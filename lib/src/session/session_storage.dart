@@ -116,6 +116,28 @@ String _generateEntryId(Map<String, SessionRecord> byId) {
   return uuidv7();
 }
 
+/// One write-chain per session file path, shared by every
+/// [JsonlSessionStorage] instance in this isolate: concurrent mutations of
+/// the SAME file (message persistence vs subagent-registry snapshots vs an
+/// open-time heal rewrite) queue here instead of racing their byte ranges
+/// into the middle of each other's records. Cross-process safety comes from
+/// single-shot whole-line appends (`appendFile` with one complete JSON line)
+/// plus this quarantine-on-open heal for anything that slipped through.
+final Map<String, Future<void>> _sessionFileOps = <String, Future<void>>{};
+
+/// Runs [op] after every previously queued operation on [filePath]
+/// completes. Never lets one failure poison the chain for later callers.
+Future<T> _withSessionFileLock<T>(
+  String filePath,
+  Future<T> Function() op,
+) {
+  final result = (_sessionFileOps[filePath] ?? Future<void>.value()).then(
+    (_) => op(),
+  );
+  _sessionFileOps[filePath] = result.then<void>((_) {}, onError: (Object _) {});
+  return result;
+}
+
 Never _invalidSession(String filePath, String message, [Object? cause]) {
   throw SessionException(
     'Invalid JSONL session file $filePath: $message',
@@ -240,11 +262,13 @@ final class JsonlSessionStorage implements SessionStorage {
     this._filePath,
     SessionHeader header,
     List<SessionRecord> entries,
-    String? leafId,
-  ) : _metadata = _headerToMetadata(header, _filePath),
+    String? leafId, {
+    int quarantined = 0,
+  }) : _metadata = _headerToMetadata(header, _filePath),
       _entries = entries,
       _byId = {for (final entry in entries) entry.id: entry},
-      _currentLeafId = leafId {
+      _currentLeafId = leafId,
+      _quarantinedEntries = quarantined {
     for (final entry in entries) {
       _updateLabelCache(_labelsById, entry);
     }
@@ -258,12 +282,30 @@ final class JsonlSessionStorage implements SessionStorage {
   final Map<String, String> _labelsById = {};
   String? _currentLeafId;
 
+  /// How many malformed lines the last [open] quarantined into the
+  /// `<file>.corrupt` sidecar (0 for freshly created storages).
+  final int _quarantinedEntries;
+  int get quarantinedEntries => _quarantinedEntries;
+
   /// The header metadata, available synchronously (it is parsed at
   /// construction). Backs [Session.cachedId].
   SessionMetadata get cachedMetadata => _metadata;
 
-  /// Opens an existing session file, parsing and validating every line.
+  /// Opens an existing session file.
+  ///
+  /// Malformed lines — a torn crash-write at ANY position (torn last line,
+  /// or a hole mid-file left by racing writers) — never fail the open: they
+  /// are quarantined verbatim into a `<file>.corrupt` sidecar and dropped,
+  /// and the main file is rewritten from the surviving records so every
+  /// later open/append sees whole JSONL. The number of quarantined lines is
+  /// reported through [quarantinedEntries].
   static Future<JsonlSessionStorage> open(
+    FileSystem fs,
+    String filePath,
+  ) async =>
+      _withSessionFileLock(filePath, () => _openLocked(fs, filePath));
+
+  static Future<JsonlSessionStorage> _openLocked(
     FileSystem fs,
     String filePath,
   ) async {
@@ -271,34 +313,48 @@ final class JsonlSessionStorage implements SessionStorage {
       await fs.readTextFile(filePath),
       'Failed to read session $filePath',
     );
-    final lines = [
+    final allLines = [
       for (final line in content.split('\n'))
         if (line.trim().isNotEmpty) line,
     ];
-    if (lines.isEmpty) _invalidSession(filePath, 'missing session header');
-    final header = _parseHeaderLine(lines.first, filePath);
+    if (allLines.isEmpty) _invalidSession(filePath, 'missing session header');
+    final header = _parseHeaderLine(allLines.first, filePath);
     final entries = <SessionRecord>[];
+    final goodLines = <String>[allLines.first];
+    final tornLines = <String>[];
     String? leafId;
-    for (var i = 1; i < lines.length; i++) {
+    for (var i = 1; i < allLines.length; i++) {
       try {
-        final entry = _parseEntryLine(lines[i], filePath, i + 1);
+        final entry = _parseEntryLine(allLines[i], filePath, i + 1);
         entries.add(entry);
+        goodLines.add(allLines[i]);
         leafId = _leafIdAfter(entry);
       } on Object {
-        // A malformed LAST line is a torn crash-write (the app died
-        // mid-append) — drop the partial record and TRUNCATE the tail so
-        // the file is whole again (every later open/append would
-        // otherwise hit the tear as mid-file corruption). A malformed
-        // MID-FILE line is real corruption and stays fatal.
-        if (i != lines.length - 1) rethrow;
-        try {
-          await fs.writeFile(filePath, '${lines.take(i).join('\n')}\n');
-        } on Object {
-          // Read-only storage: the in-memory state is still consistent.
-        }
+        // A malformed line is a torn write: drop the record, keep the raw
+        // bytes for the sidecar below. Never fatal.
+        tornLines.add(allLines[i]);
       }
     }
-    return JsonlSessionStorage._(fs, filePath, header, entries, leafId);
+    var quarantined = 0;
+    if (tornLines.isNotEmpty) {
+      quarantined = tornLines.length;
+      // Forensics sidecar first; read-only storage skips both writes and
+      // still loads fine with the torn records simply absent from memory.
+      try {
+        await fs.appendFile('$filePath.corrupt', '${tornLines.join('\n')}\n');
+        await fs.writeFile(filePath, '${goodLines.join('\n')}\n');
+      } on Object {
+        // Read-only storage: the in-memory state is still consistent.
+      }
+    }
+    return JsonlSessionStorage._(
+      fs,
+      filePath,
+      header,
+      entries,
+      leafId,
+      quarantined: quarantined,
+    );
   }
 
   /// Creates a new session file with just the header line.
@@ -317,10 +373,12 @@ final class JsonlSessionStorage implements SessionStorage {
       parentSessionPath: parentSessionPath,
       metadata: metadata,
     );
-    _fsOrThrow(
-      await fs.writeFile(filePath, '${jsonEncode(header.toJson())}\n'),
-      'Failed to create session $filePath',
-    );
+    await _withSessionFileLock(filePath, () async {
+      _fsOrThrow(
+        await fs.writeFile(filePath, '${jsonEncode(header.toJson())}\n'),
+        'Failed to create session $filePath',
+      );
+    });
     return JsonlSessionStorage._(fs, filePath, header, [], null);
   }
 
@@ -361,10 +419,19 @@ final class JsonlSessionStorage implements SessionStorage {
 
   @override
   Future<void> appendEntry(SessionRecord record) async {
-    _fsOrThrow(
-      await _fs.appendFile(_filePath, '${jsonEncode(record.toJson())}\n'),
-      'Failed to append session entry ${record.id}',
-    );
+    // Serialize with every other writer of this file (other appends, an
+    // open-time heal rewrite, creation) so concurrent persistence bursts —
+    // message records landing while subagent-registry snapshots flush —
+    // can never interleave their byte ranges mid-record.
+    await _withSessionFileLock(_filePath, () async {
+      _fsOrThrow(
+        await _fs.appendFile(
+          _filePath,
+          '${jsonEncode(record.toJson())}\n',
+        ),
+        'Failed to append session entry ${record.id}',
+      );
+    });
     _entries.add(record);
     _byId[record.id] = record;
     _updateLabelCache(_labelsById, record);
