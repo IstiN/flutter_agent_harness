@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.230
+
+- perf(tui): cache the formatted sticky echo. During a stream every
+  keystroke forces a paint, and each paint re-ran markdown formatting
+  over the entire echoed prompt — typing cost was O(echo lines) per
+  key, painful with long prompts in big sessions. Rows are now formatted
+  once per echo change (content+width keyed cache carried across model
+  copies); view frames just write the cached bytes.
+
 ## 0.1.229
 
 - feat(memory): `memory_delete` tool — remove stale entries by id

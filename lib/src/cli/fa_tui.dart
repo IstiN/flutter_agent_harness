@@ -358,6 +358,39 @@ final class FaTuiModel extends Model {
   /// re-formats.
   var _wrapCache = _WrapCache();
 
+  /// Formatted sticky-echo rows: view() runs on every painted frame, and
+  /// during streaming that means keystroke-rate forced paints — re-running
+  /// markdown formatting over the whole echoed prompt each time made
+  /// typing cost O(echo lines). The echo only changes when the user
+  /// submits, so the cache is keyed by its content and width.
+  List<String> _stickyFmtRows = const [];
+  List<String>? _stickyFmtSource;
+  int? _stickyFmtWidth;
+
+  List<String> _formattedStickyRows(int width) {
+    final src = stickyLines;
+    final cached = _stickyFmtRows;
+    final cachedSrc = _stickyFmtSource;
+    if (_stickyFmtWidth == width &&
+        cachedSrc != null &&
+        cachedSrc.length == src.length) {
+      var same = true;
+      for (var i = 0; i < src.length; i++) {
+        if (cachedSrc[i] != src[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return cached;
+    }
+    final md = AnsiMarkdown(width: width);
+    final rows = [for (final line in src) md.formatLine(line)];
+    _stickyFmtSource = List.of(src);
+    _stickyFmtWidth = width;
+    _stickyFmtRows = rows;
+    return rows;
+  }
+
   /// The input block's height in PHYSICAL rows: the text soft-wraps to the
   /// terminal width, so a long single line occupies several rows. All
   /// layout math (viewport height, cursor homing) must use this count —
@@ -554,6 +587,9 @@ final class FaTuiModel extends Model {
       frameNonce: frameNonce + 1,
     );
     copy._wrapCache = _wrapCache;
+    copy._stickyFmtRows = _stickyFmtRows;
+    copy._stickyFmtSource = _stickyFmtSource;
+    copy._stickyFmtWidth = _stickyFmtWidth;
     copy._promptCompleter = _promptCompleter;
     return copy;
   }
@@ -1734,9 +1770,8 @@ final class FaTuiModel extends Model {
   View view() {
     final b = StringBuffer();
     final height = _viewportHeight;
-    final md = AnsiMarkdown(width: termWidth);
 
-    _writeStickyEcho(b, md);
+    _writeStickyEcho(b);
 
     // Output history, padded to a fixed height. Markdown is formatted and
     // ANSI-safely wrapped to physical rows (SGR-only output, escapes never
@@ -1813,11 +1848,13 @@ final class FaTuiModel extends Model {
   }
 
   /// The sticky user echo pinned to the top while a run streams and the
-  /// echo itself has scrolled out of view (Copilot-style).
-  void _writeStickyEcho(StringBuffer b, AnsiMarkdown md) {
+  /// echo itself has scrolled out of view (Copilot-style). Rows come from
+  /// the content-keyed cache — formatting per frame made typing during a
+  /// stream O(echo lines) per keystroke.
+  void _writeStickyEcho(StringBuffer b) {
     if (_stickyActive) {
-      for (final line in stickyLines) {
-        b.writeln(md.formatLine(line));
+      for (final line in _formattedStickyRows(termWidth)) {
+        b.writeln(line);
       }
     }
   }
