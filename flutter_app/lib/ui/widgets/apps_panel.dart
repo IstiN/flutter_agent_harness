@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
@@ -153,6 +154,13 @@ class _AppsPanelState extends State<AppsPanel> {
       source: 'apps_panel',
     );
     pushJsApp(context, manager: manager, app: app, source: 'apps_panel');
+  }
+
+  /// The widgets-catalog bottom sheet over the shared env (install /
+  /// update catalog widgets — see [WidgetsCatalogSheet]).
+  Future<void> _openWidgetsCatalog() async {
+    AppAnalytics.instance.widgetEvent('gallery_open', params: const {});
+    await showWidgetsCatalogSheet(context, env: widget.manager.env);
   }
 
   // Files / Settings live in the shell sidebar and open the real
@@ -321,7 +329,16 @@ class _AppsPanelState extends State<AppsPanel> {
           _SectionHeader(title: 'Demo apps', count: _demoApps.length),
           const SizedBox(height: 8),
           _AppGrid(apps: _demoApps, onTap: _openApp),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: _openWidgetsCatalog,
+              icon: const Icon(Icons.widgets_outlined, size: 18),
+              label: const Text('Get widgets'),
+            ),
+          ),
+          const SizedBox(height: 8),
         ],
 
         // ── All apps fallback ────────────────────────────────────

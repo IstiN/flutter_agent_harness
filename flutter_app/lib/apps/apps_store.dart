@@ -5,6 +5,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -469,20 +470,7 @@ class AppsStore {
   static const List<String> demoAppIds = [
     'calculator',
     'weather',
-    'stocks',
-    'crypto',
-    'animation-showcase',
-    'yolo-hello',
-    'calendar',
-    'contacts',
-    'map',
-    'health',
-    'homekit',
-    'voice-notes',
-    'reminders',
-    '3d-game',
     'fitness-trainer',
-    'english-teacher',
   ];
 
   /// The demo apps this store seeds (see [seedBundledApps]).
@@ -695,4 +683,139 @@ class AppsStore {
 
   static String _digest(String content) =>
       sha256.convert(utf8.encode(content)).toString();
+
+  // ── Widget-catalog lifecycle (install / update / remove) ────────────────
+
+  /// Env-relative record of catalog-installed widgets:
+  /// `{id: {origin, version, installedAt, files:{rel: sha256}}}`. Lives
+  /// next to the app code under `apps/` so both the CLI and the app (and
+  /// the agent) can read it as data.
+  static const String installedMetaFile = 'apps/.installed.json';
+
+  /// Installs (or updates) one widget from the catalog's unpacked archive.
+  /// Ownership-aware per file, same contract as bundled-demo seeding: a
+  /// file the user or agent changed since OUR last write is never
+  /// clobbered. `storage.json` is user data and is always skipped. The new
+  /// version is recorded even when individual files were protected.
+  Future<void> installWidget({
+    required String id,
+    required String version,
+    required Map<String, Uint8List> files,
+  }) async {
+    final meta = await _readInstalled();
+    final entry = meta.putIfAbsent(
+      id,
+      () => {'origin': 'catalog', 'version': version},
+    )..['version'] = version;
+    entry['origin'] = 'catalog';
+    entry['installedAt'] = DateTime.now().toUtc().toIso8601String();
+    final hashes = Map<String, String>.from(
+      (entry['files'] as Map?)?.cast<String, String>() ?? const {},
+    );
+    for (final file in files.entries) {
+      if (file.key == 'storage.json') continue; // user data, not ours
+      final path = 'apps/$id/${file.key}';
+      final bytes = file.value;
+      final digest = sha256.convert(bytes).toString();
+      final recorded = hashes[file.key];
+      if (recorded != null) {
+        final current = await _env.readBinaryFile(path);
+        if (current.valueOrNull != null &&
+            sha256.convert(current.valueOrNull!).toString() != recorded) {
+          AppLog.i('apps', 'catalog update keeps user-modified $path');
+          continue;
+        }
+      }
+      await _env.writeBinaryFile(path, bytes);
+      hashes[file.key] = digest;
+    }
+    entry['files'] = hashes;
+    await _writeInstalled(meta);
+  }
+
+  /// Removes a catalog-installed widget's CODE files (`apps/<id>/` minus
+  /// `storage.json`) and drops its meta record. Returns false when there is
+  /// nothing installed under that id.
+  Future<bool> removeWidget(String appId) async {
+    final meta = await _readInstalled();
+    if (!meta.containsKey(appId)) return false;
+    final entries =
+        (await _env.listDir('apps/$appId')).valueOrNull ?? const <FileInfo>[];
+    for (final item in entries) {
+      if (item.name == 'storage.json') continue;
+      await _env.remove('apps/$appId/${item.name}', recursive: true);
+    }
+    meta.remove(appId);
+    await _writeInstalled(meta);
+    return true;
+  }
+
+  /// Compares [entries] against installed versions: returns candidates with
+  /// a strictly newer semver AND an existing `apps/<id>/` directory
+  /// (not-installed ids are fresh installs, not updates).
+  Future<List<WidgetUpdate>> availableUpdates(
+    List<CatalogEntry> entries,
+  ) async {
+    final meta = await _readInstalled();
+    final updates = <WidgetUpdate>[];
+    for (final entry in entries) {
+      final dirExists =
+          (await _env.exists('apps/${entry.id}/manifest.json')).valueOrNull ??
+          false;
+      if (!dirExists) continue;
+      final installedVersion = meta[entry.id]?['version'] ?? '';
+      if (semverNewer(installedVersion, entry.version)) {
+        updates.add(
+          WidgetUpdate(entry: entry, installedVersion: installedVersion),
+        );
+      }
+    }
+    return updates;
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _readInstalled() async {
+    final text = (await _env.readTextFile(installedMetaFile)).valueOrNull;
+    if (text == null) return {};
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map) return {};
+      return {
+        for (final entry in decoded.entries)
+          if (entry.value is Map)
+            entry.key as String: Map<String, dynamic>.from(entry.value as Map),
+      };
+    } on FormatException {
+      return {};
+    }
+  }
+
+  Future<void> _writeInstalled(Map<String, Map<String, dynamic>> meta) async {
+    await _env.writeFile(installedMetaFile, jsonEncode(meta));
+  }
+}
+
+/// Numeric `major.minor.patch` comparison: true when [installed] is STRICTLY
+/// older than [candidate]. Absent/broken installed versions always upgrade.
+bool semverNewer(String installed, String candidate) {
+  List<int> parts(String value) => value
+      .split('.')
+      .map((part) => int.tryParse(part) ?? -1)
+      .toList(growable: false);
+  final a = parts(installed);
+  final b = parts(candidate);
+  if (a.length != 3 || a.any((part) => part < 0)) return true;
+  if (b.length != 3) return false;
+  for (var i = 0; i < 3; i++) {
+    if (b[i] > a[i]) return true;
+    if (b[i] < a[i]) return false;
+  }
+  return false;
+}
+
+/// A catalog entry whose remote version beats the locally installed one.
+class WidgetUpdate {
+  const WidgetUpdate({required this.entry, required this.installedVersion});
+
+  final CatalogEntry entry;
+  final String installedVersion;
 }

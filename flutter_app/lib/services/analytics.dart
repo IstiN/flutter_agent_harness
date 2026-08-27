@@ -107,6 +107,11 @@ final class AppAnalytics {
   void sessionAction(String action) =>
       _log('session_action', {'action': action});
 
+  /// Widget-catalog lifecycle event (`name` without the `widget_` prefix —
+  /// added here so call sites stay grep-able and names stay consistent).
+  void widgetEvent(String name, {Map<String, Object> params = const {}}) =>
+      _log('widget_$name', params);
+
   /// The settings dialog/screen was opened.
   void settingsOpened() => _log('settings_opened');
 

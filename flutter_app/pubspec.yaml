@@ -173,23 +173,10 @@ flutter:
 
   assets:
     - .env
-    - assets/apps/3d-game/
-    - assets/apps/animation-showcase/
     - assets/apps/calculator/
-    - assets/apps/calendar/
-    - assets/apps/contacts/
-    - assets/apps/crypto/
-    - assets/apps/english-teacher/
     - assets/apps/fitness-trainer/
     - assets/apps/fitness-trainer/models/
-    - assets/apps/health/
-    - assets/apps/homekit/
-    - assets/apps/map/
-    - assets/apps/reminders/
-    - assets/apps/stocks/
-    - assets/apps/voice-notes/
     - assets/apps/weather/
-    - assets/apps/yolo-hello/
     - assets/skills/js-apps/SKILL.md
     - assets/wasm/add.wasm
     - assets/wasm/coreutils.wasm

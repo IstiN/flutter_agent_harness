@@ -27,6 +27,7 @@ import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/calendar_tool.dart';
 import 'package:fa/services/contact_service.dart';
 import 'package:fa/services/contact_tool.dart';
+import 'package:fa/services/apps_catalog_tool.dart';
 import 'package:fa/services/health_service.dart';
 import 'package:fa/services/health_tool.dart';
 import 'package:fa/services/home_service.dart';
@@ -597,6 +598,11 @@ class AgentService extends ChangeNotifier
         // channel — the tool reports a clean note where unsupported.
         readVideoTool(env, _videoReader!),
       ],
+      // The widgets catalog: browse / search read-tier; the write twin
+      // (install / remove / get-source) rides the same surface gated by
+      // the approval mode.
+      appsCatalogTool(env: env),
+      appsCatalogWriteTool(env: env),
     ]);
     _toolRegistry = registry;
     // Wire the task tool's child surface: all tools except `task` itself.

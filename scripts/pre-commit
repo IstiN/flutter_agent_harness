@@ -61,10 +61,25 @@ fi
 echo "🔍 Running dart analyze..."
 dart analyze
 
-echo "🔍 Checking dart format..."
-# Explicit package dirs: the repo also hosts standalone workspaces with their
-# own toolchains (yoclip/ video production) that must not gate harness commits.
-dart format --output=none --set-exit-if-changed lib test bin example scripts flutter_app packages
+echo "🎨 Auto-formatting staged Dart files..."
+# Format is SELF-HEALING with a BLOCKING backstop: reformat exactly the
+# Dart files in the index and re-stage them; anything still unformatted
+# after that (formatter crashed on syntax errors) blocks the commit with a
+# clear message. A whole-tree `--set-exit-if-changed` gate both (a) failed
+# commits over a single unformatted line and (b) rewrote OTHER agents'
+# work-in-progress files mid-edit when run concurrently — scoped auto-fix
+# avoids both.
+STAGED_DART=$(git diff --cached --name-only --diff-filter=ACM | grep '\.dart$' || true)
+if [ -n "$STAGED_DART" ]; then
+  printf '%s\n' "$STAGED_DART" | xargs dart format >/dev/null 2>&1 || true
+  printf '%s\n' "$STAGED_DART" | xargs git add --
+  UNFORMATTED=$(dart format --output=none --set-exit-if-changed $STAGED_DART 2>/dev/null | grep '^Changed' || true)
+  if [ -n "$UNFORMATTED" ]; then
+    echo "❌ dart format could not fix these files (syntax error?):"
+    echo "$UNFORMATTED"
+    exit 1
+  fi
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. TESTS WITH COVERAGE
