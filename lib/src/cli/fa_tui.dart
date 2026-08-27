@@ -2004,14 +2004,17 @@ final class FaTuiModel extends Model {
       result.add(parts[i]);
     }
     if (newline) result.add('');
-    // Keep the history bounded. The cap must stay generous: trimming drops
-    // the OLDEST lines permanently, and a trim that lands inside a fenced
-    // code block leaves the buffer starting mid-fence — every following
-    // line then renders as (un)styled markdown wrongly ("the formatting
-    // slid"). 2000 raw lines ≈ a very long answer; the per-append
-    // reformat+rewrap stays fast at this size.
+    // Keep the history bounded — but AMORTIZED. Trimming back to exactly
+    // maxLines on EVERY append drops the oldest line each flush, and a
+    // changed first line breaks TranscriptMarkdown's boundary identity, so
+    // once an answer crossed the cap every 50 ms streaming flush paid a
+    // full O(history) formatAll+wrap pass (~27 ms at 2000 lines — over half
+    // the flush budget): constant scroll/typing jank for long answers. A
+    // slack window lets ordinary appends stay on the incremental path; one
+    // batch rebuild per [trimSlack] dropped lines is imperceptible.
     const maxLines = 2000;
-    if (result.length > maxLines) {
+    const trimSlack = 400;
+    if (result.length > maxLines + trimSlack) {
       return result.sublist(result.length - maxLines);
     }
     return result;

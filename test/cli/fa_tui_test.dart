@@ -335,6 +335,25 @@ void main() {
     },
   );
 
+  test('history cap trims in batches, not on every overflowing append', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    FaTuiModel pump(int lines) =>
+        model.update(OutputMsg('${List.filled(lines, 'x').join('\n')}\n')).$1
+            as FaTuiModel;
+
+    // Past the base cap the buffer keeps GROWING through the slack window:
+    // trimming every append would drop a line per flush and break the
+    // incremental renderer's boundary identity (a full re-parse per flush —
+    // the scroll/typing jank for long answers).
+    model = pump(2100);
+    expect(model.outputLines.length, greaterThan(2000));
+    final overCap = model.outputLines.length;
+
+    // Once overflow exceeds the slack window ONE batch trims back to cap.
+    model = pump(400);
+    expect(model.outputLines.length, lessThan(overCap));
+    expect(model.outputLines.length, 2000);
+  });
   test(
     'a mid-run phase relabel swaps the label over the same elapsed window',
     () {
