@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.217
+
+- perf(tui,fork): cursor home dedupe is render-aware — a frame that painted
+  rows force-homes the physical cursor exactly once; fully idle frames now
+  emit ZERO bytes (the identical-content skip no longer pays the CUP).
+- perf(cli): drop the nonce-SGR suffix from the idle cursor line — the
+  renderer's render-aware re-home replaces it, so idle appends stop
+  repainting the status row every frame.
+
 ## 0.1.216
 
 - perf(tui,fork): dropped frames no longer build the view — `Program` now

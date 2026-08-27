@@ -1793,14 +1793,13 @@ final class FaTuiModel extends Model {
     // the renderer's cell diff re-homes it only when the last frame line
     // changes (a spinner tick), so between ticks it was left sitting inside
     // the streamed text (the visible mid-text jump). When idle, show it and
-    // home it into the input zone; the nonce-varying SGR suffix forces that
-    // row to differ on every content change, so the home sequence re-emits
-    // even when the only changed row is mid-history (a lone output append
-    // while idle used to strand the cursor inside the transcript).
-    final idleSuffix = '\x1b[0m' * (frameNonce % 4);
+    // home it into the input zone. The RENDERER force-homes the cursor after
+    // any frame that painted rows, so the trailing line needs no nonce
+    // churn anymore: a quiet idle append repaints the changed history row
+    // and still ends with the explicit home sequence.
     final cursorLine = hideCursor
         ? '\x1b[?25l'
-        : '\x1b[?25h$idleSuffix\x1b[${cursorRow + 1};${cursorX + 1}H';
+        : '\x1b[?25h\x1b[${cursorRow + 1};${cursorX + 1}H';
     return View(
       content: body + cursorLine,
       cursor: hideCursor

@@ -62,14 +62,18 @@ final class _CursorRendererState {
   int _lastRow = -1;
   int _lastCol = -1;
 
-  void apply(IOSink output, Cursor? cursor) {
+  void apply(
+    IOSink output,
+    Cursor? cursor, {
+    bool forceHome = false,
+  }) {
     if (cursor == null) {
       reset(output);
       return;
     }
 
-    var moved = false;
-    if (cursor.shape != _shape || cursor.blink != _blink) {
+    final shapeChanged = cursor.shape != _shape || cursor.blink != _blink;
+    if (shapeChanged) {
       final style = switch (cursor.shape) {
         CursorShape.block => cursor.blink ? 1 : 2,
         CursorShape.underline => cursor.blink ? 3 : 4,
@@ -78,11 +82,10 @@ final class _CursorRendererState {
       output.write('\x1b[$style q');
       _shape = cursor.shape;
       _blink = cursor.blink;
-      moved = true; // shape restyle does not move the cursor, but the
-      // terminal may reinterpret it — re-home to stay exact.
     }
 
-    if (cursor.color != _color) {
+    final colorChanged = cursor.color != _color;
+    if (colorChanged) {
       if (cursor.color == null) {
         output.write('\x1b]112\x07');
       } else {
@@ -91,16 +94,21 @@ final class _CursorRendererState {
         output.write('\x1b]12;#$hex\x07');
       }
       _color = cursor.color;
-      moved = true;
     }
 
     final row = cursor.y.clamp(0, 0x7ffffffe) + 1;
     final column = cursor.x.clamp(0, 0x7ffffffe) + 1;
-    // CUP dedupe: the identical position is already on screen; rewriting it
-    // every frame was pure escape churn. [invalidate] clears this cache
-    // wherever the renderer's other caches reset (the terminal's real
-    // cursor position becomes unknown).
-    if (moved || row != _lastRow || column != _lastCol) {
+    // CUP dedupe: an idle frame whose screen bytes are all unchanged does
+    // not need the home sequence again. Style churn or an invalidated cache
+    // re-homes; [forceHome] comes from the renderer and is true whenever
+    // THIS frame painted anything — painting rows physically moves the
+    // terminal cursor away from home, so the same logical position must be
+    // re-emitted even though nothing changed.
+    if (shapeChanged ||
+        colorChanged ||
+        forceHome ||
+        row != _lastRow ||
+        column != _lastCol) {
       output.write('\x1b[$row;${column}H');
       _lastRow = row;
       _lastCol = column;
@@ -185,10 +193,12 @@ final class AnsiRenderer implements TeaRenderer {
         ? nextLines.length
         : _lastLines.length;
     final firstFrame = !_hasRenderedFrame;
+    var wroteRows = false;
     for (var row = 0; row < maxRows; row++) {
       final next = row < nextLines.length ? nextLines[row] : '';
       final prev = row < _lastLines.length ? _lastLines[row] : '';
       if (!firstFrame && next == prev) continue;
+      wroteRows = true;
       _output.write('\x1b[${row + 1};1H');
       if (firstFrame) _output.write('\x1b[K');
       _output.write(next);
@@ -207,7 +217,7 @@ final class AnsiRenderer implements TeaRenderer {
     _lastLines = nextLines;
     _lastContent = view.content;
     _hasRenderedFrame = true;
-    _cursorState.apply(_output, view.cursor);
+    _cursorState.apply(_output, view.cursor, forceHome: wroteRows);
     _logSink?.writeln('--- frame (diff) ---\n${view.content}');
   }
 
@@ -391,15 +401,17 @@ final class CellRenderer implements TeaRenderer {
       return; // identical frame — skip rebuild + diff walk
     }
     final nextGrid = _buildGrid(view.content);
+    var wroteCells = false;
     if (_lastGrid == null) {
       for (var row = 0; row < nextGrid.length; row++) {
         _output.write('\x1b[${row + 1};1H\x1b[K');
       }
+      wroteCells = nextGrid.isNotEmpty;
     }
-    _diffAndEmit(nextGrid);
+    wroteCells = _diffAndEmit(nextGrid) || wroteCells;
     _lastGrid = nextGrid;
     _lastContent = view.content;
-    _cursorState.apply(_output, view.cursor);
+    _cursorState.apply(_output, view.cursor, forceHome: wroteCells);
     _logSink?.writeln('--- cell frame ---\n${view.content}');
   }
 
@@ -522,8 +534,9 @@ final class CellRenderer implements TeaRenderer {
     return grid;
   }
 
-  /// Emit only the cells that differ from [_lastGrid].
-  void _diffAndEmit(List<List<_Cell>> next) {
+  /// Emit only the cells that differ from [_lastGrid]; returns true when
+  /// anything was written (drives the cursor force-home).
+  bool _diffAndEmit(List<List<_Cell>> next) {
     final prev = _lastGrid;
     final rows =
         next.length > (prev?.length ?? 0) ? next.length : (prev?.length ?? 0);
@@ -531,6 +544,7 @@ final class CellRenderer implements TeaRenderer {
     var lastCol = -1;
     var lastAttrs = '';
     var lastHyperlink = '';
+    var wrote = false;
 
     for (var row = 0; row < rows; row++) {
       final nextRow = row < next.length ? next[row] : const <_Cell>[];
@@ -552,6 +566,7 @@ final class CellRenderer implements TeaRenderer {
         // stale content is cleared when a wide glyph disappears, but it must
         // never be written independently.
         if (nextCell.isContinuation) continue;
+        wrote = true;
 
         // Move cursor if needed
         if (lastRow != row || lastCol != col) {
@@ -590,6 +605,7 @@ final class CellRenderer implements TeaRenderer {
     if (lastHyperlink.isNotEmpty) {
       _output.write('\x1b]8;;\x1b\\');
     }
+    return wrote;
   }
 }
 

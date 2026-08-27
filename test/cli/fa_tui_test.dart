@@ -1089,18 +1089,22 @@ void main() {
       expect(position.hasMatch(idleContent), isTrue);
     });
 
-    test('an idle output append still varies the cursor line (re-home)', () {
-      // dart_tui's row diff re-emits the cursor-home sequence only when the
-      // row carrying it changed; a lone mid-history append while idle used
-      // to strand the physical cursor inside the transcript.
-      var model = filledModel();
-      final before = model.view().content.split('\n').last;
-      model = send(model, OutputMsg('fresh output', newline: true));
-      final after = model.view().content.split('\n').last;
-      expect(after, isNot(before));
-      expect(after, contains('\x1b[?25h'));
-      expect(after, contains(RegExp(r'\x1b\[\d+;\d+H$')));
-    });
+    test(
+      'an idle output append keeps the trailing cursor line byte-stable',
+      () {
+        // The renderer force-homes the physical cursor after any frame that
+        // painted rows, so the view no longer needs nonce churn to force a
+        // rewrite: the cursor line stays IDENTICAL across idle appends (the
+        // status row stops being repainted on every change).
+        var model = filledModel();
+        final before = model.view().content.split('\n').last;
+        model = send(model, OutputMsg('fresh output', newline: true));
+        final after = model.view().content.split('\n').last;
+        expect(after, before);
+        expect(after, contains('\x1b[?25h'));
+        expect(after, contains(RegExp(r'\x1b\[\d+;\d+H$')));
+      },
+    );
 
     test(
       'a submit after scrolling up re-attaches follow and pins the echo',
