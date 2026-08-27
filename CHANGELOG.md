@@ -1242,4 +1242,8 @@
 - perf(tui): incremental transcript markdown+wrap — streaming flush x729 faster
 - fix(cli,app): attach delivery, pasted-path attachments; split cli inbox part file
 
+## 0.1.213
+
+- style(env): brace single-statement if in CwdOverrideEnv.backgroundJobsSupported
+
 ## Unreleased
