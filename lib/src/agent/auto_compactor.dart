@@ -22,6 +22,7 @@ library;
 
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
+import '../context.dart';
 import '../model.dart';
 import '../session/session_tree.dart' show Session;
 import '../types.dart';
@@ -212,6 +213,29 @@ final class AutoCompactor {
     );
 
     if (!attempt.ok) {
+      // Both summarizers down: as a last resort, mechanically bound the
+      // live context (see [_localTrimFallback]) so the agent can keep
+      // working instead of being stuck over-window until the endpoint
+      // recovers.
+      final trimmed = _localTrimFallback();
+      if (trimmed != null) {
+        state.messages = trimmed;
+        final tokensAfter = estimateContextTokens(state.messages).tokens;
+        hooks.onPass(
+          AutoCompactorPass(
+            pass: pass,
+            tokensBefore: tokensBefore,
+            tokensAfter: tokensAfter,
+            fallback: 'local-trim',
+            ok: true,
+          ),
+        );
+        hooks.onDone(pass, tokensAfter);
+        return (
+          done: true,
+          success: !shouldCompact(tokensAfter, window, settings),
+        );
+      }
       hooks.onBothRolesFailed(attempt.error!);
       hooks.onPass(
         AutoCompactorPass(
@@ -271,6 +295,42 @@ final class AutoCompactor {
       return (done: true, success: true);
     }
     return (done: false, success: false);
+  }
+
+  /// Emergency valve when both summarizers are down and the transcript is
+  /// over the window: mechanically keep the most recent
+  /// [CompactionSettings.keepRecentTokens] (estimated) messages, prefixing
+  /// a user-role marker so the model (and providers, which reject
+  /// toolResult-first transcripts) see what happened. In-memory only — the
+  /// session file keeps every record; the next restart replays the full
+  /// transcript and the pre-flight compaction retries the LLM path with a
+  /// healthy endpoint. Returns null when there is nothing droppable (the
+  /// budget already covers the whole transcript).
+  List<Message>? _localTrimFallback() {
+    final messages = state.messages;
+    if (messages.isEmpty) return null;
+    final budget = settings.keepRecentTokens;
+    var cut = 0; // first kept index
+    var accumulated = 0;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      accumulated += estimateTokens(messages[i]);
+      if (accumulated > budget) {
+        cut = i + 1;
+        break;
+      }
+    }
+    if (cut <= 0) return null;
+    final kept = messages.sublist(cut);
+    if (kept.isEmpty) return null;
+    return [
+      UserMessage.text(
+        '[context trimmed locally: the summarizer endpoint was unavailable, '
+        '$cut older message(s) were dropped from the live context at '
+        '${DateTime.now().toUtc().toIso8601String()} — the full history '
+        'stays in the session file]',
+      ),
+      ...kept,
+    ];
   }
 
   /// Picks the summarizer for this pass: smol first, main as fallback when

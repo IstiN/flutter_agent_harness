@@ -160,4 +160,45 @@ void main() {
       expect(estimateContextTokens(messages).lastUsageIndex, isNull);
     });
   });
+
+  group('SettledContextEstimate', () {
+    test('memoizes on the list identity + length — one estimator run for '
+        'repeated calls', () {
+      final memo = SettledContextEstimate();
+      final messages = [UserMessage.text('a' * 100)];
+      expect(memo.settled(messages), 25);
+      expect(memo.settled(messages), 25);
+      expect(memo.estimatorCalls, 1);
+    });
+
+    test('recomputes when the list grows (length key)', () {
+      final memo = SettledContextEstimate();
+      final messages = [UserMessage.text('a' * 100)];
+      memo.settled(messages);
+      messages.add(UserMessage.text('b' * 100));
+      expect(memo.settled(messages), 50);
+      expect(memo.estimatorCalls, 2);
+    });
+
+    test('recomputes for a same-length REPLACEMENT list (compaction '
+        'swaps identity)', () {
+      final memo = SettledContextEstimate();
+      memo.settled([UserMessage.text('a' * 100), _assistant()]);
+      expect(memo.settled([UserMessage.text('c' * 100), _assistant()]), 25);
+      expect(memo.estimatorCalls, 2);
+    });
+
+    test('the settled memo has no streaming input — in-flight stream '
+        'content never invalidates it (the typing-lag fix)', () {
+      // The whole point: the key carries nothing about the stream message,
+      // so per-delta callers cost one O(stream) estimateTokens on top of
+      // the memo hit, never an O(context) re-scan.
+      final memo = SettledContextEstimate();
+      final messages = [UserMessage.text('a' * 100)];
+      memo.settled(messages);
+      memo.settled(messages);
+      memo.settled(messages);
+      expect(memo.estimatorCalls, 1);
+    });
+  });
 }

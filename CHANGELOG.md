@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.219
+
+- fix(cli): a pasted absolute path that EXISTS is sent as a message with the
+  file attached instead of being refused with a "filesystem path, not a
+  command" hint; a nonexistent path keeps the hint.
+- fix(cli): auto-compaction reports honestly — a failed pass no longer
+  prints the success-looking "[auto-compacted] N tokens summarized" line,
+  and a no-op pass stays quiet.
+- fix(compaction): emergency local trim — when both summarizers are down and
+  the transcript is over the window, the most recent keepRecentTokens stay
+  live behind a user-role marker (in-memory only; the session file keeps the
+  full history) so the agent can keep working instead of being stuck
+  over-window until the endpoint recovers.
+- fix(cli): compaction-time memory extraction is bounded — the extraction
+  stream is cancelled after 90s and force-skipped after 120s (the phase
+  label no longer hangs for the whole role-chain retry ladder), and the
+  "Compacting context…" phase is restored afterwards.
+- perf(cli): the status line's context estimate memoizes the settled
+  transcript by list identity + length only — the in-flight stream message
+  is estimated per render and never invalidates the memo. Keying the memo on
+  the stream's growing length used to force a full O(context) re-scan on
+  EVERY streamed delta (dozens per second — the "typing lag" while a run
+  streams over a large transcript).
+
 ## 0.1.218
 
 - fix(tui,fork): the FA_TUI_TRACE file sink flushes every row — a traced

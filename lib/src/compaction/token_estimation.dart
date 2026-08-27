@@ -164,3 +164,40 @@ ContextUsageEstimate estimateContextTokens(List<Message> messages) {
     lastUsageIndex: usageInfo.index,
   );
 }
+
+/// Memoized context estimate for the SETTLED part of a transcript.
+///
+/// The status line renders on every frame — including every keystroke while
+/// the user types over a run. Keying the memo on the message list identity
+/// and length ONLY (never on in-flight stream content) makes each streamed
+/// delta cost one O(stream) `estimateTokens` instead of a full O(context)
+/// re-scan: on a 200k-token transcript that is the difference between
+/// ~50 whole-transcript scans per second and none.
+final class SettledContextEstimate {
+  /// Creates a memo; [estimator] is injectable for tests.
+  SettledContextEstimate({int Function(List<Message>)? estimator})
+    : _estimator =
+          estimator ?? ((messages) => estimateContextTokens(messages).tokens);
+
+  final int Function(List<Message>) _estimator;
+  Object? _cachedKey;
+  int _cachedValue = 0;
+
+  /// How many times the underlying estimator actually ran (test seam).
+  int get estimatorCalls => _estimatorCalls;
+  int _estimatorCalls = 0;
+
+  /// Estimate for the settled [messages], recomputed only when the list
+  /// identity or length changed (appends, compaction, session switches).
+  /// An in-place mutation that keeps both is deliberately NOT tracked —
+  /// settled messages are immutable once appended.
+  int settled(List<Message> messages) {
+    final key = (identityHashCode(messages), messages.length);
+    if (key != _cachedKey) {
+      _estimatorCalls++;
+      _cachedValue = _estimator(messages);
+      _cachedKey = key;
+    }
+    return _cachedValue;
+  }
+}

@@ -1,12 +1,4 @@
-import 'package:flutter_agent_harness/src/agent/agent.dart';
-import 'package:flutter_agent_harness/src/agent/auto_compactor.dart';
-import 'package:flutter_agent_harness/src/compaction/compaction.dart';
-import 'package:flutter_agent_harness/src/context.dart';
-import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
-import 'package:flutter_agent_harness/src/model.dart';
-import 'package:flutter_agent_harness/src/session/session_repo.dart';
-import 'package:flutter_agent_harness/src/session/session_tree.dart';
-import 'package:flutter_agent_harness/src/types.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 const _model = Model(
@@ -166,5 +158,82 @@ void main() {
     expect(hooks.passes, hasLength(1)); // one no-op pass, not maxPasses(8)
     // The no-op pass never reaches the summarizer (nothing to cut).
     expect(fake.calls, 1); // only the real compaction above
+  });
+
+  test('both summarizers down over the window: local trim bounds the '
+      'context and reports an honest local-trim pass', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // ~101 tokens per message (404 chars / 4); 12 of them ≈ 1212 — over
+    // the 1000-token window. No usage anchors: pure char/4 estimate.
+    for (var i = 0; i < 12; i++) {
+      await session.appendMessage(UserMessage.text('u$i${'a' * 400}'));
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    expect(state.messages.length, 12);
+
+    Future<SummarizationResult> failing(SummarizationRequest request) async {
+      throw const CompactionException(
+        'Summarization failed: TimeoutException after 0:05:00.000',
+      );
+    }
+
+    final hooks = _RecordingHooks();
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: failing,
+      mainSummary: failing,
+      smolModel: null,
+      hooks: hooks,
+    ).run();
+
+    expect(ok, isTrue, reason: 'the local trim bounds the context');
+    // Marker + the kept recent messages — far fewer than the original 12.
+    expect(state.messages.length, lessThan(12));
+    expect(state.messages.first, isA<UserMessage>());
+    final marker = state.messages.first as UserMessage;
+    expect(marker.content as String, contains('context trimmed locally'));
+    final pass = hooks.passes.last;
+    expect(pass.fallback, 'local-trim');
+    expect(pass.ok, isTrue);
+    expect(pass.tokensAfter, lessThan(pass.tokensBefore));
+  });
+
+  test('both summarizers down but the transcript fits the keep budget: '
+      'no trim, honest failure', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // One short message: under keepRecentTokens — nothing droppable.
+    await session.appendMessage(UserMessage.text('tiny'));
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+
+    Future<SummarizationResult> failing(SummarizationRequest request) async {
+      throw const CompactionException('boom');
+    }
+
+    final hooks = _RecordingHooks();
+    // force: the point is the both-failed path, not the threshold gate.
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: failing,
+      mainSummary: failing,
+      smolModel: null,
+      hooks: hooks,
+      force: true,
+    ).run();
+
+    expect(ok, isFalse);
+    expect(hooks.passes.single.ok, isFalse);
+    expect(hooks.passes.single.fallback, isNull);
   });
 }

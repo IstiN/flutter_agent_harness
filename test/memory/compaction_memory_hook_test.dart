@@ -208,4 +208,43 @@ void main() {
     await hook!('summarized span');
     expect(await memory.list(), isEmpty);
   });
+
+  test('a cancelled token aborts the extraction stream — the hook yields '
+      'no entries (the bounded-extraction contract)', () async {
+    final env = MemoryExecutionEnv();
+    final memory = MemoryController(env: env);
+    final source = CancelTokenSource();
+
+    // A stream that only completes when cancelled — the wedged-endpoint
+    // shape the CLI's 90s deadline protects against.
+    AssistantMessageEventStream hangUntilCancelled(
+      Model model,
+      Context context, {
+      CancelToken? cancelToken,
+    }) {
+      final s = AssistantMessageEventStream();
+      s.push(StartEvent(partial: _assistant('')));
+      cancelToken?.onCancel.then((_) {
+        s.push(
+          ErrorEvent(
+            reason: StopReason.aborted,
+            error: _assistant('', reason: StopReason.aborted),
+          ),
+        );
+        s.end();
+      });
+      return s;
+    }
+
+    final hook = compactionMemoryHook(
+      memory: memory,
+      stream: hangUntilCancelled,
+      model: _model,
+      cancelToken: source.token,
+    );
+    final pending = hook!('summarized span');
+    source.cancel();
+    await pending;
+    expect(await memory.list(), isEmpty);
+  });
 }

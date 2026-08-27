@@ -456,36 +456,16 @@ extension on AgentCli {
   /// to the last reported turn plus an estimate of the trailing messages
   /// (what the NEXT request carries) — moves mid-run as tool results and
   /// the stream land, instead of freezing at the last turn's prompt size.
-  /// Memoized (the memo fields live on [AgentCli]): the status line runs on
-  /// every rendered frame. The cache key must cover EVERYTHING the value
-  /// depends on: message list identity (compaction/session switches can
-  /// replace it with a same-length list) and the streaming message's full
-  /// content length — text AND thinking (a reasoning model's long thinking
-  /// phase grows the context while text length stays 0, which used to pin a
-  /// stale ctx%/tok read for the whole phase).
+  /// The SETTLED part is memoized on the message list identity + length
+  /// ([SettledContextEstimate]); the in-flight stream message is estimated
+  /// per call and never touches the memo. Keying the settled memo on the
+  /// stream's growing length would invalidate it on EVERY delta — a full
+  /// O(context) re-scan dozens of times per second (the "typing lag").
   int _liveContextTokens() {
     final messages = _agent.state.messages;
     final streaming = _agent.state.streamingMessage;
-    final streamLen = switch (streaming) {
-      AssistantMessage(:final content) => content.fold<int>(0, (sum, block) {
-        // Cheap per-block size: text/thinking char counts, tool calls via
-        // name only (arguments rarely stream mid-flight).
-        return sum +
-            switch (block) {
-              TextContent(:final text) => text.length,
-              ThinkingContent(:final thinking) => thinking.length,
-              ToolCall(:final name) => name.length,
-              _ => 0,
-            };
-      }),
-      _ => 0,
-    };
-    final key = (identityHashCode(messages), messages.length, streamLen);
-    if (key == _ctxCacheKey) return _ctxCacheValue;
-    var tokens = estimateContextTokens(messages).tokens;
+    var tokens = _ctxEstimate.settled(messages);
     if (streaming != null) tokens += estimateTokens(streaming);
-    _ctxCacheKey = key;
-    _ctxCacheValue = tokens;
     return tokens;
   }
 

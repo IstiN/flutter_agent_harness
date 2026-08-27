@@ -112,6 +112,7 @@ export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
 part 'provider_flow_helpers.dart';
 part 'provider_commands.dart';
+part 'agent_cli_compaction.dart';
 part 'provider_models.dart';
 part 'codemie_provider_commands.dart';
 part 'provider_keys.dart';
@@ -785,11 +786,16 @@ class AgentCli {
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
 
-  /// Memo fields for the status line's live context estimate
+  /// Hard bounds for the compaction-time memory extraction (see
+  /// `_runAutoCompact`): cancel the extraction stream after 90s, and
+  /// force-skip after 120s even if the cancel didn't land.
+  static const _memoryExtractionDeadline = Duration(seconds: 90);
+  static const _memoryExtractionHardCap = Duration(seconds: 120);
+
+  /// Memoized settled-part context estimate for the status line
   /// (see `_liveContextTokens` in approval_commands.dart): keyed on the
-  /// transcript size plus the in-flight stream's text length.
-  (Object, int, int)? _ctxCacheKey;
-  int _ctxCacheValue = 0;
+  /// transcript list identity + length only — never on stream content.
+  final SettledContextEstimate _ctxEstimate = SettledContextEstimate();
   late SessionRepo _repo = JsonlSessionRepo(
     fs: _env,
     sessionsRoot: config.sessionRoot,
@@ -2337,13 +2343,35 @@ class AgentCli {
       hooks: _AutoCompactorCliHooks(this),
       prompts: CompactionPrompts.fromOverrides(config.promptOverrides),
       memoryExtractionHook: (text) async {
-        _tuiController?.setBusyPhase('Extracting memory…');
-        final hook = compactionMemoryHook(
-          memory: _memory,
-          stream: smol?.stream ?? _streamFunction,
-          model: smol?.model ?? _agent.state.model,
-        );
-        await hook?.call(text);
+        final tui = _tuiController;
+        tui?.setBusyPhase('Extracting memory…');
+        // Best-effort and BOUNDED: a wedged smol endpoint used to keep the
+        // phase label up for the whole role-chain retry ladder (minutes
+        // per pass — the "Extracting memory… 1025s" stall). Cancel the
+        // extraction stream after the deadline, hard-cap the wait anyway,
+        // and restore the compaction phase label either way. A timeout
+        // skips extraction for this pass only — never the compaction.
+        final source = CancelTokenSource();
+        final deadline = Timer(_memoryExtractionDeadline, source.cancel);
+        try {
+          final hook = compactionMemoryHook(
+            memory: _memory,
+            stream: smol?.stream ?? _streamFunction,
+            model: smol?.model ?? _agent.state.model,
+            cancelToken: source.token,
+          );
+          if (hook != null) {
+            await hook(text).timeout(_memoryExtractionHardCap);
+          }
+        } on TimeoutException {
+          _logDiagnostic(
+            'memory extraction skipped: exceeded '
+            '${_memoryExtractionHardCap.inSeconds}s hard cap',
+          );
+        } finally {
+          deadline.cancel();
+          tui?.setBusyPhase('Compacting context…');
+        }
       },
       force: label == '[compacted]',
     ).run();
@@ -2647,12 +2675,17 @@ class AgentCli {
     // Unknown slash command: treat it as a filter for the command menu.
     // A string starting with `/` followed by no spaces and containing at
     // least one more `/` is a filesystem path (absolute or `~/...`),
-    // never a slash command — pasting one shouldn't trigger "unknown
-    // command"; hint at how to load it instead.
+    // never a slash command. When the referenced file EXISTS, the message
+    // is sent with the file attached (resolveInteractiveFileReference);
+    // a nonexistent path keeps the load hint — it cannot be attached.
     if (trimmed.startsWith('/') && trimmed.length > 1) {
       final looksAbsolutePath =
           RegExp(r'^/[^/\s]*\/').hasMatch(trimmed) || trimmed.startsWith('~/');
       if (looksAbsolutePath) {
+        if (resolveInteractiveFileReference(trimmed) != trimmed) {
+          _startRun(trimmed);
+          return;
+        }
         io.writeln(
           'looks like a filesystem path, not a command — '
           'paste the contents (e.g. `cat ${trimmed.split(' ').first}`), '
@@ -2696,57 +2729,4 @@ class AgentCli {
 
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;
-}
-
-/// [AutoCompactorHooks] impl that drives the CLI TUI / stderr and the
-/// diagnostic log file (`~/.fah/logs/fa.log`). One per run; cheap to
-/// allocate.
-class _AutoCompactorCliHooks implements AutoCompactorHooks {
-  _AutoCompactorCliHooks(this.cli);
-
-  final AgentCli cli;
-
-  @override
-  void onPass(AutoCompactorPass pass) {
-    cli.io.writeln(
-      '[auto-compacted${pass.pass == 1 ? '' : ' pass=${pass.pass}'}] '
-      '${pass.tokensBefore} tokens summarized',
-    );
-    cli._logDiagnostic(
-      'auto-compact pass ${pass.pass} '
-      'fallback=${pass.fallback ?? '-'} '
-      'tokens ${pass.tokensBefore}→${pass.tokensAfter} '
-      'ok=${pass.ok} error=${pass.error ?? '-'}',
-    );
-  }
-
-  @override
-  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {
-    cli.io.writeln(
-      'compaction transient error (attempt $attempt/$maxAttempts); '
-      'retrying in ${backoff.inSeconds}s — $error',
-    );
-    cli._logDiagnostic(
-      'compact retry attempt=$attempt backoff=${backoff.inSeconds}s '
-      'error=$error',
-    );
-  }
-
-  @override
-  void onDone(int passes, int tokens) {
-    if (passes > 0) {
-      cli._logDiagnostic('auto-compact done passes=$passes tokens=$tokens');
-    }
-  }
-
-  @override
-  void onBothRolesFailed(Object lastError) {
-    final hint = cli._compactionFailureHint(lastError);
-    cli.io.writeln('compaction both roles failed: $hint');
-    cli.io.writeln(
-      'compaction both roles failed; the agent cannot make progress '
-      'until you switch models (e.g. `/model`) or start a new session '
-      '(`/new`).',
-    );
-  }
 }

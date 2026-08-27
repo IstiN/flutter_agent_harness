@@ -55,11 +55,14 @@ const maxExtractionSpanChars = 32 * 1024;
 ///
 /// [stream] / [model] back the smol-role extraction call; every failure
 /// (network, malformed JSON, memory-store error) is swallowed — extraction
-/// must never block or fail a compaction.
+/// must never block or fail a compaction. [cancelToken] lets a host bound
+/// the wait: cancelling aborts the underlying provider stream, and the
+/// aborted response yields no entries.
 Future<void> Function(String summarizedText)? compactionMemoryHook({
   required MemoryController? memory,
   required StreamFunction? stream,
   required Model? model,
+  CancelToken? cancelToken,
 }) {
   if (memory == null || stream == null || model == null) return null;
   return (String summarizedText) async {
@@ -68,6 +71,7 @@ Future<void> Function(String summarizedText)? compactionMemoryHook({
         stream,
         model,
         summarizedText,
+        cancelToken: cancelToken,
       );
       for (final entry in entries) {
         await memory.add(

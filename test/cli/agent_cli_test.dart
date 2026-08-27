@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -888,6 +889,28 @@ void main() {
       await run;
     },
   );
+
+  test('a pasted absolute path that EXISTS is sent as a message with the file '
+      'attached, not refused', () async {
+    final dir = await Directory.systemTemp.createTemp('fa_path_test');
+    final file = File('${dir.path}/clip_note.txt');
+    await file.writeAsString('hello from the clip');
+    addTearDown(() => dir.delete(recursive: true));
+
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('${file.path} summarize this');
+    await waitForIt(
+      () => io.out.toString().contains('[file] pasted path attached'),
+      reason: 'an existing path attaches and starts the run',
+    );
+    await waitForIt(() => io.out.toString().contains('ok'));
+    expect(io.out.toString(), isNot(contains('looks like a filesystem path')));
+    io.sendLine('/exit');
+    await run;
+  });
 
   test('bare / shows a numbered command menu in line mode', () async {
     final fake = FakeStreamFunction([]);
