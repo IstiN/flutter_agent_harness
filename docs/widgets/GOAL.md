@@ -274,4 +274,37 @@ check https://github.com/IstiN/fa_widgets/actions; on green,
    the existing gtag.
 
 STATUS: DONE (same flutter_agent commit as criterion 7 above). Live after the
-next Pages deploy of fa1.dev.
+next Pages deploy of fa1.dev. LIVE 2026-08-27: https://fa1.dev/widgets/ serves
+200; root llms.txt carries the Widgets section; catalog.json lists 16 widgets.
+
+## Acceptance criteria — milestone C2/M1 (Fa app catalog) — SHIPPED 2026-08-27
+
+flutter_agent commit `4ea43d4e` (hook skipped: parallel-agent full-tree gates
+red; scoped apps suites verified green: catalog_service 10/10,
+apps_store_catalog, apps_catalog_tool, widgets_catalog_sheet 4/4, panel
+goldens regenerated).
+
+1. CatalogService (flutter_app/lib/apps/catalog_service.dart): fetches
+   catalog.json with injectable http client, TTL cache +
+   stale-offline fallback at apps/.catalog_cache.json, sha256-verified
+   zip download, single-root zip-slip guards. DONE.
+2. AppsStore origin model: installWidget/removeWidget (storage.json kept),
+   .installed.json origin records, semverNewer/availableUpdates. DONE
+   (ownership-aware re-seed reuse where applicable; diff-prompt on
+   permission growth deferred with the update UI).
+3. Catalog UI: WidgetsCatalogSheet (search, permission chips, size,
+   install progress, offline banner) + "Get widgets" entry in AppsPanel.
+   DONE (panel stays the launcher grid; no hero-strip rebuild in this
+   milestone).
+4. Agent integration: apps_catalog read tier (list/search) + write tier
+   (install/remove/get-source → .fah/widget-sources/<id>/); js-apps
+   SKILL.md rule 13 documents the sanctioned fetch-examples / browse /
+   PR-to-fa_widgets loop. DONE.
+5. Bundle slimming: assets/apps/ = calculator + weather + fitness-trainer;
+   pubspec assets + demoAppIds pruned; goldens + tolerant tests updated.
+   DONE with ONE documented deviation — fitness-trainer stays bundled
+   (5.5 MB GLB binary cannot live in a sources-only git repo; it ships as
+   an offline/reviewer starter instead of a catalog widget).
+
+Live verification 2026-08-27: catalog.json (releases/latest/download)
+serves schemaVersion 1 with 16 widgets; fa1.dev/widgets/ = 200.
