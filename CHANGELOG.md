@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.232
+
+- perf(tui): grown-tail rollback truncates the transcript arrays
+  in place instead of sublist-copying them per streaming chunk — the
+  per-chunk cost no longer grows with session length (the last
+  time-coupled term; everything else is bounded or O(delta)).
+
 ## 0.1.231
 
 - perf(tui): streaming flush interval 50ms → 16ms (~60 fps). A traced

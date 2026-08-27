@@ -770,11 +770,17 @@ final class TranscriptMarkdown {
     }
     final edge = _through - 1;
     final fmtKept = _srcFmtStarts[edge];
-    _formatted = _formatted.sublist(0, fmtKept);
-    _rows = _rows.sublist(0, _srcRowStarts[edge]);
-    _starts = [..._starts.sublist(0, fmtKept), _rows.length];
-    _srcFmtStarts = [..._srcFmtStarts.sublist(0, edge), _formatted.length];
-    _srcRowStarts = [..._srcRowStarts.sublist(0, edge), _rows.length];
+    final rowKept = _srcRowStarts[edge];
+    // In-place truncation: sublist+spread copied the whole per-session
+    // arrays on EVERY no-newline chunk, so cost grew with session length.
+    _formatted.length = fmtKept;
+    _rows.length = rowKept;
+    _starts.length = fmtKept;
+    _starts.add(_rows.length);
+    _srcFmtStarts.length = edge;
+    _srcFmtStarts.add(_formatted.length);
+    _srcRowStarts.length = edge;
+    _srcRowStarts.add(_rows.length);
     _through = edge;
     _boundaryLast = edge > 0 ? src[edge - 1] : null;
     _savedFence = _fenceBeforeBoundaryLine;
