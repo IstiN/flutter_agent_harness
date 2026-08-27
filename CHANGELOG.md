@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.224
+
+- fix(messaging): agent_message to a peer in ANOTHER project now lands in
+  the recipient's messages root. Delivery used to write into the sender's
+  cwd-slug root, so the other fa (draining only its own root) never saw
+  the mail — cross-project chats silently vanished. FileMessagingRepository
+  resolves the mailbox's real root (messages-registry.json slug map, then
+  a sibling-slug scan by .id marker); unknown ids stay local. Diagnosed
+  live: a message fa<->crap4dart agent was found sitting in the wrong
+  project's inbox.
+
 ## 0.1.223
 
 - feat(tui): input-driven frames bypass the fps throttle — a keystroke or

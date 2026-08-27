@@ -67,9 +67,15 @@ final class FileMessagingRepository implements MessagingRepository {
 
   @override
   Future<void> send(AgentMessage message) async {
-    final dir = _inboxDir(message.toId);
+    // Cross-project routing: the recipient drains only ITS OWN cwd-slug
+    // messages root, so a sender-rooted write into a foreign mailbox
+    // silently vanishes (a peer fa in another project never sees it).
+    // Resolve the mailbox's real root first: the messages-registry.json
+    // slug map, then a broad scan of sibling slugs; unknown ids stay local.
+    final root = await _resolveRecipientRoot(message.toId);
+    final dir = '$root/${sanitizeAgentId(message.toId)}/inbox';
     (await _env.createDir(dir)).getOrThrow();
-    final agentDir = '$_root/${sanitizeAgentId(message.toId)}';
+    final agentDir = '$root/${sanitizeAgentId(message.toId)}';
     // The real (unsanitized) id marker, so directory() can report
     // human-meaningful mailbox names instead of filesystem-safe ones.
     final marker = '$agentDir/.id';
@@ -78,6 +84,67 @@ final class FileMessagingRepository implements MessagingRepository {
     }
     final path = '$dir/${_fileName(message)}';
     (await _env.writeFile(path, jsonEncode(message.toJson()))).getOrThrow();
+  }
+
+  /// The messages root that actually backs [agentId]'s mailbox: a foreign
+  /// cwd-slug root when the mailbox lives in another project (registry
+  /// entry first, then a sibling-slug scan by `.id` marker), otherwise
+  /// [_root].
+  Future<String> _resolveRecipientRoot(String agentId) async {
+    final sanitized = sanitizeAgentId(agentId);
+    // Fast path: the best-effort registry maps agent id -> slug.
+    final slug = await _registrySlugFor(agentId);
+    if (slug != null) {
+      final peer = '${_sessionRoot()}/$slug/messages';
+      if (slug != _ownSlug &&
+          (await _env.exists('$peer/$sanitized')).valueOrNull == true) {
+        return peer;
+      }
+    }
+    // Broad scan of sibling slugs (sends are rare; correctness first).
+    final slugDirs =
+        (await _env.listDir(_sessionRoot())).valueOrNull ?? const [];
+    for (final slugDir in slugDirs) {
+      if (slugDir.kind != FileKind.directory) continue;
+      final peerMessages = '${slugDir.path}/messages';
+      if (peerMessages == _root) continue;
+      final marker = (await _env.readTextFile(
+        '$peerMessages/$sanitized/.id',
+      )).valueOrNull?.trim();
+      if (marker == agentId) return peerMessages;
+    }
+    return _root;
+  }
+
+  Future<String?> _registrySlugFor(String agentId) async {
+    final home = _homeDir;
+    if (home == null || home.isEmpty) return null;
+    final path = (await _env.joinPath([
+      home,
+      '.fah',
+      'messages-registry.json',
+    ])).getOrThrow();
+    final existing = await _env.readTextFile(path);
+    final text = existing.valueOrNull;
+    if (text == null || text.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(text) as Map<String, dynamic>;
+      final entry = decoded[agentId];
+      if (entry is Map<String, dynamic> && entry['slug'] is String) {
+        return entry['slug'] as String;
+      }
+    } on FormatException {
+      return null;
+    }
+    return null;
+  }
+
+  /// This repository's own cwd slug (the `<slug>` in
+  /// `<sessionRoot>/<slug>/messages`).
+  String get _ownSlug {
+    final parts = _root.split('/').where((s) => s.isNotEmpty).toList();
+    if (parts.length < 2) return '';
+    return parts[parts.length - 2];
   }
 
   @override

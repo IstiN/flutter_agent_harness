@@ -214,4 +214,59 @@ void main() {
       expect(await isolated.directory(), isEmpty);
     });
   });
+
+  // Cross-project delivery: a mailbox registered under a DIFFERENT cwd slug
+  // must receive mail in ITS messages root — the recipient drains only its
+  // own root, so sender-rooted delivery silently vanishes (the peer fa in
+  // another project never sees the message). Resolution order: the
+  // messages-registry.json slug lookup, then a broad scan of sibling slugs
+  // for a mailbox whose .id marker matches; unknown ids stay local.
+  group('cross-project send routing', () {
+    test('registry-known foreign slug receives the message', () async {
+      await env.writeFile(
+        '/home/user/.fah/messages-registry.json',
+        jsonEncode({
+          '01a044d9/main': {'slug': '--other-project--', 'cwd': '/other'},
+        }),
+      );
+      await env.createDir(
+        '/sessions/--other-project--/messages/01a044d9_main/inbox',
+      );
+      await repo.send(msg(to: '01a044d9/main', text: 'cross'));
+      final there =
+          (await env.listDir(
+            '/sessions/--other-project--/messages/01a044d9_main/inbox',
+          )).valueOrNull ??
+          const [];
+      expect(there.where((e) => e.kind == FileKind.file), hasLength(1));
+      // NOT in our own root — sender-rooted delivery is the bug.
+      expect(await repo.peek('01a044d9/main'), isEmpty);
+    });
+
+    test(
+      'broad scan finds a foreign mailbox without a registry entry',
+      () async {
+        await env.createDir(
+          '/sessions/--other-project--/messages/01a044d9_main/inbox',
+        );
+        await env.writeFile(
+          '/sessions/--other-project--/messages/01a044d9_main/.id',
+          '01a044d9/main',
+        );
+        await repo.send(msg(to: '01a044d9/main', text: 'scan'));
+        final there =
+            (await env.listDir(
+              '/sessions/--other-project--/messages/01a044d9_main/inbox',
+            )).valueOrNull ??
+            const [];
+        expect(there.where((e) => e.kind == FileKind.file), hasLength(1));
+        expect(await repo.peek('01a044d9/main'), isEmpty);
+      },
+    );
+
+    test('unknown ids stay in the local root', () async {
+      await repo.send(msg(to: 'local-child', text: 'local'));
+      expect(await repo.peek('local-child'), hasLength(1));
+    });
+  });
 }
