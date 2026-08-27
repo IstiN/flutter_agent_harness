@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.225
+
+- fix(tui): the input caret stays visible while a run streams. The old
+  hide-while-busy guarded a pre-force-home artifact (the cursor jumping
+  inside streamed text); the renderer now re-homes after every painting
+  frame, so hiding only stranded invisible typing. Pickers and prompt
+  dialogs still hide it.
+
 ## 0.1.224
 
 - fix(messaging): agent_message to a peer in ANOTHER project now lands in

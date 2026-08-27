@@ -1788,15 +1788,13 @@ final class FaTuiModel extends Model {
     // empty input zone would blink nowhere near the text it "edits". The
     // slash menu DOES edit the input line, so it keeps the cursor.
     final pickerOpen = menuOpen && menuModelMode;
-    final hideCursor = busy || pickerOpen;
-    // Cursor management: while a run streams, HIDE the physical cursor —
-    // the renderer's cell diff re-homes it only when the last frame line
-    // changes (a spinner tick), so between ticks it was left sitting inside
-    // the streamed text (the visible mid-text jump). When idle, show it and
-    // home it into the input zone. The RENDERER force-homes the cursor after
-    // any frame that painted rows, so the trailing line needs no nonce
-    // churn anymore: a quiet idle append repaints the changed history row
-    // and still ends with the explicit home sequence.
+    // The caret stays visible in the input zone while a run streams:
+    // typing mid-stream is first-class. The renderer re-homes the physical
+    // cursor after every painting frame (forceHome on any written row/cell),
+    // so the old "cursor jumps inside streamed text between spinner ticks"
+    // artifact no longer applies. Selection-only pickers still hide it —
+    // typing goes nowhere there.
+    final hideCursor = pickerOpen;
     final cursorLine = hideCursor
         ? '\x1b[?25l'
         : '\x1b[?25h\x1b[${cursorRow + 1};${cursorX + 1}H';

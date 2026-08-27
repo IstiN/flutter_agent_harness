@@ -322,10 +322,10 @@ void main() {
         );
         model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
       }
-      // The spinner animates; the trailing cursor line is the hide escape —
-      // stable across ticks (the old re-homing suffix is gone on purpose).
+      // The spinner animates; the trailing cursor line shows + homes the
+      // caret into the input zone (visible while streaming by design).
       expect(spinnerRows.length, greaterThan(1));
-      expect(model.view().content.split('\n').last, contains('\x1b[?25l'));
+      expect(model.view().content.split('\n').last, contains('\x1b[?25h'));
       // The busy row carries the elapsed seconds — a wedged endpoint is
       // visible instead of looking like a frozen UI.
       expect(
@@ -1069,25 +1069,33 @@ void main() {
       expect(model.view().content, contains('%'));
     });
 
-    test('the physical cursor hides while busy and homes when idle', () {
-      var model = filledModel();
-      final position = RegExp(r'\x1b\[\d+;\d+H$');
-      expect(
-        model.view().content,
-        contains('\x1b[?25h'),
-        reason: 'idle: cursor shown',
-      );
+    test(
+      'the physical cursor stays in the input while busy and homes idle',
+      () {
+        var model = filledModel();
+        final position = RegExp(r'\x1b\[\d+;\d+H$');
+        expect(
+          model.view().content,
+          contains('\x1b[?25h'),
+          reason: 'idle: cursor shown',
+        );
 
-      model = send(model, BusyMsg(true));
-      final busyContent = model.view().content;
-      expect(busyContent, contains('\x1b[?25l'));
-      expect(busyContent, isNot(contains('\x1b[?25h')));
+        model = send(model, BusyMsg(true));
+        final busyContent = model.view().content;
+        // Typing during a stream is first-class since the input-priority
+        // card: the caret stays visible in the input zone. The renderer
+        // re-homes it after every painting frame (forceHome on writes), so
+        // the old "cursor jumps inside streamed text" artifact is gone.
+        expect(busyContent, contains('\x1b[?25h'));
+        expect(busyContent, isNot(contains('\x1b[?25l')));
+        expect(position.hasMatch(busyContent), isTrue);
 
-      model = send(model, BusyMsg(false));
-      final idleContent = model.view().content;
-      expect(idleContent, contains('\x1b[?25h'));
-      expect(position.hasMatch(idleContent), isTrue);
-    });
+        model = send(model, BusyMsg(false));
+        final idleContent = model.view().content;
+        expect(idleContent, contains('\x1b[?25h'));
+        expect(position.hasMatch(idleContent), isTrue);
+      },
+    );
 
     test(
       'an idle output append keeps the trailing cursor line byte-stable',
