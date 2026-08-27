@@ -590,7 +590,11 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleOutputMsg(OutputMsg msg) {
-    final newLines = _appendOutput(outputLines, msg.text, msg.newline);
+    // System-notice blocks render as dim blockquotes, not raw tags.
+    final displayText = msg.text.contains('<system-notice>')
+        ? renderSystemNoticeLines(msg.text).join('\n')
+        : msg.text;
+    final newLines = _appendOutput(outputLines, displayText, msg.newline);
     final next = copyWith(outputLines: newLines);
     final nextWrapped = next._wrappedLines();
     // Auto-follow the stream while the latch holds; preserve the scroll

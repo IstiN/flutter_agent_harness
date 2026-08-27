@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.228
+
+- feat(tui): `<system-notice>` blocks (background-shell settlements,
+  inter-agent mail) render as dim blockquotes with a ⚙ marker instead of
+  raw tags — session notes look like notes. Model-visible records keep
+  the raw tags; only the TUI view restyles them.
+
 ## 0.1.227
 
 - perf(tui): width measurement fast path — printable-ASCII runs skip
