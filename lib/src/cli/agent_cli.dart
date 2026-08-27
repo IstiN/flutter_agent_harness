@@ -2300,6 +2300,7 @@ class AgentCli {
     )) {
       return;
     }
+    _tuiController?.setBusyPhase('Compacting context…');
     await _runAutoCompact('[auto-compacted]');
   }
 
@@ -2313,6 +2314,7 @@ class AgentCli {
       io.writeln('nothing to compact');
       return;
     }
+    _tuiController?.setBusyPhase('Compacting context…');
     await _runAutoCompact('[compacted]');
   }
 
@@ -2335,6 +2337,7 @@ class AgentCli {
       hooks: _AutoCompactorCliHooks(this),
       prompts: CompactionPrompts.fromOverrides(config.promptOverrides),
       memoryExtractionHook: (text) async {
+        _tuiController?.setBusyPhase('Extracting memory…');
         final hook = compactionMemoryHook(
           memory: _memory,
           stream: smol?.stream ?? _streamFunction,

@@ -335,6 +335,54 @@ void main() {
     },
   );
 
+  test(
+    'a mid-run phase relabel swaps the label over the same elapsed window',
+    () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+      final started = model.busyStartedAtMs;
+
+      model =
+          model.update(const BusyMsg(true, phase: 'Compacting context…')).$1
+              as FaTuiModel;
+      final row = model
+          .view()
+          .content
+          .split('\n')
+          .firstWhere((line) => line.contains('Compacting'));
+      expect(RegExp(r'Compacting context… \d+s').hasMatch(row), isTrue);
+      // The elapsed window belongs to the RUN: a relabel must not restart it.
+      expect(model.busyStartedAtMs, started);
+
+      // A second relabel stays timer-neutral too…
+      model =
+          model.update(const BusyMsg(true, phase: 'Extracting memory…')).$1
+              as FaTuiModel;
+      expect(model.busyStartedAtMs, started);
+      // …and the spinner keeps animating across relabels.
+      model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
+      expect(model.spinnerFrame, greaterThan(0));
+
+      // Going idle clears the phase; the next run starts generic.
+      model = model.update(BusyMsg(false)).$1 as FaTuiModel;
+      expect(model.busyPhase, isEmpty);
+      expect(model.view().content, isNot(contains('Compacting')));
+    },
+  );
+
+  test('in-busy relabels never stack extra spinner tick chains', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    final start = model.update(BusyMsg(true));
+    model = start.$1 as FaTuiModel;
+    expect(start.$2, isNotNull); // the one and only tick chain
+
+    // Every in-busy relabel schedules NO extra Cmd — phases-per-turn would
+    // otherwise multiply repaint timers.
+    final relabel = model.update(const BusyMsg(true, phase: 'phase'));
+    model = relabel.$1 as FaTuiModel;
+    expect(relabel.$2, isNull);
+  });
+
   test('escape aborts the run via onInterrupt without quitting', () {
     var interrupted = 0;
     var model = FaTuiModel(

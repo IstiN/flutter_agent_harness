@@ -130,8 +130,15 @@ final class _QuitRequestedMsg extends Msg {}
 
 /// Message toggling the busy ("thinking") indicator while a run streams.
 final class BusyMsg extends Msg {
-  BusyMsg(this.busy);
+  const BusyMsg(this.busy, {this.phase});
+
+  /// `true` starts a busy stretch, `false` ends it.
   final bool busy;
+
+  /// Silent post-answer phase label ("Compacting context…"). Non-null on an
+  /// ALREADY-busy message means relabel-only: the spinner chain and the
+  /// elapsed window stay untouched.
+  final String? phase;
 }
 
 /// Internal spinner-frame tick; re-scheduled while the model stays busy.
@@ -210,6 +217,7 @@ final class FaTuiModel extends Model {
     this.termHeight = 24,
     this.busy = false,
     this.busyStartedAtMs = -1,
+    this.busyPhase = '',
     this.mouseCapture = true,
     this.spinnerFrame = 0,
     this.stickyLines = const [],
@@ -276,6 +284,11 @@ final class FaTuiModel extends Model {
   /// busy row shows the elapsed seconds so a wedged endpoint is visible
   /// instead of looking like a frozen UI.
   final int busyStartedAtMs;
+
+  /// Post-answer phase label overriding the generic "Working…" while set
+  /// ("Compacting context…", "Extracting memory…"); cleared whenever a
+  /// busy stretch ends so the next run starts generic.
+  final String busyPhase;
 
   /// Whether the TUI captures the mouse (wheel scrolling) instead of
   /// leaving it to the terminal's native text selection. Default on: the
@@ -476,6 +489,7 @@ final class FaTuiModel extends Model {
     int? termHeight,
     bool? busy,
     int? busyStartedAtMs,
+    String? busyPhase,
     bool? mouseCapture,
     int? spinnerFrame,
     List<String>? stickyLines,
@@ -507,6 +521,7 @@ final class FaTuiModel extends Model {
       termHeight: termHeight ?? this.termHeight,
       busy: busy ?? this.busy,
       busyStartedAtMs: busyStartedAtMs ?? this.busyStartedAtMs,
+      busyPhase: busyPhase ?? this.busyPhase,
       mouseCapture: mouseCapture ?? this.mouseCapture,
       spinnerFrame: spinnerFrame ?? this.spinnerFrame,
       stickyLines: stickyLines ?? this.stickyLines,
@@ -572,13 +587,24 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleBusyMsg(BusyMsg msg) {
+    // An in-busy phase relabel (silent post-answer work like auto-compaction
+    // or durable-memory extraction): swap the label over the SAME elapsed
+    // window and never schedule another tick here — extra chains would
+    // multiply repaint timers. Guarded on [busy] so an idle-host relabel
+    // cannot strand a stale label.
+    final phase = msg.phase;
+    if (msg.busy && phase != null && busy) {
+      return (copyWith(busyPhase: phase), null);
+    }
     // Kick the spinner loop when going busy; the loop stops itself on the
     // first tick that finds the model idle again. Going idle also unpins
-    // the sticky user echo.
+    // the sticky user echo and clears any phase, so the next run starts
+    // as plain "Working…".
     return (
       copyWith(
         busy: msg.busy,
         busyStartedAtMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
+        busyPhase: '',
         spinnerFrame: 0,
         stickyLines: msg.busy ? null : const [],
         stickyIndex: msg.busy ? null : -1,
@@ -1875,9 +1901,8 @@ final class FaTuiModel extends Model {
           ? 0
           : ((DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) / 1000)
                 .floor();
-      b.writeln(
-        '${_accent2Plain(frame)} ${_dim('Working… ${elapsedSeconds}s')}',
-      );
+      final label = busyPhase.isEmpty ? 'Working…' : busyPhase;
+      b.writeln('${_accent2Plain(frame)} ${_dim('$label ${elapsedSeconds}s')}');
     }
     if (queue.isNotEmpty) {
       for (final queued in queue) {
@@ -2126,6 +2151,14 @@ final class FaTuiController {
   /// Toggles the animated thinking indicator while a run streams.
   void sendBusy(bool busy) {
     _send(BusyMsg(busy));
+  }
+
+  /// Relabels the busy row while a run streams (silent post-answer phases:
+  /// auto-compaction, durable-memory extraction) WITHOUT restarting the
+  /// spinner loop or resetting the elapsed window — the user sees WHAT is
+  /// happening instead of a growing "Working… Ns" that reads like a hang.
+  void setBusyPhase(String phase) {
+    _send(BusyMsg(true, phase: phase));
   }
 
   /// Drains the queued messages (the model echoes them into the history) —
