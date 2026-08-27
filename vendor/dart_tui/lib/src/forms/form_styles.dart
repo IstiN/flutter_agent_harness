@@ -1,0 +1,66 @@
+import '../bubbles/style.dart';
+
+/// Styling for a [Form] and its fields. Catppuccin Mocha defaults.
+final class FormStyles {
+  const FormStyles({
+    this.title = const Style(),
+    this.activeTitle = const Style(),
+    this.description = const Style(),
+    this.error = const Style(),
+    this.cursor = const Style(),
+    this.option = const Style(),
+    this.selectedOption = const Style(),
+    this.checkedBox = const Style(),
+    this.uncheckedBox = const Style(),
+    this.help = const Style(),
+    this.pageIndicator = const Style(),
+  });
+
+  factory FormStyles.forDarkBackground(bool isDark) => isDark ? dark : light;
+
+  factory FormStyles.forBackground(int rgb) =>
+      FormStyles.forDarkBackground(isDarkRgb(rgb));
+
+  final Style title; // inactive field title
+  final Style activeTitle; // focused field title
+  final Style description; // field description / note body
+  final Style error; // inline validation error
+  final Style cursor; // focus marker (›)
+  final Style option; // unselected option
+  final Style selectedOption; // highlighted / chosen option
+  final Style checkedBox; // [x]
+  final Style uncheckedBox; // [ ]
+  final Style help; // footer help line
+  final Style pageIndicator; // Group N/M
+
+  static const FormStyles dark = FormStyles(
+    title: Style(foregroundRgb: RgbColor(205, 214, 244)),
+    activeTitle: Style(foregroundRgb: RgbColor(203, 166, 247), isBold: true),
+    description: Style(foregroundRgb: RgbColor(166, 173, 200), isDim: true),
+    error: Style(foregroundRgb: RgbColor(243, 139, 168)),
+    cursor: Style(foregroundRgb: RgbColor(203, 166, 247), isBold: true),
+    option: Style(foregroundRgb: RgbColor(205, 214, 244)),
+    selectedOption: Style(foregroundRgb: RgbColor(166, 227, 161), isBold: true),
+    checkedBox: Style(foregroundRgb: RgbColor(166, 227, 161)),
+    uncheckedBox: Style(foregroundRgb: RgbColor(108, 112, 134)),
+    help: Style(foregroundRgb: RgbColor(108, 112, 134), isDim: true),
+    pageIndicator: Style(foregroundRgb: RgbColor(137, 180, 250), isBold: true),
+  );
+
+  static const FormStyles light = FormStyles(
+    title: Style(foregroundRgb: RgbColor(76, 79, 105)),
+    activeTitle: Style(foregroundRgb: RgbColor(136, 57, 239), isBold: true),
+    description: Style(foregroundRgb: RgbColor(108, 111, 133)),
+    error: Style(foregroundRgb: RgbColor(210, 15, 57)),
+    cursor: Style(foregroundRgb: RgbColor(136, 57, 239), isBold: true),
+    option: Style(foregroundRgb: RgbColor(76, 79, 105)),
+    selectedOption: Style(foregroundRgb: RgbColor(64, 160, 43), isBold: true),
+    checkedBox: Style(foregroundRgb: RgbColor(64, 160, 43)),
+    uncheckedBox: Style(foregroundRgb: RgbColor(108, 111, 133)),
+    help: Style(foregroundRgb: RgbColor(108, 111, 133)),
+    pageIndicator: Style(foregroundRgb: RgbColor(30, 102, 245), isBold: true),
+  );
+
+  /// Defaults remain optimized for dark terminal backgrounds.
+  static const FormStyles defaults = dark;
+}
