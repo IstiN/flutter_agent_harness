@@ -17,6 +17,15 @@ final class SuspendMsg extends Msg {}
 /// Program resumed from suspend.
 final class ResumeMsg extends Msg {}
 
+/// Internal: repaint request scheduled by [Program] when a frame arrived
+/// sooner than the fps budget allows. Dropping frames must never block the
+/// event loop, so instead of sleeping the loop defers ONE redraw to when
+/// the budget has elapsed and paints the LATEST view then. Never delivered
+/// to models — [Program] intercepts it before update.
+final class RenderTickMsg extends Msg {
+  const RenderTickMsg();
+}
+
 /// Tick signal for timers/animation.
 final class TickMsg extends Msg {
   TickMsg(this.when, {this.id});

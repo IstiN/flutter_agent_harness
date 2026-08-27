@@ -130,6 +130,11 @@ final class Program {
   StreamSubscription<ProcessSignal>? _sigSub;
   TeaRenderer? _renderer;
 
+  /// Frame instrumentation (dev tools/tests): frames painted and dropped by
+  /// the fps throttle.
+  var debugFramesPainted = 0;
+  var debugFramesDropped = 0;
+
   void _setRawMode(bool raw) {
     try {
       stdin.echoMode = !raw;
@@ -264,18 +269,35 @@ final class Program {
     final minFrameMicros = _fps > 0 ? (1000000 / _fps).round() : 0;
     final frameClock = Stopwatch()..start();
     var lastRenderMicros = -1;
+    var redrawArmed = false;
     View? lastRenderedView;
+    // Frame throttle WITHOUT blocking the event loop. The old inline
+    // Future.delayed stalled message pickup behind every early frame (a key
+    // press arriving mid-frame waited out the remaining budget): with the
+    // spinner ticking at 10 Hz and output flushing at 20 Hz, keystrokes
+    // routinely queued behind ~16 ms sleeps and every interaction felt
+    // rubber-banded. Instead an early frame is DROPPED and one timer defers
+    // a RenderTickMsg; the loop keeps draining messages meanwhile and paints
+    // the LATEST view when the tick lands. Renders still happen strictly in
+    // this awaited sequence, so frames can never paint out of order or race.
     Future<void> render(View v) async {
       final nowMicros = frameClock.elapsedMicroseconds;
       if (lastRenderMicros >= 0 && minFrameMicros > 0) {
         final delta = nowMicros - lastRenderMicros;
         if (delta < minFrameMicros) {
-          await Future<void>.delayed(
-            Duration(microseconds: minFrameMicros - delta),
-          );
+          debugFramesDropped++;
+          if (!redrawArmed) {
+            redrawArmed = true;
+            Timer(Duration(microseconds: minFrameMicros - delta), () {
+              redrawArmed = false;
+              if (_running) enqueue(const RenderTickMsg());
+            });
+          }
+          return;
         }
       }
       _renderer?.render(v);
+      debugFramesPainted++;
       lastRenderedView = v;
       lastRenderMicros = frameClock.elapsedMicroseconds;
     }
@@ -318,6 +340,11 @@ final class Program {
           await restoreTerminal();
           enqueue(ResumeMsg());
           return false; // ResumeMsg will trigger re-render next batch
+        case RenderTickMsg():
+          // A dropped frame's deferred repaint: paint on this pass without
+          // re-entering the model — frame drops must not be observable to
+          // application code.
+          return true;
         case RequestWindowSizeMsg():
           scheduleResizeMsg();
           return false;
