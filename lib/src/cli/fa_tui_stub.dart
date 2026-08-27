@@ -83,6 +83,13 @@ final class FaTuiController {
 
   void sendBusy(bool busy) {}
 
+  /// No-op on web: the stub controller renders nothing, so silent
+  /// post-answer phase relabels (auto-compaction, memory extraction) have
+  /// no visible row to update. Mirrors the dart_tui controller's method
+  /// so agent_cli call sites compile for BOTH targets (the web build
+  /// broke when only the real controller grew this member).
+  void setBusyPhase(String phase) {}
+
   Future<TuiPromptAnswer?> openPrompt(TuiPromptSpec spec) async => null;
 
   Future<List<String>> drainQueue() async => const [];
