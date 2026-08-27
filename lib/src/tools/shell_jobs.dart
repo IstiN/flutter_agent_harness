@@ -17,8 +17,22 @@
 library;
 
 import 'dart:async';
+import 'dart:math';
 
 import '../env/execution_env.dart';
+
+final Random _shellJobRandom = Random.secure();
+
+/// Globally-unique background job id: several fa processes share one
+/// workspace, so per-process counters alone (`sh-1`, `sh-2`) would make
+/// them append to the SAME `.fah/bash_jobs/<id>.log` and interleave each
+/// other's captured output. The microsecond stamp plus a random tail makes
+/// cross-process collisions practically impossible.
+String newShellJobId(int n) {
+  final micros = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+  final rand = _shellJobRandom.nextInt(1 << 32).toRadixString(36);
+  return 'sh-$n-$micros$rand';
+}
 
 /// One registered background shell job.
 final class ShellJobEntry {
@@ -107,7 +121,7 @@ final class ShellJobRegistry {
       );
     }
     final bg = baseEnv as BackgroundShell;
-    final id = 'sh-${_nextId++}';
+    final id = newShellJobId(_nextId++);
     final dir = '${baseEnv.cwd}/.fah/bash_jobs';
     await baseEnv.createDir(dir);
     final logPath = '$dir/$id.log';

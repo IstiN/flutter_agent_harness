@@ -323,8 +323,30 @@ void main() {
       env.jobs[0].complete(0);
       await registry.start('make test');
       final result = await tool.execute(_args('status'), null, null);
-      expect(_text(result), contains('sh-1: exited(0) — make all'));
-      expect(_text(result), contains('sh-2: running — make test'));
+      // Ids are globally unique (process-safe), so match them off the jobs.
+      expect(_text(result), contains('${env.jobs[0].id}: exited(0) — make all'));
+      expect(_text(result), contains('${env.jobs[1].id}: running — make test'));
+    });
+
+    test('job ids and log paths are unique across registries', () async {
+      // Two fa processes in one workspace share `.fah/bash_jobs/` — their
+      // per-process counters both start at 1, so ids must be disambiguated
+      // beyond the counter or one process's output lands in the other's
+      // log file.
+      final otherEnv = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final otherRegistry = ShellJobRegistry(env: otherEnv);
+      final a = await registry.start('a');
+      await registry.start('b');
+      final c = await otherRegistry.start('c');
+
+      final allJobs = [...registry.jobs, ...otherRegistry.jobs];
+      expect({for (final j in allJobs) j.id}, hasLength(3));
+      expect(a.id, isNot(c.id));
+      expect(
+        {for (final j in allJobs) j.logPath},
+        hasLength(3),
+        reason: 'shared `.fah/bash_jobs/` dir must not collide',
+      );
     });
 
     test('status without jobs says so', () async {

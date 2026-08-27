@@ -13,6 +13,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -23,6 +24,8 @@ import '../approval/approval.dart';
 import '../env/execution_env.dart';
 import '../model_roles/models_config.dart';
 import '../types.dart';
+
+final Random _mediaNameRandom = Random.secure();
 
 /// The `generate_image` tool name.
 const generateImageToolName = 'generate_image';
@@ -294,7 +297,11 @@ Future<String> _save(
   if (created.isErr) {
     throw MediaException('failed to create $dir: ${created.errorOrNull}');
   }
-  final name = '${prefix}_${DateTime.now().millisecondsSinceEpoch}.$ext';
+  // Milliseconds alone collide when two calls land in the same batch (or
+  // two fa processes generate at once) — one would overwrite the other.
+  final unique = DateTime.now().microsecondsSinceEpoch.toRadixString(36) +
+      _mediaNameRandom.nextInt(1 << 32).toRadixString(36);
+  final name = '${prefix}_${DateTime.now().millisecondsSinceEpoch}_$unique.$ext';
   final rel = '$dir/$name';
   final written = await env.writeBinaryFile(rel, bytes);
   if (written.isErr) {
