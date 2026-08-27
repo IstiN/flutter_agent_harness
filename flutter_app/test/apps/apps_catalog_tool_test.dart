@@ -33,7 +33,11 @@ http.Client server(Map<String, dynamic> catalog) => MockClient((req) async {
   final name = req.url.pathSegments.last;
   if (name == 'catalog.json') return http.Response(jsonEncode(catalog), 200);
   for (final w in catalog['widgets'] as List) {
-    if ('${w['id']}-1.0.0.zip' == name) {
+    // Match on the catalog's declared zip file, exactly like the live
+    // catalog does — a versioned name (weather-2.0.0.zip) must resolve.
+    final zip = w['zip'];
+    final file = zip is Map ? zip['file'] : null;
+    if (file is String && file == name) {
       final wid = w['id'];
       if (wid is! String) return http.Response('bad', 500);
       return http.Response.bytes(zipOf(wid), 200);

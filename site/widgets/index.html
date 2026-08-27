@@ -104,9 +104,17 @@
 </footer>
 <script>
 (function () {
-  const BASE =
+  // Release assets (github.com/.../releases/latest/download/) serve WITHOUT
+  // CORS headers, so a browser fetch() of catalog.json from this page is
+  // blocked and the gallery stayed empty. raw.githubusercontent.com DOES
+  // send access-control-allow-origin: * — the publish workflow mirrors the
+  // catalog there (catalog.json on main) — with the release URL kept as a
+  // non-browser fallback. Icon/download URLs are fine either way: <img> and
+  // link navigation are not CORS-gated.
+  const RAW = 'https://raw.githubusercontent.com/IstiN/fa_widgets/main/';
+  const RELEASE =
     'https://github.com/IstiN/fa_widgets/releases/latest/download/';
-  document.getElementById('catalog-link').href = BASE + 'catalog.json';
+  document.getElementById('catalog-link').href = RAW + 'catalog.json';
 
   const grid = document.getElementById('grid');
   const status = document.getElementById('status');
@@ -132,7 +140,7 @@
       const iconBox = el('div', 'icon');
       if (w.icon) {
         const img = document.createElement('img');
-        img.src = BASE + w.id + '-icon.svg';
+        img.src = RAW + 'widgets/' + w.id + '/' + (w.icon || 'icon.svg');
         img.alt = w.name || w.id;
         img.onerror = () => iconBox.remove();
         iconBox.appendChild(img);
@@ -164,7 +172,7 @@
       if (w.zip && w.zip.file) {
         const a = document.createElement('a');
         a.className = 'btn';
-        a.href = BASE + w.zip.file;
+        a.href = RELEASE + w.zip.file;
         a.textContent = 'Download';
         a.setAttribute(
           'onclick',
@@ -177,8 +185,11 @@
     }
   }
 
-  fetch(BASE + 'catalog.json')
-    .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+  const load = (url) =>
+    fetch(url)
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+  load(RAW + 'catalog.json')
+    .catch(() => load(RELEASE + 'catalog.json'))
     .then((cat) => {
       const widgets = (cat.widgets || []).slice()
         .sort((a, b) => String(a.id).localeCompare(String(b.id)));

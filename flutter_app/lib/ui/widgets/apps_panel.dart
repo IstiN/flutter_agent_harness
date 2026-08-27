@@ -314,7 +314,21 @@ class _AppsPanelState extends State<AppsPanel> {
         ],
         // ── Focus Timer (real interactive 25-min pomodoro) ───────
         _FocusTimerWidget(colors: colors, theme: theme, isLight: isLight),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
+        // Always-visible entry to the widgets catalog: installs sample
+        // widgets from the fa_widgets release (see WidgetsCatalogSheet).
+        // Lives OUTSIDE the demo section on purpose — an install with no
+        // demo apps (or an old one that already seeded them) must still
+        // see the gallery.
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: _openWidgetsCatalog,
+            icon: const Icon(Icons.widgets_outlined, size: 18),
+            label: const Text('Get widgets'),
+          ),
+        ),
+        const SizedBox(height: 8),
 
         // ── Custom apps section ──────────────────────────────────
         if (_customApps.isNotEmpty) ...[
@@ -329,15 +343,6 @@ class _AppsPanelState extends State<AppsPanel> {
           _SectionHeader(title: 'Demo apps', count: _demoApps.length),
           const SizedBox(height: 8),
           _AppGrid(apps: _demoApps, onTap: _openApp),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: _openWidgetsCatalog,
-              icon: const Icon(Icons.widgets_outlined, size: 18),
-              label: const Text('Get widgets'),
-            ),
-          ),
           const SizedBox(height: 8),
         ],
 

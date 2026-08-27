@@ -151,8 +151,8 @@ Future<ToolExecutionResult> _mutate(
   ExecutionEnv env,
 ) async {
   final id = (arguments['id'] ?? '').toString().trim();
+  if (id.isEmpty) return ToolExecutionResult.text('Provide a widget "id".');
   if (action == 'remove') {
-    if (id.isEmpty) return ToolExecutionResult.text('Provide a widget "id".');
     final removed = await store.removeWidget(id);
     return ToolExecutionResult.text(
       removed

@@ -160,9 +160,13 @@ void main() {
 
   group('semverNewer', () {
     test('numeric part-wise comparison', () {
-      expect(semverNewer('1.10.0', '1.9.9'), isTrue);
+      // semverNewer(installed, candidate): true when candidate is strictly
+      // newer, compared part-wise numerically (10 > 9, not string order).
+      expect(semverNewer('1.9.9', '1.10.0'), isTrue);
+      expect(semverNewer('1.10.0', '1.9.9'), isFalse);
       expect(semverNewer('1.0.0', '1.0.0'), isFalse);
-      expect(semverNewer('0.4.79', '0.4.80'), isFalse);
+      expect(semverNewer('0.4.79', '0.4.80'), isTrue);
+      expect(semverNewer('0.4.80', '0.4.79'), isFalse);
       expect(semverNewer('', '1.0.0'), isTrue, reason: 'absent = upgrade');
     });
   });

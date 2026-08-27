@@ -420,30 +420,50 @@ void main() {
                   as Map)
               .cast<String, Object?>();
 
-      final calendar = AppPermissions.fromJson(manifest('calendar'));
-      expect(calendar.calendar, isTrue);
-      expect(calendar.network, isFalse);
+      // Only bundled demos can be checked; the slim bundle leaves the
+      // rest to the fa_widgets catalog (their boot tests skip below).
+      void ifBundled(String id, void Function() check) {
+        if (Directory('assets/apps/$id').existsSync()) check();
+      }
 
-      final contacts = AppPermissions.fromJson(manifest('contacts'));
-      expect(contacts.contacts, isTrue);
-      expect(contacts.network, isFalse);
+      ifBundled('calendar', () {
+        final calendar = AppPermissions.fromJson(manifest('calendar'));
+        expect(calendar.calendar, isTrue);
+        expect(calendar.network, isFalse);
+      });
 
-      final map = AppPermissions.fromJson(manifest('map'));
-      expect(map.network, isTrue); // OSM tiles
+      ifBundled('contacts', () {
+        final contacts = AppPermissions.fromJson(manifest('contacts'));
+        expect(contacts.contacts, isTrue);
+        expect(contacts.network, isFalse);
+      });
 
-      final health = AppPermissions.fromJson(manifest('health'));
-      expect(health.health, isTrue);
+      ifBundled('map', () {
+        final map = AppPermissions.fromJson(manifest('map'));
+        expect(map.network, isTrue); // OSM tiles
+      });
 
-      final homekit = AppPermissions.fromJson(manifest('homekit'));
-      expect(homekit.homekit, isTrue);
+      ifBundled('health', () {
+        final health = AppPermissions.fromJson(manifest('health'));
+        expect(health.health, isTrue);
+      });
 
-      final voiceNotes = AppPermissions.fromJson(manifest('voice-notes'));
-      expect(voiceNotes.microphone, isTrue);
-      expect(voiceNotes.network, isFalse);
+      ifBundled('homekit', () {
+        final homekit = AppPermissions.fromJson(manifest('homekit'));
+        expect(homekit.homekit, isTrue);
+      });
 
-      final reminders = AppPermissions.fromJson(manifest('reminders'));
-      expect(reminders.notifications, isTrue);
-      expect(reminders.network, isFalse);
+      ifBundled('voice-notes', () {
+        final voiceNotes = AppPermissions.fromJson(manifest('voice-notes'));
+        expect(voiceNotes.microphone, isTrue);
+        expect(voiceNotes.network, isFalse);
+      });
+
+      ifBundled('reminders', () {
+        final reminders = AppPermissions.fromJson(manifest('reminders'));
+        expect(reminders.notifications, isTrue);
+        expect(reminders.network, isFalse);
+      });
     });
   });
 
@@ -460,258 +480,277 @@ void main() {
     JsAppInfo app(String id, Map<String, Object?> manifest) =>
         JsAppInfo.fromManifest(manifest, bundled: true, fallbackId: id);
 
-    testWidgets('calendar renders events from the fa.calendar bridge', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = await envWithApp('calendar');
-        final engine = JsAppEngine(
-          app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
-          env: env,
-          permissions: const AppPermissions(calendar: true),
-          calendar: _FakeCalendarApi(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
+    /// Whether the demo is still SHIPPED in the bundle. The slim bundle
+    /// carries a few demos; the rest are catalog-installable (fa_widgets
+    /// releases), so boot tests for absent assets skip instead of failing.
+    bool bundled(String id) => File('assets/apps/$id/widget.js').existsSync();
 
-          expect(engine.tree.value, isNotNull);
-          expect(engine.exportedState?['loading'], isFalse);
-          expect(engine.exportedState?['error'], isNull);
-          expect(engine.exportedState?['eventCount'], 2);
-          expect(
-            jsonEncode(engine.exportedState?['events']),
-            contains('Standup'),
+    testWidgets(
+      'calendar renders events from the fa.calendar bridge',
+      (tester) async {
+        await tester.runAsync(() async {
+          final env = await envWithApp('calendar');
+          final engine = JsAppEngine(
+            app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
+            env: env,
+            permissions: const AppPermissions(calendar: true),
+            calendar: _FakeCalendarApi(),
           );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
 
-          // Day navigation re-queries the bridge.
-          await engine.callEvent('next_day');
-          await Future<void>.delayed(settle);
-          expect(engine.exportedState?['loading'], isFalse);
-          expect(engine.exportedState?['eventCount'], 2);
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+            expect(engine.tree.value, isNotNull);
+            expect(engine.exportedState?['loading'], isFalse);
+            expect(engine.exportedState?['error'], isNull);
+            expect(engine.exportedState?['eventCount'], 2);
+            expect(
+              jsonEncode(engine.exportedState?['events']),
+              contains('Standup'),
+            );
 
-    testWidgets('calendar add form creates an event through the bridge', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final calendar = _FakeCalendarApi();
-        final env = await envWithApp('calendar');
-        final engine = JsAppEngine(
-          app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
-          env: env,
-          permissions: const AppPermissions(calendar: true),
-          calendar: calendar,
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
+            // Day navigation re-queries the bridge.
+            await engine.callEvent('next_day');
+            await Future<void>.delayed(settle);
+            expect(engine.exportedState?['loading'], isFalse);
+            expect(engine.exportedState?['eventCount'], 2);
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('calendar'),
+    );
 
-          // Open the add form, fill it, save.
-          await engine.callEvent('add_open');
-          await Future<void>.delayed(settle);
-          expect(engine.exportedState?['form'], 'add');
-          await engine.callEvent('form_title', {'value': 'Dentist'});
-          await engine.callEvent('form_start', {'value': '16'});
-          await engine.callEvent('form_end', {'value': '17'});
-          await engine.callEvent('form_save');
-          await Future<void>.delayed(settle);
-
-          expect(calendar.created, hasLength(1));
-          expect(calendar.created.single.title, 'Dentist');
-          expect(calendar.created.single.start.hour, 16);
-          expect(calendar.created.single.end.hour, 17);
-          // The form closed and the day reloaded.
-          expect(engine.exportedState?['form'], isNull);
-          expect(engine.exportedState?['notice'], 'Event added.');
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
-
-    testWidgets('calendar event tap opens edit, delete removes the event', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final calendar = _FakeCalendarApi();
-        final env = await envWithApp('calendar');
-        final engine = JsAppEngine(
-          app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
-          env: env,
-          permissions: const AppPermissions(calendar: true),
-          calendar: calendar,
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
-
-          // Tapping the first event row opens the edit form for it.
-          await engine.callEvent('event_0');
-          await Future<void>.delayed(settle);
-          expect(engine.exportedState?['form'], 'edit');
-          expect(jsonEncode(engine.tree.value), contains('Edit event'));
-
-          // The delete action goes through the bridge with the event id.
-          await engine.callEvent('form_delete');
-          await Future<void>.delayed(settle);
-          expect(calendar.deletedIds, ['ev-standup']);
-          expect(engine.exportedState?['form'], isNull);
-          expect(engine.exportedState?['notice'], 'Event deleted.');
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
-
-    testWidgets('calendar without the permission shows the grant card', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = await envWithApp('calendar');
-        final engine = JsAppEngine(
-          app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
-          env: env,
-          permissions: const AppPermissions(),
-          calendar: _FakeCalendarApi(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
-
-          expect(
-            engine.exportedState?['error'],
-            contains('calendar permission'),
+    testWidgets(
+      'calendar add form creates an event through the bridge',
+      (tester) async {
+        await tester.runAsync(() async {
+          final calendar = _FakeCalendarApi();
+          final env = await envWithApp('calendar');
+          final engine = JsAppEngine(
+            app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
+            env: env,
+            permissions: const AppPermissions(calendar: true),
+            calendar: calendar,
           );
-          expect(
-            jsonEncode(engine.tree.value),
-            contains('Calendar permission needed'),
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+
+            // Open the add form, fill it, save.
+            await engine.callEvent('add_open');
+            await Future<void>.delayed(settle);
+            expect(engine.exportedState?['form'], 'add');
+            await engine.callEvent('form_title', {'value': 'Dentist'});
+            await engine.callEvent('form_start', {'value': '16'});
+            await engine.callEvent('form_end', {'value': '17'});
+            await engine.callEvent('form_save');
+            await Future<void>.delayed(settle);
+
+            expect(calendar.created, hasLength(1));
+            expect(calendar.created.single.title, 'Dentist');
+            expect(calendar.created.single.start.hour, 16);
+            expect(calendar.created.single.end.hour, 17);
+            // The form closed and the day reloaded.
+            expect(engine.exportedState?['form'], isNull);
+            expect(engine.exportedState?['notice'], 'Event added.');
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('calendar'),
+    );
+
+    testWidgets(
+      'calendar event tap opens edit, delete removes the event',
+      (tester) async {
+        await tester.runAsync(() async {
+          final calendar = _FakeCalendarApi();
+          final env = await envWithApp('calendar');
+          final engine = JsAppEngine(
+            app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
+            env: env,
+            permissions: const AppPermissions(calendar: true),
+            calendar: calendar,
           );
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
 
-    testWidgets('contacts renders search results from the bridge', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = await envWithApp('contacts');
-        final engine = JsAppEngine(
-          app: app('contacts', const {'id': 'contacts', 'name': 'Contacts'}),
-          env: env,
-          permissions: const AppPermissions(contacts: true),
-          contacts: _FakeContactApi(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
+            // Tapping the first event row opens the edit form for it.
+            await engine.callEvent('event_0');
+            await Future<void>.delayed(settle);
+            expect(engine.exportedState?['form'], 'edit');
+            expect(jsonEncode(engine.tree.value), contains('Edit event'));
 
-          expect(engine.tree.value, isNotNull);
-          expect(engine.exportedState?['loading'], isFalse);
-          expect(engine.exportedState?['error'], isNull);
-          expect(engine.exportedState?['resultCount'], 2);
-          expect(
-            jsonEncode(engine.exportedState?['contacts']),
-            contains('Anna Ivanova'),
+            // The delete action goes through the bridge with the event id.
+            await engine.callEvent('form_delete');
+            await Future<void>.delayed(settle);
+            expect(calendar.deletedIds, ['ev-standup']);
+            expect(engine.exportedState?['form'], isNull);
+            expect(engine.exportedState?['notice'], 'Event deleted.');
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('calendar'),
+    );
+
+    testWidgets(
+      'calendar without the permission shows the grant card',
+      (tester) async {
+        await tester.runAsync(() async {
+          final env = await envWithApp('calendar');
+          final engine = JsAppEngine(
+            app: app('calendar', const {'id': 'calendar', 'name': 'Calendar'}),
+            env: env,
+            permissions: const AppPermissions(),
+            calendar: _FakeCalendarApi(),
           );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
 
-          // The results list is a scrollable listView.
-          expect(jsonEncode(engine.tree.value), contains('"listView"'));
+            expect(
+              engine.exportedState?['error'],
+              contains('calendar permission'),
+            );
+            expect(
+              jsonEncode(engine.tree.value),
+              contains('Calendar permission needed'),
+            );
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('calendar'),
+    );
 
-          // Tapping a result opens the detail card with call/SMS buttons.
-          await engine.callEvent('contact_0');
-          await Future<void>.delayed(settle);
-          expect(engine.exportedState?['selected'], 'Anna Ivanova');
-          final tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('Call'));
-          expect(tree, contains('SMS'));
-
-          // A name query re-searches live on change (no submit needed).
-          await engine.callEvent('back_list');
-          await engine.callEvent('search_change', {'value': 'bob'});
-          await Future<void>.delayed(settle);
-          expect(engine.exportedState?['resultCount'], 1);
-          expect(
-            jsonEncode(engine.exportedState?['contacts']),
-            contains('Bob Petrov'),
+    testWidgets(
+      'contacts renders search results from the bridge',
+      (tester) async {
+        await tester.runAsync(() async {
+          final env = await envWithApp('contacts');
+          final engine = JsAppEngine(
+            app: app('contacts', const {'id': 'contacts', 'name': 'Contacts'}),
+            env: env,
+            permissions: const AppPermissions(contacts: true),
+            contacts: _FakeContactApi(),
           );
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
 
-    testWidgets('contacts add form creates a contact through the bridge', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final contacts = _FakeContactApi();
-        final env = await envWithApp('contacts');
-        final engine = JsAppEngine(
-          app: app('contacts', const {'id': 'contacts', 'name': 'Contacts'}),
-          env: env,
-          permissions: const AppPermissions(contacts: true),
-          contacts: contacts,
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
+            expect(engine.tree.value, isNotNull);
+            expect(engine.exportedState?['loading'], isFalse);
+            expect(engine.exportedState?['error'], isNull);
+            expect(engine.exportedState?['resultCount'], 2);
+            expect(
+              jsonEncode(engine.exportedState?['contacts']),
+              contains('Anna Ivanova'),
+            );
 
-          // Open the add form, fill it, save.
-          await engine.callEvent('add_open');
-          await Future<void>.delayed(settle);
-          expect(engine.exportedState?['form'], 'add');
-          await engine.callEvent('form_name', {'value': 'Carol Sidorova'});
-          await engine.callEvent('form_phone', {'value': '+1 555 0300'});
-          await engine.callEvent('form_save');
-          await Future<void>.delayed(settle);
+            // The results list is a scrollable listView.
+            expect(jsonEncode(engine.tree.value), contains('"listView"'));
 
-          expect(contacts.created, hasLength(1));
-          expect(contacts.created.single.name, 'Carol Sidorova');
-          expect(contacts.created.single.phones, ['+1 555 0300']);
-          // The form closed and the list reloaded.
-          expect(engine.exportedState?['form'], isNull);
-          expect(engine.exportedState?['notice'], 'Contact added.');
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+            // Tapping a result opens the detail card with call/SMS buttons.
+            await engine.callEvent('contact_0');
+            await Future<void>.delayed(settle);
+            expect(engine.exportedState?['selected'], 'Anna Ivanova');
+            final tree = jsonEncode(engine.tree.value);
+            expect(tree, contains('Call'));
+            expect(tree, contains('SMS'));
 
-    testWidgets('contacts without the permission shows the grant card', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = await envWithApp('contacts');
-        final engine = JsAppEngine(
-          app: app('contacts', const {'id': 'contacts', 'name': 'Contacts'}),
-          env: env,
-          permissions: const AppPermissions(),
-          contacts: _FakeContactApi(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
+            // A name query re-searches live on change (no submit needed).
+            await engine.callEvent('back_list');
+            await engine.callEvent('search_change', {'value': 'bob'});
+            await Future<void>.delayed(settle);
+            expect(engine.exportedState?['resultCount'], 1);
+            expect(
+              jsonEncode(engine.exportedState?['contacts']),
+              contains('Bob Petrov'),
+            );
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('contacts'),
+    );
 
-          expect(
-            engine.exportedState?['error'],
-            contains('contacts permission'),
+    testWidgets(
+      'contacts add form creates a contact through the bridge',
+      (tester) async {
+        await tester.runAsync(() async {
+          final contacts = _FakeContactApi();
+          final env = await envWithApp('contacts');
+          final engine = JsAppEngine(
+            app: app('contacts', const {'id': 'contacts', 'name': 'Contacts'}),
+            env: env,
+            permissions: const AppPermissions(contacts: true),
+            contacts: contacts,
           );
-          expect(
-            jsonEncode(engine.tree.value),
-            contains('Contacts permission needed'),
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+
+            // Open the add form, fill it, save.
+            await engine.callEvent('add_open');
+            await Future<void>.delayed(settle);
+            expect(engine.exportedState?['form'], 'add');
+            await engine.callEvent('form_name', {'value': 'Carol Sidorova'});
+            await engine.callEvent('form_phone', {'value': '+1 555 0300'});
+            await engine.callEvent('form_save');
+            await Future<void>.delayed(settle);
+
+            expect(contacts.created, hasLength(1));
+            expect(contacts.created.single.name, 'Carol Sidorova');
+            expect(contacts.created.single.phones, ['+1 555 0300']);
+            // The form closed and the list reloaded.
+            expect(engine.exportedState?['form'], isNull);
+            expect(engine.exportedState?['notice'], 'Contact added.');
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('contacts'),
+    );
+
+    testWidgets(
+      'contacts without the permission shows the grant card',
+      (tester) async {
+        await tester.runAsync(() async {
+          final env = await envWithApp('contacts');
+          final engine = JsAppEngine(
+            app: app('contacts', const {'id': 'contacts', 'name': 'Contacts'}),
+            env: env,
+            permissions: const AppPermissions(),
+            contacts: _FakeContactApi(),
           );
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+
+            expect(
+              engine.exportedState?['error'],
+              contains('contacts permission'),
+            );
+            expect(
+              jsonEncode(engine.tree.value),
+              contains('Contacts permission needed'),
+            );
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('contacts'),
+    );
 
     testWidgets('map renders the map node and handles taps', (tester) async {
       await tester.runAsync(() async {
@@ -745,7 +784,7 @@ void main() {
           await engine.dispose();
         }
       });
-    });
+    }, skip: !bundled('map'));
 
     testWidgets('health shows the honest bridge stub state', (tester) async {
       await tester.runAsync(() async {
@@ -779,45 +818,47 @@ void main() {
           await engine.dispose();
         }
       });
-    });
+    }, skip: !bundled('health'));
 
-    testWidgets('health renders real data when the bridge provides it', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = await envWithApp('health');
-        final engine = JsAppEngine(
-          app: app('health', const {'id': 'health', 'name': 'Health'}),
-          env: env,
-          permissions: const AppPermissions(health: true),
-          health: _FakeHealthApi(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
-
-          expect(engine.exportedState?['loading'], isFalse);
-          expect(engine.exportedState?['bridgeAvailable'], isTrue);
-          expect(engine.exportedState?['bridgeError'], isNull);
-          expect(engine.exportedState?['demoData'], isFalse);
-          expect(
-            jsonEncode(engine.exportedState?['latest']),
-            contains('"steps":12345'),
+    testWidgets(
+      'health renders real data when the bridge provides it',
+      (tester) async {
+        await tester.runAsync(() async {
+          final env = await envWithApp('health');
+          final engine = JsAppEngine(
+            app: app('health', const {'id': 'health', 'name': 'Health'}),
+            env: env,
+            permissions: const AppPermissions(health: true),
+            health: _FakeHealthApi(),
           );
-          final tree = jsonEncode(engine.tree.value);
-          // Real dashboard — no demo banner, no sample numbers.
-          expect(tree, isNot(contains('DEMO DATA')));
-          expect(tree, isNot(contains('8,432')));
-          expect(tree, contains('LIVE'));
-          expect(tree, contains('12,345')); // real steps card
-          expect(tree, contains('7.5 h')); // real sleep card
-          expect(tree, contains('"chart"'));
-          expect(tree, contains('"data":[10234,12345]'));
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+
+            expect(engine.exportedState?['loading'], isFalse);
+            expect(engine.exportedState?['bridgeAvailable'], isTrue);
+            expect(engine.exportedState?['bridgeError'], isNull);
+            expect(engine.exportedState?['demoData'], isFalse);
+            expect(
+              jsonEncode(engine.exportedState?['latest']),
+              contains('"steps":12345'),
+            );
+            final tree = jsonEncode(engine.tree.value);
+            // Real dashboard — no demo banner, no sample numbers.
+            expect(tree, isNot(contains('DEMO DATA')));
+            expect(tree, isNot(contains('8,432')));
+            expect(tree, contains('LIVE'));
+            expect(tree, contains('12,345')); // real steps card
+            expect(tree, contains('7.5 h')); // real sleep card
+            expect(tree, contains('"chart"'));
+            expect(tree, contains('"data":[10234,12345]'));
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('health'),
+    );
 
     testWidgets('homekit demo toggles persist locally', (tester) async {
       await tester.runAsync(() async {
@@ -862,7 +903,7 @@ void main() {
           await engine.dispose();
         }
       });
-    });
+    }, skip: !bundled('homekit'));
 
     testWidgets('homekit renders real accessories and controls call the '
         'bridge', (tester) async {
@@ -935,116 +976,120 @@ void main() {
           await engine.dispose();
         }
       });
-    });
+    }, skip: !bundled('homekit'));
 
-    testWidgets('voice-notes records, transcribes, and persists the note', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final asr = _FakeAsrApi();
-        final env = await envWithApp('voice-notes');
-        // A 1-second take keeps the test fast (the app defaults to 5 s).
-        await env.writeFile(
-          'apps/voice-notes/storage.json',
-          '{"recordSeconds":1}',
-        );
-        final engine = JsAppEngine(
-          app: app('voice-notes', const {
-            'id': 'voice-notes',
-            'name': 'Voice Notes',
-          }),
-          env: env,
-          permissions: const AppPermissions(microphone: true),
-          asr: asr,
-          asrTranscriber: _FakeAsrTranscriber(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
-
-          expect(engine.tree.value, isNotNull);
-          expect(engine.exportedState?['noteCount'], 0);
-          expect(engine.exportedState?['busy'], isNull);
-
-          // Record a take: the bridge waits the wall-clock second, then
-          // the transcript is appended and persisted via jsr.storage.
-          // Poll — the bridge calls cross real platform channels.
-          await engine.callEvent('record_toggle');
-          for (
-            var i = 0;
-            i < 40 && engine.exportedState?['noteCount'] != 1;
-            i++
-          ) {
-            await Future<void>.delayed(const Duration(milliseconds: 150));
-          }
-          expect(asr.startCalls, 1);
-          expect(asr.stopCalls, 1);
-          expect(engine.exportedState?['noteCount'], 1);
-          expect(engine.exportedState?['busy'], isNull);
-          expect(
-            jsonEncode(engine.exportedState?['notes']),
-            contains('fake transcript'),
-          );
-          final tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('fake transcript'));
-          final storage = await env.readTextFile(
+    testWidgets(
+      'voice-notes records, transcribes, and persists the note',
+      (tester) async {
+        await tester.runAsync(() async {
+          final asr = _FakeAsrApi();
+          final env = await envWithApp('voice-notes');
+          // A 1-second take keeps the test fast (the app defaults to 5 s).
+          await env.writeFile(
             'apps/voice-notes/storage.json',
+            '{"recordSeconds":1}',
           );
-          expect(storage.valueOrNull, contains('fake transcript'));
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+          final engine = JsAppEngine(
+            app: app('voice-notes', const {
+              'id': 'voice-notes',
+              'name': 'Voice Notes',
+            }),
+            env: env,
+            permissions: const AppPermissions(microphone: true),
+            asr: asr,
+            asrTranscriber: _FakeAsrTranscriber(),
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
 
-    testWidgets('voice-notes without the permission shows the grant card', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final asr = _FakeAsrApi();
-        final env = await envWithApp('voice-notes');
-        await env.writeFile(
-          'apps/voice-notes/storage.json',
-          '{"recordSeconds":1}',
-        );
-        final engine = JsAppEngine(
-          app: app('voice-notes', const {
-            'id': 'voice-notes',
-            'name': 'Voice Notes',
-          }),
-          env: env,
-          permissions: const AppPermissions(),
-          asr: asr,
-          asrTranscriber: _FakeAsrTranscriber(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
+            expect(engine.tree.value, isNotNull);
+            expect(engine.exportedState?['noteCount'], 0);
+            expect(engine.exportedState?['busy'], isNull);
 
-          await engine.callEvent('record_toggle');
-          // The bridge call crosses real platform channels — poll instead
-          // of a fixed settle (races under load).
-          for (
-            var i = 0;
-            i < 40 && engine.exportedState?['error'] == null;
-            i++
-          ) {
-            await Future<void>.delayed(const Duration(milliseconds: 150));
+            // Record a take: the bridge waits the wall-clock second, then
+            // the transcript is appended and persisted via jsr.storage.
+            // Poll — the bridge calls cross real platform channels.
+            await engine.callEvent('record_toggle');
+            for (
+              var i = 0;
+              i < 40 && engine.exportedState?['noteCount'] != 1;
+              i++
+            ) {
+              await Future<void>.delayed(const Duration(milliseconds: 150));
+            }
+            expect(asr.startCalls, 1);
+            expect(asr.stopCalls, 1);
+            expect(engine.exportedState?['noteCount'], 1);
+            expect(engine.exportedState?['busy'], isNull);
+            expect(
+              jsonEncode(engine.exportedState?['notes']),
+              contains('fake transcript'),
+            );
+            final tree = jsonEncode(engine.tree.value);
+            expect(tree, contains('fake transcript'));
+            final storage = await env.readTextFile(
+              'apps/voice-notes/storage.json',
+            );
+            expect(storage.valueOrNull, contains('fake transcript'));
+          } finally {
+            await engine.dispose();
           }
-          expect(asr.startCalls, 0);
-          expect(
-            engine.exportedState?['error'],
-            contains('microphone permission'),
+        });
+      },
+      skip: !bundled('voice-notes'),
+    );
+
+    testWidgets(
+      'voice-notes without the permission shows the grant card',
+      (tester) async {
+        await tester.runAsync(() async {
+          final asr = _FakeAsrApi();
+          final env = await envWithApp('voice-notes');
+          await env.writeFile(
+            'apps/voice-notes/storage.json',
+            '{"recordSeconds":1}',
           );
-          expect(
-            jsonEncode(engine.tree.value),
-            contains('Microphone permission needed'),
+          final engine = JsAppEngine(
+            app: app('voice-notes', const {
+              'id': 'voice-notes',
+              'name': 'Voice Notes',
+            }),
+            env: env,
+            permissions: const AppPermissions(),
+            asr: asr,
+            asrTranscriber: _FakeAsrTranscriber(),
           );
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+
+            await engine.callEvent('record_toggle');
+            // The bridge call crosses real platform channels — poll instead
+            // of a fixed settle (races under load).
+            for (
+              var i = 0;
+              i < 40 && engine.exportedState?['error'] == null;
+              i++
+            ) {
+              await Future<void>.delayed(const Duration(milliseconds: 150));
+            }
+            expect(asr.startCalls, 0);
+            expect(
+              engine.exportedState?['error'],
+              contains('microphone permission'),
+            );
+            expect(
+              jsonEncode(engine.tree.value),
+              contains('Microphone permission needed'),
+            );
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('voice-notes'),
+    );
 
     testWidgets('reminders schedules and cancels through the fa.notify '
         'bridge', (tester) async {
@@ -1104,50 +1149,55 @@ void main() {
           await engine.dispose();
         }
       });
-    });
+    }, skip: !bundled('reminders'));
 
-    testWidgets('reminders without the permission shows the grant card', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final notify = _FakeNotifyApi();
-        final env = await envWithApp('reminders');
-        final engine = JsAppEngine(
-          app: app('reminders', const {'id': 'reminders', 'name': 'Reminders'}),
-          env: env,
-          permissions: const AppPermissions(),
-          notify: notify,
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
+    testWidgets(
+      'reminders without the permission shows the grant card',
+      (tester) async {
+        await tester.runAsync(() async {
+          final notify = _FakeNotifyApi();
+          final env = await envWithApp('reminders');
+          final engine = JsAppEngine(
+            app: app('reminders', const {
+              'id': 'reminders',
+              'name': 'Reminders',
+            }),
+            env: env,
+            permissions: const AppPermissions(),
+            notify: notify,
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
 
-          await engine.callEvent('remind_title', {'value': 'Stretch break'});
-          await engine.callEvent('remind_minutes', {'value': '1'});
-          await engine.callEvent('remind_add');
-          // The bridge call crosses real platform channels — poll instead
-          // of a fixed settle (races under load).
-          for (
-            var i = 0;
-            i < 40 && engine.exportedState?['error'] == null;
-            i++
-          ) {
-            await Future<void>.delayed(const Duration(milliseconds: 150));
+            await engine.callEvent('remind_title', {'value': 'Stretch break'});
+            await engine.callEvent('remind_minutes', {'value': '1'});
+            await engine.callEvent('remind_add');
+            // The bridge call crosses real platform channels — poll instead
+            // of a fixed settle (races under load).
+            for (
+              var i = 0;
+              i < 40 && engine.exportedState?['error'] == null;
+              i++
+            ) {
+              await Future<void>.delayed(const Duration(milliseconds: 150));
+            }
+            expect(notify.scheduled, isEmpty);
+            expect(
+              engine.exportedState?['error'],
+              contains('notifications permission'),
+            );
+            expect(
+              jsonEncode(engine.tree.value),
+              contains('Notifications permission needed'),
+            );
+          } finally {
+            await engine.dispose();
           }
-          expect(notify.scheduled, isEmpty);
-          expect(
-            engine.exportedState?['error'],
-            contains('notifications permission'),
-          );
-          expect(
-            jsonEncode(engine.tree.value),
-            contains('Notifications permission needed'),
-          );
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+        });
+      },
+      skip: !bundled('reminders'),
+    );
 
     testWidgets(
       'animation-showcase staggers entrances and switches list → card',
@@ -1254,6 +1304,7 @@ void main() {
           }
         });
       },
+      skip: !bundled('animation-showcase'),
     );
 
     testWidgets('fitness-trainer runs a guided workout with the 3D coach', (
@@ -1305,55 +1356,57 @@ void main() {
       });
     });
 
-    testWidgets('english-teacher runs a Duolingo-style quiz session', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = await envWithApp('english-teacher');
-        final engine = JsAppEngine(
-          app: app('english-teacher', const {
-            'id': 'english-teacher',
-            'name': 'Language Tutor',
-          }),
-          env: env,
-          permissions: const AppPermissions(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
-          // No stored settings → the language picker comes first.
-          var tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('Pick a language'));
+    testWidgets(
+      'english-teacher runs a Duolingo-style quiz session',
+      (tester) async {
+        await tester.runAsync(() async {
+          final env = await envWithApp('english-teacher');
+          final engine = JsAppEngine(
+            app: app('english-teacher', const {
+              'id': 'english-teacher',
+              'name': 'Language Tutor',
+            }),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+            // No stored settings → the language picker comes first.
+            var tree = jsonEncode(engine.tree.value);
+            expect(tree, contains('Pick a language'));
 
-          // Pick English → the home screen offers a lesson.
-          await engine.callEvent('lang:en');
-          await Future<void>.delayed(settle);
-          tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('Language Tutor'));
-          expect(tree, contains('words in the bank'));
+            // Pick English → the home screen offers a lesson.
+            await engine.callEvent('lang:en');
+            await Future<void>.delayed(settle);
+            tree = jsonEncode(engine.tree.value);
+            expect(tree, contains('Language Tutor'));
+            expect(tree, contains('words in the bank'));
 
-          // Start the lesson → question 1 of 10 with 3 hearts.
-          await engine.callEvent('start');
-          await Future<void>.delayed(settle);
-          tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('Question'));
-          expect(tree, contains('Pick the translation'));
+            // Start the lesson → question 1 of 10 with 3 hearts.
+            await engine.callEvent('start');
+            await Future<void>.delayed(settle);
+            tree = jsonEncode(engine.tree.value);
+            expect(tree, contains('Question'));
+            expect(tree, contains('Pick the translation'));
 
-          // Answer (any option) → the feedback bar offers Continue.
-          await engine.callEvent('opt:0');
-          await Future<void>.delayed(settle);
-          tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('Continue'));
+            // Answer (any option) → the feedback bar offers Continue.
+            await engine.callEvent('opt:0');
+            await Future<void>.delayed(settle);
+            tree = jsonEncode(engine.tree.value);
+            expect(tree, contains('Continue'));
 
-          // Continue → the quiz advances.
-          await engine.callEvent('next');
-          await Future<void>.delayed(settle);
-          tree = jsonEncode(engine.tree.value);
-          expect(tree, contains('Question'));
-        } finally {
-          await engine.dispose();
-        }
-      });
-    });
+            // Continue → the quiz advances.
+            await engine.callEvent('next');
+            await Future<void>.delayed(settle);
+            tree = jsonEncode(engine.tree.value);
+            expect(tree, contains('Question'));
+          } finally {
+            await engine.dispose();
+          }
+        });
+      },
+      skip: !bundled('english-teacher'),
+    );
   });
 }
