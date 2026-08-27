@@ -47,6 +47,18 @@ final class ExecutionEnvKbStorage
   FutureOr<void> deleteEntity(String type, String id) =>
       _env.remove(_path(type, id), force: true);
 
+  /// Deletes the entity with [id] across all entity types. Returns whether
+  /// a file was removed (false = unknown id in this storage).
+  Future<bool> deleteEntityById(String id) async {
+    for (final type in const ['question', 'answer', 'note']) {
+      final path = _path(type, id);
+      if ((await _env.exists(path)).valueOrNull != true) continue;
+      await _env.remove(path, force: true);
+      return true;
+    }
+    return false;
+  }
+
   @override
   FutureOr<List<String>> listEntityIds(String type) async {
     final result = await _env.listDir('$_baseDir/$type');

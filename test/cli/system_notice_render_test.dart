@@ -17,9 +17,27 @@ void main() {
       ['before', '> ⚙ mail arrived', 'after'],
     );
     // Unterminated block (one-write notices always close, but stay safe).
+    expect(renderSystemNoticeLines('<system-notice>still open'), [
+      '> ⚙ still open',
+    ]);
+  });
+
+  test('task-result blocks and service receipts get the same treatment', () {
     expect(
-      renderSystemNoticeLines('<system-notice>still open'),
-      ['> ⚙ still open'],
+      renderSystemNoticeLines(
+        '<task-result id="a">\nmemory tools wired\n</task-result>',
+      ),
+      ['> ⚙ memory tools wired'],
+    );
+    expect(
+      renderSystemNoticeLines('[auto-compacted] 210925 tokens summarized'),
+      ['> ⚙ [auto-compacted] 210925 tokens summarized'],
+    );
+    expect(
+      renderSystemNoticeLines(
+        '[context trimmed] 1000 → 200 tokens (summarizer unavailable)',
+      ),
+      ['> ⚙ [context trimmed] 1000 → 200 tokens (summarizer unavailable)'],
     );
   });
 }

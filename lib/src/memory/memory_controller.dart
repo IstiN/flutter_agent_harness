@@ -77,8 +77,8 @@ final class MemoryController {
   final String? _userRoot;
   final LlmProvider? _llmProvider;
 
-  KbStorage? _projectStorage;
-  KbStorage? _userStorage;
+  ExecutionEnvKbStorage? _projectStorage;
+  ExecutionEnvKbStorage? _userStorage;
   KBMemoryStore? _projectStore;
   KBMemoryStore? _userStore;
   KBSearchEngine? _projectSearch;
@@ -139,6 +139,31 @@ final class MemoryController {
       importance: importance,
       scope: scope,
     );
+  }
+
+  /// Deletes a memory entry by id. With no explicit [scope], scans project
+  /// then user storage. Returns the scope it was deleted from, or null when
+  /// the id exists in neither.
+  Future<String?> delete(String id, {String? scope}) async {
+    final candidateScopes = <String>[
+      if (scope != null)
+        scope
+      else ...[
+        'project',
+        if (_userRoot != null) 'user',
+      ],
+    ];
+    for (final s in candidateScopes) {
+      if (s == 'user') {
+        await userStore; // no-op when there is no user root
+        if (_userStorage == null) continue;
+        if (await _userStorage!.deleteEntityById(id)) return s;
+      } else {
+        await projectStore;
+        if (await _projectStorage!.deleteEntityById(id)) return s;
+      }
+    }
+    return null;
   }
 
   /// Searches both scopes (project first, then user).

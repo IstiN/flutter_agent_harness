@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.229
+
+- feat(memory): `memory_delete` tool — remove stale entries by id
+  (scan project then user scope, or restrict with `scope`); hosts get
+  the prompt-section refresh hook like `memory_add`.
+- feat(tui): `<task-result>` blocks and `[auto-compacted]` /
+  `[context trimmed]` / `[memory maintained]` service receipts render as
+  dim blockquotes with a ⚙ marker, same as `<system-notice>`.
+
 ## 0.1.228
 
 - feat(tui): `<system-notice>` blocks (background-shell settlements,

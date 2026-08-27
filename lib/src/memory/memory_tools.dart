@@ -20,7 +20,51 @@ List<AgentTool> memoryTools(
     _memoryAddTool(controller, onChanged),
     _memorySearchTool(controller),
     _memoryListTool(controller),
+    _memoryDeleteTool(controller, onChanged),
   ];
+}
+
+/// `memory_delete` — remove a stale or wrong entry from long-term memory.
+AgentTool _memoryDeleteTool(
+  MemoryController controller,
+  void Function()? onChanged,
+) {
+  return AgentTool(
+    name: 'memory_delete',
+    description:
+        'Delete a stale, wrong, or obsolete entry from long-term memory '
+        'by id. Prefer deleting over rewriting when the fact no longer '
+        'holds at all.',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'id': {
+          'type': 'string',
+          'description': 'The memory entry id (from memory_list/search).',
+        },
+        'scope': {
+          'type': 'string',
+          'enum': ['project', 'user'],
+          'description': 'Restrict deletion to one scope; default scans both.',
+        },
+      },
+      'required': ['id'],
+    },
+    tier: ApprovalTier.write,
+    execute: (args, cancelToken, onUpdate) async {
+      final id = args['id'] as String? ?? '';
+      if (id.trim().isEmpty) {
+        return ToolExecutionResult.text('error: id is required');
+      }
+      final scope = args['scope'] as String?;
+      final deletedScope = await controller.delete(id.trim(), scope: scope);
+      if (deletedScope == null) {
+        return ToolExecutionResult.text('error: no memory entry with id $id');
+      }
+      onChanged?.call();
+      return ToolExecutionResult.text('deleted memory ($deletedScope): $id');
+    },
+  );
 }
 
 /// `memory_add` — store a durable fact in long-term memory.
