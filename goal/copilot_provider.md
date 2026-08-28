@@ -152,13 +152,17 @@ Pure Dart (deps только `http` + `meta`, без `dart:io`/Flutter), нов�
   `fetchCopilotToken`, `CopilotToken {token, expiresAt, refreshIn}`;
 - `copilot_token_manager.dart` — кэш + проактивный refresh (за 2 мин до
   expiry, мин. интервал 30с, лок от параллельных refresh) + refresh по 401;
-  инъектные clock/httpClient;
-- `copilot_token_store.dart` — интерфейс persist'а GitHub-токена
-  (платформенные impl снаружи: IO → `SecureKeyStore`, Flutter app → его
-  secure storage; fa_llm остаётся чистым);
+  инъектные clock/httpClient; **экземпляр на каждый аккаунт** — состояние
+  (токен, таймеры refresh) разных entry не пересекается;
+- `copilot_token_store.dart` — интерфейс persist'а GitHub-токена,
+  **ключевание по имени entry**: `read(name)` / `write(name, token)` /
+  `delete(name)`; платформенные impl снаружи: IO → `SecureKeyStore`,
+  Flutter app → его secure storage; fa_llm остаётся чистым;
 - `copilot_provider.dart` — `LlmProvider` над `/chat/completions`
   (streaming SSE, стрим + complete), список моделей `listModels()`;
-- `ProviderFactory`: `providerName: 'copilot'` (+ `accountType`, `baseUrl`).
+- `ProviderFactory`: `providerName: 'copilot'` (+ `entryName`,
+  `accountType`, `baseUrl`) — `entryName` выбирает, какой из сохранённых
+  аккаунтов используется.
 
 TDD через `http.testing`-mock, реальные вызовы — только в интеграционных
 тестах с тегом `integration`.
@@ -173,9 +177,19 @@ TDD через `http.testing`-mock, реальные вызовы — тольк
   401/403 до обычного retry);
 - CLI-флоу `/provider copilot` в духе `/provider chatgpt oauth`: device-code
   (показать `verification_uri` + `user_code`, поллинг; headless-friendly —
-  callback-сервер не нужен), шаг выбора `accountType`
-  (individual/business/enterprise/custom baseUrl), сохранение GitHub-токена в
-  secure store, регистрация entry в `customProviders`/config;
+  callback-сервер не нужен), после авторизации `GET /api.github.com/user`
+  → login — дефолт имени entry (`copilot-<login>`), шаг имени entry с
+  правилами `_askConnectProviderName` (клэш с другим endpoint → повтор),
+  шаг `accountType` (individual/business/enterprise/custom baseUrl),
+  сохранение GitHub-токена под entry-скопированным ключом, регистрация
+  entry в `customProviders`/config;
+- резолвер ключа copilot-entry: secure store, затем env
+  `FA_KEY_COPILOT_<NAME>` (и `FA_KEY_COPILOT_<NAME>_2`… в духе `ApiKeyRing`
+  — env-first, работает в CI без secure store); все живые токены
+  регистрируются в `SecretRedactor`;
+- при уже подключённых copilot-entries `/provider copilot` предлагает
+  **добавить ещё аккаунт** или выбрать/настроить существующий; повторный
+  device flow для той же учётки обновляет только её токен;
 - `/models` — ветка copilot в per-dialect dispatch (`_fetchProviderModelIds`).
 
 ### 3. Flutter app (`fa_ui` / `flutter_app`)
@@ -216,15 +230,18 @@ Catalog spec, stream function, `/provider copilot` (auth + план + baseUrl),
 `--help`/docs.
 
 **Критерий:** `fa --provider copilot "..."` отвечает стримом; смена плана —
-без правки кода; 401 посреди стрима восстанавливается refresh'ем.
+без правки кода; 401 посреди стрима восстанавливается refresh'ем; два
+GitHub-аккаунта подключаются под разными именами, переключаются и работают
+изолированно (refresh/логаут одного не задевает другой).
 
 ### Phase 3 — Flutter app
 
 `fa_ui`-маппинг + настройки + secure storage; агентный режим использует того
 же провайдера.
 
-**Критерий:** в приложении можно подключить Copilot (любой план) и(chat +
-агент) работают; токен переживает рестарт.
+**Критерий:** в приложении можно подключить Copilot (любой план) и (чат +
+агент) работают; токен переживает рестарт; несколько аккаунтов добавляются
+и переключаются из настроек.
 
 ## Риски / открытые вопросы
 
@@ -243,7 +260,13 @@ Catalog spec, stream function, `/provider copilot` (auth + план + baseUrl),
    пользователя человекочитаемо (в harness уже есть похожий hint для
    usage-limit ошибок).
 5. **Короткая жизнь токена** — обязателен и проактивный refresh, и
-   refresh-on-401; параллельные refresh'и под локом.
+   refresh-on-401; параллельные refresh'и под локом (у каждого entry свой
+   лок).
+6. **Много device-flow авторизаций подряд** — GitHub может рейтлимить/
+   флажить client id при частых авторизациях разных аккаунтов с одной
+   машины; подключение аккаунта — редкая ручная операция, но ошибки
+   поллинга должны быть человекочитаемы (expired_token/access_denied
+   как в прокси).
 
 ## Открытые решения (решить на старте имплементации)
 
