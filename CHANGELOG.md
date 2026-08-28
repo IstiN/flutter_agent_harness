@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.238
+
+- fix(replay): a restored `<system-notice>` message (background-shell job
+  settle, inter-agent mail, task result) replays as ONE dim chrome line
+  instead of the raw block — the full multi-line command dump, log paths
+  and the closing tag no longer wall up the transcript after a resume.
+  Mixed content still replays verbatim.
+
 ## 0.1.237
 
 - fix(status): the provider shown next to the model is now the saved

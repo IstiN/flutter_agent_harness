@@ -22,6 +22,59 @@ void main() {
     timestamp: DateTime.utc(2026),
   );
 
+  group('system-notice replay', () {
+    const settleNotice = '<system-notice>\n'
+        'Background shell job sh-32-hlrc finished with exit code 0.\n'
+        'Command: git commit -m "fix(provider): entry-name status label\n'
+        '  plus a very long multi-line commit body full of noise"\n'
+        'Log: /tmp/x/.fah/bash_jobs/sh-32-hlrc.log\n'
+        'Check the result with bash_job (action: output) or by reading the\n'
+        'log file, and act on it when the result was awaited.\n'
+        '</system-notice>';
+
+    test('a settled background-job notice replays as ONE dim chrome line',
+        () {
+      final lines = replayLinesTui(
+        UserMessage.text(settleNotice),
+        width: 80,
+        dim: dim,
+      );
+      expect(lines, [
+        '<d>${'─' * 80}</d>',
+        '<d>⚙ Background shell job sh-32-hlrc finished with exit code 0.</d>',
+        '',
+      ]);
+    });
+
+    test('the notice never leaks the closing tag or the command dump', () {
+      final lines = replayLines(
+        UserMessage.text(settleNotice),
+        maxRows: 0,
+      );
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('⚙'));
+      expect(lines.single, isNot(contains('system-notice')));
+      expect(lines.single, isNot(contains('Command:')));
+      expect(lines.single, isNot(contains('git commit')));
+    });
+
+    test('a one-line mail notice keeps its sentence', () {
+      const mail = '<system-notice>New inter-agent mail arrived (2 message(s))'
+          ' — read it with agent_directory.</system-notice>';
+      final lines = replayLinesTui(UserMessage.text(mail), width: 80, dim: dim);
+      expect(lines[1], contains('New inter-agent mail arrived'));
+    });
+
+    test('mixed content replays verbatim (not a notice)', () {
+      final lines = replayLinesTui(
+        UserMessage.text('look: <system-notice>x</system-notice>'),
+        width: 80,
+        dim: dim,
+      );
+      expect(lines.join(), contains('look:'));
+    });
+  });
+
   group('replayLinesTui', () {
     test('a plain-text user message renders as the background echo box', () {
       final lines = replayLinesTui(
