@@ -191,53 +191,6 @@ Model _buildModel(CliArgs args) {
   );
 }
 
-/// The env names that can hold [provider]'s API key: the catalog spec's
-/// names (copilot → COPILOT_GITHUB_TOKEN, kimi → KIMI_API_KEY, …), plus
-/// the two non-catalog slots; unknown kinds keep the historical
-/// OpenRouter/OpenAI pair.
-List<String> _apiKeyEnvNames(String provider) => switch (provider) {
-  'vision' => const ['VISION_API_KEY'],
-  'transcribe' => const ['TRANSCRIBE_API_KEY'],
-  _ =>
-    providerCatalog[provider]?.apiKeyEnvNames ??
-        const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
-};
-
-/// Resolves [provider]'s API key headlessly: a genuine environment value
-/// of the catalog env names, then endpoint-scoped secure-store entries
-/// (`FA_KEY_<HOST>` — what /provider writes — plus any saved custom entry's
-/// name-scoped key for this endpoint), then legacy env-name store entries
-/// from older versions. [env] overrides Platform.environment (tests).
-String? optionalProviderApiKey(
-  String provider,
-  SecureKeyCache keys, {
-  String? baseUrl,
-  Iterable<String>? scopedKeyNames,
-  Map<String, String>? env,
-}) {
-  final environment = env ?? Platform.environment;
-  final names = _apiKeyEnvNames(provider);
-  for (final name in names) {
-    final value = environment[name];
-    if (value != null && value.isNotEmpty) return value;
-  }
-  if (baseUrl != null) {
-    final candidates = [
-      CustomProviderRegistry.keyNameFor(baseUrl),
-      ...?scopedKeyNames,
-    ];
-    for (final name in candidates) {
-      final stored = keys.read(name);
-      if (stored != null && stored.isNotEmpty) return stored;
-    }
-  }
-  for (final name in names) {
-    final stored = keys.read(name);
-    if (stored != null && stored.isNotEmpty) return stored;
-  }
-  return null;
-}
-
 /// Every catalog provider's env names (a redaction preload set: an env
 /// value of ANY supported provider key must never reach the transcript).
 List<String> _allCatalogEnvNames() => [
@@ -261,7 +214,7 @@ String _resolveApiKey(
       fallback;
   if (key == null || key.isEmpty) {
     _fail(
-      'missing API key: set ${_apiKeyEnvNames(provider).first} in the '
+      'missing API key: set ${apiKeyEnvNames(provider).first} in the '
       'environment',
     );
   }

@@ -2,12 +2,11 @@
 // name COPILOT_GITHUB_TOKEN resolves env-first, then endpoint-scoped store
 // entries (what `/provider copilot` writes), then legacy env-name slots.
 //
-// The function lives in `bin/fah.dart` (a proper library); this test pins
-// the copilot branch of the resolution order.
+// The function lives in `lib/src/cli/headless_provider_key.dart`; this
+// test pins the copilot branch of the resolution order.
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
-
-import '../../bin/fah.dart' as fah;
 import 'agent_cli_test_support.dart';
 
 void main() {
@@ -15,7 +14,7 @@ void main() {
     final store = FakeSecureKeyStore()..map['COPILOT_GITHUB_TOKEN'] = 'stored';
     final keys = SecureKeyCache(store);
 
-    final key = fah.optionalProviderApiKey(
+    final key = optionalProviderApiKey(
       'copilot',
       keys,
       env: const {'COPILOT_GITHUB_TOKEN': 'from-env'},
@@ -29,7 +28,7 @@ void main() {
     final keys = SecureKeyCache(store);
     await keys.preload(const ['COPILOT_GITHUB_TOKEN']);
 
-    final key = fah.optionalProviderApiKey('copilot', keys, env: const {});
+    final key = optionalProviderApiKey('copilot', keys, env: const {});
 
     expect(key, 'stored');
   });
@@ -40,7 +39,7 @@ void main() {
     final keys = SecureKeyCache(store);
     await keys.preload(const ['FA_KEY_COPILOT_COPILOT_X']);
 
-    final key = fah.optionalProviderApiKey(
+    final key = optionalProviderApiKey(
       'copilot',
       keys,
       baseUrl: 'https://api.business.githubcopilot.com',
@@ -55,8 +54,7 @@ void main() {
     'copilot without any key resolves null (headless then fails loudly)',
     () {
       final keys = SecureKeyCache(FakeSecureKeyStore());
-
-      final key = fah.optionalProviderApiKey('copilot', keys, env: const {});
+      final key = optionalProviderApiKey('copilot', keys, env: const {});
 
       expect(key, isNull);
     },
