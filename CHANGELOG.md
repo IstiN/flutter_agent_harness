@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- feat(chatgpt): the ChatGPT provider (Codex backend) is now visible across
+  the pickers and `/provider` — it ships with the real Codex HTTP SSE
+  transport: Codex header parity (originator, session/thread ids, account
+  id), cloudflare cookie replay, and a single challenge retry.
+- feat(chatgpt): OAuth access tokens refresh proactively (expiry is tracked
+  on the credentials blob) and the rotated blob is re-persisted.
+- feat(chatgpt): reasoning deltas surface as thinking blocks;
+  `response.incomplete` ends the stream as a terminal error event.
+- feat(chatgpt): `/models` probes the live Codex `/models` endpoint and
+  falls back to the bundled catalog on 401 / challenge / malformed bodies.
+
+
 ## 0.1.236
 
 - fix(roles): model switches on NON-catalog endpoints (CodeMie SSO, DIAL,

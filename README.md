@@ -85,6 +85,10 @@ Flags: `--model <id>`, `--provider openai-completions|anthropic|google`,
 `--base-url <url>`, `--cwd <dir>`, `--session-root <dir>`, `-p`/`--prompt
 <text>`, `--help`, `--version`.
 
+The `chatgpt` provider (Codex backend) is also available: sign in with a
+ChatGPT account via `/provider chatgpt oauth` in the REPL (OAuth-only —
+there is no headless `--provider chatgpt` flag).
+
 Slash commands inside the REPL: `/exit`, `/reset` (new session), `/compact`
 (summarize history now), `/stats` (token/cost totals), `/model <id>` (show or
 switch model), `/approval [always-ask|write|yolo]` (tool approval mode),
