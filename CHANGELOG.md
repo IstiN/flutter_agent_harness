@@ -1612,4 +1612,8 @@
 - feat(tui): truthful busy-row phase labels
 - feat(cli): pre-flight context guard — compact BEFORE an over-window request
 
+## 0.1.241
+
+- fix(compaction): 10-minute attempt budget — a hung summarizer can no longer wedge the turn (0.1.240)
+
 ## Unreleased
