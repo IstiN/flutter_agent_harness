@@ -35,6 +35,23 @@ http.Client sseClient(String body) => http_testing.MockClient.streaming(
   ),
 );
 
+/// A 200 SSE response wrapping [body].
+http.StreamedResponse sseResponse(String body) => http.StreamedResponse(
+  Stream.value(utf8.encode(body)),
+  200,
+  headers: {'content-type': 'text/event-stream'},
+);
+
+/// Mock streaming client popping one queued response per request and
+/// recording each request's headers into [sentHeaders].
+http.Client queueClient(
+  List<Map<String, String>> sentHeaders,
+  List<http.StreamedResponse> responses,
+) => http_testing.MockClient.streaming((request, requestBody) async {
+  sentHeaders.add(Map.of(request.headers));
+  return responses.removeAt(0);
+});
+
 void main() {
   group('streamChatGptCodex', () {
     test('streams text deltas, usage and a done event', () async {
@@ -113,10 +130,9 @@ void main() {
       expect(toolCall.arguments, {'cmd': 'ls'});
     });
 
-    test('sends store:false, bearer token and account id headers', () async {
+    test('sends Codex transport headers and store:false body', () async {
       Map<String, dynamic>? sentBody;
-      String? authorization;
-      String? accountId;
+      Map<String, String>? sentHeaders;
       final client = http_testing.MockClient.streaming((
         request,
         requestBody,
@@ -124,8 +140,7 @@ void main() {
         sentBody =
             jsonDecode(await requestBody.bytesToString())
                 as Map<String, dynamic>;
-        authorization = request.headers['authorization'];
-        accountId = request.headers['ChatGPT-Account-ID'];
+        sentHeaders = Map.of(request.headers);
         return http.StreamedResponse(
           Stream.value(
             utf8.encode(
@@ -150,12 +165,18 @@ void main() {
       expect(sentBody!['store'], isFalse);
       expect(sentBody!['stream'], isTrue);
       expect(sentBody!['model'], 'gpt-5-codex');
-      expect(authorization, 'Bearer at-1');
-      expect(accountId, 'acc-1');
+      expect(sentHeaders!['authorization'], 'Bearer at-1');
+      expect(sentHeaders!['ChatGPT-Account-ID'], 'acc-1');
+      expect(sentHeaders!['accept'], 'text/event-stream');
+      expect(sentHeaders!['session-id'], isNotEmpty);
+      expect(sentHeaders!['thread-id'], isNotEmpty);
+      expect(sentHeaders!['x-client-request-id'], sentHeaders!['thread-id']);
+      expect(sentHeaders!['originator'], 'codex_cli_rs');
     });
 
     test('a 401 refreshes, persists and retries with the new token', () async {
       var requests = 0;
+      final sessionIds = <String?>[];
       String? retriedAuthorization;
       final client = http_testing.MockClient.streaming((
         request,
@@ -177,6 +198,7 @@ void main() {
             200,
           );
         }
+        sessionIds.add(request.headers['session-id']);
         if (requests == 1) {
           return http.StreamedResponse(Stream.value(utf8.encode('')), 401);
         }
@@ -214,6 +236,127 @@ void main() {
       // the previous one is kept).
       expect(saved.accountId, 'acc-1');
       expect(events.whereType<TextEndEvent>().single.content, 'recovered');
+      // Session/thread ids stay stable across the retry.
+      expect(sessionIds, hasLength(2));
+      expect(sessionIds[0], isNotEmpty);
+      expect(sessionIds[1], sessionIds[0]);
+    });
+
+    test('replays learned Cloudflare cookies on a challenge retry', () async {
+      final sentHeaders = <Map<String, String>>[];
+      final client = queueClient(sentHeaders, [
+        http.StreamedResponse(
+          Stream.value(utf8.encode('<html>Just a moment...</html>')),
+          403,
+          headers: {
+            'content-type': 'text/html',
+            'cf-mitigated': 'challenge',
+            'set-cookie': '__cf_bm=x; Path=/; Secure',
+          },
+        ),
+        sseResponse(
+          sseChunk({'type': 'response.output_text.delta', 'delta': 'ok'}) +
+              sseChunk({'type': 'response.output_text.done'}),
+        ),
+      ]);
+
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList();
+
+      expect(sentHeaders, hasLength(2));
+      expect(sentHeaders[0]['cookie'], isNull);
+      expect(sentHeaders[1]['cookie'], '__cf_bm=x');
+      expect(events.whereType<TextEndEvent>().single.content, 'ok');
+      expect(events.last, isA<DoneEvent>());
+    });
+
+    test(
+      'a challenge replay cannot clear fails with Cloudflare guidance',
+      () async {
+        final sentHeaders = <Map<String, String>>[];
+        http.StreamedResponse challenge() => http.StreamedResponse(
+          Stream.value(utf8.encode('<html>Just a moment...</html>')),
+          403,
+          headers: {
+            'content-type': 'text/html',
+            'set-cookie': '__cf_bm=x; Path=/; Secure',
+          },
+        );
+        final client = queueClient(sentHeaders, [challenge(), challenge()]);
+
+        final events = await streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: credentials.encode(),
+          client: client,
+        ).toList();
+
+        // One cookie replay, then a hard failure — no third attempt.
+        expect(sentHeaders, hasLength(2));
+        final error = events.whereType<ErrorEvent>().single;
+        expect(error.error.errorMessage, contains('Cloudflare'));
+        expect(
+          error.error.errorMessage,
+          contains('fa /provider chatgpt oauth'),
+        );
+      },
+    );
+
+    test('refreshes proactively when the access token is expired', () async {
+      final urls = <Uri>[];
+      String? responsesAuthorization;
+      final client = http_testing.MockClient.streaming((
+        request,
+        requestBody,
+      ) async {
+        urls.add(request.url);
+        if (request.url.host == 'auth.openai.com') {
+          return http.StreamedResponse(
+            Stream.value(
+              utf8.encode(
+                jsonEncode({
+                  'access_token': 'at-2',
+                  'refresh_token': 'rt-2',
+                  'id_token': 'it-2',
+                }),
+              ),
+            ),
+            200,
+          );
+        }
+        responsesAuthorization = request.headers['authorization'];
+        return sseResponse(
+          sseChunk({
+            'type': 'response.completed',
+            'response': {'id': 'r', 'model': 'gpt-5-codex'},
+          }),
+        );
+      });
+
+      final expired = ChatGptOAuthCredentials(
+        accessToken: 'at-1',
+        refreshToken: 'rt-1',
+        idToken: 'it-1',
+        accountId: 'acc-1',
+        expiresAt: DateTime.now().toUtc().subtract(const Duration(hours: 1)),
+      );
+      String? persisted;
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: expired.encode(),
+        onCredentialsRefreshed: (encoded) => persisted = encoded,
+        client: client,
+      ).toList();
+
+      expect(urls.first.host, 'auth.openai.com');
+      expect(responsesAuthorization, 'Bearer at-2');
+      expect(ChatGptOAuthCredentials.decode(persisted!).accessToken, 'at-2');
+      expect(events.last, isA<DoneEvent>());
     });
   });
 
@@ -348,6 +491,107 @@ void main() {
     });
   });
 
+  group('sse event coverage', () {
+    test(
+      'response.incomplete is a terminal error carrying the reason',
+      () async {
+        final body = sseChunk({
+          'type': 'response.incomplete',
+          'response': {
+            'incomplete_details': {'reason': 'max_output_tokens'},
+          },
+        });
+        final events = await streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: credentials.encode(),
+          client: sseClient(body),
+        ).toList();
+
+        final error = events.whereType<ErrorEvent>().single;
+        expect(error.error.errorMessage, contains('max_output_tokens'));
+        expect(events.whereType<DoneEvent>(), isEmpty);
+      },
+    );
+
+    test('output_item.added pre-binds the tool call block', () async {
+      final body =
+          sseChunk({
+            'type': 'response.output_item.added',
+            'item': {
+              'type': 'function_call',
+              'call_id': 'call_9',
+              'name': 'bash',
+            },
+          }) +
+          // Argument deltas without call_id still bind to the block.
+          sseChunk({
+            'type': 'response.function_call_arguments.delta',
+            'delta': '{"cmd":"ls"}',
+          }) +
+          sseChunk({
+            'type': 'response.output_item.done',
+            'item': {'type': 'function_call'},
+          });
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: sseClient(body),
+      ).toList();
+
+      final start = events.whereType<ToolCallStartEvent>().single;
+      expect(
+        events.indexOf(start),
+        lessThan(events.indexOf(events.whereType<ToolCallDeltaEvent>().first)),
+      );
+      final end = events.whereType<ToolCallEndEvent>().single;
+      expect(end.toolCall.id, 'call_9');
+      expect(end.toolCall.name, 'bash');
+      expect(end.toolCall.arguments, {'cmd': 'ls'});
+      expect((events.last as DoneEvent).reason, StopReason.toolUse);
+    });
+
+    test('reasoning deltas stream as a thinking block', () async {
+      final body =
+          sseChunk({
+            'type': 'response.reasoning_summary_text.delta',
+            'delta': 'think',
+          }) +
+          sseChunk({'type': 'response.reasoning_text.delta', 'delta': 'ing'}) +
+          sseChunk({'type': 'response.reasoning_summary_text.done'}) +
+          sseChunk({'type': 'response.reasoning_summary_part.added'}) +
+          sseChunk({'type': 'response.output_text.delta', 'delta': 'answer'}) +
+          sseChunk({'type': 'response.output_text.done'}) +
+          sseChunk({
+            'type': 'response.completed',
+            'response': {'id': 'r', 'model': 'gpt-5-codex'},
+          });
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: sseClient(body),
+      ).toList();
+
+      expect(events.whereType<ThinkingStartEvent>(), hasLength(1));
+      expect(
+        events.whereType<ThinkingDeltaEvent>().map((e) => e.delta).join(),
+        'thinking',
+      );
+      expect(events.whereType<ThinkingEndEvent>().single.content, 'thinking');
+      final done = events.last as DoneEvent;
+      expect(
+        done.message.content.whereType<ThinkingContent>().single.thinking,
+        'thinking',
+      );
+      expect(
+        done.message.content.whereType<TextContent>().single.text,
+        'answer',
+      );
+    });
+  });
+
   group('error handling', () {
     test(
       'response.failed pushes an ErrorEvent with the error message',
@@ -381,6 +625,38 @@ void main() {
       final events = await stream.toList();
       final error = events.whereType<ErrorEvent>().single;
       expect(error.error.errorMessage, contains('ChatGPT response failed'));
+    });
+    test('a 429 error message includes the Codex reset time', () async {
+      final client = http_testing.MockClient.streaming(
+        (request, requestBody) async => http.StreamedResponse(
+          Stream.value(utf8.encode('slow down')),
+          429,
+          headers: {
+            'content-type': 'text/plain',
+            'x-codex-primary-used-percent': '100',
+            'x-codex-primary-reset-at': '2000000000',
+          },
+        ),
+      );
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList();
+
+      final message = events.whereType<ErrorEvent>().single.error.errorMessage!;
+      expect(message, contains('429'));
+      expect(message, contains('rate limited; resets at'));
+      expect(
+        message,
+        contains(
+          DateTime.fromMillisecondsSinceEpoch(
+            2000000000 * 1000,
+            isUtc: true,
+          ).toIso8601String(),
+        ),
+      );
     });
   });
 }
