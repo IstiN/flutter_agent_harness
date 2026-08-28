@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- feat(provider): GitHub Copilot as a first-class provider — catalog
+  entry plus the `/provider copilot` CLI flow (GitHub device flow with
+  user_code + verification_uri, or paste an existing PAT; works
+  headless) and the app's fa_ui Copilot connect sheet.
+- feat(fa_llm): 0.2.0 copilot protocol core — device flow, token
+  manager (single-flight, proactive refresh), copilot provider.
+- feat(keys): entry-scoped `FA_KEY_COPILOT_<NAME>` secure-store keys
+  with an env-first `_2`… ring — CI supplies keys without a store.
+- feat(models): live copilot `/models` dialect — the GitHub token is
+  exchanged for the Copilot token, capability/limit fields parsed.
+- feat(provider): multi-account isolation — each GitHub account saves
+  as its own named entry (`copilot-<login>`); re-auth updates only its
+  own entry.
+- fix(app): pre-existing flutter_app compile repairs — scheduled
+  messages field/imports, messaging exports, AutoCompactorHooks.onDelta
+  — app tests compile again.
+
 ## 0.1.238
 
 - fix(replay): a restored `<system-notice>` message (background-shell job
