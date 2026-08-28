@@ -283,6 +283,16 @@ void main() {
         find.byKey(ValueKey('sessionChatDrawerEntry:${persistedMeta.id}')),
       );
       await tester.pumpAndSettle();
+      // The lazy open completes over real async hops (clone + session
+      // load); the widget-test clock does not advance them, so drain the
+      // real queue until the manager switches (bounded — a hang must fail,
+      // not stall).
+      for (var i = 0; i < 50 && manager.activeId != persistedMeta.id; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pumpAndSettle();
+      }
 
       expect(manager.activeId, persistedMeta.id);
       expect(manager.sessions, hasLength(2));
@@ -341,6 +351,16 @@ void main() {
         find.byKey(ValueKey('sessionChatDrawerEntry:${persistedMeta.id}')),
       );
       await tester.pumpAndSettle();
+      // The lazy open completes over real async hops (clone + session
+      // load); drain the real queue until the manager switches (bounded —
+      // a hang must fail, not stall).
+      for (var i = 0; i < 50 && manager.activeId != persistedMeta.id; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pumpAndSettle();
+      }
+      expect(manager.activeId, persistedMeta.id);
 
       // Live now — the opened session must STAY in its origin folder's
       // group (alpha), not move into the current mount's (beta). The

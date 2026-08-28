@@ -362,7 +362,15 @@ void main() {
       // Deliver a message into the main agent's file inbox, exactly like
       // another Fa instance (or a child agent) would through the messaging
       // fabric: <sessions>/<cwd-slug>/messages/<sessionId>_main/inbox/.
-      final sessionsDir = Directory('${tempHome.path}/.fah/sessions');
+      // Sessions live under the platform default root (the macOS app-group
+      // container when writable, else ~/.fah/sessions).
+      final sessionsDir = [
+        Directory(
+          '${tempHome.path}/Library/Group Containers/'
+          'group.dev.fa1.shared/fa/sessions',
+        ),
+        Directory('${tempHome.path}/.fah/sessions'),
+      ].firstWhere((dir) => dir.existsSync(), orElse: () => Directory(''));
       final sessionFile = sessionsDir
           .listSync(recursive: true)
           .whereType<File>()
@@ -791,9 +799,16 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       await harness.screenshot(shotsDir, '102_tasks_shell_job');
       expect(harness.screenText, contains('sleep 300'));
 
-      await harness.runSlashCommand('/tasks cancel sh-1');
+      // Job ids carry a unique suffix (sh-1-<uniq>) — cancel the EXACT id
+      // the listing shows.
+      final shellJobId = RegExp(
+        'sh-[A-Za-z0-9-]+',
+      ).firstMatch(harness.screenText)?.group(0);
+      expect(shellJobId, isNotNull);
+
+      await harness.runSlashCommand('/tasks cancel $shellJobId');
       await harness.settle(settleMs: 500);
-      expect(harness.screenText, contains('stopped sh-1'));
+      expect(harness.screenText, contains('stopped $shellJobId'));
 
       await harness.close();
       await _stopServer(tester, server);

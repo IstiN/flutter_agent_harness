@@ -147,13 +147,19 @@ final class DuckDuckGoSearchProvider implements WebSearchProvider {
   const DuckDuckGoSearchProvider();
 
   @override
-  String get id => 'duckduckgo';
+  String get id {
+    return 'duckduckgo';
+  }
 
   @override
-  String get label => 'DuckDuckGo';
+  String get label {
+    return 'DuckDuckGo';
+  }
 
   @override
-  String? get apiKeyName => null;
+  String? get apiKeyName {
+    return null;
+  }
 
   @override
   Future<WebSearchResponse> search(WebSearchRequest request) async {
@@ -366,13 +372,19 @@ final class BraveSearchProvider implements WebSearchProvider {
   const BraveSearchProvider();
 
   @override
-  String get id => 'brave';
+  String get id {
+    return 'brave';
+  }
 
   @override
-  String get label => 'Brave';
+  String get label {
+    return 'Brave';
+  }
 
   @override
-  String? get apiKeyName => 'BRAVE_API_KEY';
+  String? get apiKeyName {
+    return 'BRAVE_API_KEY';
+  }
 
   @override
   Future<WebSearchResponse> search(WebSearchRequest request) async {
@@ -447,13 +459,19 @@ final class TavilySearchProvider implements WebSearchProvider {
   const TavilySearchProvider();
 
   @override
-  String get id => 'tavily';
+  String get id {
+    return 'tavily';
+  }
 
   @override
-  String get label => 'Tavily';
+  String get label {
+    return 'Tavily';
+  }
 
   @override
-  String? get apiKeyName => 'TAVILY_API_KEY';
+  String? get apiKeyName {
+    return 'TAVILY_API_KEY';
+  }
 
   /// Builds the Tavily request body (omp's `buildRequestBody`, reduced: no
   /// recency/topic mapping — `topic` stays at the default general scope).

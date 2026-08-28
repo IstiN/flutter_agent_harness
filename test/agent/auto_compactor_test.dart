@@ -14,6 +14,10 @@ final class _RecordingHooks implements AutoCompactorHooks {
   final passes = <AutoCompactorPass>[];
   int? donePasses;
   int doneTokens = 0;
+  final deltas = <String>[];
+
+  @override
+  void onDelta(String delta) => deltas.add(delta);
 
   @override
   void onPass(AutoCompactorPass pass) => passes.add(pass);

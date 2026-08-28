@@ -2,7 +2,7 @@ name: flutter_agent_harness
 description: >-
   Cross-platform AI agent harness for Dart and Flutter: streaming provider
   adapters, agent loop with tools, session persistence, context compaction.
-version: 0.1.238
+version: 0.1.239
 repository: https://github.com/IstiN/flutter_agent_harness
 issue_tracker: https://github.com/IstiN/flutter_agent_harness/issues
 topics:
@@ -26,6 +26,12 @@ environment:
 executables:
   fah: fah
   fa: fah
+
+# The harness vendors dart_tui via a path dependency, which pub refuses to
+# publish; local installs (install_local.sh) are the distribution channel
+# until Phase 5 swaps the vendor for a hosted dep. Publishing is blocked
+# explicitly so the failure is loud and self-explaining.
+publish_to: none
 
 dependencies:
   archive: ^4.0.9

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.239
+
+- fix(app): the macOS app builds again against the current core — the
+  harness barrel now exports `ScheduledMessageQueue` +
+  `scheduleMessageTool`, the service declares its `_scheduledMessages`
+  field and arms the queue, the fabric repo's `root:` is a plain String,
+  `_AutoCompactorFlutterHooks` implements `onDelta`, and the app's
+  flutter_agent_memory constraint moved to ^0.1.1 (the stale lock had
+  resolved harness 0.1.218).
+- refactor(cli): the perf-sprint methods fit the CRAP ratchet again —
+  pure extractions (busy-edge `sendBusy`, `_rollingTail`,
+  `_maybeSwitchToSavedEntry`, fold-XOR fence scan,
+  `_needsRewrite`/`_nextOpenTag`/`_taskOpenerEnd`, `_resumable`/
+  `_tailThrottled`, `_replayUserTui`/`_chromeMarkerLine`); no behavior
+  change. Max CRAP back to 12.00.
+- test(app): the flutter_app suite is green under the hook again — the
+  compaction-failure test matches the honest local-trim contract, the
+  drawer tests drain the real-async lazy open, the map goldens skip when
+  the demo moved to the widgets catalog, the ctrl+s visual test cancels
+  the full `sh-<n>-<uniq>` job id, the /agents visual test seeds mail
+  under the app-group sessions root, the corrupt-session test matches
+  the quarantine-on-open heal, and `WidgetsCatalogSheet` passes the
+  l10n + golden-coverage guards (new arb keys en/ru + two goldens).
+
 ## 0.1.238
 
 - fix(replay): a restored `<system-notice>` message (background-shell job

@@ -507,7 +507,9 @@ final class AssistantMessage implements Message {
   }
 
   @override
-  String get role => 'assistant';
+  String get role {
+    return 'assistant';
+  }
 
   @override
   Map<String, dynamic> toJson() => {

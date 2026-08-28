@@ -458,7 +458,7 @@ class AgentService extends ChangeNotifier
         '$sessionsRoot/${encodeSessionCwd(env.sessionCwd)}/messages';
     final fabricRepo = FileMessagingRepository(
       env: env,
-      root: () => messagesRoot,
+      root: messagesRoot,
       decodeSessionCwd: decodeSessionCwd,
       homeDir: null,
     );
@@ -467,6 +467,9 @@ class AgentService extends ChangeNotifier
       repo: () => fabricRepo,
       root: () => messagesRoot,
     );
+    // Arm the delivery timer; best-effort (an unwritable root keeps the
+    // app booting, the tools just report unavailable).
+    unawaited(_scheduledMessages.start());
     _subagentManager = SubagentManager(
       parentSessionId: '',
       messaging: fabricRepo,
@@ -998,6 +1001,11 @@ class AgentService extends ChangeNotifier
   }
 
   late final Agent _agent;
+
+  /// Persisted scheduled messages (`schedule_message` tool): delivered as
+  /// idle mail by a timer; survives restarts (JSON under the messages
+  /// root). Started best-effort after the service wires up.
+  late final ScheduledMessageQueue _scheduledMessages;
 
   /// Response deadline for one agent run; 10 minutes for the on-device
   /// providers (WebLLM's and transformers.js's first run compiles WebGPU
@@ -2635,6 +2643,9 @@ class AgentService extends ChangeNotifier
 /// surface each pass).
 class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
   const _AutoCompactorFlutterHooks();
+
+  @override
+  void onDelta(String delta) {}
 
   @override
   void onPass(AutoCompactorPass pass) {}
