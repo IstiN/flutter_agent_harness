@@ -59,6 +59,7 @@ export 'src/providers/anthropic.dart';
 export 'src/providers/chatgpt_codex.dart';
 export 'src/providers/chatgpt_codex_models.dart';
 export 'src/providers/chatgpt_oauth.dart';
+export 'src/providers/codex_transport.dart';
 export 'src/providers/codemie_sso.dart';
 export 'src/providers/dial.dart';
 export 'src/providers/google.dart';
