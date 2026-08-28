@@ -194,6 +194,14 @@ extension on AgentCli {
     if (providerName == 'dial') {
       return _fetchDialModelsAndFeatures(baseUrl, apiKey: key);
     }
+    if (providerName == 'chatgpt') {
+      final (ids, _, _) = await fetchModelsForEndpoint(
+        baseUrl,
+        apiKey: key,
+        provider: 'chatgpt',
+      );
+      return ids;
+    }
     final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
     return fetch(baseUrl, apiKey: key);
   }

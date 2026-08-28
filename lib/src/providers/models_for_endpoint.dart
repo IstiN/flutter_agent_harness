@@ -5,10 +5,15 @@
 /// [modelListDialects], never by adding a branch here.
 library;
 
+import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 
+import '../session/uuid.dart';
 import 'chatgpt_codex_models.dart';
+import 'chatgpt_oauth.dart';
 import 'codemie_sso.dart';
+import 'codex_transport.dart';
 import 'dial.dart';
 import 'models_endpoint.dart';
 
@@ -106,11 +111,16 @@ final class _DialDialect extends ModelListDialect {
   }
 }
 
-// ── ChatGPT Codex (no public /models — bundled catalog) ────────────────
+// ── ChatGPT Codex (GET /models over the ChatGPT backend) ────────────────
 
 final class _CodexDialect extends ModelListDialect {
   @override
-  bool matches(String baseUrl, String? provider) => provider == 'chatgpt-codex';
+  bool matches(String baseUrl, String? provider) {
+    if (provider == 'chatgpt' || provider == 'chatgpt-codex') return true;
+    final uri = Uri.parse(baseUrl);
+    return isAllowedChatgptHost(uri.host) &&
+        uri.path.startsWith('/backend-api/codex');
+  }
 
   @override
   Future<ModelsEndpointInfo> fetch(
@@ -118,14 +128,78 @@ final class _CodexDialect extends ModelListDialect {
     String apiKey, {
     http.Client? client,
   }) async {
-    // The bundled list is regenerated from codex-rs/models-manager/
-    // models.json via scripts/sync_codex_models.dart.
-    return (
-      chatGptCodexModels,
-      Map<String, int>.from(chatGptCodexContextWindows),
-      Map<String, int>.from(chatGptCodexMaxTokens),
-    );
+    final codexClient = client ?? http.Client();
+    final ownsClient = client == null;
+    try {
+      final uri = Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models');
+      final response = await codexClient
+          .get(uri, headers: _headers(apiKey))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return _bundled();
+      final ids = _idsFrom(response.body);
+      if (ids.isEmpty) return _bundled();
+      return (
+        ids,
+        _knownLimits(ids, chatGptCodexContextWindows),
+        _knownLimits(ids, chatGptCodexMaxTokens),
+      );
+    } on Object {
+      return _bundled();
+    } finally {
+      if (ownsClient) codexClient.close();
+    }
   }
+
+  /// The bundled catalog (regenerated from codex-rs/models-manager/
+  /// models.json via scripts/sync_codex_models.dart) — the never-empty
+  /// fallback the pickers rely on.
+  ModelsEndpointInfo _bundled() => (
+    chatGptCodexModels,
+    Map<String, int>.from(chatGptCodexContextWindows),
+    Map<String, int>.from(chatGptCodexMaxTokens),
+  );
+
+  /// Codex backend headers: [apiKey] for chatgpt accounts is the encoded
+  /// OAuth blob when it decodes, else a raw bearer token.
+  Map<String, String> _headers(String apiKey) {
+    var accessToken = apiKey;
+    String? accountId;
+    try {
+      final credentials = ChatGptOAuthCredentials.decode(apiKey);
+      accessToken = credentials.accessToken;
+      accountId = credentials.accountId;
+    } on Object {
+      // Raw bearer token — sent as-is.
+    }
+    return {
+      'accept': 'application/json',
+      ...codexRequestHeaders(
+        accessToken: accessToken,
+        accountId: accountId,
+        sessionId: uuidv7(),
+        threadId: uuidv7(),
+      ),
+    };
+  }
+
+  /// Ids from a `{"data": [{"id": ...}]}` payload, tolerating a top-level
+  /// list; non-empty string ids only, sorted.
+  List<String> _idsFrom(String body) {
+    final decoded = jsonDecode(body);
+    final entries = decoded is Map ? decoded['data'] : decoded;
+    if (entries is! List) return const [];
+    final ids = <String>[
+      for (final entry in entries)
+        if (entry case {'id': final String id} when id.isNotEmpty) id,
+    ];
+    ids.sort();
+    return ids;
+  }
+
+  /// The bundled limits for the live ids the catalog knows.
+  Map<String, int> _knownLimits(List<String> ids, Map<String, int> bundled) => {
+    for (final id in ids) id: ?bundled[id],
+  };
 }
 
 // ── Google (Gemini generateContent API) ─────────────────────────────────
