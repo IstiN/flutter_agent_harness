@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.240
+
+- fix(compaction): a summarizer endpoint that accepts the request and
+  never answers can no longer wedge the turn on the compaction spinner
+  forever — every summarization attempt now runs under a 10-minute
+  wall-clock budget (`AutoCompactor.attemptBudget`); the timeout fails
+  the attempt (not transient — no retry spin), the pass falls through to
+  the next summarizer or the honest local trim, and the turn goes on.
+- fix(compaction): the emergency local trim zeroes the kept generations'
+  usage anchors — a stale generation-time anchor kept the post-trim
+  estimate over the window and retriggered the compactor every turn.
+
 ## 0.1.239
 
 - fix(app): the macOS app builds again against the current core — the
