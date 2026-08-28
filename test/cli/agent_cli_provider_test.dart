@@ -1328,6 +1328,15 @@ void main() {
         expect(entry.keyName, 'CHATGPT_OAUTH_CREDENTIALS');
         expect(cli.agent.state.model.provider, 'chatgpt');
         expect(cli.providerKind, 'chatgpt-codex');
+        // Tokens live ONLY in the secure store: the persisted registry
+        // (config.yaml shape) and the transcript never carry them.
+        final persistedConfig = jsonEncode(
+          registry.entries.map((entry) => entry.toYaml()).toList(),
+        );
+        for (final secret in ['at-123', 'rt-123', 'it-123']) {
+          expect(persistedConfig, isNot(contains(secret)));
+          expect(output, isNot(contains(secret)));
+        }
       },
     );
 
