@@ -5,10 +5,13 @@
 /// [modelListDialects], never by adding a branch here.
 library;
 
+import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 
 import 'chatgpt_codex_models.dart';
 import 'codemie_sso.dart';
+import 'copilot_oauth.dart';
 import 'dial.dart';
 import 'models_endpoint.dart';
 
@@ -38,6 +41,7 @@ final List<ModelListDialect> modelListDialects = [
   _CodeMieDialect(),
   _DialDialect(),
   _CodexDialect(),
+  _CopilotDialect(),
   _GoogleDialect(),
   _OpenAiCompatibleDialect(), // default — must stay last
 ];
@@ -176,6 +180,75 @@ final class _GoogleDialect extends ModelListDialect {
       if (gOwnsClient) gClient.close();
     }
   }
+}
+
+// ── GitHub Copilot (token exchange + Bearer /models) ───────────────────
+
+final class _CopilotDialect extends ModelListDialect {
+  @override
+  bool matches(String baseUrl, String? provider) =>
+      provider == 'copilot' ||
+      Uri.tryParse(baseUrl)?.host.endsWith('githubcopilot.com') == true;
+
+  @override
+  Future<ModelsEndpointInfo> fetch(
+    String baseUrl,
+    String apiKey, {
+    http.Client? client,
+  }) async {
+    final gClient = client ?? http.Client();
+    final gOwnsClient = client == null;
+    try {
+      // The GitHub key is worthless to the Copilot API itself: exchange it
+      // for the short-lived Copilot token first (goal/copilot_provider.md,
+      // /models section).
+      final apiToken = await fetchCopilotApiToken(
+        githubToken: apiKey,
+        client: gClient,
+      );
+      final uri = Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models');
+      final response = await gClient
+          .get(uri, headers: copilotApiHeaders(copilotToken: apiToken.token))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) {
+        return (const <String>[], const <String, int>{}, const <String, int>{});
+      }
+      return _parseCopilotModelsResponse(response.body);
+    } on Object {
+      return (const <String>[], const <String, int>{}, const <String, int>{});
+    } finally {
+      if (gOwnsClient) gClient.close();
+    }
+  }
+}
+
+/// Maps the Copilot `{data: [{id, capabilities.limits.{max_context_window_
+/// tokens, max_output_tokens}}]}` shape into [ModelsEndpointInfo] (the
+/// limits are nested, so [parseModelsResponse] reads only the ids).
+ModelsEndpointInfo _parseCopilotModelsResponse(String body) {
+  final decoded = jsonDecode(body);
+  final data = decoded is Map<String, dynamic> ? decoded['data'] : null;
+  if (data is! List) {
+    return (const <String>[], const <String, int>{}, const <String, int>{});
+  }
+  final ids = <String>[];
+  final windows = <String, int>{};
+  final maxTokens = <String, int>{};
+  for (final entry in data) {
+    if (entry is! Map<String, dynamic>) continue;
+    final id = entry['id'];
+    if (id is! String || id.isEmpty) continue;
+    ids.add(id);
+    final limits =
+        ((entry['capabilities'] as Map<String, dynamic>?)?['limits']
+            as Map<String, dynamic>?);
+    final window = (limits?['max_context_window_tokens'] as num?)?.toInt();
+    if (window != null) windows[id] = window;
+    final cap = (limits?['max_output_tokens'] as num?)?.toInt();
+    if (cap != null) maxTokens[id] = cap;
+  }
+  ids.sort();
+  return (ids, windows, maxTokens);
 }
 
 // ── OpenAI-compatible (Bearer + /models) — the default fallback ────────

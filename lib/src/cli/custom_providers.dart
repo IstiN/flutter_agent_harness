@@ -25,6 +25,7 @@ const customProviderApiTypes = [
   'minimax',
   'kimi',
   'chatgpt',
+  'copilot',
 ];
 
 /// How a saved custom provider authenticates. Distinguishes regular API-key
