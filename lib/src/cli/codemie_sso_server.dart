@@ -87,7 +87,22 @@ Future<CodeMieSsoCredentials?> runCodeMieSsoCliFlow({
     onStatus('could not open browser automatically');
     onStatus('open this URL manually: $ssoUrl');
   }
-  final token = await server.waitForToken();
+  final token = await () async {
+    // The CodeMie page often signs in BY ITSELF (existing browser session →
+    // instant redirect) — wait patiently with a live status line, and bail
+    // only after a generous timeout instead of hanging forever.
+    onStatus('waiting for the CodeMie SSO callback (the page may sign in by '
+        'itself)…');
+    const wait = Duration(minutes: 5);
+    final statusTimer = Timer.periodic(const Duration(seconds: 15), (t) {
+      onStatus('still waiting for the SSO callback… (${t.tick * 15}s)');
+    });
+    try {
+      return await server.waitForToken().timeout(wait, onTimeout: () => null);
+    } finally {
+      statusTimer.cancel();
+    }
+  }();
   if (token == null) {
     onStatus('no SSO callback received (timeout or cancelled)');
     return null;

@@ -5,6 +5,33 @@ import 'package:test/test.dart';
 /// (`TranscriptMarkdown`, backing `_WrapCache`). Work counters — not
 /// timings — per docs/performance-cli-tui.md.
 void main() {
+  test('growing tail throttle: huge single-line stream updates ~10Hz, '
+      'final state byte-exact', () {
+    TranscriptMarkdown.resetDebugCounters();
+    final tx = TranscriptMarkdown(width: 80);
+    // A paragraph streamed WITHOUT newlines, far past the throttle floor.
+    final chunk = 'thinking words ' * 8; // ~112 chars per delta
+    final src = <String>['intro', 'x'];
+    tx.sync(src);
+    for (var i = 0; i < 400; i++) {
+      src[1] = src[1] + chunk; // grows to ~45k chars, no newline
+      tx.sync(src);
+    }
+    expect(
+      TranscriptMarkdown.debugTailThrottled,
+      greaterThan(50),
+      reason: 'throttle must engage for a huge growing line',
+    );
+    // Paragraph completes with a newline: immediate full processing.
+    src.add('end of thought');
+    final out = tx.sync(src);
+    expect(out.join('\n'), contains('end of thought'));
+    // Fresh instance, no throttle: byte-exact reference of the same text.
+    final ref = TranscriptMarkdown(width: 80);
+    final refOut = ref.sync([...src]);
+    expect(tx.sync([...src]).join('\n'), refOut.join('\n'));
+  });
+
   setUp(TranscriptMarkdown.resetDebugCounters);
 
   group('TranscriptMarkdown parity (incremental ≡ one-shot)', () {
@@ -191,14 +218,16 @@ void main() {
       expect(
         TranscriptMarkdown.debugFullRebuilds,
         rebuildsBefore,
-        reason: 'table streaming must re-walk only the table, '
+        reason:
+            'table streaming must re-walk only the table, '
             'never the whole history',
       );
       final reference = AnsiMarkdown(width: 80).formatAll(src);
       expect(session.sync(src), reference, reason: 'rows stay byte-exact');
     });
 
-    test('unclosed fence resumes correctly without rebuilding', () {      final session = TranscriptMarkdown(width: 60);
+    test('unclosed fence resumes correctly without rebuilding', () {
+      final session = TranscriptMarkdown(width: 60);
       session.sync(['```dart']);
       final rebuilds = TranscriptMarkdown.debugFullRebuilds;
 

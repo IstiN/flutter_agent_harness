@@ -1559,7 +1559,7 @@ void main() {
       contains(
         // ctx anchors at the provider-reported totalTokens of the last
         // reported turn (input+output = the next request's size).
-        '/work · ctx 0% (15/100k) · 15tok · \$0.0010 · turn 1 · test-model',
+        '/work · ctx 0% (15/100k) · 15tok · \$0.0010 · turn 1 · test-provider/test-model',
       ),
     );
   });

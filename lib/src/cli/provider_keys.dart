@@ -36,6 +36,20 @@ extension on AgentCli {
     return null;
   }
 
+  /// The host-scoped store key name for a NON-catalog-default endpoint
+  /// (CodeMie SSO, DIAL, self-hosted) — where SSO-cookie saves put their
+  /// cookie even when no registry entry recorded an explicit keyName. Null
+  /// for the catalog default endpoint (its env names keep priority) and for
+  /// unknown providers. Used ONLY by the model-switch pins: the roles
+  /// resolver must bind the endpoint's OWN key, never the catalog env name
+  /// (the "no usable chain entry: set OPENAI_API_KEY" bug).
+  String? _scopedKeyNameForNonDefault(String provider, String? baseUrl) {
+    if (baseUrl == null) return null;
+    final spec = catalogProvider(provider);
+    if (spec != null && baseUrl == spec.defaultBaseUrl) return null;
+    return CustomProviderRegistry.keyNameFor(baseUrl);
+  }
+
   /// Persists an explicit `/provider` token in the platform secure store
   /// so future starts resolve it without env vars. Returns the store label
   /// on success, null when secure storage is unavailable (the token then

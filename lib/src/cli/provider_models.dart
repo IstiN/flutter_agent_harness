@@ -659,7 +659,8 @@ extension on AgentCli {
           contextWindow: def.contextWindow,
           maxTokens: def.maxTokens,
           // Keep the endpoint's scoped key on the pin (see _switchProvider).
-          apiKeyName: _rolesKeyNameFor(spec.name, def.baseUrl),
+          apiKeyName: _rolesKeyNameFor(spec.name, def.baseUrl) ??
+              _scopedKeyNameForNonDefault(spec.name, def.baseUrl),
         ),
       ]);
       rolesResolver.applyToAgent(_agent);
@@ -734,7 +735,8 @@ extension on AgentCli {
           baseUrl: current.baseUrl,
           contextWindow: window,
           maxTokens: cap,
-          apiKeyName: _rolesKeyNameFor(current.provider, current.baseUrl),
+          apiKeyName: _rolesKeyNameFor(current.provider, current.baseUrl) ??
+              _scopedKeyNameForNonDefault(current.provider, current.baseUrl),
         ),
       ]);
       rolesResolver.applyToAgent(_agent);

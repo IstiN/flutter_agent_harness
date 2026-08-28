@@ -1,8 +1,30 @@
 # Changelog
 
-## 0.1.235
+## 0.1.236
 
-- deps: flutter_agent_memory ^0.1.1 — MemoryDeletionService and
+- fix(roles): model switches on NON-catalog endpoints (CodeMie SSO, DIAL,
+  self-hosted) resolve the endpoint-scoped store key
+  (FA_KEY_<HOST>_<NAME>) even when the registry entry has no explicit
+  keyName — SSO-cookie saves never set one, and the resolver fell back to
+  the catalog env name (OPENAI_API_KEY), rejecting the chain ("no usable
+  chain entry") and silently keeping the entry's saved model. The chosen
+  provider's own token is now the ONLY candidate; expiry still triggers
+  the silent browser re-auth. The catalog default endpoint keeps env-name
+  priority.
+- perf(tui): growing-tail throttle — a streamed paragraph whose last
+  line keeps growing (a long thinking burst with no newline) re-formats +
+  re-wraps that line on every 16ms flush, O(line length) per tick, which
+  saturated the event loop and froze the screen (neither the thinking nor
+  typed input rendered). Expensive tails (>8k chars) now re-render at
+  ~10 Hz and complete instantly on the final newline; short lines and
+  tests keep the byte-exact immediate path (debugTailThrottled counter).
+- fix(codemie): the SSO wait now shows a live "still waiting…" status and
+  bails after 5 minutes instead of hanging forever — the page usually
+  signs in by itself (existing browser session), so the callback just
+  needs patient waiting, not user action.
+- fix(status): hide the $0.0000 price when the model has no cost data,
+  humanize big token counts (12.3k / 4.6M), and show the provider name
+  with the model in the status bar.
   MemoryRevisionService (+ MemoryRevision, ConcurrentRevisionException)
   are now public exports, so pendingDeletions/markConsolidated and the
   consolidate(expectedRevisionHash:) contract are reachable directly.

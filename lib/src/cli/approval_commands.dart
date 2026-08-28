@@ -428,7 +428,10 @@ extension on AgentCli {
   String _statusLine() {
     final model = _agent.state.model;
     final total = _usage.total;
-    final cost = total.cost.total.toStringAsFixed(4);
+    // Hide the price when the model carries no cost data — a permanent
+    // "$0.0000" reads as a bug (and we genuinely don't know the price).
+    final cost = total.cost.total;
+    final costPart = cost > 0 ? ' · \$${cost.toStringAsFixed(4)}' : '';
     final cwd = _env.cwd;
     // Live context pressure: provider-reported usage up to the last reported
     // turn plus an estimate of the trailing messages (what the NEXT request
@@ -447,9 +450,9 @@ extension on AgentCli {
     final badge = _agentsBadge();
     return '$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
-        '$totalTokens'
-        'tok · \$$cost · turn ${_usage.turns}$badge · '
-        '${model.id}';
+        '${_formatTokenCount(totalTokens)}tok'
+        '$costPart · turn ${_usage.turns}$badge · '
+        '${model.provider}/${model.id}';
   }
 
   /// Live context pressure for the status line: provider-reported usage up

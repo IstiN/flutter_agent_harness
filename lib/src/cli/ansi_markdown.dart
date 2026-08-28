@@ -699,11 +699,23 @@ final class TranscriptMarkdown {
   static int debugResumedPasses = 0;
   static int debugLinesFormatted = 0;
 
+  /// Growing-tail throttle (see [sync]): skips counted here.
+  static int debugTailThrottled = 0;
+
+  /// Only lines longer than this are throttled — test streams (and real
+  /// short lines) must keep their byte-exact immediate behavior.
+  static const int _tailThrottleMinLength = 8192;
+
+  /// ~10 Hz re-render cap for an expensive still-growing tail line.
+  static const int _tailThrottleIntervalMs = 100;
+  int _lastTailProcessMs = -1000;
+
   /// Zeroes the debug counters.
   static void resetDebugCounters() {
     debugFullRebuilds = 0;
     debugResumedPasses = 0;
     debugLinesFormatted = 0;
+    debugTailThrottled = 0;
   }
 
   /// Test seam: forces the next [sync] onto the rebuild path (simulates a
@@ -740,6 +752,25 @@ final class TranscriptMarkdown {
     }
     if (src.length == _through) {
       return _viewFormatted; // nothing new: pure cache hit
+    }
+    // Growing-tail throttle: a streamed paragraph whose last line has no
+    // newline yet re-formats + re-wraps that line on EVERY flush — O(line
+    // length), so a long thinking burst (tens of KB in one line) saturated
+    // the event loop at the 16ms flush cadence: the screen froze (neither
+    // the thinking nor typed input rendered) until the chunk ended. When
+    // the ONLY pending change is such a line and it is expensive, process
+    // it at ~10 Hz instead — the paragraph accumulates, everything else
+    // (typing, other lines, the final newline) stays instant. Bytes are
+    // never dropped: the unchanged `src` is re-offered on the next flush.
+    if (src.length == _through + 1 &&
+        src.last.length > _tailThrottleMinLength &&
+        (DateTime.now().millisecondsSinceEpoch - _lastTailProcessMs) <
+            _tailThrottleIntervalMs) {
+      debugTailThrottled++;
+      return _viewFormatted;
+    }
+    if (src.length == _through + 1) {
+      _lastTailProcessMs = DateTime.now().millisecondsSinceEpoch;
     }
     debugResumedPasses++;
     debugLinesFormatted += src.length - _through;
