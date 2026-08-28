@@ -212,51 +212,113 @@ Future<String> pollCopilotDeviceGrant({
         'Copilot device-flow poll failed: $error',
       );
     }
-    if (response.statusCode == 404) {
-      throw _endpointDisabled(clientId, response.statusCode, response.body);
-    }
-    final body = _decodeJsonObject(response);
-    if (body == null) {
-      throw CopilotDeviceFlowError(
-        CopilotDeviceFlowErrorKind.transport,
-        'Copilot device-flow poll returned a non-JSON response '
-        '(HTTP ${response.statusCode}): ${response.body.trim()}',
-      );
-    }
-    final token = body['access_token'];
-    if (token is String && token.isNotEmpty) return token;
-    switch (body['error']) {
-      case 'authorization_pending':
+    switch (classifyCopilotPollResponse(response, clientId: clientId)) {
+      case CopilotPollSuccess(:final token):
+        return token;
+      case CopilotPollPending():
         onStatus?.call(
           'waiting for authorization... (${waited.inSeconds}s elapsed)',
         );
-      case 'slow_down':
-        interval += _slowDownPenalty;
-      case 'expired_token':
-        throw const CopilotDeviceFlowError(
-          CopilotDeviceFlowErrorKind.expired,
-          'the device code expired (GitHub: expired_token) — start again',
-        );
-      case 'access_denied':
-        throw const CopilotDeviceFlowError(
-          CopilotDeviceFlowErrorKind.denied,
-          'the authorization was denied (GitHub: access_denied)',
-        );
-      case final Object other:
-        throw CopilotDeviceFlowError(
-          CopilotDeviceFlowErrorKind.transport,
-          'Copilot device-flow poll failed: ${response.body.trim()} '
-          '(error: $other)',
-        );
-      default:
-        throw CopilotDeviceFlowError(
-          CopilotDeviceFlowErrorKind.transport,
-          'Copilot device-flow poll returned no token and no error: '
-          '${response.body.trim()}',
-        );
+      case CopilotPollSlowDown():
+        interval = nextCopilotPollDelay(interval, slowDown: true);
+      case CopilotPollFailure(:final error):
+        throw error;
     }
   }
 }
+
+/// One classified device-flow poll response — the poll state machine's
+/// states. [classifyCopilotPollResponse] maps a raw response onto one of
+/// these; the poll loop just switches over them.
+sealed class CopilotPollOutcome {
+  const CopilotPollOutcome();
+}
+
+/// The user approved: [token] is the GitHub token.
+final class CopilotPollSuccess extends CopilotPollOutcome {
+  const CopilotPollSuccess(this.token);
+
+  final String token;
+}
+
+/// Still waiting for the user (`authorization_pending`).
+final class CopilotPollPending extends CopilotPollOutcome {
+  const CopilotPollPending();
+}
+
+/// The server asked to slow down (`slow_down`) — the wait grows.
+final class CopilotPollSlowDown extends CopilotPollOutcome {
+  const CopilotPollSlowDown();
+}
+
+/// A terminal failure; [error] carries the typed kind and message.
+final class CopilotPollFailure extends CopilotPollOutcome {
+  const CopilotPollFailure(this.error);
+
+  final CopilotDeviceFlowError error;
+}
+
+/// Classifies one device-flow poll response. Pure: 404 →
+/// endpointDisabled, a non-JSON body → transport, an `access_token` →
+/// success, otherwise the OAuth `error` field decides.
+CopilotPollOutcome classifyCopilotPollResponse(
+  http.Response response, {
+  required String clientId,
+}) {
+  if (response.statusCode == 404) {
+    return CopilotPollFailure(
+      _endpointDisabled(clientId, response.statusCode, response.body),
+    );
+  }
+  final body = _decodeJsonObject(response);
+  if (body == null) {
+    return CopilotPollFailure(
+      CopilotDeviceFlowError(
+        CopilotDeviceFlowErrorKind.transport,
+        'Copilot device-flow poll returned a non-JSON response '
+        '(HTTP ${response.statusCode}): ${response.body.trim()}',
+      ),
+    );
+  }
+  final token = body['access_token'];
+  if (token is String && token.isNotEmpty) return CopilotPollSuccess(token);
+  return switch (body['error']) {
+    'authorization_pending' => const CopilotPollPending(),
+    'slow_down' => const CopilotPollSlowDown(),
+    'expired_token' => const CopilotPollFailure(
+      CopilotDeviceFlowError(
+        CopilotDeviceFlowErrorKind.expired,
+        'the device code expired (GitHub: expired_token) — start again',
+      ),
+    ),
+    'access_denied' => const CopilotPollFailure(
+      CopilotDeviceFlowError(
+        CopilotDeviceFlowErrorKind.denied,
+        'the authorization was denied (GitHub: access_denied)',
+      ),
+    ),
+    final Object other => CopilotPollFailure(
+      CopilotDeviceFlowError(
+        CopilotDeviceFlowErrorKind.transport,
+        'Copilot device-flow poll failed: ${response.body.trim()} '
+        '(error: $other)',
+      ),
+    ),
+    _ => CopilotPollFailure(
+      CopilotDeviceFlowError(
+        CopilotDeviceFlowErrorKind.transport,
+        'Copilot device-flow poll returned no token and no error: '
+        '${response.body.trim()}',
+      ),
+    ),
+  };
+}
+
+/// The next poll wait: [current], plus the 5s `slow_down` penalty when the
+/// server said `slow_down` (the penalty is cumulative — every `slow_down`
+/// grows the wait by another 5s).
+Duration nextCopilotPollDelay(Duration current, {required bool slowDown}) =>
+    slowDown ? current + _slowDownPenalty : current;
 
 /// The endpoint-rejection carrier (the Phase-0 live finding: GitHub routes
 /// the device endpoints but the app's flow is disabled or its id changed —

@@ -1772,13 +1772,11 @@ extension on AgentCli {
             keyName: pinnedKeyName,
           );
           rolesResolver.addSecret(pinnedKeyName!, token);
-        } else if (pinnedKeyName != null) {
-          // No fresh token: seed the resolver with the entry key name's env
-          // ring (FA_KEY_COPILOT_<NAME> + _2, …) so the pinned chain
+        } else {
+          // No fresh token: seed the resolver with the entry key name's
+          // env ring (FA_KEY_COPILOT_<NAME> + _2, …) so the pinned chain
           // resolves (and rotates) without a secure store.
-          for (final credential in _envKeyStackFor(pinnedKeyName)) {
-            rolesResolver.addSecret(credential.name, credential.value);
-          }
+          _seedEnvKeyStack(rolesResolver, pinnedKeyName);
         }
         try {
           rolesResolver.setDefaultChain([

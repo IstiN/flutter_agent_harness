@@ -55,6 +55,17 @@ extension on AgentCli {
     return collectKeyStack(secrets, keyName);
   }
 
+  /// Seeds [resolver] with the env ring of a pinned chain entry's
+  /// [keyName] — `FA_KEY_COPILOT_<NAME>` + `_2`, … (see
+  /// [_envKeyStackFor]) — so the chain resolves (and rotates) without a
+  /// secure store. No-op when [keyName] is null.
+  void _seedEnvKeyStack(ModelRolesResolver resolver, String? keyName) {
+    if (keyName == null) return;
+    for (final credential in _envKeyStackFor(keyName)) {
+      resolver.addSecret(credential.name, credential.value);
+    }
+  }
+
   /// The host-scoped store key name for a NON-catalog-default endpoint
   /// (CodeMie SSO, DIAL, self-hosted) — where SSO-cookie saves put their
   /// cookie even when no registry entry recorded an explicit keyName. Null
