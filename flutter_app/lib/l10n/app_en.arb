@@ -38,6 +38,20 @@
   "appsFollowUpHint": "Follow up…",
   "appsGridTitle": "Apps",
   "appsLoadError": "Failed to load apps: {error}",
+  "widgetsCatalogInstallFailed": "Install failed: {error}",
+  "widgetsCatalogOffline": "Offline — showing the last known catalog.",
+  "widgetsCatalogLoadFailed": "Could not load the widgets catalog.\n{error}",
+  "@widgetsCatalogLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "@widgetsCatalogInstallFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "widgetsCatalogRetry": "Retry",
   "appsOpenChatTooltip": "Open chat",
   "appsOpenFullChatTooltip": "Open full chat",
   "appsPermissionCalendar": "Calendar",

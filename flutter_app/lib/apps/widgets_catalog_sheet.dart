@@ -4,6 +4,7 @@
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
+import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:flutter/material.dart';
@@ -141,9 +142,11 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
       );
       if (mounted) {
         setState(() => _installing.remove(entry.id));
-        ScaffoldMessenger.maybeOf(
-          context,
-        )?.showSnackBar(SnackBar(content: Text('Install failed: $error')));
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.widgetsCatalogInstallFailed('$error')),
+          ),
+        );
       }
     }
   }
@@ -209,13 +212,13 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
             child: ListTile(
               dense: true,
               leading: const Icon(Icons.cloud_off, size: 20),
-              title: const Text(
-                'Offline — showing the last known catalog.',
-                style: TextStyle(fontSize: 13),
+              title: Text(
+                context.l10n.widgetsCatalogOffline,
+                style: const TextStyle(fontSize: 13),
               ),
               trailing: TextButton(
                 onPressed: _reload,
-                child: const Text('Retry'),
+                child: Text(context.l10n.widgetsCatalogRetry),
               ),
             ),
           ),
@@ -348,12 +351,15 @@ class _ErrorView extends StatelessWidget {
             const Icon(Icons.cloud_off),
             const SizedBox(height: 8),
             Text(
-              'Could not load the widgets catalog.\n$error',
+              context.l10n.widgetsCatalogLoadFailed(error.toString()),
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
-            OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+            OutlinedButton(
+              onPressed: onRetry,
+              child: Text(context.l10n.widgetsCatalogRetry),
+            ),
           ],
         ),
       ),

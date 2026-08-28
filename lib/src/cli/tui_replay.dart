@@ -12,10 +12,10 @@ final _fenceLineRe = RegExp(r'^\s*```');
 /// Appends a synthetic closing fence when [rows] (a truncated assistant
 /// message) ends inside a fenced code block.
 void _closeDanglingFence(List<String> rows) {
-  var open = false;
-  for (final row in rows) {
-    if (_fenceLineRe.hasMatch(row)) open = !open;
-  }
+  final open = rows.fold<bool>(
+    false,
+    (open, row) => open != _fenceLineRe.hasMatch(row),
+  );
   if (open) rows.add('```');
 }
 
@@ -25,6 +25,51 @@ void _closeDanglingFence(List<String> rows) {
 /// the history. The replay instead shows one compact marker row with the
 /// summary's first line as a hint. Returns null for non-summary messages;
 /// a summary without a plain-text line yields an empty hint.
+/// The TUI-mode projection of a restored user message: the same background
+/// echo box the live submit draws; compaction/branch summaries and
+/// system-notice rows render as one compact dim chrome line instead.
+List<String> _replayUserTui(
+  Object content,
+  int width,
+  String Function(String) dim,
+) {
+  final text = content is String
+      ? content
+      : (content as List<ContentBlock>)
+            .whereType<TextContent>()
+            .map((b) => b.text)
+            .join('\n');
+  if (text.trim().isEmpty) return const [];
+  final markerLine = _chromeMarkerLine(text);
+  if (markerLine != null) {
+    // The marker fits the terminal width — a wrapped chrome row desyncs
+    // the renderer.
+    final line = markerLine.length > width
+        ? '${markerLine.substring(0, width - 1)}…'
+        : markerLine;
+    return [dim('─' * width), dim(line), ''];
+  }
+  const bg = '\x1b[48;2;30;34;42m';
+  const reset = '\x1b[0m';
+  return [
+    dim('─' * width),
+    for (final line in text.split('\n')) '$bg$line$reset',
+    '',
+  ];
+}
+
+/// The one-line chrome marker for a compactible user message (system
+/// notice / compaction summary), or null for verbatim replay.
+String? _chromeMarkerLine(String text) {
+  final notice = _systemNoticeMarker(text);
+  if (notice != null) return notice.$1;
+  final summary = _summaryMarker(text);
+  if (summary == null) return null;
+  final (label, firstLine) = summary;
+  final hint = firstLine.isEmpty ? '' : ' — $firstLine';
+  return '$label$hint';
+}
+
 (String label, String firstLine)? _summaryMarker(String text) {
   final isCompaction = text.startsWith(compactionSummaryPrefix);
   if (!isCompaction && !text.startsWith(branchSummaryPrefix)) return null;
@@ -47,6 +92,32 @@ void _closeDanglingFence(List<String> rows) {
   );
 }
 
+/// A user message that is PURELY a `<system-notice>` (background-shell job
+/// settles, inter-agent mail, task results): steering context for the
+/// model, not reading material — replaying it verbatim dumps the full
+/// command text, log paths and the closing tag into the restored
+/// transcript. The replay instead shows one compact row with the notice's
+/// first informative line (Command:/Log:/meta lines dropped). Returns null
+/// for anything else — mixed content replays verbatim.
+(String label, String firstLine)? _systemNoticeMarker(String text) {
+  final match = RegExp(
+    r'^\s*<system-notice>\n?([\s\S]*?)\n?</system-notice>\s*$',
+  ).firstMatch(text);
+  if (match == null) return null;
+  for (final line in (match.group(1) ?? '').split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    if (trimmed.startsWith('<') ||
+        trimmed.startsWith('Command:') ||
+        trimmed.startsWith('Log:') ||
+        trimmed.startsWith('Check the result')) {
+      continue;
+    }
+    return ('⚙ $trimmed', '');
+  }
+  return ('⚙ system notice', '');
+}
+
 /// TUI-mode replay entry in the ACTIVE session's format: the user message
 /// as the same background echo box the TUI draws at submit time, the
 /// assistant text as raw markdown ([AnsiMarkdown] styles it at render
@@ -60,33 +131,7 @@ List<String> replayLinesTui(
 }) {
   switch (message) {
     case UserMessage(:final content):
-      final text = content is String
-          ? content
-          : (content as List<ContentBlock>)
-                .whereType<TextContent>()
-                .map((b) => b.text)
-                .join('\n');
-      if (text.trim().isEmpty) return const [];
-      final summary = _summaryMarker(text);
-      if (summary != null) {
-        // A projected compaction/branch summary renders compact: the raw
-        // block is model context, not reading material. The marker fits the
-        // terminal width — a wrapped chrome row desyncs the renderer.
-        final (label, firstLine) = summary;
-        final hint = firstLine.isEmpty ? '' : ' — $firstLine';
-        final marker = '$label$hint';
-        final line = marker.length > width
-            ? '${marker.substring(0, width - 1)}…'
-            : marker;
-        return [dim('─' * width), dim(line), ''];
-      }
-      const bg = '\x1b[48;2;30;34;42m';
-      const reset = '\x1b[0m';
-      return [
-        dim('─' * width),
-        for (final line in text.split('\n')) '$bg$line$reset',
-        '',
-      ];
+      return _replayUserTui(content, width, dim);
     case AssistantMessage(:final content):
       final texts = content
           .whereType<TextContent>()
@@ -119,12 +164,8 @@ List<String> replayLinesTui(
 List<String> replayLines(Message message, {required int maxRows}) {
   if (message case UserMessage(:final content)) {
     final text = _userReplayText(content);
-    final summary = _summaryMarker(text);
-    if (summary != null) {
-      final (label, firstLine) = summary;
-      final hint = firstLine.isEmpty ? '' : ' — $firstLine';
-      return ['$label$hint'];
-    }
+    final markerLine = _chromeMarkerLine(text);
+    if (markerLine != null) return [markerLine];
   }
   final (prefix, text) = switch (message) {
     UserMessage(:final content) => ('you: ', _userReplayText(content)),

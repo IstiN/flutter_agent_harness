@@ -4,8 +4,6 @@ library;
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/messaging/schedule_message_tool.dart';
-import 'package:flutter_agent_harness/src/messaging/scheduled_messages.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -62,14 +60,22 @@ void main() {
         homeDir: '/home/user',
         decodeSessionCwd: decodeSessionCwd,
       );
-      final first = ScheduledMessageQueue(env: env, repo: () => repo, root: () => root);
+      final first = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+      );
       await first.schedule(
         text: 'ping later',
         delay: const Duration(milliseconds: 20),
         to: 'main',
       );
       // A fresh queue (host restart) re-arms and delivers overdue records.
-      final second = ScheduledMessageQueue(env: env, repo: () => repo, root: () => root);
+      final second = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+      );
       await Future<void>.delayed(const Duration(milliseconds: 40));
       await second.start();
       expect((await repo.peek('main')).single.text, contains('ping later'));

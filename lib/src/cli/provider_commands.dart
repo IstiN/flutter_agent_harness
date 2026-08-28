@@ -410,8 +410,14 @@ extension on AgentCli {
   /// it with the usual config save).
   void _recordCustomModel(String modelId) {
     final active = _activeCustomName;
-    if (active == null) return;
-    config.customProviders?.updateModel(active, modelId);
+    if (active != null) {
+      config.customProviders?.updateModel(active, modelId);
+    }
+    // ALWAYS notify the host, not just with an active custom entry: the
+    // host persists the live model id + baseUrl, and without this a
+    // catalog-provider `/model` switch (active == null) would save nothing
+    // — the next start restored the last provider switch's model instead
+    // of the one the user picked.
     config.onModelChanged?.call(_agent.state.model);
   }
 

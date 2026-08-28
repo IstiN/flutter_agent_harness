@@ -21,7 +21,9 @@ final class PubDevHandler implements WebSiteHandler {
   const PubDevHandler();
 
   @override
-  String get id => 'pub.dev';
+  String get id {
+    return 'pub.dev';
+  }
 
   static final _packagePathPattern = RegExp(r'^/packages/([^/]+)');
 

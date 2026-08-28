@@ -302,6 +302,30 @@ abstract class AppLocalizations {
   /// **'Failed to load apps: {error}'**
   String appsLoadError(Object error);
 
+  /// No description provided for @widgetsCatalogInstallFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Install failed: {error}'**
+  String widgetsCatalogInstallFailed(Object error);
+
+  /// No description provided for @widgetsCatalogOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline — showing the last known catalog.'**
+  String get widgetsCatalogOffline;
+
+  /// No description provided for @widgetsCatalogLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load the widgets catalog.\n{error}'**
+  String widgetsCatalogLoadFailed(Object error);
+
+  /// No description provided for @widgetsCatalogRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get widgetsCatalogRetry;
+
   /// No description provided for @appsOpenChatTooltip.
   ///
   /// In en, this message translates to:

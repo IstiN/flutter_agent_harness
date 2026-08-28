@@ -13,6 +13,63 @@
 - feat(chatgpt): `/models` probes the live Codex `/models` endpoint and
   falls back to the bundled catalog on 401 / challenge / malformed bodies.
 
+## 0.1.240
+
+- fix(compaction): a summarizer endpoint that accepts the request and
+  never answers can no longer wedge the turn on the compaction spinner
+  forever — every summarization attempt now runs under a 10-minute
+  wall-clock budget (`AutoCompactor.attemptBudget`); the timeout fails
+  the attempt (not transient — no retry spin), the pass falls through to
+  the next summarizer or the honest local trim, and the turn goes on.
+- fix(compaction): the emergency local trim zeroes the kept generations'
+  usage anchors — a stale generation-time anchor kept the post-trim
+  estimate over the window and retriggered the compactor every turn.
+
+## 0.1.239
+
+- fix(app): the macOS app builds again against the current core — the
+  harness barrel now exports `ScheduledMessageQueue` +
+  `scheduleMessageTool`, the service declares its `_scheduledMessages`
+  field and arms the queue, the fabric repo's `root:` is a plain String,
+  `_AutoCompactorFlutterHooks` implements `onDelta`, and the app's
+  flutter_agent_memory constraint moved to ^0.1.1 (the stale lock had
+  resolved harness 0.1.218).
+- refactor(cli): the perf-sprint methods fit the CRAP ratchet again —
+  pure extractions (busy-edge `sendBusy`, `_rollingTail`,
+  `_maybeSwitchToSavedEntry`, fold-XOR fence scan,
+  `_needsRewrite`/`_nextOpenTag`/`_taskOpenerEnd`, `_resumable`/
+  `_tailThrottled`, `_replayUserTui`/`_chromeMarkerLine`); no behavior
+  change. Max CRAP back to 12.00.
+- test(app): the flutter_app suite is green under the hook again — the
+  compaction-failure test matches the honest local-trim contract, the
+  drawer tests drain the real-async lazy open, the map goldens skip when
+  the demo moved to the widgets catalog, the ctrl+s visual test cancels
+  the full `sh-<n>-<uniq>` job id, the /agents visual test seeds mail
+  under the app-group sessions root, the corrupt-session test matches
+  the quarantine-on-open heal, and `WidgetsCatalogSheet` passes the
+  l10n + golden-coverage guards (new arb keys en/ru + two goldens).
+
+## 0.1.238
+
+- fix(replay): a restored `<system-notice>` message (background-shell job
+  settle, inter-agent mail, task result) replays as ONE dim chrome line
+  instead of the raw block — the full multi-line command dump, log paths
+  and the closing tag no longer wall up the transcript after a resume.
+  Mixed content still replays verbatim.
+
+## 0.1.237
+
+- fix(status): the provider shown next to the model is now the saved
+  provider ENTRY name (z.ai, codemie-personal, …) matched by endpoint —
+  the model's `provider` field carries the catalog protocol kind
+  ("openai"), which read as "it switched to OpenAI" although the pick
+  was z.ai.
+- fix(provider): `/model` switches on catalog providers (no active
+  custom entry) now persist the picked model — the host's onModelChanged
+  fired only for saved-entry switches, so a restart restored the last
+  provider switch's model (gemini from a codemie test) instead of the
+  one the user chose.
+>>>>>>> origin/main
 
 ## 0.1.236
 
@@ -1513,5 +1570,60 @@
 ## 0.1.213
 
 - style(env): brace single-statement if in CwdOverrideEnv.backgroundJobsSupported
+
+## 0.1.240
+
+- fix(app,test): the whole quality gate goes green — CRAP ratchet, app suite, l10n and goldens (0.1.239)
+- fix(replay): compact system-notice rows in restored transcripts (0.1.238)
+- fix(provider): entry-name status label + persist catalog model picks (0.1.237)
+- docs(goal): codex gpt auth — cross-platform notes (Rust portability does not transfer)
+- docs(goal): codex gpt auth — point the reference at the open-source GitHub repo
+- docs(goal): codex gpt auth — ship the ChatGPT/Codex-backend provider
+- perf+fix: growing-tail throttle, codemie scoped key, status bar (0.1.236)
+- docs(goal): copilot — translate to English, add tickable implementation checklist
+- docs(goal): copilot — multi-account contract, mandatory TDD plan, Keychain-only tokens
+- docs(goal): copilot provider — multi-account support as first-class scope
+- docs(goal): add copilot provider goal — migrate copilot-proxy-go protocol into fa_llm
+- deps: flutter_agent_memory ^0.1.1 (0.1.235)
+- fix(memory): tombstoned delete via KBMemoryStore; hosted dep (0.1.234)
+- feat: schedule_message + bash stdin param; crash hardening (0.1.233)
+- perf(tui): O(1) in-place rollback of grown-tail arrays (0.1.232)
+- perf(tui): flush streamed output every 16ms (0.1.231)
+- perf(tui): cache formatted sticky echo rows (0.1.230)
+- feat(memory): memory_delete tool; quote-style service blocks (0.1.229)
+- fix(tui): add the missing system_notice_render import in fa_tui (0.1.228 fixup)
+- feat(tui): render system notices as dim blockquotes with a gear marker (0.1.228)
+- perf(tui): ASCII fast path + bounded line-width memo in tuiTextWidth (0.1.227)
+- fix(tui): hoist terminal reset before SIGINT use; wire compaction delta tail (0.1.226 follow-up)
+- fix(tui): restore terminal modes on Ctrl+C exit (0.1.226)
+- fix(tui): keep the input caret visible while a run streams (0.1.225)
+- fix(messaging): cross-project agent_message delivers to the recipient root (0.1.224)
+- feat: instant key echo + Ctrl+C exits like /exit (0.1.223)
+- fix(cli): visible hint after mid-run Ctrl+C abort (0.1.222)
+- chore(tool): land the frame-build bisect probe (gitignored path)
+- fix(tui): no-newline stream deltas stay incremental — typing lag gone (0.1.221)
+- chore(tool): land the key-latency probe (path is gitignored)
+- feat(tools): warn when a stale fa build writes old-format job logs here (0.1.220)
+- fix(cli,compaction): paste-a-path sends, honest compact status, bounded extraction, per-delta ctx memo (0.1.219)
+- fix(cli): FaTuiController stub carries setBusyPhase — web build compiles again
+- fix(app,site): widgets entry points visible and verifiable
+- docs(widgets): mark C2/M1 app-catalog milestone shipped with live checks
+- feat(app): widgets catalog — install from fa_widgets releases, slim the bundle
+- test(tools): assert shell job ids by shape after unique-id change
+- chore(messaging): skip messages-registry write when unchanged
+- fix(tools): collision-proof background job ids and image filenames
+- fix(session): serialize JSONL writers per file and quarantine torn lines on open
+- chore(local): rebuild fa-local bundle binary at 0.1.218
+- fix(tui,fork): serialize tracer writes through a flush queue
+- fix(tui,fork): FA_TUI_TRACE file sink flushes per event (crash-safe)
+- perf(tui,fork): render-aware cursor dedupe — zero-byte idle frames
+- perf(tui,fork): lazy frames, output dedupe, keypress-paint tracer
+- fix(tui): replay restored messages in full — no per-message head caps
+- fix(tui): wrap overflowing table cells — keep the box grid readable
+- perf(tui,fork): drop-frame fps throttle — stop sleeping the event loop
+- chore(vendor): inline dart_tui 2.0.0 under vendor/ for perf work
+- perf(tui): amortized history-cap trim — no full re-parse per streaming flush
+- feat(tui): truthful busy-row phase labels
+- feat(cli): pre-flight context guard — compact BEFORE an over-window request
 
 ## Unreleased

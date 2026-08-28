@@ -1700,11 +1700,11 @@ void main() {
     );
 
     test(
-      'a failing summary call leaves the transcript untouched and silent',
+      'a failing summary call stays silent and never fakes a summary',
       () async {
         // Chat answers normally; the compaction summary call (recognizable by
-        // its fixed system prompt) fails — best effort must not surface or
-        // corrupt history.
+        // its fixed system prompt) fails — best effort must not surface the
+        // error or corrupt history with an invented summary.
         flakySummarizer(
           Model model,
           Context context, {
@@ -1733,12 +1733,26 @@ void main() {
           await service.waitForIdle();
         }
 
-        expect(service.messages, hasLength(6));
+        expect(service.error, isNull);
+        final rendered = service.messages.map((m) => m.content).join('\n');
         expect(
-          service.messages.first.content,
+          rendered,
           isNot(contains('compacted into the following summary')),
         );
-        expect(service.error, isNull);
+        // The emergency local trim (it fires for this over-window
+        // transcript) is honest and in-memory only: the marker names the
+        // outage, and the session file keeps every record — the next
+        // replay restores the full history.
+        if (service.messages.any(
+          (m) => m.content.startsWith('[context trimmed'),
+        )) {
+          final transcript = await _readAllFiles(env, '/sessions');
+          for (final filler in ['x' * 600, 'y' * 600, 'z' * 600]) {
+            expect(transcript, contains(filler));
+          }
+        } else {
+          expect(service.messages, hasLength(6));
+        }
       },
     );
   });

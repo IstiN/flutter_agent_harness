@@ -20,6 +20,8 @@
 /// is no implicit coupling to `AgentCli` or `AgentService`.
 library;
 
+import 'dart:async';
+
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
@@ -104,6 +106,7 @@ final class AutoCompactor {
     this.maxAttempts = 3,
     this.baseBackoff = const Duration(seconds: 1),
     this.force = false,
+    this.attemptBudget = const Duration(minutes: 10),
   });
 
   /// The session to compact and to read the projected transcript from.
@@ -155,6 +158,17 @@ final class AutoCompactor {
   /// First backoff sleep between same-pass attempts (multiplied by
   /// attempt number): 1s, 2s.
   final Duration baseBackoff;
+
+  /// Wall-clock budget for ONE summarization attempt. A provider endpoint
+  /// that accepts the request and never answers (no bytes, no error, no
+  /// done) would otherwise pend `stream.result` forever and wedge the
+  /// turn on the compaction spinner for as long as the user is willing to
+  /// watch it — the provider-level connect/idle watchdogs cover clean
+  /// hangs, but not dribbling keep-alives or a lost completion. When the
+  /// budget fires the attempt fails with a [TimeoutException] (not
+  /// transient — no retry spin), the pass falls to the next summarizer /
+  /// the local trim, and the turn goes on.
+  final Duration attemptBudget;
 
   /// When `true`, skip the [shouldCompact] gate and run the compactor
   /// unconditionally. Set by manual `/compact` (the user asked, so we
@@ -334,7 +348,14 @@ final class AutoCompactor {
         '${DateTime.now().toUtc().toIso8601String()} — the full history '
         'stays in the session file]',
       ),
-      ...kept,
+      // Zero the kept generations' usage anchors — a stale generation-time
+      // anchor would keep the estimate over the window and retrigger the
+      // compactor on the next turn (same rule as the success pass).
+      for (final message in kept)
+        if (message is AssistantMessage)
+          message.copyWith(usage: Usage.zero)
+        else
+          message,
     ];
   }
 
@@ -421,7 +442,16 @@ final class AutoCompactor {
           prompts: prompts,
           memoryExtractionHook: memoryExtractionHook,
         );
-        final record = await manager.compactSession(session);
+        final record = await manager
+            .compactSession(session)
+            .timeout(
+              attemptBudget,
+              onTimeout: () => throw TimeoutException(
+                'compaction attempt exceeded the '
+                '${attemptBudget.inMinutes}-minute budget',
+                attemptBudget,
+              ),
+            );
         return (ok: true, error: null, noWork: record == null);
       } catch (error) {
         final isTransient = _transient.hasMatch(error.toString());

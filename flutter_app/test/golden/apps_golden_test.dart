@@ -1205,11 +1205,23 @@ void main() {
   /// [golden]. [chromeOverride] pins the display chrome: the bundled
   /// manifest declares `chrome: 'full'`, so the header-mode snapshot forces
   /// `'header'` back on.
+  ///
+  /// The map demo no longer ships in the repo bundle — since the widgets
+  /// catalog it installs from fa_widgets releases. Skip the golden when the
+  /// bundle is absent locally (a developer with the widget installed can
+  /// restore the folder to regenerate these).
   Future<void> mapGolden(
     WidgetTester tester, {
     required String golden,
     String? chromeOverride,
   }) async {
+    if (!File('assets/apps/map/manifest.json').existsSync()) {
+      markTestSkipped(
+        'map demo moved to the fa_widgets catalog — bundle not present '
+        'locally',
+      );
+      return;
+    }
     await tester.runAsync(() async {
       final manifest =
           (jsonDecode(
@@ -1300,6 +1312,13 @@ void main() {
   ) async {
     // The manifest's own `chrome: 'full'`: no AppBar, a semi-transparent
     // menu button floats top-right over the map canvas.
+    if (!File('assets/apps/map/manifest.json').existsSync()) {
+      markTestSkipped(
+        'map demo moved to the fa_widgets catalog — bundle not present '
+        'locally',
+      );
+      return;
+    }
     await mapGolden(tester, golden: 'apps_map_full');
     expect(find.byType(AppBar), findsNothing);
     expect(find.byIcon(Icons.more_vert), findsOneWidget);

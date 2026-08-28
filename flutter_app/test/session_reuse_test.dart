@@ -196,14 +196,16 @@ void main() {
     });
 
     test(
-      'a session file that fails to load falls back to a new session',
+      'a session file with corrupt lines loads with the junk quarantined',
       () async {
         final existing = await _persistSession(repo, userText: 'earlier chat');
         // Corrupt the file: the header stays readable (so the session is
-        // listed and picked for resume) but an entry line is no longer valid
-        // JSON. The bad line must sit MID-file (junk after it): a torn LAST
-        // line is treated as a crash-torn append and healed, while mid-file
-        // corruption stays fatal and forces the fallback.
+        // listed and picked for resume) but entry lines are no longer valid
+        // JSON. Since the quarantine-on-open heal (serialized writers +
+        // torn-line sidecar) a malformed line at ANY position is dropped
+        // into the .corrupt sidecar — the session still loads, and the
+        // fallback-to-new-session path is reserved for unreadable files
+        // (covered by the storage quarantine tests).
         (await env.appendFile(
           existing.path,
           'this is not json\n',
@@ -215,10 +217,13 @@ void main() {
 
         final result = await boot();
 
-        expect(result.id, isNot(existing.id));
-        expect(manager.activeId, result.id);
-        // Only the corrupt file is on disk — the fallback session has not
-        // persisted anything yet.
+        // The corrupt file still resumes — its readable records survive.
+        expect(result.id, existing.id);
+        expect(manager.activeId, existing.id);
+        expect(
+          result.service.messages.map((m) => m.content),
+          contains('earlier chat'),
+        );
         expect(await repo.list(), hasLength(1));
       },
     );
