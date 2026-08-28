@@ -1545,4 +1545,59 @@
 
 - style(env): brace single-statement if in CwdOverrideEnv.backgroundJobsSupported
 
+## 0.1.240
+
+- fix(app,test): the whole quality gate goes green — CRAP ratchet, app suite, l10n and goldens (0.1.239)
+- fix(replay): compact system-notice rows in restored transcripts (0.1.238)
+- fix(provider): entry-name status label + persist catalog model picks (0.1.237)
+- docs(goal): codex gpt auth — cross-platform notes (Rust portability does not transfer)
+- docs(goal): codex gpt auth — point the reference at the open-source GitHub repo
+- docs(goal): codex gpt auth — ship the ChatGPT/Codex-backend provider
+- perf+fix: growing-tail throttle, codemie scoped key, status bar (0.1.236)
+- docs(goal): copilot — translate to English, add tickable implementation checklist
+- docs(goal): copilot — multi-account contract, mandatory TDD plan, Keychain-only tokens
+- docs(goal): copilot provider — multi-account support as first-class scope
+- docs(goal): add copilot provider goal — migrate copilot-proxy-go protocol into fa_llm
+- deps: flutter_agent_memory ^0.1.1 (0.1.235)
+- fix(memory): tombstoned delete via KBMemoryStore; hosted dep (0.1.234)
+- feat: schedule_message + bash stdin param; crash hardening (0.1.233)
+- perf(tui): O(1) in-place rollback of grown-tail arrays (0.1.232)
+- perf(tui): flush streamed output every 16ms (0.1.231)
+- perf(tui): cache formatted sticky echo rows (0.1.230)
+- feat(memory): memory_delete tool; quote-style service blocks (0.1.229)
+- fix(tui): add the missing system_notice_render import in fa_tui (0.1.228 fixup)
+- feat(tui): render system notices as dim blockquotes with a gear marker (0.1.228)
+- perf(tui): ASCII fast path + bounded line-width memo in tuiTextWidth (0.1.227)
+- fix(tui): hoist terminal reset before SIGINT use; wire compaction delta tail (0.1.226 follow-up)
+- fix(tui): restore terminal modes on Ctrl+C exit (0.1.226)
+- fix(tui): keep the input caret visible while a run streams (0.1.225)
+- fix(messaging): cross-project agent_message delivers to the recipient root (0.1.224)
+- feat: instant key echo + Ctrl+C exits like /exit (0.1.223)
+- fix(cli): visible hint after mid-run Ctrl+C abort (0.1.222)
+- chore(tool): land the frame-build bisect probe (gitignored path)
+- fix(tui): no-newline stream deltas stay incremental — typing lag gone (0.1.221)
+- chore(tool): land the key-latency probe (path is gitignored)
+- feat(tools): warn when a stale fa build writes old-format job logs here (0.1.220)
+- fix(cli,compaction): paste-a-path sends, honest compact status, bounded extraction, per-delta ctx memo (0.1.219)
+- fix(cli): FaTuiController stub carries setBusyPhase — web build compiles again
+- fix(app,site): widgets entry points visible and verifiable
+- docs(widgets): mark C2/M1 app-catalog milestone shipped with live checks
+- feat(app): widgets catalog — install from fa_widgets releases, slim the bundle
+- test(tools): assert shell job ids by shape after unique-id change
+- chore(messaging): skip messages-registry write when unchanged
+- fix(tools): collision-proof background job ids and image filenames
+- fix(session): serialize JSONL writers per file and quarantine torn lines on open
+- chore(local): rebuild fa-local bundle binary at 0.1.218
+- fix(tui,fork): serialize tracer writes through a flush queue
+- fix(tui,fork): FA_TUI_TRACE file sink flushes per event (crash-safe)
+- perf(tui,fork): render-aware cursor dedupe — zero-byte idle frames
+- perf(tui,fork): lazy frames, output dedupe, keypress-paint tracer
+- fix(tui): replay restored messages in full — no per-message head caps
+- fix(tui): wrap overflowing table cells — keep the box grid readable
+- perf(tui,fork): drop-frame fps throttle — stop sleeping the event loop
+- chore(vendor): inline dart_tui 2.0.0 under vendor/ for perf work
+- perf(tui): amortized history-cap trim — no full re-parse per streaming flush
+- feat(tui): truthful busy-row phase labels
+- feat(cli): pre-flight context guard — compact BEFORE an over-window request
+
 ## Unreleased
