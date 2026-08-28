@@ -144,6 +144,30 @@ optional phase.** If Phase 0 proves Cloudflare blocks non-browser HTTP
 clients outright, fall back to the WS-first approach of the old doc — that
 decision point is built into the checklist.
 
+## Cross-platform notes (Rust ≠ our runtime)
+
+codex-rs being Rust does NOT make our adapter portable "for free" — we never
+ship their binaries; we re-implement the wire behavior in pure Dart, so
+portability comes from Dart, not from Rust. The practical matrix:
+
+| Platform | HTTP SSE (Phase 1) | WS v2 (Phase 3, optional) |
+| --- | --- | --- |
+| macOS / Linux / Windows (VM) | works | works (`web_socket_channel`) |
+| iOS / Android | works | works |
+| Web (browser build) | blocked by CORS (chatgpt.com sends no CORS headers) — same limitation class as every other direct LLM provider in the web build; needs a host/proxy relay, out of scope here | effectively impossible: the browser WebSocket API cannot set custom handshake headers, and `OpenAI-Beta: responses_websockets=2026-02-06` is mandatory |
+
+Notes:
+
+- The Cloudflare `cf_*` cookie jar and every header builder are pure string/
+  HTTP logic — trivially portable; keep them free of `dart:io` (inject the
+  transport, as the provider layer already does).
+- `x-oai-attestation` (deferred) is built from device/platform info in Rust;
+  on our side it would need per-platform injectable sources — another reason
+  it stays deferred.
+- Embedding the Rust CLI via FFI (e.g. flutter_rust_bridge) would cover
+  desktop/mobile but break the web story entirely and contradict the pure-
+  Dart architecture contract in GOAL.md. Not planned.
+
 ## Implementation checklist
 
 Same discipline as `goal/copilot_provider.md`: TDD (red → green →
@@ -209,7 +233,8 @@ will not save you; keep your files analyze-clean yourself.
   retry → actionable error text.
 - [ ] Gates: new-file coverage ≥ 90%, `dart analyze` clean, crap4dart no
   regression, still pure Dart (no `dart:io` imports in the provider — use
-  injected transports).
+  injected transports); desktop + mobile targets in scope, web documented
+  as relay-only per the Cross-platform notes.
 
 ### Phase 2 — auth polish + storage
 
