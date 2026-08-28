@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.234
+
+- fix(memory): `memory_delete` now goes through `KBMemoryStore.deleteRecord`
+  (flutter_agent_memory 0.1.0) — tombstones + revision bump mean
+  consolidation can no longer resurrect deleted entries; graph rebuilds on
+  delete. `deleteEntityById` stays as a raw-storage escape hatch only.
+- deps: flutter_agent_memory flipped from git tag to hosted `^0.1.0`
+  (published on pub.dev) — unblocks fa's own future publish.
+
 ## 0.1.233
 
 - fix(tui): a throwing update()/picker command can never close the app —

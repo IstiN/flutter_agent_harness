@@ -157,14 +157,26 @@ final class MemoryController {
       if (s == 'user') {
         await userStore; // no-op when there is no user root
         if (_userStorage == null) continue;
-        if (await _userStorage!.deleteEntityById(id)) return s;
+        if (await _kbStoreFor('user', _userStorage!).deleteRecord(id)) {
+          return s;
+        }
       } else {
         await projectStore;
-        if (await _projectStorage!.deleteEntityById(id)) return s;
+        if (await _kbStoreFor('project', _projectStorage!).deleteRecord(id)) {
+          return s;
+        }
       }
     }
     return null;
   }
+
+  final Map<String, KBMemoryStore> _kbStores = {};
+
+  /// The [KBMemoryStore] for [scope] — delete MUST go through it (not the
+  /// raw storage): its MemoryDeletionService writes tombstones + bumps the
+  /// revision so consolidation cannot resurrect deleted entries.
+  KBMemoryStore _kbStoreFor(String scope, KbStorage storage) =>
+      _kbStores[scope] ??= KBMemoryStore(storage, source: 'fa-$scope');
 
   /// Searches both scopes (project first, then user).
   Future<List<MemoryEntry>> search(String query, {int limit = 10}) async {
