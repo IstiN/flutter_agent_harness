@@ -64,8 +64,8 @@ OpenAI/Anthropic/Responses-совместимые endpoints (`localhost:4141`) �
    - токен короткоживущий (~30 мин); обновлять за ~2 мин до `expires_at`
      (или через `refresh_in`), но не чаще раза в 30с; при 401/403 от API —
      немедленный refresh и один повтор запроса.
-3. (Опционально) `GET https://api.github.com/user` → `login` для показа
-   имени аккаунта в UI.
+3. `GET https://api.github.com/user` → `login` — показ имени аккаунта в UI
+   и дефолт имени entry при нескольких аккаунтах (`copilot-<login>`).
 
 Важно: **этот exchange endpoint один и тот же для всех типов аккаунта** —
 тип аккаунта влияет только на базовый URL Copilot API (см. ниже).
@@ -156,16 +156,20 @@ Pure Dart (deps только `http` + `meta`, без `dart:io`/Flutter), нов�
   (токен, таймеры refresh) разных entry не пересекается;
 - `copilot_token_store.dart` — интерфейс persist'а GitHub-токена,
   **ключевание по имени entry**: `read(name)` / `write(name, token)` /
-  `delete(name)`; платформенные impl снаружи: IO → `SecureKeyStore`,
-  Flutter app → его secure storage; fa_llm остаётся чистым;
+  `delete(name)`; платформенные impl снаружи: IO → `SecureKeyStore`
+  (macOS Keychain / Linux Secret Service / Windows PasswordVault, IO-бэкенды
+  только через `lib/io.dart`), Flutter app → его secure storage;
+  fa_llm остаётся чистым; **токены хранятся ТОЛЬКО в secure store —
+  plain-файлы и config.yaml запрещены**;
 - `copilot_provider.dart` — `LlmProvider` над `/chat/completions`
   (streaming SSE, стрим + complete), список моделей `listModels()`;
 - `ProviderFactory`: `providerName: 'copilot'` (+ `entryName`,
   `accountType`, `baseUrl`) — `entryName` выбирает, какой из сохранённых
   аккаунтов используется.
 
-TDD через `http.testing`-mock, реальные вызовы — только в интеграционных
-тестах с тегом `integration`.
+TDD обязателен — тест-план и правила в разделе «Тестирование» ниже: тесты
+пишутся до реализации; в unit-тестах сеть только через `http.testing`-mock,
+живые вызовы — тесты с тегом `integration` (вне pre-commit).
 
 ### 2. Harness (`fa` CLI) — провайдер в каталоге
 
@@ -181,8 +185,9 @@ TDD через `http.testing`-mock, реальные вызовы — тольк
   → login — дефолт имени entry (`copilot-<login>`), шаг имени entry с
   правилами `_askConnectProviderName` (клэш с другим endpoint → повтор),
   шаг `accountType` (individual/business/enterprise/custom baseUrl),
-  сохранение GitHub-токена под entry-скопированным ключом, регистрация
-  entry в `customProviders`/config;
+  сохранение GitHub-токена под entry-скопированным ключом в secure store
+  (Keychain; в config попадают только имя entry, план и baseUrl — никогда
+  сам токен), регистрация entry в `customProviders`/config;
 - резолвер ключа copilot-entry: secure store, затем env
   `FA_KEY_COPILOT_<NAME>` (и `FA_KEY_COPILOT_<NAME>_2`… в духе `ApiKeyRing`
   — env-first, работает в CI без secure store); все живые токены
@@ -197,8 +202,108 @@ TDD через `http.testing`-mock, реальные вызовы — тольк
 - маппинг copilot-конфига в `fa_llm`-провайдер
   (`fa_ui/lib/src/providers/llm_config_mapping.dart`);
 - настройки провайдера: тот же device-code flow в шите + выбор плана,
-  токен — в secure storage приложения;
+  токен — в secure storage приложения (Keychain/Keystore), не в plain
+  файлах; список подключённых аккаунтов
+  (добавить / переключить активный / удалить — удаляется только токен
+  этого аккаунта);
 - провайдер доступен и обычному чату приложения, и агентному режиму.
+
+## Мульти-аккаунт (несколько GitHub-аккаунтов)
+
+Обязательная часть скоупа, не опция. Контракт:
+
+- **Единица конфигурации — именованный entry** («какая учётка + какой план +
+  какой baseUrl»), а не глобальный «copilot-провайдер». Один аккаунт = один
+  entry; один и тот же GitHub-аккаунт можно добавить под несколькими
+  именами (например, разные планы), токен у них общий по учётке.
+- **Изоляция**: у каждого entry свой secure-store ключ, свой экземпляр
+  `CopilotTokenManager` (свой refresh-цикл и кэш Copilot-токена), свои
+  `/models`. Refresh/логаут одного аккаунта не затрагивает другие.
+- **Имя entry**: дефолт `copilot-<github-login>` (login из `GET /user`),
+  переименовывается; уникальность и клэш-правила — как у существующих
+  customProviders-entries. В TUI/меню entries видны по имени, у активного —
+  маркер.
+- **Переключение активного аккаунта** — существующими механизмами
+  `/provider`/`/model` и маппингом в приложении; конфиг-пример:
+  `default:` роль указывает на entry по имени.
+- **Env-only окружения (CI)**: `FA_KEY_COPILOT_<NAME>` (+ `_2`… ring) —
+  единственное исключение из keychain-правила: токен подаётся переменной
+  окружения и никуда не пишется.
+- **Fallback между аккаунтами НЕ делаем** (429/лимит одного аккаунта не
+  должен молча переключать на другой — пользователь сам решает, каким
+  entry работать).
+- **Безопасность — токены только в Keychain**: GitHub-токен каждого
+  аккаунта хранится ТОЛЬКО в secure store с keychain-бэкендом (macOS
+  Keychain, Linux Secret Service, Windows PasswordVault — `SecureKeyStore`
+  в harness, secure storage приложения в app); краткоживущий Copilot-токен
+  живёт в памяти и на диск вне secure store не пишется никогда; токены не
+  попадают в `config.yaml`, JSONL-сессии и логи (`SecretRedactor` для всех
+  подключённых аккаунтов); удаление entry = удалить запись конфига + ключ
+  из secure store; сам GitHub-токен можно отозвать на
+  github.com/settings/security (подсказка в UI logout).
+
+## Тестирование — TDD обязателен
+
+Дисциплина из GOAL.md применяется к карточке буквально: на каждое поведение
+сначала падающий тест (red), затем реализация (green), затем рефактор.
+Карточка не закрывается, если новые файлы покрыты хуже 90%. Правила:
+
+- в unit-тестах реальной сети нет — только `http.testing.MockClient`
+  (конвенция репо); тайминги (интервалы поллинга, refresh-таймеры) — через
+  инъектные clock/delay-фейки, никаких реальных `sleep`;
+- SSE-ответы — строковыми фикстурами;
+- живые вызовы GitHub/Copilot — только тесты с тегом `integration`
+  (`dart_test.yaml`, исключены из pre-commit, гоняются вручную/в CI).
+
+Обязательный тест-план по слоям (тесты появляются РАНЬШЕ кода каждого
+файла):
+
+**`packages/fa_llm/test/`:**
+
+- `copilot_endpoints_test` — маппинг individual/business/enterprise;
+  `baseUrl` override побеждает enum; неизвестный план — ошибка;
+- `copilot_token_test` — device flow: тело/парсинг device-code запроса
+  (client_id, scope); поллинг: pending → успех, slow_down (+5с к интервалу),
+  expired_token, access_denied, сетевая ошибка; exchange: 200 →
+  `{token, expiresAt, refreshIn}`, non-200 → понятная ошибка с телом,
+  заголовки `Authorization: token` + editor-набор;
+- `copilot_token_manager_test` — кэш жив до порога (fake clock);
+  проактивный refresh за 2 мин до expiry; не чаще раза в 30с; 401/403 →
+  ровно один refresh и один повтор, второй 401 — ошибка наверх; N
+  параллельных потребителей → один exchange (лок); два entry изолированы;
+- `copilot_token_store_test` — read/write/delete по имени; отсутствие
+  ключа; изоляция имён;
+- `copilot_provider_test` — SSE-стрим по фикстуре чанков (+ `[DONE]`),
+  complete-ответ, отмена посреди стрима, `listModels` (capabilities/
+  limits/supported_endpoints), обязательные заголовки и правильный base URL
+  на запрос, `X-Initiator: agent`, когда последнее сообщение
+  `assistant`/`tool`, иначе `user`;
+- `provider_factory_test` — ветка `copilot` (entryName/accountType/baseUrl).
+
+**harness `test/` (unit, без сети):**
+
+- каталог: spec `copilot` присутствует, `FA_PROVIDERS`-фильтр его уважает
+  (паттерн `provider_filter_test`);
+- stream function: URL по плану, Bearer из manager, refresh-on-401 посреди
+  стрима (fake manager), ветка copilot в `/models` dispatch;
+- `/provider copilot` line-mode драйвером (как `settings_flow_test`):
+  fake transport для device flow → шаги auth → имя entry (клэш → повтор) →
+  accountType → сохранение entry + ключа; повторная авторизация обновляет
+  только этот entry; резолвер `FA_KEY_COPILOT_<NAME>` (+`_2`), регистрация
+  токенов в `SecretRedactor`;
+- мульти-аккаунт: два entry, переключение через `/model`, изоляция
+  ключей/токенов.
+
+**flutter_app / fa_ui (unit/widget):**
+
+- маппинг copilot-конфига (`llm_config_mapping`);
+- шит настроек с fake-колбэками: добавить/переключить/удалить аккаунт —
+  меняется только ключ этого аккаунта.
+
+**Тег `integration` (вручную/CI):**
+
+- живой device flow → `/models` → один completion (individual);
+  business-вариант включается, когда есть аккаунт (результат Phase 0).
 
 ## Фазы
 
@@ -217,31 +322,35 @@ individual и business; enterprise — проверяется по аналог�
 ### Phase 1 — `fa_llm`: протокольное ядро
 
 Endpoints, token manager, token store interface, provider, factory-ветка,
-`listModels`. Mock-тесты на device flow (pending/slow_down/expired/denied),
-refresh (proactive + по 401), SSE-стрим.
+`listModels`. Тесты из тест-плана пишутся первыми (red), затем реализация
+(green). Покрытие тестами: device flow (pending/slow_down/expired/denied),
+refresh (proactive + по 401), SSE-стрим, изоляцию двух entry (разные
+токены/кэши не пересекаются).
 
-**Критерий:** `CopilotProvider` проходит тесты; `dart analyze` чист;
-покрытие новых файлов ≥ 90%; pure-Dart не нарушен.
+**Критерий:** TDD-цикл соблюдён (тесты до реализации); все unit-тесты
+fa_llm зелёные; `dart analyze` чист; покрытие новых файлов ≥ 90%;
+pure-Dart не нарушен.
 
 ### Phase 2 — harness + `fa` CLI
 
 Catalog spec, stream function, `/provider copilot` (auth + план + baseUrl),
 `/models` dispatch, конфиг-схема (`roles:`/`customProviders` примеры),
-`--help`/docs.
+`--help`/docs. Флоу-тесты line-mode — первыми, как в `settings_flow_test`.
 
 **Критерий:** `fa --provider copilot "..."` отвечает стримом; смена плана —
 без правки кода; 401 посреди стрима восстанавливается refresh'ем; два
 GitHub-аккаунта подключаются под разными именами, переключаются и работают
-изолированно (refresh/логаут одного не задевает другой).
+изолированно (refresh/логаут одного не задевает другой); unit/флоу-тесты
+harness'а зелёные.
 
 ### Phase 3 — Flutter app
 
 `fa_ui`-маппинг + настройки + secure storage; агентный режим использует того
-же провайдера.
+же провайдера. Widget/unit-тесты маппинга и шита настроек — первыми.
 
 **Критерий:** в приложении можно подключить Copilot (любой план) и (чат +
 агент) работают; токен переживает рестарт; несколько аккаунтов добавляются
-и переключаются из настроек.
+и переключаются из настроек; unit/widget-тесты зелёные.
 
 ## Риски / открытые вопросы
 
@@ -275,5 +384,6 @@ GitHub-аккаунта подключаются под разными имен�
   один источник — path-dep на `packages/fa_llm`.
 - Первый wire-формат: `/chat/completions` (Phase 1–2), нативный
   `/v1/messages` для Claude-моделей и `/responses` — следующими шагами.
-- Хранение GitHub-токена в harness: отдельное имя в secure store
-  (в духе `FA_KEY_GITHUB`) vs entry в `customProviders`.
+- ~~Хранение GitHub-токена в harness~~ — решено: именованные entry в стиле
+  `customProviders`, токен в secure store под entry-скопированным ключом +
+  env-резолвер `FA_KEY_COPILOT_<NAME>` для CI (см. «Мульти-аккаунт»).
