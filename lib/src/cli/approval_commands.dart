@@ -452,7 +452,29 @@ extension on AgentCli {
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
         '$costPart · turn ${_usage.turns}$badge · '
-        '${model.provider}/${model.id}';
+        '${_statusProviderLabel(model)}/${model.id}';
+  }
+
+  /// Status-bar provider label: the saved custom entry's name when the
+  /// model's endpoint belongs to one — the user picked "z.ai"/"codemie",
+  /// while the model's `provider` field carries the catalog protocol kind
+  /// ("openai") that means nothing to them. Falls back to the catalog
+  /// provider name when no saved entry matches the endpoint.
+  String _statusProviderLabel(Model model) {
+    final entries = config.customProviders?.entries;
+    if (entries != null) {
+      for (final entry in entries) {
+        if (_sameEndpoint(entry.baseUrl, model.baseUrl)) return entry.name;
+      }
+    }
+    return model.provider;
+  }
+
+  /// Endpoint equality ignoring a trailing slash (saved entries and pinned
+  /// chains disagree on it routinely).
+  bool _sameEndpoint(String a, String b) {
+    String norm(String u) => u.endsWith('/') ? u.substring(0, u.length - 1) : u;
+    return norm(a) == norm(b);
   }
 
   /// Live context pressure for the status line: provider-reported usage up

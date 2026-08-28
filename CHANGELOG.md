@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.237
+
+- fix(status): the provider shown next to the model is now the saved
+  provider ENTRY name (z.ai, codemie-personal, …) matched by endpoint —
+  the model's `provider` field carries the catalog protocol kind
+  ("openai"), which read as "it switched to OpenAI" although the pick
+  was z.ai.
+- fix(provider): `/model` switches on catalog providers (no active
+  custom entry) now persist the picked model — the host's onModelChanged
+  fired only for saved-entry switches, so a restart restored the last
+  provider switch's model (gemini from a codemie test) instead of the
+  one the user chose.
+
 ## 0.1.236
 
 - fix(roles): model switches on NON-catalog endpoints (CodeMie SSO, DIAL,

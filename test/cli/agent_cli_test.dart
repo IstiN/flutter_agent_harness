@@ -31,6 +31,7 @@ void main() {
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
+    Future<void> Function(Model model)? onModelChanged,
     String? providerKind,
     SkillsAccess? skillsAccess,
   }) {
@@ -47,6 +48,7 @@ void main() {
         secureKeys: secureKeys,
         customProviders: customProviders,
         onSecretStored: onSecretStored,
+        onModelChanged: onModelChanged,
         providerKind: providerKind ?? 'openai-completions',
         // Matches AgentCliConfig's own default: third-party discovery is ON
         // (opt-out); consent-dialog tests pass SkillsAccess.ask explicitly.
@@ -1562,6 +1564,67 @@ void main() {
         '/work · ctx 0% (15/100k) · 15tok · \$0.0010 · turn 1 · test-provider/test-model',
       ),
     );
+  });
+
+  test('status line shows the saved provider entry name for its endpoint', () async {
+    const usage = Usage(
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: UsageCost(input: 0, output: 0, total: 0),
+    );
+    final fake = FakeStreamFunction([textTurn('hi', usage: usage)]);
+    // The user's z.ai pick is a saved openai-compatible entry: the model's
+    // provider field carries the catalog KIND (openai) — the status bar
+    // must show the ENTRY name instead, matched by endpoint (ignoring a
+    // trailing-slash difference between the saved entry and the pin).
+    final cli = cliFor(
+      fake.call,
+      model: const Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'openai',
+        baseUrl: 'https://api.z.ai/api/paas/v4',
+        contextWindow: 100000,
+        maxTokens: 4096,
+      ),
+      customProviders: CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'openai',
+          baseUrl: 'https://api.z.ai/api/paas/v4/',
+          modelId: 'glm-5.3-flash',
+        ),
+      ]),
+    );
+    final run = cli.run();
+    io.sendLine('q');
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+    expect(io.out.toString(), contains(' · z.ai/test-model'));
+  });
+
+  test('model switch without an active custom entry still persists', () async {
+    // Catalog-provider `/model` switches have no active custom entry; the
+    // host's onModelChanged must still fire so the restart restores the
+    // picked model (it used to silently keep the old one).
+    Model? notified;
+    final fake = FakeStreamFunction([textTurn('hi')]);
+    final cli = cliFor(
+      fake.call,
+      onModelChanged: (model) async => notified = model,
+    );
+    final run = cli.run();
+    io.sendLine('q');
+    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+    io.sendLine('/model other-model');
+    await waitForIt(() => !cli.isBusy);
+    io.sendLine('/exit');
+    await run;
+    expect(notified?.id, 'other-model');
   });
 
   test('status line keeps the last real usage after a failed run', () async {
