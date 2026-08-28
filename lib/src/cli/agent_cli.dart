@@ -355,6 +355,7 @@ class AgentCli {
       );
       plugin.register(context);
       pluginTools.addAll(context.tools);
+      _pluginInboxes.addAll(context.externalInboxes);
       _pluginSlashCommands.addAll(context.slashCommands);
     }
 
@@ -452,7 +453,8 @@ class AgentCli {
           // initialized once; keeping it tied to the original folder avoids
           // breaking the file-based directory layout. Each mailbox is still
           // namespaced by session id.
-          root: _messagesRoot = '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
+          root: _messagesRoot =
+              '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
           decodeSessionCwd: decodeSessionCwd,
           homeDir: config.homeDir,
         ),
@@ -550,12 +552,7 @@ class AgentCli {
     _agent.externalSteeringSource = _mainInboxMessages;
     // Non-draining probe for the same inbox: mid-run mail also triggers the
     // tool phase's soft-yield so a long bash/task call does not delay it.
-    _agent.externalSteeringProbe = () async {
-      final count = await _subagentManager.pendingInboxCount(
-        _subagentManager.selfId,
-      );
-      return count > 0;
-    };
+    _agent.externalSteeringProbe = _mainInboxProbe;
     // Model roles: when the default role resolves, the agent runs through
     // the resolver's fallback stream (rotation/failover per provider call).
     // A resolver without a default role leaves the legacy wiring in place
@@ -851,6 +848,7 @@ class AgentCli {
   /// cancel (Ctrl-C, input shutdown).
   Completer<String?>? _pendingPromptAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
+  final List<ExternalInbox> _pluginInboxes = [];
   late AgentMode _currentMode;
   List<PromptTemplate> _templates = [];
 

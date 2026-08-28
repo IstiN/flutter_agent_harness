@@ -7,6 +7,7 @@ library;
 
 import '../agent/agent_tool.dart';
 import '../env/execution_env.dart';
+import '../messaging/agent_message.dart';
 
 /// A slash-command handler registered by a plugin.
 typedef SlashCommand = Future<void> Function(List<String> args);
@@ -37,6 +38,7 @@ final class PluginContext {
 
   final List<AgentTool> _tools = [];
   final Map<String, SlashCommand> _slashCommands = {};
+  final List<ExternalInbox> _externalInboxes = [];
 
   /// Registers an [AgentTool] that will be available to the agent.
   void registerTool(AgentTool tool) => _tools.add(tool);
@@ -46,12 +48,39 @@ final class PluginContext {
     _slashCommands[name] = handler;
   }
 
+  /// Registers an external inbox (e.g. a network hub mailbox) whose mail
+  /// is drained into the agent loop as steering messages at every turn
+  /// boundary.
+  void registerExternalInbox(ExternalInbox inbox) =>
+      _externalInboxes.add(inbox);
+
   /// Tools collected from plugins.
   List<AgentTool> get tools => List.unmodifiable(_tools);
 
   /// Slash commands collected from plugins.
   Map<String, SlashCommand> get slashCommands =>
       Map.unmodifiable(_slashCommands);
+
+  /// External inboxes collected from plugins (unmodifiable).
+  List<ExternalInbox> get externalInboxes =>
+      List.unmodifiable(_externalInboxes);
+}
+
+/// A plugin-provided inbox drained into the agent loop as steering
+/// messages, oldest first. Sources may be remote (a hub connection), so
+/// both callbacks must be cheap and [drain] must never throw — a failing
+/// drain returns an empty list instead.
+final class ExternalInbox {
+  const ExternalInbox({required this.drain, this.hasPending});
+
+  /// Consumes the unread messages, oldest first. Never throws; an empty
+  /// list means "nothing arrived".
+  final Future<List<AgentMessage>> Function() drain;
+
+  /// Non-draining probe: true when at least one unread message waits.
+  /// Optional — inboxes without it cannot wake the idle loop or soften a
+  /// long tool call, only deliver at turn boundaries.
+  final Future<bool> Function()? hasPending;
 }
 
 /// Base interface for a `fah` plugin / package extension.

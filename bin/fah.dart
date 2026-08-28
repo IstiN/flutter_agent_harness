@@ -32,7 +32,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
-
+import 'package:fah_hub_client/fah_hub_client.dart' show HubPlugin;
+import 'fah_hub_plugin.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 
@@ -316,6 +317,7 @@ Set<String> _roleKeyNames(ModelRolesConfig rolesConfig) {
 /// Built-in plugins available via `--plugin <name>` or `.fah/packages.yaml`.
 FahPlugin? _builtInPlugin(String name) {
   return switch (name) {
+    'hub' => HubPluginHost(HubPlugin()),
     'inspect_image' => const InspectImagePlugin(),
     'transcribe_audio' => const TranscribeAudioPlugin(),
     _ => null,
@@ -372,7 +374,7 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
   String cwd,
 ) {
   final config = _loadPackagesConfig(cwd);
-  final enabled = <String>{...args.plugins, ...config.keys};
+  final enabled = <String>{'hub', ...args.plugins, ...config.keys};
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
     final plugin = _builtInPlugin(name);

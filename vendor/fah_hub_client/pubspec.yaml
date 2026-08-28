@@ -1,0 +1,17 @@
+name: fah_hub_client
+description: >-
+  DAP/1 hub client for flutter_agent_harness: MessagingRepository over a
+  signed WebSocket connection, FahPlugin wiring delivery via
+  Agent.externalSteeringSource. Shaped as an upstreamable PR for
+  IstiN/flutter_agent_harness (lib/src/hub/).
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  cryptography: ^2.7.0
+
+dev_dependencies:
+  test: ^1.31.0

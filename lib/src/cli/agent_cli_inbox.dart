@@ -23,13 +23,74 @@ extension AgentCliMessagingFlow on AgentCli {
     // app) burns the 10-run agent-chat cap and the CLI goes permanently
     // silent on further app mail until restart.
     if (queued.any((message) => message.isUserInput)) _inboxWakeStreak = 0;
-    return [
+    final messages = [
       for (final message in queued)
-        if (message.isUserInput)
-          UserMessage.text('[from ${message.fromId}] ${message.text.trim()}')
-        else
-          UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
+        _steeringLine(
+          message.fromId,
+          message.text,
+          userInput: message.isUserInput,
+        ),
     ];
+    // Plugin inboxes (e.g. the hub) join the same steering flow, after
+    // the fabric mail. A source that throws is skipped — the steering
+    // contract is that this closure never throws.
+    for (final inbox in _pluginInboxes) {
+      final List<AgentMessage> drained;
+      try {
+        drained = await inbox.drain();
+      } on Object {
+        continue;
+      }
+      if (drained.any((message) => message.kind == AgentMessageKind.user)) {
+        _inboxWakeStreak = 0;
+      }
+      messages.addAll([
+        for (final message in drained)
+          _steeringLine(
+            message.fromId,
+            message.text,
+            userInput: message.kind == AgentMessageKind.user,
+          ),
+      ]);
+    }
+    return messages;
+  }
+
+  /// Sender-attributed steering line for one inbox message: user input
+  /// (an attached client handing over the user's words) lands with an
+  /// attribution prefix; agent chat reads as a chat line.
+  Message _steeringLine(
+    String fromId,
+    String text, {
+    required bool userInput,
+  }) => userInput
+      ? UserMessage.text('[from $fromId] ${text.trim()}')
+      : UserMessage.text('from $fromId: ${text.trim()}');
+
+  /// The steering probe: fabric mail pending, or any plugin inbox
+  /// reports unread mail. Never throws — a broken plugin probe counts
+  /// as empty.
+  Future<bool> _mainInboxProbe() async {
+    final count = await _subagentManager.pendingInboxCount(
+      _subagentManager.selfId,
+    );
+    if (count > 0) return true;
+    return _anyPluginInboxPending();
+  }
+
+  /// Non-draining check across every registered plugin inbox; a probe
+  /// that throws counts as empty.
+  Future<bool> _anyPluginInboxPending() async {
+    for (final inbox in _pluginInboxes) {
+      final hasPending = inbox.hasPending;
+      if (hasPending == null) continue;
+      try {
+        if (await hasPending()) return true;
+      } on Object {
+        // Broken probe — the drain still guards itself.
+      }
+    }
+    return false;
   }
 
   /// Namespaces this instance's mailboxes with the active session id: two
@@ -59,7 +120,8 @@ extension AgentCliMessagingFlow on AgentCli {
     final pending = await _subagentManager.pendingInbox(
       _subagentManager.selfId,
     );
-    if (pending.isEmpty) return;
+    final pluginPending = await _anyPluginInboxPending();
+    if (pending.isEmpty && !pluginPending) return;
     final hasUserInput = pending.any(
       (message) => message.kind == AgentMessageKind.user,
     );
@@ -70,13 +132,19 @@ extension AgentCliMessagingFlow on AgentCli {
     _inboxWakeRunning = true;
     final count = pending.length;
     io.writeln(
-      _style.dim('[mail] $count new message(s) — waking up to answer'),
+      _style.dim(
+        count > 0
+            ? '[mail] $count new message(s) — waking up to answer'
+            : '[mail] new hub message(s) — waking up to answer',
+      ),
     );
     _startRun(
-      '<system-notice>New inter-agent mail arrived ($count message(s)) — '
-      'the messages follow below as user messages. Read them and act: reply '
-      'with the agent_message tool to the sender address when a response is '
-      'expected, or just incorporate the information.</system-notice>',
+      '<system-notice>New inter-agent mail arrived '
+      '${count > 0 ? '($count message(s))' : '(hub mail)'} — the messages '
+      'follow below as user messages. Read them and act: reply via the '
+      "sender's messaging tool (agent_message for fabric addresses, dap_dm "
+      'for hub peers) when a response is expected, or just incorporate the '
+      'information.</system-notice>',
     );
     unawaited(_settled.whenComplete(() => _inboxWakeRunning = false));
   }
