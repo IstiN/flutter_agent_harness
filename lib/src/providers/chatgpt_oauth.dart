@@ -23,6 +23,7 @@ final class ChatGptOAuthCredentials {
     required this.refreshToken,
     required this.idToken,
     this.accountId,
+    this.expiresAt,
   });
 
   final String accessToken;
@@ -30,11 +31,15 @@ final class ChatGptOAuthCredentials {
   final String idToken;
   final String? accountId;
 
-  Map<String, String> toJson() => {
+  /// When the access token expires, in UTC; null when unknown.
+  final DateTime? expiresAt;
+
+  Map<String, dynamic> toJson() => {
     'access_token': accessToken,
     'refresh_token': refreshToken,
     'id_token': idToken,
     if (accountId != null) 'chatgpt_account_id': ?accountId,
+    if (expiresAt != null) 'expires_at': expiresAt!.millisecondsSinceEpoch,
   };
 
   String encode() => jsonEncode(toJson());
@@ -53,6 +58,7 @@ final class ChatGptOAuthCredentials {
     }
 
     final accountId = decoded['chatgpt_account_id'];
+    final expiresAt = decoded['expires_at'];
     return ChatGptOAuthCredentials(
       accessToken: field('access_token'),
       refreshToken: field('refresh_token'),
@@ -60,7 +66,19 @@ final class ChatGptOAuthCredentials {
       accountId: accountId is String && accountId.isNotEmpty
           ? accountId
           : _accountIdFromJwt(field('id_token')),
+      expiresAt: expiresAt is int
+          ? DateTime.fromMillisecondsSinceEpoch(expiresAt, isUtc: true)
+          : null,
     );
+  }
+
+  /// Whether [now] is at or past expiry minus [skew].
+  bool needsRefresh(
+    DateTime now, {
+    Duration skew = const Duration(seconds: 60),
+  }) {
+    final expiresAt = this.expiresAt;
+    return expiresAt != null && !now.isBefore(expiresAt.subtract(skew));
   }
 }
 
@@ -75,9 +93,9 @@ String generateChatGptPkceVerifier() {
   return String.fromCharCodes(bytes);
 }
 
-String generateChatGptPkceChallenge(String verifier) => base64UrlEncode(
-  sha256.convert(utf8.encode(verifier)).bytes,
-).replaceAll('=', '');
+String generateChatGptPkceChallenge(String verifier) =>
+    base64UrlEncode(sha256.convert(utf8.encode(verifier)).bytes)
+        .replaceAll('=', '');
 
 String generateChatGptState() {
   final random = _secureRandom();
@@ -142,6 +160,7 @@ Future<ChatGptOAuthCredentials> refreshChatGptCredentials(
         ? credentials.idToken
         : refreshed.idToken,
     accountId: refreshed.accountId ?? credentials.accountId,
+    expiresAt: refreshed.expiresAt ?? credentials.expiresAt,
   );
 }
 
@@ -185,11 +204,15 @@ Future<ChatGptOAuthCredentials> _tokenRequest(
     }
 
     final idToken = token('id_token', required: false);
+    final expiresIn = body['expires_in'];
     return ChatGptOAuthCredentials(
       accessToken: token('access_token'),
       refreshToken: token('refresh_token', required: false),
       idToken: idToken,
       accountId: _accountIdFromJwt(idToken),
+      expiresAt: expiresIn is int
+          ? DateTime.now().toUtc().add(Duration(seconds: expiresIn))
+          : null,
     );
   } on ConfigException {
     rethrow;

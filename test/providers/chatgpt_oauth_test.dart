@@ -71,6 +71,44 @@ void main() {
       expect(decoded.refreshToken, 'rt');
       expect(decoded.idToken, 'it');
       expect(decoded.accountId, 'acc');
+      expect(decoded.expiresAt, isNull);
+    });
+
+    test('encode/decode roundtrip keeps expiresAt', () {
+      final credentials = ChatGptOAuthCredentials(
+        accessToken: 'at',
+        refreshToken: 'rt',
+        idToken: 'it',
+        expiresAt: DateTime.utc(2026, 1, 2, 3, 4, 5),
+      );
+      final decoded = ChatGptOAuthCredentials.decode(credentials.encode());
+      expect(decoded.expiresAt, DateTime.utc(2026, 1, 2, 3, 4, 5));
+    });
+
+    test('decode tolerates a legacy blob without expires_at', () {
+      final decoded = ChatGptOAuthCredentials.decode(
+        jsonEncode({
+          'access_token': 'at',
+          'refresh_token': 'rt',
+          'id_token': 'it',
+        }),
+      );
+      expect(decoded.expiresAt, isNull);
+    });
+
+    test('decode parses an int expires_at as UTC', () {
+      final decoded = ChatGptOAuthCredentials.decode(
+        jsonEncode({
+          'access_token': 'at',
+          'refresh_token': 'rt',
+          'id_token': 'it',
+          'expires_at': 1767225600000,
+        }),
+      );
+      expect(
+        decoded.expiresAt,
+        DateTime.fromMillisecondsSinceEpoch(1767225600000, isUtc: true),
+      );
     });
 
     test('decode derives the account id from the id_token JWT', () {
@@ -97,6 +135,41 @@ void main() {
       expect(
         () => ChatGptOAuthCredentials.decode('{"access_token":""}'),
         throwsFormatException,
+      );
+    });
+  });
+
+  group('needsRefresh', () {
+    final expiry = DateTime.utc(2026, 1, 2, 3, 4, 5);
+    ChatGptOAuthCredentials withExpiry(DateTime? expiresAt) =>
+        ChatGptOAuthCredentials(
+          accessToken: 'at',
+          refreshToken: 'rt',
+          idToken: 'it',
+          expiresAt: expiresAt,
+        );
+
+    test('is false when expiresAt is null', () {
+      expect(withExpiry(null).needsRefresh(expiry), isFalse);
+    });
+
+    test('is true when now is at or past expiry', () {
+      expect(withExpiry(expiry).needsRefresh(expiry), isTrue);
+    });
+
+    test('is true within the skew window', () {
+      expect(
+        withExpiry(expiry)
+            .needsRefresh(expiry.subtract(const Duration(seconds: 30))),
+        isTrue,
+      );
+    });
+
+    test('is false well before expiry', () {
+      expect(
+        withExpiry(expiry)
+            .needsRefresh(expiry.subtract(const Duration(days: 1))),
+        isFalse,
       );
     });
   });
@@ -133,6 +206,34 @@ void main() {
       );
       expect(credentials.accessToken, 'at-1');
       expect(credentials.refreshToken, 'rt-1');
+      expect(credentials.expiresAt, isNull);
+    });
+
+    test('exchange parses expires_in into a future expiresAt', () async {
+      final client = http_testing.MockClient(
+        (request) async => http.Response(
+          jsonEncode({
+            'access_token': 'at-1',
+            'refresh_token': 'rt-1',
+            'id_token': 'it-1',
+            'expires_in': 3600,
+          }),
+          200,
+        ),
+      );
+      final credentials = await exchangeChatGptAuthorizationCode(
+        code: 'the-code',
+        redirectUri: 'http://127.0.0.1:1455/auth/callback',
+        codeVerifier: 'the-verifier',
+        client: client,
+      );
+      final now = DateTime.now().toUtc();
+      expect(credentials.expiresAt, isNotNull);
+      expect(credentials.expiresAt!.isAfter(now), isTrue);
+      expect(
+        credentials.expiresAt!.isBefore(now.add(const Duration(minutes: 61))),
+        isTrue,
+      );
     });
 
     test(
@@ -146,17 +247,20 @@ void main() {
           return http.Response(jsonEncode({'access_token': 'at-new'}), 200);
         });
 
-        const old = ChatGptOAuthCredentials(
+        final oldExpiry = DateTime.utc(2026, 1, 2, 3, 4, 5);
+        final old = ChatGptOAuthCredentials(
           accessToken: 'at-old',
           refreshToken: 'rt-old',
           idToken: 'it-old',
           accountId: 'acc-1',
+          expiresAt: oldExpiry,
         );
         final refreshed = await refreshChatGptCredentials(old, client: client);
         expect(refreshed.accessToken, 'at-new');
         expect(refreshed.refreshToken, 'rt-old');
         expect(refreshed.idToken, 'it-old');
         expect(refreshed.accountId, 'acc-1');
+        expect(refreshed.expiresAt, oldExpiry);
       },
     );
 
