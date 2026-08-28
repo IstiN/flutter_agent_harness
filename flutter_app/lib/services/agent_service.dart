@@ -454,14 +454,22 @@ class AgentService extends ChangeNotifier
     // persist facts across sessions. The messaging fabric gives every agent
     // (main + children) a file inbox colocated with the sessions — any Fa
     // instance sharing this root can exchange messages with them.
+    final messagesRoot =
+        '$sessionsRoot/${encodeSessionCwd(env.sessionCwd)}/messages';
+    final fabricRepo = FileMessagingRepository(
+      env: env,
+      root: () => messagesRoot,
+      decodeSessionCwd: decodeSessionCwd,
+      homeDir: null,
+    );
+    _scheduledMessages = ScheduledMessageQueue(
+      env: env,
+      repo: () => fabricRepo,
+      root: () => messagesRoot,
+    );
     _subagentManager = SubagentManager(
       parentSessionId: '',
-      messaging: FileMessagingRepository(
-        env: env,
-        root: '$sessionsRoot/${encodeSessionCwd(env.sessionCwd)}/messages',
-        decodeSessionCwd: decodeSessionCwd,
-        homeDir: null,
-      ),
+      messaging: fabricRepo,
       selfId: 'main',
     );
     // Real JSONL child sessions at completion (fast register keeps the
@@ -521,6 +529,9 @@ class AgentService extends ChangeNotifier
         _memoryController,
         onChanged: () => unawaited(_refreshMemorySection()),
       ),
+      // schedule_message: self-addressed delayed notes, delivered by the
+      // fabric's idle-wake (shared with the CLI).
+      scheduleMessageTool(_scheduledMessages),
       ...subagentMonitoringTools(
         manager: _subagentManager,
         jobs: taskJobManager,

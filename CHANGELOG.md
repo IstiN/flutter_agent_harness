@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.233
+
+- fix(tui): a throwing update()/picker command can never close the app —
+  dart_tui wraps model.update in try/catch (log + keep running), matching
+  the existing runCmd guard. Cross-provider model switches surface errors
+  as notices instead of dying (the CodeMie crash).
+- fix(cli): stdout.terminalColumns/terminalLines fall back to 80/24 when
+  stdout is not a TTY (session-switch replay crashed twice in crash.log).
+- fix(tui): sendBusy is reference-counted — a second submit during a
+  running turn (slash menus work mid-stream) no longer resets the elapsed
+  timer + sticky echo, and its finally no longer kills the spinner of the
+  live stream.
+- feat(tools): bash gains a `stdin` param — text written to the command's
+  stdin right after start (ask the USER for a passphrase via the ask tool,
+  then feed it; ssh-add/sudo no longer hang on a raw prompt).
+- feat(messaging): `schedule_message` — persisted delayed notes to an
+  agent mailbox (self by default); pending records survive restarts and
+  delivery rides the inbox idle-wake. Wired into the CLI and the app.
+- deps: flutter_agent_memory 0.1.0 (git tag v0.1.0) — tombstoned deletes,
+  timeout-guarded search, public graph-overview API.
+
 ## 0.1.232
 
 - perf(tui): grown-tail rollback truncates the transcript arrays

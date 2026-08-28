@@ -2143,6 +2143,14 @@ AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
               'Run detached and return the job id immediately (optional, '
               'default false). Use for long-running commands.',
         },
+        'stdin': {
+          'type': 'string',
+          'description':
+              'Optional text written to the command\'s stdin right after '
+              'start (a password/passphrase the USER supplied via the ask '
+              'tool, or "y\\n"). Use when the command prompts for input, '
+              'e.g. ssh-add or sudo. Never invent secrets — ask first.',
+        },
       },
       'required': ['command'],
     },
@@ -2152,6 +2160,7 @@ AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
       final timeoutArg = arguments['timeout'] as num?;
       final timeout = timeoutArg == null ? null : _resolveTimeout(timeoutArg);
       final background = arguments['background'] as bool? ?? false;
+      final stdinData = arguments['stdin'] as String?;
       final canJob = jobs != null && jobs.isSupported;
 
       if (background) {
@@ -2167,6 +2176,7 @@ AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
             cwd: env.cwd,
             timeout: timeout,
             cancelToken: cancelToken,
+            stdinData: stdinData,
           ),
         );
         return ToolExecutionResult.text(
@@ -2186,6 +2196,7 @@ AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
           env,
           jobs,
           command,
+          stdinData: stdinData,
           timeout: timeout,
           timeoutArg: timeoutArg,
           cancelToken: cancelToken,
@@ -2199,6 +2210,7 @@ AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
           cwd: env.cwd,
           timeout: timeout,
           cancelToken: cancelToken,
+          stdinData: stdinData,
         ),
       );
 
@@ -2262,6 +2274,7 @@ Future<ToolExecutionResult> _shellViaJob(
   ExecutionEnv env,
   ShellJobRegistry jobs,
   String command, {
+  String? stdinData,
   required Duration? timeout,
   required num? timeoutArg,
   required CancelToken? cancelToken,
@@ -2273,6 +2286,7 @@ Future<ToolExecutionResult> _shellViaJob(
       cwd: env.cwd,
       timeout: timeout,
       cancelToken: cancelToken,
+      stdinData: stdinData,
     ),
   );
   final finished = await Future.any<bool>([

@@ -490,10 +490,24 @@ final class _TerminalCliIO implements CliIO {
   bool get supportsRawMode => !headless && stdin.hasTerminal && _rawModeOk;
 
   @override
-  int get columns => stdout.terminalColumns;
+  int get columns {
+    // stdout can be a pipe (session switch replay, headless-ish paths) —
+    // terminalColumns throws StdoutException there (crash.log had two).
+    try {
+      return stdout.terminalColumns;
+    } on StdoutException {
+      return 80;
+    }
+  }
 
   @override
-  int get rows => stdout.terminalLines;
+  int get rows {
+    try {
+      return stdout.terminalLines;
+    } on StdoutException {
+      return 24;
+    }
+  }
 
   void _startRawInput() {
     if (_keySub != null) return;

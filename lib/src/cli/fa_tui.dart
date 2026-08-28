@@ -2212,8 +2212,23 @@ final class FaTuiController {
     return completer.future;
   }
 
+  var _busyDepth = 0;
+
   /// Toggles the animated thinking indicator while a run streams.
+  ///
+  /// Reference-counted: a second submit during a running turn (slash
+  /// commands work mid-stream) must NOT reset the elapsed timer + sticky
+  /// echo on re-enter, and its finally-branch must NOT switch the spinner
+  /// off while the first run is still streaming.
   void sendBusy(bool busy) {
+    if (busy) {
+      _busyDepth++;
+      if (_busyDepth > 1) return;
+    } else {
+      if (_busyDepth == 0) return;
+      _busyDepth--;
+      if (_busyDepth > 0) return;
+    }
     _send(BusyMsg(busy));
   }
 

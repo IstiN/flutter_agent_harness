@@ -172,8 +172,33 @@ void main() {
       );
     });
 
-    test('unclosed fence resumes correctly without rebuilding', () {
-      final session = TranscriptMarkdown(width: 60);
+    test('streaming a markdown table line-by-line stays incremental', () {
+      final session = TranscriptMarkdown(width: 80);
+      final src = <String>[...List.generate(300, (i) => 'seed line $i')];
+      session.sync(src);
+      final rebuildsBefore = TranscriptMarkdown.debugFullRebuilds;
+
+      final tableLines = <String>[
+        '| col A | col B |',
+        '| --- | --- |',
+        for (var i = 0; i < 20; i++) '| cell ${i}a | cell ${i}b |',
+      ];
+      for (final tl in tableLines) {
+        src.add(tl);
+        session.sync(src);
+      }
+
+      expect(
+        TranscriptMarkdown.debugFullRebuilds,
+        rebuildsBefore,
+        reason: 'table streaming must re-walk only the table, '
+            'never the whole history',
+      );
+      final reference = AnsiMarkdown(width: 80).formatAll(src);
+      expect(session.sync(src), reference, reason: 'rows stay byte-exact');
+    });
+
+    test('unclosed fence resumes correctly without rebuilding', () {      final session = TranscriptMarkdown(width: 60);
       session.sync(['```dart']);
       final rebuilds = TranscriptMarkdown.debugFullRebuilds;
 

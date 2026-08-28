@@ -457,8 +457,17 @@ final class LocalShell implements Shell, BackgroundShell {
     final stdout = StringBuffer();
     final stderr = StringBuffer();
     ExecutionError? callbackError;
-    // Close stdin immediately so tools like ripgrep/grep that fall back to
-    // stdin when no paths are given do not hang waiting for terminal input.
+    // Feed optional stdin data (bash tool `stdin` param: a passphrase the
+    // user supplied via the ask UI, a `y\n`), then close the pipe so
+    // tools like ripgrep that fall back to stdin do not hang forever.
+    if (options?.stdinData != null) {
+      try {
+        process.stdin.write(options!.stdinData);
+        await process.stdin.flush();
+      } on Object {
+        // Process already gone — the exit path reports the real status.
+      }
+    }
     unawaited(process.stdin.close());
     final stdoutDone = process.stdout
         .transform(utf8.decoder)
@@ -527,7 +536,16 @@ final class LocalShell implements Shell, BackgroundShell {
     final started = await _start(command, options);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
-    // Background jobs get no stdin either — they are not interactive.
+    // Feed optional stdin data (bash tool `stdin` param), then close the
+    // pipe — background jobs are not interactive beyond this.
+    if (options?.stdinData != null) {
+      try {
+        process.stdin.write(options!.stdinData);
+        await process.stdin.flush();
+      } on Object {
+        // Process already gone — the settle path reports the real status.
+      }
+    }
     unawaited(process.stdin.close());
     final IOSink logSink;
     try {

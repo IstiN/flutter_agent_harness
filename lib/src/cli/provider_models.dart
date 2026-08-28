@@ -146,15 +146,21 @@ extension on AgentCli {
     await _switchCrossProviderModel(key, pipe);
   }
 
-  /// Switches to the provider/model encoded as `provider|model`.
+  /// Switches to the provider/model encoded as `provider|model`. A failing
+  /// switch (key store, SSO mint, dead endpoint) must surface as a notice,
+  /// never bubble into the picker command and take the TUI down.
   Future<void> _switchCrossProviderModel(String key, int pipe) async {
     final providerName = key.substring(0, pipe);
     final modelId = key.substring(pipe + 1);
-    final entry = config.customProviders?.find(providerName);
-    if (entry != null && entry.name != _activeCustomName) {
-      await _switchToSavedProvider(entry);
+    try {
+      final entry = config.customProviders?.find(providerName);
+      if (entry != null && entry.name != _activeCustomName) {
+        await _switchToSavedProvider(entry);
+      }
+      await _switchModel(modelId);
+    } on Object catch (e) {
+      io.writeln('error: model switch to $providerName/$modelId failed: $e');
     }
-    await _switchModel(modelId);
   }
 
   /// Fetches model lists from ALL saved providers in the background and

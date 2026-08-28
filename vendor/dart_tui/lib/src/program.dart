@@ -510,7 +510,19 @@ final class Program {
           }
         }
       }
-      final (nextModel, cmd) = model.update(msg);
+      (Model, Cmd?)? updateResult;
+      try {
+        updateResult = model.update(msg);
+      } catch (e, st) {
+        // A throwing update() must never kill the whole TUI: log and keep
+        // running (matches runCmd's guard above — a picker bug must not
+        // close the app).
+        stderr.writeln('Caught update exception: $e');
+        stderr.writeln(st);
+        enqueue(InterruptMsg());
+        return true;
+      }
+      final (nextModel, cmd) = updateResult!;
       _runningModel = nextModel;
       // Fire cmd asynchronously so its result message is queued and processed
       // in the next event-loop batch, unblocking key-event handling.

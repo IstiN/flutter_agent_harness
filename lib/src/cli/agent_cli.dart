@@ -89,6 +89,8 @@ import '../memory/compaction_memory_hook.dart';
 import '../memory/memory_controller.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
+import '../messaging/schedule_message_tool.dart';
+import '../messaging/scheduled_messages.dart';
 import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
 import '../ttsr/ttsr.dart';
@@ -394,6 +396,9 @@ class AgentCli {
         _memory,
         onChanged: () => unawaited(_refreshMemorySection()),
       ),
+      // schedule_message: self-addressed delayed notes — an agent can
+      // schedule its own follow-up check; delivery rides the inbox idle-wake.
+      scheduleMessageTool(_scheduledMessages),
       // Non-interactive input (piped) gets a null ask callback: ask calls
       // then fail with a "host cannot answer" error result (safe default).
       askTool(callback: io.isInteractive ? _answerAskQuestions : null),
@@ -447,7 +452,7 @@ class AgentCli {
           // initialized once; keeping it tied to the original folder avoids
           // breaking the file-based directory layout. Each mailbox is still
           // namespaced by session id.
-          root: '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
+          root: _messagesRoot = '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
           decodeSessionCwd: decodeSessionCwd,
           homeDir: config.homeDir,
         ),
@@ -760,6 +765,18 @@ class AgentCli {
   /// back to a different root so the mailboxes follow the sessions.
   late final SwappableMessagingRepository _fabricRepository;
 
+  /// The launch-cwd messaging root (also backs scheduled messages).
+  late final String _messagesRoot;
+
+  /// Persisted delayed messages (`schedule_message`): pending records live
+  /// under `<messagesRoot>/_scheduled/` and are delivered into the
+  /// agent's own inbox when due, where the idle-wake starts a turn.
+  late final ScheduledMessageQueue _scheduledMessages = ScheduledMessageQueue(
+    env: _env,
+    repo: () => _fabricRepository,
+    root: () => _messagesRoot,
+  );
+
   /// The session's retained-subagent registry (tests, the app settings
   /// Agents panel, hosts observing children).
   SubagentManager get subagentManager => _subagentManager;
@@ -980,6 +997,9 @@ class AgentCli {
         if (due) await _memory.maintain();
       }),
     );
+    // Due scheduled messages (schedule_message): re-arm any pending records
+    // from previous runs — restart-survivable reminders.
+    unawaited(_scheduledMessages.start());
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
     });

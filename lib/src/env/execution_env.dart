@@ -285,6 +285,7 @@ final class ShellExecOptions {
     this.cancelToken,
     this.onStdout,
     this.onStderr,
+    this.stdinData,
   });
 
   /// Working directory for the command. Defaults to [FileSystem.cwd].
@@ -305,6 +306,11 @@ final class ShellExecOptions {
 
   /// Called with stderr chunks as they are produced.
   final void Function(String chunk)? onStderr;
+
+  /// Optional data written to the command's stdin before the pipe closes
+  /// (a password/passphrase answer, a `y\n` confirmation). Null keeps the
+  /// old behavior: stdin closes immediately.
+  final String? stdinData;
 }
 
 /// Outcome of a completed [Shell.exec] invocation.
