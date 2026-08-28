@@ -36,6 +36,25 @@ extension on AgentCli {
     return null;
   }
 
+  /// The env-resolved stack for a saved entry's key name —
+  /// `FA_KEY_COPILOT_<NAME>` + its `_2`… ring (goal/copilot_provider.md:
+  /// env-first, works in CI without a secure store). Empty when the host
+  /// exposes no environment values. Rings beyond `_9` need the startup
+  /// roles resolution, which enumerates the whole environment.
+  List<ApiKeyCredential> _envKeyStackFor(String keyName) {
+    final read = config.envVarValue;
+    if (read == null) return const [];
+    final secrets = <String, String>{
+      for (var i = 2; i <= 9; i++)
+        if (read.call('${keyName}_$i') case final value? when value.isNotEmpty)
+          '${keyName}_$i': value,
+    };
+    if (read.call(keyName) case final base? when base.isNotEmpty) {
+      secrets[keyName] = base;
+    }
+    return collectKeyStack(secrets, keyName);
+  }
+
   /// The host-scoped store key name for a NON-catalog-default endpoint
   /// (CodeMie SSO, DIAL, self-hosted) — where SSO-cookie saves put their
   /// cookie even when no registry entry recorded an explicit keyName. Null

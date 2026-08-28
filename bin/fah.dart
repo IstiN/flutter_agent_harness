@@ -191,28 +191,34 @@ Model _buildModel(CliArgs args) {
   );
 }
 
-String? _optionalApiKey(
+/// The env names that can hold [provider]'s API key: the catalog spec's
+/// names (copilot → COPILOT_GITHUB_TOKEN, kimi → KIMI_API_KEY, …), plus
+/// the two non-catalog slots; unknown kinds keep the historical
+/// OpenRouter/OpenAI pair.
+List<String> _apiKeyEnvNames(String provider) => switch (provider) {
+  'vision' => const ['VISION_API_KEY'],
+  'transcribe' => const ['TRANSCRIBE_API_KEY'],
+  _ =>
+    providerCatalog[provider]?.apiKeyEnvNames ??
+        const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
+};
+
+/// Resolves [provider]'s API key headlessly: a genuine environment value
+/// of the catalog env names, then endpoint-scoped secure-store entries
+/// (`FA_KEY_<HOST>` — what /provider writes — plus any saved custom entry's
+/// name-scoped key for this endpoint), then legacy env-name store entries
+/// from older versions. [env] overrides Platform.environment (tests).
+String? optionalProviderApiKey(
   String provider,
   SecureKeyCache keys, {
   String? baseUrl,
   Iterable<String>? scopedKeyNames,
+  Map<String, String>? env,
 }) {
-  final env = Platform.environment;
-  final names = switch (provider) {
-    'anthropic' => const ['ANTHROPIC_API_KEY'],
-    'google' => const ['GOOGLE_API_KEY'],
-    'dial' => const ['DIAL_API_KEY'],
-    'minimax' => const ['MINIMAX_API_KEY'],
-    'vision' => const ['VISION_API_KEY'],
-    'transcribe' => const ['TRANSCRIBE_API_KEY'],
-    _ => const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
-  };
-  // Resolution order: a genuine environment value of the catalog env names,
-  // then endpoint-scoped secure-store entries (FA_KEY_<HOST> — what
-  // /provider writes — plus any saved custom entry's name-scoped key for
-  // this endpoint), then legacy env-name store entries from older versions.
+  final environment = env ?? Platform.environment;
+  final names = _apiKeyEnvNames(provider);
   for (final name in names) {
-    final value = env[name];
+    final value = environment[name];
     if (value != null && value.isNotEmpty) return value;
   }
   if (baseUrl != null) {
@@ -232,6 +238,12 @@ String? _optionalApiKey(
   return null;
 }
 
+/// Every catalog provider's env names (a redaction preload set: an env
+/// value of ANY supported provider key must never reach the transcript).
+List<String> _allCatalogEnvNames() => [
+  for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
+];
+
 String _resolveApiKey(
   String provider,
   SecureKeyCache keys, {
@@ -240,7 +252,7 @@ String _resolveApiKey(
   Iterable<String>? scopedKeyNames,
 }) {
   final key =
-      _optionalApiKey(
+      optionalProviderApiKey(
         provider,
         keys,
         baseUrl: baseUrl,
@@ -248,16 +260,10 @@ String _resolveApiKey(
       ) ??
       fallback;
   if (key == null || key.isEmpty) {
-    final name = switch (provider) {
-      'anthropic' => 'ANTHROPIC_API_KEY',
-      'google' => 'GOOGLE_API_KEY',
-      'dial' => 'DIAL_API_KEY',
-      'minimax' => 'MINIMAX_API_KEY',
-      'vision' => 'VISION_API_KEY',
-      'transcribe' => 'TRANSCRIBE_API_KEY',
-      _ => 'OPENROUTER_API_KEY',
-    };
-    _fail('missing API key: set $name in the environment');
+    _fail(
+      'missing API key: set ${_apiKeyEnvNames(provider).first} in the '
+      'environment',
+    );
   }
   return key;
 }
@@ -906,7 +912,7 @@ Future<void> _runApp(List<String> args) async {
       if (entry.baseUrl == baseUrl && entry.keyName != null) entry.keyName!,
   ];
   final apiKey = defaultRoleResolved || customEndpoint || interactive
-      ? (_optionalApiKey(
+      ? (optionalProviderApiKey(
               provider,
               keyCache,
               baseUrl: baseUrl,
@@ -925,13 +931,8 @@ Future<void> _runApp(List<String> args) async {
   // session files. The spawned shell already inherits the process
   // environment, so no env injection is needed here.
   final redactor = SecretRedactor();
-  for (final name in const [
-    'OPENROUTER_API_KEY',
-    'OPENAI_API_KEY',
-    'ANTHROPIC_API_KEY',
-    'GOOGLE_API_KEY',
-    'VISION_API_KEY',
-    'TRANSCRIBE_API_KEY',
+  for (final name in [
+    ..._allCatalogEnvNames(),
     'BRAVE_API_KEY',
     'TAVILY_API_KEY',
   ]) {

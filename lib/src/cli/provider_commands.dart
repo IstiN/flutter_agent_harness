@@ -494,12 +494,13 @@ extension on AgentCli {
   }
 
   /// Dispatches the subcommand forms of `/provider` (custom, openrouter
-  /// oauth, chatgpt oauth, codemie sso, dial setup). Returns true when one
-  /// handled it.
+  /// oauth, chatgpt oauth, copilot connect, codemie sso, dial setup).
+  /// Returns true when one handled it.
   bool _dispatchProviderSubcommand(List<String> args) {
     if (_startCustomProviderArg(args)) return true;
     if (_startOpenRouterArg(args)) return true;
     if (_startChatGptOAuthArg(args)) return true;
+    if (_startCopilotArg(args)) return true;
     if (_startCodeMieArg(args)) return true;
     if (_startDialSetupArg(args)) return true;
     if (_startKimiArg(args)) return true;
@@ -548,6 +549,215 @@ extension on AgentCli {
     _startProviderFlow();
     return true;
   }
+
+  /// The `/provider copilot` branch: connects a GitHub Copilot account
+  /// (device flow, or pasting an existing GitHub token) and saves it as a
+  /// named registry entry. Returns true when the command targeted the flow.
+  bool _startCopilotArg(List<String> args) {
+    if (args.first != 'copilot') return false;
+    if (args.length > 1) {
+      io.writeln('usage: /provider copilot');
+      return true;
+    }
+    unawaited(_handleCopilotConnectCommand());
+    return true;
+  }
+
+  /// Runs the Copilot connect flow with the shared flow gate (the REPL
+  /// keeps reading lines so the flow's prompts get answered).
+  Future<void> _handleCopilotConnectCommand() async {
+    if (_providerFlowActive) return;
+    _providerFlowActive = true;
+    try {
+      await _runCopilotConnectCommand();
+    } finally {
+      _providerFlowActive = false;
+      _promptLineBuffer.clear();
+    }
+  }
+
+  Future<void> _runCopilotConnectCommand() async {
+    final registry = config.customProviders;
+    // Existing Copilot accounts first: pick one, or add another (goal:
+    // multi-account is not an option).
+    final accounts = [
+      for (final entry in registry?.entries ?? const <CustomProviderEntry>[])
+        if (entry.apiType == 'copilot') entry,
+    ];
+    if (accounts.isNotEmpty) {
+      final choice = await _pickOption('Copilot account', [
+        for (final entry in accounts)
+          (entry.name, entry.name, '${entry.baseUrl} · ${entry.modelId}'),
+        (
+          'add',
+          'add another account',
+          'connect a GitHub account (device flow or paste a token)',
+        ),
+      ]);
+      if (choice == null) {
+        io.writeln('Copilot connect cancelled');
+        return;
+      }
+      if (choice != 'add') {
+        await _switchToSavedProvider(registry!.find(choice)!);
+        return;
+      }
+    }
+
+    final githubToken = await _askCopilotGithubToken();
+    if (githubToken == null) return;
+    await _applyCopilotCredentials(githubToken);
+  }
+
+  /// The sign-in step: the GitHub device flow, or pasting an existing
+  /// token (the always-available fallback — the device flow can be
+  /// rejected server-side, or the host has no browser). Null = cancelled.
+  Future<String?> _askCopilotGithubToken() async {
+    final mode = await _pickOption('Copilot sign-in', [
+      (
+        'device',
+        'GitHub device flow',
+        'open github.com/login/device and enter the shown code',
+      ),
+      (
+        'paste',
+        'paste an existing GitHub token',
+        'works when the device flow is unavailable (headless, CI)',
+      ),
+    ]);
+    if (mode == null) {
+      io.writeln('Copilot connect cancelled');
+      return null;
+    }
+    if (mode == 'paste') {
+      final typed = await _askLine('GitHub token: ', secret: true);
+      final token = typed?.trim();
+      if (token == null || token.isEmpty) {
+        io.writeln('Copilot connect cancelled');
+        return null;
+      }
+      return token;
+    }
+    try {
+      return await (config.copilotDeviceFlowFn ?? _defaultCopilotDeviceFlow)(
+        clientId: _copilotClientIdOverride(),
+        onStatus: io.writeln,
+      );
+    } on CopilotDeviceFlowError catch (error) {
+      io.writeln('Copilot device flow failed: ${error.message}');
+      return null;
+    } on Object catch (error) {
+      io.writeln('Copilot device flow failed: $error');
+      return null;
+    }
+  }
+
+  /// The FA_COPILOT_CLIENT_ID override, or null for the pinned VS Code
+  /// Copilot client id.
+  String? _copilotClientIdOverride() {
+    final value = config.envVarValue?.call('FA_COPILOT_CLIENT_ID');
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  /// The production device flow: request a device code, show it, poll.
+  Future<String> _defaultCopilotDeviceFlow({
+    String? clientId,
+    void Function(String status)? onStatus,
+  }) async {
+    final id = clientId ?? copilotDeviceClientId;
+    final grant = await requestCopilotDeviceGrant(clientId: id);
+    onStatus?.call(
+      'open ${grant.verificationUri} and enter the code: ${grant.userCode}',
+    );
+    return pollCopilotDeviceGrant(
+      grant: grant,
+      clientId: id,
+      delay: (d) => Future<void>.delayed(d),
+      onStatus: onStatus,
+    );
+  }
+
+  /// Applies a connected GitHub token: resolve the login, name the entry
+  /// (default `copilot-<login>`), pick the plan (base URL), store the
+  /// token under the entry-scoped key, register, and switch.
+  Future<void> _applyCopilotCredentials(String githubToken) async {
+    final spec = providerCatalog['copilot']!;
+    final String login;
+    try {
+      login = await (config.copilotUserFn ?? _defaultCopilotUser)(githubToken);
+    } on Object catch (error) {
+      io.writeln('could not resolve the GitHub account: $error');
+      return;
+    }
+
+    // The default entry name IS the account identity: re-running the flow
+    // for the same login reuses that entry (and its key slot), so only
+    // that account's token is renewed.
+    final fallback = 'copilot-$login';
+    // An existing COPILOT entry under the same name is the re-auth target,
+    // not a clash (the plan — and so the URL — isn't known yet).
+    final name =
+        await _askConnectProviderName(
+          fallback,
+          allowClash: (entry) => entry.apiType == 'copilot',
+        ) ??
+        fallback;
+
+    final baseUrl = await _copilotAskAccountType();
+    if (baseUrl == null) {
+      io.writeln('Copilot connect cancelled');
+      return;
+    }
+
+    final registry = config.customProviders;
+    final keyName =
+        registry?.find(name)?.keyName ??
+        CustomProviderRegistry.copilotEntryKeyName(name);
+    await _storeProviderToken(spec, baseUrl, githubToken, keyName: keyName);
+    registry?.add(
+      CustomProviderEntry(
+        name: name,
+        apiType: 'copilot',
+        baseUrl: baseUrl,
+        modelId: buildCliDefaultModel('copilot').id,
+        keyName: keyName,
+      ),
+    );
+    _activeCustomName = name;
+    io.writeln('saved provider $name (listed in /provider)');
+    await _switchProvider(
+      spec,
+      baseUrl,
+      buildCliDefaultModel('copilot').id,
+      token: githubToken,
+      tokenKeyName: keyName,
+    );
+  }
+
+  /// The plan step (goal/copilot_provider.md GetBaseURL): the three named
+  /// Copilot hosts, or an explicit base URL for anything new/corporate.
+  /// Null = cancelled.
+  Future<String?> _copilotAskAccountType() async {
+    final plan = await _pickOption('Copilot plan', [
+      ('individual', 'individual', copilotIndividualBaseUrl),
+      ('business', 'business', copilotBusinessBaseUrl),
+      ('enterprise', 'enterprise', copilotEnterpriseBaseUrl),
+      ('custom', 'custom base URL', 'a corporate/new Copilot endpoint'),
+    ]);
+    return switch (plan) {
+      null => null,
+      'individual' => copilotIndividualBaseUrl,
+      'business' => copilotBusinessBaseUrl,
+      'enterprise' => copilotEnterpriseBaseUrl,
+      _ => _askLine(
+        'Copilot API base URL: ',
+      ).then((typed) => typed?.trim().isEmpty ?? true ? null : typed!.trim()),
+    };
+  }
+
+  /// The production GitHub account lookup for a token.
+  Future<String> _defaultCopilotUser(String githubToken) =>
+      fetchGitHubLogin(githubToken: githubToken);
 
   Future<OpenRouterOAuthKey> _defaultOpenRouterExchange({
     required String code,
@@ -1383,12 +1593,15 @@ extension on AgentCli {
   /// [fallback] (usually the endpoint host). A name already used by an entry
   /// on a DIFFERENT endpoint retries, and so does a name matching a CATALOG
   /// provider — `/provider kimi` & friends route to the catalog flow before
-  /// the registry lookup, so such an entry would be unreachable. Null only
-  /// on cancel (Ctrl-C) — flows whose credentials are already minted
+  /// the registry lookup, so such an entry would be unreachable.
+  /// [allowClash] exempts individual clashes (Copilot re-auth: the entry it
+  /// renews is its own clash — the plan isn't known at name time). Null
+  /// only on cancel (Ctrl-C) — flows whose credentials are already minted
   /// (OAuth/SSO) substitute [fallback] instead of aborting.
   Future<String?> _askConnectProviderName(
     String fallback, {
     String? sameBaseUrl,
+    bool Function(CustomProviderEntry entry)? allowClash,
   }) async {
     final typed = await _askLine('provider name [$fallback]: ');
     if (typed == null) return null;
@@ -1398,12 +1611,22 @@ extension on AgentCli {
         '"$name" is a built-in provider name — /provider $name routes to it, '
         'pick another name',
       );
-      return _askConnectProviderName(fallback, sameBaseUrl: sameBaseUrl);
+      return _askConnectProviderName(
+        fallback,
+        sameBaseUrl: sameBaseUrl,
+        allowClash: allowClash,
+      );
     }
     final clash = config.customProviders?.find(name);
-    if (clash != null && clash.baseUrl != sameBaseUrl) {
+    if (clash != null &&
+        clash.baseUrl != sameBaseUrl &&
+        !(allowClash != null && allowClash(clash))) {
       io.writeln('name "$name" is already used by ${clash.baseUrl} — retry');
-      return _askConnectProviderName(fallback, sameBaseUrl: sameBaseUrl);
+      return _askConnectProviderName(
+        fallback,
+        sameBaseUrl: sameBaseUrl,
+        allowClash: allowClash,
+      );
     }
     return name;
   }
@@ -1549,6 +1772,13 @@ extension on AgentCli {
             keyName: pinnedKeyName,
           );
           rolesResolver.addSecret(pinnedKeyName!, token);
+        } else if (pinnedKeyName != null) {
+          // No fresh token: seed the resolver with the entry key name's env
+          // ring (FA_KEY_COPILOT_<NAME> + _2, …) so the pinned chain
+          // resolves (and rotates) without a secure store.
+          for (final credential in _envKeyStackFor(pinnedKeyName)) {
+            rolesResolver.addSecret(credential.name, credential.value);
+          }
         }
         try {
           rolesResolver.setDefaultChain([
@@ -1968,19 +2198,25 @@ extension on AgentCli {
     return null;
   }
 
-  /// Key resolution for ANY OTHER endpoint: only the endpoint-scoped store
-  /// keys (the active custom entry's key name, then the host-scoped one) —
-  /// the spec's env names (`OPENROUTER_API_KEY` & friends) describe the
-  /// default endpoint and must never hijack a custom one (the user's
-  /// OpenRouter key silently serving api.aiin.by).
+  /// Key resolution for ANY OTHER endpoint: the active custom entry's own
+  /// key name (its env ring FIRST — `FA_KEY_COPILOT_<NAME>` + `_2`… works
+  /// in CI without a secure store — then the store slot), then the
+  /// host-scoped store key. The spec's env names (`OPENROUTER_API_KEY` &
+  /// friends) describe the default endpoint and must never hijack a custom
+  /// one (the user's OpenRouter key silently serving api.aiin.by).
   String? _customEndpointKey(String baseUrl) {
-    final keys = config.secureKeys;
-    if (keys == null) return null;
     final entryKey = _activeCustomKeyName();
     if (entryKey != null) {
-      final entryValue = _nonEmptyStoredKey(keys, entryKey);
-      if (entryValue != null) return entryValue;
+      final envStack = _envKeyStackFor(entryKey);
+      if (envStack.isNotEmpty) return envStack.first.value;
+      final keys = config.secureKeys;
+      if (keys != null) {
+        final entryValue = _nonEmptyStoredKey(keys, entryKey);
+        if (entryValue != null) return entryValue;
+      }
     }
+    final keys = config.secureKeys;
+    if (keys == null) return null;
     return _nonEmptyStoredKey(keys, CustomProviderRegistry.keyNameFor(baseUrl));
   }
 

@@ -126,6 +126,38 @@ Future<CopilotApiToken> fetchCopilotApiToken({
   return CopilotApiToken.fromJson(decoded);
 }
 
+/// The GitHub login behind a token (`GET https://api.github.com/user`,
+/// goal: the account name is the default Copilot entry name
+/// `copilot-<login>`). Throws [CopilotAuthException] on a non-200.
+Future<String> fetchGitHubLogin({
+  required String githubToken,
+  http.Client? client,
+}) async {
+  final transport = client ?? sharedProviderHttpClient();
+  final response = await transport
+      .get(
+        Uri.parse('https://api.github.com/user'),
+        headers: {
+          'authorization': 'token $githubToken',
+          'accept': 'application/json',
+        },
+      )
+      .timeout(effectiveProviderConnectTimeout);
+  if (response.statusCode != 200) {
+    throw CopilotAuthException(
+      'could not resolve the GitHub account (HTTP ${response.statusCode}): '
+      '${response.body.trim()}',
+    );
+  }
+  final decoded = jsonDecode(response.body);
+  if (decoded is! Map<String, dynamic> || decoded['login'] is! String) {
+    throw const CopilotAuthException(
+      'the GitHub user response had an unexpected shape.',
+    );
+  }
+  return decoded['login'] as String;
+}
+
 /// The mandatory Copilot API headers, per request (goal:
 /// copilot-proxy-go internal/api/config.go: BuildCopilotHeaders). A fresh
 /// `x-request-id` UUID is minted per call.

@@ -59,6 +59,8 @@ import '../model_roles/model_roles.dart';
 import '../model_roles/vision_models.dart';
 import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
+import '../providers/copilot_device_flow.dart';
+import '../providers/copilot_oauth.dart';
 import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
@@ -452,7 +454,8 @@ class AgentCli {
           // initialized once; keeping it tied to the original folder avoids
           // breaking the file-based directory layout. Each mailbox is still
           // namespaced by session id.
-          root: _messagesRoot = '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
+          root: _messagesRoot =
+              '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
           decodeSessionCwd: decodeSessionCwd,
           homeDir: config.homeDir,
         ),

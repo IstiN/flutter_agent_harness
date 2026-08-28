@@ -258,6 +258,51 @@ void main() {
     });
   });
 
+  group('fetchGitHubLogin', () {
+    test('GETs the authenticated user and returns the login', () async {
+      http.BaseRequest? captured;
+      final client = http_testing.MockClient((request) async {
+        captured = request;
+        return http.Response('{"login": "octocat"}', 200);
+      });
+
+      final login = await fetchGitHubLogin(githubToken: 'gh-1', client: client);
+
+      expect(login, 'octocat');
+      expect(captured!.url, Uri.parse('https://api.github.com/user'));
+      expect(hdr(captured!, 'authorization'), 'token gh-1');
+      expect(hdr(captured!, 'accept'), 'application/json');
+    });
+
+    test('a non-200 carries the status and body', () async {
+      final client = http_testing.MockClient(
+        (_) async => http.Response('{"message": "Bad credentials"}', 401),
+      );
+
+      await expectLater(
+        fetchGitHubLogin(githubToken: 'dead', client: client),
+        throwsA(
+          isA<CopilotAuthException>().having(
+            (e) => e.message,
+            'message',
+            contains('401'),
+          ),
+        ),
+      );
+    });
+
+    test('an unexpected shape names the response', () async {
+      final client = http_testing.MockClient(
+        (_) async => http.Response('{}', 200),
+      );
+
+      await expectLater(
+        fetchGitHubLogin(githubToken: 'gh', client: client),
+        throwsA(isA<CopilotAuthException>()),
+      );
+    });
+  });
+
   group('copilotApiHeaders', () {
     test('carries the mandatory Copilot headers', () {
       final headers = copilotApiHeaders(copilotToken: 'cop-1');

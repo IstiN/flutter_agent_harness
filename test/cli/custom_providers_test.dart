@@ -143,6 +143,18 @@ void main() {
       );
     });
 
+    test('copilotEntryKeyName scopes to the entry name', () {
+      expect(
+        CustomProviderRegistry.copilotEntryKeyName('copilot-octocat'),
+        'FA_KEY_COPILOT_COPILOT_OCTOCAT',
+      );
+      // Non-alphanumerics collapse; edges trim.
+      expect(
+        CustomProviderRegistry.copilotEntryKeyName('Copilot -- Hub.Org_2'),
+        'FA_KEY_COPILOT_COPILOT_HUB_ORG_2',
+      );
+    });
+
     test('keyNameFor scopes to the provider name when given', () {
       expect(
         CustomProviderRegistry.keyNameFor(
