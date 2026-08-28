@@ -554,6 +554,21 @@ settings; unit/widget tests green.
 surprises, decisions taken during implementation. Newest first, one bullet
 per fact.)
 
+- CI round (PR #2 quality-gate loop, all resolved same day): (1) main moved
+  (v0.1.239/0.1.240 — owner fixed the app suite + auto_compactor fixture
+  upstream, healing our carried carve-outs) → merged main into the branch,
+  resolved the CHANGELOG Unreleased/release-section overlap; post-merge
+  tree 3134 root / 153 fa_ui / 76 fa_llm all green. (2) quality FAIL:
+  2800-line guard — copilot fixtures pushed agent_cli_provider_test.dart
+  to 2985 → split into test/cli/copilot_provider_test.dart (2684+386).
+  (3) quality FAIL: duplicate_export warnings — the merge kept both
+  copies of the scheduled-messages exports (ours + main's identical
+  0.1.239 ones) → dropped ours. (4) quality FAIL: CRAP 3906 — the new
+  headless test imported bin/fah.dart, dragging bin into the lcov at
+  ~0%; moved optionalProviderApiKey into lib/src/cli/
+  headless_provider_key.dart (io-backed lib convention, exported from
+  lib/io.dart) — crap4dart back to the pristine-main baseline (Max 12.00
+  OK). Final: Quality gates + CodeQL all PASS, mergeStateStatus CLEAN.
 - gates observation (final gates agent, post-refactor): root suite 3126/1/1
   (sole failure = pre-existing auto_compactor fixture load error, present
   unchanged on pristine origin/main); new-file coverage 94.5–100%;
