@@ -53,8 +53,6 @@ export 'src/messaging/schedule_message_tool.dart';
 export 'src/messaging/scheduled_messages.dart';
 export 'src/messaging/file_messaging_repository.dart';
 export 'src/messaging/messaging_repository.dart';
-export 'src/messaging/schedule_message_tool.dart';
-export 'src/messaging/scheduled_messages.dart';
 export 'src/model.dart';
 export 'src/model_roles/model_roles.dart';
 export 'src/model_roles/vision_models.dart';
