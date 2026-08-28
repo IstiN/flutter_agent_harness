@@ -232,7 +232,15 @@ final class RemoteCatalogEnrichment {
   /// later preload can recover without surfacing prior failures.
   Future<void> preload({Uri? url, http.Client? client}) async {
     final loaded = await fetchRemoteModelsCatalog(url: url, client: client);
-    if (loaded != null) _cached = loaded;
+    if (loaded != null) {
+      _cached = loaded;
+      return;
+    }
+    // Network unavailable / 404 / timeout — seed the bundled fallback so
+    // pickers still get catalog metadata + the data-driven chat id
+    // fallback chain. The remote URL remains the source of truth when
+    // it answers.
+    _cached ??= bundledRemoteModelsCatalog;
   }
 
   /// Merges the cached catalog into [info] for [providerKind]. Used by
@@ -263,6 +271,15 @@ final class RemoteCatalogEnrichment {
       slot: slot,
       catalog: _cached,
     );
+  }
+
+  /// Chat model ids the catalog knows about for [providerKind] — the
+  /// LAST-RESORT fallback the picker uses when the live `/v1/models`
+  /// fetch is empty. Endpoint-reported ids always win; this list is
+  /// only consulted on the empty-result branch so the picker stays
+  /// useful when the endpoint can't answer.
+  List<String> chatFallbackFor(String? providerKind) {
+    return remoteChatModelsFor(providerKind: providerKind, catalog: _cached);
   }
 }
 

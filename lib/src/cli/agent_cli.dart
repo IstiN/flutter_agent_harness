@@ -29,6 +29,7 @@ import 'key_event.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
+import '../providers/models_for_endpoint.dart';
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart';
 import '../a2a/a2a_manager.dart';
@@ -713,6 +714,14 @@ class AgentCli {
   @visibleForTesting
   List<MenuItem> buildModelMenuForTest(String filter) =>
       _buildModelMenu(filter);
+
+  /// The deduped `(provider, modelId)` pair list the picker is built
+  /// from. Exposed for tests so cross-provider invariants (catalog
+  /// fallback chains, dedup with the saved entry's modelId) can be
+  /// asserted without driving the TUI two-step picker.
+  @visibleForTesting
+  List<(String, String)> crossProviderCandidatesForTest([String filter = '']) =>
+      _crossProviderCandidates(filter);
 
   /// Test seam for the TUI's model-menu selection: routes `@<provider>`
   /// (the two-step pick's provider row) and `provider|model` keys the same

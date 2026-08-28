@@ -287,6 +287,94 @@ void main() {
     });
   });
 
+  group('remoteChatModelsFor', () {
+    test('returns contextWindow keys for the requested provider', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'contextWindows': {
+              'MiniMax-M3': 1000000,
+              'MiniMax-M2.7': 204800,
+              'MiniMax-M2': 204800,
+            },
+          },
+        },
+      });
+      expect(remoteChatModelsFor(providerKind: 'minimax', catalog: catalog), [
+        'MiniMax-M3',
+        'MiniMax-M2.7',
+        'MiniMax-M2',
+      ]);
+    });
+
+    test('returns empty list when the catalog is null', () {
+      expect(
+        remoteChatModelsFor(providerKind: 'minimax', catalog: null),
+        isEmpty,
+      );
+    });
+
+    test('returns empty list when the provider is unknown', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'contextWindows': {'MiniMax-M3': 1000000},
+          },
+        },
+      });
+      expect(
+        remoteChatModelsFor(providerKind: 'openai', catalog: catalog),
+        isEmpty,
+      );
+    });
+
+    test('returns empty list when the provider has no contextWindows', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'media': {
+              'imageGeneration': ['image-01'],
+            },
+          },
+        },
+      });
+      expect(
+        remoteChatModelsFor(providerKind: 'minimax', catalog: catalog),
+        isEmpty,
+      );
+    });
+
+    test('providerKind null is treated as no-match', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'contextWindows': {'MiniMax-M3': 1000000},
+          },
+        },
+      });
+      expect(
+        remoteChatModelsFor(providerKind: null, catalog: catalog),
+        isEmpty,
+      );
+    });
+
+    test('RemoteCatalogEnrichment.chatFallbackFor delegates', () async {
+      final fake = RemoteCatalogEnrichment();
+      await fake.preload(
+        client: MockClient((req) async {
+          return http.Response(
+            '{"providers": {"minimax": {"contextWindows": '
+            '{"MiniMax-M3": 1000000}}}}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      expect(fake.chatFallbackFor('minimax'), ['MiniMax-M3']);
+      expect(fake.chatFallbackFor('openai'), isEmpty);
+    });
+  });
+
   group('fetchRemoteModelsCatalog', () {
     test('decodes a valid payload', () async {
       final client = MockClient((req) async {
@@ -360,14 +448,22 @@ void main() {
       },
     );
 
-    test('preload leaves cached untouched on failure', () async {
+    test('preload falls back to the bundled catalog on failure', () async {
       final enrichment = RemoteCatalogEnrichment();
       final client = MockClient((req) async => http.Response('bad', 500));
       await enrichment.preload(
         url: Uri.parse('https://example.test/catalog.json'),
         client: client,
       );
-      expect(enrichment.cached, isNull);
+      // Network/parse failure: the in-process bundled catalog seeds the
+      // enrichment so the picker still has data-driven context windows
+      // and media lists. Without this the picker collapses to "1 model"
+      // for any provider whose /v1/models fetch also fails.
+      expect(enrichment.cached, isNotNull);
+      expect(
+        enrichment.cached!.providers['minimax']?.contextWindows['MiniMax-M3'],
+        1000000,
+      );
     });
 
     test('mediaFor returns the catalog list for the slot', () async {

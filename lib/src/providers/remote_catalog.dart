@@ -119,7 +119,7 @@ const String defaultRemoteCatalogUrl = 'https://fa1.dev/models-catalog.json';
 /// Fetches the remote catalog. Honours a 10-second connect/idle budget
 /// (matches the other lightweight endpoint reads in [models_endpoint])
 /// and never throws — every error returns `null`, the host falls back to
-/// its local defaults + the endpoint's own `/v1/models`.
+/// [bundledRemoteModelsCatalog] + the endpoint's own `/v1/models`.
 Future<RemoteModelsCatalog?> fetchRemoteModelsCatalog({
   Uri? url,
   http.Client? client,
@@ -141,6 +141,35 @@ Future<RemoteModelsCatalog?> fetchRemoteModelsCatalog({
     if (ownsClient) httpClient.close();
   }
 }
+
+/// Bundled fallback catalog — ships in-process so the picker still
+/// works when the remote URL is down (the user just reported "только
+/// одна m3 захардкожена" because the GitHub Pages site at fa1.dev
+/// didn't ship the catalog JSON yet). The remote fetch is the source
+/// of truth; this is the offline seed. The catalog contains ONLY
+/// metadata the chat endpoint doesn't publish (context windows, media
+/// slots) and the chat ids the picker falls back on when `/v1/models`
+/// is unreachable. Keep it data-shaped (a single JSON literal) so the
+/// remote catalog can replace it 1:1 the day fa1.dev ships.
+final RemoteModelsCatalog bundledRemoteModelsCatalog =
+    RemoteModelsCatalog.fromJson(const {
+      'providers': {
+        'minimax': {
+          'contextWindows': {
+            'MiniMax-M3': 1000000,
+            'MiniMax-M2.7': 204800,
+            'MiniMax-M2': 204800,
+            'MiniMax-M1': 128000,
+          },
+          'media': {
+            'imageGeneration': ['image-01'],
+            'videoGeneration': ['video-01'],
+            'speech': ['speech-01'],
+            'transcription': ['asr-01'],
+          },
+        },
+      },
+    });
 
 /// The host-injected accessor. The CLI passes its yaml override; the
 /// app passes its in-memory config.
@@ -198,4 +227,22 @@ List<String> remoteMediaModelsFor({
   final entry = catalog.providers[providerKind ?? ''];
   if (entry == null) return const [];
   return entry.media[slot] ?? const [];
+}
+
+/// Chat model ids the catalog knows about for [providerKind] — used
+/// only as a LAST-RESORT picker fallback when the live `/v1/models`
+/// fetch returns an empty list (e.g. token failure, 5xx, endpoint down).
+/// The endpoint is ALWAYS the source of truth; this list just keeps the
+/// picker from collapsing to the saved entry's single modelId when the
+/// endpoint can't answer. The catalog ships these ids explicitly in
+/// `contextWindows` so the data is data-driven, not hardcoded.
+List<String> remoteChatModelsFor({
+  required String? providerKind,
+  required RemoteModelsCatalog? catalog,
+}) {
+  if (catalog == null) return const [];
+  final entry = catalog.providers[providerKind ?? ''];
+  if (entry == null) return const [];
+  // Insertion order matches the catalog author intent (newest first).
+  return [for (final key in entry.contextWindows.keys) key];
 }
