@@ -458,7 +458,7 @@ class AgentService extends ChangeNotifier
         '$sessionsRoot/${encodeSessionCwd(env.sessionCwd)}/messages';
     final fabricRepo = FileMessagingRepository(
       env: env,
-      root: () => messagesRoot,
+      root: messagesRoot,
       decodeSessionCwd: decodeSessionCwd,
       homeDir: null,
     );
@@ -998,6 +998,7 @@ class AgentService extends ChangeNotifier
   }
 
   late final Agent _agent;
+  late final ScheduledMessageQueue _scheduledMessages;
 
   /// Response deadline for one agent run; 10 minutes for the on-device
   /// providers (WebLLM's and transformers.js's first run compiles WebGPU
@@ -2644,6 +2645,9 @@ class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
 
   @override
   void onDone(int passes, int tokens) {}
+
+  @override
+  void onDelta(String delta) {}
 
   @override
   void onBothRolesFailed(Object lastError) {

@@ -15,6 +15,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
+import 'package:fa/services/copilot_connect_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -2108,6 +2109,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   final registry = widget.registry;
                   if (registry == null) return;
                   await runChatGptOAuthFlow(
+                    context: context,
+                    registry: registry,
+                    service: service,
+                    lastConnectionStore:
+                        widget.lastConnectionStore ??
+                        LastConnectionStore.inMemory(),
+                  );
+                },
+                onCopilotConnect: () async {
+                  final registry = widget.registry;
+                  if (registry == null) return;
+                  await runCopilotConnectFlow(
                     context: context,
                     registry: registry,
                     service: service,
