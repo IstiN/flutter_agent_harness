@@ -1660,4 +1660,8 @@
 
 - fix(compaction): 10-minute attempt budget — a hung summarizer can no longer wedge the turn (0.1.240)
 
+## 0.1.242
+
+- feat(catalog,ui): remote models catalog + thinking markdown + table CRAP fix (0.1.241)
+
 ## Unreleased
