@@ -33,7 +33,7 @@ dependencies:
   crypto: ^3.0.3
   dart_tui:
     path: vendor/dart_tui
-  flutter_agent_memory: ^0.1.0
+  flutter_agent_memory: ^0.1.1
   http: ^1.6.0
   image: ^4.9.1
   meta: ^1.18.0

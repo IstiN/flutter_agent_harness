@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.235
+
+- deps: flutter_agent_memory ^0.1.1 — MemoryDeletionService and
+  MemoryRevisionService (+ MemoryRevision, ConcurrentRevisionException)
+  are now public exports, so pendingDeletions/markConsolidated and the
+  consolidate(expectedRevisionHash:) contract are reachable directly.
+
 ## 0.1.234
 
 - fix(memory): `memory_delete` now goes through `KBMemoryStore.deleteRecord`
