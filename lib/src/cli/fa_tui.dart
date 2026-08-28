@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:convert' show latin1, utf8;
 import 'dart:io'
     show IOSink, Platform, Process, ProcessException, ProcessResult, stdin;
@@ -2221,15 +2222,13 @@ final class FaTuiController {
   /// echo on re-enter, and its finally-branch must NOT switch the spinner
   /// off while the first run is still streaming.
   void sendBusy(bool busy) {
-    if (busy) {
-      _busyDepth++;
-      if (_busyDepth > 1) return;
-    } else {
-      if (_busyDepth == 0) return;
-      _busyDepth--;
-      if (_busyDepth > 0) return;
-    }
-    _send(BusyMsg(busy));
+    // Clamp at zero so an unpaired release cannot poison the count.
+    final depth = math.max(0, _busyDepth + (busy ? 1 : -1));
+    final wasBusy = _busyDepth > 0;
+    _busyDepth = depth;
+    // Only the 0→1 / 1→0 edges reach the model; a re-entrant submit
+    // (slash command mid-stream) keeps the spinner and elapsed timer.
+    if ((depth > 0) != wasBusy) _send(BusyMsg(busy));
   }
 
   /// Relabels the busy row while a run streams (silent post-answer phases:

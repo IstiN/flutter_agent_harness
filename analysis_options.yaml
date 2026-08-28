@@ -12,3 +12,6 @@ analyzer:
     - yoclip/**
     # Reusable Flutter package with its own analysis_options.
     - packages/**
+    # Standalone Flutter app (own pubspec/analysis_options) — gated by
+    # `flutter analyze` in its own toolchain, not the harness dart gate.
+    - flutter_app/**

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -14,6 +16,10 @@ final class _RecordingHooks implements AutoCompactorHooks {
   final passes = <AutoCompactorPass>[];
   int? donePasses;
   int doneTokens = 0;
+  final deltas = <String>[];
+
+  @override
+  void onDelta(String delta) => deltas.add(delta);
 
   @override
   void onPass(AutoCompactorPass pass) => passes.add(pass);
@@ -88,6 +94,7 @@ void main() {
     _FakeSummarizer fake,
     _RecordingHooks hooks, {
     bool force = false,
+    Duration? attemptBudget,
   }) {
     return AutoCompactor(
       session: session,
@@ -99,6 +106,7 @@ void main() {
       smolModel: null,
       hooks: hooks,
       force: force,
+      attemptBudget: attemptBudget ?? const Duration(minutes: 10),
     );
   }
 
@@ -159,6 +167,86 @@ void main() {
     // The no-op pass never reaches the summarizer (nothing to cut).
     expect(fake.calls, 1); // only the real compaction above
   });
+
+  test('a hung summarizer burns the attempt budget, not the session — the '
+      'local trim still rescues the turn', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    await session.appendMessage(UserMessage.text('u1${'a' * 400}'));
+    await session.appendMessage(assistantWithUsage('b' * 400, 5000));
+    await session.appendMessage(UserMessage.text('u2${'a' * 400}'));
+    await session.appendMessage(assistantWithUsage('c' * 400, 5000));
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    final hooks = _RecordingHooks();
+    // The endpoint accepted the request and never answered (no error
+    // event, no done) — stream.result pends forever.
+    Future<SummarizationResult> hung(SummarizationRequest request) =>
+        Completer<SummarizationResult>().future;
+
+    final watch = Stopwatch()..start();
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: hung,
+      mainSummary: hung,
+      smolModel: null,
+      hooks: hooks,
+      force: true,
+      attemptBudget: const Duration(milliseconds: 100),
+    ).run();
+    watch.stop();
+
+    // The budget cut the hung attempt: the run ENDED (local trim) instead
+    // of spinning forever.
+    expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+    expect(hooks.passes, hasLength(1));
+    expect(hooks.passes.single.fallback, 'local-trim');
+    expect(ok, isTrue);
+  });
+
+  test(
+    'a hung summarizer with nothing to trim fails the run honestly',
+    () async {
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+      // One small message: over the window via the stale usage anchor, but
+      // the local trim has nothing droppable (keep budget covers it all).
+      await session.appendMessage(UserMessage.text('u1'));
+      await session.appendMessage(assistantWithUsage('b', 5000));
+      final state = AgentState(
+        model: _model,
+        messages: await session.buildContextMessages(),
+      );
+      final hooks = _RecordingHooks();
+      Future<SummarizationResult> hung(SummarizationRequest request) =>
+          Completer<SummarizationResult>().future;
+
+      final watch = Stopwatch()..start();
+      final ok = await AutoCompactor(
+        session: session,
+        state: state,
+        window: 1000,
+        settings: settings,
+        summary: hung,
+        mainSummary: hung,
+        smolModel: null,
+        hooks: hooks,
+        force: true,
+        attemptBudget: const Duration(milliseconds: 100),
+      ).run();
+      watch.stop();
+
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+      expect(ok, isFalse);
+      expect(hooks.passes.single.fallback, isNull);
+      expect(hooks.passes.single.ok, isFalse);
+      expect(hooks.passes.single.error, isA<TimeoutException>());
+      expect(hooks.donePasses, 1);
+    },
+  );
 
   test('both summarizers down over the window: local trim bounds the '
       'context and reports an honest local-trim pass', () async {

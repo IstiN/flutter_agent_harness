@@ -35,6 +35,20 @@
   "appsFollowUpHint": "Уточнить…",
   "appsGridTitle": "Приложения",
   "appsLoadError": "Не удалось загрузить приложения: {error}",
+  "widgetsCatalogInstallFailed": "Не удалось установить: {error}",
+  "widgetsCatalogOffline": "Офлайн — показан последний известный каталог.",
+  "widgetsCatalogLoadFailed": "Не удалось загрузить каталог виджетов.\n{error}",
+  "@widgetsCatalogLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "@widgetsCatalogInstallFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "widgetsCatalogRetry": "Повторить",
   "appsOpenChatTooltip": "Открыть чат",
   "appsOpenFullChatTooltip": "Открыть полный чат",
   "appsPermissionCalendar": "Календарь",

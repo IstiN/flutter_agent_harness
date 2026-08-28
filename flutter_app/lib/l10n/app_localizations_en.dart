@@ -125,6 +125,23 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String widgetsCatalogInstallFailed(Object error) {
+    return 'Install failed: $error';
+  }
+
+  @override
+  String get widgetsCatalogOffline =>
+      'Offline — showing the last known catalog.';
+
+  @override
+  String widgetsCatalogLoadFailed(Object error) {
+    return 'Could not load the widgets catalog.\n$error';
+  }
+
+  @override
+  String get widgetsCatalogRetry => 'Retry';
+
+  @override
   String get appsOpenChatTooltip => 'Open chat';
 
   @override

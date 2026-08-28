@@ -25,8 +25,11 @@ final class ScheduledMessageQueue {
        _repo = repo,
        _root = root;
 
-  final ExecutionEnv _env; // ignore: prefer_initializing_formals
+  // ignore: prefer_initializing_formals
+  final ExecutionEnv _env;
+  // ignore: prefer_initializing_formals
   final MessagingRepository Function() _repo;
+  // ignore: prefer_initializing_formals
   final String Function() _root;
 
   String get _dir => '${_root()}/_scheduled';

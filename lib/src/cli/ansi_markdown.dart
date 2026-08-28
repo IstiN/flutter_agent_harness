@@ -738,15 +738,29 @@ final class TranscriptMarkdown {
   List<int> get lineStartRows => _viewStarts;
 
   /// Brings every view in line with [src]; returns [formattedLines].
-  List<String> sync(List<String> src) {
-    final resumable =
-        width == _fmt.width &&
+  /// Whether the incremental walk can resume from the frozen boundary
+  /// state (same width, boundary identity intact).
+  bool _resumable(List<String> src) {
+    return width == _fmt.width &&
         src.length >= _through &&
         (_through == 0 ||
             (src.isNotEmpty &&
                 identical(src.first, _boundaryFirst) &&
                 identical(src[_through - 1], _boundaryLast)));
-    if (!resumable && !_rollbackGrownTail(src)) {
+  }
+
+  /// The growing-tail throttle decision: the ONLY pending change is one
+  /// still-growing line (no trailing newline yet) and it was re-rendered
+  /// less than [_tailThrottleIntervalMs] ago.
+  bool _tailThrottled(List<String> src) {
+    if (src.length != _through + 1) return false;
+    if (src.last.length <= _tailThrottleMinLength) return false;
+    final elapsed = DateTime.now().millisecondsSinceEpoch - _lastTailProcessMs;
+    return elapsed < _tailThrottleIntervalMs;
+  }
+
+  List<String> sync(List<String> src) {
+    if (!_resumable(src) && !_rollbackGrownTail(src)) {
       _rebuild(src);
       return _viewFormatted;
     }
@@ -762,10 +776,7 @@ final class TranscriptMarkdown {
     // it at ~10 Hz instead — the paragraph accumulates, everything else
     // (typing, other lines, the final newline) stays instant. Bytes are
     // never dropped: the unchanged `src` is re-offered on the next flush.
-    if (src.length == _through + 1 &&
-        src.last.length > _tailThrottleMinLength &&
-        (DateTime.now().millisecondsSinceEpoch - _lastTailProcessMs) <
-            _tailThrottleIntervalMs) {
+    if (_tailThrottled(src)) {
       debugTailThrottled++;
       return _viewFormatted;
     }

@@ -127,6 +127,23 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String widgetsCatalogInstallFailed(Object error) {
+    return 'Не удалось установить: $error';
+  }
+
+  @override
+  String get widgetsCatalogOffline =>
+      'Офлайн — показан последний известный каталог.';
+
+  @override
+  String widgetsCatalogLoadFailed(Object error) {
+    return 'Не удалось загрузить каталог виджетов.\n$error';
+  }
+
+  @override
+  String get widgetsCatalogRetry => 'Повторить';
+
+  @override
   String get appsOpenChatTooltip => 'Открыть чат';
 
   @override

@@ -153,13 +153,19 @@ extension on AgentCli {
     final providerName = key.substring(0, pipe);
     final modelId = key.substring(pipe + 1);
     try {
-      final entry = config.customProviders?.find(providerName);
-      if (entry != null && entry.name != _activeCustomName) {
-        await _switchToSavedProvider(entry);
-      }
+      await _maybeSwitchToSavedEntry(providerName);
       await _switchModel(modelId);
     } on Object catch (e) {
       io.writeln('error: model switch to $providerName/$modelId failed: $e');
+    }
+  }
+
+  /// Lands a cross-provider model pick on its own endpoint: switches to
+  /// [providerName]'s saved entry unless it is already the active one.
+  Future<void> _maybeSwitchToSavedEntry(String providerName) async {
+    final entry = config.customProviders?.find(providerName);
+    if (entry != null && entry.name != _activeCustomName) {
+      await _switchToSavedProvider(entry);
     }
   }
 
@@ -659,7 +665,8 @@ extension on AgentCli {
           contextWindow: def.contextWindow,
           maxTokens: def.maxTokens,
           // Keep the endpoint's scoped key on the pin (see _switchProvider).
-          apiKeyName: _rolesKeyNameFor(spec.name, def.baseUrl) ??
+          apiKeyName:
+              _rolesKeyNameFor(spec.name, def.baseUrl) ??
               _scopedKeyNameForNonDefault(spec.name, def.baseUrl),
         ),
       ]);
@@ -735,7 +742,8 @@ extension on AgentCli {
           baseUrl: current.baseUrl,
           contextWindow: window,
           maxTokens: cap,
-          apiKeyName: _rolesKeyNameFor(current.provider, current.baseUrl) ??
+          apiKeyName:
+              _rolesKeyNameFor(current.provider, current.baseUrl) ??
               _scopedKeyNameForNonDefault(current.provider, current.baseUrl),
         ),
       ]);
