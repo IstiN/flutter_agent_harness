@@ -3,9 +3,11 @@
 Status: research done (sources + our prior plan reviewed), implementation not
 started. Supersedes the transport claims of `docs/codex_websocket_adapter.md`
 (see "Correction vs the old plan" below).
-Reference: `/Users/Uladzimir_Klyshevich/git/references/codex` (codex-rs, the
-official OpenAI Codex CLI) — all file paths below point into
-`codex-rs/` there.
+Reference: <https://github.com/openai/codex> — the open-source OpenAI Codex
+CLI; its Rust workspace lives under `codex-rs/`, and all file paths below
+are relative to that directory. Research was done against the local
+checkout of that repo at
+`/Users/Uladzimir_Klyshevich/git/references/codex`.
 Provider in fa: the `chatgpt` catalog entry (`kind: 'chatgpt-codex'`), OAuth
 already built, **currently hidden** (`ProviderSpec.visible: false`) because
 model requests 404.
