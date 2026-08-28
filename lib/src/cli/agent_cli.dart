@@ -17,6 +17,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'ansi_markdown.dart';
 import 'package:http/http.dart' as http;
 import 'package:meta/meta.dart';
 import 'package:yaml/yaml.dart';
@@ -452,7 +453,8 @@ class AgentCli {
           // initialized once; keeping it tied to the original folder avoids
           // breaking the file-based directory layout. Each mailbox is still
           // namespaced by session id.
-          root: _messagesRoot = '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
+          root: _messagesRoot =
+              '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
           decodeSessionCwd: decodeSessionCwd,
           homeDir: config.homeDir,
         ),
