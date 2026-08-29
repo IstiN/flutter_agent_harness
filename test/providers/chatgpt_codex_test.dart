@@ -493,14 +493,16 @@ void main() {
 
   group('sse event coverage', () {
     test(
-      'response.incomplete is a terminal error carrying the reason',
+      'response.incomplete keeps partial text and ends as a terminal error',
       () async {
-        final body = sseChunk({
-          'type': 'response.incomplete',
-          'response': {
-            'incomplete_details': {'reason': 'max_output_tokens'},
-          },
-        });
+        final body =
+            sseChunk({'type': 'response.output_text.delta', 'delta': 'part'}) +
+            sseChunk({
+              'type': 'response.incomplete',
+              'response': {
+                'incomplete_details': {'reason': 'max_output_tokens'},
+              },
+            });
         final events = await streamChatGptCodex(
           chatGptModel,
           simpleContext(),
@@ -508,8 +510,16 @@ void main() {
           client: sseClient(body),
         ).toList();
 
-        final error = events.whereType<ErrorEvent>().single;
+        // The partial text stays visible: its block is closed before the
+        // terminal error event, never wiped.
+        expect(events.whereType<TextEndEvent>().single.content, 'part');
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
         expect(error.error.errorMessage, contains('max_output_tokens'));
+        expect(
+          error.error.content.whereType<TextContent>().single.text,
+          'part',
+        );
         expect(events.whereType<DoneEvent>(), isEmpty);
       },
     );
@@ -594,14 +604,19 @@ void main() {
 
   group('error handling', () {
     test(
-      'response.failed pushes an ErrorEvent with the error message',
+      'response.failed keeps partial text and ends as a terminal error',
       () async {
-        final body = sseChunk({
-          'type': 'response.failed',
-          'response': {
-            'error': {'message': 'rate limited'},
-          },
-        });
+        final body =
+            sseChunk({
+              'type': 'response.output_text.delta',
+              'delta': 'so far',
+            }) +
+            sseChunk({
+              'type': 'response.failed',
+              'response': {
+                'error': {'message': 'rate limited'},
+              },
+            });
         final stream = streamChatGptCodex(
           chatGptModel,
           simpleContext(),
@@ -609,8 +624,15 @@ void main() {
           client: sseClient(body),
         );
         final events = await stream.toList();
-        final error = events.whereType<ErrorEvent>().single;
+
+        expect(events.whereType<TextEndEvent>().single.content, 'so far');
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
         expect(error.error.errorMessage, contains('rate limited'));
+        expect(
+          error.error.content.whereType<TextContent>().single.text,
+          'so far',
+        );
       },
     );
 

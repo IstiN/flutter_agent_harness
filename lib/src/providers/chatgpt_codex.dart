@@ -136,7 +136,11 @@ final class _ChatGptCodexSession {
     ChatGptOAuthCredentials credentials,
   ) async {
     final uri = _endpoint;
-    _cookiesBeforeRequest = _cookies.cookieHeader(uri);
+    // Snapshot before the send/store sequence: `_learnedCookies()` must
+    // diff against exactly what this request carried, never the post-store
+    // jar of the same response.
+    final cookieHeader = _cookies.cookieHeader(uri);
+    _cookiesBeforeRequest = cookieHeader;
     final request = http.Request('POST', uri)
       ..headers.addAll({
         'content-type': 'application/json',
@@ -147,7 +151,7 @@ final class _ChatGptCodexSession {
           sessionId: _sessionId,
           threadId: _threadId,
         ),
-        'cookie': ?_cookies.cookieHeader(uri),
+        'cookie': ?cookieHeader,
         // Model headers go last so they can override the defaults.
         ...?model.headers,
       })
@@ -393,13 +397,29 @@ final class _ChatGptCodexSession {
     }
   }
 
-  /// Extracts the error message from a `response.failed` payload and throws.
+  /// Terminal mid-stream failure: close the in-flight blocks so partial
+  /// text stays visible, record the error on the state, and throw —
+  /// `runProviderStream` converts the throw into the terminal `ErrorEvent`
+  /// (errors-as-events invariant; the same termination path the OpenAI and
+  /// Anthropic adapters use). Nothing escapes the adapter.
+  Never _terminateWithError(String message) {
+    _endThinking();
+    _endText();
+    _endTool();
+    state
+      ..stopReason = StopReason.error
+      ..errorMessage = message;
+    throw StateError(message);
+  }
+
+  /// Extracts the error message from a `response.failed` payload and ends
+  /// the stream as a terminal error.
   Never _handleFailed(Map<String, dynamic> value) {
     final response = value['response'];
     final error = response is Map ? response['error'] : null;
-    throw StateError(
+    _terminateWithError(
       error is Map
-          ? error['message'] ?? 'ChatGPT response failed'
+          ? '${error['message'] ?? 'ChatGPT response failed'}'
           : 'ChatGPT response failed',
     );
   }
@@ -410,7 +430,7 @@ final class _ChatGptCodexSession {
     final response = value['response'];
     final details = response is Map ? response['incomplete_details'] : null;
     final reason = details is Map ? details['reason'] as String? : null;
-    throw StateError(
+    _terminateWithError(
       'ChatGPT response incomplete '
       '(${reason?.isNotEmpty == true ? reason : 'unknown'})',
     );
