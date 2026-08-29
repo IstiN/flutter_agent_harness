@@ -43,7 +43,11 @@ final class HubPluginHost implements FahPlugin {
         config: {_pluginName: context.config},
       ),
     );
-    unawaited(_connect(context));
+    unawaited(
+      _connect(context).catchError((Object e, StackTrace s) {
+        context.io.writeln('[hub] connect failed: $e');
+      }),
+    );
     context.registerSlashCommand('/dap', (args) => _dapSlash(context, args));
     context.registerExternalInbox(
       ExternalInbox(drain: _drainHubMail, hasPending: _hasPendingHubMail),
@@ -59,6 +63,11 @@ final class HubPluginHost implements FahPlugin {
     try {
       await _hub.start();
     } on Object catch (error) {
+      // The zero-config default hub is usually just not running — a
+      // connect failure there is normal, so normal CLI starts stay clean.
+      // An explicitly configured hub (packages.yaml url, DAP_HUB_URL,
+      // ~/.dap/config.json) failing to connect IS worth one line.
+      if (_hub.isDefaultUrl) return;
       context.io.writeln('[hub] connect failed: $error');
     }
   }

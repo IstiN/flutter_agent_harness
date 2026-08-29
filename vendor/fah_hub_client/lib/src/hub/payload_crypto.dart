@@ -32,18 +32,19 @@ Future<Uint8List> hkdfSha256({
   required int length,
 }) async {
   // RFC 5869 extract: PRK = HMAC-Hash(key = salt, message = IKM)
-  final prk = await _macAlgorithm.calculateMac(
-    ikm,
-    secretKey: SecretKey(salt),
-  );
+  final prk = await _macAlgorithm.calculateMac(ikm, secretKey: SecretKey(salt));
   var okm = <int>[];
   var previous = const <int>[];
   var counter = 1;
   while (okm.length < length) {
-    final block = await _macAlgorithm.calculateMac(
-      [...previous, ...info, counter],
-      secretKey: SecretKey(prk.bytes),
-    );
+    if (counter > 255) {
+      throw StateError('HKDF exceeded RFC 5869 iteration cap');
+    }
+    final block = await _macAlgorithm.calculateMac([
+      ...previous,
+      ...info,
+      counter,
+    ], secretKey: SecretKey(prk.bytes));
     previous = block.bytes;
     okm = [...okm, ...block.bytes];
     counter++;
@@ -61,11 +62,7 @@ Future<String> encryptPayload({
   required String aadTarget,
   required String plaintext,
 }) async {
-  final key = await _deriveKey(
-    senderDhKeyPair,
-    recipientDhPubkey,
-    frameId,
-  );
+  final key = await _deriveKey(senderDhKeyPair, recipientDhPubkey, frameId);
   final nonce = Uint8List.fromList(
     List.generate(_nonceLength, (_) => _random.nextInt(256)),
   );
@@ -88,11 +85,7 @@ Future<String> decryptPayload({
   required String ciphertextB64,
 }) async {
   final data = base64Decode(ciphertextB64);
-  final key = await _deriveKey(
-    recipientDhKeyPair,
-    senderDhPubkey,
-    frameId,
-  );
+  final key = await _deriveKey(recipientDhKeyPair, senderDhPubkey, frameId);
   final box = SecretBox(
     data.sublist(_nonceLength, data.length - _tagLength),
     nonce: data.sublist(0, _nonceLength),

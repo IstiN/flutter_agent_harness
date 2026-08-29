@@ -14,11 +14,13 @@ void main() {
     );
     expect(
       okm,
-      equals(hexDecode(
-        '3cb25f25faacd57a90434f64d0362f2a'
-        '2d2d0a90cf1a5a4c5db02d56ecc4c5bf'
-        '34007208d5b887185865',
-      )),
+      equals(
+        hexDecode(
+          '3cb25f25faacd57a90434f64d0362f2a'
+          '2d2d0a90cf1a5a4c5db02d56ecc4c5bf'
+          '34007208d5b887185865',
+        ),
+      ),
     );
   });
 
@@ -96,6 +98,41 @@ void main() {
         ciphertextB64: ciphertext,
       ),
       throwsA(anything),
+    );
+  });
+
+  test(
+    'hkdfSha256 expands to the RFC 5869 maximum (255 blocks = 8160)',
+    () async {
+      final ikm = List.filled(22, 0x0b);
+      final salt = List.generate(13, (i) => i);
+      final info = List.generate(10, (i) => 0xf0 + i);
+      final max = await hkdfSha256(
+        ikm: ikm,
+        salt: salt,
+        info: info,
+        length: 8160,
+      );
+      // Expand is prefix-stable: the first block must match a short output.
+      final short = await hkdfSha256(
+        ikm: ikm,
+        salt: salt,
+        info: info,
+        length: 32,
+      );
+      expect(max.take(32), short);
+    },
+  );
+
+  test('hkdfSha256 past 255 blocks hits the RFC 5869 iteration cap', () async {
+    expect(
+      () => hkdfSha256(
+        ikm: List.filled(22, 0x0b),
+        salt: List.generate(13, (i) => i),
+        info: List.generate(10, (i) => 0xf0 + i),
+        length: 8161,
+      ),
+      throwsStateError,
     );
   });
 }

@@ -374,7 +374,7 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
   String cwd,
 ) {
   final config = _loadPackagesConfig(cwd);
-  final enabled = <String>{'hub', ...args.plugins, ...config.keys};
+  final enabled = _resolveEnabledPlugins(args.plugins, config);
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
     final plugin = _builtInPlugin(name);
@@ -382,6 +382,25 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
     plugins.add(plugin);
   }
   return (plugins: plugins, config: config);
+}
+
+/// `'hub'` ships default-on. A `.fah/packages.yaml` entry enables a plugin
+/// with a truthy value (`inspect_image:`/`hub: {url: …}`) and opts it OUT
+/// with a falsy one (`hub: false`, `hub:`) — so only the keys with truthy
+/// values join the enabled set.
+Set<String> _resolveEnabledPlugins(
+  List<String> argPlugins,
+  Map<String, dynamic> config,
+) {
+  final enabled = <String>{'hub', ...argPlugins};
+  for (final entry in config.entries) {
+    if (entry.value == null || entry.value == false) {
+      enabled.remove(entry.key);
+    } else {
+      enabled.add(entry.key);
+    }
+  }
+  return enabled;
 }
 
 String _defaultSessionRoot() {

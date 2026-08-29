@@ -37,10 +37,7 @@ class HubIdentity {
   static Future<HubIdentity> generate() async {
     final signing = await Ed25519().newKeyPair();
     final dh = await X25519().newKeyPair();
-    return _build(
-      signingKeyPair: signing,
-      dhKeyPair: dh,
-    );
+    return _build(signingKeyPair: signing, dhKeyPair: dh);
   }
 
   static Future<HubIdentity> _build({
@@ -60,14 +57,21 @@ class HubIdentity {
   }
 
   /// Loads the identity persisted at [keyPath], creating it (mode 0600) on
-  /// first use. File format: `ed25519:<seed b64>`, `x25519:<priv b64>`,
+  /// first use. When the mode cannot be set (Windows — dart:io has no
+  /// portable chmod — or a failing `chmod`), [warn] is invoked with a
+  /// permission warning: the private seeds may stay readable by other
+  /// local users. File format: `ed25519:<seed b64>`, `x25519:<priv b64>`,
   /// `x25519pub:<pub b64>`, one per line. The `x25519pub:` line is
   /// informational only — the public key is always re-derived from the
   /// private scalar, so a torn or legacy write can never pair a mismatched
   /// pub with this priv (the agent would advertise the stored pub while
   /// decrypting with the priv: outbound fine, every inbound DM
   /// undecryptable).
-  static Future<HubIdentity> load(String keyPath) async {
+  static Future<HubIdentity> load(
+    String keyPath, {
+    Future<bool> Function(String path) setPrivateMode = _chmod600,
+    void Function(String message) warn = _warnToStderr,
+  }) async {
     final file = File(keyPath);
     if (await file.exists()) {
       return _parse(await file.readAsString());
@@ -89,11 +93,11 @@ class HubIdentity {
       flush: true,
     );
     await tmp.rename(keyPath);
-    // ponytail: dart:io has no chmod; best-effort 0600 via system chmod
-    try {
-      await Process.run('chmod', ['600', file.path]);
-    } on Object {
-      // non-POSIX platform — umask governs
+    if (!await setPrivateMode(file.path)) {
+      warn(
+        'identity file $keyPath was NOT locked to mode 0600 — '
+        'the private keys may be readable by other local users',
+      );
     }
     return identity;
   }
@@ -104,10 +108,31 @@ class HubIdentity {
       final idx = line.indexOf(':');
       if (idx > 0) fields[line.substring(0, idx)] = line.substring(idx + 1);
     }
-    final signing =
-        await Ed25519().newKeyPairFromSeed(base64Decode(fields['ed25519']!));
+    final signing = await Ed25519().newKeyPairFromSeed(
+      base64Decode(fields['ed25519']!),
+    );
     // Never trust the stored `x25519pub:` line — derive from the scalar.
-    final dh = await X25519().newKeyPairFromSeed(base64Decode(fields['x25519']!));
+    final dh = await X25519().newKeyPairFromSeed(
+      base64Decode(fields['x25519']!),
+    );
     return _build(signingKeyPair: signing, dhKeyPair: dh);
   }
+}
+
+/// Best-effort `chmod 600`: dart:io exposes no chmod, and the call only
+/// exists on POSIX — on Windows (or wherever `chmod` is unavailable or
+/// fails) the mode cannot be guaranteed and the caller is told so instead
+/// of the failure being swallowed. Injectable via [HubIdentity.load].
+Future<bool> _chmod600(String path) async {
+  if (Platform.isWindows) return false;
+  try {
+    final result = await Process.run('chmod', ['600', path]);
+    return result.exitCode == 0;
+  } on Object {
+    return false;
+  }
+}
+
+void _warnToStderr(String message) {
+  stderr.writeln('[hub] warning: $message');
 }
