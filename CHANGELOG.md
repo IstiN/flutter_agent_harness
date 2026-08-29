@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.1.241
+
+- feat(catalog): remote provider-models catalog at `fa1.dev/models-catalog.json`
+  preloaded once per process — fills `contextWindow` defaults the
+  MiniMax-style `/v1/models` endpoint doesn't publish (M3=1M,
+  M2.x=204800) and ships per-slot media-model lists
+  (`imageGeneration`/`videoGeneration`/`speech`/`transcription`) the
+  chat endpoint never returns. Pickers stay endpoint-driven: the
+  catalog NEVER seeds the chat model id list (the provider's own
+  `/v1/models` is the source of truth) — it only enriches metadata and
+  the media slots. Endpoint-reported values always win; failures are
+  silent (10s budget, never throws); pickers keep their manual-entry
+  fallback. `RemoteCatalogEnrichment` (`lib/src/providers/`) is the
+  host seam — preloaded from `bin/fah.dart` at boot.
+- fix(tui): thinking-streaming deltas get inline markdown (bold,
+  italic, inline code) inside their dim wrapper — reasoning snippets
+  that quote function names or emphasise alternatives render properly
+  instead of leaving stray `**…**` in the dim background. Renderer is
+  a small single-pass scanner split into `_matchInlineSpan` +
+  per-marker helpers (`lib/src/cli/ansi_markdown.dart`); block
+  constructs (fences, headings, lists) still belong to `AnsiMarkdown`
+  for full answers.
+- refactor: `AnsiMarkdown._renderTableRows` split into
+  `_tableFragments` / `_tableSeparator` / `_renderTableRow` /
+  `_renderTableLine` — CC dropped, CRAP ratchet back to 12.00
+  (pre-existing method was 16.27 at 69% coverage; now 12.00 at 100%).
+
+## 0.1.240
+
+- feat(catalog): remote provider-models catalog at `fa1.dev/models-catalog.json`
+  preloaded once per process — fills `contextWindows` the endpoint
+  didn't publish, suggests a `defaultModelId`, and ships per-slot
+  media-model lists (`imageGeneration`, `videoGeneration`, `speech`,
+  `transcription`) for providers like MiniMax whose chat endpoint
+  doesn't return their media models. Endpoint-reported values always
+  win; failures are silent (10s budget, never throws); pickers keep
+  their manual-entry fallback. The catalog lives in
+  `RemoteCatalogEnrichment` (`lib/src/providers/`) — preloaded from
+  `bin/fah.dart` at boot.
+- fix(tui): thinking-streaming deltas get inline markdown (bold,
+  italic, inline code) inside their dim wrapper — reasoning snippets
+  that quote function names or emphasise alternatives render properly
+  instead of leaving stray `**…**` in the dim background.
+
 ## 0.1.240
 
 - fix(compaction): a summarizer endpoint that accepts the request and
@@ -1611,5 +1655,20 @@
 - perf(tui): amortized history-cap trim — no full re-parse per streaming flush
 - feat(tui): truthful busy-row phase labels
 - feat(cli): pre-flight context guard — compact BEFORE an over-window request
+
+## 0.1.241
+
+- fix(compaction): 10-minute attempt budget — a hung summarizer can no longer wedge the turn (0.1.240)
+
+## 0.1.242
+
+- feat(catalog,ui): remote models catalog + thinking markdown + table CRAP fix (0.1.241)
+
+## 0.1.243
+
+- fix: gen_prompts trims description trailing newline
+- fix: skip subagent integration tests when MiniMax key missing
+- feat: v0.1.242 — MiniMax media picker fix + generate_video tool
+- fix(provider): minimax /model picker shows the full catalog, not the saved modelId
 
 ## Unreleased

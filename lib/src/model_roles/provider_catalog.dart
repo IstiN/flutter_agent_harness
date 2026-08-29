@@ -296,6 +296,11 @@ Model buildCliDefaultModel(
           : providerCatalog['openai']!,
     _ => throw ConfigException('unknown provider: $providerKind'),
   };
+
+  /// The hardcoded fallback when neither the endpoint's `/v1/models` nor
+  /// the remote fa1.dev/models-catalog.json has an opinion. Per-provider
+  /// knowledge that ages out — kept here only as a last-resort floor;
+  /// the pickers and the model resolver prefer the live endpoint.
   const defaultIds = {
     'anthropic': 'claude-sonnet-4-5',
     'google': 'gemini-2.5-pro',

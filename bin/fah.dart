@@ -810,6 +810,18 @@ Future<void> _runApp(List<String> args) async {
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
 
+  // Remote provider catalog (fa1.dev/models-catalog.json): default model
+  // ids and per-provider context-window tables for endpoints that don't
+  // publish them. Preloaded once, non-blocking (a 10s timeout, never
+  // throws) — pickers fall back to the live endpoint + local defaults.
+  await remoteCatalogEnrichment.preload(client: sharedProviderHttpClient());
+
+  // Remote provider catalog (fa1.dev/models-catalog.json): default model
+  // ids and per-provider context-window tables for endpoints that don't
+  // publish them. Preloaded once, non-blocking (a 10s timeout, never
+  // throws) — pickers fall back to the live endpoint + local defaults.
+  await remoteCatalogEnrichment.preload(client: sharedProviderHttpClient());
+
   // Platform secure storage (macOS Keychain / Secret Service / Windows
   // Credential Locker): backs up every provider key the environment does
   // not set. Reads are process spawns, so the store is preloaded once into

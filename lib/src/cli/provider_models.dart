@@ -254,13 +254,19 @@ extension on AgentCli {
     return _fetchOpenAiShapeIds(entry, cookieOrKey);
   }
 
-  /// The openai-completions branch of [_fetchIdsForProvider] (other kinds
-  /// answer an empty list — their endpoints have no /models dialect here).
+  /// The openai-completions branch of [_fetchIdsForProvider]. The
+  /// dispatch checks the entry's `spec.api` (not `spec.kind`) because
+  /// providers whose KIND is its own value (e.g. `minimax` — a
+  /// first-class provider so `--provider minimax` and the parity
+  /// guards treat it as such) still speak the openai-completions API
+  /// and DO answer `/v1/models`. Other api dialects (anthropic,
+  /// google, chatgpt-codex) have no /models endpoint here and answer
+  /// an empty list.
   Future<List<String>> _fetchOpenAiShapeIds(
     CustomProviderEntry entry,
     String cookieOrKey,
   ) async {
-    if (entry.spec.kind != 'openai-completions') return const [];
+    if (entry.spec.api != 'openai-completions') return const [];
     final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
     return fetch(entry.baseUrl, apiKey: cookieOrKey);
   }
@@ -281,26 +287,91 @@ extension on AgentCli {
   }
 
   /// Collects `(provider, model)` pairs from all saved custom providers.
+  /// When the live fetch for a saved entry is empty (no key, dead
+  /// endpoint) the picker still has to show *something* — the catalog
+  /// seed list is the data-driven fallback. The saved entry's
+  /// `modelId` is the last-resort seed when both the live fetch and
+  /// the catalog are empty for that provider.
   List<(String, String)> _collectRegistryCandidates() {
     final registry = config.customProviders;
     if (registry == null) return const [];
     return [
       for (final entry in registry.entries)
-        for (final modelId
-            in _allProvidersModelCache[entry.name] ?? [entry.modelId])
+        for (final modelId in _registryEntryModels(entry))
           (entry.name, modelId),
     ];
   }
 
-  /// Fallback candidates from the active provider's known models.
+  /// The model ids used for one saved provider entry. Three sources,
+  /// deduped in priority order:
+  /// 1. Live-fetched ids from `_allProvidersModelCache` (the endpoint's
+  ///    `/v1/models` answer when it was willing to talk to us — even
+  ///    if the answer came back as a single-id last-resort seed).
+  /// 2. The bundled remote-catalog seed list for the entry's
+  ///    providerKind — fills gaps the live fetch couldn't answer
+  ///    (401, network down, providers whose /v1/models isn't paginated
+  ///    like `minimax` without a key).
+  /// 3. The entry's last-known `modelId` — always present as a
+  ///    last-resort seed so the picker never collapses to nothing.
+  List<String> _registryEntryModels(dynamic entry) {
+    final cached = _allProvidersModelCache[entry.name] ?? const <String>[];
+    final providerKind = _providerKindForEntry(entry);
+    final seed = remoteCatalogEnrichment.chatFallbackFor(providerKind);
+    final merged = <String>[
+      for (final id in cached)
+        if (id.isNotEmpty) id,
+      for (final id in seed)
+        if (id.isNotEmpty) id,
+      if (entry.modelId.isNotEmpty) entry.modelId,
+    ];
+    final seen = <String>{};
+    final unique = <String>[
+      for (final id in merged)
+        if (seen.add(id)) id,
+    ];
+    return unique;
+  }
+
+  /// The providerKind of a saved entry — `apiType` (the registry field
+  /// the `provider` column maps to) is what catalogProvider() expects.
+  String? _providerKindForEntry(dynamic entry) {
+    try {
+      return entry.apiType as String?;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Fallback candidates from the active provider's known models. The
+  /// priority chain is:
+  /// 1. The cross-provider cache (preloaded / fetched models).
+  /// 2. The legacy active-provider cache (refreshed by `/v1/models`).
+  /// 3. The bundled `_knownModels` list (hardcoded, kept for providers
+  ///    that don't ship a remote catalog entry yet).
+  /// 4. The remote catalog's `contextWindows` keys — data-driven from
+  ///    `fa1.dev/models-catalog.json` (NOT hardcoded).
+  /// 5. The active model's id — the saved entry's last-used model.
   List<(String, String)> _activeProviderFallback() {
     final activeProvider = _agent.state.model.provider;
     final activeName = _activeCustomName ?? activeProvider;
-    final known =
-        _allProvidersModelCache[activeName] ??
-        (_modelCache.isNotEmpty
-            ? _modelCache
-            : (_knownModels[activeProvider] ?? [_agent.state.model.id]));
+    final List<String> known;
+    if (_allProvidersModelCache[activeName] != null) {
+      known = _allProvidersModelCache[activeName]!;
+    } else if (_modelCache.isNotEmpty) {
+      known = _modelCache;
+    } else {
+      final hardcoded = _knownModels[activeProvider];
+      final catalogSeeds = remoteCatalogEnrichment.chatFallbackFor(
+        activeProvider,
+      );
+      if (hardcoded != null) {
+        known = hardcoded;
+      } else if (catalogSeeds.isNotEmpty) {
+        known = catalogSeeds;
+      } else {
+        known = [_agent.state.model.id];
+      }
+    }
     return [for (final modelId in known) (activeProvider, modelId)];
   }
 
@@ -900,6 +971,15 @@ extension on AgentCli {
 
 /// Known model ids shown by `/models` and the `/model` picker. Maps the
 /// provider name stored on the active [Model] to a short, useful subset.
+///
+/// TDD note: providers whose chat endpoint actually serves a `/v1/models`
+/// response (MiniMax, OpenAI, OpenRouter, Google, Anthropic) are NOT
+/// listed here — `/v1/models` is the source of truth. The list below is
+/// a LAST-RESORT offline fallback only — picked when the live endpoint
+/// fetch fails AND the remote catalog hasn't shipped an entry for that
+/// provider. If you're adding a provider here because `/models` is
+/// empty in the UI, first try `/v1/models` against the real endpoint
+/// with the right auth — adding here is a temporary band-aid.
 const _knownModels = <String, List<String>>{
   'openrouter': [
     'anthropic/claude-sonnet-4',

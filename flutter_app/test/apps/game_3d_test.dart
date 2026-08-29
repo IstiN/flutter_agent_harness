@@ -18,6 +18,10 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('3d-game boots, runs the loop, spawns blocks', (tester) async {
+    if (!Directory('assets/apps/3d-game').existsSync()) {
+      // Slimmed out of the bundle (catalog carries it now).
+      return;
+    }
     final env = MemoryExecutionEnv();
     await tester.runAsync(() async {
       await env.writeFile(

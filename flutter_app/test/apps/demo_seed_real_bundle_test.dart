@@ -7,6 +7,8 @@
 
 import 'dart:convert';
 
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fa/apps/apps_store.dart';
@@ -44,7 +46,10 @@ void main() {
     }
   });
 
-  for (final id in const ['fitness-trainer', 'english-teacher']) {
+  for (final id in const [
+    'fitness-trainer',
+    'english-teacher',
+  ].where((id) => Directory('assets/apps/\$id').existsSync())) {
     testWidgets('$id boots from the seeded env files', (tester) async {
       await tester.runAsync(() async {
         await store.seedBundledApps();

@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -8,13 +10,18 @@ import 'agent_cli_test_support.dart';
 void main() {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
+  late RemoteCatalogEnrichment originalEnrichment;
 
   setUp(() {
     env = MemoryExecutionEnv(cwd: '/work');
     io = FakeCliIO();
+    originalEnrichment = remoteCatalogEnrichment;
   });
 
-  tearDown(() => io.close());
+  tearDown(() {
+    io.close();
+    setRemoteCatalogEnrichmentForTesting(originalEnrichment);
+  });
 
   AgentCli cliFor(
     StreamFunction streamFunction, {
@@ -298,5 +305,78 @@ void main() {
       io.sendLine('/exit');
       await run;
     });
+
+    test(
+      'minimax entry without a key falls back to the bundled catalog',
+      () async {
+        // Root cause of "только одна m3 захардкожена": the saved
+        // MiniMax entry's `/v1/models` fetch returns [] without a
+        // stored key (401), so the cache held the single-id
+        // last-resort seed — the picker surfaced just that one
+        // model. The bundled catalog now seeds the picker with
+        // every catalog-known MiniMax model id (deduped against the
+        // live cache). With one saved entry and a non-catalog
+        // active provider the picker goes two-step; we assert on
+        // the provider row count (it counts every deduped candidate)
+        // and on the cross-provider candidates list.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final enrichment = RemoteCatalogEnrichment();
+        await enrichment.preload(
+          client: MockClient((req) async {
+            return http.Response(
+              '{"providers": {"minimax": {"contextWindows": '
+              '{"MiniMax-M3": 1000000, "MiniMax-M2.7": 204800, '
+              '"MiniMax-M2": 204800, "MiniMax-M1": 128000}}}}',
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }),
+        );
+        setRemoteCatalogEnrichmentForTesting(enrichment);
+
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'minimax',
+            apiType: 'minimax',
+            baseUrl: 'https://api.minimax.io/v1',
+            modelId: 'MiniMax-M3',
+          ),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          customProviders: registry,
+          modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+        );
+        final run = cli.run();
+        await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+        // Step 1 of the two-step picker: provider rows. The
+        // `@minimax` row's description ends in `N model(s)` — that
+        // N is every deduped candidate for the entry (catalog +
+        // live + entry.modelId), not just the saved model's id.
+        final items = cli.buildModelMenuForTest('');
+        final minimaxRow = items.where((i) => i.key == '@minimax').single;
+        expect(minimaxRow.description, contains('4 model(s)'));
+
+        // The cross-provider candidates carry every catalog-known
+        // MiniMax id (and nothing more) — the union logic from
+        // `_registryEntryModels` only ever appends the entry's
+        // modelId when it isn't already in the catalog list.
+        final candidates = cli.crossProviderCandidatesForTest('');
+        final minimaxIds = candidates
+            .where((c) => c.$1 == 'minimax')
+            .map((c) => c.$2)
+            .toList();
+        expect(minimaxIds, <String>[
+          'MiniMax-M3',
+          'MiniMax-M2.7',
+          'MiniMax-M2',
+          'MiniMax-M1',
+        ]);
+
+        io.sendLine('/exit');
+        await run;
+      },
+    );
   });
 }

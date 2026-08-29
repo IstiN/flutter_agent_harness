@@ -17,6 +17,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'ansi_markdown.dart';
 import 'package:http/http.dart' as http;
 import 'package:meta/meta.dart';
 import 'package:yaml/yaml.dart';
@@ -28,6 +29,7 @@ import 'key_event.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
+import '../providers/models_for_endpoint.dart';
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart';
 import '../a2a/a2a_manager.dart';
@@ -81,6 +83,7 @@ import '../tools/request_secret_tool.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
 import '../tools/generate_image.dart';
+import '../tools/generate_video.dart';
 import '../tools/inspect_image.dart';
 import '../tools/shell_jobs.dart';
 import '../tools/sqlite/sqlite_reader.dart';
@@ -400,13 +403,9 @@ class AgentCli {
       // schedule_message: self-addressed delayed notes — an agent can
       // schedule its own follow-up check; delivery rides the inbox idle-wake.
       scheduleMessageTool(_scheduledMessages),
-      // Non-interactive input (piped) gets a null ask callback: ask calls
-      // then fail with a "host cannot answer" error result (safe default).
+      // Non-interactive input gets a null ask callback (safe default).
       askTool(callback: io.isInteractive ? _answerAskQuestions : null),
-      // request_secret: let the agent ask for missing API keys securely.
-      // In interactive mode the user types the value (echoed as dots in the
-      // future; for now plain text like the ask flow). Non-interactive hosts
-      // get null → the tool errors with guidance to set the key manually.
+      // request_secret: ask the user for missing API keys securely.
       requestSecretTool(
         callback: io.isInteractive ? _answerSecretRequest : null,
       ),
@@ -414,10 +413,18 @@ class AgentCli {
         inspectImageTool(_env, config.visionConfig!),
       if (config.transcribeConfig != null)
         transcribeAudioTool(_env, config.transcribeConfig!),
-      // Image generation: resolves the `imageGeneration` slot from the
-      // models config (or falls back to the main connection) lazily per
-      // call, so `/models set imageGeneration ...` is picked up live.
+      // Image generation: resolves the `imageGeneration` slot lazily per
+      // call so `/models set imageGeneration ...` is picked up live.
       generateImageTool(
+        env: _env,
+        modelsConfig: config.modelsConfig,
+        mainBaseUrl: () => _agent.state.model.baseUrl,
+        mainModelId: () => _agent.state.model.id,
+        mainApiKey: () => _apiKey,
+        resolveKey: _resolveMediaKey,
+      ),
+      // Video generation: videoGeneration slot only (no chat fallback).
+      generateVideoTool(
         env: _env,
         modelsConfig: config.modelsConfig,
         mainBaseUrl: () => _agent.state.model.baseUrl,
@@ -439,19 +446,14 @@ class AgentCli {
     // instances of the same cwd).
     _subagentManager = SubagentManager(
       parentSessionId: '',
-      // The messaging fabric: per-agent inboxes colocated with the project's
-      // sessions (`<sessionRoot>/<cwd-slug>/messages`). Any Fa instance
-      // sharing the repo can exchange messages with this one's agents.
-      // The wrapper lets `_createSession`'s storage fallback re-point the
-      // fabric at the effective root — a fallback must move the MAILBOXES
-      // too, or an attached app writes into inboxes no process drains.
+      // Messaging fabric: per-agent inboxes under the session root.
+      // SwappableMessagingRepository lets _createSession re-point the
+      // fabric when storage falls back to another root.
       messaging: _fabricRepository = SwappableMessagingRepository(
         FileMessagingRepository(
           env: _env,
-          // Messaging is scoped to the *launch* cwd. Sessions are grouped by
-          // cwd under the shared root, but the messaging fabric is
-          // initialized once; keeping it tied to the original folder avoids
-          // breaking the file-based directory layout. Each mailbox is still
+          // Messaging is scoped to the *launch* cwd. Sessions are grouped
+          // by cwd; the fabric is initialized once. Each mailbox is
           // namespaced by session id.
           root: _messagesRoot =
               '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
@@ -708,6 +710,14 @@ class AgentCli {
   @visibleForTesting
   List<MenuItem> buildModelMenuForTest(String filter) =>
       _buildModelMenu(filter);
+
+  /// The deduped `(provider, modelId)` pair list the picker is built
+  /// from. Exposed for tests so cross-provider invariants (catalog
+  /// fallback chains, dedup with the saved entry's modelId) can be
+  /// asserted without driving the TUI two-step picker.
+  @visibleForTesting
+  List<(String, String)> crossProviderCandidatesForTest([String filter = '']) =>
+      _crossProviderCandidates(filter);
 
   /// Test seam for the TUI's model-menu selection: routes `@<provider>`
   /// (the two-step pick's provider row) and `provider|model` keys the same
