@@ -15,6 +15,17 @@
 - feat(provider): multi-account isolation — each GitHub account saves
   as its own named entry (`copilot-<login>`); re-auth updates only its
   own entry.
+- fix(copilot): model limits come from the endpoint — the periodic
+  `/models` refresh and saved-entry model lists route through the
+  Copilot dialect (GitHub token exchange; a raw Bearer GET always
+  401'd), and the advertised `capabilities.limits`
+  (`max_context_window_tokens` / `max_output_tokens`) override the
+  catalog's 1000000/32768 defaults per model after `/models`. Ids the
+  payload has no opinion on keep the catalog fallback.
+- fix(tools): `inspect_image` accepts `providerKind: copilot` — the
+  vision call rides `streamCopilot` (token exchange + mandatory
+  headers) instead of throwing "Unsupported inspect_image provider
+  kind".
 
 ## 0.1.241
 

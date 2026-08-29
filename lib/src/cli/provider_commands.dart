@@ -199,9 +199,11 @@ extension on AgentCli {
 
   /// The shared model-list dispatch for the settings flows and the cache
   /// refresh: CodeMie endpoints list `/llm_models`, DIAL serves deployments
-  /// (recording the reported limits), everything else is an OpenAI-compatible
-  /// `/models` ([AgentCliConfig.modelsFetcher] override included). Without
-  /// this a DIAL/CodeMie pick dropped the user into manual model entry.
+  /// (recording the reported limits), Copilot runs the token-exchange
+  /// dialect (also recording the reported limits), everything else is an
+  /// OpenAI-compatible `/models` ([AgentCliConfig.modelsFetcher] override
+  /// included). Without this a DIAL/CodeMie pick dropped the user into
+  /// manual model entry.
   Future<List<String>> _fetchProviderModelIds(
     String providerName,
     String baseUrl,
@@ -212,6 +214,9 @@ extension on AgentCli {
     }
     if (providerName == 'dial') {
       return _fetchDialModelsAndFeatures(baseUrl, apiKey: key);
+    }
+    if (providerName == 'copilot') {
+      return _fetchCopilotModelsAndLimits(baseUrl, apiKey: key);
     }
     final fetch = config.modelsFetcher ?? _fetchOpenAiCompatibleModels;
     return fetch(baseUrl, apiKey: key);
