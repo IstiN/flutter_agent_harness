@@ -111,6 +111,36 @@ void main() {
       );
     });
 
+    test('decode parses a string expires_at as UTC', () {
+      final decoded = ChatGptOAuthCredentials.decode(
+        jsonEncode({
+          'access_token': 'at',
+          'refresh_token': 'rt',
+          'id_token': 'it',
+          'expires_at': '1767225600000',
+        }),
+      );
+      expect(
+        decoded.expiresAt,
+        DateTime.fromMillisecondsSinceEpoch(1767225600000, isUtc: true),
+      );
+    });
+
+    test('toJson keeps Map<String, String> with a string expiry', () {
+      final credentials = ChatGptOAuthCredentials(
+        accessToken: 'at',
+        refreshToken: 'rt',
+        idToken: 'it',
+        expiresAt: DateTime.utc(2026, 1, 2, 3, 4, 5),
+      );
+      final json = credentials.toJson();
+      expect(json, isA<Map<String, String>>());
+      expect(
+        json['expires_at'],
+        credentials.expiresAt!.millisecondsSinceEpoch.toString(),
+      );
+    });
+
     test('decode derives the account id from the id_token JWT', () {
       final payload = base64Url.encode(
         utf8.encode(
@@ -159,16 +189,18 @@ void main() {
 
     test('is true within the skew window', () {
       expect(
-        withExpiry(expiry)
-            .needsRefresh(expiry.subtract(const Duration(seconds: 30))),
+        withExpiry(
+          expiry,
+        ).needsRefresh(expiry.subtract(const Duration(seconds: 30))),
         isTrue,
       );
     });
 
     test('is false well before expiry', () {
       expect(
-        withExpiry(expiry)
-            .needsRefresh(expiry.subtract(const Duration(days: 1))),
+        withExpiry(
+          expiry,
+        ).needsRefresh(expiry.subtract(const Duration(days: 1))),
         isFalse,
       );
     });

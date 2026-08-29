@@ -34,12 +34,13 @@ final class ChatGptOAuthCredentials {
   /// When the access token expires, in UTC; null when unknown.
   final DateTime? expiresAt;
 
-  Map<String, dynamic> toJson() => {
+  Map<String, String> toJson() => {
     'access_token': accessToken,
     'refresh_token': refreshToken,
     'id_token': idToken,
     if (accountId != null) 'chatgpt_account_id': ?accountId,
-    if (expiresAt != null) 'expires_at': expiresAt!.millisecondsSinceEpoch,
+    if (expiresAt != null)
+      'expires_at': expiresAt!.millisecondsSinceEpoch.toString(),
   };
 
   String encode() => jsonEncode(toJson());
@@ -58,7 +59,6 @@ final class ChatGptOAuthCredentials {
     }
 
     final accountId = decoded['chatgpt_account_id'];
-    final expiresAt = decoded['expires_at'];
     return ChatGptOAuthCredentials(
       accessToken: field('access_token'),
       refreshToken: field('refresh_token'),
@@ -66,9 +66,7 @@ final class ChatGptOAuthCredentials {
       accountId: accountId is String && accountId.isNotEmpty
           ? accountId
           : _accountIdFromJwt(field('id_token')),
-      expiresAt: expiresAt is int
-          ? DateTime.fromMillisecondsSinceEpoch(expiresAt, isUtc: true)
-          : null,
+      expiresAt: _persistedExpiry(decoded['expires_at']),
     );
   }
 
@@ -82,6 +80,19 @@ final class ChatGptOAuthCredentials {
   }
 }
 
+/// Parses the persisted `expires_at`: an epoch-millisecond string (what
+/// [ChatGptOAuthCredentials.toJson] writes) or a raw int (blobs persisted
+/// before the string tightening). Anything else counts as unknown.
+DateTime? _persistedExpiry(Object? value) => switch (value) {
+  final int milliseconds => DateTime.fromMillisecondsSinceEpoch(
+    milliseconds,
+    isUtc: true,
+  ),
+  final String milliseconds when int.tryParse(milliseconds) != null =>
+    DateTime.fromMillisecondsSinceEpoch(int.parse(milliseconds), isUtc: true),
+  _ => null,
+};
+
 String generateChatGptPkceVerifier() {
   const alphabet =
       'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
@@ -93,9 +104,9 @@ String generateChatGptPkceVerifier() {
   return String.fromCharCodes(bytes);
 }
 
-String generateChatGptPkceChallenge(String verifier) =>
-    base64UrlEncode(sha256.convert(utf8.encode(verifier)).bytes)
-        .replaceAll('=', '');
+String generateChatGptPkceChallenge(String verifier) => base64UrlEncode(
+  sha256.convert(utf8.encode(verifier)).bytes,
+).replaceAll('=', '');
 
 String generateChatGptState() {
   final random = _secureRandom();
