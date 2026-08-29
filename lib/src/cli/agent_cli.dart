@@ -63,7 +63,6 @@ import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
 import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
-import '../providers/models_for_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../providers/provider_common.dart'
     show authExpiredProvider, stripAuthExpiredMarker;
