@@ -2,31 +2,6 @@
 
 ## Unreleased
 
-- feat(provider): GitHub Copilot as a first-class provider — catalog
-  entry plus the `/provider copilot` CLI flow (GitHub device flow with
-  user_code + verification_uri, or paste an existing PAT; works
-  headless) and the app's fa_ui Copilot connect sheet.
-- feat(fa_llm): 0.2.0 copilot protocol core — device flow, token
-  manager (single-flight, proactive refresh), copilot provider.
-- feat(keys): entry-scoped `FA_KEY_COPILOT_<NAME>` secure-store keys
-  with an env-first `_2`… ring — CI supplies keys without a store.
-- feat(models): live copilot `/models` dialect — the GitHub token is
-  exchanged for the Copilot token, capability/limit fields parsed.
-- feat(provider): multi-account isolation — each GitHub account saves
-  as its own named entry (`copilot-<login>`); re-auth updates only its
-  own entry.
-- fix(copilot): model limits come from the endpoint — the periodic
-  `/models` refresh and saved-entry model lists route through the
-  Copilot dialect (GitHub token exchange; a raw Bearer GET always
-  401'd), and the advertised `capabilities.limits`
-  (`max_context_window_tokens` / `max_output_tokens`) override the
-  catalog's 1000000/32768 defaults per model after `/models`. Ids the
-  payload has no opinion on keep the catalog fallback.
-- fix(tools): `inspect_image` accepts `providerKind: copilot` — the
-  vision call rides `streamCopilot` (token exchange + mandatory
-  headers) instead of throwing "Unsupported inspect_image provider
-  kind".
-
 ## 0.1.241
 
 - feat(catalog): remote provider-models catalog at `fa1.dev/models-catalog.json`
@@ -1697,3 +1672,9 @@
 - fix: skip subagent integration tests when MiniMax key missing
 - feat: v0.1.242 — MiniMax media picker fix + generate_video tool
 - fix(provider): minimax /model picker shows the full catalog, not the saved modelId
+
+## 0.1.244
+
+- fix(cli): media slot flow propagates custom provider keyName
+
+## Unreleased
