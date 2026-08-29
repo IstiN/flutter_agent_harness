@@ -9,7 +9,11 @@
 - feat(chatgpt): OAuth access tokens refresh proactively (expiry is tracked
   on the credentials blob) and the rotated blob is re-persisted.
 - feat(chatgpt): reasoning deltas surface as thinking blocks;
-  `response.incomplete` ends the stream as a terminal error event.
+  `response.incomplete` / `response.failed` end the stream as a terminal
+  error event, preserving any partial text already streamed.
+- fix(chatgpt): OAuth credentials `toJson` returns `Map<String, String>`
+  again (expiry serialized as an epoch-millisecond string); decoding still
+  accepts blobs with a raw int `expires_at`.
 - feat(chatgpt): `/models` probes the live Codex `/models` endpoint and
   falls back to the bundled catalog on 401 / challenge / malformed bodies.
 
