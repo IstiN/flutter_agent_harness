@@ -323,9 +323,16 @@ class MediaModelsStore extends ChangeNotifier {
   }
 
   /// The usability gate every media call shares: an OpenAI-compatible
-  /// endpoint with a model id and a credential.
+  /// endpoint with a model id and a credential. MiniMax rides the same
+  /// wire format (Bearer + JSON, `/image_generation`, `/v2/video_generation`,
+  /// `/v1/music_generation`, `/v1/t2a_v2`) even though its catalog kind
+  /// is its own — it must not be dropped here, otherwise the picker
+  /// sees MiniMax but every media call fails with "no usable endpoint".
   static MediaEndpoint? _usable(MediaEndpoint endpoint) {
-    if (endpoint.providerKind != 'openai-completions') return null;
+    final ok =
+        endpoint.providerKind == 'openai-completions' ||
+        endpoint.providerKind == 'minimax';
+    if (!ok) return null;
     if (endpoint.modelId.isEmpty || endpoint.apiKey.isEmpty) return null;
     return MediaEndpoint(
       providerKind: endpoint.providerKind,
