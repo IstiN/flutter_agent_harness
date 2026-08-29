@@ -1311,5 +1311,5 @@ Real-world examples shipped in the `apps/` folder. Read their source before buil
 10. **Timer cleanup** — save `setInterval` IDs and `clearInterval` when done.
 11. **Never hand-edit `apps/<id>/storage.json`** — it's owned by `jsr.storage`.
 12. **Write files with your write/edit tools** — never shell heredocs.
-13. **Study demo apps first** — read the closest match in `apps/` before writing new code.
+13. **Study CANONICAL sources first** — run `apps_catalog` action `get-source` with the closest matching id (unpacks reference code into `.fah/widget-sources/<id>/`), then read those files. Installed copies in `apps/` may be user-modified — never learn patterns from them. Browse the full gallery at https://fa1.dev/widgets. To publish your widget for everyone: open a PR adding `widgets/<id>/` to https://github.com/IstiN/fa_widgets (CI validates and republishes automatically).
 14. **Open apps for the user** — the `open_app` tool navigates the Fa UI to an app by id; use it after creating or fixing an app instead of telling the user where to tap.

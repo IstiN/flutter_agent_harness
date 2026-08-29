@@ -25,6 +25,73 @@ library;
 
 import 'tui_text_width.dart' show tuiTextWidth;
 
+/// Lightweight inline renderer for streaming reasoning: bold (`**x**`),
+/// italic (`*x*`), inline code (`` `x` ``). Skips block constructs
+/// (fences, headings, lists) — those belong to [AnsiMarkdown] for full
+/// answers, and the dim wrapping in the TUI already downplays long
+/// thinking. Use [AnsiMarkdown.formatAll] when the caller needs the
+/// full block-level grammar.
+String renderInlineMarkdown(String text) {
+  final out = StringBuffer();
+  var i = 0;
+  while (i < text.length) {
+    final span = _matchInlineSpan(text, i);
+    if (span == null) {
+      out.write(text[i]);
+      i++;
+      continue;
+    }
+    final (opening, bodyStart, bodyEnd, closing, nextStart) = span;
+    out
+      ..write(opening)
+      ..write(text.substring(bodyStart, bodyEnd))
+      ..write(closing);
+    i = nextStart;
+  }
+  return out.toString();
+}
+
+/// One matched inline span starting at [start], or null when [start] is
+/// not a marker or the marker has no closing partner ahead. The record
+/// carries `(opening, bodyStart, bodyEnd, closing, nextStart)` so the
+/// caller emits the body and resumes past the closing marker without
+/// per-marker branches.
+(String, int, int, String, int)? _matchInlineSpan(String text, int start) {
+  final ch = text[start];
+  if (ch == '`') return _matchInlineCode(text, start);
+  if (ch != '*') return null;
+  if (start + 1 < text.length && text[start + 1] == '*') {
+    return _matchDoubleStar(text, start);
+  }
+  return _matchSingleStar(text, start);
+}
+
+/// Inline code: `` `x` ``. Returns null when the closing backtick is
+/// missing or the span is empty (a lone `` ` `` leaks as plain text).
+(String, int, int, String, int)? _matchInlineCode(String text, int start) {
+  final end = text.indexOf('`', start + 1);
+  if (end <= start + 1) return null;
+  return ('\x1b[2m\x1b[37m', start + 1, end, '\x1b[0m', end + 1);
+}
+
+/// Bold: `**x**`. Requires a `**` ahead of any closing pair. Empty
+/// matches (start == end) leak as plain `**` so reasoning still parses
+/// the stray markers.
+(String, int, int, String, int)? _matchDoubleStar(String text, int start) {
+  final end = text.indexOf('**', start + 2);
+  if (end <= start + 2) return null;
+  return ('\x1b[1m', start + 2, end, '\x1b[22m', end + 2);
+}
+
+/// Italic: `*x*`. Single-star span; the bold pair is tried first when
+/// the input starts with `**`, so this only runs on genuine single
+/// markers.
+(String, int, int, String, int)? _matchSingleStar(String text, int start) {
+  final end = text.indexOf('*', start + 1);
+  if (end <= start + 1) return null;
+  return ('\x1b[3m', start + 1, end, '\x1b[23m', end + 1);
+}
+
 /// One formatter per render pass; feed the whole output buffer via
 /// [formatAll] (or single lines in order via [formatLine]).
 final class AnsiMarkdown {
