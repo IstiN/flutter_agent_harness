@@ -1686,5 +1686,3 @@
 - fix: skip subagent integration tests when MiniMax key missing
 - feat: v0.1.242 — MiniMax media picker fix + generate_video tool
 - fix(provider): minimax /model picker shows the full catalog, not the saved modelId
-
-## Unreleased
