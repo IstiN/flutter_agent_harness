@@ -40,9 +40,14 @@ extension SettingsFlow on AgentCli {
   /// when the list is empty), then [apply] receives the choice. Cancelling
   /// any step aborts silently. [openAiCompatibleOnly] restricts the
   /// provider list to the wire format the media tools speak.
+  /// [mediaSlot] opts the model-list fetch into catalog seeding — pass
+  /// the slot name (e.g. `imageGeneration`) when the user is picking a
+  /// media model so the remote catalog's per-slot ids show up in the
+  /// result even when `/v1/models` returns an empty list.
   Future<void> runProviderModelFlow({
     required String title,
     bool openAiCompatibleOnly = false,
+    String? mediaSlot,
     required Future<void> Function(ProviderModelChoice choice) apply,
   }) async {
     final provider = await _pickProviderStep(
@@ -63,6 +68,7 @@ extension SettingsFlow on AgentCli {
       baseUrl,
       entry?.modelId ?? _agent.state.model.id,
       token: entryToken,
+      mediaSlot: mediaSlot,
     );
     if (modelId == null) return;
     await apply(
@@ -99,20 +105,31 @@ extension SettingsFlow on AgentCli {
   /// The provider list of [_pickProviderStep]: saved custom entries first
   /// (`saved:<name>` keys), then the catalog (`catalog:<name>` keys),
   /// optionally restricted to the wire format the media tools speak.
+  /// "OpenAI-compatible" is read as "any provider whose media tools can
+  /// ride the same OpenAI completions wire" — that includes MiniMax
+  /// (its image/video/music/tts/asr endpoints all use Bearer + JSON, the
+  /// same shape the OpenAI adapter speaks) and the literal
+  /// `openai-completions` catalog kind. Without this opt-in a MiniMax
+  /// entry never shows up in the media picker (the user just reported
+  /// exactly that).
   List<FlowOption> _providerFlowOptions(
     List<CustomProviderEntry> saved, {
     required bool openAiCompatibleOnly,
   }) {
+    bool mediaOk(String kind) =>
+        !openAiCompatibleOnly ||
+        kind == 'openai-completions' ||
+        kind == 'minimax';
     return [
       for (final entry in saved)
-        if (!openAiCompatibleOnly || entry.spec.kind == 'openai-completions')
+        if (mediaOk(entry.spec.kind))
           (
             'saved:${entry.name}',
             entry.name,
             '${entry.baseUrl} · ${entry.modelId}',
           ),
       for (final spec in enabledProviders())
-        if (!openAiCompatibleOnly || spec.kind == 'openai-completions')
+        if (mediaOk(spec.kind))
           ('catalog:${spec.name}', spec.name, spec.defaultBaseUrl),
     ];
   }
@@ -129,10 +146,18 @@ extension SettingsFlow on AgentCli {
     String baseUrl,
     String currentModelId, {
     String? token,
+    String? mediaSlot,
   }) async {
-    if (spec.kind == 'openai-completions' || spec.name == 'dial') {
+    if (spec.kind == 'openai-completions' ||
+        spec.kind == 'minimax' ||
+        spec.name == 'dial') {
       io.writeln('fetching models from $baseUrl ...');
-      final models = await _fetchModelsForFlow(spec, baseUrl, token: token);
+      final models = await _fetchModelsForFlow(
+        spec,
+        baseUrl,
+        token: token,
+        mediaSlot: mediaSlot,
+      );
       if (models.isNotEmpty) {
         final picked = await _pickFromModelList(title, models, currentModelId);
         if (picked == null) return null;
@@ -207,17 +232,18 @@ extension SettingsFlow on AgentCli {
       io.writeln('models config is unavailable on this host');
       return;
     }
-    final slot = await _pickOption('media slot', [
+    final selectedSlot = await _pickOption('media slot', [
       for (final id in mediaModelSlotIds)
         (id, id, _mediaSlotDescription(models, id)),
     ]);
-    if (slot == null) return;
+    if (selectedSlot == null) return;
     await runProviderModelFlow(
-      title: 'media $slot',
+      title: 'media $selectedSlot',
       openAiCompatibleOnly: true,
+      mediaSlot: selectedSlot,
       apply: (choice) async {
         models.setSlotOverride(
-          slot,
+          selectedSlot,
           MediaSlotModelConfig(
             providerKind: 'openai-completions',
             baseUrl: choice.baseUrl,
@@ -225,7 +251,7 @@ extension SettingsFlow on AgentCli {
           ),
         );
         io.writeln(
-          'slot $slot → ${choice.modelId} @ ${choice.baseUrl} '
+          'slot $selectedSlot → ${choice.modelId} @ ${choice.baseUrl} '
           '(openai-completions)',
         );
         config.onModelsConfigChanged?.call();

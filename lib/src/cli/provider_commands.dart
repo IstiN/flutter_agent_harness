@@ -165,14 +165,33 @@ extension on AgentCli {
   /// The flow's `/models` fetch with the same key resolution the provider
   /// switch uses (explicit token, else env → endpoint-scoped → legacy store).
   /// Failures answer an empty list: the flow falls back to manual entry.
+  ///
+  /// [mediaSlot] opts the fetch into catalog-side seeding — when set
+  /// (e.g. `imageGeneration` for the image picker), the remote catalog's
+  /// per-slot ids appear in the result even if `/v1/models` returns an
+  /// empty list (which it always does for chat-only endpoints when
+  /// picking image/video/tts/asr models).
   Future<List<String>> _fetchModelsForFlow(
     ProviderSpec spec,
     String baseUrl, {
     String? token,
+    String? mediaSlot,
   }) async {
     final key = token ?? _providerKeyFor(spec, baseUrl) ?? '';
     try {
-      return await _fetchProviderModelIds(spec.name, baseUrl, key);
+      final ids = await _fetchProviderModelIds(spec.name, baseUrl, key);
+      if (mediaSlot == null) return ids;
+      // For media slots the picker must show ONLY the media models —
+      // the chat endpoint's `/v1/models` answer is noise (chat ids like
+      // MiniMax-M3 don't generate images). mergeFor with a mediaSlot
+      // parameter drops the chat list and answers exactly the
+      // catalog's per-slot media ids.
+      final merged = remoteCatalogEnrichment.mergeFor(
+        (ids, const <String, int>{}, const <String, int>{}),
+        spec.name,
+        mediaSlot: [mediaSlot],
+      );
+      return merged.$1;
     } on Object {
       return const [];
     }

@@ -267,13 +267,20 @@ Future<List<LoadedPrompt>> loadPrompts(
     if (description is! String || description.isEmpty) {
       throw StateError('${spec.source}: missing frontmatter description');
     }
+    // yaml 3.1.4 preserves the trailing newline of a multi-line `>` string;
+    // trim it so the generated doc comment doesn't gain a spurious empty
+    // line. The committed .g.dart files were generated with yaml 3.1.3
+    // which trimmed it implicitly.
+    final trimmedDescription = description.trimRight();
     final requiredToken = spec.requiredToken;
     if (requiredToken != null && !body.contains(requiredToken)) {
       throw StateError(
         '${spec.source}: prompt body must contain "$requiredToken"',
       );
     }
-    prompts.add(LoadedPrompt(spec: spec, description: description, body: body));
+    prompts.add(
+      LoadedPrompt(spec: spec, description: trimmedDescription, body: body),
+    );
   }
   return prompts;
 }
