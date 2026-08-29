@@ -1671,4 +1671,8 @@
 - feat: v0.1.242 — MiniMax media picker fix + generate_video tool
 - fix(provider): minimax /model picker shows the full catalog, not the saved modelId
 
+## 0.1.244
+
+- fix(cli): media slot flow propagates custom provider keyName
+
 ## Unreleased
