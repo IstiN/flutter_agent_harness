@@ -161,7 +161,10 @@ void main() {
       expect(merged.$2, {'M3': 1000000, 'M2.7': 204800});
     });
 
-    test('mediaSlot ids seed into the merged list when slot is empty', () {
+    test('mediaSlot ids replace the chat list with catalog seeds', () {
+      // The media-slot path discards the endpoint's chat list and
+      // answers the catalog's per-slot media ids. The picker must
+      // never see chat ids (e.g. m1) in the media picker.
       final catalog = RemoteModelsCatalog.fromJson({
         'providers': {
           'minimax': {
@@ -178,7 +181,7 @@ void main() {
         catalog: catalog,
         mediaSlot: ['imageGeneration'],
       );
-      expect(merged.$1, ['m1', 'image-01', 'image-02']);
+      expect(merged.$1, ['image-01', 'image-02']);
     });
 
     test('null providerKind is a passthrough', () {
@@ -221,10 +224,39 @@ void main() {
       expect(merged.$1, ['m1']);
     });
 
-    test('missing media slot in catalog entry is a passthrough', () {
+    test('media slot path: drops chat ids, answers only catalog seeds', () {
+      // The chat list is irrelevant for media slots — the picker
+      // should see ONLY media models, never chat ids.
       final catalog = RemoteModelsCatalog.fromJson({
         'providers': {
-          'minimax': {'media': {}},
+          'minimax': {
+            'contextWindows': {'MiniMax-M3': 1000000},
+            'media': {
+              'imageGeneration': ['image-01', 'image-01-live'],
+            },
+          },
+        },
+      });
+      const endpoint = (
+        ['MiniMax-M3', 'MiniMax-M2.7'],
+        <String, int>{},
+        <String, int>{},
+      );
+      final merged = mergeWithRemoteCatalog(
+        endpointInfo: endpoint,
+        providerKind: 'minimax',
+        catalog: catalog,
+        mediaSlot: ['imageGeneration'],
+      );
+      expect(merged.$1, ['image-01', 'image-01-live']);
+    });
+
+    test('media slot path: missing slot answers an empty list', () {
+      // No media entries for the slot in the catalog → empty list, not
+      // a passthrough. The picker falls through to manual entry.
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {'media': <String, List<String>>{}},
         },
       });
       const endpoint = (['m1'], <String, int>{}, <String, int>{});
@@ -234,7 +266,7 @@ void main() {
         catalog: catalog,
         mediaSlot: ['imageGeneration'],
       );
-      expect(merged.$1, ['m1']);
+      expect(merged.$1, isEmpty);
     });
 
     test('null catalog is a passthrough', () {
@@ -284,6 +316,94 @@ void main() {
         ),
         isEmpty,
       );
+    });
+  });
+
+  group('remoteChatModelsFor', () {
+    test('returns contextWindow keys for the requested provider', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'contextWindows': {
+              'MiniMax-M3': 1000000,
+              'MiniMax-M2.7': 204800,
+              'MiniMax-M2': 204800,
+            },
+          },
+        },
+      });
+      expect(remoteChatModelsFor(providerKind: 'minimax', catalog: catalog), [
+        'MiniMax-M3',
+        'MiniMax-M2.7',
+        'MiniMax-M2',
+      ]);
+    });
+
+    test('returns empty list when the catalog is null', () {
+      expect(
+        remoteChatModelsFor(providerKind: 'minimax', catalog: null),
+        isEmpty,
+      );
+    });
+
+    test('returns empty list when the provider is unknown', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'contextWindows': {'MiniMax-M3': 1000000},
+          },
+        },
+      });
+      expect(
+        remoteChatModelsFor(providerKind: 'openai', catalog: catalog),
+        isEmpty,
+      );
+    });
+
+    test('returns empty list when the provider has no contextWindows', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'media': {
+              'imageGeneration': ['image-01'],
+            },
+          },
+        },
+      });
+      expect(
+        remoteChatModelsFor(providerKind: 'minimax', catalog: catalog),
+        isEmpty,
+      );
+    });
+
+    test('providerKind null is treated as no-match', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'contextWindows': {'MiniMax-M3': 1000000},
+          },
+        },
+      });
+      expect(
+        remoteChatModelsFor(providerKind: null, catalog: catalog),
+        isEmpty,
+      );
+    });
+
+    test('RemoteCatalogEnrichment.chatFallbackFor delegates', () async {
+      final fake = RemoteCatalogEnrichment();
+      await fake.preload(
+        client: MockClient((req) async {
+          return http.Response(
+            '{"providers": {"minimax": {"contextWindows": '
+            '{"MiniMax-M3": 1000000}}}}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      expect(fake.chatFallbackFor('minimax'), ['MiniMax-M3']);
+      expect(fake.chatFallbackFor('openai'), isEmpty);
     });
   });
 
@@ -360,14 +480,22 @@ void main() {
       },
     );
 
-    test('preload leaves cached untouched on failure', () async {
+    test('preload falls back to the bundled catalog on failure', () async {
       final enrichment = RemoteCatalogEnrichment();
       final client = MockClient((req) async => http.Response('bad', 500));
       await enrichment.preload(
         url: Uri.parse('https://example.test/catalog.json'),
         client: client,
       );
-      expect(enrichment.cached, isNull);
+      // Network/parse failure: the in-process bundled catalog seeds the
+      // enrichment so the picker still has data-driven context windows
+      // and media lists. Without this the picker collapses to "1 model"
+      // for any provider whose /v1/models fetch also fails.
+      expect(enrichment.cached, isNotNull);
+      expect(
+        enrichment.cached!.providers['minimax']?.contextWindows['MiniMax-M3'],
+        1000000,
+      );
     });
 
     test('mediaFor returns the catalog list for the slot', () async {
@@ -385,5 +513,54 @@ void main() {
       );
       expect(enrichment.mediaFor('minimax', 'imageGeneration'), ['image-01']);
     });
+
+    test(
+      'bundledRemoteModelsCatalog ships MiniMax chat ids and media lists',
+      () {
+        final minimax = bundledRemoteModelsCatalog.providers['minimax']!;
+        expect(minimax.contextWindows.keys, contains('MiniMax-M3'));
+        expect(minimax.contextWindows['MiniMax-M3'], 1000000);
+        expect(
+          minimax.media['imageGeneration'],
+          containsAll(['image-01', 'image-01-live']),
+        );
+        expect(minimax.media['videoGeneration'], ['MiniMax-H3']);
+        expect(minimax.media['musicGeneration'], contains('music-3.0'));
+        expect(minimax.media['speech'], contains('speech-2.8-hd'));
+      },
+    );
+
+    test(
+      'mergeFor layers media ids from the catalog for a media slot',
+      () async {
+        final enrichment = RemoteCatalogEnrichment();
+        final client = MockClient(
+          (req) async => http.Response(
+            '{"providers": {"minimax": '
+            '{"media": {"imageGeneration": ["image-01", "image-01-live"]}}}}',
+            200,
+          ),
+        );
+        await enrichment.preload(
+          url: Uri.parse('https://example.test/catalog.json'),
+          client: client,
+        );
+        // For media slots the chat endpoint's id list is ignored
+        // entirely — the picker must only see media models, not chat
+        // models like MiniMax-M3. The catalog seed is the answer.
+        final merged = enrichment.mergeFor(
+          (
+            const <String>['MiniMax-M3'],
+            const <String, int>{},
+            const <String, int>{},
+          ),
+          'minimax',
+          mediaSlot: const ['imageGeneration'],
+        );
+        expect(merged.$1, isNot(contains('MiniMax-M3')));
+        expect(merged.$1, contains('image-01'));
+        expect(merged.$1, contains('image-01-live'));
+      },
+    );
   });
 }

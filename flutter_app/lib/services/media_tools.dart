@@ -306,6 +306,20 @@ final class MediaGateway {
         'point the videoGeneration slot at an OpenAI-compatible endpoint.',
       );
     }
+    // MiniMax rides its own async contract (V2 /video_generation with
+    // polling at /query/video_generation) — dispatch on the baseUrl
+    // marker, same shape as MiniMaxImageDialect in the CLI's
+    // generate_video.dart. The OpenAI /videos path stays as the
+    // fallback for every other provider.
+    if (endpoint.baseUrl.contains('minimax')) {
+      return _generateMiniMaxVideo(
+        endpoint: endpoint,
+        prompt: trimmed,
+        seconds: seconds,
+        size: size,
+        cancelToken: cancelToken,
+      );
+    }
     final usedSeconds = seconds != null && seconds > 0 ? seconds : null;
     final usedSize = size != null && size.trim().isNotEmpty
         ? size.trim()
@@ -348,6 +362,186 @@ final class MediaGateway {
       bytes,
       detail: detail.isEmpty ? 'provider defaults' : detail.join(', '),
     );
+  }
+
+  /// MiniMax V2 async video generation (`POST {base}/video_generation`,
+  /// `task_id` → `GET {base}/v2/query/video_generation?task_id=…` polling
+  /// → `file_url` download). Dispatched from [generateVideo] when the
+  /// endpoint's baseUrl contains the `minimax` marker.
+  Future<GeneratedMediaFile> _generateMiniMaxVideo({
+    required MediaEndpoint endpoint,
+    required String prompt,
+    int? seconds,
+    String? size,
+    CancelToken? cancelToken,
+  }) async {
+    final base = _trimSlash(endpoint.baseUrl);
+    final headers = _minimaxHeaders(endpoint);
+    final (resolution, ratio) = _minimaxVideoSize(size);
+    final duration = seconds != null && seconds > 0 ? seconds : 5;
+    final client = _httpClient ?? http.Client();
+    final create = await _minimaxVideoCreate(
+      client,
+      base,
+      headers,
+      endpoint.modelId,
+      prompt,
+      resolution,
+      ratio,
+      duration,
+    );
+    final taskId = _minimaxVideoTaskId(create);
+    final fileUrl = await _minimaxVideoPoll(
+      client,
+      base,
+      headers,
+      taskId,
+      cancelToken,
+    );
+    final bytes = await _minimaxVideoDownload(client, fileUrl);
+    final detail = [if (duration > 0) '${duration}s', size];
+    return _save(
+      'video',
+      'mp4',
+      bytes,
+      detail: detail.whereType<String>().isEmpty
+          ? 'MiniMax MiniMax-H3'
+          : detail.whereType<String>().join(', '),
+    );
+  }
+
+  String _trimSlash(String url) =>
+      url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+
+  Map<String, String> _minimaxHeaders(MediaEndpoint endpoint) => {
+    'Content-Type': 'application/json',
+    if (endpoint.apiKey.isNotEmpty)
+      'Authorization': 'Bearer ${endpoint.apiKey}',
+  };
+
+  (String, String) _minimaxVideoSize(String? size) {
+    if (size == null || size.trim().isEmpty) return ('2K', '16:9');
+    final parts = size.toLowerCase().split('x');
+    if (parts.length != 2) return ('2K', '16:9');
+    final w = int.tryParse(parts[0]);
+    final h = int.tryParse(parts[1]);
+    if (w == null || h == null || w <= 0 || h <= 0) return ('2K', '16:9');
+    final resolution = w >= 1920 ? '2K' : '1080P';
+    final g = _gcd(w, h);
+    return (resolution, '${w ~/ g}:${h ~/ g}');
+  }
+
+  Future<http.Response> _minimaxVideoCreate(
+    http.Client client,
+    String base,
+    Map<String, String> headers,
+    String model,
+    String prompt,
+    String resolution,
+    String ratio,
+    int duration,
+  ) async {
+    final create = await client
+        .post(
+          Uri.parse('$base/v2/video_generation'),
+          headers: headers,
+          body: jsonEncode({
+            'model': model,
+            'content': [
+              {'type': 'text', 'text': prompt},
+            ],
+            'resolution': resolution,
+            'ratio': ratio,
+            'duration': duration,
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    if (create.statusCode != 200) {
+      throw StateError(
+        'Video generation failed: HTTP ${create.statusCode}: ${create.body}',
+      );
+    }
+    return create;
+  }
+
+  String _minimaxVideoTaskId(http.Response create) {
+    final created = jsonDecode(create.body) as Map<String, dynamic>;
+    final taskId = created['task_id'] as String?;
+    if (taskId == null) {
+      throw StateError(
+        'Video generation: MiniMax response missing task_id: ${create.body}',
+      );
+    }
+    return taskId;
+  }
+
+  Future<String> _minimaxVideoPoll(
+    http.Client client,
+    String base,
+    Map<String, String> headers,
+    String taskId,
+    CancelToken? cancelToken,
+  ) async {
+    for (var i = 0; i < 20; i++) {
+      cancelToken?.throwIfCancelled();
+      final query = await client.get(
+        Uri.parse('$base/v2/query/video_generation?task_id=$taskId'),
+        headers: headers,
+      );
+      if (query.statusCode != 200) {
+        throw StateError(
+          'Video task query failed: HTTP ${query.statusCode}: ${query.body}',
+        );
+      }
+      final data = jsonDecode(query.body) as Map<String, dynamic>;
+      final status = data['status'] as String?;
+      if (status == 'Success') return _minimaxVideoFileUrl(data, taskId);
+      if (status == 'Failed') {
+        throw StateError('Video task $taskId failed: ${jsonEncode(data)}');
+      }
+      if (status == 'Cancelled') {
+        throw StateError('Video task $taskId was cancelled');
+      }
+      final delaySeconds = (3 + i).clamp(3, 10);
+      await Future<void>.delayed(Duration(seconds: delaySeconds));
+    }
+    throw StateError(
+      'Video task $taskId did not finish within the polling window',
+    );
+  }
+
+  String _minimaxVideoFileUrl(Map<String, dynamic> data, String taskId) {
+    final fileUrl = data['file_url'] as String?;
+    if (fileUrl == null) {
+      throw StateError(
+        'Video task $taskId succeeded without file_url: ${jsonEncode(data)}',
+      );
+    }
+    return fileUrl;
+  }
+
+  Future<Uint8List> _minimaxVideoDownload(
+    http.Client client,
+    String fileUrl,
+  ) async {
+    final video = await client.get(Uri.parse(fileUrl));
+    if (video.statusCode != 200) {
+      throw StateError(
+        'Video download failed: HTTP ${video.statusCode} for $fileUrl',
+      );
+    }
+    return video.bodyBytes;
+  }
+
+  int _gcd(int a, int b) {
+    var x = a;
+    var y = b;
+    while (y != 0) {
+      final t = x % y;
+      x = y;
+      y = t;
+    }
+    return x;
   }
 
   /// Polls the video job at [pollUri] until it reaches a terminal status,

@@ -119,7 +119,7 @@ const String defaultRemoteCatalogUrl = 'https://fa1.dev/models-catalog.json';
 /// Fetches the remote catalog. Honours a 10-second connect/idle budget
 /// (matches the other lightweight endpoint reads in [models_endpoint])
 /// and never throws — every error returns `null`, the host falls back to
-/// its local defaults + the endpoint's own `/v1/models`.
+/// [bundledRemoteModelsCatalog] + the endpoint's own `/v1/models`.
 Future<RemoteModelsCatalog?> fetchRemoteModelsCatalog({
   Uri? url,
   http.Client? client,
@@ -142,17 +142,64 @@ Future<RemoteModelsCatalog?> fetchRemoteModelsCatalog({
   }
 }
 
+/// Bundled fallback catalog — ships in-process so the picker still
+/// works when the remote URL is down (the user just reported "только
+/// одна m3 захардкожена" because the GitHub Pages site at fa1.dev
+/// didn't ship the catalog JSON yet). The remote fetch is the source
+/// of truth; this is the offline seed. The catalog contains ONLY
+/// metadata the chat endpoint doesn't publish (context windows, media
+/// slots) and the chat ids the picker falls back on when `/v1/models`
+/// is unreachable. Keep it data-shaped (a single JSON literal) so the
+/// remote catalog can replace it 1:1 the day fa1.dev ships.
+///
+/// The MiniMax model ids below were extracted from
+/// `https://platform.minimax.io/docs/llms.txt` (the docs index file
+/// fetched 2026-08-28): each entry is the literal `model` value the
+/// provider accepts in the matching endpoint's POST body. Image uses
+/// `/v1/image_generation`; video uses `/v2/video_generation`
+/// (`MiniMax-H3`); music uses `/v1/music_generation` (`music-3.0`/
+/// `music-2.6`); TTS uses `/v1/t2a_v2` (`speech-2.8-hd` etc). ASR
+/// names are kept as legacy placeholders — no doc was shipped in
+/// this fetch, so the slot is empty until the remote catalog (or
+/// another doc fetch) fills it in.
+final RemoteModelsCatalog bundledRemoteModelsCatalog =
+    RemoteModelsCatalog.fromJson(const {
+      'providers': {
+        'minimax': {
+          'contextWindows': {
+            'MiniMax-M3': 1000000,
+            'MiniMax-M2.7': 204800,
+            'MiniMax-M2': 204800,
+            'MiniMax-M1': 128000,
+          },
+          'media': {
+            'imageGeneration': ['image-01', 'image-01-live'],
+            'videoGeneration': ['MiniMax-H3'],
+            'musicGeneration': ['music-3.0', 'music-2.6'],
+            'speech': ['speech-2.8-hd', 'speech-2.6-hd'],
+            'transcription': <String>[],
+          },
+        },
+      },
+    });
+
 /// The host-injected accessor. The CLI passes its yaml override; the
 /// app passes its in-memory config.
 typedef RemoteCatalogUrlResolver = Uri? Function();
 
-/// Folds a remote catalog into the per-endpoint fetch result: the
-/// catalog's context-windows fill gaps the endpoint didn't report, and
-/// (only for media slots) its per-slot model ids appear when the
-/// endpoint didn't return any. The CHAT id list is NEVER seeded from
-/// the catalog — providers expose their own chat models via
-/// `GET /v1/models` (MiniMax, OpenAI, OpenRouter, …) and that's the
-/// source of truth for the picker; the catalog only enriches metadata.
+/// Folds a remote catalog into the per-endpoint fetch result.
+///
+/// Without a [mediaSlot] the merge is chat-only: the catalog's
+/// `contextWindows` fill gaps the endpoint didn't report, the chat id
+/// list stays exactly as the endpoint reported it (the catalog never
+/// seeds chat ids — `/v1/models` is the source of truth).
+///
+/// With [mediaSlot] the merge flips to media-only: the chat id list
+/// from the endpoint is DISCARDED (chat ids like `MiniMax-M3` are
+/// useless in the image picker), and the merged id list contains
+/// exactly the catalog's per-slot media ids. The catalog is the only
+/// source of media ids for providers whose chat endpoint never
+/// publishes them.
 ModelsEndpointInfo mergeWithRemoteCatalog({
   required ModelsEndpointInfo endpointInfo,
   required String? providerKind,
@@ -162,20 +209,22 @@ ModelsEndpointInfo mergeWithRemoteCatalog({
   if (catalog == null) return endpointInfo;
   final entry = catalog.providers[providerKind ?? ''];
   if (entry == null) return endpointInfo;
-  final (ids, windows, maxTokens) = endpointInfo;
-  // Chat ids: endpoint list, untouched by the catalog.
-  final mergedIds = <String>[...ids];
-  // Media ids (image/video/tts/asr) only get catalog-seeded when the
-  // endpoint report is empty — most providers have a separate endpoint
-  // for media that doesn't go through this fetch at all, so an empty
-  // endpoint result is the normal case and the catalog is the only
-  // source. The picker still dedupes against manual override / saved
-  // custom list.
-  for (final slot in mediaSlot) {
-    final seed = entry.media[slot];
-    if (seed == null) continue;
-    for (final id in seed) {
-      if (!mergedIds.contains(id)) mergedIds.add(id);
+  final (_, windows, maxTokens) = endpointInfo;
+  final List<String> mergedIds;
+  if (mediaSlot.isEmpty) {
+    // Chat path: keep the endpoint's id list verbatim, the catalog
+    // never augments chat ids.
+    mergedIds = <String>[...endpointInfo.$1];
+  } else {
+    // Media path: drop the chat list, answer exactly the catalog's
+    // per-slot media ids. Picker sees only the right model kind.
+    mergedIds = <String>[];
+    for (final slot in mediaSlot) {
+      final seed = entry.media[slot];
+      if (seed == null) continue;
+      for (final id in seed) {
+        if (!mergedIds.contains(id)) mergedIds.add(id);
+      }
     }
   }
   final mergedWindows = <String, int>{
@@ -198,4 +247,22 @@ List<String> remoteMediaModelsFor({
   final entry = catalog.providers[providerKind ?? ''];
   if (entry == null) return const [];
   return entry.media[slot] ?? const [];
+}
+
+/// Chat model ids the catalog knows about for [providerKind] — used
+/// only as a LAST-RESORT picker fallback when the live `/v1/models`
+/// fetch returns an empty list (e.g. token failure, 5xx, endpoint down).
+/// The endpoint is ALWAYS the source of truth; this list just keeps the
+/// picker from collapsing to the saved entry's single modelId when the
+/// endpoint can't answer. The catalog ships these ids explicitly in
+/// `contextWindows` so the data is data-driven, not hardcoded.
+List<String> remoteChatModelsFor({
+  required String? providerKind,
+  required RemoteModelsCatalog? catalog,
+}) {
+  if (catalog == null) return const [];
+  final entry = catalog.providers[providerKind ?? ''];
+  if (entry == null) return const [];
+  // Insertion order matches the catalog author intent (newest first).
+  return [for (final key in entry.contextWindows.keys) key];
 }

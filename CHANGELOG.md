@@ -1680,4 +1680,11 @@
 
 - feat(catalog,ui): remote models catalog + thinking markdown + table CRAP fix (0.1.241)
 
+## 0.1.243
+
+- fix: gen_prompts trims description trailing newline
+- fix: skip subagent integration tests when MiniMax key missing
+- feat: v0.1.242 — MiniMax media picker fix + generate_video tool
+- fix(provider): minimax /model picker shows the full catalog, not the saved modelId
+
 ## Unreleased
