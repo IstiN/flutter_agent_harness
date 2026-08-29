@@ -274,6 +274,7 @@ void main() {
         apiType: 'openai',
         baseUrl: 'http://localhost:11434/v1',
         modelId: 'm2',
+        keyName: 'MY_OLLAMA_KEY',
       ),
     ]);
     final cli = cliFor(
@@ -322,6 +323,55 @@ void main() {
     expect(persisted, 1);
     // The media provider list hides non-openai wire kinds.
     expect(io.out.toString(), isNot(contains('chatgpt-codex')));
+    expect(fake.calls, 0);
+  });
+
+  test('media-slot flow: saved entry propagates its keyName', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final models = ModelsConfig();
+    final registry = CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'minimax',
+        apiType: 'minimax',
+        baseUrl: 'https://api.minimax.io/v1',
+        modelId: 'MiniMax-M3',
+        keyName: 'FA_KEY_API_MINIMAX_IO_MINIMAX',
+      ),
+    ]);
+    final cli = cliFor(
+      fake.call,
+      modelsConfig: models,
+      customProviders: registry,
+      envVarValue: (_) => null,
+      modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+    );
+    final run = cli.run();
+
+    final flow = cli.startMediaSlotFlow();
+    await waitForIt(() => io.out.toString().contains('media slot'));
+    io.sendLine('4'); // videoGeneration
+    await waitForIt(
+      () => io.out.toString().contains('media videoGeneration — provider'),
+    );
+    await waitForIt(() => io.out.toString().contains('1) minimax'));
+    io.sendLine('1'); // minimax
+    await waitForIt(
+      () => io.out.toString().contains("model id (empty keeps 'MiniMax-M3')"),
+    );
+    io.sendLine('MiniMax-H3');
+    await waitForIt(
+      () => io.out.toString().contains(
+        'slot videoGeneration → MiniMax-H3 @ https://api.minimax.io/v1',
+      ),
+    );
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    final override = models.slots['videoGeneration'];
+    expect(override?.modelId, 'MiniMax-H3');
+    expect(override?.baseUrl, 'https://api.minimax.io/v1');
+    expect(override?.apiKeyName, 'FA_KEY_API_MINIMAX_IO_MINIMAX');
     expect(fake.calls, 0);
   });
 

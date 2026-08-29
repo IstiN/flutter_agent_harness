@@ -248,6 +248,9 @@ extension SettingsFlow on AgentCli {
             providerKind: 'openai-completions',
             baseUrl: choice.baseUrl,
             modelId: choice.modelId,
+            // The saved custom provider's key authenticates the media
+            // endpoint; without it the tool sends no Authorization header.
+            apiKeyName: choice.savedEntry?.keyName,
           ),
         );
         io.writeln(
