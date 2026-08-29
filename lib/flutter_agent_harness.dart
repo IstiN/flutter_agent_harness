@@ -70,6 +70,7 @@ export 'src/providers/models_for_endpoint.dart';
 export 'src/providers/openai_completions.dart';
 export 'src/providers/openrouter_oauth.dart';
 export 'src/providers/provider_common.dart';
+export 'src/providers/remote_catalog.dart';
 export 'src/secrets/secret_redactor.dart';
 export 'src/secrets/secrets_store.dart';
 export 'src/secrets/secure_key_store.dart';

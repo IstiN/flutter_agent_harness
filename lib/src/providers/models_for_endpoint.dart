@@ -8,6 +8,7 @@ library;
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:meta/meta.dart';
 
 import '../session/uuid.dart';
 import 'chatgpt_codex_models.dart';
@@ -16,6 +17,7 @@ import 'codemie_sso.dart';
 import 'codex_transport.dart';
 import 'dial.dart';
 import 'models_endpoint.dart';
+import 'remote_catalog.dart';
 
 /// One provider's "how to list models" implementation. Each dialect
 /// encapsulates its own detection (does this endpoint belong to me?) and
@@ -287,4 +289,65 @@ final class _OpenAiCompatibleDialect extends ModelListDialect {
       if (ownsClient) httpClient.close();
     }
   }
+}
+
+/// Holds the preloaded [RemoteModelsCatalog] for the lifetime of the
+/// process. Hosts (CLI startup, app boot) inject the catalog once; the
+/// rest of the code calls [mergeFor] and [mediaFor] to fold catalog
+/// hints into the endpoint-reported model list without re-fetching.
+final class RemoteCatalogEnrichment {
+  RemoteModelsCatalog? _cached;
+
+  /// Returns the live parsed catalog (or null when no preload ran).
+  RemoteModelsCatalog? get cached => _cached;
+
+  /// Loads the catalog via [fetchRemoteModelsCatalog]. Failures (any
+  /// network, timeout, or parse error) leave [_cached] untouched so a
+  /// later preload can recover without surfacing prior failures.
+  Future<void> preload({Uri? url, http.Client? client}) async {
+    final loaded = await fetchRemoteModelsCatalog(url: url, client: client);
+    if (loaded != null) _cached = loaded;
+  }
+
+  /// Merges the cached catalog into [info] for [providerKind]. Used by
+  /// hosts that want the merged view directly (pickers, settings flows)
+  /// rather than going through the dispatcher twice.
+  ///
+  /// [mediaSlot] opts into seeding catalog media ids into the merged
+  /// list — chat slots leave it empty, media pickers pass the slot name
+  /// so the empty endpoint result gets the catalog defaults.
+  ModelsEndpointInfo mergeFor(
+    ModelsEndpointInfo info,
+    String? providerKind, {
+    List<String> mediaSlot = const [],
+  }) {
+    return mergeWithRemoteCatalog(
+      endpointInfo: info,
+      providerKind: providerKind,
+      catalog: _cached,
+      mediaSlot: mediaSlot,
+    );
+  }
+
+  /// Media-model ids the catalog lists for [providerKind]/[slot], or an
+  /// empty list when the catalog has no opinion.
+  List<String> mediaFor(String? providerKind, String slot) {
+    return remoteMediaModelsFor(
+      providerKind: providerKind,
+      slot: slot,
+      catalog: _cached,
+    );
+  }
+}
+
+/// Process-wide [RemoteCatalogEnrichment] singleton. Hosts preload once
+/// at boot and the rest of the code reads from this instance. Tests swap
+/// it via [setRemoteCatalogEnrichmentForTesting].
+RemoteCatalogEnrichment remoteCatalogEnrichment = RemoteCatalogEnrichment();
+
+/// Test seam — swap in a fake enrichment so unit tests don't need a
+/// real HTTP client. Not part of the public API.
+@visibleForTesting
+void setRemoteCatalogEnrichmentForTesting(RemoteCatalogEnrichment fake) {
+  remoteCatalogEnrichment = fake;
 }

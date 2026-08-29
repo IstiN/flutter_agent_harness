@@ -1,0 +1,389 @@
+import 'package:flutter_agent_harness/src/providers/remote_catalog.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:test/test.dart';
+
+void main() {
+  group('RemoteModelsCatalog.fromJson', () {
+    test('parses providers, windows, and media lists', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'contextWindows': {'MiniMax-M3': 1000000, 'MiniMax-M2.7': 204800},
+            'media': {
+              'imageGeneration': ['image-01'],
+              'videoGeneration': ['video-01'],
+              'speech': ['speech-01'],
+              'transcription': ['asr-01'],
+            },
+          },
+        },
+      });
+      expect(catalog.providers.keys, ['minimax']);
+      final entry = catalog.providers['minimax']!;
+      expect(entry.contextWindows['MiniMax-M3'], 1000000);
+      expect(entry.contextWindows['MiniMax-M2.7'], 204800);
+      expect(entry.media['imageGeneration'], ['image-01']);
+      expect(entry.media['videoGeneration'], ['video-01']);
+      expect(entry.media['speech'], ['speech-01']);
+      expect(entry.media['transcription'], ['asr-01']);
+    });
+
+    test('returns empty catalog on non-map root', () {
+      expect(RemoteModelsCatalog.fromJson('not-a-map').providers, isEmpty);
+    });
+
+    test('returns empty catalog when providers key is not a map', () {
+      expect(
+        RemoteModelsCatalog.fromJson({'providers': 'oops'}).providers,
+        isEmpty,
+      );
+    });
+
+    test('skips entries with wrong shape without throwing', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'broken': 'not-a-map',
+          'good': {
+            'contextWindows': {'m1': 1000},
+          },
+        },
+      });
+      expect(catalog.providers.keys, ['good']);
+      expect(catalog.providers['broken'], isNull);
+    });
+
+    test('drops window values that are not positive numbers', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'p': {
+            'contextWindows': {
+              'm1': 100000,
+              'bad1': 0,
+              'bad2': -1,
+              'bad3': 'x',
+            },
+          },
+        },
+      });
+      expect(catalog.providers['p']!.contextWindows.keys, ['m1']);
+    });
+
+    test('drops media lists whose values are not lists', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'p': {
+            'media': {'imageGeneration': 'oops'},
+          },
+        },
+      });
+      expect(catalog.providers['p']!.media, isEmpty);
+    });
+
+    test('drops non-string media entries', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'p': {
+            'media': {
+              'imageGeneration': [123, 'good', null],
+            },
+          },
+        },
+      });
+      expect(catalog.providers['p']!.media['imageGeneration'], ['good']);
+    });
+
+    test('skips empty media lists after dedupe', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'p': {
+            'media': {'imageGeneration': []},
+          },
+        },
+      });
+      expect(
+        catalog.providers['p']!.media.containsKey('imageGeneration'),
+        isFalse,
+      );
+    });
+
+    test('ignores deprecated defaultModelId without keeping it', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'p': {'defaultModelId': 'M3'},
+        },
+      });
+      expect(catalog.providers['p']!.contextWindows, isEmpty);
+      expect(catalog.providers['p']!.media, isEmpty);
+    });
+  });
+
+  group('mergeWithRemoteCatalog', () {
+    test('endpoint windows win where both report a value', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'contextWindows': {'M2.7': 204800, 'M3': 1000000},
+          },
+        },
+      });
+      const endpoint = (['M2.7', 'M3'], {'M2.7': 99999}, <String, int>{});
+      final merged = mergeWithRemoteCatalog(
+        endpointInfo: endpoint,
+        providerKind: 'minimax',
+        catalog: catalog,
+      );
+      // Chat ids stay endpoint-only — the catalog must NEVER add ids to
+      // the chat list. Provider's /v1/models is the source of truth.
+      expect(merged.$1, ['M2.7', 'M3']);
+      expect(merged.$2['M2.7'], 99999);
+      expect(merged.$2['M3'], 1000000);
+    });
+
+    test('does not seed chat ids from catalog context-window keys', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'contextWindows': {'M3': 1000000, 'M2.7': 204800},
+          },
+        },
+      });
+      const endpoint = (['other-model'], <String, int>{}, <String, int>{});
+      final merged = mergeWithRemoteCatalog(
+        endpointInfo: endpoint,
+        providerKind: 'minimax',
+        catalog: catalog,
+      );
+      // The chat list comes from the endpoint only — even though the
+      // catalog has M3 and M2.7 keys, those are window metadata, not
+      // model ids. Seeding them here would override the live endpoint.
+      expect(merged.$1, ['other-model']);
+      expect(merged.$2, {'M3': 1000000, 'M2.7': 204800});
+    });
+
+    test('mediaSlot ids seed into the merged list when slot is empty', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'media': {
+              'imageGeneration': ['image-01', 'image-02'],
+            },
+          },
+        },
+      });
+      const endpoint = (['m1'], <String, int>{}, <String, int>{});
+      final merged = mergeWithRemoteCatalog(
+        endpointInfo: endpoint,
+        providerKind: 'minimax',
+        catalog: catalog,
+        mediaSlot: ['imageGeneration'],
+      );
+      expect(merged.$1, ['m1', 'image-01', 'image-02']);
+    });
+
+    test('null providerKind is a passthrough', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'media': {
+              'imageGeneration': ['image-01'],
+            },
+          },
+        },
+      });
+      const endpoint = (['m1'], <String, int>{}, <String, int>{});
+      final merged = mergeWithRemoteCatalog(
+        endpointInfo: endpoint,
+        providerKind: null,
+        catalog: catalog,
+        mediaSlot: ['imageGeneration'],
+      );
+      expect(merged.$1, ['m1']);
+    });
+
+    test('unknown providerKind is a passthrough', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'media': {
+              'imageGeneration': ['image-01'],
+            },
+          },
+        },
+      });
+      const endpoint = (['m1'], <String, int>{}, <String, int>{});
+      final merged = mergeWithRemoteCatalog(
+        endpointInfo: endpoint,
+        providerKind: 'openai',
+        catalog: catalog,
+        mediaSlot: ['imageGeneration'],
+      );
+      expect(merged.$1, ['m1']);
+    });
+
+    test('missing media slot in catalog entry is a passthrough', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {'media': {}},
+        },
+      });
+      const endpoint = (['m1'], <String, int>{}, <String, int>{});
+      final merged = mergeWithRemoteCatalog(
+        endpointInfo: endpoint,
+        providerKind: 'minimax',
+        catalog: catalog,
+        mediaSlot: ['imageGeneration'],
+      );
+      expect(merged.$1, ['m1']);
+    });
+
+    test('null catalog is a passthrough', () {
+      const endpoint = (['m'], {'m': 100}, <String, int>{});
+      final merged = mergeWithRemoteCatalog(
+        endpointInfo: endpoint,
+        providerKind: 'minimax',
+        catalog: null,
+      );
+      expect(merged.$1, endpoint.$1);
+      expect(merged.$2, endpoint.$2);
+    });
+  });
+
+  group('remoteMediaModelsFor', () {
+    test('returns the catalog list for the slot, empty when silent', () {
+      final catalog = RemoteModelsCatalog.fromJson({
+        'providers': {
+          'minimax': {
+            'media': {
+              'imageGeneration': ['image-01'],
+            },
+          },
+        },
+      });
+      expect(
+        remoteMediaModelsFor(
+          providerKind: 'minimax',
+          slot: 'imageGeneration',
+          catalog: catalog,
+        ),
+        ['image-01'],
+      );
+      expect(
+        remoteMediaModelsFor(
+          providerKind: 'minimax',
+          slot: 'videoGeneration',
+          catalog: catalog,
+        ),
+        isEmpty,
+      );
+      expect(
+        remoteMediaModelsFor(
+          providerKind: 'openai',
+          slot: 'imageGeneration',
+          catalog: catalog,
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  group('fetchRemoteModelsCatalog', () {
+    test('decodes a valid payload', () async {
+      final client = MockClient((req) async {
+        return http.Response(
+          '{"providers": {"minimax": '
+          '{"contextWindows": {"M3": 1000000}}}}',
+          200,
+        );
+      });
+      final catalog = await fetchRemoteModelsCatalog(
+        url: Uri.parse('https://example.test/models-catalog.json'),
+        client: client,
+      );
+      expect(catalog, isNotNull);
+      expect(catalog!.providers['minimax']?.contextWindows['M3'], 1000000);
+    });
+
+    test('returns null on non-200', () async {
+      final client = MockClient((req) async => http.Response('not found', 404));
+      final catalog = await fetchRemoteModelsCatalog(
+        url: Uri.parse('https://example.test/models-catalog.json'),
+        client: client,
+      );
+      expect(catalog, isNull);
+    });
+
+    test('returns null on client exception (no throw)', () async {
+      final client = MockClient((req) async {
+        throw http.ClientException('boom');
+      });
+      final catalog = await fetchRemoteModelsCatalog(
+        url: Uri.parse('https://example.test/models-catalog.json'),
+        client: client,
+      );
+      expect(catalog, isNull);
+    });
+
+    test('swallows a malformed JSON body (no throw)', () async {
+      final client = MockClient(
+        (req) async => http.Response('this is not json', 200),
+      );
+      final catalog = await fetchRemoteModelsCatalog(
+        url: Uri.parse('https://example.test/models-catalog.json'),
+        client: client,
+      );
+      expect(catalog, isNull);
+    });
+  });
+
+  group('RemoteCatalogEnrichment', () {
+    test(
+      'preload caches the catalog; mergeFor layers it on the endpoint info',
+      () async {
+        final enrichment = RemoteCatalogEnrichment();
+        final client = MockClient(
+          (req) async => http.Response(
+            '{"providers": {"minimax": '
+            '{"contextWindows": {"M3": 1000000}}}}',
+            200,
+          ),
+        );
+        await enrichment.preload(
+          url: Uri.parse('https://example.test/catalog.json'),
+          client: client,
+        );
+        expect(enrichment.cached, isNotNull);
+        const endpoint = (['M3', 'm2.7'], <String, int>{}, <String, int>{});
+        final merged = enrichment.mergeFor(endpoint, 'minimax');
+        expect(merged.$2['M3'], 1000000);
+        expect(enrichment.mediaFor('minimax', 'imageGeneration'), isEmpty);
+      },
+    );
+
+    test('preload leaves cached untouched on failure', () async {
+      final enrichment = RemoteCatalogEnrichment();
+      final client = MockClient((req) async => http.Response('bad', 500));
+      await enrichment.preload(
+        url: Uri.parse('https://example.test/catalog.json'),
+        client: client,
+      );
+      expect(enrichment.cached, isNull);
+    });
+
+    test('mediaFor returns the catalog list for the slot', () async {
+      final enrichment = RemoteCatalogEnrichment();
+      final client = MockClient(
+        (req) async => http.Response(
+          '{"providers": {"minimax": '
+          '{"media": {"imageGeneration": ["image-01"]}}}}',
+          200,
+        ),
+      );
+      await enrichment.preload(
+        url: Uri.parse('https://example.test/catalog.json'),
+        client: client,
+      );
+      expect(enrichment.mediaFor('minimax', 'imageGeneration'), ['image-01']);
+    });
+  });
+}

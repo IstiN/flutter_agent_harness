@@ -772,7 +772,12 @@ extension on AgentCli {
     } else if (assistantMessageEvent is ThinkingDeltaEvent && _useTui) {
       // Reasoning models stream long thinking before any text; showing
       // it dimmed under the user message is the TUI's progress signal.
-      io.write(_style.dim(assistantMessageEvent.delta));
+      // Even reasoning snippets benefit from inline markdown (bold spans
+      // for emphasis, inline code for self-references) — we apply the
+      // same inline renderer the answer text gets, then dim the whole
+      // result so the thinking still reads as background context.
+      final inline = renderInlineMarkdown(assistantMessageEvent.delta);
+      io.write(_style.dim(inline));
       _streamedThinking = true;
     }
   }

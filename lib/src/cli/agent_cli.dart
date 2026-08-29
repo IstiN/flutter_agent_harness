@@ -17,6 +17,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'ansi_markdown.dart';
 import 'package:http/http.dart' as http;
 import 'package:meta/meta.dart';
 import 'package:yaml/yaml.dart';
