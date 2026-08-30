@@ -15,6 +15,12 @@ import 'package:http/http.dart' as http;
 const String kDefaultWidgetsBaseUrl =
     'https://github.com/IstiN/fa_widgets/releases/latest/download/';
 
+/// Raw mirror of the fa_widgets repo (catalog + per-widget sources/icons).
+/// raw.githubusercontent.com sends `access-control-allow-origin: *` and
+/// serves UTF-8 sources — used for in-app gallery icons and web fetches.
+const String kDefaultWidgetsRawBaseUrl =
+    'https://raw.githubusercontent.com/IstiN/fa_widgets/main/';
+
 /// How long a fetched catalog stays trusted before the next fetch revalidates.
 const Duration kCatalogCacheTtl = Duration(hours: 6);
 
@@ -45,11 +51,13 @@ class CatalogEntry {
     required this.zipFile,
     required this.zipSha256,
     required this.zipSizeBytes,
+    this.platforms = const [],
   });
 
   factory CatalogEntry.fromJson(Map<String, dynamic> json) {
     final permissions = json['permissions'];
     final zip = json['zip'];
+    final rawPlatforms = json['platforms'];
     return CatalogEntry(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '',
@@ -71,6 +79,11 @@ class CatalogEntry {
       zipFile: zip is Map ? zip['file'] as String? ?? '' : '',
       zipSha256: zip is Map ? zip['sha256'] as String? ?? '' : '',
       zipSizeBytes: zip is Map ? (zip['sizeBytes'] as int? ?? 0) : 0,
+      platforms: [
+        if (rawPlatforms is List)
+          for (final platform in rawPlatforms)
+            if (platform is String) platform,
+      ],
     );
   }
 
@@ -80,6 +93,10 @@ class CatalogEntry {
   final String description;
   final String author;
   final List<String> tags;
+
+  /// Platform restriction tags (e.g. `ios`, `macos`) for widgets that only
+  /// run on specific platforms; empty means the widget runs everywhere.
+  final List<String> platforms;
 
   /// Minimum `js_widget_runtime`; informational (the app pins the package).
   final String minRuntime;
@@ -140,7 +157,12 @@ class CatalogService {
        _clock = clock ?? DateTime.now;
 
   /// Env-relative cache file (inside the shared `apps/` workspace folder).
-  static const String cacheFile = 'apps/.catalog_cache.json';
+  /// `_v2`: v1 caches were written from `response.body`, which the http
+  /// package decodes as latin1 when the release asset has no charset —
+  /// non-ASCII descriptions ("→", Cyrillic) came out mojibake. The v2 name
+  /// purges those poisoned snapshots; decoding now goes through
+  /// `utf8.decode(response.bodyBytes)`.
+  static const String cacheFile = 'apps/.catalog_cache_v2.json';
 
   final ExecutionEnv _env;
   final http.Client _client;
@@ -166,7 +188,7 @@ class CatalogService {
       if (response.statusCode != 200) {
         throw CatalogError('catalog HTTP ${response.statusCode}');
       }
-      final decoded = jsonDecode(response.body);
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is! Map<String, dynamic>) {
         throw CatalogError('catalog.json is not an object');
       }
@@ -247,6 +269,33 @@ class CatalogService {
       throw CatalogError('${entry.id}: archive misses manifest/widget.js');
     }
     return files;
+  }
+
+  /// [downloadWidget] with one self-heal: the rolling `catalog` release is
+  /// rebuilt by publish runs, so a TTL-cached catalog can reference asset
+  /// bytes that were replaced since (the historical sha256-mismatch
+  /// install failure). On a mismatch the catalog is refetched with the
+  /// cache bypassed and the download retried ONCE against the fresh entry
+  /// for the same id — but only when the entry actually changed.
+  Future<Map<String, Uint8List>> downloadWidgetHealing(
+    CatalogEntry entry,
+  ) async {
+    try {
+      return await downloadWidget(entry);
+    } on CatalogError catch (error) {
+      if (!error.toString().contains('sha256 mismatch')) rethrow;
+      final fresh = await fetchCatalog(force: true);
+      CatalogEntry? updated;
+      for (final candidate in fresh.entries) {
+        if (candidate.id == entry.id) updated = candidate;
+      }
+      if (updated == null ||
+          (updated.zipSha256 == entry.zipSha256 &&
+              updated.zipFile == entry.zipFile)) {
+        rethrow;
+      }
+      return downloadWidget(updated);
+    }
   }
 
   Future<List<CatalogEntry>> _parseEntries(Map<String, dynamic> catalog) async {

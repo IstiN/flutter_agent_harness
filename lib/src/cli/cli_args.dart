@@ -24,6 +24,7 @@ const cliProviderKinds = {
   'dial',
   'minimax',
   'zai',
+  'copilot',
 };
 
 /// Invalid command line: the executable prints [message] plus a usage hint

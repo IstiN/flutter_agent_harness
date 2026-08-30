@@ -105,6 +105,36 @@ Future<Uint8List> _captureZip(String id) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('CatalogEntry.fromJson platforms', () {
+    Map<String, dynamic> base() =>
+        Map<String, dynamic>.from(goodCatalog()['widgets'][0] as Map);
+
+    test('parses declared platforms', () {
+      final json = base()..['platforms'] = ['ios', 'macos'];
+      expect(CatalogEntry.fromJson(json).platforms, ['ios', 'macos']);
+    });
+
+    test('absent platforms default to empty', () {
+      expect(CatalogEntry.fromJson(base()).platforms, isEmpty);
+    });
+
+    test('null or non-list platforms are treated as absent', () {
+      expect(
+        CatalogEntry.fromJson(base()..['platforms'] = null).platforms,
+        isEmpty,
+      );
+      expect(
+        CatalogEntry.fromJson(base()..['platforms'] = 'ios').platforms,
+        isEmpty,
+      );
+    });
+
+    test('non-string items are dropped', () {
+      final json = base()..['platforms'] = ['ios', 42, null, 'macos'];
+      expect(CatalogEntry.fromJson(json).platforms, ['ios', 'macos']);
+    });
+  });
+
   group('CatalogService.fetchCatalog', () {
     test('parses entries and stamps freshness', () async {
       final env = MemoryExecutionEnv();
@@ -130,6 +160,24 @@ void main() {
       expect(calc.iconFile, 'icon.svg');
       expect(calc.zipFile, 'calculator-1.2.0.zip');
       expect(calc.network, isFalse);
+    });
+
+    test('non-ASCII descriptions survive a charset-less response', () async {
+      // GitHub release assets / raw URLs send no charset, so http's
+      // `response.body` would latin1-decode the UTF-8 bytes into mojibake
+      // ("→" → "â\x86\x92"). The service must decode the BYTES as UTF-8.
+      final catalog = goodCatalog();
+      (catalog['widgets'] as List)[0]['description'] = 'Dodge → steer · Таймер';
+      final env = MemoryExecutionEnv();
+      final service = CatalogService(
+        env,
+        httpClient: MockClient((request) async {
+          return http.Response.bytes(utf8.encode(jsonEncode(catalog)), 200);
+        }),
+      );
+      final result = await service.fetchCatalog();
+      final calc = result.entries.firstWhere((e) => e.id == 'calculator');
+      expect(calc.description, 'Dodge → steer · Таймер');
     });
 
     test('TTL cache serves the second fetch without a network hit', () async {
@@ -250,6 +298,62 @@ void main() {
         ),
       );
     });
+
+    test(
+      'healing download refetches a stale catalog and retries once',
+      () async {
+        // The stale cache references bytes A; the "republish" replaced the
+        // same-named asset with bytes B and an updated catalog hash.
+        Uint8List zipBytes(String marker) {
+          final archive = Archive();
+          final manifest = utf8.encode('{"id":"w"}');
+          final js = utf8.encode('/* $marker */');
+          archive.addFile(
+            ArchiveFile('w/manifest.json', manifest.length, manifest),
+          );
+          archive.addFile(ArchiveFile('w/widget.js', js.length, js));
+          return Uint8List.fromList(ZipEncoder().encode(archive));
+        }
+
+        final bytesB = zipBytes('b');
+        final hashA = sha256.convert(zipBytes('a')).toString();
+        final hashB = sha256.convert(bytesB).toString();
+        var catalogCalls = 0;
+        Map<String, dynamic> catalogFor(String hash) => {
+          'widgets': [
+            {
+              'id': 'w',
+              'name': 'W',
+              'version': '1.0.0',
+              'permissions': {'network': false, 'allowedCommands': []},
+              'zip': {
+                'file': 'w-1.0.0.zip',
+                'sha256': hash,
+                'sizeBytes': bytesB.length,
+              },
+            },
+          ],
+        };
+        final client = MockClient((request) async {
+          final name = request.url.pathSegments.last;
+          if (name == 'catalog.json') {
+            catalogCalls++;
+            return http.Response(
+              jsonEncode(catalogFor(catalogCalls == 1 ? hashA : hashB)),
+              200,
+            );
+          }
+          if (name == 'w-1.0.0.zip') return http.Response.bytes(bytesB, 200);
+          return http.Response('nf', 404);
+        });
+        final env = MemoryExecutionEnv();
+        final service = CatalogService(env, httpClient: client);
+        final stale = await service.fetchCatalog(); // caches the hashA entry
+        final files = await service.downloadWidgetHealing(stale.entries.single);
+        expect(utf8.decode(files['widget.js']!), '/* b */');
+        expect(catalogCalls, 2); // one stale fetch + one forced refetch
+      },
+    );
 
     test('path escape / foreign roots are rejected', () async {
       Uint8List evilZip(String entryName) {

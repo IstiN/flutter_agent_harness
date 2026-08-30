@@ -674,7 +674,7 @@ void main() {
       expect(harness.layout.tileSizeFor('alpha'), isNull);
     });
 
-    testWidgets('hold-release on a classic app tile opens no menu', (
+    testWidgets('hold-release on a classic app tile opens the menu', (
       tester,
     ) async {
       await _pumpLauncher(tester);
@@ -684,7 +684,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 700));
       await gesture.up();
       await tester.pumpAndSettle();
-      expect(find.byType(PopupMenuItem<Object?>), findsNothing);
+      // Every app gets a menu now (Remove for non-demos) — no early
+      // return for plain icon tiles.
+      expect(find.byType(PopupMenuItem<Object?>), findsWidgets);
+      expect(find.text('Remove widget'), findsOneWidget);
       expect(find.text('Small (2×2)'), findsNothing);
     });
 

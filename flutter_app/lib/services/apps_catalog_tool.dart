@@ -180,7 +180,7 @@ Future<ToolExecutionResult> _mutate(
   }
 
   try {
-    final files = await service.downloadWidget(entry);
+    final files = await service.downloadWidgetHealing(entry);
     if (action == 'get-source') {
       for (final file in files.entries) {
         await env.writeFile(

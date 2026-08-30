@@ -148,6 +148,8 @@ void main() {
       'openrouter oauth',
       'codemie sso',
       'dial setup',
+      '/provider copilot',
+      'device flow',
       '/key',
       '/key',
       '/mode',

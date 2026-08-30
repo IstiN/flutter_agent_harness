@@ -145,6 +145,53 @@ void main() {
       },
     );
 
+    test('a copilot connection restores through its registry key', () async {
+      const conn = LastConnection(
+        providerKind: 'copilot',
+        modelId: 'gpt-4.1',
+        baseUrl: 'https://api.githubcopilot.com',
+      );
+      final registry = ProviderRegistry.inMemory();
+      final provider = await registry.add(
+        name: 'copilot-octocat',
+        baseUrl: conn.baseUrl!,
+        modelId: 'gpt-4.1',
+      );
+      registry.rememberKey(provider.id, 'gho_custom');
+      final config = restorableBootConfig(
+        connection: conn,
+        registry: registry,
+        sessionKeysStore: SessionKeysStore.inMemory(),
+      );
+      expect(config, isNotNull);
+      expect(config!.providerKind, 'copilot');
+      expect(config.apiKey, 'gho_custom');
+    });
+
+    test('a copilot connection restores through the entry-scoped '
+        'FA_KEY_COPILOT name', () async {
+      const conn = LastConnection(
+        providerKind: 'copilot',
+        modelId: 'gpt-4.1',
+        baseUrl: 'https://api.githubcopilot.com',
+      );
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'copilot-octocat',
+        baseUrl: conn.baseUrl!,
+        modelId: 'gpt-4.1',
+      );
+      final config = restorableBootConfig(
+        connection: conn,
+        registry: registry,
+        sessionKeysStore: SessionKeysStore.inMemory({
+          'FA_KEY_COPILOT_COPILOT_OCTOCAT': 'gho_scoped',
+        }),
+      );
+      expect(config, isNotNull);
+      expect(config!.apiKey, 'gho_scoped');
+    });
+
     test('null for a google connection whose key is gone', () {
       expect(
         restorableBootConfig(

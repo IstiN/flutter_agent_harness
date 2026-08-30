@@ -20,6 +20,12 @@ dependencies:
   fa_ui:
     path: ../packages/fa_ui
 
+
+  # The local fa_llm package: the LLM config + Copilot device-flow types
+  # the connect flow wires.
+  fa_llm:
+    path: ../packages/fa_llm
+
   # Mobile-friendly filesystem root and image picking.
   path_provider: ^2.1.6
   image_picker: ^1.2.3

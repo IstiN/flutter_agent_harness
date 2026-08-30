@@ -674,6 +674,52 @@ class AppLocalizationsEn extends AppLocalizations {
       'App code restored (your data was kept)';
 
   @override
+  String get launcherRemoveWidget => 'Remove widget';
+
+  @override
+  String launcherRemoveWidgetTitle(String name) {
+    return 'Remove $name?';
+  }
+
+  @override
+  String get launcherRemoveWidgetBody =>
+      'The widget files are deleted; its saved data (storage.json) is kept, so reinstalling restores its state.';
+
+  @override
+  String get launcherSearchHint => 'Search widgets…';
+
+  @override
+  String get launcherTabWidgets => 'Widgets';
+
+  @override
+  String get settingsResetApps => 'Reset apps';
+
+  @override
+  String get settingsResetAppsHint =>
+      'Restore the widget apps to their initial state';
+
+  @override
+  String get settingsResetAppsConfirmTitle => 'Reset all apps?';
+
+  @override
+  String get settingsResetAppsConfirmBody =>
+      'This deletes EVERY widget you downloaded from the catalog or created here, together with ALL its data (saved state, settings, storage). Bundled demo apps are restored to the reference version. This cannot be undone.';
+
+  @override
+  String settingsResetAppsDone(int count) {
+    return 'Apps reset — $count widget(s) removed, demos restored';
+  }
+
+  @override
+  String get appsCatalogCreatedByMe => 'Created by me';
+
+  @override
+  String get commonError => 'Something went wrong';
+
+  @override
+  String get launcherTabGetWidgets => 'Get widgets';
+
+  @override
   String get launcherRestoreDemoAppFailed => 'Could not restore the app';
 
   @override

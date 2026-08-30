@@ -49,6 +49,23 @@ void main() {
       expect(llmConfig.providerName, 'ollama');
       expect(llmConfig.model, 'gemma4:31b');
     });
+
+    test(
+      'maps Copilot config to the copilot provider (key = GitHub token)',
+      () {
+        const config = FaChatModelConfig(
+          providerKind: 'copilot',
+          modelId: 'gpt-4.1',
+          baseUrl: 'https://api.githubcopilot.com',
+          apiKey: 'gho_github_token',
+        );
+        final llmConfig = config.toLlmConfig();
+        expect(llmConfig.providerName, 'copilot');
+        expect(llmConfig.model, 'gpt-4.1');
+        expect(llmConfig.baseUrl, 'https://api.githubcopilot.com');
+        expect(llmConfig.apiKey, 'gho_github_token');
+      },
+    );
   });
 
   group('ProviderPresetLlmMapping', () {

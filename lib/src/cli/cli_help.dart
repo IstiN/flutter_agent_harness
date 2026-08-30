@@ -363,8 +363,8 @@ SKILLS AND CONTEXT FILES
                      wins over the 200k catalog default; persist per chain
                      via roles yaml contextWindow:/maxTokens:)
   /provider [name] [baseUrl] [token] | custom | openrouter oauth [headless]
-                     | chatgpt oauth [headless] | codemie sso [orgUrl]
-                     | dial setup | kimi
+                     | chatgpt oauth [headless] | /provider copilot
+                     | codemie sso [orgUrl] | dial setup | kimi
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is
                      a guided setup that saves the provider (api type, url,
@@ -382,6 +382,15 @@ SKILLS AND CONTEXT FILES
                      OpenAI-compatible adapter; dial setup runs the guided
                      DIAL Core flow (base URL, Api key, deployment) and
                      saves the org as a dial custom provider
+                    /provider copilot connects a GitHub Copilot account via
+                    the GitHub device flow (open the shown URL, enter the
+                    code; also works headless) or by pasting an existing
+                    GitHub token; the account saves as a named entry
+                    (copilot-<login>, individual/business/enterprise/custom
+                    endpoint) with its token in the secure store under
+                    FA_KEY_COPILOT_<NAME> (env FA_COPILOT_CLIENT_ID
+                    overrides the device-flow client id); the short-lived
+                    Copilot token refreshes automatically
   /providers         alias for /provider
   /key [set|delete]  manage API keys in the OS secure store
   /mode [name]       show or switch the active mode

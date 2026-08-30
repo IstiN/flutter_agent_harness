@@ -735,10 +735,12 @@ class AppsStore {
 
   /// Removes a catalog-installed widget's CODE files (`apps/<id>/` minus
   /// `storage.json`) and drops its meta record. Returns false when there is
-  /// nothing installed under that id.
-  Future<bool> removeWidget(String appId) async {
+  /// nothing installed under that id. With [force] the meta check is
+  /// skipped — used by the launcher's long-press Remove for agent-created
+  /// apps that were never catalog-installed (same storage.json keep).
+  Future<bool> removeWidget(String appId, {bool force = false}) async {
     final meta = await _readInstalled();
-    if (!meta.containsKey(appId)) return false;
+    if (!force && !meta.containsKey(appId)) return false;
     final entries =
         (await _env.listDir('apps/$appId')).valueOrNull ?? const <FileInfo>[];
     for (final item in entries) {
@@ -748,6 +750,37 @@ class AppsStore {
     meta.remove(appId);
     await _writeInstalled(meta);
     return true;
+  }
+
+  /// Factory reset of the whole apps workspace: deletes EVERY app
+  /// directory — catalog downloads, agent-created apps, demos — WITH
+  /// their `storage.json` user data (unlike [removeWidget], nothing is
+  /// preserved), plus the install metadata, the demo-seed tracking file
+  /// and the catalog cache, then re-seeds the bundled demos from the
+  /// reference assets. Returns how many app directories were removed.
+  Future<int> resetToFactory() async {
+    final entries =
+        (await _env.listDir('apps')).valueOrNull ?? const <FileInfo>[];
+    var removed = 0;
+    for (final item in entries) {
+      await _env.remove('apps/${item.name}', recursive: true);
+      if (item.kind == FileKind.directory) removed++;
+    }
+    // Dotfiles may not be listed by every env — remove the known ones
+    // explicitly (missing files are fine).
+    for (final metaFile in const [
+      installedMetaFile,
+      demoSeedsFile,
+      'apps/.catalog_cache_v2.json',
+    ]) {
+      try {
+        await _env.remove(metaFile, recursive: true);
+      } on Object {
+        // Absent or read-only — nothing to reset there.
+      }
+    }
+    await seedBundledApps();
+    return removed;
   }
 
   /// Compares [entries] against installed versions: returns candidates with

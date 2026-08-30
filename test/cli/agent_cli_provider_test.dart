@@ -75,10 +75,10 @@ void main() {
         onProviderChanged: onProviderChanged,
         secureKeys: secureKeys,
         customProviders: customProviders,
+        chatGptOAuthExchangeFn: chatGptOAuthExchangeFn,
         onSecretStored: onSecretStored,
         providerKind: providerKind ?? 'openai-completions',
         openRouterOAuthExchangeFn: openRouterOAuthExchangeFn,
-        chatGptOAuthExchangeFn: chatGptOAuthExchangeFn,
         codeMieSsoAuthenticateFn: codeMieSsoAuthenticateFn,
         codeMieGuidedSetupFn: codeMieGuidedSetupFn,
       ),
@@ -245,7 +245,7 @@ void main() {
     expect(
       output,
       contains(
-        'supported providers: openrouter, kimi, openai, codemie, dial, minimax, anthropic, google',
+        'supported providers: openrouter, kimi, openai, copilot, codemie, dial, minimax, anthropic, google',
       ),
     );
     expect(cli.agent.state.model.provider, 'test-provider');

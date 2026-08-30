@@ -232,41 +232,49 @@ extension on AgentCli {
         _allProvidersModelCache[activeProvider] =
             _knownModels[activeProvider] ?? [_agent.state.model.id];
       }
-      // Env-keyed catalog providers: a provider whose key sits in the
-      // environment (ZAI_API_KEY, MINIMAX_API_KEY, ...) is usable out of
-      // the box even without a saved registry entry — fetch its live
-      // /models list so the picker shows the endpoint's realtime answer,
-      // seeding from the remote catalog + the catalog default when the
-      // endpoint won't talk to us. A provider with neither a live answer
-      // nor seeds stays hidden (never listed with zero models).
-      for (final spec in enabledProviders()) {
-        if (spec.name == activeProvider ||
-            _allProvidersModelCache.containsKey(spec.name)) {
-          continue;
-        }
-        final envKey = _envKeyEntry(spec);
-        if (envKey == null) continue;
-        try {
-          final ids = await _fetchProviderModelIds(
-            spec.name,
-            spec.defaultBaseUrl,
-            envKey.$2,
-          );
-          if (ids.isNotEmpty) {
-            _allProvidersModelCache[spec.name] = ids;
-            continue;
-          }
-        } on Object {
-          // Dead endpoint — the seeds below keep the provider listed.
-        }
-        final seeds = _envCatalogSeedModels(spec);
-        if (seeds.isNotEmpty) _allProvidersModelCache[spec.name] = seeds;
-      }
+      await _refreshEnvKeyedProviders(activeProvider);
       _allProvidersCacheRefreshed = true;
       _tuiController?.sendModelsRefresh();
     } finally {
       _modelCacheFuture = null;
       completer.complete();
+    }
+  }
+
+  /// Fetches model lists for the env-keyed catalog providers (a key in the
+  /// environment but no saved entry — the FA_PROVIDER_* / out-of-the-box
+  /// path). Split out of [_refreshAllProvidersModelCache] to keep its
+  /// cyclomatic complexity under the CRAP ratchet; behavior unchanged.
+  Future<void> _refreshEnvKeyedProviders(String activeProvider) async {
+    // Env-keyed catalog providers: a provider whose key sits in the
+    // environment (ZAI_API_KEY, MINIMAX_API_KEY, ...) is usable out of
+    // the box even without a saved registry entry — fetch its live
+    // /models list so the picker shows the endpoint's realtime answer,
+    // seeding from the remote catalog + the catalog default when the
+    // endpoint won't talk to us. A provider with neither a live answer
+    // nor seeds stays hidden (never listed with zero models).
+    for (final spec in enabledProviders()) {
+      if (spec.name == activeProvider ||
+          _allProvidersModelCache.containsKey(spec.name)) {
+        continue;
+      }
+      final envKey = _envKeyEntry(spec);
+      if (envKey == null) continue;
+      try {
+        final ids = await _fetchProviderModelIds(
+          spec.name,
+          spec.defaultBaseUrl,
+          envKey.$2,
+        );
+        if (ids.isNotEmpty) {
+          _allProvidersModelCache[spec.name] = ids;
+          continue;
+        }
+      } on Object {
+        // Dead endpoint — the seeds below keep the provider listed.
+      }
+      final seeds = _envCatalogSeedModels(spec);
+      if (seeds.isNotEmpty) _allProvidersModelCache[spec.name] = seeds;
     }
   }
 
@@ -307,6 +315,9 @@ extension on AgentCli {
     }
     if (entry.spec.kind == 'dial') {
       return fetchDialModels(entry.baseUrl, cookieOrKey);
+    }
+    if (entry.spec.kind == 'copilot') {
+      return _fetchCopilotModelsAndLimits(entry.baseUrl, apiKey: cookieOrKey);
     }
     return _fetchOpenAiShapeIds(entry, cookieOrKey);
   }
@@ -571,6 +582,26 @@ extension on AgentCli {
       client: config.modelsHttpClient,
     );
     if (cacheSupported.isNotEmpty) _dialCacheModels = cacheSupported;
+    if (windows.isNotEmpty) _modelContextWindows = windows;
+    if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
+    return ids;
+  }
+
+  /// [fetchModelsForEndpoint] wrapper routing Copilot to its dialect (the
+  /// GitHub key is exchanged for the short-lived Copilot token first — a
+  /// raw Bearer GET would 401): records the endpoint-reported limits
+  /// (context window / max output from `capabilities.limits`) and answers
+  /// the plain id list.
+  Future<List<String>> _fetchCopilotModelsAndLimits(
+    String baseUrl, {
+    String? apiKey,
+  }) async {
+    final (ids, windows, maxTokens) = await fetchModelsForEndpoint(
+      baseUrl,
+      apiKey: apiKey ?? _apiKey,
+      provider: 'copilot',
+      client: config.modelsHttpClient,
+    );
     if (windows.isNotEmpty) _modelContextWindows = windows;
     if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
     return ids;

@@ -752,4 +752,25 @@ void main() {
       expect(connection.model, 'local-model');
     });
   });
+
+  testWidgets('ProvidersSection forwards onCopilotConnect to the picker', (
+    tester,
+  ) async {
+    var called = 0;
+    await _pump(
+      tester,
+      ProvidersSection(
+        registry: ProviderRegistry.inMemory(),
+        onCopilotConnect: () {
+          called++;
+        },
+      ),
+    );
+    await tester.tap(find.text('Add provider'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AddProviderPresetPickerPage), findsOneWidget);
+    await tester.tap(find.text('GitHub Copilot'));
+    await tester.pumpAndSettle();
+    expect(called, 1);
+  });
 }
