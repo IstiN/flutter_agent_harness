@@ -320,6 +320,12 @@ abstract class AppLocalizations {
   /// **'Could not load the widgets catalog.\n{error}'**
   String widgetsCatalogLoadFailed(Object error);
 
+  /// No description provided for @widgetsCatalogFilterAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get widgetsCatalogFilterAll;
+
   /// No description provided for @widgetsCatalogRetry.
   ///
   /// In en, this message translates to:

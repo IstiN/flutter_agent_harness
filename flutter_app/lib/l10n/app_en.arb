@@ -55,6 +55,8 @@
       "error": {}
     }
   },
+  "widgetsCatalogFilterAll": "All",
+  "@widgetsCatalogFilterAll": {},
   "widgetsCatalogRetry": "Retry",
   "appsOpenChatTooltip": "Open chat",
   "appsOpenFullChatTooltip": "Open full chat",

@@ -98,6 +98,46 @@ http.Client okServer({List<String>? platforms}) => MockClient((req) async {
   return http.Response('nf', 404);
 });
 
+/// Two widgets with DIFFERENT topic tags — drives the category-filter
+/// chip row tests.
+http.Client twoWidgetServer() => MockClient((req) async {
+  final name = req.url.pathSegments.last;
+  if (name == 'catalog.json') {
+    return http.Response(
+      jsonEncode({
+        'widgets': [
+          {
+            'id': 'focus-timer',
+            'name': 'Focus Timer',
+            'version': '1.0.0',
+            'description': 'Pomodoro timer',
+            'tags': ['timer'],
+            'permissions': {'network': false, 'allowedCommands': []},
+            'zip': {'file': 'focus-timer-1.0.0.zip'},
+          },
+          {
+            'id': 'unit-converter',
+            'name': 'Unit Converter',
+            'version': '0.9.1',
+            'description': 'Length, mass, temperature',
+            'tags': ['tools'],
+            'permissions': {'network': false, 'allowedCommands': []},
+            'zip': {'file': 'unit-converter-0.9.1.zip'},
+          },
+        ],
+      }),
+      200,
+    );
+  }
+  if (name == 'focus-timer-1.0.0.zip') {
+    return http.Response.bytes(zipOf('focus-timer'), 200);
+  }
+  if (name == 'unit-converter-0.9.1.zip') {
+    return http.Response.bytes(zipOf('unit-converter'), 200);
+  }
+  return http.Response('nf', 404);
+});
+
 Future<void> pumpSheet(
   WidgetTester tester, {
   required MemoryExecutionEnv env,
@@ -142,8 +182,9 @@ void main() {
       env: env,
       client: okServer(platforms: ['ios', 'macos']),
     );
-    // Topic tags still show alongside the platform chips.
-    expect(find.text('timer'), findsOneWidget);
+    // Topic tags still show alongside the platform chips (the filter row
+    // uses FilterChips, so scoping to Chip hits only the tile's tag).
+    expect(find.widgetWithText(Chip, 'timer'), findsOneWidget);
     expect(find.text('ios'), findsOneWidget);
     expect(find.text('macos'), findsOneWidget);
     // Platform chips are visually distinguished by a tertiary border.
@@ -159,7 +200,7 @@ void main() {
   ) async {
     final env = MemoryExecutionEnv();
     await pumpSheet(tester, env: env, client: okServer());
-    expect(find.text('timer'), findsOneWidget);
+    expect(find.widgetWithText(Chip, 'timer'), findsOneWidget);
     expect(find.text('ios'), findsNothing);
     expect(find.text('macos'), findsNothing);
   });
@@ -297,6 +338,29 @@ void main() {
     await tester.tap(find.widgetWithText(OutlinedButton, 'Remove'));
     await tester.pumpAndSettle();
     expect(fsRevision.value, greaterThan(before));
+  });
+
+  testWidgets('the category chips filter the catalog list', (tester) async {
+    final env = MemoryExecutionEnv();
+    await pumpSheet(tester, env: env, client: twoWidgetServer());
+    // Tile titles render as '<name>  ·  v<version>' — textContaining.
+    expect(find.textContaining('Focus Timer'), findsOneWidget);
+    expect(find.textContaining('Unit Converter'), findsOneWidget);
+    // The chip row offers All + every tag.
+    expect(find.widgetWithText(FilterChip, 'All'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'timer'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'tools'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilterChip, 'tools'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Focus Timer'), findsNothing);
+    expect(find.textContaining('Unit Converter'), findsOneWidget);
+
+    // Back to everything.
+    await tester.tap(find.widgetWithText(FilterChip, 'All'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Focus Timer'), findsOneWidget);
+    expect(find.textContaining('Unit Converter'), findsOneWidget);
   });
 
   testWidgets('stale catalog shows the offline banner with retry', (

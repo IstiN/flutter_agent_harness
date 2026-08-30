@@ -141,6 +141,9 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get widgetsCatalogFilterAll => 'Все';
+
+  @override
   String get widgetsCatalogRetry => 'Повторить';
 
   @override

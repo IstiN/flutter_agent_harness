@@ -96,6 +96,10 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
   /// Ids currently installing (button spinner).
   final Set<String> _installing = {};
 
+  /// The active category filter (a tag from the catalog's union of tags);
+  /// null shows every widget.
+  String? _tagFilter;
+
   /// Installed apps on disk: id → installed version (refreshed on load and
   /// after every install). Drives the Install/Update/Open button states.
   Map<String, String> _installed = {};
@@ -366,12 +370,13 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
               ),
             ),
           ),
+        _buildTagFilter(theme, result),
         Expanded(
           child: ListView(
             controller: scrollController,
             children: [
               ..._buildCreatedByMe(theme, result),
-              for (final entry in result.entries)
+              for (final entry in _filteredEntries(result))
                 _CatalogTile(
                   entry: entry,
                   busy: _installing.contains(entry.id),
@@ -386,6 +391,56 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Catalog entries matching the active [_tagFilter] (null = all).
+  List<CatalogEntry> _filteredEntries(CatalogFetchResult result) {
+    final tag = _tagFilter;
+    if (tag == null) return result.entries;
+    return [
+      for (final entry in result.entries)
+        if (entry.tags.contains(tag)) entry,
+    ];
+  }
+
+  /// Horizontally scrollable category chips: All + the sorted union of
+  /// every widget's tags. Collapses to nothing for a tag-less catalog.
+  Widget _buildTagFilter(ThemeData theme, CatalogFetchResult result) {
+    final tags = <String>{
+      for (final entry in result.entries) ...entry.tags,
+    }.toList()..sort();
+    if (tags.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 44,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilterChip(
+              label: Text(context.l10n.widgetsCatalogFilterAll),
+              selected: _tagFilter == null,
+              showCheckmark: false,
+              visualDensity: VisualDensity.compact,
+              onSelected: (_) => setState(() => _tagFilter = null),
+            ),
+          ),
+          for (final tag in tags)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilterChip(
+                label: Text(tag),
+                selected: _tagFilter == tag,
+                showCheckmark: false,
+                visualDensity: VisualDensity.compact,
+                onSelected: (selected) =>
+                    setState(() => _tagFilter = selected ? tag : null),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

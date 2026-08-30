@@ -139,6 +139,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get widgetsCatalogFilterAll => 'All';
+
+  @override
   String get widgetsCatalogRetry => 'Retry';
 
   @override
