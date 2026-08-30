@@ -1768,6 +1768,21 @@
 - fix(tui): key parser never swallows a trailing control byte into a text run
 - fix(cli): restored sessions label the model with the pinned-key account
 
+## 0.1.249
+
+- fix(app): self-heal stale-catalog sha mismatches + card-ify the catalog list
+- test(app): hold-release on a classic tile now expects the menu
+- fix(app): installed widgets really swap Preview for Remove + tests
+- fix(app): re-add the _localApps field declaration (clobbered again)
+- fix(app): restore the _localApps field + refresh (clobbered mid-commit)
+- feat(app): catalog sheet — Remove for installed, Created by me, real avatars
+- fix(app): tile menu opens for plain icon widgets + right-click + soft hover
+- fix(site): openPreview really uses the RUNNER url — the torn write had resurrected the /widgets/preview/ path
+- fix(site): repair torn index.html (duplicate tail after </html>) + restore the app-only marks
+- feat(site): platform widgets are marked 'runs in the Fa app' instead of a broken preview
+- fix(site): preview iframe points at the jsr repo's own Pages runner
+- feat(site): widget preview runs the real Flutter/jsr runner — DOM shim removed
+
 ## Unreleased
 
 ## Unreleased
