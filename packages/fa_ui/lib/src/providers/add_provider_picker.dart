@@ -73,6 +73,12 @@ const defaultAddProviderPresets = <AddProviderPreset>[
     icon: Icons.login,
   ),
   AddProviderPreset(
+    key: 'copilot',
+    name: 'GitHub Copilot',
+    description: 'Account sign-in via device flow',
+    icon: Icons.login,
+  ),
+  AddProviderPreset(
     key: 'codemie',
     name: 'CodeMie',
     description: 'Enterprise SSO sign-in',
@@ -183,6 +189,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     this.presets = defaultAddProviderPresets,
     this.onCodeMieSso,
     this.onChatGptOAuth,
+    this.onCopilotConnect,
     this.openRouterOAuthCallbackUrl,
     this.openRouterOAuthCapture,
     this.onDeviceRoutes = const [],
@@ -210,6 +217,11 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   /// iOS). When null, the ChatGPT tile is hidden.
   final VoidCallback? onChatGptOAuth;
 
+  /// Called when the user picks the Copilot preset. The host should run
+  /// the GitHub Copilot connect flow (device-flow sheet + provider setup).
+  /// When null, the Copilot tile is hidden.
+  final VoidCallback? onCopilotConnect;
+
   /// `callback_url` for the OpenRouter OAuth flow (forwarded to the editor).
   final String? openRouterOAuthCallbackUrl;
 
@@ -234,6 +246,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
       if (!addProviderPresetEnabled(p)) return false;
       if (p.key == 'codemie' && onCodeMieSso == null) return false;
       if (p.key == 'chatgpt' && onChatGptOAuth == null) return false;
+      if (p.key == 'copilot' && onCopilotConnect == null) return false;
       return true;
     }).toList();
     return Scaffold(
@@ -287,6 +300,10 @@ class AddProviderPresetPickerPage extends StatelessWidget {
       case 'chatgpt':
         Navigator.of(context).pop();
         onChatGptOAuth?.call();
+        return;
+      case 'copilot':
+        Navigator.of(context).pop();
+        onCopilotConnect?.call();
         return;
       case 'custom':
         await pushProviderEditor(

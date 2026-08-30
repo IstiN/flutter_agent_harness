@@ -12,7 +12,11 @@
   "sessionInfoNameLabel": "Имя сессии",
   "newSessionFolderTitle": "Новая сессия — папка",
   "newSessionCurrentFolder": "Текущая папка ({folder})",
-  "@newSessionCurrentFolder": { "placeholders": { "folder": {} } },
+  "@newSessionCurrentFolder": {
+    "placeholders": {
+      "folder": {}
+    }
+  },
   "approvalModeAlwaysAsk": "Всегда спрашивать",
   "approvalModeAlwaysAskHint": "Каждый вызов инструмента требует разрешения.",
   "approvalModeTitle": "Разрешения инструментов",
@@ -197,6 +201,38 @@
   "launcherRenameFolderTooltip": "Переименовать папку",
   "launcherRestoreDemoApp": "Восстановить эталонную версию",
   "launcherRestoreDemoAppDone": "Код приложения восстановлен (данные сохранены)",
+  "launcherRemoveWidget": "Удалить виджет",
+  "@launcherRemoveWidget": {},
+  "launcherRemoveWidgetTitle": "Удалить {name}?",
+  "@launcherRemoveWidgetTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "launcherRemoveWidgetBody": "Файлы виджета удаляются; его данные (storage.json) сохраняются — при повторной установке состояние восстановится.",
+  "@launcherRemoveWidgetBody": {},
+  "launcherSearchHint": "Поиск виджетов…",
+  "@launcherSearchHint": {},
+  "launcherTabWidgets": "Виджеты",
+  "@launcherTabWidgets": {},
+  "settingsResetApps": "Сбросить приложения",
+  "@settingsResetApps": {},
+  "settingsResetAppsHint": "Вернуть приложения-виджеты к изначальному состоянию",
+  "@settingsResetAppsHint": {},
+  "settingsResetAppsConfirmTitle": "Сбросить все приложения?",
+  "@settingsResetAppsConfirmTitle": {},
+  "settingsResetAppsConfirmBody": "Будут удалены ВСЕ виджеты, которые вы скачали из каталога или создали, вместе со ВСЕМИ их данными (сохранённое состояние, настройки, хранилище). Встроенные демо-приложения вернутся к эталонной версии. Действие необратимо.",
+  "@settingsResetAppsConfirmBody": {},
+  "settingsResetAppsDone": "Приложения сброшены — удалено виджетов: {count}, демо восстановлены",
+  "@settingsResetAppsDone": {"placeholders": {"count": {"type": "int"}}},
+  "appsCatalogCreatedByMe": "Создано мной",
+  "@appsCatalogCreatedByMe": {},
+  "commonError": "Что-то пошло не так",
+  "@commonError": {},
+  "launcherTabGetWidgets": "Каталог виджетов",
+  "@launcherTabGetWidgets": {},
   "launcherRestoreDemoAppFailed": "Не удалось восстановить приложение",
   "launcherSeedErrorCopy": "Скопировать ошибку",
   "launcherSeedErrorHint": "Отправьте эту ошибку Fa — он сможет починить приложение.",

@@ -12,9 +12,11 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa_ui/fa_ui.dart' as faui;
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
+import 'package:fa/services/copilot_connect_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -2116,6 +2118,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         LastConnectionStore.inMemory(),
                   );
                 },
+                onCopilotConnect: () async {
+                  final registry = widget.registry;
+                  if (registry == null) return;
+                  await runCopilotConnectFlow(
+                    context: context,
+                    registry: registry,
+                    service: service,
+                    lastConnectionStore:
+                        widget.lastConnectionStore ??
+                        LastConnectionStore.inMemory(),
+                  );
+                },
                 // CodeMie edit provider → "Re-authenticate": re-run the SSO
                 // flow for that org (the cookie key expires and cannot be
                 // refreshed by re-typing). The flow itself refreshes the
@@ -2228,6 +2242,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 16),
               if (widget.layoutStore != null) ...[
                 HomeGridSection(layoutStore: widget.layoutStore!),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+              ],
+              if (service != null) ...[
+                ResetAppsSection(service: service),
                 const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 16),
@@ -2384,6 +2404,90 @@ class HomeGridSection extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// The settings "Reset apps" row: restores the widget apps to their
+/// initial state — every downloaded/agent-created widget is deleted
+/// TOGETHER WITH ITS DATA (`storage.json`), the bundled demos return to
+/// the reference version. The confirmation dialog spells out the data
+/// loss; [AppsStore.resetToFactory] does the work.
+class ResetAppsSection extends StatelessWidget {
+  const ResetAppsSection({super.key, required this.service, this.appsStore});
+
+  /// The active service (its env owns the `apps/` workspace).
+  final AgentService service;
+
+  /// Injectable store (tests); defaults to one over the service env.
+  final AppsStore? appsStore;
+
+  Future<void> _confirmAndReset(BuildContext context) async {
+    final l10n = context.l10n;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: Icon(
+          Icons.warning_amber_rounded,
+          color: Theme.of(dialogContext).colorScheme.error,
+        ),
+        title: Text(l10n.settingsResetAppsConfirmTitle),
+        content: Text(l10n.settingsResetAppsConfirmBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.commonCancel),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.settingsResetApps),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    AppAnalytics.instance.widgetEvent('reset_apps');
+    final store = appsStore ?? AppsStore(service.env);
+    final removed = await store.resetToFactory();
+    if (context.mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(l10n.settingsResetAppsDone(removed))),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Icon(Icons.restart_alt, size: 20, color: colors.dim),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                context.l10n.settingsResetApps,
+                style: theme.textTheme.bodyMedium,
+              ),
+              Text(
+                context.l10n.settingsResetAppsHint,
+                style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+              ),
+            ],
+          ),
+        ),
+        TextButton(
+          onPressed: () => _confirmAndReset(context),
+          style: TextButton.styleFrom(foregroundColor: theme.colorScheme.error),
+          child: Text(context.l10n.settingsResetApps),
+        ),
+      ],
     );
   }
 }

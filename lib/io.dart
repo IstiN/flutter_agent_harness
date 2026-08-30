@@ -9,6 +9,7 @@ export 'src/cli/cli_config.dart';
 export 'src/cli/chatgpt_oauth_server.dart';
 export 'src/cli/codemie_sso_server.dart';
 export 'src/cli/headless_prompt.dart';
+export 'src/cli/headless_provider_key.dart';
 export 'src/cli/openrouter_oauth_server.dart';
 export 'src/cli/prompt_overrides_io.dart';
 export 'src/env/io_execution_env.dart';

@@ -55,6 +55,8 @@ final class AgentCliConfig {
     this.tuiProgramHooks,
     this.openRouterOAuthExchangeFn,
     this.chatGptOAuthExchangeFn,
+    this.copilotDeviceFlowFn,
+    this.copilotUserFn,
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
@@ -90,6 +92,23 @@ final class AgentCliConfig {
     required String verifier,
   })?
   chatGptOAuthExchangeFn;
+
+  /// Optional override for the whole Copilot device flow (grant + poll),
+  /// returning the GitHub token. Tests inject a fake so `/provider copilot`
+  /// runs without network; production runs the real flow against
+  /// github.com. [clientId] is the FA_COPILOT_CLIENT_ID override (null =
+  /// the pinned VS Code Copilot client id); [onStatus] receives the
+  /// waiting lines.
+  final Future<String> Function({
+    String? clientId,
+    void Function(String status)? onStatus,
+  })?
+  copilotDeviceFlowFn;
+
+  /// Optional override for the GitHub account lookup behind `/provider
+  /// copilot` (GET api.github.com/user → login). Tests inject a fake;
+  /// production calls [fetchGitHubLogin].
+  final Future<String> Function(String githubToken)? copilotUserFn;
 
   /// Optional override for the CodeMie SSO browser flow
   /// (`/provider codemie sso`). Tests inject a fake returning canned

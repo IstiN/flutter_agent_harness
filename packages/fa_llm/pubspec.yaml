@@ -2,7 +2,7 @@ name: fa_llm
 description: >-
   Reusable LLM provider adapters for Fa and related projects.
   Pure Dart core: OpenAI-compatible, OpenRouter, Ollama, and configuration.
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/IstiN/flutter_agent_harness
 homepage: https://github.com/IstiN/flutter_agent_harness/tree/main/packages/fa_llm
 issue_tracker: https://github.com/IstiN/flutter_agent_harness/issues
@@ -15,5 +15,5 @@ dependencies:
   meta: ^1.18.0
 
 dev_dependencies:
-  lints: ^6.1.0
+  coverage: ^1.15.0
   test: ^1.31.2

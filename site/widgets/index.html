@@ -69,16 +69,63 @@
     border: 1px solid var(--border); color: var(--muted);
   }
   .tag.net { color: #fbbf24; border-color: #4d3a10; }
-  .meta { display: flex; justify-content: space-between; align-items: center; }
-  .size { color: var(--muted); font-size: 12px; }
+  .tag.plat { color: var(--accent2); border-color: #3a4170; }
+  .meta {
+    display: flex; flex-wrap: wrap;
+    justify-content: space-between; align-items: center;
+  }
+  .size {
+    color: var(--muted); font-size: 12px;
+    flex: 1 1 100%; margin-bottom: 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .actions { display: flex; gap: 8px; margin-left: auto; }
   .btn {
     font: inherit; font-size: 14px; padding: 7px 14px; border-radius: 8px;
     border: 1px solid var(--border); background: transparent;
     color: var(--accent); cursor: pointer; text-decoration: none;
+    white-space: nowrap; line-height: 1.3; text-align: center;
   }
   .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); }
+  .btn.primary:hover { filter: brightness(1.1); }
+  .apponly {
+    font-size: 13px; color: var(--muted); padding: 7px 4px;
+    white-space: nowrap; align-self: center;
+  }
   footer { max-width: 960px; margin: 0 auto; padding: 0 20px 48px; color: var(--muted); font-size: 13px; }
   footer a { color: var(--accent); }
+
+  /* ---- preview overlay ---- */
+  #preview-overlay {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(2, 4, 8, 0.72);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  #preview-overlay[hidden] { display: none; }
+  .pv-panel {
+    width: min(920px, 100%); height: min(720px, 100%);
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .pv-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+  }
+  .pv-head .icon { width: 32px; height: 32px; }
+  .pv-head .icon img { width: 22px; height: 22px; }
+  .pv-title { font-weight: 600; font-size: 15px; }
+  .pv-note { color: var(--muted); font-size: 12px; }
+  .pv-spacer { flex: 1; }
+  .pv-close {
+    font: inherit; font-size: 16px; line-height: 1;
+    background: transparent; color: var(--muted); cursor: pointer;
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  }
+  .pv-close:hover { color: var(--text); border-color: var(--accent); }
+  #pv-frame { flex: 1; width: 100%; border: 0; background: var(--bg); }
 </style>
 </head>
 <body>
@@ -100,8 +147,27 @@
 </main>
 <footer>
   Installing happens inside the Fa app (Plugins → Get widgets). The files here
-  are the same open-source artifacts the app consumes.
+  are the same open-source artifacts the app consumes — and Preview runs the
+  same <code>widget.js</code> against a small web shim of Fa's
+  <code>jsr</code> API.
 </footer>
+
+<div id="preview-overlay" hidden>
+  <div class="pv-panel">
+    <div class="pv-head">
+      <div class="icon" id="pv-iconbox" hidden><img id="pv-icon" alt=""></div>
+      <div>
+        <div class="pv-title" id="pv-title">Preview</div>
+        <div class="pv-note">Web preview of <code>widget.js</code> · fa.*
+          device services and 3D scenes are stubbed · state resets on close</div>
+      </div>
+      <div class="pv-spacer"></div>
+      <button class="pv-close" id="pv-close" title="Close (Esc)">✕</button>
+    </div>
+    <iframe id="pv-frame" sandbox="allow-scripts allow-same-origin" title="Widget preview"></iframe>
+  </div>
+</div>
+
 <script>
 (function () {
   // Release assets (github.com/.../releases/latest/download/) serve WITHOUT
@@ -132,6 +198,54 @@
     return (bytes / 1024).toFixed(1) + ' KB';
   }
 
+  // ---------------------------------------------------------------- preview
+  //
+  // The overlay embeds the REAL Flutter web preview runner (hosted on the
+  // flutter_js_widget_runtime repo's GitHub Pages): it fetches
+  // manifest.json + widget.js from the fa_widgets repo and renders the JSON
+  // tree with the actual jsr runtime — what you see is what the app shows.
+  const RUNNER = 'https://istin.github.io/flutter_js_widget_runtime/preview/';
+  const overlay = document.getElementById('preview-overlay');
+  const frame = document.getElementById('pv-frame');
+  const pvTitle = document.getElementById('pv-title');
+  const pvIconBox = document.getElementById('pv-iconbox');
+  const pvIcon = document.getElementById('pv-icon');
+
+
+  let currentWidget = null;
+
+  function closePreview() {
+    overlay.hidden = true;
+    frame.src = 'about:blank';
+    currentWidget = null;
+    document.removeEventListener('keydown', onEsc);
+  }
+
+  function onEsc(ev) { if (ev.key === 'Escape') closePreview(); }
+
+  function openPreview(widget) {
+    currentWidget = widget;
+    pvTitle.textContent = (widget.name || widget.id) + ' · v' + (widget.version || '?');
+    if (widget.icon) {
+      pvIcon.src = RAW + 'widgets/' + widget.id + '/' + widget.icon;
+      pvIconBox.hidden = false;
+    } else {
+      pvIconBox.hidden = true;
+    }
+    overlay.hidden = false;
+    document.addEventListener('keydown', onEsc);
+    window.gtag && gtag('event', 'widget_preview_click',
+      { widget_id: widget.id });
+    frame.src = RUNNER + '?widget=' + encodeURIComponent(widget.id) +
+      '&theme=dark';
+  }
+
+  document.getElementById('pv-close').addEventListener('click', closePreview);
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) closePreview();
+  });
+
+  // ---------------------------------------------------------------- gallery
   function render(widgets) {
     status.remove();
     for (const w of widgets) {
@@ -161,6 +275,9 @@
       }
       const commands = (w.permissions || {}).allowedCommands || [];
       if (commands.length) tags.appendChild(el('span', 'tag net', 'commands'));
+      for (const p of w.platforms || []) {
+        tags.appendChild(el('span', 'tag plat', p));
+      }
       if (tags.children.length) card.appendChild(tags);
 
       const meta = el('div', 'meta');
@@ -169,6 +286,20 @@
           [w.zip ? humanSize(w.zip.sizeBytes) : '',
            (w.minRuntime ? 'jsr ≥ ' + w.minRuntime : '')].filter(Boolean).join(' · '))
       );
+      const actions = el('div', 'actions');
+      // Widgets whose manifest excludes the web platform need a native
+      // host bridge (calendar/contacts/health/homekit) or hit browser-only
+      // limits (stocks: the quote API sends no CORS headers) — iframing
+      // them would show an error card, so mark them app-only instead.
+      const appOnly = (w.platforms || []).length > 0 &&
+        !(w.platforms || []).includes('web');
+      if (appOnly) {
+        actions.appendChild(el('span', 'apponly', 'runs in the Fa app'));
+      } else {
+        const previewBtn = el('button', 'btn primary', '▶ Preview');
+        previewBtn.addEventListener('click', () => openPreview(w));
+        actions.appendChild(previewBtn);
+      }
       if (w.zip && w.zip.file) {
         const a = document.createElement('a');
         a.className = 'btn';
@@ -178,8 +309,9 @@
           'onclick',
           "gtag&&gtag('event','widget_download_click',{widget_id:'"
             + w.id + "'});return true;");
-        meta.appendChild(a);
+        actions.appendChild(a);
       }
+      meta.appendChild(actions);
       card.appendChild(meta);
       grid.appendChild(card);
     }

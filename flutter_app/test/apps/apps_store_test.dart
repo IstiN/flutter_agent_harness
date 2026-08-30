@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
+
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -59,10 +61,63 @@ void main() {
       },
     );
 
+    test(
+      'resetToFactory wipes downloads WITH data and reseeds demos',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = AppsStore(env, readAsset: _fakeAssets);
+        await store.seedBundledApps(['demo']);
+        // A catalog-style download with user data + install metadata.
+        await store.installWidget(
+          id: 'focus-timer',
+          version: '1.0.0',
+          files: {
+            'manifest.json': utf8.encode(
+              '{"id":"focus-timer","version":"1.0.0"}',
+            ),
+            'widget.js': utf8.encode('// ft'),
+          },
+        );
+        await env.writeFile('apps/focus-timer/storage.json', '{"sessions":9}');
+        await env.writeFile('apps/my-own/manifest.json', '{"id":"my-own"}');
+        await env.writeFile('apps/my-own/storage.json', '{"x":1}');
+        await env.writeFile('apps/.catalog_cache_v2.json', '{}');
+
+        final removed = await store.resetToFactory();
+        expect(removed, greaterThanOrEqualTo(3)); // demo + focus-timer + my-own
+
+        // Only the bundled demo DIRS remain (reseeded from the assets).
+        final dirs = (await env.listDir('apps')).valueOrNull ?? const [];
+        final dirNames = dirs.map((e) => e.name).toList();
+        expect(
+          dirNames,
+          containsAll(['calculator', 'weather', 'fitness-trainer']),
+        );
+        expect(dirNames, isNot(contains('focus-timer')));
+        expect(dirNames, isNot(contains('my-own')));
+        // User data is GONE (unlike removeWidget, nothing is preserved).
+        expect(
+          (await env.readTextFile('apps/focus-timer/storage.json')).valueOrNull,
+          isNull,
+        );
+        expect(
+          (await env.readTextFile('apps/my-own/storage.json')).valueOrNull,
+          isNull,
+        );
+        expect(
+          (await env.readTextFile('apps/.installed.json')).valueOrNull,
+          isNull,
+        );
+        expect(
+          (await env.readTextFile('apps/.catalog_cache_v2.json')).valueOrNull,
+          isNull,
+        );
+      },
+    );
+
     test('seeds bundled apps once and lists them', () async {
       final env = MemoryExecutionEnv();
       final store = AppsStore(env, readAsset: _fakeAssets);
-
       await store.seedBundledApps(['demo']);
       var apps = await store.listApps();
       expect(apps, hasLength(1));

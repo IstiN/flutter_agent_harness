@@ -492,7 +492,13 @@ class AgentService extends ChangeNotifier
     }
 
     _childSessionFactory = childSessionFactory;
-    _memoryController = MemoryController(env: env);
+    _memoryController = MemoryController(
+      env: env,
+      // Semantic search + consolidate() need an LLM: per call the smol
+      // task-model override (resolver is built below — the closure reads it
+      // lazily), else the main model.
+      llmProvider: HarnessLlmProvider(resolve: () => _resolveMemoryLlmSlot()),
+    );
     // Model-roles resolver backed by the TaskModelsStore: `smol` (compaction
     // + explore) and `subagent` (delegation) overrides resolve through it;
     // the Map reads the store lazily, so settings changes apply on the next
@@ -841,6 +847,14 @@ class AgentService extends ChangeNotifier
 
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
+
+  /// The memory LLM slot, resolved per call: the `smol` task-model override
+  /// when one is set (settings change mid-session), else the main model.
+  HarnessLlmSlot? _resolveMemoryLlmSlot() {
+    final role = _taskRolesResolver?.resolveRole(smolModelRole);
+    if (role != null) return role;
+    return (model: _agent.state.model, stream: _agent.streamFunction);
+  }
 
   /// The session's background shell jobs (bash background / steer-yield);
   /// null before the agent is built.

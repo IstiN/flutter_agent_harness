@@ -251,6 +251,9 @@ extension on AgentCli {
     if (entry.spec.kind == 'dial') {
       return fetchDialModels(entry.baseUrl, cookieOrKey);
     }
+    if (entry.spec.kind == 'copilot') {
+      return _fetchCopilotModelsAndLimits(entry.baseUrl, apiKey: cookieOrKey);
+    }
     return _fetchOpenAiShapeIds(entry, cookieOrKey);
   }
 
@@ -467,6 +470,26 @@ extension on AgentCli {
       client: config.modelsHttpClient,
     );
     if (cacheSupported.isNotEmpty) _dialCacheModels = cacheSupported;
+    if (windows.isNotEmpty) _modelContextWindows = windows;
+    if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
+    return ids;
+  }
+
+  /// [fetchModelsForEndpoint] wrapper routing Copilot to its dialect (the
+  /// GitHub key is exchanged for the short-lived Copilot token first — a
+  /// raw Bearer GET would 401): records the endpoint-reported limits
+  /// (context window / max output from `capabilities.limits`) and answers
+  /// the plain id list.
+  Future<List<String>> _fetchCopilotModelsAndLimits(
+    String baseUrl, {
+    String? apiKey,
+  }) async {
+    final (ids, windows, maxTokens) = await fetchModelsForEndpoint(
+      baseUrl,
+      apiKey: apiKey ?? _apiKey,
+      provider: 'copilot',
+      client: config.modelsHttpClient,
+    );
     if (windows.isNotEmpty) _modelContextWindows = windows;
     if (maxTokens.isNotEmpty) _modelMaxTokens = maxTokens;
     return ids;

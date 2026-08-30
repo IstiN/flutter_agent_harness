@@ -12,7 +12,7 @@ import 'package:fa_ui/fa_ui.dart' as fa_ui;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-
+import 'package:fa/services/copilot_connect_flow.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
@@ -162,6 +162,16 @@ class DefaultChatModelSection extends StatelessWidget {
         onChatGptOAuth: () async {
           Navigator.of(context).pop();
           await runChatGptOAuthFlow(
+            context: context,
+            registry: reg,
+            service: service,
+            lastConnectionStore:
+                lastConnectionStore ?? LastConnectionStore.inMemory(),
+          );
+        },
+        onCopilotConnect: () async {
+          Navigator.of(context).pop();
+          await runCopilotConnectFlow(
             context: context,
             registry: reg,
             service: service,

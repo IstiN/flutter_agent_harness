@@ -42,6 +42,7 @@ class ProvidersSection extends StatelessWidget {
     this.openRouterOAuthCapture,
     this.onCodeMieSso,
     this.onChatGptOAuth,
+    this.onCopilotConnect,
     this.onProviderReauthenticate,
     this.modelsFetcher,
   });
@@ -81,6 +82,11 @@ class ProvidersSection extends StatelessWidget {
   /// picker. When null, ChatGPT is not offered. The host should open the
   /// ChatGPT OAuth flow.
   final VoidCallback? onChatGptOAuth;
+
+  /// Called when the user picks Copilot from the add-provider preset
+  /// picker. When null, Copilot is not offered. The host should run the
+  /// GitHub Copilot connect flow.
+  final VoidCallback? onCopilotConnect;
 
   /// Re-authentication for SSO-backed providers (CodeMie) in the edit
   /// editor: the host re-runs the sign-in flow for [provider] (refreshing
@@ -341,6 +347,7 @@ class ProvidersSection extends StatelessWidget {
       context,
       AddProviderPresetPickerPage(
         registry: registry,
+        onCopilotConnect: onCopilotConnect,
         onCodeMieSso: onCodeMieSso,
         onChatGptOAuth: onChatGptOAuth,
         openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,

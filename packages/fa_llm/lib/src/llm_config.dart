@@ -25,6 +25,14 @@ class LlmConfig {
   final double temperature;
   final String maxTokensParamName;
 
+  /// Copilot plan name ('individual' | 'business' | 'enterprise') for the
+  /// `copilot` provider; ignored by other providers.
+  final String? accountType;
+
+  /// Named multi-account entry (e.g. `copilot-<login>`) selecting the
+  /// secure-store key for the `copilot` provider.
+  final String? entryName;
+
   const LlmConfig({
     required this.providerName,
     required this.apiKey,
@@ -34,8 +42,9 @@ class LlmConfig {
     int? contextWindow,
     this.temperature = -1,
     this.maxTokensParamName = 'max_completion_tokens',
+    this.accountType,
+    this.entryName,
   }) : contextWindow = contextWindow ?? 4096;
-
   factory LlmConfig.fromEnvironment({
     String provider = 'openai',
     String? apiKey,
@@ -125,6 +134,8 @@ class LlmConfig {
     int? contextWindow,
     double? temperature,
     String? maxTokensParamName,
+    String? accountType,
+    String? entryName,
   }) {
     return LlmConfig(
       providerName: providerName ?? this.providerName,
@@ -135,6 +146,8 @@ class LlmConfig {
       contextWindow: contextWindow ?? this.contextWindow,
       temperature: temperature ?? this.temperature,
       maxTokensParamName: maxTokensParamName ?? this.maxTokensParamName,
+      accountType: accountType ?? this.accountType,
+      entryName: entryName ?? this.entryName,
     );
   }
 }

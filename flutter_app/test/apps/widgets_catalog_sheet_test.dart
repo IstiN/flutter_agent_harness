@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:flutter/material.dart';
@@ -13,7 +14,9 @@ import 'package:http/testing.dart';
 Uint8List zipOf(String id) {
   final archive = Archive();
   final data = {
-    '$id/manifest.json': utf8.encode('{"id":"$id"}'),
+    '$id/manifest.json': utf8.encode(
+      '{"id":"$id","name":"$id","version":"1.0.0"}',
+    ),
     '$id/widget.js': utf8.encode('/* $id */'),
   };
   for (final name in data.keys.toList()..sort()) {
@@ -23,7 +26,7 @@ Uint8List zipOf(String id) {
   return Uint8List.fromList(ZipEncoder().encode(archive));
 }
 
-http.Client okServer() => MockClient((req) async {
+http.Client okServer({List<String>? platforms}) => MockClient((req) async {
   final name = req.url.pathSegments.last;
   if (name == 'catalog.json') {
     return http.Response(
@@ -35,6 +38,7 @@ http.Client okServer() => MockClient((req) async {
             'version': '1.0.0',
             'description': 'Pomodoro timer',
             'tags': ['timer'],
+            'platforms': ?platforms,
             'permissions': {'network': false, 'allowedCommands': []},
             'zip': {'file': 'focus-timer-1.0.0.zip'},
           },
@@ -53,6 +57,7 @@ Future<void> pumpSheet(
   WidgetTester tester, {
   required MemoryExecutionEnv env,
   http.Client? client,
+  Future<void> Function(BuildContext, JsAppInfo)? onOpenApp,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -60,7 +65,11 @@ Future<void> pumpSheet(
         body: SizedBox(
           width: 420,
           height: 700,
-          child: WidgetsCatalogSheet(env: env, httpClient: client),
+          child: WidgetsCatalogSheet(
+            env: env,
+            httpClient: client,
+            onOpenApp: onOpenApp,
+          ),
         ),
       ),
     ),
@@ -79,7 +88,36 @@ void main() {
     expect(find.textContaining('v1.0.0'), findsOneWidget);
   });
 
-  testWidgets('install flow writes the widget and marks it installed', (
+  testWidgets('platform chips render next to the tag chips', (tester) async {
+    final env = MemoryExecutionEnv();
+    await pumpSheet(
+      tester,
+      env: env,
+      client: okServer(platforms: ['ios', 'macos']),
+    );
+    // Topic tags still show alongside the platform chips.
+    expect(find.text('timer'), findsOneWidget);
+    expect(find.text('ios'), findsOneWidget);
+    expect(find.text('macos'), findsOneWidget);
+    // Platform chips are visually distinguished by a tertiary border.
+    final chip = tester.widget<Chip>(
+      find.ancestor(of: find.text('ios'), matching: find.byType(Chip)),
+    );
+    final theme = Theme.of(tester.element(find.text('ios')));
+    expect(chip.side?.color, theme.colorScheme.tertiary);
+  });
+
+  testWidgets('entries without platforms render no platform chips', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await pumpSheet(tester, env: env, client: okServer());
+    expect(find.text('timer'), findsOneWidget);
+    expect(find.text('ios'), findsNothing);
+    expect(find.text('macos'), findsNothing);
+  });
+
+  testWidgets('install flow writes the widget and the button becomes Open', (
     tester,
   ) async {
     final env = MemoryExecutionEnv();
@@ -91,7 +129,97 @@ void main() {
       (await env.readTextFile('apps/focus-timer/widget.js')).valueOrNull,
       contains('focus-timer'),
     );
-    expect(find.text('Installed ✓'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Open'), findsOneWidget);
+  });
+
+  testWidgets('Open on an installed widget fires the open hook', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final opened = <String>[];
+    await pumpSheet(
+      tester,
+      env: env,
+      client: okServer(),
+      onOpenApp: (context, app) async => opened.add(app.id),
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Install'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Open'));
+    await tester.pumpAndSettle();
+    expect(opened, ['focus-timer']);
+  });
+
+  testWidgets('Preview installs a missing widget and opens it right away', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final opened = <String>[];
+    await pumpSheet(
+      tester,
+      env: env,
+      client: okServer(),
+      onOpenApp: (context, app) async => opened.add(app.id),
+    );
+    await tester.tap(find.widgetWithText(TextButton, 'Preview'));
+    await tester.pumpAndSettle();
+
+    expect(
+      (await env.readTextFile('apps/focus-timer/widget.js')).valueOrNull,
+      contains('focus-timer'),
+    );
+    expect(opened, ['focus-timer']);
+  });
+
+  testWidgets('an older installed version offers Update', (tester) async {
+    final env = MemoryExecutionEnv();
+    await env.writeFile(
+      'apps/focus-timer/manifest.json',
+      '{"id":"focus-timer","name":"Focus Timer","version":"0.9.0"}',
+    );
+    await pumpSheet(tester, env: env, client: okServer());
+    expect(find.widgetWithText(FilledButton, 'Update'), findsOneWidget);
+  });
+
+  testWidgets('an installed current widget swaps Preview for Remove', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await pumpSheet(tester, env: env, client: okServer());
+    await tester.tap(find.widgetWithText(FilledButton, 'Install'));
+    await tester.pumpAndSettle();
+
+    // Installed & current: Open + Remove, no Preview.
+    expect(find.widgetWithText(TextButton, 'Preview'), findsNothing);
+    final remove = find.widgetWithText(TextButton, 'Remove');
+    expect(remove, findsOneWidget);
+
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+    expect(
+      (await env.readTextFile('apps/focus-timer/manifest.json')).valueOrNull,
+      isNull,
+    );
+    expect(find.widgetWithText(FilledButton, 'Install'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Preview'), findsOneWidget);
+  });
+
+  testWidgets('local apps missing from the catalog list as Created by me', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await env.writeFile(
+      'apps/my-tool/manifest.json',
+      '{"id":"my-tool","name":"My Tool","version":"1.0.0"}',
+    );
+    await env.writeFile('apps/my-tool/widget.js', '// mine');
+    await pumpSheet(tester, env: env, client: okServer());
+
+    expect(find.text('Created by me'), findsOneWidget);
+    expect(find.text('My Tool'), findsOneWidget);
+    // The catalog entry itself is still listed below the section.
+    expect(find.textContaining('Focus Timer'), findsWidgets);
   });
 
   testWidgets('stale catalog shows the offline banner with retry', (
