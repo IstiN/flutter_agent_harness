@@ -305,6 +305,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                 onNewSession: _newSession,
                 onSessionTap: () => setState(() {}),
                 persistedSessions: _persistedSessions,
+                sessionInfoNames: _jsonlNames,
                 onOpenPersisted: _openPersistedSession,
               ),
             ),
