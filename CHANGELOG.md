@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.248
+
 
 - fix(cli): a run counts as busy from the moment it is STARTED, not from
   the first streamed byte — the inbox watcher / shell-job settle path no
@@ -1766,5 +1767,7 @@
 - feat(tools): Hailuo 2.3 video dialect + headless pre-flight compaction
 - fix(tui): key parser never swallows a trailing control byte into a text run
 - fix(cli): restored sessions label the model with the pinned-key account
+
+## Unreleased
 
 ## Unreleased
