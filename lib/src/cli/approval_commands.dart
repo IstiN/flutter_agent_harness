@@ -4,6 +4,15 @@ part of 'agent_cli.dart';
 
 /// Implementation members of [AgentCli] for approval prompts.
 extension ApprovalCommands on AgentCli {
+  /// Answers any pending approval/ask prompt defensively so a tool call
+  /// never waits on an answer that cannot arrive.
+  void _cancelPendingAnswers() {
+    _pendingApprovalAnswer?.complete('n');
+    _pendingApprovalAnswer = null;
+    _pendingAskAnswer?.complete(null);
+    _pendingAskAnswer = null;
+  }
+
   Future<ApprovalDecision> _promptForApproval(ApprovalRequest request) async {
     // TUI mode: prompt through the on-screen approval zone (y/a/n keys).
     final tui = _tuiController;

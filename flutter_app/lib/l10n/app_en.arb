@@ -15,7 +15,11 @@
   "sessionInfoNameLabel": "Session name",
   "newSessionFolderTitle": "New session — folder",
   "newSessionCurrentFolder": "Current folder ({folder})",
-  "@newSessionCurrentFolder": { "placeholders": { "folder": {} } },
+  "@newSessionCurrentFolder": {
+    "placeholders": {
+      "folder": {}
+    }
+  },
   "approvalModeAlwaysAsk": "Always ask",
   "approvalModeAlwaysAskHint": "Every tool call asks for approval.",
   "approvalModeTitle": "Tool approvals",
@@ -200,6 +204,38 @@
   "launcherRenameFolderTooltip": "Rename folder",
   "launcherRestoreDemoApp": "Restore reference version",
   "launcherRestoreDemoAppDone": "App code restored (your data was kept)",
+  "launcherRemoveWidget": "Remove widget",
+  "@launcherRemoveWidget": {},
+  "launcherRemoveWidgetTitle": "Remove {name}?",
+  "@launcherRemoveWidgetTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "launcherRemoveWidgetBody": "The widget files are deleted; its saved data (storage.json) is kept, so reinstalling restores its state.",
+  "@launcherRemoveWidgetBody": {},
+  "launcherSearchHint": "Search widgets…",
+  "@launcherSearchHint": {},
+  "launcherTabWidgets": "Widgets",
+  "@launcherTabWidgets": {},
+  "settingsResetApps": "Reset apps",
+  "@settingsResetApps": {},
+  "settingsResetAppsHint": "Restore the widget apps to their initial state",
+  "@settingsResetAppsHint": {},
+  "settingsResetAppsConfirmTitle": "Reset all apps?",
+  "@settingsResetAppsConfirmTitle": {},
+  "settingsResetAppsConfirmBody": "This deletes EVERY widget you downloaded from the catalog or created here, together with ALL its data (saved state, settings, storage). Bundled demo apps are restored to the reference version. This cannot be undone.",
+  "@settingsResetAppsConfirmBody": {},
+  "settingsResetAppsDone": "Apps reset — {count} widget(s) removed, demos restored",
+  "@settingsResetAppsDone": {"placeholders": {"count": {"type": "int"}}},
+  "appsCatalogCreatedByMe": "Created by me",
+  "@appsCatalogCreatedByMe": {},
+  "commonError": "Something went wrong",
+  "@commonError": {},
+  "launcherTabGetWidgets": "Get widgets",
+  "@launcherTabGetWidgets": {},
   "launcherRestoreDemoAppFailed": "Could not restore the app",
   "launcherSeedErrorCopy": "Copy error",
   "launcherSeedErrorHint": "Send this error to Fa — it can fix the app.",

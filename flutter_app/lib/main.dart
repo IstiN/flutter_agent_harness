@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'dart:async' show unawaited;
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/copilot_connect_flow.dart' show copilotEntryKeyName;
 import 'package:fa/services/app_log.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
@@ -391,10 +392,11 @@ class MyApp extends StatelessWidget {
 /// silently loading multi-GB weights at boot), or a hosted connection
 /// whose key is gone. Every hosted catalog kind restores
 /// (`openai-completions`, `google`, `anthropic`, `dial`, `minimax`,
-/// `chatgpt-codex`). Key order: the matching custom provider's
-/// (Keychain-backed) registry key, then the catalog kind's standard env
-/// names (`GOOGLE_API_KEY`, …) from the saved-keys chain, then the legacy
-/// hosted key; keyless custom endpoints (llama.cpp/Ollama) connect
+/// `chatgpt-codex`, `copilot`). Key order: the matching custom provider's
+/// (Keychain-backed) registry key, then — for Copilot, whose tokens live
+/// entry-scoped — `FA_KEY_COPILOT_<NAME>` from the saved-keys chain, then
+/// the catalog kind's standard env names (`GOOGLE_API_KEY`, …), then the
+/// legacy hosted key; keyless custom endpoints (llama.cpp/Ollama) connect
 /// without a key.
 AgentConfig? restorableBootConfig({
   required LastConnection? connection,
@@ -425,6 +427,11 @@ AgentConfig? restorableBootConfig({
     }
   }
   var key = custom != null ? registry!.keyFor(custom.id) ?? '' : '';
+  if (key.isEmpty && custom != null && kind == 'copilot') {
+    // Copilot GitHub tokens are stored entry-scoped (FA_KEY_COPILOT_<NAME>,
+    // the CLI contract); the entry name is the registry provider's name.
+    key = settingsKeyEnv(copilotEntryKeyName(custom.name), sessionKeysStore);
+  }
   if (key.isEmpty) {
     // Hosted catalog kinds resolve their standard key names
     // (GOOGLE_API_KEY, ANTHROPIC_API_KEY, …) from the saved-keys chain.

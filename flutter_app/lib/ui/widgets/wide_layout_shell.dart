@@ -19,7 +19,7 @@ import 'package:fa/services/project_mount_flow.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
-import 'package:fa/ui/widgets/apps_panel.dart';
+import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/providers_section.dart' show agentConfigFrom;
@@ -533,20 +533,25 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   // ---------------------------------------------------------------------------
 
   Widget _buildAppsArea() {
-    // The nested Navigator ensures that calls to Navigator.of(context) from
-    // within the apps panel (app launches via pushJsApp, Settings/Files
-    // tiles) push within this panel rather than replacing the whole shell.
+    // The nested Navigator ensures that calls to Navigator.of(context)
+    // from within the apps area (app launches via pushJsApp,
+    // Settings/Files tiles) push within this panel rather than replacing
+    // the whole shell.
+    //
+    // The MOBILE launcher is the single panel implementation on every
+    // form factor (drag&drop folders, live tiles, search, the Widgets /
+    // Get widgets tabs); the chat sheet stays off here — the wide shell
+    // owns chat itself.
     return Navigator(
       key: _appsNavigatorKey,
       onGenerateRoute: (settings) => MaterialPageRoute(
-        builder: (context) => ManagerScope(
+        builder: (context) => AppLauncherScreen(
           manager: widget.manager,
-          child: AppsPanel(
-            manager: widget.manager,
-            appsStore: widget.appsStore,
-            sessionNamesStore: widget.sessionNamesStore,
-            registry: widget.registry,
-          ),
+          registry: widget.registry,
+          lastConnectionStore: widget.lastConnectionStore,
+          appsStore: widget.appsStore,
+          sessionNamesStore: widget.sessionNamesStore,
+          hideChatSheet: true,
         ),
       ),
     );

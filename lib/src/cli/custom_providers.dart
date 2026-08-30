@@ -25,6 +25,7 @@ const customProviderApiTypes = [
   'minimax',
   'kimi',
   'chatgpt',
+  'copilot',
 ];
 
 /// How a saved custom provider authenticates. Distinguishes regular API-key
@@ -213,6 +214,14 @@ final class CustomProviderRegistry {
         ? base
         : '${base}_$name';
   }
+
+  /// The secure-store/env key name backing a connected Copilot account:
+  /// `FA_KEY_COPILOT_<SANITIZED_ENTRY_NAME>` (goal/copilot_provider.md).
+  /// Scoped to the ENTRY (not the host) so several accounts — possibly on
+  /// different plans, hence different hosts — keep separate key slots, and
+  /// so CI can supply `FA_KEY_COPILOT_<NAME>` (+ `_2`…) without a store.
+  static String copilotEntryKeyName(String entryName) =>
+      'FA_KEY_COPILOT_${_sanitizeKeyHost(entryName)}';
 
   /// The host part of [uri] (falling back to [baseUrl]), with a non-default
   /// port appended.

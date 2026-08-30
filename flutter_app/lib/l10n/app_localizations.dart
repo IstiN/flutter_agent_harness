@@ -1214,6 +1214,84 @@ abstract class AppLocalizations {
   /// **'App code restored (your data was kept)'**
   String get launcherRestoreDemoAppDone;
 
+  /// No description provided for @launcherRemoveWidget.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove widget'**
+  String get launcherRemoveWidget;
+
+  /// No description provided for @launcherRemoveWidgetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name}?'**
+  String launcherRemoveWidgetTitle(String name);
+
+  /// No description provided for @launcherRemoveWidgetBody.
+  ///
+  /// In en, this message translates to:
+  /// **'The widget files are deleted; its saved data (storage.json) is kept, so reinstalling restores its state.'**
+  String get launcherRemoveWidgetBody;
+
+  /// No description provided for @launcherSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search widgets…'**
+  String get launcherSearchHint;
+
+  /// No description provided for @launcherTabWidgets.
+  ///
+  /// In en, this message translates to:
+  /// **'Widgets'**
+  String get launcherTabWidgets;
+
+  /// No description provided for @settingsResetApps.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset apps'**
+  String get settingsResetApps;
+
+  /// No description provided for @settingsResetAppsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore the widget apps to their initial state'**
+  String get settingsResetAppsHint;
+
+  /// No description provided for @settingsResetAppsConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset all apps?'**
+  String get settingsResetAppsConfirmTitle;
+
+  /// No description provided for @settingsResetAppsConfirmBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This deletes EVERY widget you downloaded from the catalog or created here, together with ALL its data (saved state, settings, storage). Bundled demo apps are restored to the reference version. This cannot be undone.'**
+  String get settingsResetAppsConfirmBody;
+
+  /// No description provided for @settingsResetAppsDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Apps reset — {count} widget(s) removed, demos restored'**
+  String settingsResetAppsDone(int count);
+
+  /// No description provided for @appsCatalogCreatedByMe.
+  ///
+  /// In en, this message translates to:
+  /// **'Created by me'**
+  String get appsCatalogCreatedByMe;
+
+  /// No description provided for @commonError.
+  ///
+  /// In en, this message translates to:
+  /// **'Something went wrong'**
+  String get commonError;
+
+  /// No description provided for @launcherTabGetWidgets.
+  ///
+  /// In en, this message translates to:
+  /// **'Get widgets'**
+  String get launcherTabGetWidgets;
+
   /// No description provided for @launcherRestoreDemoAppFailed.
   ///
   /// In en, this message translates to:

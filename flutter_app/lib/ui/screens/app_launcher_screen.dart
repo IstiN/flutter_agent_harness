@@ -13,6 +13,7 @@ import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/session_chat_sheet.dart';
+import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/analytics.dart';
@@ -134,6 +135,13 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   Object? _error;
   String? _openFolderId;
 
+  /// Search field above the grid; a non-empty query swaps the draggable
+  /// grid for a flat filtered results grid (no drag&drop in search mode).
+  final TextEditingController _searchController = TextEditingController();
+
+  /// The active content tab: the app grid or the widgets catalog.
+  _LauncherTab _tab = _LauncherTab.widgets;
+
   /// Key into the session chat sheet so the header's session chip can
   /// expand it (the chip shows WHICH session is active — the sheet hosts it).
   final _sheetKey = GlobalKey<SessionChatSheetState>();
@@ -171,11 +179,17 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   @override
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
     _detachFsRevision();
     _layout?.removeListener(_onLayoutChanged);
     _layoutReloadDebounce?.cancel();
     _cancelFolderDwell();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadLayout() async {
@@ -560,7 +574,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     }
     final appId = app.id;
     final isDemo = AppsStore.demoAppIds.contains(appId);
-    if (tile == null && !isDemo) return;
+    // Every app gets a menu now: tile sizes for live-tile apps, Restore
+    // for bundled demos, Remove for everything else (catalog downloads,
+    // agent-created) — no early return for plain icon apps.
     final override = layout.tileSizeFor(appId);
     final current = tile == null
         ? null
@@ -604,6 +620,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             value: 'restore',
             child: Text(context.l10n.launcherRestoreDemoApp),
           ),
+        if (!isDemo)
+          PopupMenuItem<Object?>(
+            value: 'remove',
+            child: Text(context.l10n.launcherRemoveWidget),
+          ),
       ],
     );
     if (selected == 'reset') {
@@ -614,6 +635,44 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       layout.setTileSize(appId, selected);
     } else if (selected == 'restore') {
       unawaited(_restoreDemoApp(appId));
+    } else if (selected == 'remove') {
+      unawaited(_removeApp(app));
+    }
+  }
+
+  /// Confirms and removes a non-demo app (catalog download or agent-created)
+  /// through [AppsStore.removeWidget] — code files go, `storage.json`
+  /// survives, the layout prunes the tile (and dissolves emptied folders)
+  /// on the next apps reload.
+  Future<void> _removeApp(JsAppInfo app) async {
+    final l10n = context.l10n;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.launcherRemoveWidgetTitle(app.name)),
+        content: Text(l10n.launcherRemoveWidgetBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.commonCancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.commonDelete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    AppAnalytics.instance.widgetEvent('remove', params: {'id': app.id});
+    final removed = await _appsStore.removeWidget(app.id, force: true);
+    if (!mounted) return;
+    if (removed) {
+      await _reloadApps();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.launcherRestoreDemoAppFailed)),
+      );
     }
   }
 
@@ -871,6 +930,152 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             ],
           ),
         ),
+        // ── Search ───────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+          child: TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search, size: 18),
+              hintText: context.l10n.launcherSearchHint,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: colors.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: colors.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: colors.indigo, width: 1.2),
+              ),
+              filled: true,
+              fillColor: colors.panelAlt,
+            ),
+          ),
+        ),
+        // ── Tabs: the app grid or the widgets catalog ────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+          child: Row(
+            children: [
+              for (final tab in _LauncherTab.values)
+                _LauncherTabButton(
+                  label: switch (tab) {
+                    _LauncherTab.widgets => context.l10n.launcherTabWidgets,
+                    _LauncherTab.getWidgets =>
+                      context.l10n.launcherTabGetWidgets,
+                  },
+                  selected: _tab == tab,
+                  onTap: () => setState(() => _tab = tab),
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _tab == _LauncherTab.getWidgets
+              // The catalog inline (no bottom-sheet chrome) — install,
+              // update, preview and open widgets without leaving home.
+              // Shares the launcher's AppsStore so installs are visible to
+              // the tile menu (Remove) immediately.
+              ? WidgetsCatalogSheet(
+                  env: widget.manager.env,
+                  manager: widget.manager,
+                  appsStore: _appsStore,
+                  embedded: true,
+                )
+              : _searchController.text.trim().isNotEmpty
+              ? _buildSearchResults(colors)
+              : _buildDraggableGrid(colors),
+        ),
+      ],
+    );
+  }
+
+  /// Flat filtered grid while the search field has a query: tap opens,
+  /// long-press shows the same tile menu (remove included) — drag&drop
+  /// and folders stay exclusive to the main grid.
+  Widget _buildSearchResults(FahColors colors) {
+    final query = _searchController.text.trim().toLowerCase();
+    final matches = (_apps ?? const <JsAppInfo>[])
+        .where(
+          (app) =>
+              app.name.toLowerCase().contains(query) ||
+              app.id.toLowerCase().contains(query) ||
+              app.description.toLowerCase().contains(query),
+        )
+        .toList();
+    if (matches.isEmpty) {
+      return Center(
+        child: Text(
+          '∅',
+          style: Theme.of(
+            context,
+          ).textTheme.headlineMedium?.copyWith(color: colors.dim),
+        ),
+      );
+    }
+    return GridView.builder(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        8,
+        16,
+        MediaQuery.viewPaddingOf(context).bottom + 128,
+      ),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        childAspectRatio: 0.82,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 12,
+      ),
+      itemCount: matches.length,
+      itemBuilder: (context, index) {
+        final app = matches[index];
+        return InkWell(
+          borderRadius: BorderRadius.circular(12),
+          hoverColor: colors.indigo.withValues(alpha: 0.06),
+          onTap: () => unawaited(_launchApp(app)),
+          onSecondaryTapUp: (details) =>
+              unawaited(_showTileMenu('app:${app.id}', details.globalPosition)),
+          onLongPress: () {
+            final box = context.findRenderObject();
+            final center = box is RenderBox
+                ? box.localToGlobal(box.size.center(Offset.zero))
+                : Offset.zero;
+            unawaited(_showTileMenu('app:${app.id}', center));
+          },
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AppIcon(app: app, env: widget.manager.env, size: 32),
+              const SizedBox(height: 6),
+              Text(
+                app.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// The main content: the iOS-style draggable grid (extracted from the
+  /// build method unchanged when tabs/search were added).
+  Widget _buildDraggableGrid(FahColors colors) {
+    // _buildGridArea already guards _apps/_layout being null.
+    final layout = _layout!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -1162,7 +1367,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     }
     return InkWell(
       borderRadius: BorderRadius.circular(16),
+      hoverColor: colors.indigo.withValues(alpha: 0.06),
       onTap: () => _onTileTap(key),
+      onSecondaryTapUp: (details) =>
+          unawaited(_showTileMenu(key, details.globalPosition)),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
@@ -1493,6 +1701,51 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                   ),
                 ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The launcher's content tabs: the app grid vs the widgets catalog.
+enum _LauncherTab { widgets, getWidgets }
+
+/// One tab button in the launcher header row (pill highlight, the same
+/// look the desktop apps panel's filter tabs use).
+class _LauncherTabButton extends StatelessWidget {
+  const _LauncherTabButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected ? colors.panelAlt : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: selected ? colors.text : colors.dim,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              fontSize: 12,
             ),
           ),
         ),

@@ -17,6 +17,8 @@ import '../providers/anthropic.dart';
 import '../providers/chatgpt_codex.dart';
 import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
+import '../providers/copilot.dart';
+import '../providers/copilot_oauth.dart';
 import '../providers/dial.dart';
 import '../providers/google.dart';
 import '../providers/openai_completions.dart';
@@ -119,6 +121,16 @@ const providerCatalog = <String, ProviderSpec>{
     apiKeyEnvNames: ['CHATGPT_OAUTH_CREDENTIALS'],
     contextWindow: 128000,
     maxTokens: 16384,
+  ),
+
+  'copilot': ProviderSpec(
+    name: 'copilot',
+    kind: 'copilot',
+    api: 'openai-completions',
+    defaultBaseUrl: copilotIndividualBaseUrl,
+    apiKeyEnvNames: ['COPILOT_GITHUB_TOKEN'],
+    contextWindow: 1000000,
+    maxTokens: 32768,
   ),
   'codemie': ProviderSpec(
     name: 'codemie',
@@ -282,6 +294,7 @@ Model buildCliDefaultModel(
     'google' => providerCatalog['google']!,
     'dial' => providerCatalog['dial']!,
     'minimax' => providerCatalog['minimax']!,
+    'copilot' => providerCatalog['copilot']!,
     'openai-completions' || 'openrouter' =>
       baseUrl == null
           ? providerCatalog['openrouter']!
@@ -295,6 +308,9 @@ Model buildCliDefaultModel(
   /// the pickers and the model resolver prefer the live endpoint.
   const defaultIds = {
     'anthropic': 'claude-sonnet-4-5',
+    // /models is the source of truth for copilot at runtime; this is only
+    // the flag default when /models has not been consulted.
+    'copilot': 'gpt-4.1',
     'google': 'gemini-2.5-pro',
     'minimax': 'MiniMax-M3',
     'openai-completions': 'anthropic/claude-sonnet-4',
@@ -319,7 +335,8 @@ Model buildCliDefaultModel(
 }
 
 /// Builds the [StreamFunction] for a provider adapter [kind]
-/// (`openai-completions`, `anthropic`, `google`, `dial`, `chatgpt-codex`)
+/// (`openai-completions`, `anthropic`, `google`, `dial`, `minimax`,
+/// `chatgpt-codex`, `copilot`)
 /// with a static [apiKey]. Throws [ConfigException] for unknown kinds.
 ///
 /// [sessionId] (resolved lazily per call) is the prompt-cache affinity key
@@ -343,7 +360,8 @@ StreamFunction providerStreamFunction(
       kind != 'google' &&
       kind != 'dial' &&
       kind != 'minimax' &&
-      kind != 'chatgpt-codex') {
+      kind != 'chatgpt-codex' &&
+      kind != 'copilot') {
     throw ConfigException('Unknown provider kind: $kind');
   }
   // ignore: implicit_call_tearoffs
@@ -424,6 +442,16 @@ final class _CatalogStreamFunction {
           sessionId: effectiveSessionId,
           cacheRetention: effectiveRetention,
           cacheMarkersSupported: _dialCacheMarkersSupported,
+        ),
+      ),
+      'copilot' => streamCopilot(
+        model,
+        context,
+        CopilotOptions(
+          githubToken: _apiKey,
+          cancelToken: cancelToken,
+          sessionId: effectiveSessionId,
+          cacheRetention: effectiveRetention,
         ),
       ),
       'chatgpt-codex' => streamChatGptCodex(

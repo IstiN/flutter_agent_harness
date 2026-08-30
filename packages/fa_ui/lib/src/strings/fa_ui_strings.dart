@@ -235,6 +235,64 @@ abstract class FaUiStrings {
 
   /// App bar title of the media slot editor (`Edit {slot}`).
   String mediaModelsEditTitle(String slot);
+
+  /// Title of the GitHub Copilot connect sheet.
+  String get copilotSheetTitle;
+
+  /// The device-flow sign-in button.
+  String get copilotSignInButton;
+
+  /// Toggle to skip the device flow and paste an existing GitHub token.
+  String get copilotPasteTokenToggle;
+
+  /// Label of the pasted-token field.
+  String get copilotPasteTokenLabel;
+
+  /// Continue button of the paste-token path.
+  String get copilotPasteTokenContinue;
+
+  /// Hint above the device code (`Enter this code at {uri}`).
+  String copilotUserCodeHint(String uri);
+
+  /// The open-verification-page button.
+  String get copilotOpenVerification;
+
+  /// Shown when the verification page could not be opened automatically.
+  String get copilotOpenManually;
+
+  /// Waiting-for-authorization caption under the spinner.
+  String get copilotWaiting;
+
+  /// Cancel button of the waiting step.
+  String get copilotCancel;
+
+  /// Header above the plan radio list.
+  String get copilotPlanLabel;
+
+  /// The individual-plan radio tile.
+  String get copilotPlanIndividual;
+
+  /// The business-plan radio tile.
+  String get copilotPlanBusiness;
+
+  /// The enterprise-plan radio tile.
+  String get copilotPlanEnterprise;
+
+  /// The custom-endpoint radio tile.
+  String get copilotPlanCustom;
+
+  /// Label of the custom-endpoint base URL field.
+  String get copilotCustomBaseUrlLabel;
+
+  /// Label of the registry entry-name field.
+  String get copilotEntryNameLabel;
+
+  /// The finish button.
+  String get copilotConnectButton;
+
+  /// Error shown when the Copilot endpoint rejects the exchange (plan
+  /// disabled by the org, no subscription) — points at the paste-token path.
+  String get copilotEndpointDisabled;
 }
 
 /// The English [FaUiStrings] defaults.
@@ -409,6 +467,49 @@ class FaUiStringsEn extends FaUiStrings {
       '$modelId · $host';
   @override
   String mediaModelsEditTitle(String slot) => 'Edit $slot';
+
+  @override
+  String get copilotSheetTitle => 'Connect GitHub Copilot';
+  @override
+  String get copilotSignInButton => 'Sign in with GitHub';
+  @override
+  String get copilotPasteTokenToggle => 'Paste a GitHub token instead';
+  @override
+  String get copilotPasteTokenLabel => 'GitHub token';
+  @override
+  String get copilotPasteTokenContinue => 'Continue';
+  @override
+  String copilotUserCodeHint(String uri) => 'Enter this code at $uri';
+  @override
+  String get copilotOpenVerification => 'Open github.com/login/device';
+  @override
+  String get copilotOpenManually =>
+      'Could not open the browser — visit the page manually.';
+  @override
+  String get copilotWaiting => 'Waiting for authorization…';
+  @override
+  String get copilotCancel => 'Cancel';
+  @override
+  String get copilotPlanLabel => 'Copilot plan';
+  @override
+  String get copilotPlanIndividual => 'Individual';
+  @override
+  String get copilotPlanBusiness => 'Business';
+  @override
+  String get copilotPlanEnterprise => 'Enterprise';
+  @override
+  String get copilotPlanCustom => 'Custom endpoint';
+  @override
+  String get copilotCustomBaseUrlLabel => 'Custom Copilot API base URL';
+  @override
+  String get copilotEntryNameLabel => 'Entry name';
+  @override
+  String get copilotConnectButton => 'Connect Copilot';
+  @override
+  String get copilotEndpointDisabled =>
+      'Copilot rejected the sign-in — the plan may be disabled for this '
+      'account or organization. You can paste an existing GitHub token '
+      'instead.';
 }
 
 /// The Russian [FaUiStrings] defaults.
@@ -584,6 +685,48 @@ class FaUiStringsRu extends FaUiStrings {
       '$modelId · $host';
   @override
   String mediaModelsEditTitle(String slot) => 'Изменить: $slot';
+
+  @override
+  String get copilotSheetTitle => 'Подключить GitHub Copilot';
+  @override
+  String get copilotSignInButton => 'Войти через GitHub';
+  @override
+  String get copilotPasteTokenToggle => 'Вставить токен GitHub';
+  @override
+  String get copilotPasteTokenLabel => 'Токен GitHub';
+  @override
+  String get copilotPasteTokenContinue => 'Продолжить';
+  @override
+  String copilotUserCodeHint(String uri) => 'Введите код на $uri';
+  @override
+  String get copilotOpenVerification => 'Открыть github.com/login/device';
+  @override
+  String get copilotOpenManually =>
+      'Не удалось открыть браузер — откройте страницу вручную.';
+  @override
+  String get copilotWaiting => 'Ожидаем подтверждение…';
+  @override
+  String get copilotCancel => 'Отмена';
+  @override
+  String get copilotPlanLabel => 'Тариф Copilot';
+  @override
+  String get copilotPlanIndividual => 'Индивидуальный';
+  @override
+  String get copilotPlanBusiness => 'Бизнес';
+  @override
+  String get copilotPlanEnterprise => 'Корпоративный';
+  @override
+  String get copilotPlanCustom => 'Свой эндпоинт';
+  @override
+  String get copilotCustomBaseUrlLabel => 'Свой базовый URL Copilot API';
+  @override
+  String get copilotEntryNameLabel => 'Имя записи';
+  @override
+  String get copilotConnectButton => 'Подключить Copilot';
+  @override
+  String get copilotEndpointDisabled =>
+      'Copilot отклонил вход — возможно, тариф отключён для этого аккаунта '
+      'или организации. Можно вставить существующий токен GitHub.';
 }
 
 /// Exposes a host-provided [FaUiStrings] implementation to the widget tree;

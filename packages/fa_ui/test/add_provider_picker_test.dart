@@ -29,6 +29,39 @@ void main() {
     expect(addProviderPresetEnabled(custom), isTrue);
   });
 
+  test('the Copilot preset follows the visible catalog spec', () {
+    final copilot = defaultAddProviderPresets.firstWhere(
+      (p) => p.key == 'copilot',
+    );
+    expect(addProviderPresetEnabled(copilot), isTrue);
+  });
+
+  testWidgets('the Copilot tile hides without the host callback and routes '
+      'with one', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: AddProviderPresetPickerPage()),
+    );
+    expect(find.text('GitHub Copilot'), findsNothing);
+
+    var called = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AddProviderPresetPickerPage(
+          onCopilotConnect: () {
+            called++;
+          },
+        ),
+      ),
+    );
+    expect(find.text('GitHub Copilot'), findsOneWidget);
+    await tester.tap(find.text('GitHub Copilot'));
+    await tester.pumpAndSettle();
+    expect(called, 1);
+    // The picker popped before the host flow took over (the chatgpt
+    // routing precedent).
+    expect(find.byType(AddProviderPresetPickerPage), findsNothing);
+  });
+
   test('addProviderPresetEnabled honors the FA_PROVIDERS runtime filter', () {
     final dial = defaultAddProviderPresets.firstWhere((p) => p.key == 'dial');
     final ollama = defaultAddProviderPresets.firstWhere(

@@ -19,6 +19,53 @@
   challenge retry fires only when the jar truly learned a new cookie.
 - feat(chatgpt): `/models` probes the live Codex `/models` endpoint and
   falls back to the bundled catalog on 401 / challenge / malformed bodies.
+- feat(memory): the long-term-memory LLM slot is wired — a new
+  `HarnessLlmProvider` adapts fa_llm's `LlmProvider` onto the harness
+  streaming contract and is resolved per call (`memory` role → `smol` →
+  main) in BOTH the CLI and the app. Memory consolidation and semantic
+  search now actually run instead of being silently skipped.
+
+## 0.1.248
+
+
+- fix(cli): a run counts as busy from the moment it is STARTED, not from
+  the first streamed byte — the inbox watcher / shell-job settle path no
+  longer starts a parallel run during the pre-flight compaction window
+  (live session showed `Bad state: Agent is already processing a prompt`
+  right after `[auto-compacted]`).
+- feat(app,widgets): catalog entries parse the optional `platforms`
+  manifest field; the catalog sheet shows iOS/macOS platform chips.
+- feat(site): widget gallery cards show platform tags and no longer wrap
+  the size/`jsr ≥` text or the Preview/Download button labels.
+
+- feat(provider): GitHub Copilot as a first-class provider — catalog
+  entry plus the `/provider copilot` CLI flow (GitHub device flow with
+  user_code + verification_uri, or paste an existing PAT; works
+  headless) and the app's fa_ui Copilot connect sheet.
+- feat(providers): Copilot protocol core in `lib/src/providers/` —
+  `copilot.dart` (streamCopilot: token exchange, mandatory Copilot
+  headers, errors-as-events), `copilot_oauth.dart` (short-lived token
+  + header builder), `copilot_device_flow.dart` (grant + poll).
+- feat(keys): entry-scoped `FA_KEY_COPILOT_<NAME>` secure-store keys
+  with an env-first `_2`… ring — CI supplies keys without a store.
+- feat(models): live copilot `/models` dialect — the GitHub token is
+  exchanged for the Copilot token, capability/limit fields parsed.
+- feat(provider): multi-account isolation — each GitHub account saves
+  as its own named entry (`copilot-<login>`); re-auth updates only its
+  own entry.
+- fix(providers): copilot kind-dispatch audit — every provider-kind
+  dispatch in lib/src now handles `copilot`: `inspect_image` streams
+  through `streamCopilot` (GitHub token exchanged for the short-lived
+  API token, never sent as the Bearer header) and the roles fallback
+  chain accepts copilot entries (`providerStreamFunction` →
+  `_CatalogStreamFunction` → `streamCopilot`). A single dispatch-chain
+  test drives role takeover + inspect_image + /models in one run.
+- fix(models): copilot /models limits override — the catalog's static
+  copilot `contextWindow: 1000000` / `maxTokens: 32768` are wrong for
+  several real models (400s from the backend); the endpoint-reported
+  `capabilities.limits.max_context_window_tokens` /
+  `max_output_tokens` now replace them per model when present, and
+  the catalog defaults stay when the payload has no opinion.
 
 ## 0.1.246
 
@@ -1745,5 +1792,22 @@
 - feat(tools): Hailuo 2.3 video dialect + headless pre-flight compaction
 - fix(tui): key parser never swallows a trailing control byte into a text run
 - fix(cli): restored sessions label the model with the pinned-key account
+
+## 0.1.249
+
+- fix(app): self-heal stale-catalog sha mismatches + card-ify the catalog list
+- test(app): hold-release on a classic tile now expects the menu
+- fix(app): installed widgets really swap Preview for Remove + tests
+- fix(app): re-add the _localApps field declaration (clobbered again)
+- fix(app): restore the _localApps field + refresh (clobbered mid-commit)
+- feat(app): catalog sheet — Remove for installed, Created by me, real avatars
+- fix(app): tile menu opens for plain icon widgets + right-click + soft hover
+- fix(site): openPreview really uses the RUNNER url — the torn write had resurrected the /widgets/preview/ path
+- fix(site): repair torn index.html (duplicate tail after </html>) + restore the app-only marks
+- feat(site): platform widgets are marked 'runs in the Fa app' instead of a broken preview
+- fix(site): preview iframe points at the jsr repo's own Pages runner
+- feat(site): widget preview runs the real Flutter/jsr runner — DOM shim removed
+
+## Unreleased
 
 ## Unreleased

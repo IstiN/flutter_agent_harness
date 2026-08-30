@@ -680,6 +680,52 @@ class AppLocalizationsRu extends AppLocalizations {
       'Код приложения восстановлен (данные сохранены)';
 
   @override
+  String get launcherRemoveWidget => 'Удалить виджет';
+
+  @override
+  String launcherRemoveWidgetTitle(String name) {
+    return 'Удалить $name?';
+  }
+
+  @override
+  String get launcherRemoveWidgetBody =>
+      'Файлы виджета удаляются; его данные (storage.json) сохраняются — при повторной установке состояние восстановится.';
+
+  @override
+  String get launcherSearchHint => 'Поиск виджетов…';
+
+  @override
+  String get launcherTabWidgets => 'Виджеты';
+
+  @override
+  String get settingsResetApps => 'Сбросить приложения';
+
+  @override
+  String get settingsResetAppsHint =>
+      'Вернуть приложения-виджеты к изначальному состоянию';
+
+  @override
+  String get settingsResetAppsConfirmTitle => 'Сбросить все приложения?';
+
+  @override
+  String get settingsResetAppsConfirmBody =>
+      'Будут удалены ВСЕ виджеты, которые вы скачали из каталога или создали, вместе со ВСЕМИ их данными (сохранённое состояние, настройки, хранилище). Встроенные демо-приложения вернутся к эталонной версии. Действие необратимо.';
+
+  @override
+  String settingsResetAppsDone(int count) {
+    return 'Приложения сброшены — удалено виджетов: $count, демо восстановлены';
+  }
+
+  @override
+  String get appsCatalogCreatedByMe => 'Создано мной';
+
+  @override
+  String get commonError => 'Что-то пошло не так';
+
+  @override
+  String get launcherTabGetWidgets => 'Каталог виджетов';
+
+  @override
   String get launcherRestoreDemoAppFailed =>
       'Не удалось восстановить приложение';
 

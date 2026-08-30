@@ -21,6 +21,8 @@ import '../env/execution_env.dart';
 import '../event_stream.dart';
 import '../model.dart';
 import '../prompts/prompts.g.dart';
+import '../providers/copilot.dart';
+import '../providers/copilot_oauth.dart';
 import '../providers/openai_completions.dart';
 import '../types.dart';
 
@@ -43,14 +45,17 @@ final class InspectImageConfig {
   final String apiKey;
 
   /// Optional base URL. When omitted the provider's default is used
-  /// (OpenAI: https://api.openai.com/v1, OpenRouter: https://openrouter.ai/api/v1).
+  /// (OpenAI: https://api.openai.com/v1, Copilot:
+  /// https://api.githubcopilot.com).
   final String? baseUrl;
 
   /// Maximum tokens for the vision description.
   final int maxTokens;
 
-  /// Provider adapter kind. Only `openai-completions` is supported today;
-  /// this covers OpenAI, OpenRouter, and any OpenAI-compatible endpoint.
+  /// Provider adapter kind. `openai-completions` (OpenAI, OpenRouter, and
+  /// any OpenAI-compatible endpoint) and `copilot` (GitHub token exchanged
+  /// for the short-lived Copilot API token via [streamCopilot]) are
+  /// supported today.
   final String providerKind;
 
   /// Optional HTTP client for testing.
@@ -62,7 +67,7 @@ Model _visionModel(InspectImageConfig config) {
   final baseUrl =
       config.baseUrl ??
       switch (config.providerKind) {
-        'openai-completions' => 'https://api.openai.com/v1',
+        'copilot' => copilotIndividualBaseUrl,
         _ => 'https://api.openai.com/v1',
       };
   return Model(
@@ -77,8 +82,10 @@ Model _visionModel(InspectImageConfig config) {
   );
 }
 
-/// Streams the vision request for [config]'s provider kind. Only
-/// `openai-completions` is supported today.
+/// Streams the vision request for [config]'s provider kind. Copilot rides
+/// the same SSE completions wire through [streamCopilot] (token exchange +
+/// mandatory Copilot headers); every other supported kind speaks plain
+/// openai-completions.
 AssistantMessageEventStream _streamVisionResponse(
   InspectImageConfig config,
   Model model,
@@ -93,6 +100,13 @@ AssistantMessageEventStream _streamVisionResponse(
           apiKey: config.apiKey,
           maxTokens: config.maxTokens,
         ),
+        config.httpClient,
+      );
+    case 'copilot':
+      return streamCopilot(
+        model,
+        context,
+        CopilotOptions(githubToken: config.apiKey),
         config.httpClient,
       );
     default:

@@ -6,6 +6,22 @@ part of 'agent_cli.dart';
 /// [AutoCompactorHooks] impl that drives the CLI TUI / stderr and the
 /// diagnostic log file (`~/.fah/logs/fa.log`). One per run; cheap to
 /// allocate.
+/// The memory LLM slot resolution — an extension so agent_cli.dart stays
+/// under the repo's 2800-line size gate.
+extension MemoryLlmSlotResolution on AgentCli {
+  /// Resolves the LLM slot for long-term-memory work PER CALL: the `memory`
+  /// role, else `smol`, else the main model. The roles resolver is mutable
+  /// (`/settings` pins chains mid-session), so caching would go stale.
+  HarnessLlmSlot? _resolveMemoryLlmSlot() {
+    final resolver = config.modelRolesResolver;
+    final role =
+        resolver?.resolveRole(memoryModelRole) ??
+        resolver?.resolveRole(smolModelRole);
+    if (role != null) return role;
+    return (model: _agent.state.model, stream: _streamFunction);
+  }
+}
+
 class _AutoCompactorCliHooks implements AutoCompactorHooks {
   _AutoCompactorCliHooks(this.cli);
 
