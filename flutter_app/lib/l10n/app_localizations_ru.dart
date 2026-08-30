@@ -665,6 +665,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherFolderNameHint => 'Название папки';
 
   @override
+  String get launcherOpenApp => 'Открыть';
+
+  @override
   String launcherOpenAppError(Object error) {
     return 'Не удалось открыть приложение: $error';
   }

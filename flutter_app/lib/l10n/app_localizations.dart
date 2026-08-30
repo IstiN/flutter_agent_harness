@@ -1190,6 +1190,12 @@ abstract class AppLocalizations {
   /// **'Folder name'**
   String get launcherFolderNameHint;
 
+  /// No description provided for @launcherOpenApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get launcherOpenApp;
+
   /// No description provided for @launcherOpenAppError.
   ///
   /// In en, this message translates to:

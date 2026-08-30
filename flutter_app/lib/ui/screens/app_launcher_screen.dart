@@ -593,6 +593,16 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         Offset.zero & overlay.size,
       ),
       items: [
+        PopupMenuItem<Object?>(
+          value: 'open',
+          child: Row(
+            children: [
+              const Icon(Icons.open_in_new, size: 18),
+              const SizedBox(width: 12),
+              Text(context.l10n.launcherOpenApp),
+            ],
+          ),
+        ),
         if (tile != null) ...[
           for (final choice in choices)
             PopupMenuItem<Object?>(
@@ -623,11 +633,26 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         if (!isDemo)
           PopupMenuItem<Object?>(
             value: 'remove',
-            child: Text(context.l10n.launcherRemoveWidget),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.delete_outline,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  context.l10n.launcherRemoveWidget,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ),
           ),
       ],
     );
-    if (selected == 'reset') {
+    if (selected == 'open') {
+      _onTileTap(key);
+    } else if (selected == 'reset') {
       AppAnalytics.instance.launcherTileResized('reset');
       layout.setTileSize(appId, null);
     } else if (selected is TileSize) {
@@ -1350,11 +1375,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       final app = _appsById[key.substring(4)];
       final tile = app?.tileWidget;
       if (app != null && tile != null) {
-        // Live tile: the app draws its own mini UI (icon+label replaced);
-        // any tap opens the full app.
+        // Live tile: the app draws its own mini UI (icon+label replaced).
+        // A body tap opens the full app; interactive tiles (the manifest's
+        // widget.interactive) route button taps to the tile engine instead —
+        // the inner inkWell wins the arena over this outer one.
         return InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: () => _onTileTap(key),
+          onSecondaryTapUp: (details) =>
+              unawaited(_showTileMenu(key, details.globalPosition)),
           child: AppTileHost(
             app: app,
             env: widget.manager.env,
@@ -1365,22 +1394,31 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         );
       }
     }
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      hoverColor: colors.indigo.withValues(alpha: 0.06),
-      onTap: () => _onTileTap(key),
-      onSecondaryTapUp: (details) =>
-          unawaited(_showTileMenu(key, details.globalPosition)),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _maybeSeedErrorBadge(colors, key, _tileIcon(colors, key)),
-          SizedBox(
-            height: LauncherGridSpec.labelHeight,
-            // iOS-style: the label may bleed into the (empty) inter-icon
-            // gap, so it measures up to one cell PITCH wide, not just the
-            // icon square — keeps names like "Habit Tracker" readable.
+    // The hover/splash lives ONLY on the icon square (a full-cell wash
+    // over icon+label looked like a stray blob); the label stays tappable
+    // via a plain GestureDetector.
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(16),
+          hoverColor: colors.indigo.withValues(alpha: 0.08),
+          onTap: () => _onTileTap(key),
+          onSecondaryTapUp: (details) =>
+              unawaited(_showTileMenu(key, details.globalPosition)),
+          child: _maybeSeedErrorBadge(colors, key, _tileIcon(colors, key)),
+        ),
+        SizedBox(
+          height: LauncherGridSpec.labelHeight,
+          // iOS-style: the label may bleed into the (empty) inter-icon
+          // gap, so it measures up to one cell PITCH wide, not just the
+          // icon square — keeps names like "Habit Tracker" readable.
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _onTileTap(key),
+            onSecondaryTapUp: (details) =>
+                unawaited(_showTileMenu(key, details.globalPosition)),
             child: OverflowBox(
               alignment: Alignment.topCenter,
               maxWidth: LauncherGridSpec.cellCrossExtent + spacing,
@@ -1393,8 +1431,8 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
