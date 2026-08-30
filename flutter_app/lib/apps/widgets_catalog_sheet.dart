@@ -172,6 +172,9 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
         'install_done',
         params: {'id': entry.id, 'durationMs': watch.elapsedMilliseconds},
       );
+      // See _remove: the grid needs an explicit fsRevision bump for
+      // UI-side writes.
+      widget.manager?.active?.service.fsRevision.value++;
       await _refreshInstalled();
       if (mounted) setState(() => _installing.remove(entry.id));
       return true;
@@ -202,6 +205,9 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
   Future<void> _remove(String id) async {
     AppAnalytics.instance.widgetEvent('remove', params: {'id': id});
     final removed = await _appsStore.removeWidget(id, force: true);
+    // The launcher's grid reloads on fsRevision — which only AGENT tool
+    // writes bump; UI-side mutations raise it themselves.
+    widget.manager?.active?.service.fsRevision.value++;
     if (!mounted) return;
     if (removed) {
       await _refreshInstalled();

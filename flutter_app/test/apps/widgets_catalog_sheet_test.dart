@@ -5,11 +5,56 @@ import 'package:archive/archive.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/flutter_session_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+StreamFunction _singleTextResponse(String text) {
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final message = AssistantMessage(
+      content: [TextContent(text: text)],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.now(),
+    );
+    stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    return stream;
+  };
+}
+
+AgentService _fakeService(ExecutionEnv env) {
+  return AgentService(
+    agent: Agent(
+      model: Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test',
+        baseUrl: 'https://example.com',
+        contextWindow: 100000,
+        maxTokens: 4096,
+      ),
+      systemPrompt: 'You are Fa.',
+      streamFunction: _singleTextResponse('ok'),
+      toolRegistry: ToolRegistry(const []),
+    ),
+    env: env,
+    sessionsRoot: '/sessions',
+    config: AgentConfig(
+      providerKind: 'test',
+      modelId: 'test-model',
+      baseUrl: 'https://example.com',
+      apiKey: '',
+    ),
+  );
+}
 
 Uint8List zipOf(String id) {
   final archive = Archive();
@@ -57,6 +102,7 @@ Future<void> pumpSheet(
   WidgetTester tester, {
   required MemoryExecutionEnv env,
   http.Client? client,
+  FlutterSessionManager? manager,
   Future<void> Function(BuildContext, JsAppInfo)? onOpenApp,
 }) async {
   await tester.pumpWidget(
@@ -67,6 +113,7 @@ Future<void> pumpSheet(
           height: 700,
           child: WidgetsCatalogSheet(
             env: env,
+            manager: manager,
             httpClient: client,
             onOpenApp: onOpenApp,
           ),
@@ -220,6 +267,36 @@ void main() {
     expect(find.text('My Tool'), findsOneWidget);
     // The catalog entry itself is still listed below the section.
     expect(find.textContaining('Focus Timer'), findsWidgets);
+  });
+
+  testWidgets('install bumps the active service fsRevision (grid refresh)', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('s', _fakeService(env));
+    final fsRevision = manager.active!.service.fsRevision;
+    final before = fsRevision.value;
+    await pumpSheet(tester, env: env, client: okServer(), manager: manager);
+    await tester.tap(find.widgetWithText(FilledButton, 'Install'));
+    await tester.pumpAndSettle();
+    expect(fsRevision.value, greaterThan(before));
+  });
+
+  testWidgets('remove bumps the active service fsRevision (grid refresh)', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('s', _fakeService(env));
+    final fsRevision = manager.active!.service.fsRevision;
+    await pumpSheet(tester, env: env, client: okServer(), manager: manager);
+    await tester.tap(find.widgetWithText(FilledButton, 'Install'));
+    await tester.pumpAndSettle();
+    final before = fsRevision.value;
+    await tester.tap(find.widgetWithText(TextButton, 'Remove'));
+    await tester.pumpAndSettle();
+    expect(fsRevision.value, greaterThan(before));
   });
 
   testWidgets('stale catalog shows the offline banner with retry', (
