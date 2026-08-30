@@ -117,8 +117,10 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
     try {
       final apps = await _appsStore.listApps();
       _installed = {for (final app in apps) app.id: app.version};
+      _localApps = apps;
     } on Object {
       _installed = {};
+      _localApps = const [];
     }
   }
 
