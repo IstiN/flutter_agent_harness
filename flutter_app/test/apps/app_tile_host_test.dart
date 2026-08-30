@@ -88,15 +88,20 @@ const _tree = <String, dynamic>{
   },
 };
 
-JsAppInfo _app({int? refreshSeconds}) => JsAppInfo.fromManifest(
-  {
-    'id': 'weather',
-    'name': 'Weather',
-    'widget': {'entry': 'widget_tile.js', 'refreshSeconds': ?refreshSeconds},
-  },
-  bundled: false,
-  fallbackId: 'weather',
-);
+JsAppInfo _app({int? refreshSeconds, bool interactive = false}) =>
+    JsAppInfo.fromManifest(
+      {
+        'id': 'weather',
+        'name': 'Weather',
+        'widget': {
+          'entry': 'widget_tile.js',
+          'refreshSeconds': ?refreshSeconds,
+          if (interactive) 'interactive': true,
+        },
+      },
+      bundled: false,
+      fallbackId: 'weather',
+    );
 
 class _Harness {
   _Harness(this.env, this.engines);
@@ -128,6 +133,7 @@ class _Harness {
 Future<_Harness> _pumpHost(
   WidgetTester tester, {
   int? refreshSeconds,
+  bool interactive = false,
   ValueNotifier<int>? fsRevision,
 }) async {
   final harness = _Harness(MemoryExecutionEnv(), []);
@@ -140,7 +146,10 @@ Future<_Harness> _pumpHost(
             width: 120,
             height: 120,
             child: AppTileHost(
-              app: _app(refreshSeconds: refreshSeconds),
+              app: _app(
+                refreshSeconds: refreshSeconds,
+                interactive: interactive,
+              ),
               env: harness.env,
               fsRevision: fsRevision,
               engineFactory: harness.factory,
@@ -170,6 +179,23 @@ void main() {
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
       expect(harness.opened, 1);
+      expect(harness.engines.single.receivedEvents, isEmpty);
+    });
+
+    test('the widget manifest parses interactive (default false)', () {
+      expect(_app().tileWidget!.interactive, isFalse);
+      expect(_app(interactive: true).tileWidget!.interactive, isTrue);
+    });
+
+    testWidgets('an interactive tile routes UI events to the tile engine', (
+      tester,
+    ) async {
+      final harness = await _pumpHost(tester, interactive: true);
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      // The tap goes to the widget's jsr.onEvent — the app does NOT open.
+      expect(harness.opened, 0);
+      expect(harness.engines.single.receivedEvents, ['tap']);
     });
 
     testWidgets('refreshSeconds fires tile.refresh on the cadence', (

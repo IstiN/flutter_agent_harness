@@ -198,6 +198,7 @@ class JsTileWidgetInfo {
     this.widthCells = defaultWidthCells,
     this.heightCells = defaultHeightCells,
     this.refreshSeconds,
+    this.interactive = false,
   });
 
   factory JsTileWidgetInfo.fromJson(Map<String, Object?> json) {
@@ -226,6 +227,7 @@ class JsTileWidgetInfo {
       widthCells: widthCells,
       heightCells: heightCells,
       refreshSeconds: refresh is num && refresh > 0 ? refresh.toInt() : null,
+      interactive: json['interactive'] == true,
     );
   }
 
@@ -248,6 +250,12 @@ class JsTileWidgetInfo {
 
   /// Tile JS entry file inside `apps/<id>/`.
   final String entry;
+
+  /// When true, UI events from the tile tree (button taps) are routed to
+  /// the tile engine's `jsr.onEvent` instead of opening the full app —
+  /// the widget is interactive right on the launcher board. Opening the
+  /// app stays available via the tile menu (long-press / right-click).
+  final bool interactive;
 
   /// Horizontal tile span in icon-slot cells
   /// ([minWidthCells]..[maxWidthCells]); unknown manifest values fall back
