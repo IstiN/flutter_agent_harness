@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.250
+
 
 - feat(memory): the long-term-memory LLM slot is wired — a new
   `HarnessLlmProvider` adapts fa_llm's `LlmProvider` onto the harness
@@ -1790,6 +1791,8 @@
 - feat(site): platform widgets are marked 'runs in the Fa app' instead of a broken preview
 - fix(site): preview iframe points at the jsr repo's own Pages runner
 - feat(site): widget preview runs the real Flutter/jsr runner — DOM shim removed
+
+## Unreleased
 
 ## Unreleased
 
