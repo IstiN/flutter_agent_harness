@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- feat(memory): the long-term-memory LLM slot is wired — a new
+  `HarnessLlmProvider` adapts fa_llm's `LlmProvider` onto the harness
+  streaming contract and is resolved per call (`memory` role → `smol` →
+  main) in BOTH the CLI and the app. Memory consolidation and semantic
+  search now actually run instead of being silently skipped.
+
 ## 0.1.248
 
 

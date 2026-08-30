@@ -30,13 +30,18 @@ import '../exceptions.dart';
 ///
 /// Exact omp role names (`default`, `smol`, `slow`, `plan`) plus the
 /// harness-local `subagent` delegation role.
-const modelRoleIds = ['default', 'smol', 'slow', 'plan', 'subagent'];
+const modelRoleIds = ['default', 'smol', 'slow', 'plan', 'subagent', 'memory'];
 
 /// The role used for ordinary agent runs.
 const defaultModelRole = 'default';
 
 /// The role compaction summarization resolves through when configured.
 const smolModelRole = 'smol';
+
+/// The role long-term-memory LLM work (consolidation, semantic search)
+/// resolves through when configured. Falls back to `smol`, then the main
+/// model — the memory call shapes match the smol cost class.
+const memoryModelRole = 'memory';
 
 /// The role spawned subagents resolve through when configured (items
 /// without a specialist role — `explore` keeps `smol`, `review` keeps

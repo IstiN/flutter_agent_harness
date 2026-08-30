@@ -46,6 +46,7 @@ export 'src/exceptions.dart';
 export 'src/hashline/hashline.dart';
 export 'src/lsp/lsp.dart';
 export 'src/mcp/mcp.dart';
+export 'src/memory/harness_llm_provider.dart';
 export 'src/memory/memory_controller.dart';
 export 'src/memory/memory_tools.dart';
 export 'src/messaging/agent_message.dart';

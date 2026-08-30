@@ -91,6 +91,7 @@ import '../tools/shell_jobs.dart';
 import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
 import '../memory/compaction_memory_hook.dart';
+import '../memory/harness_llm_provider.dart';
 import '../memory/memory_controller.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
@@ -373,6 +374,10 @@ class AgentCli {
       env: _env,
       projectRoot: _env.cwd,
       userRoot: config.homeDir,
+      // Semantic search + consolidate() need an LLM: memory → smol → main.
+      llmProvider: HarnessLlmProvider(
+        resolve: () => _resolveMemoryLlmSlot(),
+      ),
     );
     final decoratedEnv = SessionVarsExecutionEnv(_env, _sessionEnvVars);
     // Session-scoped background shell jobs (bash background / steer-yield);
