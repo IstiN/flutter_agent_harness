@@ -103,6 +103,10 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
   /// Per-entry icon futures (memoized so rebuilds don't refetch).
   final Map<String, Future<String?>> _iconFutures = {};
 
+  /// All local apps from the last refresh — the Created-by-me section is
+  /// everything here that is NOT in the catalog (made on this device).
+  List<JsAppInfo> _localApps = const [];
+
   @override
   void initState() {
     super.initState();
