@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.245
+
+- fix(cli): restored sessions label the model with the RIGHT account
+  too — 0.1.244 covered live switches via `_activeCustomName`, but a
+  restarted session has none, so two same-endpoint accounts
+  (`kimi-ira1`/`kimi_me`) still showed the first registry entry. The
+  status label now disambiguates by the apiKeyName the persisted roles
+  chain pins for the endpoint (`_endpointEntryLabel` +
+  `_chainKeyNameFor`); the first-match scan remains the pin-less
+  fallback.
+
 ## 0.1.244
 
 - fix(cli): the status bar labels the model with the ACTIVE saved

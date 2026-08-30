@@ -462,25 +462,62 @@ extension ApprovalCommands on AgentCli {
   /// provider name when no saved entry matches the endpoint.
   String _statusProviderLabel(Model model) {
     final entries = config.customProviders?.entries;
-    if (entries != null) {
-      // The explicitly ACTIVE saved entry wins over the endpoint scan:
-      // two entries can share one baseUrl (two accounts on the same
-      // host — kimi-ira1 + kimi_me), and the first-match scan would
-      // label the model with the OTHER account's name.
-      final active = _activeCustomName;
-      if (active != null) {
-        for (final entry in entries) {
-          if (entry.name == active &&
-              _sameEndpoint(entry.baseUrl, model.baseUrl)) {
-            return entry.name;
-          }
+    if (entries == null) return model.provider;
+    // The explicitly ACTIVE saved entry wins over the endpoint scan:
+    // two entries can share one baseUrl (two accounts on the same
+    // host — kimi-ira1 + kimi_me), and the first-match scan would
+    // label the model with the OTHER account's name.
+    final active = _activeCustomName;
+    if (active != null) {
+      for (final entry in entries) {
+        if (entry.name == active &&
+            _sameEndpoint(entry.baseUrl, model.baseUrl)) {
+          return entry.name;
         }
       }
-      for (final entry in entries) {
-        if (_sameEndpoint(entry.baseUrl, model.baseUrl)) return entry.name;
+    }
+    return _endpointEntryLabel(entries, model) ?? model.provider;
+  }
+
+  /// The saved entry name for [model]'s endpoint. A restored session
+  /// has no [_activeCustomName], but the persisted roles chain pins
+  /// the endpoint's apiKeyName — it identifies WHICH of several
+  /// same-endpoint accounts was picked. Without a pin the first
+  /// endpoint match labels the model (legacy behavior).
+  String? _endpointEntryLabel(List<CustomProviderEntry> entries, Model model) {
+    final pinnedKey = _chainKeyNameFor(model.provider, model.baseUrl);
+    String? first;
+    for (final entry in entries) {
+      if (!_sameEndpoint(entry.baseUrl, model.baseUrl)) continue;
+      if (pinnedKey != null && entry.keyName == pinnedKey) {
+        return entry.name;
+      }
+      first ??= entry.name;
+    }
+    return first;
+  }
+
+  /// The apiKeyName the default roles chain pins for
+  /// ([provider], [baseUrl]) — null without a resolver or a pinned key.
+  String? _chainKeyNameFor(String provider, String baseUrl) {
+    final resolver = config.modelRolesResolver;
+    if (resolver == null) return null;
+    final refs =
+        resolver.config.chainFor(
+          defaultModelRole,
+          cwd: config.env.cwd,
+          homeDir: config.homeDir,
+        ) ??
+        const <ModelRef>[];
+    for (final ref in refs) {
+      final refBase = ref.baseUrl;
+      if (ref.provider == provider &&
+          refBase != null &&
+          _sameEndpoint(refBase, baseUrl)) {
+        return ref.apiKeyName;
       }
     }
-    return model.provider;
+    return null;
   }
 
   /// Test hook for [_statusProviderLabel] on the current model.

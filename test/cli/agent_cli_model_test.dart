@@ -427,6 +427,68 @@ void main() {
       await run;
     });
 
+    test('status label in a restored session resolves the entry by the '
+        'pinned key name', () async {
+      // Restart scenario: _activeCustomName is null (no live
+      // switch), but the persisted roles chain pins
+      // FA_KEY_API_KIMI_COM_KIMI_ME for the shared kimi endpoint —
+      // the label must still read kimi_me, not the first baseUrl
+      // match (kimi-ira1).
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'k3-256k',
+                baseUrl: 'https://api.kimi.com/coding/v1',
+                apiKeyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
+              ),
+            ],
+          },
+          retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        ),
+        secrets: const {'FA_KEY_API_KIMI_COM_KIMI_ME': 'me-key'},
+        streamFactory: (kind, apiKey) => FakeStreamFunction([]).call,
+      );
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'kimi-ira1',
+          apiType: 'openai',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          keyName: 'FA_KEY_API_KIMI_COM_KIMI_IRA1',
+          modelId: 'kimi-for-coding',
+        ),
+        CustomProviderEntry(
+          name: 'kimi_me',
+          apiType: 'openai',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          keyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
+          modelId: 'kimi-for-coding',
+        ),
+      ]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          customProviders: registry,
+          modelRolesResolver: resolver,
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy);
+
+      expect(cli.agent.state.model.baseUrl, 'https://api.kimi.com/coding/v1');
+      expect(cli.statusProviderLabelForTest(), 'kimi_me');
+      io.sendLine('/exit');
+      await run;
+    });
+
     test(
       'status label falls back to the baseUrl scan without an active '
       'custom entry, and to the catalog provider without any match',
