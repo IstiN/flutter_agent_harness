@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- fix(dap): vendored hub client warns loudly when the identity file's
+  `chmod 600` cannot be applied (no `chmod` on Windows, or the call
+  fails) — the Ed25519/X25519 private seeds would otherwise persist with
+  default permissive ACLs, readable by other local users.
+- fix(dap): vendored hub client's HKDF expand enforces the RFC 5869
+  255-block cap (throws `StateError`) — a zero-length MAC from a
+  misbehaving crypto dependency can no longer hang the hub connection.
+- fix(dap): `.fah/packages.yaml` plugin opt-out is value-aware —
+  `hub: false` (or an empty value) now really disables the plugin
+  instead of the key-only de-dup keeping it on; a failing connect to the
+  zero-config default hub prints one quiet hint line instead of a raw
+  error, so plain CLI starts stay clean.
+- fix(dap): the hub plugin's fire-and-forget connect carries a defensive
+  `.catchError`, so a future escape can never kill startup silently.
+
 ## 0.1.246
 
 - feat(tools): `HailuoVideoDialect` — Hailuo 2.3 video generation on the
@@ -1726,4 +1743,3 @@
 - fix(tui): key parser never swallows a trailing control byte into a text run
 - fix(cli): restored sessions label the model with the pinned-key account
 
-## Unreleased

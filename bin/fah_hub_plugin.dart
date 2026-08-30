@@ -58,16 +58,18 @@ final class HubPluginHost implements FahPlugin {
   }
 
   /// Connects in the background (`register` is sync void); failures
-  /// surface on the terminal instead of blocking startup.
+  /// surface on the terminal instead of blocking startup. On the
+  /// zero-config default URL (usually just "no hub running") a failure
+  /// prints one quiet hint line; an explicitly configured hub that fails
+  /// keeps its full error.
   Future<void> _connect(PluginContext context) async {
     try {
       await _hub.start();
     } on Object catch (error) {
-      // The zero-config default hub is usually just not running — a
-      // connect failure there is normal, so normal CLI starts stay clean.
-      // An explicitly configured hub (packages.yaml url, DAP_HUB_URL,
-      // ~/.dap/config.json) failing to connect IS worth one line.
-      if (_hub.isDefaultUrl) return;
+      if (_hub.isDefaultUrl) {
+        context.io.writeln('[hub] not configured — set DAP_HUB_URL to enable');
+        return;
+      }
       context.io.writeln('[hub] connect failed: $error');
     }
   }

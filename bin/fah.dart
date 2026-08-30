@@ -374,7 +374,7 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
   String cwd,
 ) {
   final config = _loadPackagesConfig(cwd);
-  final enabled = _resolveEnabledPlugins(args.plugins, config);
+  final enabled = resolveEnabledPlugins(args.plugins, config);
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
     final plugin = _builtInPlugin(name);
@@ -388,7 +388,7 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
 /// with a truthy value (`inspect_image:`/`hub: {url: …}`) and opts it OUT
 /// with a falsy one (`hub: false`, `hub:`) — so only the keys with truthy
 /// values join the enabled set.
-Set<String> _resolveEnabledPlugins(
+Set<String> resolveEnabledPlugins(
   List<String> argPlugins,
   Map<String, dynamic> config,
 ) {
