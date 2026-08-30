@@ -299,6 +299,62 @@ void main() {
       );
     });
 
+    test(
+      'healing download refetches a stale catalog and retries once',
+      () async {
+        // The stale cache references bytes A; the "republish" replaced the
+        // same-named asset with bytes B and an updated catalog hash.
+        Uint8List zipBytes(String marker) {
+          final archive = Archive();
+          final manifest = utf8.encode('{"id":"w"}');
+          final js = utf8.encode('/* $marker */');
+          archive.addFile(
+            ArchiveFile('w/manifest.json', manifest.length, manifest),
+          );
+          archive.addFile(ArchiveFile('w/widget.js', js.length, js));
+          return Uint8List.fromList(ZipEncoder().encode(archive));
+        }
+
+        final bytesB = zipBytes('b');
+        final hashA = sha256.convert(zipBytes('a')).toString();
+        final hashB = sha256.convert(bytesB).toString();
+        var catalogCalls = 0;
+        Map<String, dynamic> catalogFor(String hash) => {
+          'widgets': [
+            {
+              'id': 'w',
+              'name': 'W',
+              'version': '1.0.0',
+              'permissions': {'network': false, 'allowedCommands': []},
+              'zip': {
+                'file': 'w-1.0.0.zip',
+                'sha256': hash,
+                'sizeBytes': bytesB.length,
+              },
+            },
+          ],
+        };
+        final client = MockClient((request) async {
+          final name = request.url.pathSegments.last;
+          if (name == 'catalog.json') {
+            catalogCalls++;
+            return http.Response(
+              jsonEncode(catalogFor(catalogCalls == 1 ? hashA : hashB)),
+              200,
+            );
+          }
+          if (name == 'w-1.0.0.zip') return http.Response.bytes(bytesB, 200);
+          return http.Response('nf', 404);
+        });
+        final env = MemoryExecutionEnv();
+        final service = CatalogService(env, httpClient: client);
+        final stale = await service.fetchCatalog(); // caches the hashA entry
+        final files = await service.downloadWidgetHealing(stale.entries.single);
+        expect(utf8.decode(files['widget.js']!), '/* b */');
+        expect(catalogCalls, 2); // one stale fetch + one forced refetch
+      },
+    );
+
     test('path escape / foreign roots are rejected', () async {
       Uint8List evilZip(String entryName) {
         final archive = Archive()

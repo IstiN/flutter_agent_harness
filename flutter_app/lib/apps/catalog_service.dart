@@ -271,6 +271,33 @@ class CatalogService {
     return files;
   }
 
+  /// [downloadWidget] with one self-heal: the rolling `catalog` release is
+  /// rebuilt by publish runs, so a TTL-cached catalog can reference asset
+  /// bytes that were replaced since (the historical sha256-mismatch
+  /// install failure). On a mismatch the catalog is refetched with the
+  /// cache bypassed and the download retried ONCE against the fresh entry
+  /// for the same id — but only when the entry actually changed.
+  Future<Map<String, Uint8List>> downloadWidgetHealing(
+    CatalogEntry entry,
+  ) async {
+    try {
+      return await downloadWidget(entry);
+    } on CatalogError catch (error) {
+      if (!error.toString().contains('sha256 mismatch')) rethrow;
+      final fresh = await fetchCatalog(force: true);
+      CatalogEntry? updated;
+      for (final candidate in fresh.entries) {
+        if (candidate.id == entry.id) updated = candidate;
+      }
+      if (updated == null ||
+          (updated.zipSha256 == entry.zipSha256 &&
+              updated.zipFile == entry.zipFile)) {
+        rethrow;
+      }
+      return downloadWidget(updated);
+    }
+  }
+
   Future<List<CatalogEntry>> _parseEntries(Map<String, dynamic> catalog) async {
     final rawWidgets = catalog['widgets'];
     if (rawWidgets is! List) throw CatalogError('catalog has no widgets[]');

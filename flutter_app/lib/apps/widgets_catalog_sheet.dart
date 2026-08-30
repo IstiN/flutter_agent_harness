@@ -160,7 +160,9 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
     );
     final watch = Stopwatch()..start();
     try {
-      final files = await _catalog.downloadWidget(entry);
+      // Healing variant: a cached catalog can reference release bytes a
+      // later publish replaced — refetch + retry once on a hash mismatch.
+      final files = await _catalog.downloadWidgetHealing(entry);
       await _appsStore.installWidget(
         id: entry.id,
         version: entry.version,
@@ -400,8 +402,16 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
         ),
       ),
       for (final app in mine)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+            ),
+          ),
           child: Row(
             children: [
               SizedBox(
@@ -479,8 +489,16 @@ class _CatalogTile extends StatelessWidget {
     final hasUpdate =
         installedVersion != null &&
         semverNewer(installedVersion!, entry.version);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+        ),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -609,6 +627,7 @@ class _CatalogIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     if (entry.iconFile == null || entry.iconFile!.isEmpty) {
       return _fallback();
     }
@@ -617,9 +636,17 @@ class _CatalogIcon extends StatelessWidget {
       builder: (context, snapshot) {
         final markup = snapshot.data;
         if (markup == null || markup.trim().isEmpty) return _fallback();
-        return SizedBox(
+        // The SVG sits in a neutral rounded tile: widgets whose icon is a
+        // bare glyph (crypto's ₿) get a proper frame instead of floating
+        // naked next to the colored icons.
+        return Container(
           width: 40,
           height: 40,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: theme.colorScheme.outlineVariant),
+          ),
           child: Center(
             child: SizedBox(
               width: 26,
