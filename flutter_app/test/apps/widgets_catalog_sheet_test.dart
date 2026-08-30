@@ -24,7 +24,7 @@ Uint8List zipOf(String id) {
   return Uint8List.fromList(ZipEncoder().encode(archive));
 }
 
-http.Client okServer() => MockClient((req) async {
+http.Client okServer({List<String>? platforms}) => MockClient((req) async {
   final name = req.url.pathSegments.last;
   if (name == 'catalog.json') {
     return http.Response(
@@ -36,6 +36,7 @@ http.Client okServer() => MockClient((req) async {
             'version': '1.0.0',
             'description': 'Pomodoro timer',
             'tags': ['timer'],
+            'platforms': ?platforms,
             'permissions': {'network': false, 'allowedCommands': []},
             'zip': {'file': 'focus-timer-1.0.0.zip'},
           },
@@ -83,6 +84,35 @@ void main() {
     expect(find.textContaining('Focus Timer'), findsWidgets);
     expect(find.widgetWithText(FilledButton, 'Install'), findsOneWidget);
     expect(find.textContaining('v1.0.0'), findsOneWidget);
+  });
+
+  testWidgets('platform chips render next to the tag chips', (tester) async {
+    final env = MemoryExecutionEnv();
+    await pumpSheet(
+      tester,
+      env: env,
+      client: okServer(platforms: ['ios', 'macos']),
+    );
+    // Topic tags still show alongside the platform chips.
+    expect(find.text('timer'), findsOneWidget);
+    expect(find.text('ios'), findsOneWidget);
+    expect(find.text('macos'), findsOneWidget);
+    // Platform chips are visually distinguished by a tertiary border.
+    final chip = tester.widget<Chip>(
+      find.ancestor(of: find.text('ios'), matching: find.byType(Chip)),
+    );
+    final theme = Theme.of(tester.element(find.text('ios')));
+    expect(chip.side?.color, theme.colorScheme.tertiary);
+  });
+
+  testWidgets('entries without platforms render no platform chips', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await pumpSheet(tester, env: env, client: okServer());
+    expect(find.text('timer'), findsOneWidget);
+    expect(find.text('ios'), findsNothing);
+    expect(find.text('macos'), findsNothing);
   });
 
   testWidgets('install flow writes the widget and the button becomes Open', (

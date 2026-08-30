@@ -156,8 +156,7 @@ abstract interface class CliIO {
   Stream<KeyEvent> get keys;
 
   /// Whether the underlying terminal supports raw-mode character input with
-  /// ANSI escape sequences. True for dart:io terminals; false for tests and
-  /// headless runs.
+  /// ANSI escape sequences. True for dart:io terminals; false for tests.
   bool get supportsRawMode;
 
   /// Writes [text] without a trailing newline (streaming deltas).
@@ -167,9 +166,8 @@ abstract interface class CliIO {
   void writeln(String text);
 
   /// Whether a human is present to answer approval prompts (a real terminal,
-  /// not piped input). When false, the CLI installs no approval prompt
-  /// callback, so prompt-policy tool calls are denied with a reason — the
-  /// safe non-interactive default.
+  /// not piped input). When false, prompt-policy tool calls are denied with
+  /// a reason — the safe non-interactive default.
   bool get isInteractive;
 
   /// Terminal width in columns. Non-TUI hosts use the 80-column default.
@@ -982,8 +980,14 @@ class AgentCli {
     return const {};
   }
 
-  /// Whether a run is currently streaming.
-  bool get isBusy => _agent.state.isStreaming;
+  /// Whether a run is currently in flight. True from the moment a run is
+  /// STARTED (pre-flight compaction runs before the first streamed byte) —
+  /// not only while the provider streams.
+  bool get isBusy => _runStarting || _agent.state.isStreaming;
+
+  /// Set synchronously when a run starts, cleared when it fully settles
+  /// (including post-run compaction): the busy gate for every isBusy reader.
+  bool _runStarting = false;
 
   /// Runs the REPL until `/exit` or the input stream closes.
   Future<void> run() async {
@@ -1020,10 +1024,9 @@ class AgentCli {
       _onTaskJobCompleted,
     );
     // The inbox watcher: incoming inter-agent mail while IDLE wakes the
-    // agent into a turn (mid-run mail is already delivered by the steering
-    // poll). This is what makes two Fa instances chat live. The same tick
-    // refreshes the presence heartbeat (every other tick ≈ 4s, well
-    // inside the 15s staleness window).
+    // agent into a turn (mid-run mail is delivered by the steering poll).
+    // The same tick refreshes the presence heartbeat (every other tick ≈
+    // 4s, well inside the 15s staleness window).
     var heartbeatTick = 0;
     final inboxTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       unawaited(_wakeOnInboxMail());
@@ -1087,15 +1090,6 @@ class AgentCli {
     // Durable facts from past sessions join the prompt asynchronously
     // (memory stores initialize lazily; recompose on arrival).
     unawaited(_refreshMemorySection());
-  }
-
-  /// Answers any pending approval/ask prompt defensively so a tool call
-  /// never waits on an answer that cannot arrive.
-  void _cancelPendingAnswers() {
-    _pendingApprovalAnswer?.complete('n');
-    _pendingApprovalAnswer = null;
-    _pendingAskAnswer?.complete(null);
-    _pendingAskAnswer = null;
   }
 
   /// The line-mode REPL: banner, restored-session replay, then the
@@ -2123,6 +2117,10 @@ class AgentCli {
   }
 
   void _startRun(String text) {
+    // Mark the run in flight SYNCHRONOUSLY: pre-flight compaction awaits
+    // before the first streamed byte, and isBusy readers (inbox watcher,
+    // shell-job settle, steer-vs-start) must not start a parallel run here.
+    _runStarting = true;
     // Path-gated skills (`paths:` frontmatter) join the prompt once the
     // agent has touched a matching file; recomposing here is idempotent.
     _applyPromptComposition();
@@ -2137,6 +2135,7 @@ class AgentCli {
     _settled = settled;
     unawaited(
       settled.then((_) {
+        _runStarting = false;
         if (!_exited) _writeIdlePrompt();
       }),
     );
@@ -2144,19 +2143,13 @@ class AgentCli {
 
   /// Runs one user prompt to completion. On a CodeMie auth-session expiry,
   /// opens the browser SSO flow to refresh the token automatically. Other
-  /// provider errors are printed through [_errorLine].
-  ///
-  /// If the assistant returns an empty message (no text and no tool calls),
-  /// the prompt is automatically retried once with a 'continue' nudge before
-  /// giving up, so the user does not have to type it manually.
+  /// provider errors are printed through [_errorLine]. An empty assistant
+  /// message (no text, no tool calls) is retried once with 'continue'.
   Future<void> _runPrompt(String text, {bool isAutoContinue = false}) async {
     // Pre-flight context guard: when the LIVE context already exceeds the
-    // compaction threshold, compact BEFORE sending the request — not only
-    // after the previous run settles. A failed post-run compaction (quota-
-    // limited smol role, provider outage) used to leave the transcript
-    // ballooning past the model window turn after turn: the gauge showed
-    // nonsense like ctx 240% (480k/200k) while every request knowingly
-    // carried an over-window payload until the provider rejected it.
+    // compaction threshold, compact BEFORE sending the request — a failed
+    // post-run compaction (quota-limited smol role, provider outage) used to
+    // leave every request carrying an over-window payload (ctx 240% gauge).
     if (!isAutoContinue) await _maybeAutoCompact();
     try {
       await _agent.prompt(text);

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- fix(cli): a run counts as busy from the moment it is STARTED, not from
+  the first streamed byte — the inbox watcher / shell-job settle path no
+  longer starts a parallel run during the pre-flight compaction window
+  (live session showed `Bad state: Agent is already processing a prompt`
+  right after `[auto-compacted]`).
+- feat(app,widgets): catalog entries parse the optional `platforms`
+  manifest field; the catalog sheet shows iOS/macOS platform chips.
+- feat(site): widget gallery cards show platform tags and no longer wrap
+  the size/`jsr ≥` text or the Preview/Download button labels.
+
 - feat(provider): GitHub Copilot as a first-class provider — catalog
   entry plus the `/provider copilot` CLI flow (GitHub device flow with
   user_code + verification_uri, or paste an existing PAT; works

@@ -105,6 +105,36 @@ Future<Uint8List> _captureZip(String id) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('CatalogEntry.fromJson platforms', () {
+    Map<String, dynamic> base() =>
+        Map<String, dynamic>.from(goodCatalog()['widgets'][0] as Map);
+
+    test('parses declared platforms', () {
+      final json = base()..['platforms'] = ['ios', 'macos'];
+      expect(CatalogEntry.fromJson(json).platforms, ['ios', 'macos']);
+    });
+
+    test('absent platforms default to empty', () {
+      expect(CatalogEntry.fromJson(base()).platforms, isEmpty);
+    });
+
+    test('null or non-list platforms are treated as absent', () {
+      expect(
+        CatalogEntry.fromJson(base()..['platforms'] = null).platforms,
+        isEmpty,
+      );
+      expect(
+        CatalogEntry.fromJson(base()..['platforms'] = 'ios').platforms,
+        isEmpty,
+      );
+    });
+
+    test('non-string items are dropped', () {
+      final json = base()..['platforms'] = ['ios', 42, null, 'macos'];
+      expect(CatalogEntry.fromJson(json).platforms, ['ios', 'macos']);
+    });
+  });
+
   group('CatalogService.fetchCatalog', () {
     test('parses entries and stamps freshness', () async {
       final env = MemoryExecutionEnv();

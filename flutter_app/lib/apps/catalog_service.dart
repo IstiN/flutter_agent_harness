@@ -51,11 +51,13 @@ class CatalogEntry {
     required this.zipFile,
     required this.zipSha256,
     required this.zipSizeBytes,
+    this.platforms = const [],
   });
 
   factory CatalogEntry.fromJson(Map<String, dynamic> json) {
     final permissions = json['permissions'];
     final zip = json['zip'];
+    final rawPlatforms = json['platforms'];
     return CatalogEntry(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '',
@@ -77,6 +79,11 @@ class CatalogEntry {
       zipFile: zip is Map ? zip['file'] as String? ?? '' : '',
       zipSha256: zip is Map ? zip['sha256'] as String? ?? '' : '',
       zipSizeBytes: zip is Map ? (zip['sizeBytes'] as int? ?? 0) : 0,
+      platforms: [
+        if (rawPlatforms is List)
+          for (final platform in rawPlatforms)
+            if (platform is String) platform,
+      ],
     );
   }
 
@@ -86,6 +93,10 @@ class CatalogEntry {
   final String description;
   final String author;
   final List<String> tags;
+
+  /// Platform restriction tags (e.g. `ios`, `macos`) for widgets that only
+  /// run on specific platforms; empty means the widget runs everywhere.
+  final List<String> platforms;
 
   /// Minimum `js_widget_runtime`; informational (the app pins the package).
   final String minRuntime;
