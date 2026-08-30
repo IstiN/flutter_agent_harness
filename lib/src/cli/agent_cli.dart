@@ -58,6 +58,7 @@ import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
+import 'tool_phase_labels.dart';
 import '../model_roles/vision_models.dart';
 import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
@@ -586,6 +587,12 @@ class AgentCli {
       prompt: io.isInteractive ? _promptForApproval : null,
     );
     attachApproval(_agent, _approval);
+    // Busy-row honesty: name the executing tool ('Running bash…') instead
+    // of leaving a stale 'Compacting context…' label over long tool calls.
+    attachToolPhaseLabels(
+      _agent,
+      (phase) => _tuiController?.setBusyPhase(phase),
+    );
     _checkpoints = CheckpointRewindController(
       agent: _agent,
       sink: CheckpointSessionSink(
@@ -1635,7 +1642,10 @@ class AgentCli {
   Future<Session> _loadSession(SessionMetadata metadata) async {
     final session = await _repo.open(metadata);
     final messages = await session.buildContextMessages();
-    _agent.state.messages = messages;
+    // Loaded usage anchors are generation-time: post-compaction they
+    // phantom-report the pre-compaction size (183k on a 27k branch) and
+    // fire a no-op compaction on every resume. Re-anchor at chars/4.
+    _agent.state.messages = resetLoadedUsageAnchors(messages);
     _persistedCount = messages.length;
     // Adopt the session's original project folder. This matters both when
     // switching mid-run and when the CLI starts with --session: tools like
@@ -2376,6 +2386,9 @@ class AgentCli {
     }
     _tuiController?.setBusyPhase('Compacting context…');
     await _runAutoCompact('[auto-compacted]');
+    // Hand the busy row back to the run: a stale 'Compacting context…'
+    // over the streamed turn reads as a compaction hang.
+    _tuiController?.setBusyPhase('');
   }
 
   /// `/compact` manual override: same AutoCompactor pipeline as the
