@@ -167,6 +167,111 @@ class _AppsPanelState extends State<AppsPanel> {
     );
   }
 
+  /// Long-press on a grid tile: Open always; Remove for non-bundled apps
+  /// (catalog downloads AND agent-created apps — `force` covers apps that
+  /// are not recorded in `.installed.json`). `storage.json` always stays.
+  Future<void> _showAppMenu(JsAppInfo app, Offset globalPosition) async {
+    final overlay = Overlay.of(context).context.findRenderObject();
+    if (overlay is! RenderBox) return;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        globalPosition & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        const PopupMenuItem<String>(value: 'open', child: Text('Open')),
+        if (!app.bundled)
+          const PopupMenuItem<String>(
+            value: 'remove',
+            child: Text('Remove widget'),
+          ),
+      ],
+    );
+    if (selected == 'open') {
+      _openApp(app);
+      return;
+    }
+    if (selected != 'remove' || !mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Remove ${app.name}?'),
+        content: const Text(
+          'The widget files are deleted; its saved data (storage.json) '
+          'is kept, so reinstalling restores its state.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    AppAnalytics.instance.widgetEvent('remove', params: {'id': app.id});
+    final removed = await _appsStore.removeWidget(app.id, force: true);
+    if (!mounted) return;
+    if (removed) {
+      await _reloadApps();
+    } else {
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text('Could not remove ${app.name}.')));
+    }
+  }
+
+  /// "Add widget" tile: the user describes what they want; Fa checks the
+  /// catalog for a match (offers to install) or proposes a creation plan.
+  Future<void> _showAddWidgetDialog() async {
+    final service = widget.manager.active?.service;
+    final controller = TextEditingController();
+    final request = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Add widget'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 3,
+          minLines: 1,
+          decoration: const InputDecoration(
+            hintText: 'Describe the widget you want…',
+          ),
+          onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('Ask Fa'),
+          ),
+        ],
+      ),
+    );
+    final text = request?.trim();
+    if (text == null || text.isEmpty || service == null) return;
+    AppAnalytics.instance.widgetEvent('add_widget_request', params: const {});
+    await service.sendText(
+      'The user wants a new widget: "$text".\n'
+      '1. First check the fa_widgets catalog (apps_catalog tool, action '
+      '"list") — if a widget already matches this request, tell the user '
+      'which one and ask for confirmation, then install it (action '
+      '"install").\n'
+      '2. If nothing matches, propose a short plan to CREATE the widget '
+      'as a JS app under apps/ (follow the js-apps skill), and ask the '
+      'user before writing any code.',
+    );
+  }
+
   // Files / Settings live in the shell sidebar and open the real
   // [FileBrowser] / [SettingsScreen] from there — the apps panel no
   // longer surfaces grey placeholder tiles for them.
@@ -291,6 +396,7 @@ class _AppsPanelState extends State<AppsPanel> {
         itemBuilder: (context, index) => _AppTile(
           app: filtered[index],
           onTap: () => _openApp(filtered[index]),
+          onLongPress: (position) => _showAppMenu(filtered[index], position),
         ),
       );
     }
@@ -336,9 +442,15 @@ class _AppsPanelState extends State<AppsPanel> {
 
         // ── Custom apps section ──────────────────────────────────
         if (_customApps.isNotEmpty) ...[
-          _SectionHeader(title: 'Created by you', count: _customApps.length),
+          _SectionHeader(title: 'My widgets', count: _customApps.length),
           const SizedBox(height: 8),
-          _AppGrid(apps: _customApps, onTap: _openApp, showAddTile: true),
+          _AppGrid(
+            apps: _customApps,
+            onTap: _openApp,
+            onLongPress: _showAppMenu,
+            showAddTile: true,
+            onAdd: _showAddWidgetDialog,
+          ),
           const SizedBox(height: 16),
         ],
 
@@ -346,7 +458,7 @@ class _AppsPanelState extends State<AppsPanel> {
         if (_demoApps.isNotEmpty) ...[
           _SectionHeader(title: 'Demo apps', count: _demoApps.length),
           const SizedBox(height: 8),
-          _AppGrid(apps: _demoApps, onTap: _openApp),
+          _AppGrid(apps: _demoApps, onTap: _openApp, onLongPress: _showAppMenu),
           const SizedBox(height: 8),
         ],
 
@@ -750,12 +862,20 @@ class _AppGrid extends StatelessWidget {
   const _AppGrid({
     required this.apps,
     required this.onTap,
+    this.onLongPress,
     this.showAddTile = false,
+    this.onAdd,
   });
 
   final List<JsAppInfo> apps;
   final ValueChanged<JsAppInfo> onTap;
+
+  /// Long-press on a tile (context menu: open / remove).
+  final void Function(JsAppInfo app, Offset globalPosition)? onLongPress;
   final bool showAddTile;
+
+  /// The "Add widget" tile tap.
+  final VoidCallback? onAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -774,30 +894,44 @@ class _AppGrid extends StatelessWidget {
       itemCount: apps.length + (showAddTile ? 1 : 0),
       itemBuilder: (context, index) {
         if (showAddTile && index == apps.length) {
-          return _AddAppTile(colors: colors, theme: theme, isLight: isLight);
+          return _AddAppTile(
+            colors: colors,
+            theme: theme,
+            isLight: isLight,
+            onTap: onAdd,
+          );
         }
-        return _AppTile(app: apps[index], onTap: () => onTap(apps[index]));
+        return _AppTile(
+          app: apps[index],
+          onTap: () => onTap(apps[index]),
+          onLongPress: onLongPress == null
+              ? null
+              : (position) => onLongPress!(apps[index], position),
+        );
       },
     );
   }
 }
 
-/// The "Add app" tile at the end of the custom apps grid.
+/// The "Add widget" tile at the end of the custom apps grid: asks Fa to
+/// find a matching catalog widget or plan a new one.
 class _AddAppTile extends StatelessWidget {
   const _AddAppTile({
     required this.colors,
     required this.theme,
     required this.isLight,
+    required this.onTap,
   });
 
   final FahColors colors;
   final ThemeData theme;
   final bool isLight;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: () {}, // Placeholder — will open app creation flow
+      onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -814,7 +948,7 @@ class _AddAppTile extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Add app',
+            'Add widget',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(
@@ -830,10 +964,13 @@ class _AddAppTile extends StatelessWidget {
 
 /// One app tile: rounded-square icon + label.
 class _AppTile extends StatelessWidget {
-  const _AppTile({required this.app, required this.onTap});
+  const _AppTile({required this.app, required this.onTap, this.onLongPress});
 
   final JsAppInfo app;
   final VoidCallback onTap;
+
+  /// Long-press (context menu); carries the pointer position for the menu.
+  final ValueChanged<Offset>? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -846,6 +983,15 @@ class _AppTile extends StatelessWidget {
     final service = manager?.active?.service;
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress == null
+          ? null
+          : () {
+              final box = context.findRenderObject();
+              final center = box is RenderBox
+                  ? box.localToGlobal(box.size.center(Offset.zero))
+                  : Offset.zero;
+              onLongPress!(center);
+            },
       borderRadius: BorderRadius.circular(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,

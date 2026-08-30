@@ -735,10 +735,12 @@ class AppsStore {
 
   /// Removes a catalog-installed widget's CODE files (`apps/<id>/` minus
   /// `storage.json`) and drops its meta record. Returns false when there is
-  /// nothing installed under that id.
-  Future<bool> removeWidget(String appId) async {
+  /// nothing installed under that id. With [force] the meta check is
+  /// skipped — used by the launcher's long-press Remove for agent-created
+  /// apps that were never catalog-installed (same storage.json keep).
+  Future<bool> removeWidget(String appId, {bool force = false}) async {
     final meta = await _readInstalled();
-    if (!meta.containsKey(appId)) return false;
+    if (!force && !meta.containsKey(appId)) return false;
     final entries =
         (await _env.listDir('apps/$appId')).valueOrNull ?? const <FileInfo>[];
     for (final item in entries) {
