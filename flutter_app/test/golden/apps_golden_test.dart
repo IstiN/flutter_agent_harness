@@ -7,17 +7,17 @@
 /// js_app_view.dart and the shared ui/widgets/chat_message_tile.dart.
 ///
 /// Everything runs on MemoryExecutionEnv with fixed manifests — no network,
-/// no real file system writes, no real JS engine. The grid seeds the bundled
-/// demo manifests (read from assets/apps/ on disk) plus twelve
-/// custom "agent-built" apps. The JsAppView coverage uses the deterministic
+/// no real file system writes, no real JS engine. The grid seeds twelve
+/// custom "agent-built" apps (nothing is bundled anymore — the catalog is
+/// the source of apps). The JsAppView coverage uses the deterministic
 /// start-error chrome (missing widget.js) instead of booting the
 /// JavaScriptCore backend; FaWorkBar states render over a hand-built
 /// calculator canvas. FaWorkBar owns an infinitely repeating orbit
 /// animation, so its states are pumped frame-by-frame (never pumpAndSettle).
 ///
 /// Note: the golden font sandbox (Inter + JetBrainsMono only) has no emoji
-/// font — emoji manifest icons render as NO GLYPH boxes. Bundled manifests
-/// with emoji icons get an inline-SVG stand-in here; crypto's '₿' glyph and
+/// font — emoji manifest icons render as NO GLYPH boxes. Manifests with
+/// emoji icons get an inline-SVG stand-in here; crypto's '₿' glyph and
 /// calculator's icon.svg render for real.
 library;
 
@@ -46,23 +46,6 @@ import '../fake_media_controllers.dart';
 
 // --- Inline SVG icons (single-quoted XML so they embed in JSON manifests) --
 
-const _weatherIcon =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
-    "<circle cx='9' cy='9' r='4' fill='#fbbf24'/>"
-    "<ellipse cx='14' cy='16' rx='7' ry='4.5' fill='#e5e7eb'/></svg>";
-
-const _stocksIcon =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
-    "<polyline points='3,17 8,11 12,14 21,5' fill='none' stroke='#34d399' "
-    "stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/>"
-    "<polyline points='15,5 21,5 21,11' fill='none' stroke='#34d399' "
-    "stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/></svg>";
-
-const _animationIcon =
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
-    "<rect x='2' y='4' width='20' height='16' rx='4' fill='#a78bfa'/>"
-    "<polygon points='10,9 16,12 10,15' fill='#0b0f17'/></svg>";
-
 const _sparkleIcon =
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'>"
     "<path d='M12 2 L14 10 L22 12 L14 14 L12 22 L10 14 L2 12 L10 10 Z' "
@@ -77,16 +60,6 @@ const _alertIcon =
     "<rect x='1' y='1' width='22' height='22' rx='6' fill='#f43f5e'/>"
     "<rect x='10.8' y='6' width='2.4' height='8' rx='1.2' fill='#f8fafc'/>"
     "<circle cx='12' cy='17.5' r='1.6' fill='#f8fafc'/></svg>";
-
-/// The bundled demo manifests declare emoji icons, which the golden font
-/// sandbox cannot render — substitute an equivalent inline SVG (calculator's
-/// icon.svg file and crypto's '₿' glyph are kept verbatim).
-const _bundledIconOverrides = <String, String>{
-  'weather': _weatherIcon,
-  'stocks': _stocksIcon,
-  'animation-showcase': _animationIcon,
-  'yolo-hello': _sparkleIcon,
-};
 
 /// A simple rounded-square icon with a white glyph shape.
 String _badgeIcon(String bg, String shape) =>
@@ -238,21 +211,10 @@ Future<void> _writeApp(
   );
 }
 
-/// Seeds the ten bundled demo apps (manifests read from assets/apps/ on
-/// disk) plus the custom apps into an in-memory env.
+/// Seeds the custom "agent-built" apps into an in-memory env (nothing is
+/// bundled anymore — the catalog is the source of apps).
 Future<MemoryExecutionEnv> _seededEnv() async {
   final env = MemoryExecutionEnv();
-  for (final id in AppsStore.demoAppIds) {
-    final raw = await File('assets/apps/$id/manifest.json').readAsString();
-    final manifest = (jsonDecode(raw) as Map).cast<String, Object?>();
-    final override = _bundledIconOverrides[id];
-    if (override != null) manifest['icon'] = override;
-    await _writeApp(env, id, manifest);
-  }
-  await env.writeFile(
-    'apps/calculator/icon.svg',
-    await File('assets/apps/calculator/icon.svg').readAsString(),
-  );
   for (final entry in _customApps.entries) {
     await _writeApp(env, entry.key, {
       'id': entry.key,
@@ -702,10 +664,20 @@ void main() {
 
   testWidgets('app icon showcase', (tester) async {
     final env = MemoryExecutionEnv();
-    // Real file IO must run outside the FakeAsync test zone.
-    final calcSvg = (await tester.runAsync(
-      () => File('assets/apps/calculator/icon.svg').readAsString(),
-    ))!;
+    // The calculator icon.svg the bundle used to ship — inlined now that
+    // no demo assets exist anymore.
+    const calcSvg = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4" y="2" width="16" height="20" rx="2"/>
+  <line x1="8" y1="6" x2="16" y2="6"/>
+  <line x1="8" y1="11" x2="10" y2="11"/>
+  <line x1="14" y1="11" x2="16" y2="11"/>
+  <line x1="8" y1="15" x2="10" y2="15"/>
+  <line x1="14" y1="15" x2="16" y2="15"/>
+  <line x1="8" y1="19" x2="10" y2="19"/>
+  <line x1="14" y1="19" x2="16" y2="19"/>
+</svg>
+''';
     await env.writeFile('apps/calculator/icon.svg', calcSvg);
     final calcApp = _app(const {
       'id': 'calculator',

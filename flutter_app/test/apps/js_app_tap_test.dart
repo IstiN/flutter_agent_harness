@@ -21,7 +21,7 @@ void main() {
     late final JsAppEngine engine;
     await tester.runAsync(() async {
       final source = await File(
-        'assets/apps/calculator/widget.js',
+        'test/apps/fixtures/calculator_widget.js',
       ).readAsString();
       await env.writeFile('apps/calculator/widget.js', source);
       engine = JsAppEngine(

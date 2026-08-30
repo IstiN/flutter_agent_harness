@@ -179,10 +179,6 @@ flutter:
 
   assets:
     - .env
-    - assets/apps/calculator/
-    - assets/apps/fitness-trainer/
-    - assets/apps/fitness-trainer/models/
-    - assets/apps/weather/
     - assets/skills/js-apps/SKILL.md
     - assets/wasm/add.wasm
     - assets/wasm/coreutils.wasm

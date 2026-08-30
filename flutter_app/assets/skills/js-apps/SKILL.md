@@ -72,7 +72,7 @@ Avoid these traps (they cost real debugging time):
 3. **Register `jsr.onEvent`** — even if you handle few events.
 4. **Set the permissions the app actually needs** in `manifest.json`, and tell the user they may also need to enable them at runtime in the app's permissions dialog.
 5. **Never hand-edit `apps/<id>/storage.json`** — that file is owned by `jsr.storage`.
-6. **Study the available demo apps first** — Fa filters bundled examples by the current host platform. Read the closest visible app's source before building something similar.
+6. **Study the installed apps first** — read the source of the closest app already on the user's grid (or one the user installed from the widget catalog) before building something similar.
 
 ---
 

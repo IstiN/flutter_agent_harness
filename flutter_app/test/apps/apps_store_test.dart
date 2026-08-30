@@ -62,7 +62,7 @@ void main() {
     );
 
     test(
-      'resetToFactory wipes downloads WITH data and reseeds demos',
+      'resetToFactory wipes everything WITH data and leaves apps/ empty',
       () async {
         final env = MemoryExecutionEnv();
         final store = AppsStore(env, readAsset: _fakeAssets);
@@ -86,15 +86,11 @@ void main() {
         final removed = await store.resetToFactory();
         expect(removed, greaterThanOrEqualTo(3)); // demo + focus-timer + my-own
 
-        // Only the bundled demo DIRS remain (reseeded from the assets).
+        // NO app dirs remain — the catalog is the source of apps now,
+        // nothing is re-seeded (no bundled demos anymore).
         final dirs = (await env.listDir('apps')).valueOrNull ?? const [];
         final dirNames = dirs.map((e) => e.name).toList();
-        expect(
-          dirNames,
-          containsAll(['calculator', 'weather', 'fitness-trainer']),
-        );
-        expect(dirNames, isNot(contains('focus-timer')));
-        expect(dirNames, isNot(contains('my-own')));
+        expect(dirNames.where((n) => !n.startsWith('.')), isEmpty);
         // User data is GONE (unlike removeWidget, nothing is preserved).
         expect(
           (await env.readTextFile('apps/focus-timer/storage.json')).valueOrNull,
