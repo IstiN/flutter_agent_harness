@@ -287,9 +287,19 @@
            (w.minRuntime ? 'jsr ≥ ' + w.minRuntime : '')].filter(Boolean).join(' · '))
       );
       const actions = el('div', 'actions');
-      const previewBtn = el('button', 'btn primary', '▶ Preview');
-      previewBtn.addEventListener('click', () => openPreview(w));
-      actions.appendChild(previewBtn);
+      // Widgets whose manifest excludes the web platform need a native
+      // host bridge (calendar/contacts/health/homekit) or hit browser-only
+      // limits (stocks: the quote API sends no CORS headers) — iframing
+      // them would show an error card, so mark them app-only instead.
+      const appOnly = (w.platforms || []).length > 0 &&
+        !(w.platforms || []).includes('web');
+      if (appOnly) {
+        actions.appendChild(el('span', 'apponly', 'runs in the Fa app'));
+      } else {
+        const previewBtn = el('button', 'btn primary', '▶ Preview');
+        previewBtn.addEventListener('click', () => openPreview(w));
+        actions.appendChild(previewBtn);
+      }
       if (w.zip && w.zip.file) {
         const a = document.createElement('a');
         a.className = 'btn';
@@ -315,20 +325,6 @@
     .then((cat) => {
       const widgets = (cat.widgets || []).slice()
         .sort((a, b) => String(a.id).localeCompare(String(b.id)));
-      render(widgets);
-      window.gtag && gtag('event', 'widgets_page_view',
-        { widget_count: widgets.length });
-    })
-    .catch(() => {
-      status.textContent =
-        'Could not load the catalog from GitHub right now. ' +
-        'Try again later or browse the sources on GitHub.';
-    });
-})();
-</script>
-</body>
-</html>
- .sort((a, b) => String(a.id).localeCompare(String(b.id)));
       render(widgets);
       window.gtag && gtag('event', 'widgets_page_view',
         { widget_count: widgets.length });
