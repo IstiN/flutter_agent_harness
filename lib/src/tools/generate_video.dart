@@ -114,9 +114,13 @@ abstract final class VideoDialect {
   });
 }
 
-/// Registered video dialects, in precedence order.
+/// Registered video dialects, in precedence order — the MOST SPECIFIC
+/// matcher first: both MiniMax dialects share the `minimax` baseUrl
+/// marker, so the H3 dialect would swallow Hailuo endpoints if listed
+/// first.
 final List<VideoDialect> videoGenerationDialects = [
-  MiniMaxVideoDialect(), // MiniMax H3 async task (current default)
+  HailuoVideoDialect(), // Hailuo 2.3 async task (V1 endpoint)
+  MiniMaxVideoDialect(), // MiniMax H3 async task (V2, default)
 ];
 
 /// MiniMax video generation (`POST {base}/video_generation`, async,
@@ -285,6 +289,210 @@ final class MiniMaxVideoDialect extends VideoDialect {
   ) async {
     final response = await client.get(
       Uri.parse('$base/v2/query/video_generation?task_id=$taskId'),
+      headers: headers,
+    );
+    if (response.statusCode != 200) {
+      throw VideoException(
+        'video task query failed: HTTP ${response.statusCode}: '
+        '${response.body}',
+      );
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<Uint8List> _downloadVideo(http.Client client, String fileUrl) async {
+    final video = await client.get(Uri.parse(fileUrl));
+    if (video.statusCode != 200) {
+      throw VideoException(
+        'video download failed: HTTP ${video.statusCode} for $fileUrl',
+      );
+    }
+    return video.bodyBytes;
+  }
+}
+
+/// Hailuo 2.3 video generation (`POST {base}/v1/video_generation`, async,
+/// model `MiniMax-Hailuo-2.3`). The endpoint returns a `task_id`; we poll
+/// `GET {base}/v1/query/video_generation?task_id=…` until it succeeds,
+/// then download the returned `file_url`.
+final class HailuoVideoDialect extends VideoDialect {
+  @override
+  bool matches(VideoEndpoint endpoint) =>
+      endpoint.baseUrl.contains('minimax') &&
+      endpoint.modelId.contains('Hailuo');
+
+  /// Maps an OpenAI-style `size` ("1920x1080") to a Hailuo `resolution`
+  /// ("1080P") and `duration` (6s). Falls back to 1080P for unknown sizes.
+  /// Public for tests.
+  ({String resolution, int duration}) sizeFor(String? size) {
+    if (size == null) return (resolution: '1080P', duration: 6);
+    final parts = size.toLowerCase().split('x');
+    if (parts.length == 2) {
+      final w = int.tryParse(parts[0]);
+      final h = int.tryParse(parts[1]);
+      if (w != null && h != null && w > 0 && h > 0) {
+        final resolution = w >= 1920 ? '1080P' : '768P';
+        return (resolution: resolution, duration: 6);
+      }
+    }
+    return (resolution: '1080P', duration: 6);
+  }
+
+  @override
+  Future<({String path, Uint8List bytes, String detail})> generate({
+    required ExecutionEnv env,
+    required VideoEndpoint endpoint,
+    required String prompt,
+    String? size,
+    String? quality,
+    required http.Client client,
+    Future<void> Function()? onPollProgress,
+  }) async {
+    final base = _trimSlash(endpoint.baseUrl);
+    final (resolution: resolution, duration: duration) = sizeFor(size);
+    final headers = _hailuoHeaders(endpoint);
+    final taskId = await _createTask(
+      client,
+      base,
+      headers,
+      endpoint.modelId,
+      prompt,
+      resolution,
+      duration,
+    );
+    final fileUrl = await _pollForFileUrl(
+      client,
+      base,
+      headers,
+      taskId,
+      onPollProgress,
+    );
+    final bytes = await _downloadVideo(client, fileUrl);
+    final path = await _save(env, 'videos', 'mp4', bytes);
+    return (path: path, bytes: bytes, detail: 'saved to $path');
+  }
+
+  String _trimSlash(String url) =>
+      url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+
+  Map<String, String> _hailuoHeaders(VideoEndpoint endpoint) => {
+    'Content-Type': 'application/json',
+    if (endpoint.apiKey.isNotEmpty)
+      'Authorization': 'Bearer ${endpoint.apiKey}',
+  };
+
+  Future<String> _createTask(
+    http.Client client,
+    String base,
+    Map<String, String> headers,
+    String model,
+    String prompt,
+    String resolution,
+    int duration,
+  ) async {
+    final create = await client.post(
+      Uri.parse('$base/v1/video_generation'),
+      headers: headers,
+      body: jsonEncode({
+        'model': model,
+        'prompt': prompt,
+        'resolution': resolution,
+        'duration': duration,
+        'prompt_optimizer': true,
+      }),
+    );
+    if (create.statusCode != 200) {
+      throw VideoException(
+        'video generation failed: HTTP ${create.statusCode}: ${create.body}',
+      );
+    }
+    final created = jsonDecode(create.body) as Map<String, dynamic>;
+    final taskId = created['task_id'] as String?;
+    if (taskId == null) {
+      throw VideoException(
+        'video generation: Hailuo response missing task_id: ${create.body}',
+      );
+    }
+    return taskId;
+  }
+
+  Future<String> _pollForFileUrl(
+    http.Client client,
+    String base,
+    Map<String, String> headers,
+    String taskId,
+    Future<void> Function()? onProgress,
+  ) async {
+    const maxPolls = 20;
+    for (var i = 0; i < maxPolls; i++) {
+      final data = await _pollOnce(client, base, headers, taskId);
+      final status = data['status'] as String?;
+      if (status == 'Success') {
+        final fileId = data['file_id'] as String?;
+        if (fileId == null) {
+          throw VideoException(
+            'video generation: Hailuo task $taskId succeeded without '
+            'file_id: ${jsonEncode(data)}',
+          );
+        }
+        return _downloadUrlFrom(client, base, headers, fileId);
+      }
+      _throwIfFailed(data, status, taskId);
+      await onProgress?.call();
+      final delaySeconds = (3 + i).clamp(3, 10);
+      await Future<void>.delayed(Duration(seconds: delaySeconds));
+    }
+    throw VideoException(
+      'video task $taskId did not finish within the polling window',
+    );
+  }
+
+  Future<String> _downloadUrlFrom(
+    http.Client client,
+    String base,
+    Map<String, String> headers,
+    String fileId,
+  ) async {
+    final retrieve = await client.get(
+      Uri.parse('$base/v1/files/retrieve?file_id=$fileId'),
+      headers: headers,
+    );
+    if (retrieve.statusCode != 200) {
+      throw VideoException(
+        'video file retrieve failed: HTTP ${retrieve.statusCode}: '
+        '${retrieve.body}',
+      );
+    }
+    final body = jsonDecode(retrieve.body) as Map<String, dynamic>;
+    final file = body['file'] as Map<String, dynamic>?;
+    final url = file?['download_url'] as String?;
+    if (url == null) {
+      throw VideoException(
+        'video file retrieve: missing download_url for file_id=$fileId: '
+        '${retrieve.body}',
+      );
+    }
+    return url;
+  }
+
+  void _throwIfFailed(
+    Map<String, dynamic> data,
+    String? status,
+    String taskId,
+  ) {
+    if (status == 'Fail') {
+      throw VideoException('video task $taskId failed: ${jsonEncode(data)}');
+    }
+  }
+
+  Future<Map<String, dynamic>> _pollOnce(
+    http.Client client,
+    String base,
+    Map<String, String> headers,
+    String taskId,
+  ) async {
+    final response = await client.get(
+      Uri.parse('$base/v1/query/video_generation?task_id=$taskId'),
       headers: headers,
     );
     if (response.statusCode != 200) {

@@ -75,6 +75,40 @@ void main() {
     expect(k.code, KeyCode.tab);
   });
 
+  test(
+      'parseKeyFromBuffer never swallows a trailing control byte into a '
+      'text run (burst input)', () {
+    // A PTY/terminal delivering "ok\r" in ONE chunk: the printable run is
+    // emitted first, the CR stays buffered and parses as Enter next.
+    final b = <int>[0x6f, 0x6b, 0x0d];
+    final text = parseKeyFromBuffer(b)!;
+    expect(text.code, KeyCode.rune);
+    expect(text.text, 'ok');
+    expect(b, [0x0d]);
+    final enter = parseKeyFromBuffer(b)!;
+    expect(enter.code, KeyCode.enter);
+    expect(b, isEmpty);
+  });
+
+  test(
+      'parseKeyFromBuffer splits a multi-byte char from a following control '
+      'byte', () {
+    // "é\r" (é = 0xC3 0xA9): the rune stops before the CR.
+    final b = <int>[0xc3, 0xa9, 0x0d];
+    final text = parseKeyFromBuffer(b)!;
+    expect(text.text, 'é');
+    expect(b, [0x0d]);
+  });
+
+  test('parseKeyFromBuffer stops a text run before a tab byte', () {
+    final b = <int>[0x61, 0x09];
+    final text = parseKeyFromBuffer(b)!;
+    expect(text.text, 'a');
+    expect(b, [0x09]);
+    final tab = parseKeyFromBuffer(b)!;
+    expect(tab.code, KeyCode.tab);
+  });
+
   test('parseKeyFromBuffer parses delete', () {
     final b = <int>[0x1b, 0x5b, 0x33, 0x7e];
     final k = parseKeyFromBuffer(b)!;
