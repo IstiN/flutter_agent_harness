@@ -209,7 +209,7 @@ void main() {
       client: okServer(),
       onOpenApp: (context, app) async => opened.add(app.id),
     );
-    await tester.tap(find.widgetWithText(TextButton, 'Preview'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Preview'));
     await tester.pumpAndSettle();
 
     expect(
@@ -238,8 +238,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // Installed & current: Open + Remove, no Preview.
-    expect(find.widgetWithText(TextButton, 'Preview'), findsNothing);
-    final remove = find.widgetWithText(TextButton, 'Remove');
+    expect(find.widgetWithText(OutlinedButton, 'Preview'), findsNothing);
+    final remove = find.widgetWithText(OutlinedButton, 'Remove');
     expect(remove, findsOneWidget);
 
     await tester.tap(remove);
@@ -249,7 +249,7 @@ void main() {
       isNull,
     );
     expect(find.widgetWithText(FilledButton, 'Install'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, 'Preview'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Preview'), findsOneWidget);
   });
 
   testWidgets('local apps missing from the catalog list as Created by me', (
@@ -294,7 +294,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Install'));
     await tester.pumpAndSettle();
     final before = fsRevision.value;
-    await tester.tap(find.widgetWithText(TextButton, 'Remove'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Remove'));
     await tester.pumpAndSettle();
     expect(fsRevision.value, greaterThan(before));
   });

@@ -570,51 +570,63 @@ class _CatalogTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              FilledButton.tonal(
-                onPressed: busy
-                    ? null
-                    : (installedVersion == null || hasUpdate)
-                    ? onInstall
-                    : onOpen,
-                child: busy
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(
-                        installedVersion == null
-                            ? 'Install'
-                            : hasUpdate
-                            ? 'Update'
-                            : 'Open',
-                      ),
-              ),
-              if (installedVersion != null && !hasUpdate)
-                // Installed & current: Preview == Open, so the secondary
-                // action is Remove instead.
-                TextButton.icon(
-                  onPressed: busy ? null : onRemove,
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  label: const Text('Remove'), // l10n:ignore
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    foregroundColor: theme.colorScheme.error,
-                  ),
-                )
-              else
-                TextButton.icon(
-                  onPressed: busy ? null : onPreview,
-                  icon: const Icon(Icons.play_arrow, size: 18),
-                  label: const Text('Preview'), // l10n:ignore
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                  ),
+          // Two equal-width stacked buttons: the primary action on top,
+          // the secondary (Preview / Remove) as a compact outline under
+          // it — no ragged text links hanging off the button's edge.
+          SizedBox(
+            width: 108,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton.tonal(
+                  onPressed: busy
+                      ? null
+                      : (installedVersion == null || hasUpdate)
+                      ? onInstall
+                      : onOpen,
+                  child: busy
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(
+                          installedVersion == null
+                              ? 'Install'
+                              : hasUpdate
+                              ? 'Update'
+                              : 'Open',
+                        ),
                 ),
-            ],
+                const SizedBox(height: 6),
+                if (installedVersion != null && !hasUpdate)
+                  // Installed & current: Preview == Open, so the secondary
+                  // action is Remove instead.
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : onRemove,
+                    icon: const Icon(Icons.delete_outline, size: 16),
+                    label: const Text('Remove'), // l10n:ignore
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.colorScheme.error,
+                      side: BorderSide(
+                        color: theme.colorScheme.error.withValues(alpha: 0.4),
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  )
+                else
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : onPreview,
+                    icon: const Icon(Icons.play_arrow, size: 16),
+                    label: const Text('Preview'), // l10n:ignore
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
