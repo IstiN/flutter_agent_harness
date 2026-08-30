@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.244
+
+- fix(cli): the status bar labels the model with the ACTIVE saved
+  provider entry, not the first baseUrl match — two accounts on one
+  endpoint (e.g. `kimi-ira1` + `kimi_me` both on
+  `api.kimi.com/coding/v1`) used to show the first registry entry's
+  name no matter which one was picked (`/model kimi_me` → status read
+  `kimi-ira1/<model>`). `_statusProviderLabel` now prefers
+  `_activeCustomName` and only falls back to the endpoint scan when no
+  custom entry is active; the key resolution was never affected.
+
 ## 0.1.241
 
 - feat(catalog): remote provider-models catalog at `fa1.dev/models-catalog.json`

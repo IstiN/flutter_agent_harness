@@ -378,5 +378,89 @@ void main() {
         await run;
       },
     );
+
+    test('status label uses the ACTIVE custom entry, not the first '
+        'baseUrl match', () async {
+      // Two accounts on ONE endpoint (kimi-ira1 + kimi_me both on
+      // api.kimi.com/coding/v1): after picking kimi_me's model the
+      // status line must read "kimi_me/…". The baseUrl scan finds
+      // kimi-ira1 first and used to mislabel the active provider.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_KIMI_IRA1'] = 'ira1-key'
+        ..map['FA_KEY_KIMI_ME'] = 'me-key';
+      final cache = SecureKeyCache(store);
+      await cache.preload(const ['FA_KEY_KIMI_IRA1', 'FA_KEY_KIMI_ME']);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'kimi-ira1',
+          apiType: 'openai',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          keyName: 'FA_KEY_KIMI_IRA1',
+          modelId: 'kimi-for-coding',
+        ),
+        CustomProviderEntry(
+          name: 'kimi_me',
+          apiType: 'openai',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          keyName: 'FA_KEY_KIMI_ME',
+          modelId: 'kimi-for-coding',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        customProviders: registry,
+        secureKeys: cache,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const ['k3-256k'],
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy);
+
+      await cli.tuiSelectModelForTest('kimi_me|k3-256k');
+      await waitForIt(() => cli.agent.state.model.id == 'k3-256k');
+
+      expect(cli.statusProviderLabelForTest(), 'kimi_me');
+      // The fallback keeps working: no active custom entry → the
+      // first endpoint match labels the model.
+      expect(cli.agent.state.model.provider, isNot('kimi_me'));
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test(
+      'status label falls back to the baseUrl scan without an active '
+      'custom entry, and to the catalog provider without any match',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'kimi-ira1',
+            apiType: 'openai',
+            baseUrl: testModel.baseUrl,
+            modelId: 'kimi-for-coding',
+          ),
+        ]);
+        final cli = cliFor(fake.call, customProviders: registry);
+        final run = cli.run();
+        await waitForIt(() => !cli.isBusy);
+
+        // No switch happened: the endpoint match labels the model.
+        expect(cli.statusProviderLabelForTest(), 'kimi-ira1');
+
+        // A model on an unknown endpoint falls back to its catalog
+        // provider name.
+        cli.agent.state.model = Model(
+          id: 'm',
+          api: testModel.api,
+          provider: 'catalog-name',
+          baseUrl: 'https://unknown.example/v1',
+          contextWindow: 100000,
+          maxTokens: 4096,
+        );
+        expect(cli.statusProviderLabelForTest(), 'catalog-name');
+        io.sendLine('/exit');
+        await run;
+      },
+    );
   });
 }

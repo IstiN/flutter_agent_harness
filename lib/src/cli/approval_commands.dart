@@ -3,7 +3,7 @@
 part of 'agent_cli.dart';
 
 /// Implementation members of [AgentCli] for approval prompts.
-extension on AgentCli {
+extension ApprovalCommands on AgentCli {
   Future<ApprovalDecision> _promptForApproval(ApprovalRequest request) async {
     // TUI mode: prompt through the on-screen approval zone (y/a/n keys).
     final tui = _tuiController;
@@ -463,12 +463,30 @@ extension on AgentCli {
   String _statusProviderLabel(Model model) {
     final entries = config.customProviders?.entries;
     if (entries != null) {
+      // The explicitly ACTIVE saved entry wins over the endpoint scan:
+      // two entries can share one baseUrl (two accounts on the same
+      // host — kimi-ira1 + kimi_me), and the first-match scan would
+      // label the model with the OTHER account's name.
+      final active = _activeCustomName;
+      if (active != null) {
+        for (final entry in entries) {
+          if (entry.name == active &&
+              _sameEndpoint(entry.baseUrl, model.baseUrl)) {
+            return entry.name;
+          }
+        }
+      }
       for (final entry in entries) {
         if (_sameEndpoint(entry.baseUrl, model.baseUrl)) return entry.name;
       }
     }
     return model.provider;
   }
+
+  /// Test hook for [_statusProviderLabel] on the current model.
+  @visibleForTesting
+  String statusProviderLabelForTest() =>
+      _statusProviderLabel(_agent.state.model);
 
   /// Endpoint equality ignoring a trailing slash (saved entries and pinned
   /// chains disagree on it routinely).
