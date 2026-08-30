@@ -1001,7 +1001,6 @@ class AgentService extends ChangeNotifier
   }
 
   late final Agent _agent;
-  late final ScheduledMessageQueue _scheduledMessages;
 
   /// Persisted scheduled messages (`schedule_message` tool): delivered as
   /// idle mail by a timer; survives restarts (JSON under the messages
@@ -2656,9 +2655,6 @@ class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
 
   @override
   void onDone(int passes, int tokens) {}
-
-  @override
-  void onDelta(String delta) {}
 
   @override
   void onBothRolesFailed(Object lastError) {
