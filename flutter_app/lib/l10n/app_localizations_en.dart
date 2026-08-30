@@ -674,6 +674,27 @@ class AppLocalizationsEn extends AppLocalizations {
       'App code restored (your data was kept)';
 
   @override
+  String get launcherRemoveWidget => 'Remove widget';
+
+  @override
+  String launcherRemoveWidgetTitle(String name) {
+    return 'Remove $name?';
+  }
+
+  @override
+  String get launcherRemoveWidgetBody =>
+      'The widget files are deleted; its saved data (storage.json) is kept, so reinstalling restores its state.';
+
+  @override
+  String get launcherSearchHint => 'Search widgets…';
+
+  @override
+  String get launcherTabWidgets => 'Widgets';
+
+  @override
+  String get launcherTabGetWidgets => 'Get widgets';
+
+  @override
   String get launcherRestoreDemoAppFailed => 'Could not restore the app';
 
   @override

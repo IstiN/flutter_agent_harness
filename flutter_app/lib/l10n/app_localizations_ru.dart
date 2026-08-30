@@ -680,6 +680,27 @@ class AppLocalizationsRu extends AppLocalizations {
       'Код приложения восстановлен (данные сохранены)';
 
   @override
+  String get launcherRemoveWidget => 'Удалить виджет';
+
+  @override
+  String launcherRemoveWidgetTitle(String name) {
+    return 'Удалить $name?';
+  }
+
+  @override
+  String get launcherRemoveWidgetBody =>
+      'Файлы виджета удаляются; его данные (storage.json) сохраняются — при повторной установке состояние восстановится.';
+
+  @override
+  String get launcherSearchHint => 'Поиск виджетов…';
+
+  @override
+  String get launcherTabWidgets => 'Виджеты';
+
+  @override
+  String get launcherTabGetWidgets => 'Каталог виджетов';
+
+  @override
   String get launcherRestoreDemoAppFailed =>
       'Не удалось восстановить приложение';
 

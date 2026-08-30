@@ -12,7 +12,11 @@
   "sessionInfoNameLabel": "Имя сессии",
   "newSessionFolderTitle": "Новая сессия — папка",
   "newSessionCurrentFolder": "Текущая папка ({folder})",
-  "@newSessionCurrentFolder": { "placeholders": { "folder": {} } },
+  "@newSessionCurrentFolder": {
+    "placeholders": {
+      "folder": {}
+    }
+  },
   "approvalModeAlwaysAsk": "Всегда спрашивать",
   "approvalModeAlwaysAskHint": "Каждый вызов инструмента требует разрешения.",
   "approvalModeTitle": "Разрешения инструментов",
@@ -197,6 +201,24 @@
   "launcherRenameFolderTooltip": "Переименовать папку",
   "launcherRestoreDemoApp": "Восстановить эталонную версию",
   "launcherRestoreDemoAppDone": "Код приложения восстановлен (данные сохранены)",
+  "launcherRemoveWidget": "Удалить виджет",
+  "@launcherRemoveWidget": {},
+  "launcherRemoveWidgetTitle": "Удалить {name}?",
+  "@launcherRemoveWidgetTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "launcherRemoveWidgetBody": "Файлы виджета удаляются; его данные (storage.json) сохраняются — при повторной установке состояние восстановится.",
+  "@launcherRemoveWidgetBody": {},
+  "launcherSearchHint": "Поиск виджетов…",
+  "@launcherSearchHint": {},
+  "launcherTabWidgets": "Виджеты",
+  "@launcherTabWidgets": {},
+  "launcherTabGetWidgets": "Каталог виджетов",
+  "@launcherTabGetWidgets": {},
   "launcherRestoreDemoAppFailed": "Не удалось восстановить приложение",
   "launcherSeedErrorCopy": "Скопировать ошибку",
   "launcherSeedErrorHint": "Отправьте эту ошибку Fa — он сможет починить приложение.",

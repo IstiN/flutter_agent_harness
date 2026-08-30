@@ -1214,6 +1214,42 @@ abstract class AppLocalizations {
   /// **'App code restored (your data was kept)'**
   String get launcherRestoreDemoAppDone;
 
+  /// No description provided for @launcherRemoveWidget.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove widget'**
+  String get launcherRemoveWidget;
+
+  /// No description provided for @launcherRemoveWidgetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name}?'**
+  String launcherRemoveWidgetTitle(String name);
+
+  /// No description provided for @launcherRemoveWidgetBody.
+  ///
+  /// In en, this message translates to:
+  /// **'The widget files are deleted; its saved data (storage.json) is kept, so reinstalling restores its state.'**
+  String get launcherRemoveWidgetBody;
+
+  /// No description provided for @launcherSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search widgets…'**
+  String get launcherSearchHint;
+
+  /// No description provided for @launcherTabWidgets.
+  ///
+  /// In en, this message translates to:
+  /// **'Widgets'**
+  String get launcherTabWidgets;
+
+  /// No description provided for @launcherTabGetWidgets.
+  ///
+  /// In en, this message translates to:
+  /// **'Get widgets'**
+  String get launcherTabGetWidgets;
+
   /// No description provided for @launcherRestoreDemoAppFailed.
   ///
   /// In en, this message translates to:

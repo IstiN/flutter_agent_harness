@@ -54,6 +54,7 @@ class WidgetsCatalogSheet extends StatefulWidget {
     this.catalogService,
     this.httpClient,
     this.onOpenApp,
+    this.embedded = false,
   });
 
   final ExecutionEnv env;
@@ -73,6 +74,11 @@ class WidgetsCatalogSheet extends StatefulWidget {
   /// Test/host hook invoked instead of the default [pushJsApp] navigation
   /// when a widget is opened from the sheet.
   final Future<void> Function(BuildContext context, JsAppInfo app)? onOpenApp;
+
+  /// When true the widget renders WITHOUT the bottom-sheet chrome (drag
+  /// handle, title, close button) so hosts can embed the catalog inline —
+  /// e.g. as the launcher's "Get widgets" tab.
+  final bool embedded;
 
   @override
   State<WidgetsCatalogSheet> createState() => _WidgetsCatalogSheetState();
@@ -251,6 +257,11 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (widget.embedded) {
+      // Inline host (launcher tab): no sheet chrome, the body scrolls
+      // with its own controller.
+      return _buildBody(theme, ScrollController());
+    }
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.85,
@@ -403,7 +414,7 @@ class _CatalogTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                if (chips.isNotEmpty)
+                if (chips.isNotEmpty || entry.platforms.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Wrap(
@@ -415,6 +426,23 @@ class _CatalogTile extends StatelessWidget {
                               chip,
                               style: const TextStyle(fontSize: 11),
                             ),
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        // Platform tags are compatibility info, not topics:
+                        // always shown, outlined in the tertiary accent.
+                        for (final platform in entry.platforms)
+                          Chip(
+                            label: Text(
+                              platform,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: theme.colorScheme.tertiary,
+                              ),
+                            ),
+                            side: BorderSide(color: theme.colorScheme.tertiary),
                             visualDensity: VisualDensity.compact,
                             padding: EdgeInsets.zero,
                             materialTapTargetSize:
