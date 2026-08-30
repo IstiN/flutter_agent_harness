@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- feat(providers): ChatGPT goes multi-account — each account saves as its
+  own named entry with its own name-scoped secure-store slot
+  (`FA_KEY_CHATGPT_COM_<NAME>`, the CodeMie per-entry key pattern), so a
+  refresh-token rotation never overwrites a sibling account's blob and
+  the refresh callback writes to the ACTIVE entry's slot.
+- feat(provider): `/provider chatgpt oauth` offers the saved ChatGPT
+  accounts first (switch to one, or add another) before running OAuth;
+  a NEW account gets a guided model pick from the live Codex `/models`
+  (bundled default when the fetch answers nothing), while a re-login to
+  the SAME entry keeps its last-used model.
+- feat(app): the ChatGPT OAuth flow names the entry from the OAuth
+  account's email (id_token claim) and matches re-auths by name +
+  baseUrl — a second ChatGPT account lands in its own entry and its own
+  entry-scoped Keychain slot, mirroring the CLI.
 - feat(chatgpt): the ChatGPT provider (Codex backend) is now visible across
   the pickers and `/provider` — it ships with the real Codex HTTP SSE
   transport: Codex header parity (originator, session/thread ids, account

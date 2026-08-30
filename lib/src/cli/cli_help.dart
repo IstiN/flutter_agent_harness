@@ -366,9 +366,10 @@ SKILLS AND CONTEXT FILES
                      PKCE and stores the resulting key in the secure store;
                      kimi switches to the Kimi Code OpenAI-compatible
                      endpoint (api.kimi.com/coding/v1, key: KIMI_API_KEY);
-                     chatgpt oauth signs in with a ChatGPT account (Codex
-                     backend) and stores the OAuth credentials blob as
-                     CHATGPT_OAUTH_CREDENTIALS — access tokens refresh
+                     chatgpt oauth offers the saved ChatGPT accounts first
+                     (pick one, or add another); a new sign-in stores the
+                     OAuth credentials blob in that account's own
+                     secure-store slot — access tokens refresh
                      automatically and the rotated blob is re-persisted;
                      codemie sso [orgUrl] signs in to a CodeMie organization
                      via browser SSO (localhost callback) and saves it as a

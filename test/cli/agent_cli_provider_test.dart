@@ -245,8 +245,7 @@ void main() {
     expect(
       output,
       contains(
-        'supported providers: openrouter, kimi, openai, chatgpt, codemie, dial, minimax, anthropic, google',
-        'supported providers: openrouter, kimi, openai, copilot, codemie, dial, minimax, anthropic, google',
+        'supported providers: openrouter, kimi, openai, chatgpt, copilot, codemie, dial, minimax, anthropic, google',
       ),
     );
     expect(cli.agent.state.model.provider, 'test-provider');
@@ -1266,6 +1265,9 @@ void main() {
           envVarValue: (_) => null,
           secureKeys: cache,
           customProviders: registry,
+          // A new account answers the guided model pick; an empty list
+          // keeps the bundled default (no picker).
+          modelsFetcher: (baseUrl, {required apiKey}) async => const [],
           chatGptOAuthExchangeFn:
               ({
                 required String code,
@@ -1317,16 +1319,20 @@ void main() {
 
         final output = io.out.toString();
         expect(output, contains('ChatGPT authorized'));
-        final stored = store.map['CHATGPT_OAUTH_CREDENTIALS'];
+        // The blob lives in the entry's OWN name-scoped slot (CodeMie's
+        // per-entry key pattern), not the shared legacy env-name slot.
+        final stored = store.map['FA_KEY_CHATGPT_COM_MY_CHATGPT'];
         expect(stored, isNotNull);
         expect(stored, contains('"access_token":"at-123"'));
         expect(stored, contains('"refresh_token":"rt-123"'));
         expect(stored, contains('"chatgpt_account_id":"acc-123"'));
+        expect(store.map['CHATGPT_OAUTH_CREDENTIALS'], isNull);
         // The account shows in /provider as a saved entry.
         final entry = registry.find('my-chatgpt');
         expect(entry, isNotNull);
         expect(entry!.apiType, 'chatgpt');
-        expect(entry.keyName, 'CHATGPT_OAUTH_CREDENTIALS');
+        expect(entry.keyName, 'FA_KEY_CHATGPT_COM_MY_CHATGPT');
+        expect(entry.modelId, chatGptCodexDefaultModel);
         expect(cli.agent.state.model.provider, 'chatgpt');
         expect(cli.providerKind, 'chatgpt-codex');
         // Tokens live ONLY in the secure store: the persisted registry
@@ -1353,6 +1359,320 @@ void main() {
       io.sendLine('/exit');
       await run;
     });
+
+    test('two ChatGPT accounts keep separate credential slots', () async {
+      final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      var round = 0;
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        // No live model answer — a new account keeps the bundled default.
+        modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+        chatGptOAuthExchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String verifier,
+            }) async {
+              round++;
+              return ChatGptOAuthCredentials(
+                accessToken: 'at-$round',
+                refreshToken: 'rt-$round',
+                idToken: 'it-$round',
+              );
+            },
+      );
+      final run = cli.run();
+
+      // Round gates: the SECOND round must not answer prompts echoed by
+      // the first round's transcript, so each round waits for a FRESH
+      // authorize URL before pasting its redirect.
+      var authUrls = 0;
+      Future<void> oauth(String code, String name) async {
+        final before = authUrls;
+        io.sendLine('/provider chatgpt oauth headless');
+        await waitForIt(() {
+          authUrls = 'auth.openai.com'.allMatches(io.out.toString()).length;
+          return authUrls > before;
+        });
+        final authUrlLine = io.out
+            .toString()
+            .split('\n')
+            .lastWhere((line) => line.contains('auth.openai.com'));
+        final state = Uri.parse(authUrlLine.trim()).queryParameters['state']!;
+        io.sendLine(
+          'http://127.0.0.1:1455/auth/callback?code=$code&state=$state',
+        );
+        // One 'provider name [' echo per round: wait for THIS round's
+        // (split length = occurrences + 1).
+        await waitForIt(
+          () => io.out.toString().split('provider name [').length > before + 1,
+          reason: 'name prompt for $name',
+        );
+        io.sendLine(name);
+        await waitForIt(
+          () =>
+              io.out.toString().split('switched provider to chatgpt').length >
+              before + 1,
+          reason: 'switch for $name',
+        );
+      }
+
+      await oauth('code-1', 'work');
+      await oauth('code-2', 'personal');
+      io.sendLine('/exit');
+      await run;
+
+      // Each account landed in its own name-scoped slot — the second
+      // grant did not overwrite the first account's blob.
+      expect(registry.find('work')!.keyName, 'FA_KEY_CHATGPT_COM_WORK');
+      expect(registry.find('personal')!.keyName, 'FA_KEY_CHATGPT_COM_PERSONAL');
+      expect(
+        store.map['FA_KEY_CHATGPT_COM_WORK'],
+        contains('"access_token":"at-1"'),
+      );
+      expect(
+        store.map['FA_KEY_CHATGPT_COM_PERSONAL'],
+        contains('"access_token":"at-2"'),
+      );
+    });
+
+    test('/provider chatgpt oauth offers the saved accounts first', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final blob = const ChatGptOAuthCredentials(
+        accessToken: 'at-b',
+        refreshToken: 'rt-b',
+        idToken: 'it-b',
+      ).encode();
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_CHATGPT_COM_CHATGPT_B'] = blob;
+      final cache = SecureKeyCache(store);
+      await cache.preload(const ['FA_KEY_CHATGPT_COM_CHATGPT_B']);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'chatgpt-b',
+          apiType: 'chatgpt',
+          baseUrl: 'https://chatgpt.com/backend-api/codex',
+          modelId: 'gpt-5.6-sol',
+          keyName: 'FA_KEY_CHATGPT_COM_CHATGPT_B',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider chatgpt oauth');
+      await waitForIt(() => io.out.toString().contains('ChatGPT account'));
+      io.sendLine('1'); // chatgpt-b
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to chatgpt'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // Picking the saved account switched to it WITHOUT running OAuth.
+      expect(
+        cli.agent.state.model.baseUrl,
+        'https://chatgpt.com/backend-api/codex',
+      );
+      expect(cli.agent.state.model.id, 'gpt-5.6-sol');
+      expect(io.out.toString(), isNot(contains('auth.openai.com')));
+    });
+
+    test('re-auth to the SAME entry keeps its model', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'work',
+          apiType: 'chatgpt',
+          baseUrl: 'https://chatgpt.com/backend-api/codex',
+          modelId: 'my-pick',
+          keyName: 'FA_KEY_CHATGPT_COM_WORK',
+        ),
+      ]);
+      var fetched = 0;
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async {
+          fetched++;
+          return ['gpt-5.6-sol'];
+        },
+        chatGptOAuthExchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String verifier,
+            }) async => const ChatGptOAuthCredentials(
+              accessToken: 'at-2',
+              refreshToken: 'rt-2',
+              idToken: 'it-2',
+            ),
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider chatgpt oauth headless');
+      await waitForIt(() => io.out.toString().contains('redirect URL:'));
+      final authUrlLine = io.out
+          .toString()
+          .split('\n')
+          .lastWhere((line) => line.contains('auth.openai.com'));
+      final state = Uri.parse(authUrlLine.trim()).queryParameters['state']!;
+      io.sendLine(
+        'http://127.0.0.1:1455/auth/callback?code=code-9&state=$state',
+      );
+      await waitForIt(() => io.out.toString().contains('provider name [work]'));
+      io.sendLine(''); // Enter keeps the existing entry — same account.
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to chatgpt'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // Same account: the model pick never ran and the entry kept its
+      // last-used model; the fresh blob renewed its own slot.
+      expect(fetched, 0);
+      expect(io.out.toString(), isNot(contains('ChatGPT model')));
+      expect(registry.entries, hasLength(1));
+      expect(registry.find('work')!.modelId, 'my-pick');
+      expect(store.map['FA_KEY_CHATGPT_COM_WORK'], contains('"at-2"'));
+    });
+
+    test('a NEW account picks its model from the live list', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'work',
+          apiType: 'chatgpt',
+          baseUrl: 'https://chatgpt.com/backend-api/codex',
+          modelId: 'my-pick',
+          keyName: 'FA_KEY_CHATGPT_COM_WORK',
+        ),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        secureKeys: cache,
+        customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => [
+          'gpt-5.6-sol',
+          'gpt-5.6-mini',
+        ],
+        chatGptOAuthExchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String verifier,
+            }) async => const ChatGptOAuthCredentials(
+              accessToken: 'at-3',
+              refreshToken: 'rt-3',
+              idToken: 'it-3',
+            ),
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider chatgpt oauth headless');
+      await waitForIt(() => io.out.toString().contains('redirect URL:'));
+      final authUrlLine = io.out
+          .toString()
+          .split('\n')
+          .lastWhere((line) => line.contains('auth.openai.com'));
+      final state = Uri.parse(authUrlLine.trim()).queryParameters['state']!;
+      io.sendLine(
+        'http://127.0.0.1:1455/auth/callback?code=code-3&state=$state',
+      );
+      await waitForIt(() => io.out.toString().contains('provider name [work]'));
+      io.sendLine('personal'); // A different name = a second account.
+      await waitForIt(() => io.out.toString().contains('ChatGPT model'));
+      io.sendLine('2'); // gpt-5.6-mini
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to chatgpt'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // The pick landed on the NEW entry only; the sibling kept its own
+      // model and blob.
+      expect(registry.find('personal')!.modelId, 'gpt-5.6-mini');
+      expect(registry.find('work')!.modelId, 'my-pick');
+      expect(
+        store.map['FA_KEY_CHATGPT_COM_WORK'],
+        isNull,
+        reason: 'the second account never touched the first slot',
+      );
+      expect(store.map['FA_KEY_CHATGPT_COM_PERSONAL'], contains('"at-3"'));
+    });
+
+    test(
+      'a NEW account with no model answer keeps the bundled default',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final store = FakeSecureKeyStore();
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final registry = CustomProviderRegistry([]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (_) => null,
+          secureKeys: cache,
+          customProviders: registry,
+          modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+          chatGptOAuthExchangeFn:
+              ({
+                required String code,
+                required String redirectUri,
+                required String verifier,
+              }) async => const ChatGptOAuthCredentials(
+                accessToken: 'at-4',
+                refreshToken: 'rt-4',
+                idToken: 'it-4',
+              ),
+        );
+        final run = cli.run();
+
+        io.sendLine('/provider chatgpt oauth headless');
+        await waitForIt(() => io.out.toString().contains('redirect URL:'));
+        final authUrlLine = io.out
+            .toString()
+            .split('\n')
+            .lastWhere((line) => line.contains('auth.openai.com'));
+        final state = Uri.parse(authUrlLine.trim()).queryParameters['state']!;
+        io.sendLine(
+          'http://127.0.0.1:1455/auth/callback?code=code-4&state=$state',
+        );
+        await waitForIt(
+          () => io.out.toString().contains('provider name [chatgpt.com]'),
+        );
+        io.sendLine('');
+        await waitForIt(
+          () => io.out.toString().contains('switched provider to chatgpt'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        // Empty live list → no picker, the bundled Codex default.
+        expect(io.out.toString(), isNot(contains('ChatGPT model')));
+        expect(registry.entries.single.modelId, chatGptCodexDefaultModel);
+      },
+    );
 
     test('/provider chatgpt oauth rejects invalid usage', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);

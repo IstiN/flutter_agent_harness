@@ -222,6 +222,7 @@ extension on AgentCli {
         provider: 'chatgpt',
       );
       return ids;
+    }
     if (providerName == 'copilot') {
       return _fetchCopilotModelsAndLimits(baseUrl, apiKey: key);
     }
@@ -1111,8 +1112,8 @@ extension on AgentCli {
   /// The `/provider chatgpt oauth [headless]` branch: authenticates the
   /// user with their ChatGPT account via PKCE (the Codex CLI client id) and
   /// stores the resulting OAuth credentials — access + refresh tokens as
-  /// one JSON blob — under CHATGPT_OAUTH_CREDENTIALS. Returns true when the
-  /// command targeted the OAuth flow.
+  /// one JSON blob in the account's own secure-store slot. Returns true
+  /// when the command targeted the OAuth flow.
   bool _startChatGptOAuthArg(List<String> args) {
     if (args.first != 'chatgpt') return false;
     if (args.length < 2 || args[1] != 'oauth') {
@@ -1141,6 +1142,38 @@ extension on AgentCli {
 
   Future<void> _runChatGptOAuthCommand({required bool headless}) async {
     final spec = providerCatalog['chatgpt']!;
+
+    // Existing ChatGPT accounts first: pick one, or add another —
+    // multi-account is first-class, like copilot. The headless variant
+    // skips the picker: it is the scripted sign-in form (its stdin
+    // carries the redirect URL); saved accounts switch via
+    // `/provider <name>`.
+    if (!headless) {
+      final registry = config.customProviders;
+      final accounts = [
+        for (final entry in registry?.entries ?? const <CustomProviderEntry>[])
+          if (entry.apiType == spec.name) entry,
+      ];
+      if (accounts.isNotEmpty) {
+        final choice = await _pickOption('ChatGPT account', [
+          for (final entry in accounts)
+            (entry.name, entry.name, '${entry.baseUrl} · ${entry.modelId}'),
+          (
+            'add',
+            'add another account',
+            'sign in with a ChatGPT account (OAuth)',
+          ),
+        ]);
+        if (choice == null) {
+          io.writeln('ChatGPT connect cancelled');
+          return;
+        }
+        if (choice != 'add') {
+          await _switchToSavedProvider(registry!.find(choice)!);
+          return;
+        }
+      }
+    }
 
     final exchangeFn = config.chatGptOAuthExchangeFn ?? _defaultChatGptExchange;
 
@@ -1228,39 +1261,63 @@ extension on AgentCli {
   /// backend so the session is usable at once. The account also lands in
   /// the provider registry (name prompt included) like every other
   /// connected provider — without the entry it never showed in `/provider`.
+  /// The name prompt doubles as the multi-account boundary (CodeMie's
+  /// sameAccount rule): Enter re-auths the existing entry and keeps its
+  /// model, a new name saves a separate entry whose credentials live in
+  /// their own name-scoped key slot — a refresh-token rotation then never
+  /// overwrites a sibling account's blob.
   Future<void> _applyChatGptOAuthCredentials(
     ProviderSpec spec,
     ChatGptOAuthCredentials credentials,
   ) async {
     io.writeln('ChatGPT authorized');
     final encoded = credentials.encode();
-    final keyName = spec.apiKeyEnvNames.first;
+    final registry = config.customProviders;
+    final existing = registry != null
+        ? _entryForBaseUrl(registry, spec.defaultBaseUrl)
+        : null;
+    final fallback = existing?.name ?? _codeMieHostName(spec.defaultBaseUrl);
+    // A cancel keeps the fallback — the OAuth credentials are already
+    // minted and stored.
+    final name =
+        (registry == null
+            ? fallback
+            : (await _askConnectProviderName(
+                fallback,
+                sameBaseUrl: spec.defaultBaseUrl,
+              ))) ??
+        fallback;
+    // Re-auth stores into the entry's own slot (a legacy entry keeps its
+    // env-name slot); a new account scopes its slot by name.
+    final keyName =
+        registry?.find(name)?.keyName ??
+        CustomProviderRegistry.keyNameFor(
+          spec.defaultBaseUrl,
+          providerName: name,
+        );
     await _storeProviderToken(
       spec,
       spec.defaultBaseUrl,
       encoded,
       keyName: keyName,
     );
-    final registry = config.customProviders;
-    String? name;
+
+    // Guided model pick for a NEW account only: the live Codex /models
+    // answer under the fresh credentials; cancel (or a failed/empty
+    // fetch) keeps the bundled default. A re-login to the SAME entry
+    // keeps its last-used model.
+    final sameAccount = existing != null && name == existing.name;
+    final modelId = sameAccount
+        ? existing.modelId
+        : (await _pickChatGptModel(spec, encoded) ?? chatGptCodexDefaultModel);
+
     if (registry != null) {
-      final fallback =
-          _entryForBaseUrl(registry, spec.defaultBaseUrl)?.name ??
-          _codeMieHostName(spec.defaultBaseUrl);
-      // A cancel keeps the fallback — the OAuth credentials are already
-      // minted and stored.
-      name =
-          await _askConnectProviderName(
-            fallback,
-            sameBaseUrl: spec.defaultBaseUrl,
-          ) ??
-          fallback;
       registry.add(
         CustomProviderEntry(
           name: name,
           apiType: spec.name,
           baseUrl: spec.defaultBaseUrl,
-          modelId: _agent.state.model.id,
+          modelId: modelId,
           keyName: keyName,
         ),
       );
@@ -1270,23 +1327,50 @@ extension on AgentCli {
     await _switchProvider(
       spec,
       spec.defaultBaseUrl,
-      _agent.state.model.id,
+      modelId,
       token: encoded,
       tokenKeyName: keyName,
     );
   }
 
+  /// The live Codex `/models` pick for a NEW ChatGPT account: the ids
+  /// under the fresh credentials, answered by
+  /// [AgentCliConfig.modelsFetcher] when injected (tests), else the real
+  /// dialect. Null = keep the bundled default.
+  Future<String?> _pickChatGptModel(ProviderSpec spec, String key) async {
+    final List<String> ids;
+    try {
+      final fetch = config.modelsFetcher;
+      ids = fetch != null
+          ? await fetch(spec.defaultBaseUrl, apiKey: key)
+          : await _fetchProviderModelIds(spec.name, spec.defaultBaseUrl, key);
+    } on Object {
+      return null;
+    }
+    if (ids.isEmpty) return null;
+    return _pickOption('ChatGPT model', [for (final id in ids) (id, id, '')]);
+  }
+
   /// Persists refreshed ChatGPT OAuth credentials: the access token rotates
   /// on refresh, so the fresh blob replaces the stored one (and the live
   /// session key) — the next start resolves it like the initial grant.
+  /// The write lands in the ACTIVE account's own key slot: with several
+  /// ChatGPT entries on one endpoint, a shared legacy slot would let
+  /// account A's refresh clobber account B's blob.
   Future<void> _persistChatGptCredentials(String encoded) async {
     _apiKey = encoded;
     final spec = providerCatalog['chatgpt']!;
+    final active = _activeCustomName;
+    final keyName =
+        (active == null
+            ? null
+            : config.customProviders?.find(active)?.keyName) ??
+        spec.apiKeyEnvNames.first;
     await _storeProviderToken(
       spec,
       spec.defaultBaseUrl,
       encoded,
-      keyName: spec.apiKeyEnvNames.first,
+      keyName: keyName,
     );
   }
 

@@ -85,7 +85,30 @@ Flags: `--model <id>`, `--provider openai-completions|anthropic|google`,
 `--base-url <url>`, `--cwd <dir>`, `--session-root <dir>`, `-p`/`--prompt
 <text>`, `--help`, `--version`.
 
-        'supported providers: openrouter, kimi, openai, chatgpt, copilot, codemie, dial, minimax, anthropic, google',
+The `chatgpt` provider (Codex backend) is also available: sign in with a
+ChatGPT account via `/provider chatgpt oauth` in the REPL (OAuth-only —
+there is no headless `--provider chatgpt` flag). Several ChatGPT accounts
+can coexist: the flow offers the saved accounts first, each account keeps
+its own named entry and secure-store slot, and re-auth never touches a
+sibling account's credentials.
+
+GitHub Copilot is a first-class provider. `/provider copilot` connects a
+GitHub account via the device-code flow (open the shown
+`verification_uri`, enter the `user_code`) or by pasting an existing PAT
+— the flow works headless too — and the Flutter app offers the same
+connect as a sheet. Accounts save as named entries (`copilot-<login>` by
+default); the plan picks the host — individual `api.githubcopilot.com`,
+business `api.business.githubcopilot.com`, enterprise
+`api.enterprise.githubcopilot.com`, or a custom `--base-url` override —
+and several accounts can coexist side by side. Tokens live only in the
+OS secure store (Keychain / Secret Service); `config.yaml` carries name,
+plan, and baseUrl, never a token. CI runs store-less via the
+`FA_KEY_COPILOT_<NAME>` env (plus a `_2`… ring for more entries), and
+headless runs take `--provider copilot --model <id>` with
+`COPILOT_GITHUB_TOKEN`. Models come from a live `GET /models` (with
+capabilities and limits). The device-flow client id is overridable via
+`FA_COPILOT_CLIENT_ID` — that GitHub endpoint is undocumented, so a
+custom client id carries an account-ban risk; override only with cause.
 
 Slash commands inside the REPL: `/exit`, `/reset` (new session), `/compact`
 (summarize history now), `/stats` (token/cost totals), `/model <id>` (show or

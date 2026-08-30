@@ -59,6 +59,7 @@ import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
 import '../model_roles/vision_models.dart';
+import '../providers/chatgpt_codex_models.dart';
 import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
 import '../providers/copilot_device_flow.dart';
