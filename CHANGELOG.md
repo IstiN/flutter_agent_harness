@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.252
+
+- fix(cli): the busy row stops lying about compaction hangs — the
+  pre-flight compaction's 'Compacting context…' label no longer stays up
+  for the whole run (a long tool call read as a compaction hang); the
+  busy row now names the executing tool ('Running bash…') and drops back
+  to 'Working…' between calls; resumed sessions drop generation-time
+  usage anchors, so a compacted branch no longer phantom-reports its
+  pre-compaction size (no more no-op compaction on every resume + an
+  honest context gauge).
+
 ## 0.1.250
 
 
