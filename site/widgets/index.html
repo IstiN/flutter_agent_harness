@@ -196,10 +196,11 @@
 
   // ---------------------------------------------------------------- preview
   //
-  // The overlay embeds the REAL Flutter web preview runner (deployed to
-  // /widgets/preview/ from the flutter_js_widget_runtime repo): it fetches
+  // The overlay embeds the REAL Flutter web preview runner (hosted on the
+  // flutter_js_widget_runtime repo's GitHub Pages): it fetches
   // manifest.json + widget.js from the fa_widgets repo and renders the JSON
   // tree with the actual jsr runtime — what you see is what the app shows.
+  const RUNNER = 'https://istin.github.io/flutter_js_widget_runtime/preview/';
   const overlay = document.getElementById('preview-overlay');
   const frame = document.getElementById('pv-frame');
   const pvTitle = document.getElementById('pv-title');

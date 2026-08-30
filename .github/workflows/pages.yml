@@ -70,19 +70,6 @@ jobs:
             cp -R build/pages/app build/pages/root/app
           fi
 
-      # The widget preview runner: a Flutter web app built by the
-      # preview-web.yml workflow of IstiN/flutter_js_widget_runtime
-      # (--base-href /widgets/preview/ — must land at exactly this path).
-      # RELEASE_PAT is required for cross-repo artifact downloads.
-      - name: Download widget preview runner
-        uses: actions/download-artifact@v4
-        with:
-          name: jsr-preview-web
-          repository: IstiN/flutter_js_widget_runtime
-          workflow: preview-web.yml
-          github-token: ${{ secrets.RELEASE_PAT }}
-          path: build/pages/root/widgets/preview
-
       - name: Cache-bust static assets
         if: steps.web_build.outcome == 'success'
         env:
