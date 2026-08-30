@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.1.246
+
+- feat(tools): `HailuoVideoDialect` — Hailuo 2.3 video generation on the
+  MiniMax V1 contract (`POST /v1/video_generation` → poll
+  `task_id` → `file_id` → `/v1/files/retrieve` → `download_url`),
+  with size mapping (1080P/768P) and full MockClient flow tests.
+  Dialect registry reordered most-specific-first: both MiniMax dialects
+  share the `minimax` baseUrl marker, so the H3 dialect previously
+  swallowed Hailuo endpoints into the wrong (V2) contract.
+- fix(cli): headless runs compact BEFORE the first request — a resumed
+  session already over the threshold went out over-window and the
+  endpoint rejected the turn (the same pre-flight guard the REPL had).
+- fix(tui): key parser never swallows a trailing control byte into a
+  text run — a burst PTY read delivering `text\r` in one chunk ate the
+  Enter into the text and the composer never submitted.
+- chore: drop the build artifacts (`fa-local/bundle/…`) from git —
+  `install_local.sh` rebuilds them and the directory was already
+  gitignored (they were force-added once and churned 13 MB per install).
+
+## 0.1.245
+
+- fix(cli): restored sessions label the model with the RIGHT account
+  too — 0.1.244 covered live switches via `_activeCustomName`, but a
+  restarted session has none, so two same-endpoint accounts
+  (`kimi-ira1`/`kimi_me`) still showed the first registry entry. The
+  status label now disambiguates by the apiKeyName the persisted roles
+  chain pins for the endpoint (`_endpointEntryLabel` +
+  `_chainKeyNameFor`); the first-match scan remains the pin-less
+  fallback.
+
+## 0.1.244
+
+- fix(cli): the status bar labels the model with the ACTIVE saved
+  provider entry, not the first baseUrl match — two accounts on one
+  endpoint (e.g. `kimi-ira1` + `kimi_me` both on
+  `api.kimi.com/coding/v1`) used to show the first registry entry's
+  name no matter which one was picked (`/model kimi_me` → status read
+  `kimi-ira1/<model>`). `_statusProviderLabel` now prefers
+  `_activeCustomName` and only falls back to the endpoint scan when no
+  custom entry is active; the key resolution was never affected.
+
 ## 0.1.241
 
 - feat(catalog): remote provider-models catalog at `fa1.dev/models-catalog.json`
@@ -1674,5 +1715,15 @@
 ## 0.1.244
 
 - fix(cli): media slot flow propagates custom provider keyName
+
+## 0.1.245
+
+- fix(cli): status bar labels model with the ACTIVE saved provider
+
+## 0.1.247
+
+- feat(tools): Hailuo 2.3 video dialect + headless pre-flight compaction
+- fix(tui): key parser never swallows a trailing control byte into a text run
+- fix(cli): restored sessions label the model with the pinned-key account
 
 ## Unreleased
