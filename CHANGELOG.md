@@ -1686,4 +1686,8 @@
 
 - fix(cli): media slot flow propagates custom provider keyName
 
+## 0.1.245
+
+- fix(cli): status bar labels model with the ACTIVE saved provider
+
 ## Unreleased
