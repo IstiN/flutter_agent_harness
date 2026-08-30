@@ -89,6 +89,10 @@
   .btn:hover { border-color: var(--accent); }
   .btn.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); }
   .btn.primary:hover { filter: brightness(1.1); }
+  .apponly {
+    font-size: 13px; color: var(--muted); padding: 7px 4px;
+    white-space: nowrap; align-self: center;
+  }
   footer { max-width: 960px; margin: 0 auto; padding: 0 20px 48px; color: var(--muted); font-size: 13px; }
   footer a { color: var(--accent); }
 
@@ -311,6 +315,20 @@
     .then((cat) => {
       const widgets = (cat.widgets || []).slice()
         .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      render(widgets);
+      window.gtag && gtag('event', 'widgets_page_view',
+        { widget_count: widgets.length });
+    })
+    .catch(() => {
+      status.textContent =
+        'Could not load the catalog from GitHub right now. ' +
+        'Try again later or browse the sources on GitHub.';
+    });
+})();
+</script>
+</body>
+</html>
+ .sort((a, b) => String(a.id).localeCompare(String(b.id)));
       render(widgets);
       window.gtag && gtag('event', 'widgets_page_view',
         { widget_count: widgets.length });
