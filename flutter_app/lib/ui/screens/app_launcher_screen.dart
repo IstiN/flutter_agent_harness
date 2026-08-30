@@ -574,7 +574,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     }
     final appId = app.id;
     final isDemo = AppsStore.demoAppIds.contains(appId);
-    if (tile == null && !isDemo) return;
+    // Every app gets a menu now: tile sizes for live-tile apps, Restore
+    // for bundled demos, Remove for everything else (catalog downloads,
+    // agent-created) — no early return for plain icon apps.
     final override = layout.tileSizeFor(appId);
     final current = tile == null
         ? null
@@ -1034,7 +1036,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         final app = matches[index];
         return InkWell(
           borderRadius: BorderRadius.circular(12),
+          hoverColor: colors.indigo.withValues(alpha: 0.06),
           onTap: () => unawaited(_launchApp(app)),
+          onSecondaryTapUp: (details) => unawaited(
+            _showTileMenu('app:${app.id}', details.globalPosition),
+          ),
           onLongPress: () {
             final box = context.findRenderObject();
             final center = box is RenderBox
@@ -1359,7 +1365,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     }
     return InkWell(
       borderRadius: BorderRadius.circular(16),
+      hoverColor: colors.indigo.withValues(alpha: 0.06),
       onTap: () => _onTileTap(key),
+      onSecondaryTapUp: (details) =>
+          unawaited(_showTileMenu(key, details.globalPosition)),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
