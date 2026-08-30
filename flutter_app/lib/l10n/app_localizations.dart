@@ -1244,6 +1244,36 @@ abstract class AppLocalizations {
   /// **'Widgets'**
   String get launcherTabWidgets;
 
+  /// No description provided for @settingsResetApps.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset apps'**
+  String get settingsResetApps;
+
+  /// No description provided for @settingsResetAppsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore the widget apps to their initial state'**
+  String get settingsResetAppsHint;
+
+  /// No description provided for @settingsResetAppsConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset all apps?'**
+  String get settingsResetAppsConfirmTitle;
+
+  /// No description provided for @settingsResetAppsConfirmBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This deletes EVERY widget you downloaded from the catalog or created here, together with ALL its data (saved state, settings, storage). Bundled demo apps are restored to the reference version. This cannot be undone.'**
+  String get settingsResetAppsConfirmBody;
+
+  /// No description provided for @settingsResetAppsDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Apps reset — {count} widget(s) removed, demos restored'**
+  String settingsResetAppsDone(int count);
+
   /// No description provided for @appsCatalogCreatedByMe.
   ///
   /// In en, this message translates to:

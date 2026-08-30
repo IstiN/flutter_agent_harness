@@ -698,6 +698,25 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherTabWidgets => 'Виджеты';
 
   @override
+  String get settingsResetApps => 'Сбросить приложения';
+
+  @override
+  String get settingsResetAppsHint =>
+      'Вернуть приложения-виджеты к изначальному состоянию';
+
+  @override
+  String get settingsResetAppsConfirmTitle => 'Сбросить все приложения?';
+
+  @override
+  String get settingsResetAppsConfirmBody =>
+      'Будут удалены ВСЕ виджеты, которые вы скачали из каталога или создали, вместе со ВСЕМИ их данными (сохранённое состояние, настройки, хранилище). Встроенные демо-приложения вернутся к эталонной версии. Действие необратимо.';
+
+  @override
+  String settingsResetAppsDone(int count) {
+    return 'Приложения сброшены — удалено виджетов: $count, демо восстановлены';
+  }
+
+  @override
   String get appsCatalogCreatedByMe => 'Создано мной';
 
   @override

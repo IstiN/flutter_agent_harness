@@ -752,6 +752,37 @@ class AppsStore {
     return true;
   }
 
+  /// Factory reset of the whole apps workspace: deletes EVERY app
+  /// directory — catalog downloads, agent-created apps, demos — WITH
+  /// their `storage.json` user data (unlike [removeWidget], nothing is
+  /// preserved), plus the install metadata, the demo-seed tracking file
+  /// and the catalog cache, then re-seeds the bundled demos from the
+  /// reference assets. Returns how many app directories were removed.
+  Future<int> resetToFactory() async {
+    final entries =
+        (await _env.listDir('apps')).valueOrNull ?? const <FileInfo>[];
+    var removed = 0;
+    for (final item in entries) {
+      await _env.remove('apps/${item.name}', recursive: true);
+      if (item.kind == FileKind.directory) removed++;
+    }
+    // Dotfiles may not be listed by every env — remove the known ones
+    // explicitly (missing files are fine).
+    for (final metaFile in const [
+      installedMetaFile,
+      demoSeedsFile,
+      'apps/.catalog_cache_v2.json',
+    ]) {
+      try {
+        await _env.remove(metaFile, recursive: true);
+      } on Object {
+        // Absent or read-only — nothing to reset there.
+      }
+    }
+    await seedBundledApps();
+    return removed;
+  }
+
   /// Compares [entries] against installed versions: returns candidates with
   /// a strictly newer semver AND an existing `apps/<id>/` directory
   /// (not-installed ids are fresh installs, not updates).
