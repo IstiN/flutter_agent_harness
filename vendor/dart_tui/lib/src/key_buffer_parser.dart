@@ -127,15 +127,22 @@ TeaKey? parseKeyFromBuffer(List<int> buffer) {
 
   // Multi-byte UTF-8 or Printable ASCII
   // Try to decode as much as possible from the start of the buffer.
-  for (var len = 4; len >= 1; len--) {
-    if (buffer.length >= len) {
-      try {
-        final decoded = utf8.decode(buffer.sublist(0, len));
-        buffer.removeRange(0, len);
-        return TeaKey(code: KeyCode.rune, text: decoded);
-      } catch (_) {
-        // Continue trying shorter lengths or wait for more bytes
-      }
+  // Cap the run at the first CONTROL byte: a burst read delivering
+  // "text\r" (or "text\n") in one chunk must not swallow the Enter into
+  // the text run — the control byte belongs to the next key.
+  var maxRun = 0;
+  while (maxRun < buffer.length && maxRun < 4) {
+    final b = buffer[maxRun];
+    if (b < 0x20 || b == 0x7f) break;
+    maxRun++;
+  }
+  for (var len = maxRun; len >= 1; len--) {
+    try {
+      final decoded = utf8.decode(buffer.sublist(0, len));
+      buffer.removeRange(0, len);
+      return TeaKey(code: KeyCode.rune, text: decoded);
+    } catch (_) {
+      // Continue trying shorter lengths or wait for more bytes
     }
   }
 
