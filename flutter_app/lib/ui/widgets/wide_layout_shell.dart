@@ -116,6 +116,10 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// reloaded whenever the manager changes (create/open/close).
   List<SessionMetadata> _persistedSessions = const [];
 
+  /// The CLI-written `session_info` names for [_persistedSessions] (and the
+  /// live ones sharing their ids), reloaded together with the metadata.
+  Map<String, String> _jsonlNames = const {};
+
   /// Lazily loaded session-title store when the host did not inject one
   /// (the wide shell's boot path doesn't) — powers custom titles + rename.
   SessionNamesStore? _namesStore;
@@ -141,8 +145,14 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// Refreshes the sidebar's persisted-sessions tail from disk.
   Future<void> _reloadPersistedSessions() async {
     final all = await widget.manager.listPersistedSessions();
+    // The CLI's /rename names live in the session JSONL itself — read them
+    // alongside the metadata so CLI-named sessions show their titles here.
+    final names = await widget.manager.readSessionNames(all);
     if (!mounted) return;
-    setState(() => _persistedSessions = all);
+    setState(() {
+      _persistedSessions = all;
+      _jsonlNames = names;
+    });
   }
 
   /// The host path of the current project mount (null = Personal / no mount).
