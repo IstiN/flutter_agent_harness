@@ -698,6 +698,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherTabWidgets => 'Виджеты';
 
   @override
+  String get appsCatalogCreatedByMe => 'Создано мной';
+
+  @override
+  String get commonError => 'Что-то пошло не так';
+
+  @override
   String get launcherTabGetWidgets => 'Каталог виджетов';
 
   @override

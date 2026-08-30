@@ -982,9 +982,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           child: _tab == _LauncherTab.getWidgets
               // The catalog inline (no bottom-sheet chrome) — install,
               // update, preview and open widgets without leaving home.
+              // Shares the launcher's AppsStore so installs are visible to
+              // the tile menu (Remove) immediately.
               ? WidgetsCatalogSheet(
                   env: widget.manager.env,
                   manager: widget.manager,
+                  appsStore: _appsStore,
                   embedded: true,
                 )
               : _searchController.text.trim().isNotEmpty
@@ -1038,9 +1041,8 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           borderRadius: BorderRadius.circular(12),
           hoverColor: colors.indigo.withValues(alpha: 0.06),
           onTap: () => unawaited(_launchApp(app)),
-          onSecondaryTapUp: (details) => unawaited(
-            _showTileMenu('app:${app.id}', details.globalPosition),
-          ),
+          onSecondaryTapUp: (details) =>
+              unawaited(_showTileMenu('app:${app.id}', details.globalPosition)),
           onLongPress: () {
             final box = context.findRenderObject();
             final center = box is RenderBox

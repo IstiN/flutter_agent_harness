@@ -1244,6 +1244,18 @@ abstract class AppLocalizations {
   /// **'Widgets'**
   String get launcherTabWidgets;
 
+  /// No description provided for @appsCatalogCreatedByMe.
+  ///
+  /// In en, this message translates to:
+  /// **'Created by me'**
+  String get appsCatalogCreatedByMe;
+
+  /// No description provided for @commonError.
+  ///
+  /// In en, this message translates to:
+  /// **'Something went wrong'**
+  String get commonError;
+
   /// No description provided for @launcherTabGetWidgets.
   ///
   /// In en, this message translates to:

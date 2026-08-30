@@ -692,6 +692,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherTabWidgets => 'Widgets';
 
   @override
+  String get appsCatalogCreatedByMe => 'Created by me';
+
+  @override
+  String get commonError => 'Something went wrong';
+
+  @override
   String get launcherTabGetWidgets => 'Get widgets';
 
   @override

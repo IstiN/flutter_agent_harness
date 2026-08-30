@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/js_app_navigation.dart';
@@ -188,6 +189,22 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
     }
   }
 
+  /// Removes a downloaded widget (code files go, `storage.json` survives)
+  /// and refreshes the button states.
+  Future<void> _remove(String id) async {
+    AppAnalytics.instance.widgetEvent('remove', params: {'id': id});
+    final removed = await _appsStore.removeWidget(id, force: true);
+    if (!mounted) return;
+    if (removed) {
+      await _refreshInstalled();
+      setState(() {});
+    } else {
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text(context.l10n.commonError)));
+    }
+  }
+
   /// Opens the installed widget through the same [pushJsApp] navigation the
   /// launcher uses (or the [WidgetsCatalogSheet.onOpenApp] hook in tests).
   Future<void> _open(CatalogEntry entry) async {
@@ -204,9 +221,14 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
       }
       return;
     }
+    await _launchApp(app, entry.id);
+  }
+
+  /// Shared open path for catalog entries and created-on-device apps.
+  Future<void> _launchApp(JsAppInfo app, String analyticsId) async {
     AppAnalytics.instance.widgetEvent(
       'open',
-      params: {'id': entry.id, 'source': 'catalog'},
+      params: {'id': analyticsId, 'source': 'catalog'},
     );
     if (!mounted) return;
     final hook = widget.onOpenApp;
@@ -331,31 +353,92 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
             ),
           ),
         Expanded(
-          child: ListView.builder(
+          child: ListView(
             controller: scrollController,
-            itemCount: result.entries.length,
-            itemBuilder: (context, index) {
-              final entry = result.entries[index];
-              return _CatalogTile(
-                entry: entry,
-                busy: _installing.contains(entry.id),
-                installedVersion: _installed[entry.id],
-                iconFuture: _loadIcon(entry),
-                onInstall: () => _install(entry),
-                onOpen: () => _open(entry),
-                onPreview: () => _preview(entry),
-              );
-            },
+            children: [
+              ..._buildCreatedByMe(theme, result),
+              for (final entry in result.entries)
+                _CatalogTile(
+                  entry: entry,
+                  busy: _installing.contains(entry.id),
+                  installedVersion: _installed[entry.id],
+                  iconFuture: _loadIcon(entry),
+                  onInstall: () => _install(entry),
+                  onOpen: () => _open(entry),
+                  onPreview: () => _preview(entry),
+                  onRemove: () => _remove(entry.id),
+                ),
+            ],
           ),
         ),
       ],
     );
   }
+
+  /// Local apps that are NOT in the catalog — widgets the agent built on
+  /// this device (or side-loaded ones). Listed above the catalog with
+  /// Open/Remove actions; hidden when empty.
+  List<Widget> _buildCreatedByMe(ThemeData theme, CatalogFetchResult result) {
+    final catalogIds = {for (final entry in result.entries) entry.id};
+    final mine = [
+      for (final app in _localApps)
+        if (!catalogIds.contains(app.id)) app,
+    ];
+    if (mine.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        child: Text(
+          context.l10n.appsCatalogCreatedByMe,
+          style: theme.textTheme.titleSmall,
+        ),
+      ),
+      for (final app in mine)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 40,
+                height: 40,
+                child: Center(
+                  child: AppIcon(app: app, env: widget.env, size: 26),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  app.name,
+                  style: theme.textTheme.titleSmall,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              FilledButton.tonal(
+                onPressed: () => _launchApp(app, app.id),
+                child: const Text('Open'), // l10n:ignore
+              ),
+              TextButton.icon(
+                onPressed: () => _remove(app.id),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Remove'), // l10n:ignore
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: theme.colorScheme.error,
+                ),
+              ),
+            ],
+          ),
+        ),
+      const Divider(height: 24),
+    ];
+  }
 }
 
 /// One catalog row: icon, name/version/description, permission chips and
-/// the action buttons — Preview (install-if-needed + open) plus the state
-/// button Install / Update / Open (spinner while downloading+writing).
+/// the action buttons — the state button Install / Update / Open (spinner
+/// while downloading+writing) plus Preview (install-if-needed + open) for
+/// widgets not on the device yet, or Remove once installed and current —
+/// Preview would be pointless then, Open does exactly that.
 class _CatalogTile extends StatelessWidget {
   const _CatalogTile({
     required this.entry,
@@ -365,6 +448,7 @@ class _CatalogTile extends StatelessWidget {
     required this.onInstall,
     required this.onOpen,
     required this.onPreview,
+    required this.onRemove,
   });
 
   final CatalogEntry entry;
@@ -376,6 +460,7 @@ class _CatalogTile extends StatelessWidget {
   final VoidCallback onInstall;
   final VoidCallback onOpen;
   final VoidCallback onPreview;
+  final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -528,10 +613,41 @@ class _CatalogIcon extends StatelessWidget {
     );
   }
 
-  Widget _fallback() => CircleAvatar(
-    radius: 20,
-    child: Text(entry.name.isEmpty ? '?' : entry.name.characters.first),
-  );
+  /// Deterministic accent per widget id — the SVG tiles each have their
+  /// own color, and a bare letter on the washed-out default CircleAvatar
+  /// looked broken next to them.
+  static const _palette = [
+    Color(0xFF4F46E5),
+    Color(0xFF0D9488),
+    Color(0xFFD97706),
+    Color(0xFFDC2626),
+    Color(0xFF7C3AED),
+    Color(0xFF2563EB),
+    Color(0xFF059669),
+    Color(0xFFDB2777),
+  ];
+
+  Widget _fallback() {
+    final color = _palette[entry.id.hashCode.abs() % _palette.length];
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Center(
+        child: Text(
+          entry.name.isEmpty ? '?' : entry.name.characters.first.toUpperCase(),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+            fontSize: 15,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ErrorView extends StatelessWidget {
