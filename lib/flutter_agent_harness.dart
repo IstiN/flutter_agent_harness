@@ -24,6 +24,7 @@ export 'src/approval/bash_interceptor.dart';
 export 'src/cancel_token.dart';
 export 'src/cli/agent_cli.dart';
 export 'src/cli/custom_providers.dart';
+export 'src/cli/env_provider_preconfig.dart';
 export 'src/model_roles/provider_key_resolver.dart';
 export 'src/cli/cli_args.dart';
 export 'src/cli/cli_help.dart';

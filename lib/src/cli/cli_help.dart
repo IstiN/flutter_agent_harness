@@ -47,6 +47,7 @@ OPTIONS
   -p, --prompt <text>          Run a single headless prompt and exit
   --model <id>                 Model id (default per provider, see PROVIDERS)
   --provider <kind>            openai-completions | anthropic | google | dial
+                               | minimax | zai
                                (default: openai-completions, via OpenRouter)
   --base-url <url>             Override the provider API base URL
   --mode <name>                Initial mode: code | architect | review
@@ -97,6 +98,11 @@ PROVIDERS AND API KEYS${_providerSectionSuffix()}
       completions; --model names the deployment (required, no default).
       Default endpoint https://ai-proxy.lab.epam.com; override with
       --base-url. DIAL_API_VERSION optionally appends ?api-version=<value>.
+  zai
+      Key: ZAI_API_KEY (fallback Z_AI_API_KEY)
+      Default model: glm-5.3 @ https://api.z.ai/api/coding/paas/v4
+      (the CODING plan endpoint; an env key activates it out of the box
+      when no provider is configured).
 
   Custom endpoints: --provider openai-completions --base-url <url> talks to
   any OpenAI-compatible server — a local Ollama (http://localhost:11434/v1),
@@ -106,8 +112,8 @@ PROVIDERS AND API KEYS${_providerSectionSuffix()}
 
   In the REPL, /provider [name] [baseUrl] [token] switches the provider and
   endpoint live (openrouter, kimi, openai, anthropic, google, codemie, dial,
-  minimax, or a saved custom
-  provider by name): without a token the key resolves per below; an explicit
+  minimax, zai, or a saved custom provider by name): without a token the key
+  resolves per below; an explicit
   token is persisted in the OS secure store when one is available — under an
   endpoint-scoped name (FA_KEY_<HOST>, the same scheme custom providers
   use), never the shared env name, so a key written for one endpoint cannot

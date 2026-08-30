@@ -23,6 +23,7 @@ const cliProviderKinds = {
   'google',
   'dial',
   'minimax',
+  'zai',
 };
 
 /// Invalid command line: the executable prints [message] plus a usage hint

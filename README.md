@@ -81,7 +81,8 @@ dart run bin/fah.dart screenshot.png "describe it"   # binary → path reference
 dart run bin/fah.dart "summarize the changelog" | pbcopy  # pipes cleanly
 ```
 
-Flags: `--model <id>`, `--provider openai-completions|anthropic|google`,
+Flags: `--model <id>`,
+`--provider openai-completions|anthropic|google|dial|minimax|zai`,
 `--base-url <url>`, `--cwd <dir>`, `--session-root <dir>`, `-p`/`--prompt
 <text>`, `--help`, `--version`.
 

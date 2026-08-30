@@ -116,6 +116,11 @@ void main() {
       final dial = buildCliDefaultModel('dial', modelId: 'gpt-4o');
       expect(dial.provider, 'dial');
       expect(dial.baseUrl, 'https://ai-proxy.lab.epam.com');
+      final zai = buildCliDefaultModel('zai');
+      expect(zai.id, 'glm-5.3');
+      expect(zai.provider, 'zai');
+      expect(zai.api, 'openai-completions');
+      expect(zai.baseUrl, 'https://api.z.ai/api/coding/paas/v4');
       // DIAL deployment names are per-deployment: no universal default.
       expect(
         () => buildCliDefaultModel('dial'),
