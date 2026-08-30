@@ -1792,6 +1792,16 @@
 - fix(site): preview iframe points at the jsr repo's own Pages runner
 - feat(site): widget preview runs the real Flutter/jsr runner — DOM shim removed
 
+## 0.1.251
+
+- feat(catalog): stacked equal-width action buttons on tile rows
+- feat(launcher): Open menu item + icons, icon-square-only hover
+- feat(app): interactive live tiles via widget.interactive opt-in
+- feat(app): drop bundled demos — the catalog is the source of apps
+- fix(app): actually pass sessionInfoNames to the sidebar (torn-write casualty)
+- feat(app): the sidebar shows the CLI-written session_info names
+- fix(app): reset/remove/install refresh the grid + sane dialog width
+
 ## Unreleased
 
 ## Unreleased
