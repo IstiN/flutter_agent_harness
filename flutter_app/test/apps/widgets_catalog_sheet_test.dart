@@ -14,7 +14,9 @@ import 'package:http/testing.dart';
 Uint8List zipOf(String id) {
   final archive = Archive();
   final data = {
-    '$id/manifest.json': utf8.encode('{"id":"$id"}'),
+    '$id/manifest.json': utf8.encode(
+      '{"id":"$id","name":"$id","version":"1.0.0"}',
+    ),
     '$id/widget.js': utf8.encode('/* $id */'),
   };
   for (final name in data.keys.toList()..sort()) {
@@ -178,6 +180,46 @@ void main() {
     );
     await pumpSheet(tester, env: env, client: okServer());
     expect(find.widgetWithText(FilledButton, 'Update'), findsOneWidget);
+  });
+
+  testWidgets('an installed current widget swaps Preview for Remove', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await pumpSheet(tester, env: env, client: okServer());
+    await tester.tap(find.widgetWithText(FilledButton, 'Install'));
+    await tester.pumpAndSettle();
+
+    // Installed & current: Open + Remove, no Preview.
+    expect(find.widgetWithText(TextButton, 'Preview'), findsNothing);
+    final remove = find.widgetWithText(TextButton, 'Remove');
+    expect(remove, findsOneWidget);
+
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+    expect(
+      (await env.readTextFile('apps/focus-timer/manifest.json')).valueOrNull,
+      isNull,
+    );
+    expect(find.widgetWithText(FilledButton, 'Install'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Preview'), findsOneWidget);
+  });
+
+  testWidgets('local apps missing from the catalog list as Created by me', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    await env.writeFile(
+      'apps/my-tool/manifest.json',
+      '{"id":"my-tool","name":"My Tool","version":"1.0.0"}',
+    );
+    await env.writeFile('apps/my-tool/widget.js', '// mine');
+    await pumpSheet(tester, env: env, client: okServer());
+
+    expect(find.text('Created by me'), findsOneWidget);
+    expect(find.text('My Tool'), findsOneWidget);
+    // The catalog entry itself is still listed below the section.
+    expect(find.textContaining('Focus Timer'), findsWidgets);
   });
 
   testWidgets('stale catalog shows the offline banner with retry', (

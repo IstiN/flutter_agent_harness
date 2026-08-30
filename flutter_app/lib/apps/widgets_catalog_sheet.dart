@@ -569,14 +569,27 @@ class _CatalogTile extends StatelessWidget {
                             : 'Open',
                       ),
               ),
-              TextButton.icon(
-                onPressed: busy ? null : onPreview,
-                icon: const Icon(Icons.play_arrow, size: 18),
-                label: const Text('Preview'),
-                style: TextButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
+              if (installedVersion != null && !hasUpdate)
+                // Installed & current: Preview == Open, so the secondary
+                // action is Remove instead.
+                TextButton.icon(
+                  onPressed: busy ? null : onRemove,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('Remove'), // l10n:ignore
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    foregroundColor: theme.colorScheme.error,
+                  ),
+                )
+              else
+                TextButton.icon(
+                  onPressed: busy ? null : onPreview,
+                  icon: const Icon(Icons.play_arrow, size: 18),
+                  label: const Text('Preview'), // l10n:ignore
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
-              ),
             ],
           ),
         ],
