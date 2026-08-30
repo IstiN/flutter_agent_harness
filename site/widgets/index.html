@@ -71,14 +71,48 @@
   .tag.net { color: #fbbf24; border-color: #4d3a10; }
   .meta { display: flex; justify-content: space-between; align-items: center; }
   .size { color: var(--muted); font-size: 12px; }
+  .actions { display: flex; gap: 8px; }
   .btn {
     font: inherit; font-size: 14px; padding: 7px 14px; border-radius: 8px;
     border: 1px solid var(--border); background: transparent;
     color: var(--accent); cursor: pointer; text-decoration: none;
   }
   .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); }
+  .btn.primary:hover { filter: brightness(1.1); }
   footer { max-width: 960px; margin: 0 auto; padding: 0 20px 48px; color: var(--muted); font-size: 13px; }
   footer a { color: var(--accent); }
+
+  /* ---- preview overlay ---- */
+  #preview-overlay {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(2, 4, 8, 0.72);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  #preview-overlay[hidden] { display: none; }
+  .pv-panel {
+    width: min(920px, 100%); height: min(720px, 100%);
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .pv-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+  }
+  .pv-head .icon { width: 32px; height: 32px; }
+  .pv-head .icon img { width: 22px; height: 22px; }
+  .pv-title { font-weight: 600; font-size: 15px; }
+  .pv-note { color: var(--muted); font-size: 12px; }
+  .pv-spacer { flex: 1; }
+  .pv-close {
+    font: inherit; font-size: 16px; line-height: 1;
+    background: transparent; color: var(--muted); cursor: pointer;
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  }
+  .pv-close:hover { color: var(--text); border-color: var(--accent); }
+  #pv-frame { flex: 1; width: 100%; border: 0; background: var(--bg); }
 </style>
 </head>
 <body>
@@ -100,8 +134,27 @@
 </main>
 <footer>
   Installing happens inside the Fa app (Plugins → Get widgets). The files here
-  are the same open-source artifacts the app consumes.
+  are the same open-source artifacts the app consumes — and Preview runs the
+  same <code>widget.js</code> against a small web shim of Fa's
+  <code>jsr</code> API.
 </footer>
+
+<div id="preview-overlay" hidden>
+  <div class="pv-panel">
+    <div class="pv-head">
+      <div class="icon" id="pv-iconbox" hidden><img id="pv-icon" alt=""></div>
+      <div>
+        <div class="pv-title" id="pv-title">Preview</div>
+        <div class="pv-note">Web preview of <code>widget.js</code> · fa.*
+          device services and 3D scenes are stubbed · state resets on close</div>
+      </div>
+      <div class="pv-spacer"></div>
+      <button class="pv-close" id="pv-close" title="Close (Esc)">✕</button>
+    </div>
+    <iframe id="pv-frame" sandbox="allow-scripts" title="Widget preview"></iframe>
+  </div>
+</div>
+
 <script>
 (function () {
   // Release assets (github.com/.../releases/latest/download/) serve WITHOUT
@@ -132,6 +185,668 @@
     return (bytes / 1024).toFixed(1) + ' KB';
   }
 
+  // ---------------------------------------------------------------- preview
+  //
+  // The overlay runs the REAL widget.js inside a sandboxed iframe against a
+  // small shim of Fa's `jsr` API: jsr.render() turns the widget's JSON UI
+  // tree into DOM (flexbox), jsr.onEvent callbacks fire from clicks/inputs,
+  // storage is in-memory, fa.* device services reject with a friendly
+  // error, and 3D scenes degrade to a placeholder panel.
+  const overlay = document.getElementById('preview-overlay');
+  const frame = document.getElementById('pv-frame');
+  const pvTitle = document.getElementById('pv-title');
+  const pvIconBox = document.getElementById('pv-iconbox');
+  const pvIcon = document.getElementById('pv-icon');
+
+  const SHIM = String.raw`
+(function () {
+  var root = null;
+  var eventHandler = null;
+  var themeHandler = null;
+  var sceneSeen = false;
+  var rendered = false;
+  var mem = Object.create(null);
+  var BASE = '__WIDGET_BASE__';
+
+  var THEME = {
+    name: 'dark',
+    bg: '#070a10', text: '#e6edf7', muted: '#94a3b8',
+    accent: '#7dd3fc', accent2: '#a5b4fc', surface: '#0d1320',
+    surfaceAlt: '#131b2e', border: '#1c2740', onAccent: '#0b1220',
+    error: '#f87171'
+  };
+
+  var ICONS = {
+    add: '＋', remove: '−', close: '✕', check: '✓', check_circle: '✅',
+    refresh: '↻', info: 'ℹ️', home: '🏠', settings: '⚙️', search: '🔍',
+    delete: '🗑', edit: '✏️', play_arrow: '▶', pause: '⏸', stop: '⏹',
+    calendar_today: '📅', event: '📅', alarm: '⏰', timer: '⏱',
+    person: '👤', people: '👥', phone: '📞', mic: '🎤',
+    notifications: '🔔', notifications_active: '🔔',
+    thermostat: '🌡', lock: '🔒', lightbulb: '💡', map: '🗺',
+    favorite: '❤️', star: '⭐', arrow_back: '←', arrow_forward: '→',
+    more_vert: '⋮', send: '➤', download: '⬇', upload: '⬆',
+    cloud: '☁️', wb_sunny: '☀️', fitness_center: '🏋️',
+    directions_run: '🏃', restaurant: '🍴', note: '📝', list: '☰',
+    warning: '⚠️', error: '⛔', help: '❓', visibility: '👁',
+    volume_up: '🔊', music_note: '🎵', gamepad: '🎮', bolt: '⚡'
+  };
+
+  function esc(s) { return String(s == null ? '' : s); }
+
+  function cssPadding(v) {
+    if (typeof v === 'number') return v + 'px';
+    if (Array.isArray(v) && v.length === 4) {
+      return v[1] + 'px ' + v[2] + 'px ' + v[3] + 'px ' + v[0] + 'px'; // LTRB → CSS
+    }
+    if (v && typeof v === 'object') {
+      return (v.top || 0) + 'px ' + (v.right || 0) + 'px ' +
+        (v.bottom || 0) + 'px ' + (v.left || 0) + 'px';
+    }
+    return null;
+  }
+
+  function justify(v) {
+    return {
+      start: 'flex-start', center: 'center', end: 'flex-end',
+      spaceBetween: 'space-between', spaceAround: 'space-around',
+      spaceEvenly: 'space-evenly'
+    }[v] || 'flex-start';
+  }
+
+  function align(v) {
+    return {
+      start: 'flex-start', center: 'center', end: 'flex-end',
+      stretch: 'stretch', baseline: 'baseline'
+    }[v] || 'stretch';
+  }
+
+  function div() { return document.createElement('div'); }
+
+  function applyContainerStyle(elm, n) {
+    var deco = n.decoration || {};
+    var color = n.color || deco.color;
+    if (color) elm.style.background = color;
+    var radius = n.borderRadius != null ? n.borderRadius : deco.borderRadius;
+    if (typeof radius === 'number') elm.style.borderRadius = radius + 'px';
+    var border = n.border || deco.border;
+    if (border && border.color) {
+      elm.style.border = (border.width || 1) + 'px solid ' + border.color;
+    }
+    var pad = cssPadding(n.padding);
+    if (pad) elm.style.padding = pad;
+    var mar = cssPadding(n.margin);
+    if (mar) elm.style.margin = mar;
+    if (typeof n.width === 'number') elm.style.width = n.width + 'px';
+    if (typeof n.height === 'number') elm.style.height = n.height + 'px';
+  }
+
+  function applyTextStyle(elm, style) {
+    if (!style) return;
+    if (style.color) elm.style.color = style.color;
+    if (style.fontSize) elm.style.fontSize = style.fontSize + 'px';
+    if (style.fontWeight) {
+      elm.style.fontWeight = String(style.fontWeight).replace(/^w/, '');
+    }
+    if (style.textAlign) elm.style.textAlign = style.textAlign;
+    if (style.fontStyle === 'italic') elm.style.fontStyle = 'italic';
+    if (style.height) elm.style.lineHeight = String(style.height);
+  }
+
+  function fire(action, payload) {
+    if (!action || !eventHandler) return;
+    try { eventHandler(action, payload); } catch (e) { showErr(e); }
+  }
+
+  function showErr(e) {
+    var b = document.getElementById('faw-banner');
+    if (!b) return;
+    b.hidden = false;
+    b.textContent = '⚠ ' + (e && e.message ? e.message : String(e));
+  }
+
+  function placeholder(title, note) {
+    var d = div();
+    d.className = 'faw-placeholder';
+    d.innerHTML = '<div class="faw-ph-title">' + title + '</div>' +
+      '<div class="faw-ph-note">' + note + '</div>';
+    return d;
+  }
+
+  function build(n) {
+    if (n == null) return document.createComment('null');
+    if (typeof n === 'string' || typeof n === 'number') {
+      return document.createTextNode(String(n));
+    }
+    var type = n.type || 'container';
+    var elm, i, kids = n.children || [];
+
+    switch (type) {
+      case 'column':
+        elm = div();
+        elm.className = 'faw-col';
+        elm.style.alignItems = align(n.crossAxisAlignment);
+        elm.style.justifyContent = justify(n.mainAxisAlignment);
+        if (n.mainAxisSize === 'min') elm.style.flex = '0 0 auto';
+        for (i = 0; i < kids.length; i++) elm.appendChild(build(kids[i]));
+        return elm;
+      case 'row':
+        elm = div();
+        elm.className = 'faw-row';
+        elm.style.alignItems = align(n.crossAxisAlignment || 'center');
+        elm.style.justifyContent = justify(n.mainAxisAlignment);
+        for (i = 0; i < kids.length; i++) elm.appendChild(build(kids[i]));
+        return elm;
+      case 'expanded':
+        elm = div();
+        elm.style.flex = String(n.flex || 1);
+        elm.style.minWidth = '0';
+        elm.style.minHeight = '0';
+        elm.style.display = 'flex';
+        elm.style.flexDirection = 'column';
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+      case 'spacer':
+        elm = div();
+        elm.style.flex = String(n.flex || 1);
+        return elm;
+      case 'sizedBox':
+        elm = div();
+        elm.style.flex = '0 0 auto';
+        elm.style.width = (n.width || 0) + 'px';
+        elm.style.height = (n.height || 0) + 'px';
+        return elm;
+      case 'padding':
+        elm = div();
+        elm.style.display = 'flex';
+        elm.style.flexDirection = 'column';
+        elm.style.padding = cssPadding(n.padding) || '0';
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+      case 'container':
+      case 'animatedContainer':
+        elm = div();
+        elm.style.display = 'flex';
+        elm.style.flexDirection = 'column';
+        applyContainerStyle(elm, n);
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+      case 'card':
+        elm = div();
+        elm.className = 'faw-card';
+        applyContainerStyle(elm, n);
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+      case 'center':
+        elm = div();
+        elm.className = 'faw-center';
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+      case 'safeArea':
+      case 'clipRRect':
+        elm = div();
+        elm.style.display = 'flex';
+        elm.style.flexDirection = 'column';
+        if (type === 'clipRRect') {
+          elm.style.overflow = 'hidden';
+          if (typeof n.borderRadius === 'number') {
+            elm.style.borderRadius = n.borderRadius + 'px';
+          }
+        }
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+      case 'stack':
+        elm = div();
+        elm.style.display = 'grid';
+        for (i = 0; i < kids.length; i++) {
+          var cell = build(kids[i]);
+          if (cell.style) cell.style.gridArea = '1 / 1';
+          elm.appendChild(cell);
+        }
+        return elm;
+      case 'text':
+        elm = document.createElement('div');
+        elm.className = 'faw-text';
+        elm.textContent = esc(n.data);
+        applyTextStyle(elm, n.style);
+        return elm;
+      case 'markdown':
+        elm = document.createElement('div');
+        elm.className = 'faw-text';
+        elm.style.whiteSpace = 'pre-wrap';
+        elm.textContent = esc(n.data);
+        applyTextStyle(elm, n.style);
+        return elm;
+      case 'icon':
+        elm = document.createElement('span');
+        elm.textContent = ICONS[n.name] || '●';
+        elm.style.fontSize = (n.size || 20) + 'px';
+        elm.style.lineHeight = '1';
+        if (n.color) elm.style.color = n.color;
+        return elm;
+      case 'svg':
+        elm = document.createElement('span');
+        elm.className = 'faw-svg';
+        elm.innerHTML = esc(n.data);
+        if (n.width) elm.style.width = n.width + 'px';
+        if (n.height) elm.style.height = n.height + 'px';
+        if (n.color) elm.style.color = n.color;
+        return elm;
+      case 'button':
+        elm = document.createElement('button');
+        elm.className = 'faw-btn';
+        elm.textContent = esc(n.label || n.text || 'Button');
+        if (n.color) { elm.style.background = n.color; elm.style.borderColor = n.color; }
+        if (n.textColor) elm.style.color = n.textColor;
+        elm.onclick = function () { fire(n.onPressed, n.payload); };
+        return elm;
+      case 'textButton':
+        elm = document.createElement('button');
+        elm.className = 'faw-textbtn';
+        elm.textContent = esc(n.text || n.label || 'Button');
+        if (n.color) elm.style.color = n.color;
+        elm.onclick = function () { fire(n.onTap || n.onPressed, n.payload); };
+        return elm;
+      case 'inkWell':
+      case 'gestureDetector':
+        elm = div();
+        elm.style.display = 'flex';
+        elm.style.flexDirection = 'column';
+        elm.style.cursor = 'pointer';
+        elm.onclick = function () { fire(n.onTap, n.payload); };
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+      case 'textField':
+        elm = document.createElement('input');
+        elm.className = 'faw-input';
+        elm.placeholder = esc(n.hint || n.placeholder || '');
+        elm.value = esc(n.value || '');
+        if (n.style) applyTextStyle(elm, n.style);
+        // The runtime dispatches payloads as {value: next} — widgets read
+        // payload.value, never the raw value.
+        elm.oninput = function () { fire(n.onChange, { value: elm.value }); };
+        elm.onkeydown = function (ev) {
+          if (ev.key === 'Enter') fire(n.onSubmitted, { value: elm.value });
+        };
+        return elm;
+      case 'switch':
+        elm = document.createElement('input');
+        elm.type = 'checkbox';
+        elm.checked = n.value === true;
+        elm.onchange = function () {
+          fire(n.onChanged, { value: elm.checked });
+        };
+        return elm;
+      case 'slider':
+        elm = document.createElement('input');
+        elm.type = 'range';
+        elm.min = n.min != null ? n.min : 0;
+        elm.max = n.max != null ? n.max : 100;
+        elm.value = n.value != null ? n.value : 0;
+        elm.oninput = function () {
+          fire(n.onChanged, { value: Number(elm.value) });
+        };
+        return elm;
+      case 'listView':
+      case 'scroll':
+        elm = div();
+        elm.className = 'faw-scroll';
+        for (i = 0; i < kids.length; i++) elm.appendChild(build(kids[i]));
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+      case 'gridView':
+        elm = div();
+        elm.style.display = 'grid';
+        elm.style.gap = '8px';
+        elm.style.gridTemplateColumns =
+          'repeat(' + (n.crossAxisCount || 2) + ', 1fr)';
+        for (i = 0; i < kids.length; i++) elm.appendChild(build(kids[i]));
+        return elm;
+      case 'listTile':
+        elm = div();
+        elm.className = 'faw-listtile';
+        if (n.onTap) {
+          elm.style.cursor = 'pointer';
+          elm.onclick = function () { fire(n.onTap, n.payload); };
+        }
+        if (n.leading) elm.appendChild(build(n.leading));
+        var body = div();
+        body.style.flex = '1';
+        body.style.minWidth = '0';
+        var t = div();
+        t.textContent = esc(n.title);
+        body.appendChild(t);
+        if (n.subtitle) {
+          var st = div();
+          st.className = 'faw-muted';
+          st.textContent = esc(n.subtitle);
+          body.appendChild(st);
+        }
+        elm.appendChild(body);
+        if (n.trailing) elm.appendChild(build(n.trailing));
+        return elm;
+      case 'divider':
+        elm = document.createElement('hr');
+        elm.className = 'faw-divider';
+        if (n.color) elm.style.borderColor = n.color;
+        return elm;
+      case 'chip':
+        elm = document.createElement('span');
+        elm.className = 'faw-chip';
+        elm.textContent = esc(n.label);
+        return elm;
+      case 'linearProgress':
+      case 'linearProgressIndicator':
+        elm = div();
+        elm.className = 'faw-progress';
+        if (n.backgroundColor) elm.style.background = n.backgroundColor;
+        if (n.minHeight) elm.style.height = n.minHeight + 'px';
+        if (typeof n.borderRadius === 'number') {
+          elm.style.borderRadius = n.borderRadius + 'px';
+        }
+        var bar = div();
+        bar.className = 'faw-progress-bar';
+        bar.style.width = Math.round((n.value || 0) * 100) + '%';
+        if (n.color) bar.style.background = n.color;
+        elm.appendChild(bar);
+        return elm;
+      case 'circularProgressIndicator':
+        elm = div();
+        elm.className = 'faw-spinner';
+        if (n.color) elm.style.borderTopColor = n.color;
+        return elm;
+      case 'animatedOpacity':
+        elm = div();
+        elm.style.display = 'flex';
+        elm.style.flexDirection = 'column';
+        elm.style.opacity = String(n.opacity != null ? n.opacity : 1);
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+      case 'circleAvatar':
+        elm = div();
+        elm.className = 'faw-avatar';
+        if (n.child) elm.appendChild(build(n.child));
+        else elm.textContent = esc(n.label || '?');
+        return elm;
+      case 'image':
+        elm = document.createElement('img');
+        elm.src = esc(n.src || n.url || '');
+        if (n.width) elm.width = n.width;
+        if (n.height) elm.height = n.height;
+        elm.style.objectFit = 'contain';
+        return elm;
+      case 'chart':
+        return placeholder('📈 Chart',
+          'Charts render in the Fa app, not in the web preview');
+      case 'map':
+        return placeholder('🗺 Map',
+          'Maps render in the Fa app, not in the web preview');
+      case 'scene':
+      case 'scene3d':
+        return placeholder('🎮 3D scene',
+          'The 3D viewport runs in the Fa app, not in the web preview');
+      default:
+        elm = div();
+        elm.className = 'faw-unknown';
+        elm.textContent = '⟨' + type + '⟩';
+        for (i = 0; i < kids.length; i++) elm.appendChild(build(kids[i]));
+        if (n.child) elm.appendChild(build(n.child));
+        return elm;
+    }
+  }
+
+  function doRender(tree) {
+    if (!root) {
+      root = document.createElement('div');
+      root.className = 'faw-root';
+      document.body.appendChild(root);
+    }
+    rendered = true;
+    root.replaceChildren();
+    root.appendChild(build(tree || {}));
+  }
+
+  function unavailable(name) {
+    return Promise.reject(new Error(
+      name + ' is a device service — available in the Fa app, not in the ' +
+      'web preview'));
+  }
+
+  function makeFaProxy(path) {
+    var fn = function () { return unavailable(path || 'jsr.fa.*'); };
+    return new Proxy(fn, {
+      get: function (target, prop) {
+        if (prop === 'then') return undefined; // stay non-thenable
+        return makeFaProxy(path + '.' + String(prop));
+      },
+      apply: function () { return unavailable(path + '()'); }
+    });
+  }
+
+  window.addEventListener('unhandledrejection', function (ev) {
+    showErr(ev.reason);
+    ev.preventDefault();
+  });
+  window.addEventListener('error', function (ev) { showErr(ev.error || ev.message); });
+
+  window.jsr = {
+    render: doRender,
+    onEvent: function (cb) { eventHandler = cb; },
+    setTitle: function (t) {
+      try { parent.postMessage({ fawp: 'title', value: String(t) }, '*'); } catch (e) {}
+    },
+    exportState: function (s) { window.__exportedState = s; },
+    showError: function (m) { showErr(m); },
+    // The real bridge resolves storage over an async channel — get/set
+    // return Promises (weather relies on .then). Sync uses like
+    // Number(jsr.storage.get(k) || 0) are widget bugs, not the API.
+    storage: {
+      get: function (k) {
+        return Promise.resolve(
+          Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null);
+      },
+      set: function (k, v) { mem[k] = String(v); return Promise.resolve(); },
+      remove: function (k) { delete mem[k]; return Promise.resolve(); },
+      clear: function () { mem = Object.create(null); return Promise.resolve(); }
+    },
+    theme: THEME,
+    onThemeChange: function (cb) { themeHandler = cb; },
+    locale: (navigator.language || 'en').split('-')[0],
+    instanceId: 'web-preview',
+    fetchJson: function (url, opts) {
+      return fetch(url, opts).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + url);
+        return r.json();
+      });
+    },
+    loadAsset: function (name) {
+      return fetch(BASE + name).then(function (r) {
+        if (!r.ok) throw new Error('asset HTTP ' + r.status + ': ' + name);
+        return r.text();
+      });
+    },
+    scene: function () {
+      sceneSeen = true;
+      if (!rendered) doRender({ type: 'scene' });
+    },
+    // 3D API (create/addModel/removeModel/setTransforms/…): accepted and
+    // quietly dropped — the widget's logic runs, its viewport degrades to
+    // a placeholder panel instead of a live 3D canvas.
+    scene3d: (function () {
+      var api = {};
+      ['create', 'destroy', 'addModel', 'removeModel', 'setTransforms',
+        'setCamera', 'setLight', 'play', 'pause', 'update', 'select'].forEach(
+        function (name) {
+          api[name] = function () {
+            sceneSeen = true;
+            if (!rendered) doRender({ type: 'scene' });
+            return Promise.resolve(null);
+          };
+        });
+      return api;
+    })(),
+    exec: function () { return unavailable('jsr.exec'); },
+    secrets: { get: function () { return Promise.resolve(null); } },
+    fa: makeFaProxy('jsr.fa'),
+    onBack: function () {},
+    onKey: function () {}
+  };
+})();
+`;
+
+  const SHIM_CSS = String.raw`
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #070a10; color: #e6edf7; overflow: hidden;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  .faw-root {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    overflow: auto;
+  }
+  .faw-col { display: flex; flex-direction: column; }
+  .faw-row { display: flex; flex-direction: row; }
+  .faw-center {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; flex: 1;
+  }
+  .faw-card {
+    background: #0d1320; border: 1px solid #1c2740; border-radius: 12px;
+    display: flex; flex-direction: column;
+  }
+  .faw-text { }
+  .faw-muted { color: #94a3b8; font-size: 13px; }
+  .faw-svg { display: inline-flex; }
+  .faw-svg svg { width: 100%; height: 100%; fill: currentColor; }
+  .faw-btn {
+    font: inherit; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    background: #7dd3fc; color: #0b1220; border: 1px solid #7dd3fc;
+    align-self: flex-start;
+  }
+  .faw-textbtn {
+    font: inherit; padding: 6px 10px; cursor: pointer; border: 0;
+    background: transparent; color: #7dd3fc;
+  }
+  .faw-input {
+    font: inherit; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid #1c2740; background: #0d1320; color: #e6edf7;
+    outline: none; width: 100%;
+  }
+  .faw-input:focus { border-color: #7dd3fc; }
+  .faw-scroll { overflow-y: auto; display: flex; flex-direction: column; flex: 1; }
+  .faw-listtile {
+    display: flex; align-items: center; gap: 10px; padding: 8px 4px;
+  }
+  .faw-divider { border: 0; border-top: 1px solid #1c2740; margin: 4px 0; width: 100%; }
+  .faw-chip {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid #1c2740; color: #94a3b8;
+  }
+  .faw-progress {
+    height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden;
+    width: 100%;
+  }
+  .faw-progress-bar { height: 100%; background: #7dd3fc; transition: width .2s; }
+  .faw-spinner {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 3px solid #1c2740; border-top-color: #7dd3fc;
+    animation: faw-spin 0.9s linear infinite; align-self: center;
+  }
+  @keyframes faw-spin { to { transform: rotate(360deg); } }
+  .faw-avatar {
+    width: 36px; height: 36px; border-radius: 50%; background: #131b2e;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .faw-placeholder {
+    margin: 16px; padding: 24px; border: 1px dashed #1c2740;
+    border-radius: 12px; text-align: center; color: #94a3b8;
+  }
+  .faw-ph-title { font-size: 18px; margin-bottom: 6px; }
+  .faw-ph-note { font-size: 13px; }
+  .faw-unknown {
+    border: 1px dashed #4d3a10; color: #fbbf24; font-size: 11px;
+    padding: 2px 6px; border-radius: 6px; margin: 2px;
+  }
+  #faw-banner {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: #3f1d1d; color: #fecaca; font-size: 13px;
+    padding: 8px 12px; border-top: 1px solid #7f2d2d;
+  }
+  `;
+
+  function previewSrcdoc(widget, code) {
+    const safe = code.replace(/<\/script/gi, '<\\/script');
+    const shim = SHIM.replace(
+      '__WIDGET_BASE__',
+      RAW + 'widgets/' + widget.id + '/'
+    );
+    return '<!doctype html><html><head><meta charset="utf-8">' +
+      '<style>' + SHIM_CSS + '</style></head><body>' +
+      '<div id="faw-banner" hidden></div>' +
+      '<scr' + 'ipt>' + shim + '</scr' + 'ipt>' +
+      '<scr' + 'ipt>try{' + safe +
+      '}catch(e){document.getElementById("faw-banner").hidden=false;' +
+      'document.getElementById("faw-banner").textContent="⚠ "+(e&&e.message||e);}</scr' + 'ipt>' +
+      '</body></html>';
+  }
+
+  let currentWidget = null;
+
+  function closePreview() {
+    overlay.hidden = true;
+    frame.srcdoc = '<!doctype html><html><body></body></html>';
+    currentWidget = null;
+    document.removeEventListener('keydown', onEsc);
+  }
+
+  function onEsc(ev) { if (ev.key === 'Escape') closePreview(); }
+
+  function openPreview(widget) {
+    currentWidget = widget;
+    pvTitle.textContent = (widget.name || widget.id) + ' · v' + (widget.version || '?');
+    if (widget.icon) {
+      pvIcon.src = RAW + 'widgets/' + widget.id + '/' + widget.icon;
+      pvIconBox.hidden = false;
+    } else {
+      pvIconBox.hidden = true;
+    }
+    overlay.hidden = false;
+    document.addEventListener('keydown', onEsc);
+    window.gtag && gtag('event', 'widget_preview_click',
+      { widget_id: widget.id });
+    frame.srcdoc = '<!doctype html><html><body style="margin:0;background:' +
+      '#070a10;color:#94a3b8;font:14px sans-serif;display:grid;' +
+      'place-items:center;height:100vh">Loading widget.js…</body></html>';
+    fetch(RAW + 'widgets/' + widget.id + '/widget.js')
+      .then((r) => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then((code) => {
+        if (currentWidget !== widget) return; // closed meanwhile
+        frame.srcdoc = previewSrcdoc(widget, code);
+      })
+      .catch((e) => {
+        if (currentWidget !== widget) return;
+        frame.srcdoc = '<!doctype html><html><body style="margin:0;' +
+          'background:#070a10;color:#f87171;font:14px sans-serif;' +
+          'display:grid;place-items:center;height:100vh">' +
+          'Could not load widget.js (' + e.message + ')</body></html>';
+      });
+  }
+
+  document.getElementById('pv-close').addEventListener('click', closePreview);
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) closePreview();
+  });
+  window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (d && d.fawp === 'title' && currentWidget) {
+      pvTitle.textContent = d.value + ' · v' + (currentWidget.version || '?');
+    }
+  });
+
+  // ---------------------------------------------------------------- gallery
   function render(widgets) {
     status.remove();
     for (const w of widgets) {
@@ -169,6 +884,10 @@
           [w.zip ? humanSize(w.zip.sizeBytes) : '',
            (w.minRuntime ? 'jsr ≥ ' + w.minRuntime : '')].filter(Boolean).join(' · '))
       );
+      const actions = el('div', 'actions');
+      const previewBtn = el('button', 'btn primary', '▶ Preview');
+      previewBtn.addEventListener('click', () => openPreview(w));
+      actions.appendChild(previewBtn);
       if (w.zip && w.zip.file) {
         const a = document.createElement('a');
         a.className = 'btn';
@@ -178,8 +897,9 @@
           'onclick',
           "gtag&&gtag('event','widget_download_click',{widget_id:'"
             + w.id + "'});return true;");
-        meta.appendChild(a);
+        actions.appendChild(a);
       }
+      meta.appendChild(actions);
       card.appendChild(meta);
       grid.appendChild(card);
     }

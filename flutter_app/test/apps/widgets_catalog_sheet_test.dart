@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:flutter/material.dart';
@@ -53,6 +54,7 @@ Future<void> pumpSheet(
   WidgetTester tester, {
   required MemoryExecutionEnv env,
   http.Client? client,
+  Future<void> Function(BuildContext, JsAppInfo)? onOpenApp,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -60,7 +62,11 @@ Future<void> pumpSheet(
         body: SizedBox(
           width: 420,
           height: 700,
-          child: WidgetsCatalogSheet(env: env, httpClient: client),
+          child: WidgetsCatalogSheet(
+            env: env,
+            httpClient: client,
+            onOpenApp: onOpenApp,
+          ),
         ),
       ),
     ),
@@ -79,7 +85,7 @@ void main() {
     expect(find.textContaining('v1.0.0'), findsOneWidget);
   });
 
-  testWidgets('install flow writes the widget and marks it installed', (
+  testWidgets('install flow writes the widget and the button becomes Open', (
     tester,
   ) async {
     final env = MemoryExecutionEnv();
@@ -91,7 +97,57 @@ void main() {
       (await env.readTextFile('apps/focus-timer/widget.js')).valueOrNull,
       contains('focus-timer'),
     );
-    expect(find.text('Installed ✓'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Open'), findsOneWidget);
+  });
+
+  testWidgets('Open on an installed widget fires the open hook', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final opened = <String>[];
+    await pumpSheet(
+      tester,
+      env: env,
+      client: okServer(),
+      onOpenApp: (context, app) async => opened.add(app.id),
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Install'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Open'));
+    await tester.pumpAndSettle();
+    expect(opened, ['focus-timer']);
+  });
+
+  testWidgets('Preview installs a missing widget and opens it right away', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final opened = <String>[];
+    await pumpSheet(
+      tester,
+      env: env,
+      client: okServer(),
+      onOpenApp: (context, app) async => opened.add(app.id),
+    );
+    await tester.tap(find.widgetWithText(TextButton, 'Preview'));
+    await tester.pumpAndSettle();
+
+    expect(
+      (await env.readTextFile('apps/focus-timer/widget.js')).valueOrNull,
+      contains('focus-timer'),
+    );
+    expect(opened, ['focus-timer']);
+  });
+
+  testWidgets('an older installed version offers Update', (tester) async {
+    final env = MemoryExecutionEnv();
+    await env.writeFile(
+      'apps/focus-timer/manifest.json',
+      '{"id":"focus-timer","name":"Focus Timer","version":"0.9.0"}',
+    );
+    await pumpSheet(tester, env: env, client: okServer());
+    expect(find.widgetWithText(FilledButton, 'Update'), findsOneWidget);
   });
 
   testWidgets('stale catalog shows the offline banner with retry', (

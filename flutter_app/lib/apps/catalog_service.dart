@@ -15,6 +15,12 @@ import 'package:http/http.dart' as http;
 const String kDefaultWidgetsBaseUrl =
     'https://github.com/IstiN/fa_widgets/releases/latest/download/';
 
+/// Raw mirror of the fa_widgets repo (catalog + per-widget sources/icons).
+/// raw.githubusercontent.com sends `access-control-allow-origin: *` and
+/// serves UTF-8 sources — used for in-app gallery icons and web fetches.
+const String kDefaultWidgetsRawBaseUrl =
+    'https://raw.githubusercontent.com/IstiN/fa_widgets/main/';
+
 /// How long a fetched catalog stays trusted before the next fetch revalidates.
 const Duration kCatalogCacheTtl = Duration(hours: 6);
 
@@ -140,7 +146,12 @@ class CatalogService {
        _clock = clock ?? DateTime.now;
 
   /// Env-relative cache file (inside the shared `apps/` workspace folder).
-  static const String cacheFile = 'apps/.catalog_cache.json';
+  /// `_v2`: v1 caches were written from `response.body`, which the http
+  /// package decodes as latin1 when the release asset has no charset —
+  /// non-ASCII descriptions ("→", Cyrillic) came out mojibake. The v2 name
+  /// purges those poisoned snapshots; decoding now goes through
+  /// `utf8.decode(response.bodyBytes)`.
+  static const String cacheFile = 'apps/.catalog_cache_v2.json';
 
   final ExecutionEnv _env;
   final http.Client _client;
@@ -166,7 +177,7 @@ class CatalogService {
       if (response.statusCode != 200) {
         throw CatalogError('catalog HTTP ${response.statusCode}');
       }
-      final decoded = jsonDecode(response.body);
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is! Map<String, dynamic>) {
         throw CatalogError('catalog.json is not an object');
       }

@@ -160,7 +160,11 @@ class _AppsPanelState extends State<AppsPanel> {
   /// update catalog widgets — see [WidgetsCatalogSheet]).
   Future<void> _openWidgetsCatalog() async {
     AppAnalytics.instance.widgetEvent('gallery_open', params: const {});
-    await showWidgetsCatalogSheet(context, env: widget.manager.env);
+    await showWidgetsCatalogSheet(
+      context,
+      env: widget.manager.env,
+      manager: widget.manager,
+    );
   }
 
   // Files / Settings live in the shell sidebar and open the real

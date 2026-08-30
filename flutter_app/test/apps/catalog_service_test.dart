@@ -132,6 +132,24 @@ void main() {
       expect(calc.network, isFalse);
     });
 
+    test('non-ASCII descriptions survive a charset-less response', () async {
+      // GitHub release assets / raw URLs send no charset, so http's
+      // `response.body` would latin1-decode the UTF-8 bytes into mojibake
+      // ("→" → "â\x86\x92"). The service must decode the BYTES as UTF-8.
+      final catalog = goodCatalog();
+      (catalog['widgets'] as List)[0]['description'] = 'Dodge → steer · Таймер';
+      final env = MemoryExecutionEnv();
+      final service = CatalogService(
+        env,
+        httpClient: MockClient((request) async {
+          return http.Response.bytes(utf8.encode(jsonEncode(catalog)), 200);
+        }),
+      );
+      final result = await service.fetchCatalog();
+      final calc = result.entries.firstWhere((e) => e.id == 'calculator');
+      expect(calc.description, 'Dodge → steer · Таймер');
+    });
+
     test('TTL cache serves the second fetch without a network hit', () async {
       final env = MemoryExecutionEnv();
       var hits = 0;
