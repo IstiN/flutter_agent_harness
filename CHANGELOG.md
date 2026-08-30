@@ -14,6 +14,9 @@
 - fix(chatgpt): OAuth credentials `toJson` returns `Map<String, String>`
   again (expiry serialized as an epoch-millisecond string); decoding still
   accepts blobs with a raw int `expires_at`.
+- fix(chatgpt): the cookie-replay baseline is the header the request
+  actually carried (snapshotted before the send), so the single
+  challenge retry fires only when the jar truly learned a new cookie.
 - feat(chatgpt): `/models` probes the live Codex `/models` endpoint and
   falls back to the bundled catalog on 401 / challenge / malformed bodies.
 
