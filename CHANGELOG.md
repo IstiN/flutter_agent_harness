@@ -1720,4 +1720,10 @@
 
 - fix(cli): status bar labels model with the ACTIVE saved provider
 
+## 0.1.247
+
+- feat(tools): Hailuo 2.3 video dialect + headless pre-flight compaction
+- fix(tui): key parser never swallows a trailing control byte into a text run
+- fix(cli): restored sessions label the model with the pinned-key account
+
 ## Unreleased
