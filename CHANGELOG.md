@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+- feat(provider): GitHub Copilot as a first-class provider — catalog
+  entry plus the `/provider copilot` CLI flow (GitHub device flow with
+  user_code + verification_uri, or paste an existing PAT; works
+  headless) and the app's fa_ui Copilot connect sheet.
+- feat(providers): Copilot protocol core in `lib/src/providers/` —
+  `copilot.dart` (streamCopilot: token exchange, mandatory Copilot
+  headers, errors-as-events), `copilot_oauth.dart` (short-lived token
+  + header builder), `copilot_device_flow.dart` (grant + poll).
+- feat(keys): entry-scoped `FA_KEY_COPILOT_<NAME>` secure-store keys
+  with an env-first `_2`… ring — CI supplies keys without a store.
+- feat(models): live copilot `/models` dialect — the GitHub token is
+  exchanged for the Copilot token, capability/limit fields parsed.
+- feat(provider): multi-account isolation — each GitHub account saves
+  as its own named entry (`copilot-<login>`); re-auth updates only its
+  own entry.
+- fix(providers): copilot kind-dispatch audit — every provider-kind
+  dispatch in lib/src now handles `copilot`: `inspect_image` streams
+  through `streamCopilot` (GitHub token exchanged for the short-lived
+  API token, never sent as the Bearer header) and the roles fallback
+  chain accepts copilot entries (`providerStreamFunction` →
+  `_CatalogStreamFunction` → `streamCopilot`). A single dispatch-chain
+  test drives role takeover + inspect_image + /models in one run.
+- fix(models): copilot /models limits override — the catalog's static
+  copilot `contextWindow: 1000000` / `maxTokens: 32768` are wrong for
+  several real models (400s from the backend); the endpoint-reported
+  `capabilities.limits.max_context_window_tokens` /
+  `max_output_tokens` now replace them per model when present, and
+  the catalog defaults stay when the payload has no opinion.
+
 ## 0.1.246
 
 - feat(tools): `HailuoVideoDialect` — Hailuo 2.3 video generation on the

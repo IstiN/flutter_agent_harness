@@ -49,6 +49,7 @@ String _providerNameFor(String providerKind) {
     'openrouter' => 'openrouter',
     'ollama' || 'ollama-cloud' => 'ollama',
     'openai' || 'openai-completions' => 'openai',
+    'copilot' => 'copilot',
     _ => 'openai',
   };
 }

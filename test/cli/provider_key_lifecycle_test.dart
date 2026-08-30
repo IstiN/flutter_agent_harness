@@ -30,6 +30,7 @@ void main() {
     SecureKeyCache? secureKeys,
     ModelRolesResolver? modelRolesResolver,
     String? Function(String name)? envVarValue,
+    void Function(String providerKind, String apiKey)? onProviderChanged,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -39,6 +40,7 @@ void main() {
         sessionRoot: '/sessions',
         customProviders: customProviders,
         secureKeys: secureKeys,
+        onProviderChanged: onProviderChanged,
         modelRolesResolver: modelRolesResolver,
         envVarValue: envVarValue ?? (_) => null,
         modelsFetcher: (baseUrl, {required apiKey}) async => const [],
@@ -310,6 +312,97 @@ void main() {
       expect(store.map['FA_KEY_API_KIMI_COM_KIMI_IRA1'], 'sk-via-key-set');
       // The value never appears in the transcript.
       expect(io.out.toString(), isNot(contains('sk-via-key-set')));
+    });
+
+    test('copilot entry: env FA_KEY_COPILOT_<NAME> wins over the empty '
+        'store slot (legacy mode)', () async {
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'copilot-x',
+          apiType: 'copilot',
+          baseUrl: 'https://api.business.githubcopilot.com',
+          modelId: 'gpt-4.1',
+          keyName: 'FA_KEY_COPILOT_COPILOT_X',
+        ),
+      ]);
+      final store = FakeSecureKeyStore(); // the slot stays EMPTY (CI host)
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final changes = <(String, String)>[];
+      final cli = cliFor(
+        customProviders: registry,
+        secureKeys: cache,
+        envVarValue: (name) =>
+            name == 'FA_KEY_COPILOT_COPILOT_X' ? 'env-tok-1' : null,
+        onProviderChanged: (kind, key) => changes.add((kind, key)),
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider copilot-x');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to copilot'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(changes.single.$1, 'copilot');
+      expect(changes.single.$2, 'env-tok-1');
+      // The env value is never persisted anywhere.
+      expect(store.map, isEmpty);
+    });
+
+    test('copilot entry: the FA_KEY_COPILOT_<NAME> env ring (_2) reaches '
+        'the roles key ring', () async {
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'copilot-x',
+          apiType: 'copilot',
+          baseUrl: 'https://api.business.githubcopilot.com',
+          modelId: 'gpt-4.1',
+          keyName: 'FA_KEY_COPILOT_COPILOT_X',
+        ),
+      ]);
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(
+                provider: 'copilot',
+                modelId: 'gpt-4.1',
+                baseUrl: 'https://api.business.githubcopilot.com',
+                apiKeyName: 'FA_KEY_COPILOT_COPILOT_X',
+              ),
+            ],
+          },
+          retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        ),
+        // A real restart carries a store-backed base name in the startup
+        // snapshot; the env ring joins it at the runtime switch.
+        secrets: const {'FA_KEY_COPILOT_COPILOT_X': 'startup-key'},
+        streamFactory: (kind, apiKey) => FakeStreamFunction([]).call,
+      );
+      final cli = cliFor(
+        customProviders: registry,
+        modelRolesResolver: resolver,
+        envVarValue: (name) => switch (name) {
+          'FA_KEY_COPILOT_COPILOT_X' => 'env-tok-1',
+          'FA_KEY_COPILOT_COPILOT_X_2' => 'env-tok-2',
+          _ => null,
+        },
+      );
+      final run = cli.run();
+
+      io.sendLine('/provider copilot-x');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to copilot'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final chain = resolver.chainFor('default')!;
+      expect(chain, hasLength(1));
+      expect(chain.single.keyRing.length, 2);
+      expect(chain.single.keyRing.baseName, 'FA_KEY_COPILOT_COPILOT_X');
     });
   });
 }
