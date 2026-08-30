@@ -192,12 +192,6 @@ Model _buildModel(CliArgs args) {
   );
 }
 
-/// Every catalog provider's env names (a redaction preload set: an env
-/// value of ANY supported provider key must never reach the transcript).
-List<String> _allCatalogEnvNames() => [
-  for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
-];
-
 String _resolveApiKey(
   String provider,
   SecureKeyCache keys, {
@@ -220,57 +214,6 @@ String _resolveApiKey(
     );
   }
   return key;
-}
-
-/// Collects the secrets snapshot for the model-roles resolver: every
-/// provider catalog env name plus its rotation stack (`NAME`, `NAME_2`,
-/// `NAME_3`, ...), plus any base name referenced by an explicit
-/// `apiKeyName` in the roles config. The platform secure store backs up
-/// base names where the environment has none (env wins; rotation stacks
-/// stay env-only — secure storage holds base names only).
-Map<String, String> _collectRoleSecrets(
-  ModelRolesConfig rolesConfig,
-  SecureKeyCache keys,
-) {
-  final baseNames = <String>{
-    for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
-    for (final chain in rolesConfig.roles.values)
-      for (final ref in chain)
-        if (ref.apiKeyName != null) ref.apiKeyName!,
-    for (final override in rolesConfig.pathOverrides)
-      for (final chain in override.roles.values)
-        for (final ref in chain)
-          if (ref.apiKeyName != null) ref.apiKeyName!,
-  };
-  final secrets = <String, String>{};
-  final env = Platform.environment;
-  for (final base in baseNames) {
-    final suffix = RegExp('^${RegExp.escape(base)}_\\d+\$');
-    for (final entry in env.entries) {
-      if (entry.key == base || suffix.hasMatch(entry.key)) {
-        if (entry.value.isNotEmpty) secrets[entry.key] = entry.value;
-      }
-    }
-    if (!secrets.containsKey(base)) {
-      final stored = keys.read(base);
-      if (stored != null) secrets[base] = stored;
-    }
-  }
-  return secrets;
-}
-
-/// The explicit `apiKeyName`s referenced by a roles config (the secure-store
-/// preload set; the catalog names are always preloaded).
-Set<String> _roleKeyNames(ModelRolesConfig rolesConfig) {
-  return {
-    for (final chain in rolesConfig.roles.values)
-      for (final ref in chain)
-        if (ref.apiKeyName != null) ref.apiKeyName!,
-    for (final override in rolesConfig.pathOverrides)
-      for (final chain in override.roles.values)
-        for (final ref in chain)
-          if (ref.apiKeyName != null) ref.apiKeyName!,
-  };
 }
 
 /// Built-in plugins available via `--plugin <name>` or `.fah/packages.yaml`.
@@ -341,25 +284,6 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
     plugins.add(plugin);
   }
   return (plugins: plugins, config: config);
-}
-
-/// `'hub'` ships default-on. A `.fah/packages.yaml` entry enables a plugin
-/// with a truthy value (`inspect_image:`/`hub: {url: …}`) and opts it OUT
-/// with a falsy one (`hub: false`, `hub:`) — so only the keys with truthy
-/// values join the enabled set.
-Set<String> resolveEnabledPlugins(
-  List<String> argPlugins,
-  Map<String, dynamic> config,
-) {
-  final enabled = <String>{'hub', ...argPlugins};
-  for (final entry in config.entries) {
-    if (entry.value == null || entry.value == false) {
-      enabled.remove(entry.key);
-    } else {
-      enabled.add(entry.key);
-    }
-  }
-  return enabled;
 }
 
 String _defaultSessionRoot() {
@@ -684,26 +608,14 @@ Future<void> _runApp(List<String> args) async {
   // `--a2a` flag, so the serve form is intercepted before CliArgs parsing:
   // serve-specific flags are stripped from the parsed args and kept for the
   // late interception below (after model/key resolution).
-  final isServeA2a = args.contains('serve');
-  if (isServeA2a && !args.contains('--a2a')) {
+  final serve = splitServeA2aArgs(args);
+  if (serve.serveA2a && !args.contains('--a2a')) {
     _fail('usage: fa serve --a2a [--port N] [--token T]');
   }
-  final parseArgs = isServeA2a
-      ? [
-          for (var i = 0; i < args.length; i++)
-            if (args[i] != 'serve' &&
-                args[i] != '--a2a' &&
-                args[i] != '--port' &&
-                args[i] != '--token' &&
-                (i == 0 ||
-                    (args[i - 1] != '--port' && args[i - 1] != '--token')))
-              args[i],
-        ]
-      : args;
 
   late final CliArgs parsed;
   try {
-    parsed = switch (parseCliArgs(parseArgs)) {
+    parsed = switch (parseCliArgs(serve.cliArgs)) {
       CliArgsHelp() => _exitWithUsage(packageVersion),
       CliArgsVersion() => _exitWithVersion(packageVersion),
       final CliArgs cliArgs => cliArgs,
@@ -746,43 +658,8 @@ Future<void> _runApp(List<String> args) async {
   // read by the adapters' connect/idle watchdogs on every request.
   providerTimeoutsOverride = saved.providerTimeouts;
 
-  // An explicit --provider wins; without it the saved `provider:` (the
-  // persisted /provider switch) restores the last provider kind — model and
-  // baseUrl already restore from the config, losing only the kind would
-  // rebuild e.g. dial as a plain openai endpoint. Only kinds the legacy
-  // single-model path can build are restored (chatgpt-codex keeps the
-  // openai-completions default; its OAuth flow re-establishes on demand).
-  const restorableKinds = {
-    'openai-completions',
-    'anthropic',
-    'google',
-    'dial',
-    'minimax',
-  };
-  final provider = parsed.providerExplicit
-      ? parsed.provider
-      : (restorableKinds.contains(saved.providerKind)
-            ? saved.providerKind
-            : parsed.provider);
-  final modelId = parsed.model ?? saved.modelId;
-  final baseUrl = parsed.baseUrl ?? saved.baseUrl;
-  final mode = parsed.mode ?? saved.mode;
-
-  final effective = CliArgs(
-    model: modelId,
-    provider: provider,
-    baseUrl: baseUrl,
-    visionModel: parsed.visionModel,
-    visionBaseUrl: parsed.visionBaseUrl,
-    transcribeModel: parsed.transcribeModel,
-    transcribeBaseUrl: parsed.transcribeBaseUrl,
-    plugins: parsed.plugins,
-    promptTemplateDirs: parsed.promptTemplateDirs,
-    mode: mode,
-    cwd: parsed.cwd,
-    sessionRoot: parsed.sessionRoot,
-    session: parsed.session,
-  );
+  final (args: effective, :provider) = resolveEffectiveCliArgs(parsed, saved);
+  final baseUrl = effective.baseUrl;
 
   final model = _buildModel(effective);
   final cwd = effective.cwd ?? Directory.current.path;
@@ -806,20 +683,7 @@ Future<void> _runApp(List<String> args) async {
   // a synchronous session cache — every later lookup (startup resolution,
   // the banner, `/provider`, `/key`) hits the snapshot.
   final keyCache = SecureKeyCache(platformSecureKeyStore());
-  await keyCache.preload({
-    for (final spec in providerCatalog.values) ...[
-      ...spec.apiKeyEnvNames,
-      // Endpoint-scoped keys (FA_KEY_<HOST>): catalog defaults, the
-      // configured endpoint, and every saved custom provider's.
-      CustomProviderRegistry.keyNameFor(spec.defaultBaseUrl),
-    ],
-    CustomProviderRegistry.keyNameFor(baseUrl),
-    for (final entry in saved.customProviders)
-      entry.keyName ?? CustomProviderRegistry.keyNameFor(entry.baseUrl),
-    'VISION_API_KEY',
-    'TRANSCRIBE_API_KEY',
-    if (saved.modelRoles != null) ..._roleKeyNames(saved.modelRoles!),
-  });
+  await keyCache.preload(secureKeyPreloadNames(saved, baseUrl: baseUrl));
 
   // Prompt overrides: the `prompts:` section of ~/.fah/config.yaml (file
   // paths resolve against the agent cwd, `~` expands; missing files are a
@@ -861,7 +725,7 @@ Future<void> _runApp(List<String> args) async {
   final rolesConfig = saved.modelRoles;
   final roleSecrets = rolesConfig == null
       ? const <String, String>{}
-      : _collectRoleSecrets(rolesConfig, keyCache);
+      : collectRoleSecrets(rolesConfig, keyCache);
   ModelRolesResolver? rolesResolver;
   var defaultRoleResolved = false;
   if (rolesConfig != null) {
@@ -877,75 +741,32 @@ Future<void> _runApp(List<String> args) async {
       _fail('invalid model roles config: ${error.message}');
     }
   }
-  // A base URL other than the catalog default (--base-url or config baseUrl)
-  // means a user-configured endpoint: local llama.cpp/Ollama/LM Studio
-  // servers need no key at all, so the key is optional there (the hosted
-  // presets keep requiring one; the config default IS the OpenRouter URL, so
-  // compare values, not nullness). Roles mode already tolerates a missing
-  // key; the openai-completions adapter omits the Authorization header
-  // entirely when the key is empty.
-  final customEndpoint =
-      provider == 'openai-completions' &&
-      baseUrl != providerCatalog['openrouter']!.defaultBaseUrl;
-  // Interactive REPL can start without a key: the user can switch providers,
-  // models, or base URLs with slash commands before the first run. Headless
-  // mode needs a key immediately because it performs a single run and exits.
-  final interactive = headlessPrompt == null;
-  // Saved custom entries for this endpoint carry name-scoped keys
-  // (multi-account); they resolve right after the host-scoped slot.
-  final entryKeyNames = [
-    for (final entry in saved.customProviders)
-      if (entry.baseUrl == baseUrl && entry.keyName != null) entry.keyName!,
-  ];
-  final apiKey = defaultRoleResolved || customEndpoint || interactive
-      ? (optionalProviderApiKey(
-              provider,
-              keyCache,
-              baseUrl: baseUrl,
-              scopedKeyNames: entryKeyNames,
-            ) ??
-            '')
-      : _resolveApiKey(
-          provider,
-          keyCache,
-          baseUrl: baseUrl,
-          scopedKeyNames: entryKeyNames,
-        );
+  late final String apiKey;
+  try {
+    apiKey = startupApiKey(
+      provider,
+      keyCache,
+      baseUrl: baseUrl,
+      customProviders: saved.customProviders,
+      defaultRoleResolved: defaultRoleResolved,
+      interactive: headlessPrompt == null,
+    );
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
 
   // Redact the API keys this CLI knows about from tool results and the
   // provider context, so they cannot leak into the LLM conversation or the
-  // session files. The spawned shell already inherits the process
-  // environment, so no env injection is needed here.
-  final redactor = SecretRedactor();
-  for (final name in [
-    ..._allCatalogEnvNames(),
-    'BRAVE_API_KEY',
-    'TAVILY_API_KEY',
-  ]) {
-    final value = Platform.environment[name];
-    if (value != null) redactor.register(name, value);
-  }
-  // Rotation stacks collected for the roles resolver are redacted too.
-  for (final entry in roleSecrets.entries) {
-    redactor.register(entry.key, entry.value);
-  }
-  // As are the keys preloaded from the platform secure store (keychain
-  // values must never reach the transcript either).
-  for (final name in keyCache.names) {
-    final value = keyCache.read(name);
-    if (value != null) redactor.register(name, value);
-  }
+  // session files (assembled by [buildSecretRedactor]).
+  final redactor = buildSecretRedactor(
+    roleSecrets: roleSecrets,
+    keys: keyCache,
+  );
   // Whether the redactor is attached to the agent. A keyless startup leaves
   // it detached; a `/provider` token arriving at runtime attaches it then.
   var redactorAttached = !redactor.isEmpty;
 
-  // Web search works out of the box via keyless DuckDuckGo; keyed providers
-  // (Brave, Tavily) join the chain when their API key is in the environment.
-  final webSearchSecrets = InMemorySecretsStore({
-    for (final name in const ['BRAVE_API_KEY', 'TAVILY_API_KEY'])
-      if (Platform.environment[name] case final value? when value.isNotEmpty)
-        name: value,
-  });
+  final webSearch = webSearchSecrets();
 
   late final Future<void> Function() persistConfig;
 
@@ -989,7 +810,7 @@ Future<void> _runApp(List<String> args) async {
 
   // `fa serve --a2a [--port N] [--token T]` — mount this agent as an A2A
   // endpoint (Phase 5b). Uses the fully-resolved model/key/provider.
-  if (isServeA2a) {
+  if (serve.serveA2a) {
     final port = _serveFlagInt(args, '--port', 8300);
     final token = _serveFlagStr(args, '--token');
     await _serveA2a(
@@ -1054,7 +875,7 @@ Future<void> _runApp(List<String> args) async {
       sessionName: effective.session,
       visionConfig: visionConfig,
       transcribeConfig: transcribeConfig,
-      webSearchConfig: WebSearchConfig(secrets: webSearchSecrets),
+      webSearchConfig: WebSearchConfig(secrets: webSearch),
       sqliteEngine: const Sqlite3Engine(),
       // The lsp tool: the io-side process transport spawns `dart
       // language-server` (and any server from .fah/lsp.json); the host pid

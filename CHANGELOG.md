@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- refactor(cli): the `fah` executable's startup is decomposed — the pure
+  phases (`serve --a2a` argument interception, provider/model restoration,
+  the secure-store preload set, the startup API-key decision, roles-secret
+  collection, secret-redactor and web-search assembly) moved to
+  `lib/src/cli/startup.dart` with unit tests in `test/cli/startup_test.dart`;
+  `bin/fah.dart` keeps only process glue and `_runApp` reads as a phase
+  sequence. The CRAP ratchet is green again (worst 12.00): the
+  plugin-resolution test importing `bin/fah.dart` had dragged the whole
+  executable into the coverage trace at 0% hits, scoring `_runApp`
+  CRAP 3906.
 - fix(dap): vendored hub client warns loudly when the identity file's
   `chmod 600` cannot be applied (no `chmod` on Windows, or the call
   fails) — the Ed25519/X25519 private seeds would otherwise persist with
