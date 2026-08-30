@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.246
+
+- feat(tools): `HailuoVideoDialect` — Hailuo 2.3 video generation on the
+  MiniMax V1 contract (`POST /v1/video_generation` → poll
+  `task_id` → `file_id` → `/v1/files/retrieve` → `download_url`),
+  with size mapping (1080P/768P) and full MockClient flow tests.
+  Dialect registry reordered most-specific-first: both MiniMax dialects
+  share the `minimax` baseUrl marker, so the H3 dialect previously
+  swallowed Hailuo endpoints into the wrong (V2) contract.
+- fix(cli): headless runs compact BEFORE the first request — a resumed
+  session already over the threshold went out over-window and the
+  endpoint rejected the turn (the same pre-flight guard the REPL had).
+- fix(tui): key parser never swallows a trailing control byte into a
+  text run — a burst PTY read delivering `text\r` in one chunk ate the
+  Enter into the text and the composer never submitted.
+- chore: drop the build artifacts (`fa-local/bundle/…`) from git —
+  `install_local.sh` rebuilds them and the directory was already
+  gitignored (they were force-added once and churned 13 MB per install).
+
 ## 0.1.245
 
 - fix(cli): restored sessions label the model with the RIGHT account

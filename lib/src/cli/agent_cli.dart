@@ -1660,27 +1660,29 @@ class AgentCli {
 
   /// Runs a single non-interactive prompt (headless mode: `fah "<prompt>"`)
   /// and returns the process exit code: 0 on success, 1 when the run ends
-  /// with a provider error, 130 when aborted (Ctrl-C via
-  /// [CliIO.interrupts]). Tool errors the agent recovers from still exit 0 —
-  /// the exit code reflects the run's terminal state, like claude/pi.
+  /// with a provider error, 130 when aborted (Ctrl-C via [CliIO.interrupts]).
+  /// Tool errors the agent recovers from still exit 0 — the exit code
+  /// reflects the run's terminal state, like claude/pi.
   ///
   /// Unlike [run] there is no banner, no input prompt, no slash-command
   /// handling, and no steering; the session persists exactly like a REPL
   /// turn (including auto-compaction). The host's [CliIO] should be
-  /// non-interactive (approval/ask prompts are then denied per the
-  /// non-interactive rule) and route [CliIO.writeln] diagnostics to stderr
-  /// so [CliIO.write] (the assistant text) is the only stdout content.
+  /// non-interactive and route [CliIO.writeln] diagnostics to stderr so
+  /// [CliIO.write] (the assistant text) is the only stdout content.
   Future<int> runHeadless(String prompt) async {
     _session = await _initializeSession();
-    // Warm the endpoint metadata (model list, dial cache features, reported
-    // limits) BEFORE the first turn: the request then already carries the
-    // detected max token caps and the dial marker gating. Failures are
-    // silent — the catalog defaults keep applying.
+    // Warm the endpoint metadata (model list, dial features, reported
+    // limits) BEFORE the first turn; failures are silent — the catalog
+    // defaults keep applying.
     try {
       await _refreshModelCache();
     } on Object {
       // Swallowed: see _refreshModelCache.
     }
+    // The same pre-flight compaction guard as the REPL's [_runPrompt]:
+    // a resumed session already over the threshold must compact BEFORE
+    // the first request, or it goes out over-window and gets rejected.
+    await _maybeAutoCompact();
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) _agent.abort();
     });
@@ -2377,7 +2379,7 @@ class AgentCli {
   }
 
   /// `/compact` manual override: same AutoCompactor pipeline as the
-  /// auto-trigger, but unconditional. Honours the user's explicit ask
+  /// auto-trigger, but unconditional — honours the user's explicit ask
   /// even when the threshold isn't crossed.
   Future<void> _runManualCompact() async {
     final session = _session;
