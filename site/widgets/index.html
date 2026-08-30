@@ -236,7 +236,7 @@
     document.addEventListener('keydown', onEsc);
     window.gtag && gtag('event', 'widget_preview_click',
       { widget_id: widget.id });
-    frame.src = '/widgets/preview/?widget=' + encodeURIComponent(widget.id) +
+    frame.src = RUNNER + '?widget=' + encodeURIComponent(widget.id) +
       '&theme=dark';
   }
 
