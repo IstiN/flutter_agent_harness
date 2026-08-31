@@ -570,6 +570,13 @@ class AgentCli {
   @visibleForTesting
   List<MenuItem> addProviderItemsForTest() => _addProviderItems();
 
+  /// The deliberate picker exclusions (provider name → reason) — with
+  /// [addProviderItemsForTest] the test asserts the catalog is exactly
+  /// presets ∪ exclusions.
+  @visibleForTesting
+  Map<String, String> addProviderExclusionsForTest() =>
+      _addProviderExclusions;
+
   /// Test seam routing an "Add provider" picker selection in line mode.
   @visibleForTesting
   Future<void> tuiPickAddProviderForTest(String key) =>

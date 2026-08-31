@@ -245,6 +245,15 @@ extension _AgentCliProviderPresets on AgentCli {
       initialModelId: 'MiniMax-M3',
     ),
   };
+
+  /// Catalog providers deliberately NOT offered as "Add provider" presets,
+  /// each with the reason. The picker test asserts the catalog is exactly
+  /// `presets ∪ exclusions` — adding a provider to the catalog without
+  /// touching this file fails the test, so the Copilot-style "works as a
+  /// typed command, missing from the menu" gap cannot come back silently.
+  /// Today every catalog provider has a preset: the map is empty ON
+  /// PURPOSE; an entry looks like `'name': 'why there is no preset'`.
+  Map<String, String> get _addProviderExclusions => const {};
 }
 
 /// Terminal outcomes of the kimi flow branches (gate handling differs).
