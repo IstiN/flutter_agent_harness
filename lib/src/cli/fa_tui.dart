@@ -1534,6 +1534,7 @@ final class FaTuiModel extends Model {
       // dart_tui maps CR to 'enter' and LF to 'ctrl+j' — both mean Enter.
       // ctrl+c is NOT mapped here: it stays the global interrupt/quit key.
       'enter' || 'ctrl+j' => const PromptEnter(),
+      'ctrl+r' => const PromptCtrlR(),
       'esc' => const PromptEscape(),
       'tab' => const PromptTab(),
       'up' => const PromptArrowUp(),

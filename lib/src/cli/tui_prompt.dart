@@ -35,6 +35,11 @@ final class PromptTab extends PromptKey {
   const PromptTab();
 }
 
+/// Ctrl+R — the secret-sheet reveal toggle (show/hide the typed value).
+final class PromptCtrlR extends PromptKey {
+  const PromptCtrlR();
+}
+
 final class PromptArrowUp extends PromptKey {
   const PromptArrowUp();
 }
@@ -184,6 +189,7 @@ final class TuiPromptState {
         SecretPromptSpec _ => -1, // -1 = focus on name field
         _ => 0,
       },
+      secretValueVisible = false,
       approvalInput = '';
 
   final TuiPromptSpec spec;
@@ -193,6 +199,10 @@ final class TuiPromptState {
   final String secretName;
   final String secretValue;
   final int secretCursor;
+
+  /// Whether the secret sheet renders the typed value in clear text
+  /// (Ctrl+R toggles; hidden is the default).
+  final bool secretValueVisible;
 
   /// Text typed into an approval prompt that is not a y/a/n answer: the
   /// user can leave a note for the agent alongside the decision. Any
@@ -221,6 +231,7 @@ final class TuiPromptState {
     String? secretName,
     String? secretValue,
     int? secretCursor,
+    bool? secretValueVisible,
     String? approvalInput,
   }) {
     return TuiPromptState._raw(
@@ -231,6 +242,7 @@ final class TuiPromptState {
       secretName: secretName ?? this.secretName,
       secretValue: secretValue ?? this.secretValue,
       secretCursor: secretCursor ?? this.secretCursor,
+      secretValueVisible: secretValueVisible ?? this.secretValueVisible,
       approvalInput: approvalInput ?? this.approvalInput,
     );
   }
@@ -243,6 +255,7 @@ final class TuiPromptState {
     required this.secretName,
     required this.secretValue,
     required this.secretCursor,
+    this.secretValueVisible = false,
     this.approvalInput = '',
   });
 }
@@ -633,13 +646,23 @@ bool _secretSubmittable(TuiPromptState state) {
 /// Secret prompt: value-cursor arrows → backspace → char → enter → tab →
 /// esc; ↑/↓ are ignored.
 _PromptKeyResult _handleSecretKey(TuiPromptState state, PromptKey key) {
-  return _handleSecretArrowKey(state, key) ??
+  return _handleSecretRevealKey(state, key) ??
+      _handleSecretArrowKey(state, key) ??
       _handleSecretBackspaceKey(state, key) ??
       _handleSecretCharKey(state, key) ??
       _handleSecretEnterKey(state, key) ??
       _handleSecretTabKey(state, key) ??
       _handleEscapeKey(state, key) ??
       (state: state, resolved: null);
+}
+
+/// Ctrl+R toggles the value's clear-text rendering; null for other keys.
+_PromptKeyResult? _handleSecretRevealKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptCtrlR) return null;
+  return (
+    state: state.copyWith(secretValueVisible: !state.secretValueVisible),
+    resolved: null,
+  );
 }
 
 /// Left/right move the value cursor; the name field (-1) has no cursor
@@ -1093,9 +1116,14 @@ List<String> _textInputRows(TuiPromptState state, int inner) {
 
 List<String> _secretInputRows(TuiPromptState state, int inner) {
   final rows = <String>[];
+  final visible = state.secretValueVisible;
   rows.add(
     _wrapBodyLine(
-      _dim('Name (UPPER_SNAKE) — value is hidden:'),
+      _dim(
+        visible
+            ? 'Name (UPPER_SNAKE) — value visible (Ctrl+R hides):'
+            : 'Name (UPPER_SNAKE) — value hidden (Ctrl+R reveals):',
+      ),
       inner,
       dim: true,
     ),
@@ -1106,8 +1134,10 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
       ? 'Enter to save · Esc to cancel'
       : 'Start typing the value · Esc to cancel';
   rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-  final dots = '•' * state.secretValue.length;
-  rows.add(_wrapBodyLine(dots, inner, bold: true));
+  final display = visible
+      ? state.secretValue
+      : '•' * state.secretValue.length;
+  rows.add(_wrapBodyLine(display, inner, bold: true));
   if (!_secretNamePattern.hasMatch(state.secretName)) {
     rows.add(_wrapBodyLine(_red('Name must match ^[A-Z][A-Z0-9_]*\$'), inner));
   }

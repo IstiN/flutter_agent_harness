@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.263
+
+- feat(cli): the `request_secret` TUI sheet can reveal the typed value —
+  Ctrl+R toggles between the masked dots (default) and clear text, with
+  the header line naming the current state (`value hidden (Ctrl+R
+  reveals)` / `value visible (Ctrl+R hides)`). Long sudo passwords and
+  tokens pasted into a blind field were unverifiable; now one keystroke
+  shows what was actually typed before Enter.
+
 ## 0.1.262
 
 - fix(providers): GitHub Copilot enterprise sign-in actually connects —
