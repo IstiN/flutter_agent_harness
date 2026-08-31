@@ -191,6 +191,70 @@ Model _buildModel(CliArgs args) {
   );
 }
 
+/// The env preconfig pick for this invocation — `(spec, activating env var
+/// name)`, or null. Fires only on a pristine config: [CliConfig] has
+/// non-null defaults (a fresh install reads providerKind
+/// 'openai-completions', model 'openai/gpt-4o-mini', the OpenRouter URL),
+/// so null-checks on the saved fields are dead code — "the user never
+/// configured anything" means every provider-relevant field still equals
+/// that pristine default. An explicit --provider or --model wins; any
+/// saved provider switch, base URL, roles section, or custom provider
+/// disables the pick.
+(ProviderSpec, String)? _envPreconfigPick(CliArgs parsed, CliConfig saved) {
+  final pristine = CliConfig();
+  final untouched =
+      !parsed.providerExplicit &&
+      parsed.model == null &&
+      saved.providerKind == pristine.providerKind &&
+      saved.modelId == pristine.modelId &&
+      saved.baseUrl == pristine.baseUrl &&
+      saved.modelRoles == null &&
+      saved.customProviders.isEmpty;
+  if (!untouched) return null;
+  final picked = envPreconfiguredProvider((name) => Platform.environment[name]);
+  if (picked == null) return null;
+  return (
+    picked,
+    picked.apiKeyEnvNames.firstWhere(
+      (name) => (Platform.environment[name] ?? '').isNotEmpty,
+    ),
+  );
+}
+
+/// The `FA_PROVIDER_*` env preconfig (Docker/headless): `FA_PROVIDER_TYPE` +
+/// `FA_PROVIDER_NAME` + `FA_PROVIDER_CONFIG` (a JSON object with required
+/// `baseUrl`/`model` and an optional `apiKeyEnvVar`) plus the key env var
+/// the config references. Every text input has a `_BASE64` twin
+/// (`FA_PROVIDER_CONFIG_BASE64`, `<apiKeyEnvVar>_BASE64`) for platforms
+/// that mangle special characters; when both carry the same value the
+/// plain one is used. Unlike the catalog auto-pick above, this is an
+/// explicit declaration, so it wins over the saved config restore too — a
+/// container that declares its provider in env vars runs on it, store or
+/// config notwithstanding, and the declaration becomes the session
+/// default for every model role (the same selection a `/provider <name>`
+/// switch performs). An explicit `--provider` flag means full manual
+/// control and disables the preconfig entirely (mixing the flag's
+/// provider with the env endpoint would be a silent misconfiguration).
+///
+/// Throws via [_fail] on a malformed declaration: a container that names its
+/// provider wrong must fail loud at boot, not 401 mid-run.
+EnvProviderPreconfig? _faProviderPreconfig(CliArgs parsed, CliConfig saved) {
+  if (parsed.providerExplicit) return null;
+  final env = Platform.environment;
+  try {
+    return parseEnvProviderPreconfig(
+      providerType: env['FA_PROVIDER_TYPE'],
+      providerName: env['FA_PROVIDER_NAME'],
+      providerConfig: env['FA_PROVIDER_CONFIG'],
+      providerConfigBase64: env['FA_PROVIDER_CONFIG_BASE64'],
+      envVarValue: (name) => env[name],
+      takenNames: [for (final entry in saved.customProviders) entry.name],
+    );
+  } on ConfigException catch (error) {
+    _fail('invalid FA_PROVIDER_* preconfig: ${error.message}');
+  }
+}
+
 /// Every catalog provider's env names (a redaction preload set: an env
 /// value of ANY supported provider key must never reach the transcript).
 List<String> _allCatalogEnvNames() => [
@@ -737,14 +801,39 @@ Future<void> _runApp(List<String> args) async {
     'google',
     'dial',
     'minimax',
+    'zai',
   };
+  // Explicit env preconfig (FA_PROVIDER_*): a container's declaration of its
+  // provider. Precedence: an explicit --provider flag (full manual control,
+  // preconfig disabled) > FA_PROVIDER_* > the pristine-config catalog pick
+  // below > the saved kind restore > the default. The preconfig supplies
+  // model/baseUrl too, so the saved restore never leaks through while it is
+  // active (--model/--base-url flags still override individual fields).
+  final faPreconfig = _faProviderPreconfig(parsed, saved);
+  // Out-of-the-box env preconfig: on a pristine config (nothing the user
+  // saved) an API key in the environment activates its catalog provider —
+  // `ZAI_API_KEY=... fa` just runs. The pick wins over the pristine
+  // (default) saved kind; anything configured skips it entirely — including
+  // the explicit FA_PROVIDER_* declaration above.
+  final (ProviderSpec, String)? envPreconfig = faPreconfig == null
+      ? _envPreconfigPick(parsed, saved)
+      : null;
   final provider = parsed.providerExplicit
       ? parsed.provider
-      : (restorableKinds.contains(saved.providerKind)
-            ? saved.providerKind
-            : parsed.provider);
-  final modelId = parsed.model ?? saved.modelId;
-  final baseUrl = parsed.baseUrl ?? saved.baseUrl;
+      : faPreconfig?.spec.kind ??
+            envPreconfig?.$1.kind ??
+            (restorableKinds.contains(saved.providerKind)
+                ? saved.providerKind
+                : parsed.provider);
+  String? modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
+  String? baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
+  // The pristine saved model/baseUrl are the constant defaults, not user
+  // choices: the picked provider's catalog default model and endpoint
+  // replace them.
+  if (envPreconfig != null) {
+    modelId = catalogDefaultModelId(envPreconfig.$1.name);
+    baseUrl = null;
+  }
   final mode = parsed.mode ?? saved.mode;
 
   final effective = CliArgs(
@@ -792,7 +881,7 @@ Future<void> _runApp(List<String> args) async {
       // configured endpoint, and every saved custom provider's.
       CustomProviderRegistry.keyNameFor(spec.defaultBaseUrl),
     ],
-    CustomProviderRegistry.keyNameFor(baseUrl),
+    if (baseUrl case final url?) CustomProviderRegistry.keyNameFor(url),
     for (final entry in saved.customProviders)
       entry.keyName ?? CustomProviderRegistry.keyNameFor(entry.baseUrl),
     'VISION_API_KEY',
@@ -850,6 +939,26 @@ Future<void> _runApp(List<String> args) async {
       cwd: cwd,
       homeDir: home,
     );
+    // FA_PROVIDER_* preconfig = one explicit provider switch for the whole
+    // session: pin the default role to a single-entry chain on the env
+    // provider — the same setDefaultChain + applyToAgent path a runtime
+    // `/provider <name>` switch takes in roles mode. Roles the config
+    // pins explicitly keep their chains; unpinned roles inherit the
+    // default, so every resolution (default/smol/slow/plan) lands on the
+    // env provider. A keyless declaration cannot form a chain entry
+    // (chains require a key) — roles keep owning selection there, and
+    // the boot note says so.
+    if (faPreconfig case final preconfig? when preconfig.apiKeyEnvVar != null) {
+      rolesResolver.addSecret(preconfig.apiKeyEnvVar!, preconfig.apiKey);
+      rolesResolver.setDefaultChain([
+        ModelRef(
+          provider: preconfig.spec.name,
+          modelId: preconfig.modelId,
+          baseUrl: preconfig.baseUrl,
+          apiKeyName: preconfig.apiKeyEnvVar,
+        ),
+      ]);
+    }
     try {
       defaultRoleResolved = rolesResolver.resolveRole(defaultModelRole) != null;
     } on ConfigException catch (error) {
@@ -876,7 +985,14 @@ Future<void> _runApp(List<String> args) async {
     for (final entry in saved.customProviders)
       if (entry.baseUrl == baseUrl && entry.keyName != null) entry.keyName!,
   ];
-  final apiKey = defaultRoleResolved || customEndpoint || interactive
+  // The FA_PROVIDER_* declaration carries its own key resolution (the
+  // apiKeyEnvVar ref, or its _BASE64 twin): the env value IS the source
+  // of truth for the booted session — store and config never override
+  // it. Empty means a keyless endpoint (no ref declared — the spec's env
+  // names are never probed).
+  final apiKey = faPreconfig != null
+      ? faPreconfig.apiKey
+      : defaultRoleResolved || customEndpoint || interactive
       ? (optionalProviderApiKey(
               provider,
               keyCache,
@@ -903,6 +1019,12 @@ Future<void> _runApp(List<String> args) async {
   ]) {
     final value = Platform.environment[name];
     if (value != null) redactor.register(name, value);
+  }
+  // The FA_PROVIDER_* key ref may name ANY env var (not one of the well-known
+  // names above) — redact it under its own name so the ref'd value can never
+  // reach the transcript. A keyless declaration (no ref) carries no secret.
+  if (faPreconfig case final preconfig? when preconfig.apiKey.isNotEmpty) {
+    redactor.register(preconfig.apiKeyEnvVar!, preconfig.apiKey);
   }
   // Rotation stacks collected for the roles resolver are redacted too.
   for (final entry in roleSecrets.entries) {
@@ -959,6 +1081,37 @@ Future<void> _runApp(List<String> args) async {
   ];
 
   final io = _TerminalCliIO(headless: headlessPrompt != null);
+  // The one boot notice for env preconfig (same channel as the raw-mode
+  // note below): names the provider and the env var that activated it,
+  // never the key value.
+  if (envPreconfig case (final picked, final envName)?) {
+    io.writeln(
+      'note: ${picked.name} activated from $envName '
+      '(model ${catalogDefaultModelId(picked.name)})',
+    );
+  }
+  // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
+  // key ref — or its keyless absence) — never the key value. The pinned
+  // declaration is the session default for every model role; only a
+  // keyless declaration under an active roles: section (which cannot pin
+  // a chain) stays fallback-only, and the note says so.
+  if (faPreconfig case final preconfig?) {
+    io.writeln(
+      'note: provider ${preconfig.name} (${preconfig.spec.name}) '
+      'from FA_PROVIDER_* env — key: '
+      '${preconfig.apiKeyEnvVar ?? 'none (keyless endpoint)'}',
+    );
+    if (defaultRoleResolved) {
+      io.writeln(
+        preconfig.apiKeyEnvVar == null
+            ? 'note: FA_PROVIDER_* preconfig applies to the fallback model '
+                  'only (roles: section is active; a keyless declaration '
+                  'cannot pin a roles chain)'
+            : 'note: FA_PROVIDER_* preconfig is the session default — all '
+                  'model roles resolve to it unless roles: pins a chain',
+      );
+    }
+  }
   if (io.isInteractive && !io.supportsRawMode) {
     io.writeln(
       'note: this terminal does not support raw-mode input; '

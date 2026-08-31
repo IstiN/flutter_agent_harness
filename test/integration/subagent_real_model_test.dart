@@ -42,7 +42,8 @@ void main() {
       }
 
       // Use ZAI by overriding the active connection.
-      final config = File('${tempHome.path}/.fah/config.yaml');
+      final config = File('${tempHome.path}/.fah/config.yaml')
+        ..createSync(recursive: true);
       config.writeAsStringSync('''
 provider: openai-completions
 model: glm-4.5

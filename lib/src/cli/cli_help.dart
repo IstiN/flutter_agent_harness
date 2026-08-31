@@ -47,6 +47,7 @@ OPTIONS
   -p, --prompt <text>          Run a single headless prompt and exit
   --model <id>                 Model id (default per provider, see PROVIDERS)
   --provider <kind>            openai-completions | anthropic | google | dial
+                               | minimax | zai
                                (default: openai-completions, via OpenRouter)
   --base-url <url>             Override the provider API base URL
   --mode <name>                Initial mode: code | architect | review
@@ -97,6 +98,11 @@ PROVIDERS AND API KEYS${_providerSectionSuffix()}
       completions; --model names the deployment (required, no default).
       Default endpoint https://ai-proxy.lab.epam.com; override with
       --base-url. DIAL_API_VERSION optionally appends ?api-version=<value>.
+  zai
+      Key: ZAI_API_KEY (fallback Z_AI_API_KEY)
+      Default model: glm-5.3 @ https://api.z.ai/api/coding/paas/v4
+      (the CODING plan endpoint; an env key activates it out of the box
+      when no provider is configured).
 
   Custom endpoints: --provider openai-completions --base-url <url> talks to
   any OpenAI-compatible server — a local Ollama (http://localhost:11434/v1),
@@ -104,10 +110,27 @@ PROVIDERS AND API KEYS${_providerSectionSuffix()}
   --model. The API key is optional there: local servers (llama.cpp, Ollama,
   LM Studio) need none, and no Authorization header is sent without one.
 
+  Env preconfig (Docker/headless): FA_PROVIDER_TYPE + FA_PROVIDER_CONFIG
+  boot a declared provider with no saved config, and the declaration is
+  the session default for every model role (default/smol/slow/plan) —
+  the same selection a /provider switch makes:
+      FA_PROVIDER_TYPE=zai
+      FA_PROVIDER_CONFIG='{"baseUrl":"https://api.z.ai/api/coding/paas/v4",
+        "model":"glm-5.3","apiKeyEnvVar":"ZAI_API_KEY"}'
+      ZAI_API_KEY=sk-...
+  baseUrl and model are required (no catalog defaults — a missing field
+  fails at boot). apiKeyEnvVar is optional: declared, the named var (or
+  its _BASE64 twin) must hold the key; omitted, the provider boots
+  keyless and the spec's usual env names are never probed. Every text
+  value has a base64 twin (FA_PROVIDER_CONFIG_BASE64,
+  <apiKeyEnvVar>_BASE64) for platforms that mangle special characters:
+  the plain value wins when both carry the same value; mismatched or
+  malformed twins fail loud at boot.
+
   In the REPL, /provider [name] [baseUrl] [token] switches the provider and
   endpoint live (openrouter, kimi, openai, anthropic, google, codemie, dial,
-  minimax, or a saved custom
-  provider by name): without a token the key resolves per below; an explicit
+  minimax, zai, or a saved custom provider by name): without a token the key
+  resolves per below; an explicit
   token is persisted in the OS secure store when one is available — under an
   endpoint-scoped name (FA_KEY_<HOST>, the same scheme custom providers
   use), never the shared env name, so a key written for one endpoint cannot

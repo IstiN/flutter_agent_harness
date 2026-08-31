@@ -525,4 +525,166 @@ void main() {
       },
     );
   });
+
+  group('env-keyed catalog providers', () {
+    test(
+      'an env key lists the catalog provider with its live /models ids',
+      () async {
+        // Out of the box: MINIMAX_API_KEY in the environment, nothing
+        // saved. The /model picker must surface minimax with the
+        // endpoint's REALTIME /models answer, not a hardcoded seed.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final fetches = <(String, String)>[];
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (name) => name == 'MINIMAX_API_KEY' ? 'mm-key' : null,
+          modelsFetcher: (baseUrl, {required apiKey}) async {
+            fetches.add((baseUrl, apiKey));
+            return const ['MiniMax-M3', 'minimax-text-01'];
+          },
+        );
+        final run = cli.run();
+        await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+        cli.buildModelMenuForTest('');
+        await waitForIt(
+          () =>
+              fetches.length == 1 &&
+              fetches.single == ('https://api.minimax.io/v1', 'mm-key'),
+          reason: 'the env key drives a realtime /models fetch',
+        );
+        await waitForIt(
+          () => cli
+              .crossProviderCandidatesForTest('')
+              .any((c) => c.$1 == 'minimax' && c.$2 == 'minimax-text-01'),
+          reason: 'the fetched realtime ids land in the picker',
+        );
+        expect(
+          cli.buildModelMenuForTest('').map((i) => i.key),
+          contains('@minimax'),
+        );
+
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+
+    test('without an env key the catalog provider stays hidden', () async {
+      // Regression guard: catalog seeds alone must NOT put a provider
+      // in the picker — the env key is the out-of-the-box gate.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final enrichment = RemoteCatalogEnrichment();
+      await enrichment.preload(
+        client: MockClient((req) async {
+          return http.Response(
+            '{"providers": {"minimax": {"contextWindows": '
+            '{"MiniMax-M3": 1000000, "MiniMax-M2": 204800}}}}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      setRemoteCatalogEnrichmentForTesting(enrichment);
+
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+      cli.buildModelMenuForTest('');
+      expect(
+        cli.crossProviderCandidatesForTest('').where((c) => c.$1 == 'minimax'),
+        isEmpty,
+      );
+      expect(
+        cli.buildModelMenuForTest('').map((i) => i.key),
+        isNot(contains('@minimax')),
+      );
+
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test(
+      'picking an env-keyed provider model switches to its endpoint',
+      () async {
+        // `minimax|MiniMax-M3` must land on the minimax CATALOG endpoint
+        // (key resolved env-first), not rebuild the model on the current
+        // provider's endpoint.
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(
+          fake.call,
+          envVarValue: (name) => name == 'MINIMAX_API_KEY' ? 'mm-key' : null,
+          modelsFetcher: (baseUrl, {required apiKey}) async => const [
+            'MiniMax-M3',
+          ],
+        );
+        final run = cli.run();
+        await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+        cli.buildModelMenuForTest('');
+        await waitForIt(
+          () => cli
+              .crossProviderCandidatesForTest('')
+              .any((c) => c.$1 == 'minimax'),
+        );
+
+        await cli.tuiSelectModelForTest('minimax|MiniMax-M3');
+
+        expect(cli.agent.state.model.provider, 'minimax');
+        expect(io.out.toString(), contains('switched provider to minimax'));
+        expect(
+          io.out.toString(),
+          contains('endpoint: https://api.minimax.io/v1'),
+        );
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+
+    test('a failing /models fetch still lists the provider with the '
+        'catalog seeds', () async {
+      // Dead endpoint: the remote-catalog seed list (plus the catalog's
+      // default model id) keeps the provider in the picker instead of
+      // dropping it.
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final enrichment = RemoteCatalogEnrichment();
+      await enrichment.preload(
+        client: MockClient((req) async {
+          return http.Response(
+            '{"providers": {"minimax": {"contextWindows": '
+            '{"MiniMax-M3": 1000000, "MiniMax-M2.7": 204800}}}}',
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+      setRemoteCatalogEnrichmentForTesting(enrichment);
+
+      var fetches = 0;
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (name) => name == 'MINIMAX_API_KEY' ? 'mm-key' : null,
+        modelsFetcher: (baseUrl, {required apiKey}) async {
+          fetches++;
+          throw Exception('minimax /models is down');
+        },
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+      cli.buildModelMenuForTest('');
+      await waitForIt(() => fetches == 1, reason: 'the realtime fetch ran');
+      final minimaxIds = cli
+          .crossProviderCandidatesForTest('')
+          .where((c) {
+            return c.$1 == 'minimax';
+          })
+          .map((c) => c.$2)
+          .toList();
+      expect(minimaxIds, containsAll(['MiniMax-M3', 'MiniMax-M2.7']));
+
+      io.sendLine('/exit');
+      await run;
+    });
+  });
 }
