@@ -527,9 +527,14 @@ Duration get effectiveProviderStreamIdleTimeout =>
 /// Wires an SSE [StreamIterator] over [response]'s body, cancelling the
 /// subscription when [cancelToken] fires so the connection closes promptly.
 ///
-/// The byte stream carries an idle watchdog ([providerStreamIdleTimeout],
+/// The iterator carries an idle watchdog ([providerStreamIdleTimeout],
 /// overridable in tests): a connected-but-silent endpoint raises a
-/// [TimeoutException] the adapters surface as an error event.
+/// [TimeoutException] the adapters surface as an error event. The timer
+/// wraps each `moveNext` — NOT `Stream.timeout`: a `Stream.timeout` chained
+/// after an `async*` transformer ([SseDecoder]) never fires (the generator
+/// holds the subscription), and a byte-level timer resets on the
+/// `: comment` heartbeat gateways use to keep wedged generations alive.
+/// Event-level silence per `moveNext` is the honest signal.
 ///
 /// Cancellation through the `async*` [SseDecoder] is lazy: the cancel future
 /// only completes once the generator body resumes, so the response-body
@@ -545,16 +550,7 @@ StreamIterator<ServerSentEvent> createSseIterator(
 }) {
   final effectiveIdleTimeout =
       idleTimeout ?? effectiveProviderStreamIdleTimeout;
-  Stream<List<int>> stream = response.stream.timeout(
-    effectiveIdleTimeout,
-    onTimeout: (sink) => sink.addError(
-      TimeoutException(
-        'no bytes from the endpoint for '
-        '${effectiveIdleTimeout.inSeconds}s (stream idle timeout)',
-        effectiveIdleTimeout,
-      ),
-    ),
-  );
+  Stream<List<int>> stream = response.stream;
   if (cancelToken != null) {
     stream = stream.handleError((Object error) {
       if (!cancelToken.isCancelled) {
@@ -562,13 +558,66 @@ StreamIterator<ServerSentEvent> createSseIterator(
       }
     });
   }
-  final iterator = StreamIterator(
+  final inner = StreamIterator(
     stream.transform(utf8.decoder).transform(const SseDecoder()),
   );
+  final iterator = _IdleWatchdogSseIterator(inner, effectiveIdleTimeout);
   if (cancelToken != null) {
     unawaited(cancelToken.onCancel.then((_) => unawaited(iterator.cancel())));
   }
   return iterator;
+}
+
+/// [StreamIterator] wrapper that fails `moveNext` with a [TimeoutException]
+/// after [idleTimeout] without a decoded SSE event, and cancels the inner
+/// subscription on fire so the dead connection is released.
+class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
+  _IdleWatchdogSseIterator(this._inner, this._idleTimeout);
+
+  final StreamIterator<ServerSentEvent> _inner;
+  final Duration _idleTimeout;
+  Timer? _timer;
+
+  @override
+  ServerSentEvent get current => _inner.current;
+
+  @override
+  Future<bool> moveNext() {
+    _timer?.cancel();
+    final completer = Completer<bool>();
+    _timer = Timer(_idleTimeout, () {
+      if (completer.isCompleted) return;
+      unawaited(_inner.cancel());
+      completer.completeError(
+        TimeoutException(
+          'no events from the endpoint for '
+          '${_idleTimeout.inSeconds}s (stream idle timeout)',
+          _idleTimeout,
+        ),
+      );
+    });
+    unawaited(
+      _inner.moveNext().then(
+        (value) {
+          _timer?.cancel();
+          if (!completer.isCompleted) completer.complete(value);
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          _timer?.cancel();
+          if (!completer.isCompleted) {
+            completer.completeError(error, stackTrace);
+          }
+        },
+      ),
+    );
+    return completer.future;
+  }
+
+  @override
+  Future<void> cancel() {
+    _timer?.cancel();
+    return _inner.cancel();
+  }
 }
 
 /// Mutable accumulation state for one streamed assistant message.

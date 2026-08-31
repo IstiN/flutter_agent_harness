@@ -786,6 +786,26 @@ extension ApprovalCommands on AgentCli {
   }
 
   Future<void> _onAgentEvent(AgentEvent event, CancelToken cancelToken) async {
+    // Run-lifecycle forensics to fa.log: one line per phase transition, so
+    // a wedged "Working…"/"Compacting…" row can be attributed to the exact
+    // phase (provider turn vs named tool vs run) that never finished.
+    switch (event) {
+      case AgentStartEvent():
+        _logDiagnostic('run start sid=$_logSid');
+      case TurnStartEvent():
+        _logDiagnostic('turn start sid=$_logSid');
+      case ToolExecutionStartEvent(:final toolName):
+        _logDiagnostic('tool start sid=$_logSid name=$toolName');
+      case ToolExecutionEndEvent(:final toolName, :final isError):
+        _logDiagnostic('tool end sid=$_logSid name=$toolName error=$isError');
+      case TurnEndEvent(:final message):
+        _logDiagnostic(
+          'turn end sid=$_logSid stop=${message.stopReason.name}',
+        );
+      case AgentEndEvent():
+        _logDiagnostic('run end sid=$_logSid');
+      default:
+    }
     await _persistIncremental(event);
     handleAgentEvent(
       event,

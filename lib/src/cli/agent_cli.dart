@@ -358,6 +358,10 @@ class AgentCli {
       // The CLI handles empty-response retries itself with a 'continue' nudge
       // so the transcript reflects the retry explicitly.
       maxEmptyRetries: 0,
+      // Post-mortem "who held the busy row": the run idle watchdog's fire
+      // lands in fa.log with the session id.
+      onRunIdleTimeout: (error) =>
+          _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
@@ -2191,6 +2195,7 @@ class AgentCli {
       return;
     }
     _tuiController?.setBusyPhase('Compacting context…');
+    _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
     await _runAutoCompact('[auto-compacted]');
     // Hand the busy row back to the run: a stale 'Compacting context…'
     // over the streamed turn reads as a compaction hang.
@@ -2278,6 +2283,15 @@ class AgentCli {
     final path = _diagnosticLogPath;
     if (path == null) return;
     unawaited(_appendDiagnosticLog(path, message));
+  }
+
+  /// Short session id for diagnostic log lines: parallel fa processes share
+  /// one fa.log, so every lifecycle line names its session (post-mortem
+  /// "who held the busy row" starts here).
+  String get _logSid {
+    final id = _session?.cachedId;
+    if (id == null || id.isEmpty) return '-';
+    return id.length <= 8 ? id : id.substring(0, 8);
   }
 
   /// Appends one timestamped [message] to [path], creating the log directory

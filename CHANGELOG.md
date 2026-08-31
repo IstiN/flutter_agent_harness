@@ -1844,6 +1844,29 @@
 - feat(app): the sidebar shows the CLI-written session_info names
 - fix(app): reset/remove/install refresh the grid + sane dialog width
 
+## 0.1.254
+
+- **Wedged "Working…"/"Compacting…" turns now abort instead of hanging
+  forever.** Two layered fixes after three live sessions (working,
+  compacting, post-compact) pinned the busy row for 30-60 minutes with no
+  recovery:
+  - The SSE idle watchdog moved from the raw byte stream to a per-`moveNext`
+    timer on decoded events: gateways keep dead generations alive with
+    `: comment` heartbeat bytes, and the byte-level timer reset on every
+    heartbeat — event-level silence is the honest signal. (`Stream.timeout`
+    after the `async*` SseDecoder never fires at all — a Dart quirk this
+    sidesteps entirely.)
+  - New `Agent.runIdleTimeout` backstop (default 8 min, `Duration.zero`
+    disables, `onRunIdleTimeout` callback): a run with no events outside
+    tool execution is cancelled with a `TimeoutException` reason and ends
+    as `aborted`. Streaming deltas re-arm, tool phases disarm — a long
+    legitimate test gate never trips it.
+- **Run-lifecycle forensics in `~/.fah/logs/fa.log`**: one line per phase
+  transition (`run/turn/tool start|end`, `auto-compact start`, watchdog
+  fires), each tagged with the short session id — a wedged busy row can
+  now be attributed to the exact phase (provider turn vs named tool vs
+  compaction) that never finished, across parallel fa processes.
+
 ## 0.1.253
 
 - fix(cli): the busy row stops lying about compaction hangs
