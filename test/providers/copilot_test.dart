@@ -123,6 +123,10 @@ final class FakeCopilotBackend {
   /// Non-200 exchange status (e.g. 401 = dead GitHub token).
   int exchangeStatus;
 
+  /// Custom token strings per exchange call (default `cop-<n>`) — the
+  /// proxy-ep derivation tests embed the tenant host here.
+  String Function(int exchangeCalls)? tokenFactory;
+
   /// Returns the response for a chat-completions POST.
   Future<http.StreamedResponse> Function(http.BaseRequest request)? chatHandler;
 
@@ -146,7 +150,7 @@ final class FakeCopilotBackend {
         Stream.value(
           utf8.encode(
             exchangeJson(
-              token: 'cop-$exchangeCalls',
+              token: tokenFactory?.call(exchangeCalls) ?? 'cop-$exchangeCalls',
               expiresAt:
                   expiresAt ?? _baseNow.millisecondsSinceEpoch ~/ 1000 + 1800,
             ),
@@ -205,7 +209,7 @@ void main() {
           request.url,
           Uri.parse('https://api.github.com/copilot_internal/v2/token'),
         );
-        expect(hdr(request, 'authorization'), 'token gh-1');
+        expect(hdr(request, 'authorization'), 'Bearer gh-1');
         expect(hdr(request, 'accept'), 'application/json');
         expect(hdr(request, 'editor-version'), 'vscode/1.109.3');
         expect(hdr(request, 'editor-plugin-version'), 'copilot-chat/0.37.6');
@@ -610,7 +614,10 @@ void main() {
       if (request.url.host == 'api.github.com') {
         backend.exchangeCalls++;
         return http.Response(
-          exchangeJson(token: 'cop-1', expiresAt: 1900000000),
+          exchangeJson(
+            token: backend.tokenFactory?.call(1) ?? 'cop-1',
+            expiresAt: 1900000000,
+          ),
           200,
         );
       }
@@ -742,6 +749,115 @@ void main() {
       expect(catalogProvider('copilot'), isNotNull);
       providerFilterEnvOverride = 'dial';
       expect(catalogProvider('copilot'), isNull);
+    });
+  });
+
+  group('copilotApiBaseUrlFromToken', () {
+    test('parses proxy-ep into the tenant API host', () {
+      expect(
+        copilotApiBaseUrlFromToken(
+          'tid=abc;exp=1900000000;proxy-ep=proxy.tenant-x.githubcopilot.com;sku=enterprise',
+        ),
+        'https://api.tenant-x.githubcopilot.com',
+      );
+      expect(
+        copilotApiBaseUrlFromToken('proxy-ep=proxy.business.githubcopilot.com'),
+        'https://api.business.githubcopilot.com',
+      );
+    });
+
+    test('returns null without a proxy-ep field', () {
+      expect(copilotApiBaseUrlFromToken('cop-1'), isNull);
+      expect(copilotApiBaseUrlFromToken(''), isNull);
+    });
+  });
+
+  group('token-derived tenant host (proxy-ep)', () {
+    test('the chat POST follows the token proxy-ep host', () async {
+      final backend = FakeCopilotBackend(
+        chatHandler: (request) async => sseResponse(chatSse() + _doneChunk),
+      );
+      backend.tokenFactory = (n) =>
+          'tid=t;exp=1900000000;proxy-ep=proxy.tenant-x.githubcopilot.com';
+
+      final message = await streamCopilot(
+        copilotModel,
+        simpleContext(),
+        const CopilotOptions(githubToken: 'gh-tenant-x'),
+        backend.client(),
+      ).result;
+
+      expect(message.stopReason, StopReason.stop);
+      expect(backend.chatRequests, hasLength(1));
+      expect(
+        backend.chatRequests.single.url,
+        Uri.parse(
+          'https://api.tenant-x.githubcopilot.com/chat/completions',
+        ),
+        reason: 'the token names the tenant host, not the tier picker',
+      );
+    });
+
+    test('a proxy-ep-less token keeps the configured base URL', () async {
+      final backend = FakeCopilotBackend(
+        chatHandler: (request) async => sseResponse(chatSse() + _doneChunk),
+      );
+
+      final message = await streamCopilot(
+        copilotModel,
+        simpleContext(),
+        const CopilotOptions(githubToken: 'gh-plain'),
+        backend.client(),
+      ).result;
+
+      expect(message.stopReason, StopReason.stop);
+      expect(backend.chatRequests.single.url.host, 'api.githubcopilot.com');
+    });
+
+    test('/models follows the token proxy-ep host', () async {
+      http.BaseRequest? modelsRequest;
+      final client = http_testing.MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          return http.Response(
+            exchangeJson(
+              token: 'proxy-ep=proxy.tenant-y.githubcopilot.com;exp=1900000000',
+              expiresAt: 1900000000,
+            ),
+            200,
+          );
+        }
+        modelsRequest = request;
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {
+                'id': 'gpt-4.1',
+                'capabilities': {
+                  'limits': {
+                    'max_context_window_tokens': 1000000,
+                    'max_output_tokens': 32768,
+                  },
+                },
+              },
+            ],
+          }),
+          200,
+        );
+      });
+
+      final (ids, _, _) = await fetchModelsForEndpoint(
+        'https://api.enterprise.githubcopilot.com',
+        apiKey: 'gh-1',
+        provider: 'copilot',
+        client: client,
+      );
+
+      expect(ids, ['gpt-4.1']);
+      expect(
+        modelsRequest!.url,
+        Uri.parse('https://api.tenant-y.githubcopilot.com/models'),
+        reason: 'the configured enterprise tier host is only the fallback',
+      );
     });
   });
 }

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.262
+
+- fix(providers): GitHub Copilot enterprise sign-in actually connects —
+  the token exchange sent the legacy `Authorization: token <githubToken>`
+  scheme, which `api.github.com/copilot_internal/v2/token` rejects with a
+  bare 401 for enterprise-managed (EMU) accounts; pi's actively maintained
+  `oauth/github-copilot.ts` uses `Bearer` for the exchange, and so do we
+  now (OAuth device tokens are `gho_`/`ghu_` Bearer credentials). The
+  account-type picker hardcoding also bit: an enterprise tenant's real API
+  host lives INSIDE the exchanged token (`proxy-ep=proxy.<tenant>.github
+  copilot.com`), so both the chat path and the `/models` listing now
+  derive the tenant host from the token (pi `getGitHubCopilotBaseUrl`
+  parity) and the picked tier host is only the fallback. The app gets the
+  fix for free through the shared core exchange.
+
 ## 0.1.261
 
 - feat(providers): transient network retry on every provider call — a

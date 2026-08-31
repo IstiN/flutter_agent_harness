@@ -87,6 +87,23 @@ final class CopilotApiToken {
   final int refreshIn;
 }
 
+/// The Copilot API base URL carried INSIDE the token, if any
+/// (pi `getBaseUrlFromToken` parity): Copilot tokens embed
+/// `proxy-ep=proxy.<tenant>.githubcopilot.com` (individual/business/
+/// enterprise tenants, incl. dedicated enterprise endpoints); the API
+/// host is the proxy host with the `proxy.` prefix swapped for `api.`.
+/// Null when the token carries no proxy-ep (older/individual tokens —
+/// the caller keeps the configured base URL).
+String? copilotApiBaseUrlFromToken(String token) {
+  final match = RegExp(r'proxy-ep=([^;]+)').firstMatch(token);
+  if (match == null) return null;
+  final proxyHost = match.group(1)!;
+  final apiHost = proxyHost.startsWith('proxy.')
+      ? 'api.${proxyHost.substring('proxy.'.length)}'
+      : proxyHost;
+  return 'https://$apiHost';
+}
+
 /// Exchanges a GitHub token for a Copilot API token (goal:
 /// copilot-proxy-go internal/auth/github_client.go).
 ///
@@ -102,7 +119,11 @@ Future<CopilotApiToken> fetchCopilotApiToken({
       .get(
         Uri.parse(copilotTokenExchangeUrl),
         headers: {
-          'authorization': 'token $githubToken',
+          // Bearer, not the legacy `token` scheme (pi oauth/github-copilot.ts
+          // parity): device-flow OAuth tokens (gho_/ghu_) are Bearer
+          // credentials, and the exchange 401s enterprise-managed (EMU)
+          // accounts on the legacy scheme.
+          'authorization': 'Bearer $githubToken',
           'accept': 'application/json',
           'editor-version': _copilotEditorVersion,
           'editor-plugin-version': _copilotPluginVersion,

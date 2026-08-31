@@ -279,7 +279,12 @@ final class _CopilotDialect extends ModelListDialect {
         githubToken: apiKey,
         client: gClient,
       );
-      final uri = Uri.parse('${baseUrl.replaceAll(RegExp(r'/+$'), '')}/models');
+      // Same proxy-ep derivation as the chat path: the token names the
+      // tenant's API host; the configured tier host is only the fallback.
+      final effectiveBase =
+          (copilotApiBaseUrlFromToken(apiToken.token) ?? baseUrl)
+              .replaceAll(RegExp(r'/+$'), '');
+      final uri = Uri.parse('$effectiveBase/models');
       final response = await gClient
           .get(uri, headers: copilotApiHeaders(copilotToken: apiToken.token))
           .timeout(const Duration(seconds: 15));
