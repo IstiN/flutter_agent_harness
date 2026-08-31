@@ -5,11 +5,56 @@ import 'package:archive/archive.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/flutter_session_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+StreamFunction _singleTextResponse(String text) {
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final message = AssistantMessage(
+      content: [TextContent(text: text)],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.now(),
+    );
+    stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    return stream;
+  };
+}
+
+AgentService _fakeService(ExecutionEnv env) {
+  return AgentService(
+    agent: Agent(
+      model: Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test',
+        baseUrl: 'https://example.com',
+        contextWindow: 100000,
+        maxTokens: 4096,
+      ),
+      systemPrompt: 'You are Fa.',
+      streamFunction: _singleTextResponse('ok'),
+      toolRegistry: ToolRegistry(const []),
+    ),
+    env: env,
+    sessionsRoot: '/sessions',
+    config: AgentConfig(
+      providerKind: 'test',
+      modelId: 'test-model',
+      baseUrl: 'https://example.com',
+      apiKey: '',
+    ),
+  );
+}
 
 Uint8List zipOf(String id) {
   final archive = Archive();
@@ -53,10 +98,51 @@ http.Client okServer({List<String>? platforms}) => MockClient((req) async {
   return http.Response('nf', 404);
 });
 
+/// Two widgets with DIFFERENT topic tags — drives the category-filter
+/// chip row tests.
+http.Client twoWidgetServer() => MockClient((req) async {
+  final name = req.url.pathSegments.last;
+  if (name == 'catalog.json') {
+    return http.Response(
+      jsonEncode({
+        'widgets': [
+          {
+            'id': 'focus-timer',
+            'name': 'Focus Timer',
+            'version': '1.0.0',
+            'description': 'Pomodoro timer',
+            'tags': ['timer'],
+            'permissions': {'network': false, 'allowedCommands': []},
+            'zip': {'file': 'focus-timer-1.0.0.zip'},
+          },
+          {
+            'id': 'unit-converter',
+            'name': 'Unit Converter',
+            'version': '0.9.1',
+            'description': 'Length, mass, temperature',
+            'tags': ['tools'],
+            'permissions': {'network': false, 'allowedCommands': []},
+            'zip': {'file': 'unit-converter-0.9.1.zip'},
+          },
+        ],
+      }),
+      200,
+    );
+  }
+  if (name == 'focus-timer-1.0.0.zip') {
+    return http.Response.bytes(zipOf('focus-timer'), 200);
+  }
+  if (name == 'unit-converter-0.9.1.zip') {
+    return http.Response.bytes(zipOf('unit-converter'), 200);
+  }
+  return http.Response('nf', 404);
+});
+
 Future<void> pumpSheet(
   WidgetTester tester, {
   required MemoryExecutionEnv env,
   http.Client? client,
+  FlutterSessionManager? manager,
   Future<void> Function(BuildContext, JsAppInfo)? onOpenApp,
 }) async {
   await tester.pumpWidget(
@@ -67,6 +153,7 @@ Future<void> pumpSheet(
           height: 700,
           child: WidgetsCatalogSheet(
             env: env,
+            manager: manager,
             httpClient: client,
             onOpenApp: onOpenApp,
           ),
@@ -95,8 +182,9 @@ void main() {
       env: env,
       client: okServer(platforms: ['ios', 'macos']),
     );
-    // Topic tags still show alongside the platform chips.
-    expect(find.text('timer'), findsOneWidget);
+    // Topic tags still show alongside the platform chips (the filter row
+    // uses FilterChips, so scoping to Chip hits only the tile's tag).
+    expect(find.widgetWithText(Chip, 'timer'), findsOneWidget);
     expect(find.text('ios'), findsOneWidget);
     expect(find.text('macos'), findsOneWidget);
     // Platform chips are visually distinguished by a tertiary border.
@@ -112,7 +200,7 @@ void main() {
   ) async {
     final env = MemoryExecutionEnv();
     await pumpSheet(tester, env: env, client: okServer());
-    expect(find.text('timer'), findsOneWidget);
+    expect(find.widgetWithText(Chip, 'timer'), findsOneWidget);
     expect(find.text('ios'), findsNothing);
     expect(find.text('macos'), findsNothing);
   });
@@ -162,7 +250,7 @@ void main() {
       client: okServer(),
       onOpenApp: (context, app) async => opened.add(app.id),
     );
-    await tester.tap(find.widgetWithText(TextButton, 'Preview'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Preview'));
     await tester.pumpAndSettle();
 
     expect(
@@ -191,8 +279,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // Installed & current: Open + Remove, no Preview.
-    expect(find.widgetWithText(TextButton, 'Preview'), findsNothing);
-    final remove = find.widgetWithText(TextButton, 'Remove');
+    expect(find.widgetWithText(OutlinedButton, 'Preview'), findsNothing);
+    final remove = find.widgetWithText(OutlinedButton, 'Remove');
     expect(remove, findsOneWidget);
 
     await tester.tap(remove);
@@ -202,7 +290,7 @@ void main() {
       isNull,
     );
     expect(find.widgetWithText(FilledButton, 'Install'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, 'Preview'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Preview'), findsOneWidget);
   });
 
   testWidgets('local apps missing from the catalog list as Created by me', (
@@ -220,6 +308,59 @@ void main() {
     expect(find.text('My Tool'), findsOneWidget);
     // The catalog entry itself is still listed below the section.
     expect(find.textContaining('Focus Timer'), findsWidgets);
+  });
+
+  testWidgets('install bumps the active service fsRevision (grid refresh)', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('s', _fakeService(env));
+    final fsRevision = manager.active!.service.fsRevision;
+    final before = fsRevision.value;
+    await pumpSheet(tester, env: env, client: okServer(), manager: manager);
+    await tester.tap(find.widgetWithText(FilledButton, 'Install'));
+    await tester.pumpAndSettle();
+    expect(fsRevision.value, greaterThan(before));
+  });
+
+  testWidgets('remove bumps the active service fsRevision (grid refresh)', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('s', _fakeService(env));
+    final fsRevision = manager.active!.service.fsRevision;
+    await pumpSheet(tester, env: env, client: okServer(), manager: manager);
+    await tester.tap(find.widgetWithText(FilledButton, 'Install'));
+    await tester.pumpAndSettle();
+    final before = fsRevision.value;
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Remove'));
+    await tester.pumpAndSettle();
+    expect(fsRevision.value, greaterThan(before));
+  });
+
+  testWidgets('the category chips filter the catalog list', (tester) async {
+    final env = MemoryExecutionEnv();
+    await pumpSheet(tester, env: env, client: twoWidgetServer());
+    // Tile titles render as '<name>  ·  v<version>' — textContaining.
+    expect(find.textContaining('Focus Timer'), findsOneWidget);
+    expect(find.textContaining('Unit Converter'), findsOneWidget);
+    // The chip row offers All + every tag.
+    expect(find.widgetWithText(FilterChip, 'All'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'timer'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'tools'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilterChip, 'tools'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Focus Timer'), findsNothing);
+    expect(find.textContaining('Unit Converter'), findsOneWidget);
+
+    // Back to everything.
+    await tester.tap(find.widgetWithText(FilterChip, 'All'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Focus Timer'), findsOneWidget);
+    expect(find.textContaining('Unit Converter'), findsOneWidget);
   });
 
   testWidgets('stale catalog shows the offline banner with retry', (

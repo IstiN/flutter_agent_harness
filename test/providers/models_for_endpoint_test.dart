@@ -61,24 +61,111 @@ void main() {
     );
 
     test(
-      'chatgpt-codex hint: returns the bundled Codex catalog without hitting /models',
+      'chatgpt: live /models with OAuth-blob credentials, known ids enriched',
       () async {
-        // The Codex backend has no public /models endpoint; the picker
-        // must serve the bundled list (mirrors codex-rs/models-manager/
-        // models.json) so users always have something to pick from.
+        http.Request? seen;
         final client = http_testing.MockClient((request) async {
-          fail('chatgpt-codex must NOT issue an HTTP /models probe');
+          seen = request;
+          return http.Response(
+            '{"data":[{"id":"gpt-5.6-sol"},{"id":"brand-new-model"}]}',
+            200,
+          );
         });
+        final blob = const ChatGptOAuthCredentials(
+          accessToken: 'at-1',
+          refreshToken: 'rt-1',
+          idToken: 'it-1',
+          accountId: 'acc-1',
+        ).encode();
         final (ids, windows, caps) = await fetchModelsForEndpoint(
+          'https://chatgpt.com/backend-api/codex',
+          apiKey: blob,
+          provider: 'chatgpt',
+          client: client,
+        );
+        expect(
+          seen!.url.toString(),
+          'https://chatgpt.com/backend-api/codex/models',
+        );
+        expect(seen!.headers['authorization'], 'Bearer at-1');
+        expect(seen!.headers['ChatGPT-Account-ID'], 'acc-1');
+        expect(seen!.headers['originator'], 'codex_cli_rs');
+        expect(seen!.headers['session-id'], isNotEmpty);
+        expect(
+          seen!.headers['thread-id'],
+          seen!.headers['x-client-request-id'],
+        );
+        expect(seen!.headers['accept'], 'application/json');
+        expect(ids, ['brand-new-model', 'gpt-5.6-sol']);
+        expect(windows['gpt-5.6-sol'], 272000);
+        expect(windows['brand-new-model'], isNull);
+        expect(caps['gpt-5.6-sol'], 16384);
+      },
+    );
+
+    test(
+      'chatgpt by URL alone: a 401 probe answers the bundled Codex catalog',
+      () async {
+        final client = http_testing.MockClient(
+          (request) async => http.Response('unauthorized', 401),
+        );
+        final (ids, windows, _) = await fetchModelsForEndpoint(
+          'https://chatgpt.com/backend-api/codex',
+          apiKey: 'irrelevant',
+          client: client,
+        );
+        expect(ids, containsAll(chatGptCodexModels));
+        expect(ids.first, 'gpt-5.6-sol');
+        expect(windows[ids.first], 272000);
+      },
+    );
+
+    test(
+      'chatgpt: a malformed /models body answers the bundled catalog',
+      () async {
+        final client = http_testing.MockClient(
+          (request) async => http.Response('<html>challenge</html>', 200),
+        );
+        final (ids, _, _) = await fetchModelsForEndpoint(
           'https://chatgpt.com/backend-api/codex',
           apiKey: 'irrelevant',
           provider: 'chatgpt-codex',
           client: client,
         );
         expect(ids, containsAll(chatGptCodexModels));
-        expect(ids.first, 'gpt-5.6-sol');
-        expect(windows[ids.first], 272000);
-        expect(caps[ids.first], 16384);
+      },
+    );
+
+    test('chatgpt: an empty data list answers the bundled catalog', () async {
+      final client = http_testing.MockClient(
+        (request) async => http.Response('{"data":[]}', 200),
+      );
+      final (ids, _, _) = await fetchModelsForEndpoint(
+        'https://chatgpt.com/backend-api/codex',
+        apiKey: 'irrelevant',
+        provider: 'chatgpt',
+        client: client,
+      );
+      expect(ids, containsAll(chatGptCodexModels));
+    });
+
+    test(
+      'chatgpt: a raw non-blob key rides as the bearer, bundled on empty',
+      () async {
+        http.Request? seen;
+        final client = http_testing.MockClient((request) async {
+          seen = request;
+          return http.Response('{"data":[]}', 200);
+        });
+        final (ids, _, _) = await fetchModelsForEndpoint(
+          'https://chatgpt.com/backend-api/codex',
+          apiKey: 'raw-token',
+          provider: 'chatgpt',
+          client: client,
+        );
+        expect(seen!.headers['authorization'], 'Bearer raw-token');
+        expect(seen!.headers['ChatGPT-Account-ID'], isNull);
+        expect(ids, containsAll(chatGptCodexModels));
       },
     );
 

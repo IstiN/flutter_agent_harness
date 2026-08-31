@@ -139,6 +139,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get widgetsCatalogFilterAll => 'All';
+
+  @override
   String get widgetsCatalogRetry => 'Retry';
 
   @override
@@ -659,6 +662,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherFolderNameHint => 'Folder name';
 
   @override
+  String get launcherOpenApp => 'Open';
+
+  @override
   String launcherOpenAppError(Object error) {
     return 'Could not open the app: $error';
   }
@@ -703,11 +709,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsResetAppsConfirmBody =>
-      'This deletes EVERY widget you downloaded from the catalog or created here, together with ALL its data (saved state, settings, storage). Bundled demo apps are restored to the reference version. This cannot be undone.';
+      'This deletes EVERY widget you downloaded from the catalog or created here, together with ALL its data (saved state, settings, storage). The apps grid returns to a clean slate — re-download anything from Get widgets. This cannot be undone.';
 
   @override
   String settingsResetAppsDone(int count) {
-    return 'Apps reset — $count widget(s) removed, demos restored';
+    return 'Apps reset — $count widget(s) removed';
   }
 
   @override
@@ -1234,6 +1240,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsThemeLabel => 'Theme';
+
+  @override
+  String get settingsChatTextLabel => 'Chat text size';
 
   @override
   String get settingsThemeLight => 'Light';

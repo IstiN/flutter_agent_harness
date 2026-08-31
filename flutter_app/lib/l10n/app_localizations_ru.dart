@@ -141,6 +141,9 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get widgetsCatalogFilterAll => 'Все';
+
+  @override
   String get widgetsCatalogRetry => 'Повторить';
 
   @override
@@ -665,6 +668,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherFolderNameHint => 'Название папки';
 
   @override
+  String get launcherOpenApp => 'Открыть';
+
+  @override
   String launcherOpenAppError(Object error) {
     return 'Не удалось открыть приложение: $error';
   }
@@ -709,11 +715,11 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsResetAppsConfirmBody =>
-      'Будут удалены ВСЕ виджеты, которые вы скачали из каталога или создали, вместе со ВСЕМИ их данными (сохранённое состояние, настройки, хранилище). Встроенные демо-приложения вернутся к эталонной версии. Действие необратимо.';
+      'Будут удалены ВСЕ виджеты, которые вы скачали из каталога или создали, вместе со ВСЕМИ их данными (сохранённое состояние, настройки, хранилище). Сетка приложений станет пустой — скачать заново можно во вкладке Get widgets. Действие необратимо.';
 
   @override
   String settingsResetAppsDone(int count) {
-    return 'Приложения сброшены — удалено виджетов: $count, демо восстановлены';
+    return 'Приложения сброшены — удалено виджетов: $count';
   }
 
   @override
@@ -1245,6 +1251,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsThemeLabel => 'Тема';
+
+  @override
+  String get settingsChatTextLabel => 'Размер текста в чате';
 
   @override
   String get settingsThemeLight => 'Светлая';

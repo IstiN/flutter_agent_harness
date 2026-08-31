@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
@@ -310,6 +311,7 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
       message: m,
       images: _images,
       compact: true,
+      messageFontSize: ChatTextScope.maybeOf(context)?.fontSize,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
     );

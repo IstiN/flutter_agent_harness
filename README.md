@@ -85,6 +85,13 @@ Flags: `--model <id>`, `--provider openai-completions|anthropic|google`,
 `--base-url <url>`, `--cwd <dir>`, `--session-root <dir>`, `-p`/`--prompt
 <text>`, `--help`, `--version`.
 
+The `chatgpt` provider (Codex backend) is also available: sign in with a
+ChatGPT account via `/provider chatgpt oauth` in the REPL (OAuth-only —
+there is no headless `--provider chatgpt` flag). Several ChatGPT accounts
+can coexist: the flow offers the saved accounts first, each account keeps
+its own named entry and secure-store slot, and re-auth never touches a
+sibling account's credentials.
+
 GitHub Copilot is a first-class provider. `/provider copilot` connects a
 GitHub account via the device-code flow (open the shown
 `verification_uri`, enter the `user_code`) or by pasting an existing PAT

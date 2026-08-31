@@ -12,6 +12,7 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/viewport_reporter.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_theme.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -32,10 +33,14 @@ typedef TileEngineFactory =
 /// [JsTileWidgetInfo]) in its own [JsAppEngine] and renders the resulting
 /// tree inside the home-grid cell instead of the static icon + label.
 ///
-/// v1 tiles are display-only: any UI event from the tile tree (a tap on any
-/// interactive node) opens the full app via [onOpen] — the same contract as
-/// iOS home-screen widgets. Long-press drag & drop keeps working because the
-/// launcher wraps the tile in its own `LongPressDraggable`.
+/// Tiles are display-only BY DEFAULT: any UI event from the tile tree (a
+/// tap on any interactive node) opens the full app via [onOpen] — the same
+/// contract as iOS home-screen widgets. A manifest opt-in
+/// (`"widget": {"interactive": true}`) instead routes UI events to the tile
+/// engine's `jsr.onEvent`, making the widget interactive right on the
+/// board; opening the full app then goes through the tile menu.
+/// Long-press drag & drop keeps working because the launcher wraps the tile
+/// in its own `LongPressDraggable`.
 ///
 /// The engine restarts on [fsRevision] bumps (600 ms debounce, same as
 /// [JsAppView]) so agent edits show up live, follows the host theme via
@@ -345,10 +350,23 @@ class _AppTileHostState extends State<AppTileHost> {
           // 3D scenes render in tiles too (display-only — no tap picking:
           // any tap opens the full app).
           js3dHost: createJs3dHost(),
-          // Display-only tile: any UI event opens the full app.
-          onEvent: (actionId, payload) => widget.onOpen(),
+          // Display-only tile (default): any UI event opens the full app.
+          // An interactive tile (`"widget": {"interactive": true}`) gets
+          // its taps routed to the tile engine's jsr.onEvent instead —
+          // the app opens via the tile menu (long-press / right-click).
+          onEvent: widget.app.tileWidget?.interactive == true
+              ? (actionId, payload) {
+                  unawaited(engine.callEvent(actionId, payload));
+                }
+              : (actionId, payload) => widget.onOpen(),
         );
-        return renderer.build(tree, context);
+        return ViewportReporter(
+          onSize: (size) => engine.dispatchHostEvent('viewport', {
+            'width': size.width,
+            'height': size.height,
+          }),
+          child: renderer.build(tree, context),
+        );
       },
     );
   }

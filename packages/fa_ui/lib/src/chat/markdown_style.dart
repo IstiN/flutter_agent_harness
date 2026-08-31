@@ -12,7 +12,25 @@ import '../theme/app_theme.dart';
 /// quotes — resolved per brightness, so the light theme gets the light
 /// palette. Used by the chat transcript and the file browser's Markdown
 /// preview so both render Markdown identically.
-MarkdownStyleSheet fahMarkdownStyleSheet(ThemeData theme) {
+///
+/// [fontSize] overrides the body size (the chat text-size setting); every
+/// style scales by the same factor so headings keep their proportions.
+/// Sizes are EXPLICIT, never inherited: the current Flutter ships M3 text
+/// themes with null fontSize (fromTheme's assert kills debug builds, and
+/// release silently collapsed headings to body size). Line height is
+/// pinned at 1.35 / 1.3 for headings — the M3 defaults (1.43–1.5) read as
+/// double-spaced in a dense chat transcript.
+MarkdownStyleSheet fahMarkdownStyleSheet(ThemeData theme, {double? fontSize}) {
+  const bodyHeight = 1.35;
+  const headingHeight = 1.3;
+  final body = fontSize ?? theme.textTheme.bodyMedium?.fontSize ?? 14.0;
+  final bodyStyle = (theme.textTheme.bodyMedium ?? const TextStyle())
+      .copyWith(fontSize: body, height: bodyHeight);
+  TextStyle heading(double factor, FontWeight weight) => bodyStyle.copyWith(
+    fontSize: body * factor,
+    fontWeight: weight,
+    height: headingHeight,
+  );
   final isLight = theme.brightness == Brightness.light;
   final teal = isLight ? FahLightPalette.teal : FahPalette.teal;
   final indigo = isLight ? FahLightPalette.indigo : FahPalette.indigo;
@@ -20,10 +38,25 @@ MarkdownStyleSheet fahMarkdownStyleSheet(ThemeData theme) {
   final border = isLight ? FahLightPalette.border : FahPalette.border;
   final codeBg = isLight ? FahLightPalette.codeBg : FahPalette.codeBg;
   final codeStyle = isLight ? FahLightPalette.mono() : FahPalette.mono();
-  return MarkdownStyleSheet.fromTheme(theme).copyWith(
-    p: theme.textTheme.bodyMedium,
-    a: TextStyle(color: teal),
-    code: codeStyle.copyWith(backgroundColor: codeBg),
+  // fromTheme asserts a non-null bodyMedium fontSize — hand it a theme
+  // whose bodyMedium is guaranteed resolved.
+  final safeTheme = theme.copyWith(
+    textTheme: theme.textTheme.copyWith(bodyMedium: bodyStyle),
+  );
+  return MarkdownStyleSheet.fromTheme(safeTheme).copyWith(
+    p: bodyStyle,
+    a: TextStyle(color: teal, fontSize: body, height: bodyHeight),
+    h1: heading(2.0, FontWeight.w700),
+    h2: heading(1.6, FontWeight.w700),
+    h3: heading(1.35, FontWeight.w600),
+    h4: heading(1.15, FontWeight.w600),
+    h5: heading(1.0, FontWeight.w600),
+    h6: heading(0.95, FontWeight.w500),
+    listBullet: bodyStyle,
+    code: codeStyle.copyWith(
+      fontSize: body * 0.92,
+      backgroundColor: codeBg,
+    ),
     codeblockDecoration: BoxDecoration(
       color: panelAlt,
       borderRadius: BorderRadius.circular(8),

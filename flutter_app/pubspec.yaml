@@ -42,7 +42,7 @@ dependencies:
   # Flutter UI (QuickJS via flutter_js on VM, web worker on web).
   # Back on hosted pub: 0.4.79 ships the queued-callEvent-after-dispose guard
   # (5c3a733) and the restart-safe bridge channels the git pin carried.
-  js_widget_runtime: ^0.4.79
+  js_widget_runtime: ^0.4.87
 
   # TileProvider type for injecting offline map tiles (tests, custom hosts).
   flutter_map: ^8.2.2
@@ -179,10 +179,6 @@ flutter:
 
   assets:
     - .env
-    - assets/apps/calculator/
-    - assets/apps/fitness-trainer/
-    - assets/apps/fitness-trainer/models/
-    - assets/apps/weather/
     - assets/skills/js-apps/SKILL.md
     - assets/wasm/add.wasm
     - assets/wasm/coreutils.wasm

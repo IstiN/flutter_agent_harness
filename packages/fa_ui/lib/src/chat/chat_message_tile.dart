@@ -52,6 +52,7 @@ class ChatMessageTile extends StatelessWidget {
     this.onPermissionAction,
     this.onAuthRecovery,
     this.compact = false,
+    this.messageFontSize,
   });
 
   /// The message to render (`user` / `assistant` / `thinking` / `tool` /
@@ -88,6 +89,10 @@ class ChatMessageTile extends StatelessWidget {
   /// pads the transcript list.
   final bool compact;
 
+  /// Chat text-size override (the app's chat text setting): forwarded to
+  /// [fahMarkdownStyleSheet]; null renders at the theme's body size.
+  final double? messageFontSize;
+
   @override
   Widget build(BuildContext context) {
     final tile = switch (message.role) {
@@ -120,7 +125,10 @@ class ChatMessageTile extends StatelessWidget {
     if (message.content.trim().isEmpty && !isUser) {
       return const SizedBox.shrink();
     }
-    final styleSheet = fahMarkdownStyleSheet(Theme.of(context));
+    final styleSheet = fahMarkdownStyleSheet(
+      Theme.of(context),
+      fontSize: messageFontSize,
+    );
     final palette = fahChatColorsOf(context);
     final border = Theme.of(context).dividerColor;
 

@@ -38,6 +38,7 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/services/task_models_store.dart';
+import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -248,6 +249,7 @@ class MyApp extends StatelessWidget {
     this.mediaModelsStore,
     this.taskModelsStore,
     this.onDeviceConfigStore,
+    this.chatTextStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -293,6 +295,10 @@ class MyApp extends StatelessWidget {
   /// The on-device engines the user configured (drives Providers rows); null
   /// skips the scope (tests).
   final OnDeviceConfigStore? onDeviceConfigStore;
+
+  /// The persisted chat text-size choice; `null` skips the scope (the
+  /// settings Chat text section hides, transcripts render at the default).
+  final ChatTextStore? chatTextStore;
 
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
@@ -381,6 +387,10 @@ class MyApp extends StatelessWidget {
     final taskModels = taskModelsStore;
     if (taskModels != null) {
       child = TaskModelsScope(store: taskModels, child: child);
+    }
+    final chatText = chatTextStore;
+    if (chatText != null) {
+      child = ChatTextScope(store: chatText, child: child);
     }
     return child;
   }

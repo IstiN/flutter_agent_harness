@@ -201,4 +201,29 @@ void main() {
       expect(memo.estimatorCalls, 1);
     });
   });
+
+  group('resetLoadedUsageAnchors', () {
+    test('zeroes assistant usage; user/tool messages pass through', () {
+      final stale = _assistant(
+        content: [TextContent(text: 'hi')],
+        usage: Usage.zero.copyWith(input: 183902, totalTokens: 183944),
+      );
+      final user = UserMessage.text('hello');
+      final reset = resetLoadedUsageAnchors([stale, user]);
+
+      final assistant = reset[0] as AssistantMessage;
+      expect(assistant.usage.totalTokens, 0);
+      expect(assistant.usage.input, 0);
+      // The message itself is preserved (same content), only the anchor
+      // goes — and non-assistant messages are the SAME instances.
+      expect((assistant.content.single as TextContent).text, 'hi');
+      expect(identical(reset[1], user), isTrue);
+    });
+
+    test('a zero anchor is left as the same instance (no copy churn)', () {
+      final fresh = _assistant(usage: Usage.zero);
+      final reset = resetLoadedUsageAnchors([fresh]);
+      expect(identical(reset[0], fresh), isTrue);
+    });
+  });
 }

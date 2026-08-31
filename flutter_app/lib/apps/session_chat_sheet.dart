@@ -13,6 +13,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/attached_session_controller.dart';
@@ -1230,6 +1231,7 @@ class _SessionTranscriptState extends State<_SessionTranscript>
               message: message,
               images: _images,
               compact: true,
+              messageFontSize: ChatTextScope.maybeOf(context)?.fontSize,
               audioControllerFactory: widget.audioControllerFactory,
               videoControllerFactory: widget.videoControllerFactory,
             );

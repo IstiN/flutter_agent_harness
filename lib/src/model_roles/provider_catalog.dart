@@ -71,9 +71,6 @@ final class ProviderSpec {
   final List<String> input;
 
   /// Whether this provider shows in the CLI/app provider pickers.
-  /// ChatGPT Codex is hidden until the WebSocket adapter ships —
-  /// plain HTTP /responses returns 404 from the Codex backend
-  /// (see docs/codex_websocket_adapter.md for the plan).
   final bool visible;
 }
 
@@ -124,10 +121,6 @@ const providerCatalog = <String, ProviderSpec>{
     apiKeyEnvNames: ['CHATGPT_OAUTH_CREDENTIALS'],
     contextWindow: 128000,
     maxTokens: 16384,
-    // Hidden from the picker until the Codex WebSocket adapter ships —
-    // plain HTTP POST returns 404 from the Codex backend (see
-    // docs/codex_websocket_adapter.md for the full plan).
-    visible: false,
   ),
 
   'copilot': ProviderSpec(
@@ -227,8 +220,7 @@ bool providerEnabledInBuild(String name) {
 
 /// The build-enabled subset of the catalog (insertion order preserved).
 /// Without `FA_PROVIDERS` this is the whole table; `visible: false`
-/// entries (ChatGPT Codex until its WebSocket adapter ships) are
-/// excluded regardless of the filter.
+/// entries are excluded regardless of the filter.
 List<ProviderSpec> enabledProviders() => [
   for (final spec in providerCatalog.values)
     if (spec.visible && providerEnabledInBuild(spec.name)) spec,

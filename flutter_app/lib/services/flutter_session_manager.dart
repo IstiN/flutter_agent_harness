@@ -142,6 +142,25 @@ final class FlutterSessionManager extends ChangeNotifier {
   FlutterManagedSession? get active =>
       _activeId == null ? null : _sessions[_activeId];
 
+  /// The `session_info` display names of [sessions], keyed by session id —
+  /// the names the CLI writes with `/rename` straight into the session
+  /// JSONL. Best-effort: a session that fails to open contributes no name
+  /// (its tile falls back to the derived title).
+  Future<Map<String, String>> readSessionNames(
+    List<SessionMetadata> sessions,
+  ) async {
+    final names = <String, String>{};
+    for (final metadata in sessions) {
+      try {
+        final name = await (await _repo.open(metadata)).getSessionName();
+        if (name != null) names[metadata.id] = name;
+      } on Object {
+        // Broken or foreign session file: skip, never break the sidebar.
+      }
+    }
+    return names;
+  }
+
   /// The active session id, if any.
   String? get activeId => _activeId;
 

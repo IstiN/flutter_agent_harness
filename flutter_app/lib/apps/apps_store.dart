@@ -198,6 +198,7 @@ class JsTileWidgetInfo {
     this.widthCells = defaultWidthCells,
     this.heightCells = defaultHeightCells,
     this.refreshSeconds,
+    this.interactive = false,
   });
 
   factory JsTileWidgetInfo.fromJson(Map<String, Object?> json) {
@@ -226,6 +227,7 @@ class JsTileWidgetInfo {
       widthCells: widthCells,
       heightCells: heightCells,
       refreshSeconds: refresh is num && refresh > 0 ? refresh.toInt() : null,
+      interactive: json['interactive'] == true,
     );
   }
 
@@ -248,6 +250,12 @@ class JsTileWidgetInfo {
 
   /// Tile JS entry file inside `apps/<id>/`.
   final String entry;
+
+  /// When true, UI events from the tile tree (button taps) are routed to
+  /// the tile engine's `jsr.onEvent` instead of opening the full app —
+  /// the widget is interactive right on the launcher board. Opening the
+  /// app stays available via the tile menu (long-press / right-click).
+  final bool interactive;
 
   /// Horizontal tile span in icon-slot cells
   /// ([minWidthCells]..[maxWidthCells]); unknown manifest values fall back
@@ -463,15 +471,15 @@ class AppsStore {
   }) : platform = platform ?? currentFaPlatform,
        _readAsset = readAsset ?? rootBundle.loadString;
 
-  /// Asset root holding the bundled demo apps (see pubspec.yaml).
+  /// Asset root that USED TO hold the bundled demo apps (see pubspec.yaml).
+  /// Kept for API compatibility — nothing is bundled anymore.
   static const String bundledAssetRoot = 'assets/apps';
 
-  /// The bundled demo apps seeded on first run.
-  static const List<String> demoAppIds = [
-    'calculator',
-    'weather',
-    'fitness-trainer',
-  ];
+  /// The bundled demo apps seeded on first run — EMPTY: every widget moved
+  /// to the widget catalog (Get widgets), so a fresh install starts with a
+  /// clean grid and nothing is seeded. Kept (empty) for API compatibility:
+  /// `isDemo` checks and the demo-restore flow simply never match.
+  static const List<String> demoAppIds = [];
 
   /// The demo apps this store seeds (see [seedBundledApps]).
   final List<String> seedDemoIds;
@@ -779,7 +787,6 @@ class AppsStore {
         // Absent or read-only — nothing to reset there.
       }
     }
-    await seedBundledApps();
     return removed;
   }
 
