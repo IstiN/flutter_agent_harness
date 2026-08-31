@@ -16,6 +16,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
+import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/copilot_connect_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/ui/widgets/provider_selection_list.dart';
@@ -1485,6 +1486,59 @@ class ThemeModeSection extends StatelessWidget {
   }
 }
 
+/// The settings "Chat text size" section: a live slider over the shared
+/// [ChatTextStore] (nearest [ChatTextScope]) — every open transcript
+/// re-renders at the new size immediately. Hides without a store.
+class ChatTextSection extends StatelessWidget {
+  const ChatTextSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final store = ChatTextScope.maybeOf(context);
+    if (store == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              context.l10n.settingsChatTextLabel,
+              style: theme.textTheme.titleSmall,
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: Slider(
+                    value: store.fontSize,
+                    min: ChatTextStore.minFontSize,
+                    max: ChatTextStore.maxFontSize,
+                    divisions:
+                        (ChatTextStore.maxFontSize - ChatTextStore.minFontSize)
+                            .round(),
+                    label: store.fontSize.toStringAsFixed(0),
+                    onChanged: store.setFontSize,
+                  ),
+                ),
+                SizedBox(
+                  width: 32,
+                  child: Text(
+                    store.fontSize.toStringAsFixed(0),
+                    style: theme.textTheme.bodyMedium,
+                    textAlign: TextAlign.end,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 /// The settings "Keys" section: lists the known key names
 /// ([knownKeyNames] plus anything saved) and every custom provider with a
 /// remembered session key, each with its source (`env file` / `saved` /
@@ -2237,6 +2291,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ],
               const ThemeModeSection(),
+              const SizedBox(height: 16),
+              const ChatTextSection(),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),

@@ -2234,6 +2234,12 @@ abstract class AppLocalizations {
   /// **'Theme'**
   String get settingsThemeLabel;
 
+  /// No description provided for @settingsChatTextLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat text size'**
+  String get settingsChatTextLabel;
+
   /// No description provided for @settingsThemeLight.
   ///
   /// In en, this message translates to:

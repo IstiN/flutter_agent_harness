@@ -1242,6 +1242,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsThemeLabel => 'Theme';
 
   @override
+  String get settingsChatTextLabel => 'Chat text size';
+
+  @override
   String get settingsThemeLight => 'Light';
 
   @override

@@ -1253,6 +1253,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsThemeLabel => 'Тема';
 
   @override
+  String get settingsChatTextLabel => 'Размер текста в чате';
+
+  @override
   String get settingsThemeLight => 'Светлая';
 
   @override
