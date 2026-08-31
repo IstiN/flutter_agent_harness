@@ -829,6 +829,26 @@ class AppsStore {
     }
   }
 
+  /// Ids of every directory under `apps/` — including broken
+  /// half-installed ones that [listApps] skips (no manifest). The
+  /// auto-update healer scans these.
+  Future<List<String>> listAppDirIds() async {
+    final entries = (await _env.listDir('apps')).valueOrNull ?? const [];
+    return [
+      for (final entry in entries)
+        if (entry.kind == FileKind.directory && !entry.name.startsWith('.'))
+          entry.name,
+    ];
+  }
+
+  /// Whether `apps/<id>/` contains no entries at all — the residue of a
+  /// failed install (wipe-then-redownload that never landed). A Remove
+  /// keeps `storage.json`, so an empty dir is NEVER a removed widget.
+  Future<bool> isEmptyAppDir(String id) async {
+    final entries = (await _env.listDir('apps/$id')).valueOrNull;
+    return entries != null && entries.isEmpty;
+  }
+
   /// Installed CATALOG widgets as `{id: version}` (origin == 'catalog').
   Future<Map<String, String>> installedCatalogVersions() async {
     final meta = await _readInstalled();

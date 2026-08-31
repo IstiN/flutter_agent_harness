@@ -170,5 +170,54 @@ void main() {
       expect(updated, isEmpty);
       expect(zipHits, isEmpty);
     });
+
+    test(
+      'heals a broken install (empty dir, untracked) from the catalog',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = AppsStore(env);
+        // The residue of a failed install: the dir exists but is empty and
+        // .installed.json knows nothing — the board renders a dead tile.
+        await env.createDir('apps/pomodoro');
+
+        final updated = await autoUpdateCleanWidgets(
+          store: store,
+          catalog: _catalog(
+            env,
+            _serverFor('pomodoro', '1.0.1', {'widget.js': '// healed'}),
+          ),
+        );
+
+        expect(updated, ['pomodoro']);
+        final source = await env.readTextFile('apps/pomodoro/widget.js');
+        expect(source.valueOrNull, '// healed');
+        expect(await store.installedCatalogVersions(), {'pomodoro': '1.0.1'});
+      },
+    );
+
+    test('never resurrects a removed widget (storage.json leftover)', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env);
+      // Remove keeps the user's storage.json — that dir must NOT be
+      // mistaken for a broken install and reinstalled.
+      await env.writeFile('apps/pomodoro/storage.json', '{"cycles":3}');
+
+      final zipHits = <String>[];
+      final updated = await autoUpdateCleanWidgets(
+        store: store,
+        catalog: _catalog(
+          env,
+          _serverFor('pomodoro', '1.0.1', {
+            'widget.js': '// healed',
+          }, zipHits: zipHits),
+        ),
+      );
+
+      expect(updated, isEmpty);
+      expect(zipHits, isEmpty);
+      expect(await store.installedCatalogVersions(), isEmpty);
+      final files = await env.listDir('apps/pomodoro');
+      expect(files.valueOrNull?.length, 1, reason: 'storage.json only');
+    });
   });
 }
