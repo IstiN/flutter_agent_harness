@@ -333,6 +333,22 @@ function t(key) { return (T[jsr.locale] || T.en)[key] || T.en[key]; }
 
 Fall back to English for unknown locales (as above). Dates/numbers: format per `jsr.locale` (e.g. `new Date(ts).toLocaleString(jsr.locale)`).
 
+### `jsr.viewport()` / `jsr.onViewport(fn)` — Adaptive Layout
+
+`jsr.viewport()` returns `{width, height}` — the ACTUAL size (logical px) allotted to your UI: the screen for a full app, the TILE's size inside the launcher (a 1×1 tile is ~160×160), `null` before the first layout. `jsr.onViewport(fn)` fires on every change (window resize, tile form change). Two helpers build on it: `jsr.breakpoint(w?)` → `'compact' | 'medium' | 'expanded'` (Material 3 window size classes: <600 / 600–840 / ≥840, defaults to the viewport width) and `jsr.adaptive({compact: a, medium: b, expanded: c})` → picks a VALUE by the current breakpoint (paddings, column counts, …).
+
+For pure layout branching prefer the renderer-side `adaptive` NODE — it switches synchronously inside the host (no JS round-trip, works in tiles and previews alike):
+
+```js
+{type: 'adaptive',
+ compact:  {type: 'column', children: [/* phone layout */]},
+ medium:   {type: 'row', children: [/* 600-840px */]},
+ expanded: {type: 'row', children: [/* >=840px */]}}
+// optional: breakpoints: [600, 840]; a missing tier falls back to the nearest one
+```
+
+Rules of thumb: root in `scroll` always; `gridView` with `maxCrossAxisExtent` (columns "no wider than N", count floats with width) instead of a fixed `crossAxisCount`; `expanded`/`wrap` over fixed widths; branch whole subtrees with the `adaptive` node, tweak props with `jsr.adaptive`, and re-render from `jsr.onViewport` only when the JS STATE depends on size.
+
 ### `jsr.theme` — Current Theme Colors
 Reactive theme object, injected by the Fa host from its own palette. **Always use these colors instead of hardcoded hex values** — the theme follows the app's light/dark mode live, and hardcoded palettes look broken in one of the two modes.
 

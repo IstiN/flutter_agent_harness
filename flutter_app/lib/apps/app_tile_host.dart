@@ -12,6 +12,7 @@ import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/viewport_reporter.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_theme.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -359,7 +360,13 @@ class _AppTileHostState extends State<AppTileHost> {
                 }
               : (actionId, payload) => widget.onOpen(),
         );
-        return renderer.build(tree, context);
+        return ViewportReporter(
+          onSize: (size) => engine.dispatchHostEvent('viewport', {
+            'width': size.width,
+            'height': size.height,
+          }),
+          child: renderer.build(tree, context),
+        );
       },
     );
   }

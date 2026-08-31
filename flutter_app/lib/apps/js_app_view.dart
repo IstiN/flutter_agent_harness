@@ -32,6 +32,7 @@ import 'package:fa/apps/fa_chat_overlay.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_theme.dart';
+import 'package:fa/apps/viewport_reporter.dart';
 
 /// Payload delivered when the user talks to Fa from inside an app: their
 /// message, the app's exported state, and a screenshot of the app.
@@ -764,7 +765,13 @@ class _JsAppViewState extends State<JsAppView> {
             unawaited(engine.callEvent(actionId, payload));
           },
         );
-        return ClipRect(child: renderer.build(tree, context));
+        return ViewportReporter(
+          onSize: (size) => engine.dispatchHostEvent('viewport', {
+            'width': size.width,
+            'height': size.height,
+          }),
+          child: ClipRect(child: renderer.build(tree, context)),
+        );
       },
     );
   }

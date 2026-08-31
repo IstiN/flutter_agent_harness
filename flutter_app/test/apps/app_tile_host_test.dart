@@ -25,6 +25,7 @@ final class _FakeTileEngine extends JsAppEngine {
 
   final Map<String, dynamic> fixedTree;
   final receivedEvents = <String>[];
+  final hostPayloads = <String, Map<String, dynamic>>{};
   var startCount = 0;
   var disposeCount = 0;
 
@@ -45,6 +46,11 @@ final class _FakeTileEngine extends JsAppEngine {
   ]) async {
     receivedEvents.add(actionId);
     await callEventGate?.future;
+  }
+
+  @override
+  void dispatchHostEvent(String target, Map<String, dynamic> payload) {
+    hostPayloads[target] = payload;
   }
 
   @override
@@ -170,6 +176,19 @@ void main() {
       await _pumpHost(tester);
       expect(find.text('21°'), findsOneWidget);
       expect(find.text('Minsk'), findsOneWidget);
+    });
+
+    testWidgets('reports the tile size as a viewport host event', (
+      tester,
+    ) async {
+      final harness = await _pumpHost(tester);
+      final engine = harness.engines.single;
+      // The tile is pumped inside a 120x120 SizedBox; the render surface
+      // sits inside the tile's 1px frame, so 118x118 is the allotted size.
+      expect(engine.hostPayloads['viewport'], {
+        'width': 118.0,
+        'height': 118.0,
+      });
     });
 
     testWidgets('any UI event from the tile opens the full app', (
