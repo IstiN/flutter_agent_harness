@@ -15,7 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 /// End-to-end render check: boots the REAL calculator demo app
-/// (assets/apps/calculator/widget.js) through the real JavaScriptCore
+/// (test/apps/fixtures/calculator_widget.js) through the real JavaScriptCore
 /// backend and renders the resulting UI tree into actual Flutter widgets
 /// with the same JsonWidgetRenderer the JsAppView uses.
 ///
@@ -31,7 +31,7 @@ void main() {
     await tester.runAsync(() async {
       // Real async IO only progresses inside runAsync under flutter_test.
       final source = await File(
-        'assets/apps/calculator/widget.js',
+        'test/apps/fixtures/calculator_widget.js',
       ).readAsString();
       await env.writeFile('apps/calculator/widget.js', source);
       engine = JsAppEngine(

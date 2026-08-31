@@ -27,6 +27,7 @@ class SidebarSessionsList extends StatefulWidget {
     this.onNewSession,
     this.onSessionTap,
     this.persistedSessions = const [],
+    this.sessionInfoNames = const {},
     this.onOpenPersisted,
     this.collapsed = false,
   });
@@ -41,6 +42,12 @@ class SidebarSessionsList extends StatefulWidget {
   /// On-disk sessions (newest first). Entries not live in [manager] render
   /// below the live ones and open from disk on tap.
   final List<SessionMetadata> persistedSessions;
+
+  /// Display names read from the sessions' own `session_info` JSONL
+  /// records — what the CLI's `/rename` writes. Resolved per id by the
+  /// host (async, cached); an app-local rename ([sessionNamesStore]) stays
+  /// an override over these.
+  final Map<String, String> sessionInfoNames;
 
   /// Opens a persisted-only session from disk (see [persistedSessions]).
   final ValueChanged<SessionMetadata>? onOpenPersisted;
@@ -88,6 +95,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
 
   String _titleFor(_SessionEntry entry) {
     return widget.sessionNamesStore?.titleFor(entry.id) ??
+        widget.sessionInfoNames[entry.id] ??
         derivedSessionTitle(context, id: entry.id, createdAt: entry.createdAt);
   }
 

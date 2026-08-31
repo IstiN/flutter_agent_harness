@@ -108,6 +108,7 @@ void main() {
   Widget harness({
     SessionNamesStore? names,
     List<SessionMetadata> persisted = const [],
+    Map<String, String> sessionInfoNames = const {},
     ValueChanged<SessionMetadata>? onOpenPersisted,
   }) {
     return MaterialApp(
@@ -119,11 +120,54 @@ void main() {
           manager: manager,
           sessionNamesStore: names,
           persistedSessions: persisted,
+          sessionInfoNames: sessionInfoNames,
           onOpenPersisted: onOpenPersisted,
         ),
       ),
     );
   }
+
+  test('readSessionNames returns CLI-written session_info names', () async {
+    final meta = await persistSession(userText: 'hi');
+    final session = await repo.open(meta);
+    await session.appendSessionName('CLI title');
+    final names = await manager.readSessionNames([
+      await session.getMetadata(),
+    ]);
+    expect(names, {meta.id: 'CLI title'});
+  });
+
+  test('readSessionNames skips nameless sessions', () async {
+    final meta = await persistSession(userText: 'hi');
+    expect(await manager.readSessionNames([meta]), isEmpty);
+  });
+
+  testWidgets('shows the session_info name; the app-local rename wins', (
+    tester,
+  ) async {
+    final named = await ageSession(await persistSession(userText: 'hi'));
+
+    await tester.pumpWidget(
+      harness(
+        names: SessionNamesStore.inMemory(),
+        persisted: [named],
+        sessionInfoNames: {named.id: 'CLI title'},
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('CLI title'), findsOneWidget);
+
+    // An app-local rename stays an override over the JSONL name.
+    await tester.pumpWidget(
+      harness(
+        names: SessionNamesStore.inMemory({named.id: 'App override'}),
+        persisted: [named],
+        sessionInfoNames: {named.id: 'CLI title'},
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('App override'), findsOneWidget);
+  });
 
   testWidgets('lists persisted disk sessions alongside the live ones', (
     tester,

@@ -1,7 +1,50 @@
 # Changelog
 
-## Unreleased
+## 0.1.252
 
+- fix(cli): the busy row stops lying about compaction hangs — the
+  pre-flight compaction's 'Compacting context…' label no longer stays up
+  for the whole run (a long tool call read as a compaction hang); the
+  busy row now names the executing tool ('Running bash…') and drops back
+  to 'Working…' between calls; resumed sessions drop generation-time
+  usage anchors, so a compacted branch no longer phantom-reports its
+  pre-compaction size (no more no-op compaction on every resume + an
+  honest context gauge).
+
+## 0.1.250
+
+
+- feat(providers): ChatGPT goes multi-account — each account saves as its
+  own named entry with its own name-scoped secure-store slot
+  (`FA_KEY_CHATGPT_COM_<NAME>`, the CodeMie per-entry key pattern), so a
+  refresh-token rotation never overwrites a sibling account's blob and
+  the refresh callback writes to the ACTIVE entry's slot.
+- feat(provider): `/provider chatgpt oauth` offers the saved ChatGPT
+  accounts first (switch to one, or add another) before running OAuth;
+  a NEW account gets a guided model pick from the live Codex `/models`
+  (bundled default when the fetch answers nothing), while a re-login to
+  the SAME entry keeps its last-used model.
+- feat(app): the ChatGPT OAuth flow names the entry from the OAuth
+  account's email (id_token claim) and matches re-auths by name +
+  baseUrl — a second ChatGPT account lands in its own entry and its own
+  entry-scoped Keychain slot, mirroring the CLI.
+- feat(chatgpt): the ChatGPT provider (Codex backend) is now visible across
+  the pickers and `/provider` — it ships with the real Codex HTTP SSE
+  transport: Codex header parity (originator, session/thread ids, account
+  id), cloudflare cookie replay, and a single challenge retry.
+- feat(chatgpt): OAuth access tokens refresh proactively (expiry is tracked
+  on the credentials blob) and the rotated blob is re-persisted.
+- feat(chatgpt): reasoning deltas surface as thinking blocks;
+  `response.incomplete` / `response.failed` end the stream as a terminal
+  error event, preserving any partial text already streamed.
+- fix(chatgpt): OAuth credentials `toJson` returns `Map<String, String>`
+  again (expiry serialized as an epoch-millisecond string); decoding still
+  accepts blobs with a raw int `expires_at`.
+- fix(chatgpt): the cookie-replay baseline is the header the request
+  actually carried (snapshotted before the send), so the single
+  challenge retry fires only when the jar truly learned a new cookie.
+- feat(chatgpt): `/models` probes the live Codex `/models` endpoint and
+  falls back to the bundled catalog on 401 / challenge / malformed bodies.
 - feat(memory): the long-term-memory LLM slot is wired — a new
   `HarnessLlmProvider` adapts fa_llm's `LlmProvider` onto the harness
   streaming contract and is resolved per call (`memory` role → `smol` →
@@ -1790,6 +1833,37 @@
 - feat(site): platform widgets are marked 'runs in the Fa app' instead of a broken preview
 - fix(site): preview iframe points at the jsr repo's own Pages runner
 - feat(site): widget preview runs the real Flutter/jsr runner — DOM shim removed
+
+## 0.1.251
+
+- feat(catalog): stacked equal-width action buttons on tile rows
+- feat(launcher): Open menu item + icons, icon-square-only hover
+- feat(app): interactive live tiles via widget.interactive opt-in
+- feat(app): drop bundled demos — the catalog is the source of apps
+- fix(app): actually pass sessionInfoNames to the sidebar (torn-write casualty)
+- feat(app): the sidebar shows the CLI-written session_info names
+- fix(app): reset/remove/install refresh the grid + sane dialog width
+
+## 0.1.253
+
+- fix(cli): the busy row stops lying about compaction hangs
+- feat(catalog): category filter chips above the widget list
+- refactor(cli): split for the 2800-line size gate
+- feat(providers): multi-account ChatGPT — per-entry keys, account picker, app parity
+- fix(providers): review fixes — string-typed oauth json, pre-send cookie baseline, SSE incomplete/failed as stream events
+- fix: drop duplicate models_for_endpoint import left by the main merge
+- fix(codex): pin chatgpt catalog visibility; note review fixes in changelog
+- fix(codex): terminate failed/incomplete SSE turns as error events
+- fix(codex): serialize OAuth expiry as a string; decode stays tolerant of int blobs
+- docs(goal): codex gpt auth — tick checklist, fill implementation log
+- feat(providers): unhide chatgpt provider — ship docs, changelog, live smoke
+- test(providers): chatgpt oauth token-leak guard — persisted registry + transcript carry no tokens
+- feat(providers): codex models — live GET /models with bundled-catalog fallback
+- feat(providers): codex http sse transport — header parity, cloudflare cookie replay, full event coverage
+- feat(providers): chatgpt oauth expiry tracking — expiresAt + needsRefresh
+- feat(providers): codex transport helpers — header parity, cloudflare cookie jar, rate-limit parsing
+
+## Unreleased
 
 ## Unreleased
 

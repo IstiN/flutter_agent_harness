@@ -1,9 +1,0 @@
-{
-  "id": "fitness-trainer",
-  "name": "Fitness Trainer",
-  "description": "Guided workout with a 3D animated coach — press start and follow along",
-  "version": "2.0.0",
-  "icon": "icon.svg",
-  "allowedCommands": [],
-  "network": false
-}

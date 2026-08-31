@@ -320,6 +320,12 @@ abstract class AppLocalizations {
   /// **'Could not load the widgets catalog.\n{error}'**
   String widgetsCatalogLoadFailed(Object error);
 
+  /// No description provided for @widgetsCatalogFilterAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get widgetsCatalogFilterAll;
+
   /// No description provided for @widgetsCatalogRetry.
   ///
   /// In en, this message translates to:
@@ -1190,6 +1196,12 @@ abstract class AppLocalizations {
   /// **'Folder name'**
   String get launcherFolderNameHint;
 
+  /// No description provided for @launcherOpenApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get launcherOpenApp;
+
   /// No description provided for @launcherOpenAppError.
   ///
   /// In en, this message translates to:
@@ -1265,13 +1277,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsResetAppsConfirmBody.
   ///
   /// In en, this message translates to:
-  /// **'This deletes EVERY widget you downloaded from the catalog or created here, together with ALL its data (saved state, settings, storage). Bundled demo apps are restored to the reference version. This cannot be undone.'**
+  /// **'This deletes EVERY widget you downloaded from the catalog or created here, together with ALL its data (saved state, settings, storage). The apps grid returns to a clean slate — re-download anything from Get widgets. This cannot be undone.'**
   String get settingsResetAppsConfirmBody;
 
   /// No description provided for @settingsResetAppsDone.
   ///
   /// In en, this message translates to:
-  /// **'Apps reset — {count} widget(s) removed, demos restored'**
+  /// **'Apps reset — {count} widget(s) removed'**
   String settingsResetAppsDone(int count);
 
   /// No description provided for @appsCatalogCreatedByMe.

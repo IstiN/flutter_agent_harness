@@ -1,14 +1,19 @@
+// Copyright (c) 2026, the Flutter Agent Harness authors.
+// Use of this source code is governed by a MIT license that can be found
+// in the LICENSE file.
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-/// Guard: the env preconfig pick — the out-of-the-box provider activation
-/// driven by API keys already in the environment — and the catalog default
-/// model ids it depends on. The pick must respect catalog order, skip
-/// providers without a universal default model (an env key alone must not
-/// activate an endpoint with an invalid model), and ignore empty values.
+/// Regression pin for the Phase 1 un-hide: the ChatGPT Codex provider must
+/// stay visible across the pickers, settings screens, and `enabledProviders`
+/// consumers. A refactor that drops the default `visible: true` fails here
+/// instead of surfacing as a "the picker is missing chatgpt" mystery.
 void main() {
-  ProviderSpec? pick(Map<String, String> env) =>
-      envPreconfiguredProvider((name) => env[name]);
+  test('chatgpt spec is visible after Phase 1 un-hide', () {
+    expect(providerCatalog['chatgpt']!.visible, isTrue);
+    expect(enabledProviders().any((s) => s.name == 'chatgpt'), isTrue);
+  });
 
   group('catalogDefaultModelId', () {
     test('zai defaults to the coding endpoint flagship', () {
@@ -21,6 +26,9 @@ void main() {
   });
 
   group('envPreconfiguredProvider', () {
+    ProviderSpec? pick(Map<String, String> env) =>
+        envPreconfiguredProvider((name) => env[name]);
+
     test('ZAI_API_KEY alone activates zai', () {
       final spec = pick({'ZAI_API_KEY': 'key'});
       expect(spec?.name, 'zai');

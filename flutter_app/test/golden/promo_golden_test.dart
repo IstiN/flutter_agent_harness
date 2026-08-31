@@ -166,10 +166,15 @@ Future<void> _capture(
   int waitFrames = 40,
 }) async {
   await tester.runAsync(() async {
+    // Demo manifests live in the fa_widgets catalog repo now — point
+    // PROMO_APPS_ROOT at its widgets/ dir (defaults to the historical
+    // bundled location).
+    const appsRoot = String.fromEnvironment(
+      'PROMO_APPS_ROOT',
+      defaultValue: 'assets/apps',
+    );
     final manifest =
-        (jsonDecode(
-                  await File('assets/apps/$appId/manifest.json').readAsString(),
-                )
+        (jsonDecode(await File('$appsRoot/$appId/manifest.json').readAsString())
                 as Map)
             .cast<String, Object?>();
     if (chromeOverride != null) manifest['chrome'] = chromeOverride;
@@ -177,9 +182,9 @@ Future<void> _capture(
     await env.writeFile('apps/$appId/manifest.json', jsonEncode(manifest));
     await env.writeFile(
       'apps/$appId/widget.js',
-      await File('assets/apps/$appId/widget.js').readAsString(),
+      await File('$appsRoot/$appId/widget.js').readAsString(),
     );
-    final iconFile = File('assets/apps/$appId/icon.svg');
+    final iconFile = File('$appsRoot/$appId/icon.svg');
     if (iconFile.existsSync()) {
       await env.writeFile(
         'apps/$appId/icon.svg',

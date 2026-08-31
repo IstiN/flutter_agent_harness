@@ -201,3 +201,24 @@ final class SettledContextEstimate {
     return _cachedValue;
   }
 }
+
+/// Drops generation-time [AssistantMessage.usage] anchors from messages
+/// loaded off disk.
+///
+/// A usage anchor reflects the context the message was GENERATED in — after
+/// a compaction, the projected branch is far smaller than those anchors
+/// (a 27k projection whose last assistant message still reports 183k). Left
+/// in place, the estimate anchors at the phantom size: every resume fired a
+/// no-op compaction pass and the context gauge lied. Zeroing re-anchors the
+/// estimate at the chars/4 heuristic over the REAL projected context; the
+/// first live turn stamps fresh usage again.
+///
+/// Non-assistant messages and zero-anchored assistants pass through as the
+/// same instances (no copy churn on the hot load path).
+List<Message> resetLoadedUsageAnchors(List<Message> messages) => [
+  for (final message in messages)
+    if (message is AssistantMessage && message.usage.totalTokens != 0)
+      message.copyWith(usage: Usage.zero)
+    else
+      message,
+];

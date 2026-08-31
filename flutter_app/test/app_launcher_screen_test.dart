@@ -691,6 +691,21 @@ void main() {
       expect(find.text('Small (2×2)'), findsNothing);
     });
 
+    testWidgets('the tile menu offers Open + an icon on Remove', (
+      tester,
+    ) async {
+      await _pumpLauncher(tester);
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:beta')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.text('Open'), findsOneWidget);
+      expect(find.byIcon(Icons.open_in_new), findsOneWidget);
+      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+    });
+
     testWidgets('a layout JSON edit + fsRevision bump reconfigures the grid', (
       tester,
     ) async {

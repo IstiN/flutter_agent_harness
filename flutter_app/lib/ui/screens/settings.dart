@@ -2432,7 +2432,13 @@ class ResetAppsSection extends StatelessWidget {
           color: Theme.of(dialogContext).colorScheme.error,
         ),
         title: Text(l10n.settingsResetAppsConfirmTitle),
-        content: Text(l10n.settingsResetAppsConfirmBody),
+        // A fixed content width: unconstrained, the single-sentence
+        // warning stretched the dialog to near full window width on
+        // desktop.
+        content: SizedBox(
+          width: 400,
+          child: Text(l10n.settingsResetAppsConfirmBody),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
