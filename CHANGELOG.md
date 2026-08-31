@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- fix(app): Copilot parity with the CLI — the app's model pickers now
+  fetch through the copilot dialect (GitHub→Copilot token exchange,
+  capabilities/limits) instead of 401ing the raw GitHub token against
+  `<host>/models`; a picked Copilot model connects as the copilot wire
+  dialect, and the entry-scoped `FA_KEY_COPILOT_<NAME>` key resolves as
+  the fallback. Deleting a Copilot account now removes its entry-scoped
+  token from the Keychain and the saved-keys store (before: only the
+  shared `FA_KEY_<HOST>` slot went away and the token leaked); the
+  duplicated name→key algorithm is gone — both surfaces use the one core
+  `CustomProviderRegistry.copilotEntryKeyName`.
+
 ## 0.1.252
 
 - fix(cli): the busy row stops lying about compaction hangs — the

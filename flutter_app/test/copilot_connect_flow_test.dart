@@ -91,17 +91,23 @@ Future<(Future<bool>, _RecordingService)> _launch(WidgetTester tester) async {
 }
 
 void main() {
-  test('copilotEntryKeyName matches the CLI sanitizer', () {
+  test('copilotEntryKeyName sanitizes entry names like the CLI', () {
     expect(
-      copilotEntryKeyName('copilot-octocat'),
+      CustomProviderRegistry.copilotEntryKeyName('copilot-octocat'),
       'FA_KEY_COPILOT_COPILOT_OCTOCAT',
     );
     expect(
-      copilotEntryKeyName('copilot.alice-smith'),
+      CustomProviderRegistry.copilotEntryKeyName('copilot.alice-smith'),
       'FA_KEY_COPILOT_COPILOT_ALICE_SMITH',
     );
-    expect(copilotEntryKeyName('Acme 2'), 'FA_KEY_COPILOT_ACME_2');
-    expect(copilotEntryKeyName('_-x-_'), 'FA_KEY_COPILOT_X');
+    expect(
+      CustomProviderRegistry.copilotEntryKeyName('Acme 2'),
+      'FA_KEY_COPILOT_ACME_2',
+    );
+    expect(
+      CustomProviderRegistry.copilotEntryKeyName('_-x-_'),
+      'FA_KEY_COPILOT_X',
+    );
   });
 
   testWidgets('a completed flow reconfigures the service as copilot', (

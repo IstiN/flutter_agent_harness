@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa_ui/src/stores/keychain_store.dart';
+import 'package:fa_ui/src/stores/session_keys_store.dart';
 
 /// A user-added OpenAI-compatible provider definition.
 ///
@@ -75,11 +76,14 @@ final class CustomProvider {
 /// process memory for the session, so a reload requires re-entry (matching
 /// the app's existing key policy).
 class ProviderRegistry extends ChangeNotifier {
-  ProviderRegistry._(this._env, [this._keychain]);
+  ProviderRegistry._(this._env, [this._keychain, this._sessionKeysStore]);
 
   /// A registry without persistence (tests, widget fallbacks): mutations
   /// notify listeners but nothing is written anywhere.
-  ProviderRegistry.inMemory() : _env = null, _keychain = null;
+  ProviderRegistry.inMemory()
+    : _env = null,
+      _keychain = null,
+      _sessionKeysStore = null;
 
   /// File name (under [ExecutionEnv.cwd]) the registry persists to.
   static const fileName = 'providers.json';
@@ -94,6 +98,12 @@ class ProviderRegistry extends ChangeNotifier {
   /// CLI's `FA_KEY_<HOST>`) instead of staying session-only.
   final KeychainStore? _keychain;
   var _useKeychain = false;
+
+  /// The saved-keys store (Keys settings section): the fallback backend a
+  /// Copilot connect writes the entry-scoped GitHub token to when no
+  /// Keychain is available. Only read back on delete — the registry never
+  /// writes through it.
+  final SessionKeysStore? _sessionKeysStore;
   final List<CustomProvider> _providers = [];
   final Map<String, String> _sessionKeys = {};
 
@@ -118,8 +128,9 @@ class ProviderRegistry extends ChangeNotifier {
   static Future<ProviderRegistry> load(
     ExecutionEnv env, {
     KeychainStore? keychain,
+    SessionKeysStore? sessionKeys,
   }) async {
-    final registry = ProviderRegistry._(env, keychain);
+    final registry = ProviderRegistry._(env, keychain, sessionKeys);
     await registry._load();
     return registry;
   }
@@ -230,12 +241,27 @@ class ProviderRegistry extends ChangeNotifier {
   }
 
   /// Removes the provider with [id] and its key (Keychain slot included).
+  /// A Copilot entry's GitHub token also lives entry-scoped
+  /// (`FA_KEY_COPILOT_<NAME>`, the CLI contract) — that slot is removed
+  /// from the Keychain AND the saved-keys store (the connect flow's
+  /// Keychain-first/saved-keys-fallback write). Every delete call degrades
+  /// gracefully (see [KeychainStore.delete]/[SessionKeysStore.delete]), so
+  /// a failed secure-store delete never aborts the registry save.
   Future<void> remove(String id) async {
     final removed = _providers.where((p) => p.id == id).firstOrNull;
     _providers.removeWhere((p) => p.id == id);
     _sessionKeys.remove(id);
-    if (_useKeychain && removed != null) {
-      await _keychain?.delete(keyNameFor(removed.baseUrl));
+    if (removed != null) {
+      if (_useKeychain) {
+        await _keychain?.delete(keyNameFor(removed.baseUrl));
+      }
+      if (isCopilotBaseUrl(removed.baseUrl)) {
+        final entryKey = CustomProviderRegistry.copilotEntryKeyName(
+          removed.name,
+        );
+        if (_useKeychain) await _keychain?.delete(entryKey);
+        await _sessionKeysStore?.delete(entryKey);
+      }
     }
     await _save();
     notifyListeners();
