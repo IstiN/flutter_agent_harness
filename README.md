@@ -93,6 +93,34 @@ can coexist: the flow offers the saved accounts first, each account keeps
 its own named entry and secure-store slot, and re-auth never touches a
 sibling account's credentials.
 
+### Env preconfig (Docker / headless)
+
+`FA_PROVIDER_TYPE` + `FA_PROVIDER_CONFIG` boot a declared provider with
+no saved config, and the declaration becomes the session default for
+every model role (`default`/`smol`/`slow`/`plan`) — the same selection a
+`/provider <name>` switch makes:
+
+```bash
+FA_PROVIDER_TYPE=zai
+FA_PROVIDER_CONFIG='{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3","apiKeyEnvVar":"ZAI_API_KEY"}'
+ZAI_API_KEY=sk-...
+```
+
+`baseUrl` and `model` are required — no catalog defaults fill gaps; a
+missing field fails loud at boot. `apiKeyEnvVar` is optional: declared,
+the named env var (or its `_BASE64` twin) must hold the key; omitted,
+the provider boots keyless and the spec's usual env names are never
+probed. Every text value has a base64 twin for CI platforms that mangle
+special characters — `FA_PROVIDER_CONFIG_BASE64`, and
+`<apiKeyEnvVar>_BASE64` for the key: the plain value wins when both
+carry the same value; mismatched or malformed twins fail loud.
+
+```bash
+# base64 twin form (identical boot):
+FA_PROVIDER_CONFIG_BASE64=$(printf '%s' "$FA_PROVIDER_CONFIG" | base64)
+ZAI_API_KEY_BASE64=$(printf '%s' "$ZAI_API_KEY" | base64)
+```
+
 GitHub Copilot is a first-class provider. `/provider copilot` connects a
 GitHub account via the device-code flow (open the shown
 `verification_uri`, enter the `user_code`) or by pasting an existing PAT

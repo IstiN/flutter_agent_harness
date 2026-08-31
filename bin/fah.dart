@@ -222,14 +222,19 @@ Model _buildModel(CliArgs args) {
 }
 
 /// The `FA_PROVIDER_*` env preconfig (Docker/headless): `FA_PROVIDER_TYPE` +
-/// `FA_PROVIDER_NAME` + `FA_PROVIDER_CONFIG` (a JSON object with optional
-/// `baseUrl`/`model`/`apiKeyEnvVar`) plus the key env var the config
-/// references. Unlike the catalog auto-pick above, this is an explicit
-/// declaration, so it wins over the saved config restore too — a container
-/// that declares its provider in env vars runs on it, store or config
-/// notwithstanding. An explicit `--provider` flag means full manual control
-/// and disables the preconfig entirely (mixing the flag's provider with the
-/// env endpoint would be a silent misconfiguration).
+/// `FA_PROVIDER_NAME` + `FA_PROVIDER_CONFIG` (a JSON object with required
+/// `baseUrl`/`model` and an optional `apiKeyEnvVar`) plus the key env var
+/// the config references. Every text input has a `_BASE64` twin
+/// (`FA_PROVIDER_CONFIG_BASE64`, `<apiKeyEnvVar>_BASE64`) for platforms
+/// that mangle special characters; when both carry the same value the
+/// plain one is used. Unlike the catalog auto-pick above, this is an
+/// explicit declaration, so it wins over the saved config restore too — a
+/// container that declares its provider in env vars runs on it, store or
+/// config notwithstanding, and the declaration becomes the session
+/// default for every model role (the same selection a `/provider <name>`
+/// switch performs). An explicit `--provider` flag means full manual
+/// control and disables the preconfig entirely (mixing the flag's
+/// provider with the env endpoint would be a silent misconfiguration).
 ///
 /// Throws via [_fail] on a malformed declaration: a container that names its
 /// provider wrong must fail loud at boot, not 401 mid-run.
@@ -241,6 +246,7 @@ EnvProviderPreconfig? _faProviderPreconfig(CliArgs parsed, CliConfig saved) {
       providerType: env['FA_PROVIDER_TYPE'],
       providerName: env['FA_PROVIDER_NAME'],
       providerConfig: env['FA_PROVIDER_CONFIG'],
+      providerConfigBase64: env['FA_PROVIDER_CONFIG_BASE64'],
       envVarValue: (name) => env[name],
       takenNames: [for (final entry in saved.customProviders) entry.name],
     );
@@ -933,6 +939,26 @@ Future<void> _runApp(List<String> args) async {
       cwd: cwd,
       homeDir: home,
     );
+    // FA_PROVIDER_* preconfig = one explicit provider switch for the whole
+    // session: pin the default role to a single-entry chain on the env
+    // provider — the same setDefaultChain + applyToAgent path a runtime
+    // `/provider <name>` switch takes in roles mode. Roles the config
+    // pins explicitly keep their chains; unpinned roles inherit the
+    // default, so every resolution (default/smol/slow/plan) lands on the
+    // env provider. A keyless declaration cannot form a chain entry
+    // (chains require a key) — roles keep owning selection there, and
+    // the boot note says so.
+    if (faPreconfig case final preconfig? when preconfig.apiKeyEnvVar != null) {
+      rolesResolver.addSecret(preconfig.apiKeyEnvVar!, preconfig.apiKey);
+      rolesResolver.setDefaultChain([
+        ModelRef(
+          provider: preconfig.spec.name,
+          modelId: preconfig.modelId,
+          baseUrl: preconfig.baseUrl,
+          apiKeyName: preconfig.apiKeyEnvVar,
+        ),
+      ]);
+    }
     try {
       defaultRoleResolved = rolesResolver.resolveRole(defaultModelRole) != null;
     } on ConfigException catch (error) {
@@ -960,9 +986,10 @@ Future<void> _runApp(List<String> args) async {
       if (entry.baseUrl == baseUrl && entry.keyName != null) entry.keyName!,
   ];
   // The FA_PROVIDER_* declaration carries its own key resolution (the
-  // apiKeyEnvVar ref, else the spec's env names): the env value IS the
-  // source of truth for the booted session — store and config never
-  // override it. Empty means a keyless endpoint (local servers).
+  // apiKeyEnvVar ref, or its _BASE64 twin): the env value IS the source
+  // of truth for the booted session — store and config never override
+  // it. Empty means a keyless endpoint (no ref declared — the spec's env
+  // names are never probed).
   final apiKey = faPreconfig != null
       ? faPreconfig.apiKey
       : defaultRoleResolved || customEndpoint || interactive
@@ -995,20 +1022,9 @@ Future<void> _runApp(List<String> args) async {
   }
   // The FA_PROVIDER_* key ref may name ANY env var (not one of the well-known
   // names above) — redact it under its own name so the ref'd value can never
-  // reach the transcript.
-  if (faPreconfig case final preconfig?) {
-    var refName = preconfig.apiKeyEnvVar;
-    if (refName == null) {
-      for (final name in preconfig.spec.apiKeyEnvNames) {
-        if ((Platform.environment[name] ?? '').isNotEmpty) {
-          refName = name;
-          break;
-        }
-      }
-    }
-    if (refName != null && preconfig.apiKey.isNotEmpty) {
-      redactor.register(refName, preconfig.apiKey);
-    }
+  // reach the transcript. A keyless declaration (no ref) carries no secret.
+  if (faPreconfig case final preconfig? when preconfig.apiKey.isNotEmpty) {
+    redactor.register(preconfig.apiKeyEnvVar!, preconfig.apiKey);
   }
   // Rotation stacks collected for the roles resolver are redacted too.
   for (final entry in roleSecrets.entries) {
@@ -1075,20 +1091,24 @@ Future<void> _runApp(List<String> args) async {
     );
   }
   // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
-  // key ref) — never the key value. When a roles: section resolved, roles
-  // own the model selection; the note says so instead of silently dropping
-  // the declaration.
+  // key ref — or its keyless absence) — never the key value. The pinned
+  // declaration is the session default for every model role; only a
+  // keyless declaration under an active roles: section (which cannot pin
+  // a chain) stays fallback-only, and the note says so.
   if (faPreconfig case final preconfig?) {
-    final keyRef =
-        preconfig.apiKeyEnvVar ?? preconfig.spec.apiKeyEnvNames.first;
     io.writeln(
       'note: provider ${preconfig.name} (${preconfig.spec.name}) '
-      'from FA_PROVIDER_* env — key: $keyRef',
+      'from FA_PROVIDER_* env — key: '
+      '${preconfig.apiKeyEnvVar ?? 'none (keyless endpoint)'}',
     );
     if (defaultRoleResolved) {
       io.writeln(
-        'note: FA_PROVIDER_* preconfig applies to the fallback model only '
-        '(roles: section is active)',
+        preconfig.apiKeyEnvVar == null
+            ? 'note: FA_PROVIDER_* preconfig applies to the fallback model '
+                  'only (roles: section is active; a keyless declaration '
+                  'cannot pin a roles chain)'
+            : 'note: FA_PROVIDER_* preconfig is the session default — all '
+                  'model roles resolve to it unless roles: pins a chain',
       );
     }
   }

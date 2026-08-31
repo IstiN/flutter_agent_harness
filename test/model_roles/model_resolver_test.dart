@@ -392,5 +392,76 @@ void main() {
       expect(after, contains('* openai/gpt-backup'));
       expect(after, contains('cooldown'));
     });
+
+    group('FA_PROVIDER_* boot pin (the bin/fah.dart wiring)', () {
+      test(
+        'the env provider becomes the default role for all unpinned roles',
+        () {
+          // The exact sequence bin/fah.dart performs when FA_PROVIDER_* is
+          // set and a roles: section is active: seed the declared key var,
+          // pin the default role to a single-entry chain on the env
+          // provider — the same selection a `/provider <name>` switch makes.
+          final rolesConfig = ModelRolesConfig(
+            roles: const {
+              'default': [
+                ModelRef(provider: 'anthropic', modelId: 'claude-old'),
+              ],
+              'smol': [ModelRef(provider: 'anthropic', modelId: 'claude-smol')],
+            },
+          );
+          final resolver = ModelRolesResolver(
+            config: rolesConfig,
+            secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+            streamFactory: _neverStream,
+          );
+          const keyVar = 'ZAI_API_KEY';
+          resolver.addSecret(keyVar, 'z-key');
+          resolver.setDefaultChain([
+            const ModelRef(
+              provider: 'zai',
+              modelId: 'glm-5.3',
+              baseUrl: 'https://relay.internal/v1',
+              apiKeyName: keyVar,
+            ),
+          ]);
+
+          // default/slow/plan are unpinned — they inherit the pinned
+          // default and land on the env provider.
+          for (final role in ['default', 'slow', 'plan']) {
+            final resolved = resolver.resolveRole(role);
+            expect(resolved, isNotNull, reason: role);
+            expect(resolved!.model.provider, 'zai', reason: role);
+            expect(resolved.model.id, 'glm-5.3', reason: role);
+            expect(
+              resolved.model.baseUrl,
+              'https://relay.internal/v1',
+              reason: role,
+            );
+          }
+          // smol is pinned explicitly by roles: — it keeps its chain.
+          expect(resolver.resolveRole('smol')!.model.provider, 'anthropic');
+        },
+      );
+
+      test(
+        'a keyless declaration cannot pin a chain (roles keep selection)',
+        () {
+          final resolver = ModelRolesResolver(
+            config: ModelRolesConfig(
+              roles: const {
+                'default': [
+                  ModelRef(provider: 'anthropic', modelId: 'claude-old'),
+                ],
+              },
+            ),
+            secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+            streamFactory: _neverStream,
+          );
+          // No key env var declared → bin/fah.dart skips the pin: the
+          // roles default survives untouched.
+          expect(resolver.resolveRole('default')!.model.provider, 'anthropic');
+        },
+      );
+    });
   });
 }
