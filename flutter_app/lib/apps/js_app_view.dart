@@ -27,6 +27,7 @@ import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart' show faAppBar;
 import 'package:fa/apps/app_icon.dart';
+import 'package:fa/apps/fa_media_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/fa_chat_overlay.dart';
 import 'package:fa/apps/fa_work_bar.dart';
@@ -78,6 +79,7 @@ class JsAppView extends StatefulWidget {
     this.mediaGateway,
     this.videoReader,
     this.mapTileProvider,
+    this.mediaHost,
     this.embeddedInPanel = false,
   });
 
@@ -105,6 +107,11 @@ class JsAppView extends StatefulWidget {
   /// Optional tile provider for `map` nodes — tests inject an offline
   /// provider; null uses the runtime default (OSM over the network).
   final TileProvider? mapTileProvider;
+
+  /// Media backend for the renderer's `video`/`audio` nodes; `null` wires
+  /// the real [FaMediaHost] (video_player/audioplayers). Tests inject
+  /// fakes to stay off native plugins.
+  final JsMediaHost? mediaHost;
 
   /// Called with the composed Fa message; typically forwards to
   /// `AgentService.sendImage`/`sendText` of the app-bound session. Returns
@@ -755,6 +762,7 @@ class _JsAppViewState extends State<JsAppView> {
             brightness: theme.brightness,
           ),
           mapTileProvider: widget.mapTileProvider,
+          mediaHost: widget.mediaHost ?? const FaMediaHost(),
           // 3D scenes: the dispatcher singleton shared with the engine's
           // JsRuntimeConfig (see JsAppEngine.start); taps raycast into
           // `jsr.scene3d.onTap` handlers in the app.
