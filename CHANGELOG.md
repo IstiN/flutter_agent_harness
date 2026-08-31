@@ -1898,6 +1898,19 @@
 - feat(providers): chatgpt oauth expiry tracking — expiresAt + needsRefresh
 - feat(providers): codex transport helpers — header parity, cloudflare cookie jar, rate-limit parsing
 
+## 0.1.256
+
+- chore(sync): resolve the orphaned stash-pop conflicts to origin/main
+- fix(cli): central busy bracket in _startRun — no more spinner-after-settle
+- feat(fa_ui): always-visible custom answer in the ask sheet
+- feat(apps): JsMediaHost wiring — video/audio nodes play for real
+- fix(agent): abort wedged runs — SSE event-level idle watchdog + Agent.runIdleTimeout + fa.log run forensics
+- feat(cli): env preconfig — required fields, base64 twins, all-roles default
+- feat(app): chat text-size setting + dense markdown + unclipped copy
+- feat(apps): adaptive layout host support (js_widget_runtime ^0.4.87)
+- test(integration): fix latent env-key crash in real-model test
+- feat(providers): Z.AI first-class + env-activated providers + FA_PROVIDER_* env preconfig
+
 ## Unreleased
 
 ## Unreleased
