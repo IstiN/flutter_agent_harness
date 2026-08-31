@@ -236,8 +236,18 @@
     document.addEventListener('keydown', onEsc);
     window.gtag && gtag('event', 'widget_preview_click',
       { widget_id: widget.id });
-    frame.src = RUNNER + '?widget=' + encodeURIComponent(widget.id) +
+    // Vendored (CORE) widgets have no widget.js/manifest.json in the
+    // fa_widgets repo (raw.github does not follow submodules) — the
+    // catalog carries explicit preview URLs pointing at the runtime repo
+    // pinned to the exact shipped revision. The runner accepts them as
+    // query params and falls back to its fa_widgets convention otherwise.
+    let src = RUNNER + '?widget=' + encodeURIComponent(widget.id) +
       '&theme=dark';
+    if (widget.preview && widget.preview.manifest && widget.preview.js) {
+      src += '&manifest=' + encodeURIComponent(widget.preview.manifest) +
+        '&js=' + encodeURIComponent(widget.preview.js);
+    }
+    frame.src = src;
   }
 
   document.getElementById('pv-close').addEventListener('click', closePreview);
