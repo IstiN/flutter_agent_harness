@@ -1893,6 +1893,13 @@ extension on AgentCli {
           // resolves (and rotates) without a secure store.
           _seedEnvKeyStack(rolesResolver, pinnedKeyName);
         }
+        // Keep the session key field pointing at THIS endpoint's key (the
+        // non-roles branch below does the same): a roles-mode `/model`
+        // switch re-seeds the pinned chain from `_apiKey` as "the session's
+        // live key material", so the stale startup key (resolved for a
+        // different profile's endpoint) would otherwise clobber this
+        // switch's key on the next model pick.
+        _apiKey = token ?? _providerKeyFor(spec, baseUrl) ?? '';
         try {
           rolesResolver.setDefaultChain([
             ModelRef(

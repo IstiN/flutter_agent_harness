@@ -878,6 +878,10 @@ extension on AgentCli {
       ]);
       rolesResolver.applyToAgent(_agent);
       _streamFunction = _agent.streamFunction;
+      // Same invariant as _switchProvider: the session key field must name
+      // THIS endpoint's key, or a later /model switch re-seeds the pinned
+      // chain with the stale startup key.
+      _apiKey = _providerKeyFor(spec, def.baseUrl) ?? '';
     } else {
       final key = _providerKeyFor(spec, def.baseUrl) ?? '';
       _providerKind = spec.kind;

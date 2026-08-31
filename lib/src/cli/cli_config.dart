@@ -18,6 +18,7 @@ import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../providers/provider_common.dart';
 import '../skills/skills_access.dart';
+import '../memory_config.dart';
 import '../ttsr/ttsr.dart';
 import 'custom_providers.dart';
 
@@ -70,6 +71,7 @@ final class CliConfig {
     this.providerTimeouts,
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
+    this.memory,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -96,6 +98,10 @@ final class CliConfig {
       ttsr: map['ttsr'] == null
           ? null
           : TtsrConfig.fromYaml(map['ttsr'], sourcePath: '~/.fah/config.yaml'),
+      // The memory section: storage path overrides; strict like the rest.
+      memory: map['memory'] == null
+          ? null
+          : MemoryConfig.fromYaml(map['memory']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       customProviders: switch (map['customProviders']) {
         null => const [],
@@ -234,6 +240,11 @@ final class CliConfig {
   /// skill bodies render as a disabled placeholder instead of executing
   /// (the `skills.disableShellExecution` yaml key).
   final bool skillsDisableShellExecution;
+
+  /// Optional `memory:` section — long-term memory storage path overrides
+  /// (git-backed project memory). Null = the historical `.fah/memory`
+  /// layout.
+  final MemoryConfig? memory;
 
   String toYaml() {
     final buffer = StringBuffer()

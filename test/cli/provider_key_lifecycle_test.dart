@@ -31,11 +31,12 @@ void main() {
     ModelRolesResolver? modelRolesResolver,
     String? Function(String name)? envVarValue,
     void Function(String providerKind, String apiKey)? onProviderChanged,
+    String apiKey = 'test-key',
   }) {
     return AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: 'test-key',
+        apiKey: apiKey,
         env: env,
         sessionRoot: '/sessions',
         customProviders: customProviders,
@@ -261,6 +262,69 @@ void main() {
         resolver.config.roles['default']!.single.apiKeyName,
         'FA_KEY_API_KIMI_COM_KIMI_IRA1',
       );
+    });
+
+    test('roles mode: a cross-provider model pick keeps the endpoint key — '
+        'the stale startup key must not clobber it', () async {
+      // Repro of the copilot-profile 401: the CLI started on a persisted
+      // COPILOT profile, so the startup key field holds the copilot token;
+      // the roles chain drives api.kimi.com with the kimi key. Picking
+      // kimi_me's model in the /model picker first switches to the saved
+      // entry (seeding the chain with the entry's key), then the plain
+      // /model switch re-seeds the SAME key name from the session key
+      // field — the request must still go out with the kimi key.
+      final sentKeys = <String>[];
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'k3-256k',
+                baseUrl: 'https://api.kimi.com/coding/v1',
+                apiKeyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
+              ),
+            ],
+          },
+          retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        ),
+        secrets: const {'FA_KEY_API_KIMI_COM_KIMI_ME': 'sk-kimi-good'},
+        streamFactory: (kind, apiKey) {
+          sentKeys.add(apiKey);
+          return FakeStreamFunction([textTurn('ok')]).call;
+        },
+      );
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'kimi_me',
+          apiType: 'openai',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          modelId: 'k3-256k',
+          keyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
+        ),
+      ]);
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_API_KIMI_COM_KIMI_ME'] = 'sk-kimi-good';
+      final cache = await cacheOf(store);
+      final cli = cliFor(
+        customProviders: registry,
+        secureKeys: cache,
+        modelRolesResolver: resolver,
+        apiKey: 'copilot-token',
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+      await cli.tuiSelectModelForTest('kimi_me|k3-256k');
+      await waitForIt(
+        () => io.out.toString().contains('switched model to k3-256k'),
+      );
+      io.sendLine('go');
+      await waitForIt(() => sentKeys.isNotEmpty && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      expect(sentKeys.last, 'sk-kimi-good');
     });
 
     test('deleting a provider keeps its key in the store', () async {

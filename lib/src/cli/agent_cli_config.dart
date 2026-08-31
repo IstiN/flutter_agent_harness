@@ -36,6 +36,7 @@ final class AgentCliConfig {
     this.alwaysAllowTools = const {},
     this.modelRolesResolver,
     this.ttsr,
+    this.memoryConfig,
     this.modelsConfig,
     this.onModelsConfigChanged,
     this.onModelChanged,
@@ -165,6 +166,11 @@ final class AgentCliConfig {
   /// project rules file). When set and enabled, a [TtsrController] watches
   /// the agent's streams and drives abort/inject/retry on rule matches.
   final TtsrConfig? ttsr;
+
+  /// Optional `memory:` section of `~/.fah/config.yaml` — long-term memory
+  /// storage path overrides (git-backed project memory). Null = the
+  /// historical `.fah/memory` layout.
+  final MemoryConfig? memoryConfig;
 
   /// The live models config (the `models:` section of `~/.fah/config.yaml`),
   /// shared with the executable: `/models set`/`/models remove` mutate its

@@ -69,13 +69,25 @@ final class MemoryController {
     String? projectRoot,
     this._userRoot,
     this._llmProvider,
+    String? projectStoragePath,
+    String? userStoragePath,
   }) : _env = env,
-       _projectRoot = projectRoot ?? env.cwd;
+       _projectRoot = projectRoot ?? env.cwd,
+       _projectStoragePath = projectStoragePath,
+       _userStoragePath = userStoragePath;
 
   final ExecutionEnv _env;
   final String _projectRoot;
   final String? _userRoot;
   final LlmProvider? _llmProvider;
+
+  /// Optional storage path overrides (the `memory:` config section —
+  /// git-backed memory points projectPath inside the repo). Null = the
+  /// historical `<root>/.fah/memory`. Relative project paths resolve
+  /// against the project root; a user path's leading `~/` expands
+  /// against the user root.
+  final String? _projectStoragePath;
+  final String? _userStoragePath;
 
   ExecutionEnvKbStorage? _projectStorage;
   ExecutionEnvKbStorage? _userStorage;
@@ -87,7 +99,7 @@ final class MemoryController {
   /// Lazily initializes the project-scope store + search engine.
   Future<KBMemoryStore> get projectStore async {
     if (_projectStore != null) return _projectStore!;
-    _projectStorage = ExecutionEnvKbStorage(_env, '$_projectRoot/.fah/memory');
+    _projectStorage = ExecutionEnvKbStorage(_env, _resolvedProjectPath());
     await _projectStorage!.initialize();
     _projectStore = KBMemoryStore(_projectStorage!, provider: _llmProvider);
     _projectSearch = KBSearchEngine(_projectStorage!, provider: _llmProvider);
@@ -98,11 +110,33 @@ final class MemoryController {
   Future<KBMemoryStore?> get userStore async {
     if (_userRoot == null) return null;
     if (_userStore != null) return _userStore;
-    _userStorage = ExecutionEnvKbStorage(_env, '$_userRoot/.fah/memory');
+    _userStorage = ExecutionEnvKbStorage(_env, _resolvedUserPath());
     await _userStorage!.initialize();
     _userStore = KBMemoryStore(_userStorage!, provider: _llmProvider);
     _userSearch = KBSearchEngine(_userStorage!, provider: _llmProvider);
     return _userStore!;
+  }
+
+  /// The project storage dir: the override (absolute as-is, relative
+  /// against the project root, `./` stripped) or the `.fah/memory` default.
+  String _resolvedProjectPath() {
+    final path = _projectStoragePath;
+    if (path == null || path.isEmpty) return '$_projectRoot/.fah/memory';
+    if (path.startsWith('/')) return path;
+    final stripped = path.startsWith('./') ? path.substring(2) : path;
+    return '$_projectRoot/$stripped';
+  }
+
+  /// The user storage dir: the override (`~/` expands against the user
+  /// root, absolute as-is, relative against the user root) or default.
+  String _resolvedUserPath() {
+    final root = _userRoot!;
+    final path = _userStoragePath;
+    if (path == null || path.isEmpty) return '$root/.fah/memory';
+    if (path.startsWith('~/')) return '$root/${path.substring(2)}';
+    if (path.startsWith('/')) return path;
+    final stripped = path.startsWith('./') ? path.substring(2) : path;
+    return '$root/$stripped';
   }
 
   /// Adds a memory entry (project scope by default).

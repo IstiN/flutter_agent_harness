@@ -96,6 +96,7 @@ import '../tools/transcribe_audio.dart';
 import '../memory/compaction_memory_hook.dart';
 import '../memory/harness_llm_provider.dart';
 import '../memory/memory_controller.dart';
+import '../memory_config.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
 import '../messaging/schedule_message_tool.dart';
@@ -184,6 +185,10 @@ class AgentCli {
       env: _env,
       projectRoot: _env.cwd,
       userRoot: config.homeDir,
+      // `memory:` config section — git-backed memory points projectPath
+      // inside the repo; null keeps the .fah/memory default.
+      projectStoragePath: config.memoryConfig?.projectPath,
+      userStoragePath: config.memoryConfig?.userPath,
       // Semantic search + consolidate() need an LLM: memory → smol → main.
       llmProvider: HarnessLlmProvider(resolve: () => _resolveMemoryLlmSlot()),
     );

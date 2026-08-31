@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.265
+
+- feat(memory): configurable long-term memory storage paths — the new
+  `memory:` section of `~/.fah/config.yaml` (`projectPath`, `userPath`,
+  strict schema like the other sections) feeds `MemoryController`'s new
+  storage-path overrides: a relative projectPath resolves against the
+  project root, `~/` in userPath expands against the user home, and null
+  keeps the historical `.fah/memory` layout. Point `projectPath` inside
+  the repository (e.g. `./memory`) and the project memory becomes
+  committable — anyone cloning the repo gets its memory. Wired in the
+  CLI (`AgentCliConfig.memoryConfig`) and the app (`AgentService` reads
+  the same section through a conditional IO/stub loader — web keeps the
+  default). Step P0 of the git-backed memory program.
+
 ## 0.1.264
 
 - fix(cli): macOS Cmd+Left/Right no longer types "aaaa" in the composer —
