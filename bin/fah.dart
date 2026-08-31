@@ -1227,7 +1227,8 @@ Future<void> _runApp(List<String> args) async {
       // TTSR stream rules: user config (~/.fah/config.yaml `ttsr:`) merged
       // with project rules (.fah/rules.yaml), project first.
       ttsr: _resolveTtsr(saved, cwd),
-      memoryConfig: saved.memory,
+      // Project-level .fah/config.yaml memory: wins over the user one.
+      memoryConfig: loadProjectMemoryConfig(cwd) ?? saved.memory,
       onModelChanged: (_) async => persistConfig(),
       // `/provider` switches: redact an explicitly passed session token so
       // it cannot leak into tool results or session files, then persist the

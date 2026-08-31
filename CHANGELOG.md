@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.266
+
+- feat(memory): project-level `.fah/config.yaml` — the `memory:` section
+  now also resolves from the project's own config file and WINS over the
+  user-level one, so the git-backed memory pointer travels with the repo:
+  `memory: {projectPath: ./memory}` in `.fah/config.yaml` makes the
+  repo's `memory/` directory the project memory for anyone who clones it
+  (CLI and app, web keeps the default).
+- feat(repo): flutter_agent's own memory moved into git — the full
+  revision landed first (446 notes audited one by one; 142 deleted
+  through tombstone `memory_delete`: 84 duplicates, 44 stale, 14
+  superseded), the surviving 304 notes now live in the committable
+  `memory/` directory with derived artifacts (`GRAPH.md`,
+  `MEMORY.revision`, indexes) gitignored and `DELETIONS.md` under
+  `merge=union`. `.gitignore` flipped from ignoring all of `.fah/` to a
+  whitelist: `config.yaml`, `rules.yaml`, `lsp.json`, `mcp.json`,
+  `agents/`, `skills/`, `packages.yaml` are committable;
+  logs/sessions/bash_jobs stay local.
+
 ## 0.1.265
 
 - feat(memory): configurable long-term memory storage paths — the new

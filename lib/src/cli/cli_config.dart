@@ -375,6 +375,27 @@ CliConfig loadCliConfig(String homeDir) {
   return CliConfig();
 }
 
+/// Loads the PROJECT-level `memory:` section from
+/// `<projectDir>/.fah/config.yaml` — the git-backed memory path travels
+/// with the repo (anyone cloning gets the pointer AND the memory).
+/// Project wins over the user-level `memory:` section. Null when the
+/// file or the section is absent/unreadable; a present-but-invalid
+/// section throws [ConfigException] (strict, like the user config).
+MemoryConfig? loadProjectMemoryConfig(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['memory'];
+    return node == null ? null : MemoryConfig.fromYaml(node);
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
 /// Saves [CliConfig] to `~/.fah/config.yaml`.
 Future<void> saveCliConfig(String homeDir, CliConfig config) async {
   final dir = Directory('$homeDir/.fah');

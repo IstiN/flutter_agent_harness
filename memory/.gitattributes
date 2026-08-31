@@ -1,0 +1,3 @@
+# Append-only tombstone ledger: git's union merge driver is exactly the
+# right semantics for two branches appending deletions concurrently.
+DELETIONS.md merge=union

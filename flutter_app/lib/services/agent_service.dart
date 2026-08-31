@@ -493,7 +493,8 @@ class AgentService extends ChangeNotifier
     }
 
     _childSessionFactory = childSessionFactory;
-    final memoryConfig = loadAppMemoryConfig();
+    // Project-level .fah/config.yaml memory: wins over the user one.
+    final memoryConfig = loadAppMemoryConfig(env.sessionCwd);
     _memoryController = MemoryController(
       env: env,
       // `memory:` section of ~/.fah/config.yaml — the same git-backed

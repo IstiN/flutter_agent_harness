@@ -1,6 +1,8 @@
 @TestOn('vm')
 library;
 
+import 'dart:io';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/cli_config.dart';
 import 'package:test/test.dart';
@@ -60,6 +62,46 @@ memory:
         () => parse('memory: ./memory\n'),
         throwsA(isA<ConfigException>()),
       );
+    });
+  });
+
+  group('loadProjectMemoryConfig', () {
+    test('absent project file → null (user config applies)', () {
+      final dir = Directory.systemTemp.createTempSync('fa_memcfg_');
+      try {
+        expect(loadProjectMemoryConfig(dir.path), isNull);
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('a project memory: section parses and wins', () {
+      final dir = Directory.systemTemp.createTempSync('fa_memcfg_');
+      try {
+        File('${dir.path}/.fah/config.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('memory:\n  projectPath: ./memory\n');
+        final config = loadProjectMemoryConfig(dir.path);
+        expect(config, isNotNull);
+        expect(config!.projectPath, './memory');
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('an invalid project section throws ConfigException (strict)', () {
+      final dir = Directory.systemTemp.createTempSync('fa_memcfg_');
+      try {
+        File('${dir.path}/.fah/config.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('memory:\n  projectPath: 42\n');
+        expect(
+          () => loadProjectMemoryConfig(dir.path),
+          throwsA(isA<ConfigException>()),
+        );
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
     });
   });
 

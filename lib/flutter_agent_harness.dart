@@ -27,7 +27,8 @@ export 'src/cli/custom_providers.dart';
 export 'src/cli/env_provider_preconfig.dart';
 export 'src/model_roles/provider_key_resolver.dart';
 export 'src/cli/cli_args.dart';
-export 'src/cli/cli_config.dart' show CliConfig, loadCliConfig;
+export 'src/cli/cli_config.dart'
+    show CliConfig, loadCliConfig, loadProjectMemoryConfig;
 export 'src/cli/cli_help.dart';
 export 'src/cli/sigint_action.dart';
 export 'src/cli/key_event.dart';

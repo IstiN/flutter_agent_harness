@@ -1,0 +1,6 @@
+# Project-level fa config — committed on purpose (see .gitignore: only
+# this file and other curated .fah entries are tracked; logs/sessions/
+# bash_jobs stay local). The memory pointer makes the repo's memory/
+# directory the project memory: anyone cloning gets it out of the box.
+memory:
+  projectPath: ./memory

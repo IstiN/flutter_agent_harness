@@ -8,8 +8,13 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import '../sandbox/env_factory_io.dart' show desktopHomeDir;
 
 /// The parsed `memory:` section, or null (absent section / no config).
-MemoryConfig? loadAppMemoryConfig() {
+MemoryConfig? loadAppMemoryConfig([String? projectDir]) {
   try {
+    // Project-level .fah/config.yaml memory: wins (it travels in git).
+    if (projectDir != null) {
+      final project = loadProjectMemoryConfig(projectDir);
+      if (project != null) return project;
+    }
     final home = desktopHomeDir();
     if (home == null) return null;
     return loadCliConfig(home).memory;
