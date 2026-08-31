@@ -70,6 +70,7 @@ import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../providers/provider_common.dart'
     show authExpiredProvider, stripAuthExpiredMarker;
+import '../providers/transient_retry_stream.dart';
 import '../prompts/prompt_overrides.dart';
 import 'chatgpt_oauth_server.dart';
 import 'codemie_sso_server.dart';
@@ -845,6 +846,21 @@ class AgentCli {
     // the busy row?" — parallel fa processes share this log, so name the
     // version next to the session id before any lifecycle line.
     _logDiagnostic('fa boot sid=$_logSid version=$_version');
+    // Transient network retry visibility (the Wi-Fi-switch case): the
+    // retry itself lives in providerStreamFunction; here it gets a voice —
+    // a dim transcript line + an fa.log entry instead of a silent 5s pause.
+    transientRetryNotice = (attempt, maxAttempts, delay, reason) {
+      io.writeln(
+        _style.dim(
+          '[net] connection lost ($reason) — retrying in '
+          '${delay.inSeconds}s (attempt ${attempt + 1}/$maxAttempts)',
+        ),
+      );
+      _logDiagnostic(
+        'transient retry sid=$_logSid attempt=${attempt + 1}/$maxAttempts '
+        'reason=$reason',
+      );
+    };
     // Live-session presence: this process now owns the session — the Fa
     // app (sharing the sessions root) marks it live and can attach. The
     // heartbeat refreshes on the inbox timer; unregistering happens in

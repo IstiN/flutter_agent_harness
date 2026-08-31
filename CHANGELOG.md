@@ -1,14 +1,21 @@
 # Changelog
 
-## 0.1.259
+## 0.1.261
 
-- feat(cli): fa.log now opens with `fa boot sid=… version=…` — the shared
-  diagnostics log had no way to attribute a wedged "Working…" row to the
-  BUILD that held it (today's 1949s spinner post-mortem stalled on exactly
-  that: the wedged process predated the 0.1.255 busy-bracket fix, but only
-  circumstantial evidence proved it). Every process now names its version
-  next to its session id before any lifecycle line.
-
+- feat(providers): transient network retry on every provider call — a
+  Wi-Fi/VPN switch mid-turn killed the stream with "Connection reset by
+  peer" and the turn ended in a hard error. `providerStreamFunction` (the
+  one chokepoint for chat turns, roles chains, compaction summaries, and
+  memory extraction) now wraps every adapter with
+  `transientRetryStreamFunction`: a socket-level failure (reset / refused /
+  unreachable / timed out / broken pipe / TLS handshake cut — certificates
+  excluded, a bad cert never heals in 5s) sleeps 5s and replays the call,
+  up to 3 attempts. omp's observable-output guard is kept: a stream that
+  already emitted content is never replayed, so a retried generation can't
+  duplicate text. The CLI surfaces each retry as a dim `[net] connection
+  lost — retrying in 5s (attempt 2/3)` line plus an fa.log entry instead
+  of a mysterious pause; `transientRetryNotice`/`transientRetrySleeper`
+  are the host/test seams.
 
 ## 0.1.260
 
@@ -23,6 +30,14 @@
   duplicated name→key algorithm is gone — both surfaces use the one core
   `CustomProviderRegistry.copilotEntryKeyName`.
 
+## 0.1.259
+
+- feat(cli): fa.log now opens with `fa boot sid=… version=…` — the shared
+  diagnostics log had no way to attribute a wedged "Working…" row to the
+  BUILD that held it (today's 1949s spinner post-mortem stalled on exactly
+  that: the wedged process predated the 0.1.255 busy-bracket fix, but only
+  circumstantial evidence proved it). Every process now names its version
+  next to its session id before any lifecycle line.
 
 ## 0.1.258
 
@@ -130,7 +145,6 @@
 - feat(providers): codex http sse transport — header parity, cloudflare cookie replay, full event coverage
 - feat(providers): chatgpt oauth expiry tracking — expiresAt + needsRefresh
 - feat(providers): codex transport helpers — header parity, cloudflare cookie jar, rate-limit parsing
-<<<<<<< HEAD
 
 ## 0.1.252
 
@@ -1956,17 +1970,3 @@
   coverage ≥ 80%, duplication < 1%), GOAL.md with the pi-mono port roadmap.
 - Seeded `CancelToken` / `CancelTokenSource` / `CancelledException` — the
   universal cancellation primitive (Dart counterpart of web `AbortSignal`).
-
-## 0.1.260
-
-- feat(cli): fa.log boot line names the build (0.1.259)
-- fix(cli): copilot preset handler + cwd-aware session names
-- site: pass catalog preview manifest/js URLs to the web runner
-- test(cli): the Add provider picker must cover the whole catalog
-- fix(cli): add GitHub Copilot to the Add provider preset picker
-- docs(changelog): repair ordering — newest-first, merge duplicate sections
-- fix(cli): roles-mode /model switch on saved CodeMie entries resolves the entry key
-
-## 0.1.260
-=======
->>>>>>> 01ec9071 (Merge PR#7: fix(app): copilot parity with the CLI — model dialect + delete cleans the entry-scoped token)

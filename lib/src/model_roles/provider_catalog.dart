@@ -19,6 +19,7 @@ import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
 import '../providers/copilot.dart';
 import '../providers/copilot_oauth.dart';
+import '../providers/transient_retry_stream.dart';
 import '../providers/dial.dart';
 import '../providers/google.dart';
 import '../providers/openai_completions.dart';
@@ -418,7 +419,7 @@ StreamFunction providerStreamFunction(
     throw ConfigException('Unknown provider kind: $kind');
   }
   // ignore: implicit_call_tearoffs
-  return _CatalogStreamFunction(
+  final inner = _CatalogStreamFunction(
     kind,
     apiKey,
     sessionId,
@@ -427,6 +428,10 @@ StreamFunction providerStreamFunction(
     dialCacheMarkersSupported,
     onChatGptCredentialsRefreshed,
   );
+  // Every provider call (chat turns, compaction summaries, memory
+  // extraction, media) rides the transient-network retry: a Wi-Fi switch
+  // mid-turn dies with "Connection reset by peer" — sleep, replay.
+  return transientRetryStreamFunction(inner.call);
 }
 
 /// The [providerStreamFunction] product: resolves the cache routing at call
