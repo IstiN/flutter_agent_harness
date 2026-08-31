@@ -50,6 +50,12 @@ enum HubMode {
 
   /// Answer `presence_query` with an `error` frame. BUG 2.
   errorPresence,
+
+  /// Before answering `presence_query`, push an UNSOLICITED one-agent
+  /// presence broadcast (a join event) — the client must not let it
+  /// satisfy the pending full-roster query. BUG 5 (live: "only self
+  /// online" every other restart).
+  broadcastRace,
 }
 
 /// Minimal scripted DAP/1 hub: real WebSocket, real handshake, and a
@@ -106,17 +112,33 @@ class SilentHub {
             .substring(0, 16);
         _reply(ws, {'op': 'welcome', 'agentId': agentId});
       case 'presence_query':
+        if (mode == HubMode.broadcastRace) {
+          // An unsolicited join-event broadcast lands BEFORE the query
+          // answer — one agent only, not the roster the caller asked for.
+          _reply(ws, {
+            'op': 'presence',
+            'agents': [
+              {'agentId': 'ffffffffffffffff', 'online': true},
+            ],
+          });
+        }
         switch (mode) {
           case HubMode.silent:
             return; // swallowed: the bug state
           case HubMode.errorPresence:
             _reply(ws, {'op': 'error', 'code': 'boom', 'msg': 'nope'});
-          case HubMode.answering:
+          case HubMode.answering || HubMode.broadcastRace:
             _reply(ws, {
               'op': 'presence',
               'agents': [
                 {
                   'agentId': '0011223344556677',
+                  'pubkey': pubkey,
+                  'x25519': frame['x25519'] as String? ?? pubkey,
+                  'online': true,
+                },
+                {
+                  'agentId': 'aabbccddeeff0011',
                   'pubkey': pubkey,
                   'x25519': frame['x25519'] as String? ?? pubkey,
                   'online': true,
@@ -297,6 +319,36 @@ void main() {
       // with a timeout error here still means the clobber is present.
       final firstOutcome = await bounded(first, const Duration(seconds: 3));
       expect(firstOutcome, 'completed');
+    },
+  );
+
+  test(
+    'BUG 5: an unsolicited presence broadcast must not satisfy a pending '
+    'full-roster query (live: "only self online" every other restart)',
+    skip:
+        'fah_hub_client ^0.2.0: any op:presence frame completes all '
+        'presence waiters (hub_client _onPresence), so a join-event '
+        'broadcast with a one-agent roster can answer a peers() call — '
+        'wrong VALUE, not a hang. Verified RED 2026-08-31 (roster came '
+        'back as the one-agent broadcast). Needs the hub query-id echo + '
+        'waiter-matching wave. Unskip when it lands.',
+    timeout: timeout,
+    () async {
+      final hub = SilentHub();
+      await hub.start();
+      hub.mode = HubMode.broadcastRace;
+      final client = await connectTo(hub);
+      addTearDown(client.disconnect);
+      addTearDown(hub.stop);
+
+      final roster = await client.peers().timeout(const Duration(seconds: 5));
+
+      // The roster must be the query ANSWER (two agents), never the
+      // one-agent broadcast that arrived first.
+      expect(
+        roster.map((a) => a.agentId),
+        containsAll(<String>['0011223344556677', 'aabbccddeeff0011']),
+      );
     },
   );
 }
