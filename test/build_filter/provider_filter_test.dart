@@ -23,8 +23,8 @@ void main() {
         final name = entry.key;
         final spec = entry.value;
         expect(providerEnabledInBuild(name), isTrue, reason: name);
-        // Hidden providers (e.g. chatgpt codex) resolve through the catalog
-        // but are not user-facing in pickers / status lists.
+        // A `visible: false` spec (none in the default catalog today) would
+        // still resolve through the catalog but stay out of the enabled set.
         expect(catalogProvider(name), isNotNull, reason: name);
         expect(enabledProviders().contains(spec), spec.visible, reason: name);
       }

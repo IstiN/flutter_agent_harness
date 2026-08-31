@@ -245,7 +245,7 @@ void main() {
     expect(
       output,
       contains(
-        'supported providers: openrouter, kimi, openai, copilot, codemie, dial, minimax, anthropic, google',
+        'supported providers: openrouter, kimi, openai, chatgpt, copilot, codemie, dial, minimax, anthropic, google',
       ),
     );
     expect(cli.agent.state.model.provider, 'test-provider');
@@ -1250,114 +1250,6 @@ void main() {
       await run;
     });
   });
-
-  group('ChatGPT OAuth', () {
-    test(
-      '/provider chatgpt oauth headless exchanges, stores credentials and switches',
-      () async {
-        final fake = FakeStreamFunction([textTurn('ok')]);
-        final store = FakeSecureKeyStore();
-        final cache = SecureKeyCache(store);
-        await cache.probe();
-        final registry = CustomProviderRegistry([]);
-        final cli = cliFor(
-          fake.call,
-          envVarValue: (_) => null,
-          secureKeys: cache,
-          customProviders: registry,
-          chatGptOAuthExchangeFn:
-              ({
-                required String code,
-                required String redirectUri,
-                required String verifier,
-              }) async {
-                expect(code, 'auth-code-xyz');
-                expect(redirectUri, 'http://127.0.0.1:1455/auth/callback');
-                expect(verifier, isNotEmpty);
-                return const ChatGptOAuthCredentials(
-                  accessToken: 'at-123',
-                  refreshToken: 'rt-123',
-                  idToken: 'it-123',
-                  accountId: 'acc-123',
-                );
-              },
-        );
-        final run = cli.run();
-
-        io.sendLine('/provider chatgpt oauth headless');
-        await waitForIt(
-          () => io.out.toString().contains('ChatGPT OAuth (headless)'),
-        );
-        await waitForIt(() => io.out.toString().contains('redirect URL:'));
-
-        // The printed authorize URL carries the state parameter the
-        // callback must echo back.
-        final authUrlLine = io.out
-            .toString()
-            .split('\n')
-            .firstWhere((line) => line.contains('auth.openai.com'));
-        final state = Uri.parse(authUrlLine.trim()).queryParameters['state'];
-        expect(state, isNotNull);
-
-        io.sendLine(
-          'http://127.0.0.1:1455/auth/callback?code=auth-code-xyz&state=$state',
-        );
-        // The connect flow asks for the provider name like every other
-        // add flow; a typed name lands the account in the registry.
-        await waitForIt(
-          () => io.out.toString().contains('provider name [chatgpt.com]'),
-        );
-        io.sendLine('my-chatgpt');
-        await waitForIt(
-          () => io.out.toString().contains('switched provider to chatgpt'),
-        );
-        io.sendLine('/exit');
-        await run;
-
-        final output = io.out.toString();
-        expect(output, contains('ChatGPT authorized'));
-        final stored = store.map['CHATGPT_OAUTH_CREDENTIALS'];
-        expect(stored, isNotNull);
-        expect(stored, contains('"access_token":"at-123"'));
-        expect(stored, contains('"refresh_token":"rt-123"'));
-        expect(stored, contains('"chatgpt_account_id":"acc-123"'));
-        // The account shows in /provider as a saved entry.
-        final entry = registry.find('my-chatgpt');
-        expect(entry, isNotNull);
-        expect(entry!.apiType, 'chatgpt');
-        expect(entry.keyName, 'CHATGPT_OAUTH_CREDENTIALS');
-        expect(cli.agent.state.model.provider, 'chatgpt');
-        expect(cli.providerKind, 'chatgpt-codex');
-      },
-    );
-
-    test('/provider chatgpt oauth headless rejects a bad-state URL', () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call);
-      final run = cli.run();
-
-      io.sendLine('/provider chatgpt oauth headless');
-      await waitForIt(() => io.out.toString().contains('redirect URL:'));
-      io.sendLine('http://127.0.0.1:1455/auth/callback?code=x&state=wrong');
-      await waitForIt(() => io.out.toString().contains('invalid redirect URL'));
-      io.sendLine('/exit');
-      await run;
-    });
-
-    test('/provider chatgpt oauth rejects invalid usage', () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call);
-      final run = cli.run();
-
-      io.sendLine('/provider chatgpt oauth too many args');
-      await waitForIt(
-        () => io.out.toString().contains('usage: /provider chatgpt oauth'),
-      );
-      io.sendLine('/exit');
-      await run;
-    });
-  });
-
   group('DIAL setup', () {
     test(
       '/provider dial setup saves a registry entry, stores the key and switches',

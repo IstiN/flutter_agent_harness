@@ -14,6 +14,37 @@
 ## 0.1.250
 
 
+- feat(providers): ChatGPT goes multi-account — each account saves as its
+  own named entry with its own name-scoped secure-store slot
+  (`FA_KEY_CHATGPT_COM_<NAME>`, the CodeMie per-entry key pattern), so a
+  refresh-token rotation never overwrites a sibling account's blob and
+  the refresh callback writes to the ACTIVE entry's slot.
+- feat(provider): `/provider chatgpt oauth` offers the saved ChatGPT
+  accounts first (switch to one, or add another) before running OAuth;
+  a NEW account gets a guided model pick from the live Codex `/models`
+  (bundled default when the fetch answers nothing), while a re-login to
+  the SAME entry keeps its last-used model.
+- feat(app): the ChatGPT OAuth flow names the entry from the OAuth
+  account's email (id_token claim) and matches re-auths by name +
+  baseUrl — a second ChatGPT account lands in its own entry and its own
+  entry-scoped Keychain slot, mirroring the CLI.
+- feat(chatgpt): the ChatGPT provider (Codex backend) is now visible across
+  the pickers and `/provider` — it ships with the real Codex HTTP SSE
+  transport: Codex header parity (originator, session/thread ids, account
+  id), cloudflare cookie replay, and a single challenge retry.
+- feat(chatgpt): OAuth access tokens refresh proactively (expiry is tracked
+  on the credentials blob) and the rotated blob is re-persisted.
+- feat(chatgpt): reasoning deltas surface as thinking blocks;
+  `response.incomplete` / `response.failed` end the stream as a terminal
+  error event, preserving any partial text already streamed.
+- fix(chatgpt): OAuth credentials `toJson` returns `Map<String, String>`
+  again (expiry serialized as an epoch-millisecond string); decoding still
+  accepts blobs with a raw int `expires_at`.
+- fix(chatgpt): the cookie-replay baseline is the header the request
+  actually carried (snapshotted before the send), so the single
+  challenge retry fires only when the jar truly learned a new cookie.
+- feat(chatgpt): `/models` probes the live Codex `/models` endpoint and
+  falls back to the bundled catalog on 401 / challenge / malformed bodies.
 - feat(memory): the long-term-memory LLM slot is wired — a new
   `HarnessLlmProvider` adapts fa_llm's `LlmProvider` onto the harness
   streaming contract and is resolved per call (`memory` role → `smol` →

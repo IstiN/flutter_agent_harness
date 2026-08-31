@@ -10,8 +10,10 @@ import '../cancel_token.dart';
 import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';
+import '../session/uuid.dart';
 import '../types.dart';
 import 'chatgpt_oauth.dart';
+import 'codex_transport.dart';
 import 'provider_common.dart';
 
 typedef ChatGptCredentialsPersist = FutureOr<void> Function(String encoded);
@@ -72,42 +74,49 @@ final class _ChatGptCodexSession {
   final CancelToken? cancelToken;
   final http.Client client;
   final _SseAccumulator _sse = _SseAccumulator();
+  final CodexCookieJar _cookies = CodexCookieJar();
+
+  /// Stable per-turn Codex telemetry ids; retries within the turn reuse
+  /// them so the backend can correlate attempts.
+  final String _sessionId = uuidv7();
+  final String _threadId = uuidv7();
+
+  /// Cookie header value captured before the latest request went out.
+  String? _cookiesBeforeRequest;
 
   Future<void> run() async {
-    // ChatGPT Codex speaks WebSocket with Codex-specific headers
-    // (x-openai-internal-codex-responses-lite, responses_websockets=
-    // 2026-02-06, …) — plain HTTP POST returns 404 from the Codex
-    // backend. Rather than surfacing the 404 to the user as if the
-    // provider broke, emit a clear 'not yet supported' error so the
-    // user knows to pick another provider until we build the WebSocket
-    // adapter.
     var credentials = ChatGptOAuthCredentials.decode(encodedCredentials);
+    if (credentials.needsRefresh(DateTime.now())) {
+      // Proactive: the access token is at/past expiry minus skew.
+      credentials = await _refreshCredentials(credentials);
+    }
+    var refreshedOn401 = false;
+    var replayedCookies = false;
     var response = await _request(credentials);
-    if (response.statusCode == 401) {
+    while (true) {
+      if (response.statusCode == 401 && !refreshedOn401) {
+        // Reactive backstop: refresh once, persist, retry.
+        refreshedOn401 = true;
+        await response.stream.drain();
+        credentials = await _refreshCredentials(credentials);
+        response = await _request(credentials);
+        continue;
+      }
+      if (!_isCloudflareChallenge(response)) break;
       await response.stream.drain();
-      credentials = await refreshChatGptCredentials(
-        credentials,
-        client: client,
-      );
-      await onCredentialsRefreshed?.call(credentials.encode());
+      if (replayedCookies || !_learnedCookies()) {
+        throw StateError(
+          'ChatGPT responded with a Cloudflare challenge that cookie '
+          'replay could not clear. Re-authenticate with '
+          '`fa /provider chatgpt oauth` or retry later.',
+        );
+      }
+      // Replay the freshly learned Cloudflare cookies once.
+      replayedCookies = true;
       response = await _request(credentials);
     }
     if (response.statusCode != 200) {
-      final body = await response.stream.bytesToString();
-      if (response.statusCode == 404) {
-        throw StateError(
-          'ChatGPT Codex is not supported yet — the backend requires a '
-          'WebSocket connection with Codex-specific headers '
-          '(x-openai-internal-codex-responses-lite). Plain HTTP /responses '
-          'returns 404. Please pick another provider (OpenRouter, OpenAI, '
-          'CodeMie, …) until the Codex WebSocket adapter ships.',
-        );
-      }
-      throw ProviderHttpError(
-        response.statusCode,
-        body,
-        retryAfter: parseRetryAfter(response.headers['retry-after']),
-      );
+      throw await _httpError(response);
     }
     events.push(StartEvent(partial: state.snapshot()));
     await for (final line
@@ -121,19 +130,100 @@ final class _ChatGptCodexSession {
     _finish();
   }
 
-  Future<http.StreamedResponse> _request(ChatGptOAuthCredentials credentials) {
-    final request =
-        http.Request('POST', Uri.parse('${model.baseUrl}/responses'))
-          ..headers.addAll({
-            'content-type': 'application/json',
-            'accept': 'text/event-stream',
-            'authorization': 'Bearer ${credentials.accessToken}',
-            if (credentials.accountId != null)
-              'ChatGPT-Account-ID': credentials.accountId!,
-            ...?model.headers,
-          })
-          ..body = jsonEncode(_requestBody());
-    return client.send(request);
+  Uri get _endpoint => Uri.parse('${model.baseUrl}/responses');
+
+  Future<http.StreamedResponse> _request(
+    ChatGptOAuthCredentials credentials,
+  ) async {
+    final uri = _endpoint;
+    // Snapshot before the send/store sequence: `_learnedCookies()` must
+    // diff against exactly what this request carried, never the post-store
+    // jar of the same response.
+    final cookieHeader = _cookies.cookieHeader(uri);
+    _cookiesBeforeRequest = cookieHeader;
+    final request = http.Request('POST', uri)
+      ..headers.addAll({
+        'content-type': 'application/json',
+        'accept': 'text/event-stream',
+        ...codexRequestHeaders(
+          accessToken: credentials.accessToken,
+          accountId: credentials.accountId,
+          sessionId: _sessionId,
+          threadId: _threadId,
+        ),
+        'cookie': ?cookieHeader,
+        // Model headers go last so they can override the defaults.
+        ...?model.headers,
+      })
+      ..body = jsonEncode(_requestBody());
+    final response = await client.send(request);
+    // Cloudflare sets its cookies even on error responses — store always.
+    _cookies.store(uri, response.headers);
+    return response;
+  }
+
+  Future<ChatGptOAuthCredentials> _refreshCredentials(
+    ChatGptOAuthCredentials credentials,
+  ) async {
+    final fresh = await refreshChatGptCredentials(credentials, client: client);
+    await onCredentialsRefreshed?.call(fresh.encode());
+    return fresh;
+  }
+
+  /// Whether the response looks like a Cloudflare challenge: outright 403,
+  /// or 404/429 carrying a mitigation marker or an HTML body.
+  bool _isCloudflareChallenge(http.StreamedResponse response) {
+    final status = response.statusCode;
+    if (status == 403) return true;
+    if (status != 404 && status != 429) return false;
+    return _header(response.headers, 'cf-mitigated') != null ||
+        (_header(response.headers, 'content-type') ?? '').contains('text/html');
+  }
+
+  /// Whether the jar learned a cookie name it did not hold before the last
+  /// request — the signal that a retry can carry fresh Cloudflare cookies.
+  bool _learnedCookies() {
+    final before = _cookiesBeforeRequest;
+    final after = _cookies.cookieHeader(_endpoint);
+    if (after == null) return false;
+    if (before == null) return true;
+    final beforeNames = {
+      for (final pair in before.split('; ')) pair.split('=').first,
+    };
+    return after
+        .split('; ')
+        .any((pair) => !beforeNames.contains(pair.split('=').first));
+  }
+
+  /// Case-insensitive header lookup (header casing varies by hop).
+  String? _header(Map<String, String> headers, String name) {
+    for (final entry in headers.entries) {
+      if (entry.key.toLowerCase() == name) return entry.value;
+    }
+    return null;
+  }
+
+  /// Builds the error for a non-200 response; a 429 carries the Codex
+  /// rate-limit reset time when the backend advertises one.
+  Future<ProviderHttpError> _httpError(http.StreamedResponse response) async {
+    final body = await response.stream.bytesToString();
+    var message = body;
+    if (response.statusCode == 429) {
+      final limits = parseCodexRateLimits(response.headers);
+      final resetsAt = limits?.primary?.resetsAt ?? limits?.secondary?.resetsAt;
+      if (resetsAt != null) {
+        final resets = DateTime.fromMillisecondsSinceEpoch(
+          resetsAt * 1000,
+          isUtc: true,
+        ).toIso8601String();
+        message = 'rate limited; resets at $resets\n$body';
+      }
+    }
+    return ProviderHttpError(
+      response.statusCode,
+      message,
+      retryAfter: parseRetryAfter(response.headers['retry-after']),
+    );
   }
 
   Map<String, dynamic> _requestBody() => {
@@ -219,7 +309,9 @@ final class _ChatGptCodexSession {
   /// Routes the event type to the streaming handler.
   void _dispatchEvent(String? type, Map<String, dynamic> value) {
     if (_handleTextEvent(type, value)) return;
+    if (_handleReasoningEvent(type, value)) return;
     if (_handleToolEvent(type, value)) return;
+    if (_handleItemEvent(type, value)) return;
     _handleLifecycleEvent(type, value);
   }
 
@@ -247,6 +339,51 @@ final class _ChatGptCodexSession {
     return true;
   }
 
+  /// Reasoning deltas surface as a thinking block; the summary bookkeeping
+  /// events carry nothing new for the transcript.
+  bool _handleReasoningEvent(String? type, Map<String, dynamic> value) {
+    switch (type) {
+      case 'response.reasoning_summary_text.delta':
+      case 'response.reasoning_text.delta':
+        _thinkingDelta(value['delta'] as String? ?? '');
+      case 'response.reasoning_summary_text.done':
+      case 'response.reasoning_summary_part.added':
+      case 'response.custom_tool_call_input.delta':
+        break;
+      default:
+        return false;
+    }
+    return true;
+  }
+
+  /// `output_item` events pre-bind blocks (so argument streams without a
+  /// `call_id` still bind) and close them out.
+  bool _handleItemEvent(String? type, Map<String, dynamic> value) {
+    switch (type) {
+      case 'response.output_item.added':
+        final item = value['item'];
+        if (item is Map && item['type'] == 'function_call') {
+          _ensureTool(
+            item['call_id'] as String? ?? '',
+            item['name'] as String? ?? '',
+          );
+        }
+      case 'response.output_item.done':
+        final item = value['item'];
+        if (item is Map) {
+          switch (item['type']) {
+            case 'function_call':
+              _endTool();
+            case 'message':
+              _endText();
+          }
+        }
+      default:
+        return false;
+    }
+    return true;
+  }
+
   void _handleLifecycleEvent(String? type, Map<String, dynamic> value) {
     switch (type) {
       case 'response.created':
@@ -255,17 +392,47 @@ final class _ChatGptCodexSession {
         _setResponse(value['response']);
       case 'response.failed':
         _handleFailed(value);
+      case 'response.incomplete':
+        _handleIncomplete(value);
     }
   }
 
-  /// Extracts the error message from a `response.failed` payload and throws.
+  /// Terminal mid-stream failure: close the in-flight blocks so partial
+  /// text stays visible, record the error on the state, and throw —
+  /// `runProviderStream` converts the throw into the terminal `ErrorEvent`
+  /// (errors-as-events invariant; the same termination path the OpenAI and
+  /// Anthropic adapters use). Nothing escapes the adapter.
+  Never _terminateWithError(String message) {
+    _endThinking();
+    _endText();
+    _endTool();
+    state
+      ..stopReason = StopReason.error
+      ..errorMessage = message;
+    throw StateError(message);
+  }
+
+  /// Extracts the error message from a `response.failed` payload and ends
+  /// the stream as a terminal error.
   Never _handleFailed(Map<String, dynamic> value) {
     final response = value['response'];
     final error = response is Map ? response['error'] : null;
-    throw StateError(
+    _terminateWithError(
       error is Map
-          ? error['message'] ?? 'ChatGPT response failed'
+          ? '${error['message'] ?? 'ChatGPT response failed'}'
           : 'ChatGPT response failed',
+    );
+  }
+
+  /// `response.incomplete` is terminal: the turn ended early (token cap,
+  /// content filter) and never completed.
+  Never _handleIncomplete(Map<String, dynamic> value) {
+    final response = value['response'];
+    final details = response is Map ? response['incomplete_details'] : null;
+    final reason = details is Map ? details['reason'] as String? : null;
+    _terminateWithError(
+      'ChatGPT response incomplete '
+      '(${reason?.isNotEmpty == true ? reason : 'unknown'})',
     );
   }
 
@@ -290,6 +457,7 @@ final class _ChatGptCodexSession {
 
   TextStreamingBlock? _text;
   ToolCallStreamingBlock? _tool;
+  ThinkingStreamingBlock? _thinking;
   TextStreamingBlock _ensureText() {
     final existing = _text;
     if (existing != null) return existing;
@@ -326,22 +494,26 @@ final class _ChatGptCodexSession {
     _text = null;
   }
 
+  ToolCallStreamingBlock _ensureTool(String id, String name) {
+    final existing = _tool;
+    if (existing != null) return existing;
+    final block = ToolCallStreamingBlock(id: id, name: name);
+    _tool = block;
+    state.blocks.add(block);
+    events.push(
+      ToolCallStartEvent(
+        contentIndex: state.blocks.length - 1,
+        partial: state.snapshot(),
+      ),
+    );
+    return block;
+  }
+
   void _toolDelta(Map<String, dynamic> value) {
-    var block = _tool;
-    if (block == null) {
-      block = ToolCallStreamingBlock(
-        id: value['call_id'] as String? ?? '',
-        name: value['name'] as String? ?? '',
-      );
-      _tool = block;
-      state.blocks.add(block);
-      events.push(
-        ToolCallStartEvent(
-          contentIndex: state.blocks.length - 1,
-          partial: state.snapshot(),
-        ),
-      );
-    }
+    final block = _ensureTool(
+      value['call_id'] as String? ?? '',
+      value['name'] as String? ?? '',
+    );
     final delta = value['delta'] as String? ?? '';
     block.partialArgs.write(delta);
     events.push(
@@ -353,6 +525,42 @@ final class _ChatGptCodexSession {
     );
   }
 
+  ThinkingStreamingBlock _ensureThinking() {
+    final existing = _thinking;
+    if (existing != null) return existing;
+    final block = ThinkingStreamingBlock();
+    _thinking = block;
+    state.blocks.add(block);
+    events.push(
+      ThinkingStartEvent(
+        contentIndex: state.blocks.length - 1,
+        partial: state.snapshot(),
+      ),
+    );
+    return block;
+  }
+
+  void _thinkingDelta(String delta) {
+    if (delta.isEmpty) return;
+    final block = _ensureThinking();
+    block.thinking.write(delta);
+    events.push(
+      ThinkingDeltaEvent(
+        contentIndex: state.blocks.indexOf(block),
+        delta: delta,
+        partial: state.snapshot(),
+      ),
+    );
+  }
+
+  void _endThinking() {
+    final block = _thinking;
+    if (block != null) {
+      pushBlockEndEvent(events, state.blocks, block, state.snapshot);
+    }
+    _thinking = null;
+  }
+
   void _endTool() {
     final block = _tool;
     if (block != null) {
@@ -362,6 +570,7 @@ final class _ChatGptCodexSession {
   }
 
   void _finish() {
+    _endThinking();
     _endText();
     _endTool();
     state.stopReason =

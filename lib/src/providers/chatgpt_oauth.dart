@@ -23,6 +23,7 @@ final class ChatGptOAuthCredentials {
     required this.refreshToken,
     required this.idToken,
     this.accountId,
+    this.expiresAt,
   });
 
   final String accessToken;
@@ -30,11 +31,16 @@ final class ChatGptOAuthCredentials {
   final String idToken;
   final String? accountId;
 
+  /// When the access token expires, in UTC; null when unknown.
+  final DateTime? expiresAt;
+
   Map<String, String> toJson() => {
     'access_token': accessToken,
     'refresh_token': refreshToken,
     'id_token': idToken,
     if (accountId != null) 'chatgpt_account_id': ?accountId,
+    if (expiresAt != null)
+      'expires_at': expiresAt!.millisecondsSinceEpoch.toString(),
   };
 
   String encode() => jsonEncode(toJson());
@@ -60,9 +66,32 @@ final class ChatGptOAuthCredentials {
       accountId: accountId is String && accountId.isNotEmpty
           ? accountId
           : _accountIdFromJwt(field('id_token')),
+      expiresAt: _persistedExpiry(decoded['expires_at']),
     );
   }
+
+  /// Whether [now] is at or past expiry minus [skew].
+  bool needsRefresh(
+    DateTime now, {
+    Duration skew = const Duration(seconds: 60),
+  }) {
+    final expiresAt = this.expiresAt;
+    return expiresAt != null && !now.isBefore(expiresAt.subtract(skew));
+  }
 }
+
+/// Parses the persisted `expires_at`: an epoch-millisecond string (what
+/// [ChatGptOAuthCredentials.toJson] writes) or a raw int (blobs persisted
+/// before the string tightening). Anything else counts as unknown.
+DateTime? _persistedExpiry(Object? value) => switch (value) {
+  final int milliseconds => DateTime.fromMillisecondsSinceEpoch(
+    milliseconds,
+    isUtc: true,
+  ),
+  final String milliseconds when int.tryParse(milliseconds) != null =>
+    DateTime.fromMillisecondsSinceEpoch(int.parse(milliseconds), isUtc: true),
+  _ => null,
+};
 
 String generateChatGptPkceVerifier() {
   const alphabet =
@@ -142,6 +171,7 @@ Future<ChatGptOAuthCredentials> refreshChatGptCredentials(
         ? credentials.idToken
         : refreshed.idToken,
     accountId: refreshed.accountId ?? credentials.accountId,
+    expiresAt: refreshed.expiresAt ?? credentials.expiresAt,
   );
 }
 
@@ -185,11 +215,15 @@ Future<ChatGptOAuthCredentials> _tokenRequest(
     }
 
     final idToken = token('id_token', required: false);
+    final expiresIn = body['expires_in'];
     return ChatGptOAuthCredentials(
       accessToken: token('access_token'),
       refreshToken: token('refresh_token', required: false),
       idToken: idToken,
       accountId: _accountIdFromJwt(idToken),
+      expiresAt: expiresIn is int
+          ? DateTime.now().toUtc().add(Duration(seconds: expiresIn))
+          : null,
     );
   } on ConfigException {
     rethrow;
