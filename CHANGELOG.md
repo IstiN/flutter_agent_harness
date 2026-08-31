@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.267
+
+- feat(memory): flutter_agent_memory 0.2.0 — merge-friendly note ids
+  (`n_0447_a1b2` = sequential index + 4-hex md5 of the normalized text;
+  parallel branches union-merge, legacy `n_0001` ids valid forever), and
+  `MemoryRepoInit.ensureGitSupport()` wired into the project store: the
+  memory dir self-maintains `.gitignore` (derived artifacts never
+  committed) and `.gitattributes` (`DELETIONS.md merge=union`).
+- feat(memory): the `memory_add` tool description IS the memory repo's
+  policy (`MemoryPolicy.memoryAddPolicy` —
+  docs/memory/memory_add_policy.md): durable facts only, solved problems
+  are superseded via delete+add instead of rotting, project scope is
+  PUBLIC (committed to git — no secrets or personal data), user scope
+  stays machine-local. One source of truth for every future agent.
+- fix(build): CRAP ratchet green again — `MemoryController` delegates
+  path resolution to `MemoryConfig` (one source, covered through the
+  controller tests), and `AgentCli.run` sheds the retry-notice closure
+  into `_wireTransientRetryNotice` (the 12.61 breach).
+- docs(agents): the git-backed memory layout is documented in AGENTS.md
+  (paths resolution, derived artifacts, id scheme, the commit
+  convention: memory/ changes ride with the task's commit).
+
 ## 0.1.266
 
 - feat(memory): project-level `.fah/config.yaml` — the `memory:` section

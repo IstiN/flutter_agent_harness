@@ -843,17 +843,11 @@ class AgentCli {
   bool _runStarting = false;
 
   /// Runs the REPL until `/exit` or the input stream closes.
-  Future<void> run() async {
-    await _loadAgentContext();
-    _session = await _initializeSession();
-    _syncMailboxPrefix();
-    // Boot marker: every wedge post-mortem starts with "which BUILD held
-    // the busy row?" — parallel fa processes share this log, so name the
-    // version next to the session id before any lifecycle line.
-    _logDiagnostic('fa boot sid=$_logSid version=$_version');
-    // Transient network retry visibility (the Wi-Fi-switch case): the
-    // retry itself lives in providerStreamFunction; here it gets a voice —
-    // a dim transcript line + an fa.log entry instead of a silent 5s pause.
+
+  /// Transient network retry visibility (the Wi-Fi-switch case): the
+  /// retry itself lives in providerStreamFunction; here it gets a voice —
+  /// a dim transcript line + an fa.log entry instead of a silent 5s pause.
+  void _wireTransientRetryNotice() {
     transientRetryNotice = (attempt, maxAttempts, delay, reason) {
       io.writeln(
         _style.dim(
@@ -866,6 +860,16 @@ class AgentCli {
         'reason=$reason',
       );
     };
+  }
+
+  Future<void> run() async {    await _loadAgentContext();
+    _session = await _initializeSession();
+    _syncMailboxPrefix();
+    // Boot marker: every wedge post-mortem starts with "which BUILD held
+    // the busy row?" — parallel fa processes share this log, so name the
+    // version next to the session id before any lifecycle line.
+    _logDiagnostic('fa boot sid=$_logSid version=$_version');
+    _wireTransientRetryNotice();
     // Live-session presence: this process now owns the session — the Fa
     // app (sharing the sessions root) marks it live and can attach. The
     // heartbeat refreshes on the inbox timer; unregistering happens in

@@ -10,6 +10,7 @@ import 'dart:async';
 import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 
 import '../env/execution_env.dart';
+import '../memory_config.dart';
 import 'execution_env_kb_storage.dart';
 
 /// Formats the `/memory` stats block (pure, testable): counts per type,
@@ -69,12 +70,10 @@ final class MemoryController {
     String? projectRoot,
     this._userRoot,
     this._llmProvider,
-    String? projectStoragePath,
-    String? userStoragePath,
+    this._projectStoragePath,
+    this._userStoragePath,
   }) : _env = env,
-       _projectRoot = projectRoot ?? env.cwd,
-       _projectStoragePath = projectStoragePath,
-       _userStoragePath = userStoragePath;
+       _projectRoot = projectRoot ?? env.cwd;
 
   final ExecutionEnv _env;
   final String _projectRoot;
@@ -101,6 +100,12 @@ final class MemoryController {
     if (_projectStore != null) return _projectStore!;
     _projectStorage = ExecutionEnvKbStorage(_env, _resolvedProjectPath());
     await _projectStorage!.initialize();
+    // Git-backed memory: the store dir carries .gitignore (derived
+    // artifacts never committed) + .gitattributes (DELETIONS.md
+    // merge=union). Idempotent — appends only missing lines, never
+    // touches user content. Project scope only: the user store is
+    // machine-local by design.
+    await MemoryRepoInit(_projectStorage!).ensureGitSupport();
     _projectStore = KBMemoryStore(_projectStorage!, provider: _llmProvider);
     _projectSearch = KBSearchEngine(_projectStorage!, provider: _llmProvider);
     return _projectStore!;
@@ -117,27 +122,15 @@ final class MemoryController {
     return _userStore!;
   }
 
-  /// The project storage dir: the override (absolute as-is, relative
-  /// against the project root, `./` stripped) or the `.fah/memory` default.
-  String _resolvedProjectPath() {
-    final path = _projectStoragePath;
-    if (path == null || path.isEmpty) return '$_projectRoot/.fah/memory';
-    if (path.startsWith('/')) return path;
-    final stripped = path.startsWith('./') ? path.substring(2) : path;
-    return '$_projectRoot/$stripped';
-  }
+  // The resolution rules live in MemoryConfig (the `memory:` yaml
+  // section) — one source of truth, shared with the config consumers.
+  String _resolvedProjectPath() => MemoryConfig(
+    projectPath: _projectStoragePath,
+  ).resolveProjectPath(_projectRoot);
 
-  /// The user storage dir: the override (`~/` expands against the user
-  /// root, absolute as-is, relative against the user root) or default.
-  String _resolvedUserPath() {
-    final root = _userRoot!;
-    final path = _userStoragePath;
-    if (path == null || path.isEmpty) return '$root/.fah/memory';
-    if (path.startsWith('~/')) return '$root/${path.substring(2)}';
-    if (path.startsWith('/')) return path;
-    final stripped = path.startsWith('./') ? path.substring(2) : path;
-    return '$root/$stripped';
-  }
+  String _resolvedUserPath() => MemoryConfig(
+    userPath: _userStoragePath,
+  ).resolveUserPath(_userRoot!);
 
   /// Adds a memory entry (project scope by default).
   Future<MemoryEntry> add({

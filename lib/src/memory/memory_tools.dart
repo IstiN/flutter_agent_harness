@@ -2,6 +2,8 @@
 /// `memory_list`. Registered when a [MemoryController] is available.
 library;
 
+import 'package:flutter_agent_memory/flutter_agent_memory.dart';
+
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
@@ -74,11 +76,12 @@ AgentTool _memoryAddTool(
 ) {
   return AgentTool(
     name: 'memory_add',
-    description:
-        'Store a durable fact, preference, or observation in '
-        'long-term memory. Use for things that should persist across '
-        'sessions — project conventions, user preferences, key decisions. '
-        'Do NOT use for task progress or transient state.',
+    // The policy text lives in the flutter_agent_memory repo
+    // (docs/memory/memory_add_policy.md — durable facts only, the
+    // supersede rule for solved problems, project scope = PUBLIC via
+    // git). One source of truth; a sync test in the package keeps the
+    // constant identical to the document.
+    description: MemoryPolicy.memoryAddPolicy,
     parameters: {
       'type': 'object',
       'properties': {

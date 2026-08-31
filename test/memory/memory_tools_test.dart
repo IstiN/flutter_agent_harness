@@ -6,9 +6,24 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import 'package:test/test.dart';
 
 void main() {
+  group('memory tool governance', () {
+    test('memory_add description IS the memory repo policy', () {
+      final env = MemoryExecutionEnv();
+      final tools = memoryTools(MemoryController(env: env));
+      final add = tools.singleWhere((t) => t.name == 'memory_add');
+      // The governance text comes from flutter_agent_memory
+      // (docs/memory/memory_add_policy.md) — one source of truth.
+      expect(add.description, MemoryPolicy.memoryAddPolicy);
+      expect(add.description, contains('supersede'));
+      expect(add.description, contains('durable'));
+      expect(add.description, contains('public'));
+    });
+  });
+
   group('memoryTools', () {
     test('memory_add fires onChanged after a successful save', () async {
       final controller = MemoryController(env: MemoryExecutionEnv());
