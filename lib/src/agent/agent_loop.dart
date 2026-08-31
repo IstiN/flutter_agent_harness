@@ -362,6 +362,7 @@ final class AgentLoopConfig {
     this.steeringNotifications,
     this.hasPendingSteering,
     this.maxEmptyRetries = 1,
+    this.maxSteeringTurns = 20,
   });
 
   /// The model to call each turn.
@@ -410,6 +411,15 @@ final class AgentLoopConfig {
   /// try).
   final int maxEmptyRetries;
 
+  /// How many steering batches may extend ONE run (mid-run user input or
+  /// external mail). Without a cap, a self-sustaining agent chatter loop
+  /// (every inbound message steers a reply that triggers the next
+  /// inbound) extends the run forever — the spinner never stops and
+  /// typed input queues behind an endless turn. Once the cap is reached
+  /// the run settles; undelivered steering stays queued and is picked up
+  /// by the next run (whose own wake caps apply). Default: 20.
+  final int maxSteeringTurns;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -424,6 +434,7 @@ final class AgentLoopConfig {
       steeringNotifications: steeringNotifications,
       hasPendingSteering: hasPendingSteering,
       maxEmptyRetries: maxEmptyRetries,
+      maxSteeringTurns: maxSteeringTurns,
     );
   }
 }
@@ -754,8 +765,22 @@ Future<List<Message>> _runAgentLoop({
   await _emitRunStart(prompts, emit);
 
   var firstTurn = true;
+  // Steering-extension cap: a self-sustaining chatter loop (every inbound
+  // message steers a reply that triggers the next inbound) must not keep
+  // the run alive forever. Undelivered steering stays queued; the next
+  // run picks it up under its own wake caps.
+  var steeringExtensions = 0;
+  Future<List<Message>> pollSteering(AgentLoopConfig config) async {
+    if (steeringExtensions >= config.maxSteeringTurns) {
+      return const <Message>[];
+    }
+    final messages = await _steeringMessages(config);
+    if (messages.isNotEmpty) steeringExtensions++;
+    return messages;
+  }
+
   // Check for steering messages at start (user may have typed while waiting).
-  var pendingMessages = await _steeringMessages(currentConfig);
+  var pendingMessages = await pollSteering(currentConfig);
 
   // Outer loop: continues when queued follow-up messages arrive after the
   // agent would stop. Inner loop: tool calls and steering messages.
@@ -808,7 +833,6 @@ Future<List<Message>> _runAgentLoop({
 
       final turnResults = List<ToolResultMessage>.unmodifiable(toolResults);
       await emit(TurnEndEvent(message: message, toolResults: turnResults));
-
       final turnUpdate = await currentConfig.prepareNextTurn?.call(
         NextTurnContext(
           message: message,
@@ -823,7 +847,7 @@ Future<List<Message>> _runAgentLoop({
         turnUpdate,
       );
 
-      pendingMessages = await _steeringMessages(currentConfig);
+      pendingMessages = await pollSteering(currentConfig);
     }
 
     // Agent would stop here. Check for follow-up messages.

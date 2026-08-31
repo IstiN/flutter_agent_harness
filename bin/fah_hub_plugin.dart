@@ -126,8 +126,11 @@ final class HubPluginHost implements FahPlugin {
   /// Non-draining probe: unread mail in our own hub inbox.
   Future<bool> _hasPendingHubMail() async {
     final repository = _hub.repository;
-    if (repository == null) return false;
-    final pending = await repository.peek(_hub.agentId ?? '');
+    final agentId = _hub.agentId;
+    // No agentId yet (pre-welcome): peek the '' mailbox would report the
+    // frames parked there forever and churn the wake loop — report empty.
+    if (repository == null || agentId == null) return false;
+    final pending = await repository.peek(agentId);
     return pending.isNotEmpty;
   }
 

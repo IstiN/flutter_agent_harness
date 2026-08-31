@@ -644,13 +644,16 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleBusyMsg(BusyMsg msg) {
-    // An in-busy phase relabel (silent post-answer work like auto-compaction
-    // or durable-memory extraction): swap the label over the SAME elapsed
-    // window and never schedule another tick here — extra chains would
-    // multiply repaint timers. Guarded on [busy] so an idle-host relabel
-    // cannot strand a stale label.
     final phase = msg.phase;
-    if (msg.busy && phase != null && busy) {
+    if (phase != null) {
+      // A phase relabel (tool phase, compaction, memory extraction) never
+      // OWNS the spinner: it only relabels while the host is busy. An
+      // idle-host relabel (a wake-run's tool call — no typed submit, so
+      // sendBusy was never paired) is dropped: falling through used to
+      // flip busy ON with depth 0, and no later sendBusy(false) could
+      // produce the 1→0 edge — the "Working… Ns" row spun forever and
+      // typed input queued behind a phantom run.
+      if (!busy) return (this, null);
       return (copyWith(busyPhase: phase), null);
     }
     // Kick the spinner loop when going busy; the loop stops itself on the

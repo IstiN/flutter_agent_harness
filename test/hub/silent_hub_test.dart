@@ -130,6 +130,9 @@ class SilentHub {
           case HubMode.answering || HubMode.broadcastRace:
             _reply(ws, {
               'op': 'presence',
+              // Real hubs echo the query frame id in `replyTo` (dap-hub
+              // 223eb51): the client completes exactly the matching waiter.
+              'replyTo': frame['id'],
               'agents': [
                 {
                   'agentId': '0011223344556677',
@@ -325,22 +328,21 @@ void main() {
   test(
     'BUG 5: an unsolicited presence broadcast must not satisfy a pending '
     'full-roster query (live: "only self online" every other restart)',
-    skip:
-        'fah_hub_client ^0.2.0: any op:presence frame completes all '
-        'presence waiters (hub_client _onPresence), so a join-event '
-        'broadcast with a one-agent roster can answer a peers() call — '
-        'wrong VALUE, not a hang. Verified RED 2026-08-31 (roster came '
-        'back as the one-agent broadcast). Needs the hub query-id echo + '
-        'waiter-matching wave. Unskip when it lands.',
     timeout: timeout,
     () async {
       final hub = SilentHub();
       await hub.start();
-      hub.mode = HubMode.broadcastRace;
       final client = await connectTo(hub);
       addTearDown(client.disconnect);
       addTearDown(hub.stop);
 
+      // The live hub echoes replyTo since 223eb51 — a client in the live
+      // incident had already talked to it. One answered query teaches the
+      // client this hub echoes (hub_client.dart accepts a residual race
+      // window only for the FIRST query to a never-seen-echo hub).
+      await client.peers().timeout(const Duration(seconds: 5));
+
+      hub.mode = HubMode.broadcastRace;
       final roster = await client.peers().timeout(const Duration(seconds: 5));
 
       // The roster must be the query ANSWER (two agents), never the

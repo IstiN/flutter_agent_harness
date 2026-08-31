@@ -6,6 +6,10 @@ part of 'agent_cli.dart';
 // extension sees the class's private fields (`_subagentManager`,
 // `_session`, the wake-guard fields in the main file) with no visibility
 // change.
+/// Ceiling for one plugin-inbox drain: a wedged hub RPC must never hold
+/// the run's settle hostage.
+const Duration _hubDrainTimeout = Duration(seconds: 5);
+
 extension AgentCliMessagingFlow on AgentCli {
   /// The main agent's inbox as steering messages: each pending fabric
   /// message becomes a user message attributed to its sender, so the
@@ -37,7 +41,18 @@ extension AgentCliMessagingFlow on AgentCli {
     for (final inbox in _pluginInboxes) {
       final List<AgentMessage> drained;
       try {
-        drained = await inbox.drain();
+        // ponytail: a timed-out drain loses any batch still in flight;
+        // retain-future retry only if mail loss on a wedged hub ever
+        // matters more than run liveness.
+        drained = await inbox.drain().timeout(
+          _hubDrainTimeout,
+          onTimeout: () {
+            io.writeln(
+              _style.dim('[mail] hub drain timeout — skipping this poll'),
+            );
+            return <AgentMessage>[];
+          },
+        );
       } on Object {
         continue;
       }
