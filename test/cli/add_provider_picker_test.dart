@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -81,6 +83,18 @@ void main() {
       reason: 'a provider with a typed flow must also be a picker preset',
     );
 
+    // THE live bug: a preset row WITHOUT a handler — the picker closed and
+    // nothing happened (`null?.call()`). Rows and handlers must be the
+    // same set in BOTH directions.
+    final handlerKeys = cli.addProviderHandlerKeysForTest();
+    expect(
+      presetKeys.toSet(),
+      handlerKeys,
+      reason:
+          'every preset row needs a handler and every handler a row — '
+          'a row without a handler is a dead menu entry',
+    );
+
     io.sendLine('/exit');
     await run;
   });
@@ -142,4 +156,30 @@ void main() {
       await run;
     },
   );
+
+  test('routing a copilot pick starts the connect flow', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+    // The picker handler must land in the same connect flow the typed
+    // `/provider copilot` runs — its first step is the sign-in question.
+    unawaited(cli.tuiPickAddProviderForTest('preset:copilot'));
+    await waitForIt(
+      () => io.out.toString().contains('Copilot sign-in'),
+      reason: 'the preset row routes to the copilot connect flow',
+    );
+
+    // Walk out of the flow the way a user cancels it: paste-token branch,
+    // an empty token line cancels — then /exit reaches the REPL again.
+    io.sendLine('2');
+    await waitForIt(() => io.out.toString().contains('GitHub token:'));
+    io.sendLine('');
+    await waitForIt(
+      () => io.out.toString().contains('Copilot connect cancelled'),
+    );
+    io.sendLine('/exit');
+    await run;
+  });
 }

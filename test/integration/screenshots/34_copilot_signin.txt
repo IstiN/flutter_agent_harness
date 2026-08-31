@@ -1,0 +1,20 @@
+>_Fa v0.1.0
+escape interrupt · ctrl+c clear/exit · / commands · ! bash
+Press /help to show full commands and resources.
+[Context]
+  /Users/Uladzimir_Klyshevich/git/flutter_agent
+[Model]
+  test-model (openai-completions)
+  endpoint: http://localhost:9999/v1
+[Session]
+  /var/folders/f5/00cqw7d526l50rt309fcqp1r0000gn/T/fa_test_SIIrcj/Library/Group 
+Containers/group.dev.fa1.shared/fa/sessions/--Users-Uladzimir_Klyshevich-git-flutter_agent--/2026-08-31T15-40-31-134413_01a057d5-e6
+9d-7547-8c46-5add8021a7ea.jsonl
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/provider                                                                                                                          
+[Copilot sign-in]
+▸ GitHub device flow open github.com/login/device and enter the shown code
+  paste an existing GitHub token works when the device flow is unavailable (headless, CI)
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/Users/Uladzimir_Klyshevich/git/flutter_agent · ctx 0% (0/200k) · 0tok · turn 0 · test-provider/test-model                         

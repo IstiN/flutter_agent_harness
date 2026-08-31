@@ -1,0 +1,25 @@
+>_Fa v0.1.0
+escape interrupt · ctrl+c clear/exit · / commands · ! bash
+Press /help to show full commands and resources.
+[Context]
+  /Users/Uladzimir_Klyshevich/git/flutter_agent
+[Model]
+  test-model (openai-completions)
+  endpoint: http://localhost:9999/v1
+[Session]
+  /var/folders/f5/00cqw7d526l50rt309fcqp1r0000gn/T/fa_test_SIIrcj/Library/Group 
+Containers/group.dev.fa1.shared/fa/sessions/--Users-Uladzimir_Klyshevich-git-flutter_agent--/2026-08-31T15-40-31-134413_01a057d5-e6
+9d-7547-8c46-5add8021a7ea.jsonl
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/provider                                                                                                                          
+[Add provider]
+▸ OpenRouter OAuth or API key — 300+ models
+  ChatGPT (Codex) account sign-in via OAuth
+  GitHub Copilot account sign-in via device flow
+  CodeMie organization SSO sign-in
+  DIAL EPAM DIAL Core — Api key + deployment
+  Kimi api.kimi.com/coding/v1 — key: KIMI_API_KEY
+  ↓ more
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/Users/Uladzimir_Klyshevich/git/flutter_agent · ctx 0% (0/200k) · 0tok · turn 0 · test-provider/test-model                         

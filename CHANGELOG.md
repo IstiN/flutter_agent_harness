@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.258
+
+- fix(cli): the Copilot preset row now actually starts the connect flow —
+  the "Add provider" picker shipped the row WITHOUT its handler
+  (`null?.call()` closed the picker and nothing happened; the typed
+  `/provider copilot` always worked). The handler map gained the copilot
+  entry, and the picker test now asserts rows == handlers in BOTH
+  directions so a dead row can never ship again, plus a line-mode routing
+  test and a PTY visual test (screenshots 28/29/34) drive the real TUI
+  from `/provider` to the "Copilot sign-in" step.
+- fix(cli): `fa --session <name>` no longer opens another project's
+  session — same-named sessions resolve with the LAUNCH folder first
+  (a single local match wins); an ambiguous remainder (several in one
+  folder, or none in it) auto-resolves to the most recently updated with
+  a printed note naming every candidate id, the TUI offers the scoped
+  "which one?" picker right after boot, and mid-session `/session <name>`
+  asks with a numbered/wizard list. The switch itself now runs DETACHED
+  under the flow gate (an awaited interactive pick deadlocked the
+  sequential line REPL), redelivers lines typed during the switch instead
+  of dropping them as flow junk, and redraws the idle prompt so the
+  zeroed status meter shows.
+
 ## 0.1.257
 
 - fix(cli): GitHub Copilot appears in the TUI "Add provider" picker — the

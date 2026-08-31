@@ -226,6 +226,7 @@ extension _AgentCliProviderPresets on AgentCli {
   Map<String, Future<void> Function()> get _addProviderHandlers => {
     'openrouter': () => _handleOpenRouterAuthMethodChoice(),
     'chatgpt': () => _handleChatGptOAuthCommand(headless: false),
+    'copilot': () => _handleCopilotConnectCommand(),
     'codemie': () => _handleCodeMieAuthMethodChoice(),
     'dial': () => _startDialProviderSetup(),
     'openai': () async => _startProviderFlow(initialType: 'openai'),

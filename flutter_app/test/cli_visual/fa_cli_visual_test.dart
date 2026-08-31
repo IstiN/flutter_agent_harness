@@ -223,6 +223,45 @@ void main() {
     });
   });
 
+  group('add provider presets', () {
+    testWidgets('/provider → + Add provider → GitHub Copilot opens sign-in', (
+      tester,
+    ) async {
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      await harness.runSlashCommand('/provider');
+      await harness.liveWaitForText(
+        '+ Add provider',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '28_provider_picker_add');
+
+      // The saved provider is the first row; the add row is second.
+      harness.sendArrowDown();
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'GitHub Copilot',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '29_add_provider_copilot');
+
+      // OpenRouter, ChatGPT (Codex), GitHub Copilot — two downs, enter.
+      harness.sendArrowDown();
+      harness.sendArrowDown();
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'Copilot sign-in',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '34_copilot_signin');
+
+      harness.sendEscape();
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+  });
+
   group('approval flow', () {
     testWidgets('always-ask mode → approval mode set → /approval shows mode', (
       tester,

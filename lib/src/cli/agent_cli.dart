@@ -577,6 +577,13 @@ class AgentCli {
   Map<String, String> addProviderExclusionsForTest() =>
       _addProviderExclusions;
 
+  /// The preset names with a routing handler — the test asserts
+  /// presets == handlers (a preset row without a handler is a dead menu
+  /// entry: the picker closes and nothing happens — the live Copilot bug).
+  @visibleForTesting
+  Set<String> addProviderHandlerKeysForTest() =>
+      _addProviderHandlers.keys.toSet();
+
   /// Test seam routing an "Add provider" picker selection in line mode.
   @visibleForTesting
   Future<void> tuiPickAddProviderForTest(String key) =>
@@ -1031,6 +1038,11 @@ class AgentCli {
     // over the first frame (Esc = "Not now", asked again next launch).
     unawaited(_maybePromptSkillsAccess());
 
+    // An ambiguous `--session <name>` (same name in several folders or
+    // several in one): the scoped choice picker over the first frame —
+    // the auto-resolved session stays when dismissed.
+    unawaited(_offerStartupSessionChoice());
+
     await controller.run();
     _setTuiIo(null);
     _tuiController = null;
@@ -1379,8 +1391,27 @@ class AgentCli {
   Future<Session> _initializeSession() async {
     final name = config.sessionName?.trim();
     if (name != null && name.isNotEmpty) {
-      final metadata = await _findSessionByName(name);
+      final matches = await _sessionNameMatches(name);
+      final metadata = _resolveSessionNameMatch(
+        matches,
+        onAmbiguous: (all) {
+          // Interactive prompting is impossible this early (the input pump
+          // starts after init): auto-resolve and let the TUI offer the
+          // scoped picker after boot; line mode gets the printed hint.
+          _startupAmbiguousSessions = all;
+          _startupAmbiguousName = name;
+        },
+      );
       if (metadata != null) {
+        if (matches.length > 1) {
+          io.writeln(
+            _style.dim(
+              "note: ${matches.length} sessions named '$name' — opened "
+              '${metadata.id} (${metadata.cwd}); pick another with '
+              '/sessions or restart with fa --session <id>',
+            ),
+          );
+        }
         return _loadSession(metadata);
       }
       return _createSession(name: name);
@@ -1450,21 +1481,78 @@ class AgentCli {
       rethrow;
     }
   }
-
-  /// Finds a session by display name OR by exact id across every workspace
-  /// (the exit hint prints `fa --session '<id>'` for unnamed sessions, so ids
-  /// must resolve too).
-  Future<SessionMetadata?> _findSessionByName(String name) async {
+  /// Every session whose id IS [name] (exact id short-circuits — ids are
+  /// unique) or whose session_info name equals it, across every workspace
+  /// (the exit hint prints `fa --session '<id>'` for unnamed sessions, so
+  /// ids must resolve too). Several sessions can share a NAME — different
+  /// project folders, or renamed twice — so callers get the full list and
+  /// disambiguate (see [_resolveSessionNameMatch]).
+  Future<List<SessionMetadata>> _sessionNameMatches(String name) async {
     final sessions = await _repo.list();
+    final matches = <SessionMetadata>[];
     for (final metadata in sessions) {
-      if (metadata.id == name.trim()) return metadata;
+      if (metadata.id == name.trim()) return [metadata];
       final session = await _repo.open(metadata);
       final sessionName = await session.getSessionName();
       if (sessionName != null && sessionName.trim() == name.trim()) {
-        return metadata;
+        matches.add(metadata);
       }
     }
-    return null;
+    return matches;
+  }
+
+  /// Finds a session by display name OR exact id — the first match. Kept
+  /// for the rename-conflict check ("the name is taken anywhere").
+  Future<SessionMetadata?> _findSessionByName(String name) async {
+    final matches = await _sessionNameMatches(name);
+    return matches.isEmpty ? null : matches.first;
+  }
+
+  /// Disambiguates same-named sessions: the LAUNCH folder's session beats a
+  /// namesake from another project (the "fa --session X opens the wrong
+  /// folder's session" bug); a clear single local wins silently, anything
+  /// else is ambiguous and [onAmbiguous] receives the full match list so
+  /// the caller can offer a choice. The fallback pick is the most recently
+  /// updated local (or global when the folder has none).
+  SessionMetadata? _resolveSessionNameMatch(
+    List<SessionMetadata> matches, {
+    void Function(List<SessionMetadata> matches)? onAmbiguous,
+  }) {
+    if (matches.isEmpty) return null;
+    if (matches.length == 1) return matches.single;
+    final local = [for (final m in matches) if (m.cwd == _env.cwd) m];
+    if (local.length == 1) return local.single;
+    onAmbiguous?.call(matches);
+    final pool = local.isNotEmpty ? local : matches;
+    pool.sort(
+      (a, b) => (b.lastUpdatedAt ?? b.createdAt).compareTo(
+        a.lastUpdatedAt ?? a.createdAt,
+      ),
+    );
+    return pool.first;
+  }
+
+  /// Same-named matches pending a startup choice: set when `--session X`
+  /// resolved ambiguously, consumed by [_runTuiRepl] to offer the sessions
+  /// picker scoped to these matches once the TUI owns the screen.
+  List<SessionMetadata>? _startupAmbiguousSessions;
+  String? _startupAmbiguousName;
+
+  /// Offers the startup ambiguity choice: the sessions picker scoped to
+  /// the same-named matches. The current session stays the auto-resolved
+  /// one; picking another switches, Esc keeps it.
+  Future<void> _offerStartupSessionChoice() async {
+    final matches = _startupAmbiguousSessions;
+    final name = _startupAmbiguousName;
+    _startupAmbiguousSessions = null;
+    _startupAmbiguousName = null;
+    if (matches == null || name == null) return;
+    _lastSessionList = matches;
+    _tuiController?.openPicker(
+      'sessions',
+      "Several sessions named '$name' — which one?",
+      await _sessionPickerItems(matches),
+    );
   }
 
   Future<Session> _loadSession(SessionMetadata metadata) async {
