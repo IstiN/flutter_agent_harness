@@ -1940,3 +1940,15 @@
   coverage ≥ 80%, duplication < 1%), GOAL.md with the pi-mono port roadmap.
 - Seeded `CancelToken` / `CancelTokenSource` / `CancelledException` — the
   universal cancellation primitive (Dart counterpart of web `AbortSignal`).
+
+## 0.1.260
+
+- feat(cli): fa.log boot line names the build (0.1.259)
+- fix(cli): copilot preset handler + cwd-aware session names
+- site: pass catalog preview manifest/js URLs to the web runner
+- test(cli): the Add provider picker must cover the whole catalog
+- fix(cli): add GitHub Copilot to the Add provider preset picker
+- docs(changelog): repair ordering — newest-first, merge duplicate sections
+- fix(cli): roles-mode /model switch on saved CodeMie entries resolves the entry key
+
+## Unreleased
