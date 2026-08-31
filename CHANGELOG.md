@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.259
+
+- feat(cli): fa.log now opens with `fa boot sid=… version=…` — the shared
+  diagnostics log had no way to attribute a wedged "Working…" row to the
+  BUILD that held it (today's 1949s spinner post-mortem stalled on exactly
+  that: the wedged process predated the 0.1.255 busy-bracket fix, but only
+  circumstantial evidence proved it). Every process now names its version
+  next to its session id before any lifecycle line.
+
 ## 0.1.258
 
 - fix(cli): the Copilot preset row now actually starts the connect flow —

@@ -841,6 +841,10 @@ class AgentCli {
     await _loadAgentContext();
     _session = await _initializeSession();
     _syncMailboxPrefix();
+    // Boot marker: every wedge post-mortem starts with "which BUILD held
+    // the busy row?" — parallel fa processes share this log, so name the
+    // version next to the session id before any lifecycle line.
+    _logDiagnostic('fa boot sid=$_logSid version=$_version');
     // Live-session presence: this process now owns the session — the Fa
     // app (sharing the sessions root) marks it live and can attach. The
     // heartbeat refreshes on the inbox timer; unregistering happens in
