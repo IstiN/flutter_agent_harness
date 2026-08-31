@@ -29,14 +29,6 @@
 /// The scripted hub here keeps the WebSocket open and ponging in every mode
 /// — only the application-frame routing changes, which is exactly the
 /// pathological state a dead-ish hub or a ghost peer produces.
-@Skip(
-  'fah_hub_client ^0.1.2: request completers hang forever — no timeouts '
-  '(BUG 1-2) AND concurrent-request completer clobber orphans callers '
-  '(BUG 3-4, reproduced with an instantly-answering hub). All 5 tests '
-  'fail with HANG REPRODUCED against 0.1.2 (verified 2026-08-31). '
-  'Unskip when the package ships request timeouts + per-caller fan-out '
-  '(0.1.3); they then become the regression gate.',
-)
 library;
 
 import 'dart:async';
@@ -158,6 +150,9 @@ Future<HubClient> connectTo(SilentHub hub) async {
   final client = HubClient(
     config: HubConfig(url: hub.url),
     identity: await HubIdentity.generate(),
+    // Short door so silent-hub timeouts land inside the 3s test
+    // watchdog (package default is 10s — the param exists for tests).
+    requestTimeout: const Duration(seconds: 2),
   );
   await client.connect();
   return client;
@@ -206,7 +201,8 @@ void main() {
             'socket must stay open (pings/pongs flow) — the hang is '
             'application-layer, not a disconnect',
       );
-      expect(outcome, anyOf('completed', 'errored'));
+      // Loud bounded error (requestTimeout), never a silent hang.
+      expect(outcome, 'errored');
     },
   );
 
@@ -226,7 +222,8 @@ void main() {
         const Duration(seconds: 3),
       );
       expect(client.status().connected, isTrue);
-      expect(outcome, anyOf('completed', 'errored'));
+      // Loud bounded error (requestTimeout), never a silent hang.
+      expect(outcome, 'errored');
     },
   );
 
@@ -243,7 +240,8 @@ void main() {
 
       final outcome = await bounded(client.peers(), const Duration(seconds: 3));
       expect(client.status().connected, isTrue);
-      expect(outcome, anyOf('completed', 'errored'));
+      // The hub answered with an error frame — the caller must see it.
+      expect(outcome, 'errored');
     },
   );
 
@@ -266,9 +264,11 @@ void main() {
       final second = client.peers();
 
       final secondOutcome = await bounded(second, const Duration(seconds: 3));
-      expect(secondOutcome, anyOf('completed', 'errored'));
+      expect(secondOutcome, 'completed');
+      // The first caller must receive the VALUE (fan-out) — completing
+      // with a timeout error here still means the clobber is present.
       final firstOutcome = await bounded(first, const Duration(seconds: 3));
-      expect(firstOutcome, anyOf('completed', 'errored'));
+      expect(firstOutcome, 'completed');
     },
   );
 
@@ -292,9 +292,11 @@ void main() {
       final second = client.whois(target);
 
       final secondOutcome = await bounded(second, const Duration(seconds: 3));
-      expect(secondOutcome, anyOf('completed', 'errored'));
+      expect(secondOutcome, 'completed');
+      // The first caller must receive the VALUE (fan-out) — completing
+      // with a timeout error here still means the clobber is present.
       final firstOutcome = await bounded(first, const Duration(seconds: 3));
-      expect(firstOutcome, anyOf('completed', 'errored'));
+      expect(firstOutcome, 'completed');
     },
   );
 }
