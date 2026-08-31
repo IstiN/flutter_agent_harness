@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
@@ -683,6 +684,91 @@ void main() {
           .toList();
       expect(minimaxIds, containsAll(['MiniMax-M3', 'MiniMax-M2.7']));
 
+      io.sendLine('/exit');
+      await run;
+    });
+  });
+
+  group('roles-mode /model on a saved CodeMie JWT entry', () {
+    // The live bug: with a roles resolver configured, `/model <id>` while a
+    // CodeMie JWT entry is active pinned the default chain with the entry's
+    // key NAME — but the resolver's secrets never held the key material (the
+    // CodeMie switch paths bypass the resolver entirely), so chainFor threw
+    // 'role "default" has no usable chain entry: openai/<id> (missing API
+    // key: set OPENAI_API_KEY)' and the status line kept the old model.
+    const codemieUrl = 'https://codemie.lab.epam.com/code-assistant-api/v1';
+    const keyName = 'FA_KEY_CODEMIE_LAB_EPAM_COM_CODEMIE_PERSONAL';
+
+    String b64(Object value) => base64Url
+        .encode(utf8.encode(jsonEncode(value)))
+        .replaceAll('=', '');
+
+    test('the switch resolves the entry key instead of OPENAI_API_KEY', () async {
+      final jwt =
+          '${b64({'alg': 'HS256', 'typ': 'JWT'})}.${b64({'exp': 9999999999})}.sig';
+      final store = FakeSecureKeyStore()..map[keyName] = jwt;
+      final secureKeys = SecureKeyCache(store);
+      await secureKeys.preload(const [keyName]);
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'codemie-personal',
+          apiType: 'openai',
+          baseUrl: codemieUrl,
+          modelId: 'gemini-3.7-flash',
+          keyName: keyName,
+          authMethod: CustomProviderAuthMethod.jwt,
+        ),
+      ]);
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: const {
+            'default': [ModelRef(provider: 'openai', modelId: 'gpt-4.1-mini')],
+          },
+          retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        ),
+        // No codemie key in the resolver's snapshot — the live condition:
+        // the entry's JWT lives in the secure store, never seeded.
+        secrets: const {'OPENAI_API_KEY': 'test-key'},
+        streamFactory: (kind, apiKey) => fake.call,
+      );
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          customProviders: registry,
+          secureKeys: secureKeys,
+          modelRolesResolver: resolver,
+          modelsFetcher: (baseUrl, {required apiKey}) async => const [],
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+      io.sendLine('/provider codemie-personal');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to openai'),
+      );
+      expect(cli.agent.state.model.baseUrl, codemieUrl);
+
+      io.sendLine('/model claude-sonnet-5');
+      await waitForIt(
+        () =>
+            io.out.toString().contains('switched model to claude-sonnet-5') ||
+            io.out.toString().contains('no usable chain entry'),
+      );
+
+      expect(
+        io.out.toString(),
+        isNot(contains('no usable chain entry')),
+        reason: 'the entry key must resolve — the switch must not fail',
+      );
+      expect(cli.agent.state.model.id, 'claude-sonnet-5');
       io.sendLine('/exit');
       await run;
     });

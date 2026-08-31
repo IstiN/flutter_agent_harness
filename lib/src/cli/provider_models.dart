@@ -937,10 +937,32 @@ extension on AgentCli {
     // defaults) when the id is known to /models.
     final window = _modelContextWindows[modelId] ?? current.contextWindow;
     final cap = _modelMaxTokens[modelId] ?? current.maxTokens;
-    if (rolesResolver != null) {
+    // Cookie-header auth (CodeMie SSO) can never ride a roles chain — the
+    // chain stream would send the cookie as Bearer. Keep the direct model
+    // set (the cookie stays in model.headers), mirroring
+    // [_switchCodeMieProvider]'s resolver bypass.
+    final cookieAuth = current.headers?.containsKey('cookie') ?? false;
+    if (rolesResolver != null && !cookieAuth) {
       // Roles mode: pin the default role to the requested model id on the
       // current provider (a single-entry chain for this session). The
       // endpoint's scoped key name rides along (see _switchProvider).
+      final pinnedKeyName =
+          _rolesKeyNameFor(current.provider, current.baseUrl) ??
+          _scopedKeyNameForNonDefault(current.provider, current.baseUrl);
+      // Seed the resolver with the session's LIVE key material under the
+      // pinned name BEFORE resolving the chain: saved-entry keys (CodeMie
+      // JWT, typed custom keys) live in the secure store / session, never
+      // in the resolver's startup snapshot — an unseeded pin resolves
+      // nothing and chainFor throws "no usable chain entry: set
+      // OPENAI_API_KEY", which aborts the switch and leaves the status
+      // line on the old model.
+      if (pinnedKeyName != null) {
+        if (_apiKey.isNotEmpty) {
+          rolesResolver.addSecret(pinnedKeyName, _apiKey);
+        } else {
+          _seedEnvKeyStack(rolesResolver, pinnedKeyName);
+        }
+      }
       rolesResolver.setDefaultChain([
         ModelRef(
           provider: current.provider,
@@ -948,9 +970,7 @@ extension on AgentCli {
           baseUrl: current.baseUrl,
           contextWindow: window,
           maxTokens: cap,
-          apiKeyName:
-              _rolesKeyNameFor(current.provider, current.baseUrl) ??
-              _scopedKeyNameForNonDefault(current.provider, current.baseUrl),
+          apiKeyName: pinnedKeyName,
         ),
       ]);
       rolesResolver.applyToAgent(_agent);

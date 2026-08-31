@@ -1844,6 +1844,18 @@
 - feat(app): the sidebar shows the CLI-written session_info names
 - fix(app): reset/remove/install refresh the grid + sane dialog width
 
+## 0.1.256
+
+- fix(cli): `/model <id>` on a saved CodeMie/custom entry no longer fails
+  with 'no usable chain entry: set OPENAI_API_KEY' — the roles-mode pin
+  carried the entry's key NAME, but the resolver's secrets never held the
+  key material (the CodeMie JWT/SSO switch paths bypass the resolver), so
+  the chain failed to resolve and the switch silently did nothing (the
+  status line kept the old model). `_switchModel` now seeds the resolver
+  with the session's live key under the pinned name (env-ring fallback)
+  before pinning, and cookie-header auth (CodeMie SSO) keeps the direct
+  model set — a cookie can never ride a Bearer chain.
+
 ## 0.1.255
 
 - fix(cli): the "Working… forever with an idle agent" wedge — the TUI
