@@ -18,7 +18,12 @@ Future<List<String>> autoUpdateCleanWidgets({
   required AppsStore store,
   required CatalogService catalog,
 }) async {
-  final result = await catalog.fetchCatalog();
+  // Bypass the 6h TTL cache: this runs once per launcher start, and a
+  // stale cache is exactly how a board misses a same-day widget fix
+  // (the owner's video-player sat on dead-source 1.0.4 while 1.0.5 was
+  // already published). Network failure falls back to the stale cache
+  // inside fetchCatalog, so offline launches still work.
+  final result = await catalog.fetchCatalog(force: true);
   final installed = await store.installedCatalogVersions();
   final updated = <String>[];
   for (final entry in result.entries) {
