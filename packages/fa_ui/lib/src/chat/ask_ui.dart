@@ -46,6 +46,25 @@ class _AskSheetState extends State<AskSheet> {
   _AskDraft get _draft => _drafts[_index];
   bool get _isLast => _index == _drafts.length - 1;
 
+  @override
+  void initState() {
+    super.initState();
+    for (final draft in _drafts) {
+      draft.otherController.addListener(() => _onOtherTextChanged(draft));
+    }
+  }
+
+  /// Typing a custom answer on a single-select question auto-selects the
+  /// Other radio, so the visible choice and the submitted answer agree.
+  void _onOtherTextChanged(_AskDraft draft) {
+    final question = draft.question;
+    if (question.options.isEmpty || question.multiSelect) return;
+    if (draft.otherController.text.trim().isNotEmpty &&
+        draft.radioIndex == null) {
+      setState(() => draft.radioIndex = _AskDraft.otherIndex);
+    }
+  }
+
   void _advance() {
     if (!_draft.hasAnswer) return;
     if (_isLast) {
@@ -138,8 +157,11 @@ class _AskSheetState extends State<AskSheet> {
                       value: _AskDraft.otherIndex,
                       title: Text(FaChatStrings.of(context).askOtherLabel),
                     ),
-                    if (_draft.radioIndex == _AskDraft.otherIndex)
-                      _otherField(FaChatStrings.of(context).askYourAnswerLabel),
+                    // Always visible, not hidden behind the Other radio:
+                    // the ask tool's contract is "free-text input alongside
+                    // the options" — typing auto-selects Other (see
+                    // [_onOtherTextChanged]).
+                    _otherField(FaChatStrings.of(context).askYourAnswerLabel),
                   ],
                 ),
               ),
@@ -251,7 +273,13 @@ class _AskDraft {
         freeText: other.isEmpty ? null : other,
       );
     }
-    return AskAnswer.selection([question.options[radioIndex!].label]);
+    // A picked option plus a typed note both reach the model (multi-select
+    // semantics), so a quick "Beta, but only on weekdays" needs no Other
+    // detour.
+    return AskAnswer(
+      selected: [question.options[radioIndex!].label],
+      freeText: other.isEmpty ? null : other,
+    );
   }
 
   void dispose() => otherController.dispose();
