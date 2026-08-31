@@ -167,27 +167,18 @@ final class HubPluginHost implements FahPlugin {
       label: 'dap_peers',
       tier: ApprovalTier.read,
       description:
-          'List peers known to the DAP hub (online-only by default). Use '
-          'the ids from this list as dap_dm recipients.',
-      parameters: const {
-        'type': 'object',
-        'properties': {
-          'includeOffline': {
-            'type': 'boolean',
-            'description': 'Also list currently offline peers (default false)',
-          },
-        },
-      },
+          'List ONLINE peers known to the DAP hub. Your own entry is '
+          'included and flagged self — do not DM yourself. Use the ids '
+          'from this list as dap_dm recipients.',
+      parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
       execute: (arguments, cancelToken, onUpdate) async {
-        final peers = await _hub.peers(
-          includeOffline: arguments['includeOffline'] as bool? ?? false,
-        );
+        final peers = await _hub.peers();
         final text = peers.isEmpty
             ? 'no peers on the hub'
             : [
                 for (final peer in peers)
                   '${peer.agentId} ${peer.name ?? '-'}'
-                      '${peer.online ? '' : ' (offline)'}',
+                      '${peer.self ? ' (self)' : ''}',
               ].join('\n');
         return ToolExecutionResult(content: [TextContent(text: text)]);
       },

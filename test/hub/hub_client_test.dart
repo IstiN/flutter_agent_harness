@@ -250,32 +250,33 @@ void main() {
     expect(after.hellos, 1); // disconnect() disarms the reconnect loop
   }, timeout: timeout);
 
-  test('peers: includes self with online=true', () async {
+  test('peers: includes self with online=true and self=true', () async {
     final client = await connect(hub, await HubIdentity.generate());
 
     final peers = await client.peers();
     final self = peers.firstWhere((p) => p.agentId == client.agentId);
     expect(self.online, isTrue);
+    expect(self.self, isTrue);
     expect(peers.length, greaterThanOrEqualTo(1));
 
     await client.disconnect();
   }, timeout: timeout);
 
-  test('peers: excludes offline agents unless includeOffline', () async {
-    final client = await connect(hub, await HubIdentity.generate());
-    final ghost = await connect(hub, await HubIdentity.generate());
-    await ghost.disconnect(); // registered but gone → offline in presence
+  test(
+    'peers: online-only always — offline agents never listed (0.2.0)',
+    () async {
+      final client = await connect(hub, await HubIdentity.generate());
+      final ghost = await connect(hub, await HubIdentity.generate());
+      await ghost.disconnect(); // registered but gone → offline in presence
 
-    final online = await client.peers();
-    expect(online.map((p) => p.agentId), isNot(contains(ghost.agentId)));
-    expect(online.map((p) => p.agentId), contains(client.agentId));
+      final online = await client.peers();
+      expect(online.map((p) => p.agentId), isNot(contains(ghost.agentId)));
+      expect(online.map((p) => p.agentId), contains(client.agentId));
 
-    final all = await client.peers(includeOffline: true);
-    expect(all.map((p) => p.agentId), contains(ghost.agentId));
-    expect(all.firstWhere((p) => p.agentId == ghost.agentId).online, isFalse);
-
-    await client.disconnect();
-  }, timeout: timeout);
+      await client.disconnect();
+    },
+    timeout: timeout,
+  );
 
   test('retarget/connectTo: bare host + name + room → second welcome, '
       'new agentId, lobby joined, retired loop stays retired', () async {
