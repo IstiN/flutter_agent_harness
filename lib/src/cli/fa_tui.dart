@@ -2082,6 +2082,27 @@ final class FaTuiModel extends Model {
 
 /// Thin wrapper around [Program] that lets [AgentCli] push output and refresh
 /// the model picker without knowing dart_tui internals.
+/// Reference-counted busy accounting for the TUI spinner: nested
+/// acquire/release pairs (a submit bracket around the run's own bracket,
+/// slash commands mid-stream) collapse into ONE 0→1 / 1→0 edge for the
+/// model, so the elapsed timer and sticky echo survive re-entry, and an
+/// unpaired release clamps at zero instead of poisoning the count.
+final class BusyDepth {
+  var _depth = 0;
+
+  /// The current nesting depth (0 = idle).
+  int get depth => _depth;
+
+  /// Records an acquire ([busy] true) or release; returns whether the model
+  /// needs a `BusyMsg` (only the 0→1 / 1→0 edge reaches it).
+  bool record(bool busy) {
+    final next = math.max(0, _depth + (busy ? 1 : -1));
+    final edge = (next > 0) != (_depth > 0);
+    _depth = next;
+    return edge;
+  }
+}
+
 final class FaTuiController {
   FaTuiController({
     required this.callbacks,

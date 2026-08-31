@@ -1844,6 +1844,18 @@
 - feat(app): the sidebar shows the CLI-written session_info names
 - fix(app): reset/remove/install refresh the grid + sane dialog width
 
+## 0.1.255
+
+- fix(cli): the "Working… forever with an idle agent" wedge — the TUI
+  busy bracket lived only in the submit handler, so runs triggered
+  elsewhere (the idle inbox wake, a shell-job settle, a scheduled
+  message) streamed with phase labels but released nothing: the spinner
+  stayed on after the run settled. The busy bracket is now CENTRAL in
+  `_startRun` (paired with the settle future) and the counter is the
+  extracted, unit-tested `BusyDepth` — nested brackets (submit around
+  run around wake) collapse to one edge pair. Forensics: fa.log showed
+  `run end` with the spinner still up in two live sessions.
+
 ## 0.1.254
 
 - **Wedged "Working…"/"Compacting…" turns now abort instead of hanging

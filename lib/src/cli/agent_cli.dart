@@ -1946,6 +1946,13 @@ class AgentCli {
     // before the first streamed byte, and isBusy readers (inbox watcher,
     // shell-job settle, steer-vs-start) must not start a parallel run here.
     _runStarting = true;
+    // Busy bracket HERE, not in the TUI submit handler: every run trigger
+    // (submit, inbox wake, shell-job settle, scheduled message) must spin,
+    // and an unbracketed trigger leaves the spinner on after the run
+    // settles (the "Working… forever with an idle agent" wedge). The
+    // counter is reference-counted, so the submit handler's own bracket
+    // nests safely.
+    _tuiController?.sendBusy(true);
     // Path-gated skills (`paths:` frontmatter) join the prompt once the
     // agent has touched a matching file; recomposing here is idempotent.
     _applyPromptComposition();
@@ -1959,7 +1966,8 @@ class AgentCli {
     final settled = _runPrompt(resolved);
     _settled = settled;
     unawaited(
-      settled.then((_) {
+      settled.whenComplete(() {
+        _tuiController?.sendBusy(false);
         _runStarting = false;
         if (!_exited) _writeIdlePrompt();
       }),
