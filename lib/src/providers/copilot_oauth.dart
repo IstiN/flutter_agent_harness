@@ -35,6 +35,12 @@ const copilotIndividualBaseUrl = 'https://api.githubcopilot.com';
 const copilotBusinessBaseUrl = 'https://api.business.githubcopilot.com';
 const copilotEnterpriseBaseUrl = 'https://api.enterprise.githubcopilot.com';
 
+/// Whether [baseUrl] points at a Copilot API endpoint (any account type).
+/// The one detection shared by model listing and by surface code that must
+/// recognize a connected Copilot entry (e.g. key cleanup on delete).
+bool isCopilotBaseUrl(String baseUrl) =>
+    Uri.tryParse(baseUrl)?.host.endsWith('githubcopilot.com') == true;
+
 /// The GitHub credential was rejected by the token exchange (HTTP 401/403):
 /// the GitHub token is dead and must be re-issued (`/provider copilot`),
 /// NOT refreshed like a short-lived Copilot token would be.

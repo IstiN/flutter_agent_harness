@@ -261,8 +261,7 @@ final class _GoogleDialect extends ModelListDialect {
 final class _CopilotDialect extends ModelListDialect {
   @override
   bool matches(String baseUrl, String? provider) =>
-      provider == 'copilot' ||
-      Uri.tryParse(baseUrl)?.host.endsWith('githubcopilot.com') == true;
+      provider == 'copilot' || isCopilotBaseUrl(baseUrl);
 
   @override
   Future<ModelsEndpointInfo> fetch(

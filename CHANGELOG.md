@@ -9,6 +9,21 @@
   circumstantial evidence proved it). Every process now names its version
   next to its session id before any lifecycle line.
 
+
+## 0.1.260
+
+- fix(app): Copilot parity with the CLI — the app's model pickers now
+  fetch through the copilot dialect (GitHub→Copilot token exchange,
+  capabilities/limits) instead of 401ing the raw GitHub token against
+  `<host>/models`; a picked Copilot model connects as the copilot wire
+  dialect, and the entry-scoped `FA_KEY_COPILOT_<NAME>` key resolves as
+  the fallback. Deleting a Copilot account now removes its entry-scoped
+  token from the Keychain and the saved-keys store (before: only the
+  shared `FA_KEY_<HOST>` slot went away and the token leaked); the
+  duplicated name→key algorithm is gone — both surfaces use the one core
+  `CustomProviderRegistry.copilotEntryKeyName`.
+
+
 ## 0.1.258
 
 - fix(cli): the Copilot preset row now actually starts the connect flow —
@@ -115,6 +130,7 @@
 - feat(providers): codex http sse transport — header parity, cloudflare cookie replay, full event coverage
 - feat(providers): chatgpt oauth expiry tracking — expiresAt + needsRefresh
 - feat(providers): codex transport helpers — header parity, cloudflare cookie jar, rate-limit parsing
+<<<<<<< HEAD
 
 ## 0.1.252
 
@@ -1951,4 +1967,6 @@
 - docs(changelog): repair ordering — newest-first, merge duplicate sections
 - fix(cli): roles-mode /model switch on saved CodeMie entries resolves the entry key
 
-## Unreleased
+## 0.1.260
+=======
+>>>>>>> 01ec9071 (Merge PR#7: fix(app): copilot parity with the CLI — model dialect + delete cleans the entry-scoped token)

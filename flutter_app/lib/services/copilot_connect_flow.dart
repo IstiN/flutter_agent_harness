@@ -8,25 +8,14 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa_llm/fa_llm.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show CustomProviderRegistry;
 import 'package:fa_ui/fa_ui.dart'
     show CopilotConnectCallbacks, CopilotConnectResult, showCopilotConnectSheet;
 
 /// The default Copilot model — the provider catalog's flag default
 /// (`/models` is the runtime source of truth, like the CLI).
 const copilotDefaultModelId = 'gpt-4.1';
-
-/// Secure-store name of a Copilot entry's GitHub token:
-/// `FA_KEY_COPILOT_<SANITIZED_ENTRY_NAME>`. Byte-identical with the CLI's
-/// `CustomProviderRegistry.copilotEntryKeyName` (same sanitizer: uppercase,
-/// `[^A-Z0-9]+` → `_`, trim edge underscores) so both surfaces read the
-/// same Keychain entry. The token lives ONLY under entry-scoped names.
-String copilotEntryKeyName(String entryName) {
-  final sanitized = entryName
-      .toUpperCase()
-      .replaceAll(RegExp(r'[^A-Z0-9]+'), '_')
-      .replaceAll(RegExp(r'^_+|_+$'), '');
-  return 'FA_KEY_COPILOT_${sanitized.isEmpty ? 'DEFAULT' : sanitized}';
-}
 
 /// Runs the full GitHub Copilot connect flow: the device-flow sheet (real
 /// fa_llm wiring unless [callbacks] is injected — the device flow needs no
@@ -111,7 +100,7 @@ Future<bool> runCopilotConnectFlow({
   registry.rememberKey(provider.id, connect.githubToken);
   // Entry-scoped secure persistence (the CLI contract): Keychain first,
   // saved-keys store as the portable fallback.
-  final keyName = copilotEntryKeyName(connect.entryName);
+  final keyName = CustomProviderRegistry.copilotEntryKeyName(connect.entryName);
   var persisted = false;
   if (await keychain.isAvailable()) {
     persisted = await keychain.set(keyName, connect.githubToken);

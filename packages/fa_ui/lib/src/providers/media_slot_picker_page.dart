@@ -387,13 +387,16 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
 
   String? _error;
 
-  /// The provider kind for a media-slot save: DIAL endpoints get 'dial'
-  /// (their own URL/auth dialect), Google endpoints get 'google' (the
-  /// Gemini adapter handles inlineData images), everything else is
-  /// openai-completions. Media tools only speak the OpenAI dialect —
-  /// this mapping keeps the chat-path adapters in sync with the picker.
+  /// The provider kind for a save: DIAL endpoints get 'dial' (their own
+  /// URL/auth dialect), Copilot endpoints get 'copilot' (the GitHub→
+  /// Copilot token exchange + Bearer wire), Google endpoints get 'google'
+  /// (the Gemini adapter handles inlineData images), everything else is
+  /// openai-completions. Media-slot saves always speak the OpenAI dialect;
+  /// the generic role flow (slot == null) maps each endpoint to its real
+  /// adapter so role runs use the same wire as the chat path.
   String _mediaSlotProviderKind(String? slot, String baseUrl) {
     if (slot != null) return 'openai-completions';
+    if (isCopilotBaseUrl(baseUrl)) return 'copilot';
     final preset = ProviderPreset.fromBaseUrl(baseUrl);
     if (preset == ProviderPreset.dial) return 'dial';
     if (baseUrl.contains('generativelanguage.googleapis.com')) return 'google';
@@ -459,7 +462,8 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
   /// Fetches the endpoint's model list for the picker: the injected
   /// [MediaSlotModelPage.modelsFetcher] override (tests, host codemie
   /// wiring) wins; otherwise the core [fetchModelsForEndpoint] dispatch
-  /// handles the DIAL deployments endpoint and CodeMie marker itself.
+  /// handles the DIAL deployments endpoint, the CodeMie marker, and the
+  /// Copilot token exchange itself (see [modelsDispatchHintFor]).
   /// Silent on failure — free-text entry always works, the picker just
   /// shows the manual-entry note.
   Future<void> _fetchEndpointModels() async {
@@ -480,10 +484,7 @@ class _MediaSlotModelPageState extends State<MediaSlotModelPage> {
           : await fetchModelsForEndpoint(
               baseUrl,
               apiKey: key,
-              provider:
-                  ProviderPreset.fromBaseUrl(baseUrl) == ProviderPreset.dial
-                  ? 'dial'
-                  : null,
+              provider: modelsDispatchHintFor(baseUrl),
             );
       if (!mounted) return;
       setState(() => _endpointModels = ids);

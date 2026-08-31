@@ -156,6 +156,16 @@ String? hostedProviderKeyName(ProviderPreset preset) => switch (preset) {
 /// `/openai/deployments/...`, not `/chat/completions`).
 bool _isDialBaseUrl(String url) => url.contains('ai-proxy.lab.epam.com');
 
+/// DIAL deployments, the bundled ChatGPT Codex catalog, and Copilot (the
+/// GitHub→Copilot token exchange) each have a dedicated wire dialect;
+/// everything else probes the generic OpenAI `/models` (null hint). The
+/// single mapping every model picker passes as the `provider:` argument.
+String? modelsDispatchHintFor(String baseUrl) {
+  if (_isDialBaseUrl(baseUrl)) return 'dial';
+  if (harness.isCopilotBaseUrl(baseUrl)) return 'copilot';
+  return null;
+}
+
 /// The hosted endpoint presets listed by the Providers section, the
 /// default-chat-model picker, and the media slot editor (the ad-hoc
 /// `custom` preset is covered by "Add provider"; on-device presets have no
@@ -200,7 +210,23 @@ String resolveProviderKey(
   SessionKeysStore? keysStore,
 }) {
   return switch (provider) {
-    CustomProvider custom => registry?.keyFor(custom.id) ?? '',
+    CustomProvider custom => () {
+      final remembered = registry?.keyFor(custom.id) ?? '';
+      if (remembered.isNotEmpty || !harness.isCopilotBaseUrl(custom.baseUrl)) {
+        return remembered;
+      }
+      // Copilot tokens persist entry-scoped (`FA_KEY_COPILOT_<NAME>`, the
+      // CLI contract) rather than host-scoped — fall back to that slot when
+      // the registry session key is gone (e.g. after a restart on a
+      // platform without a Keychain backend).
+      final keyName = harness.CustomProviderRegistry.copilotEntryKeyName(
+        custom.name,
+      );
+      return FaUiHost.resolveKey(
+        keyName,
+        () => keysStore?.valueOf(keyName) ?? '',
+      );
+    }(),
     ProviderPreset preset => () {
       final name = hostedProviderKeyName(preset);
       if (name == null) return '';
