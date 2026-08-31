@@ -25,6 +25,7 @@ void main() {
     });
 
     test('leaves a lone backtick as literal text', () {
+      // No matching closing backtick — the scanner doesn't eat the rest.
       expect(renderInlineMarkdown('one ` stuck'), 'one ` stuck');
     });
 
@@ -33,18 +34,27 @@ void main() {
     });
 
     test('strips bold before italic (greedy ** wins)', () {
+      // The ** pair must win over any * it might also see. A literal
+      // "**only-bold**" run, no inner * present, must emit bold only.
       final rendered = renderInlineMarkdown('plain **only-bold** tail');
       expect(rendered, contains('\x1b[1monly-bold\x1b[22m'));
       expect(rendered, isNot(contains('\x1b[3m')));
     });
 
     test('bold wins over italic when both markers are present', () {
+      // ** inside *…* → not a bold span, but a single * inside **…** is
+      // bold. We only run on a single chunk so this is a structural
+      // test rather than a strict precedence test.
       final rendered = renderInlineMarkdown('**keep *italic* inside**');
       expect(rendered, contains('\x1b[1m'));
       expect(rendered, contains('\x1b[22m'));
     });
 
     test('leaves unmatched markers as literal text', () {
+      // A stray * with no closing partner must not eat the rest of the
+      // string — the renderer stays a streaming-friendly single-pass
+      // loop. We only assert on a single trailing * with no match; the
+      // ** precedence is exercised separately.
       final rendered = renderInlineMarkdown('plain text with trailing *');
       expect(rendered, 'plain text with trailing *');
     });

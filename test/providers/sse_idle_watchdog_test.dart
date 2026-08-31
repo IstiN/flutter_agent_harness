@@ -44,7 +44,7 @@ void main() {
     test('real events keep the stream alive', () async {
       final controller = StreamController<List<int>>();
       var ticks = 0;
-      final timer = Timer.periodic(const Duration(milliseconds: 40), (t) {
+      Timer.periodic(const Duration(milliseconds: 40), (t) {
         ticks++;
         controller.add(
           utf8.encode('data: {"delta":$ticks}\n\n'),
