@@ -1291,6 +1291,28 @@ void main() {
       expect(model.cursor, 0);
     });
 
+    test('ctrl+a moves to the line start, ctrl+e to the end — no text '
+        'leaks (macOS Cmd+Left/Right send ^A/^E)', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'hello');
+      model = send(model, ctrl('a'));
+      expect(model.inputText, 'hello', reason: 'ctrl+a is not a character');
+      expect(model.cursor, 0);
+      model = send(model, ctrl('e'));
+      expect(model.inputText, 'hello', reason: 'ctrl+e is not a character');
+      expect(model.cursor, 5);
+    });
+
+    test('an unhandled ctrl combo never inserts its letter', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'hi');
+      model = send(model, ctrl('x'));
+      model = send(model, ctrl('g'));
+      model = send(model, ctrl('z'));
+      expect(model.inputText, 'hi');
+      expect(model.cursor, 2);
+    });
+
     test('ctrl+w kills the previous word and trailing whitespace first', () {
       var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
       model = typed(model, 'hello world  ');
@@ -1629,6 +1651,31 @@ void main() {
       expect(updated.prompt, isNull);
       expect(completer.isCompleted, isTrue);
       expect(completer.future, completion(isA<TextPromptAnswer>()));
+    });
+
+    test('prompt mode: a ctrl combo never leaks its letter into the '
+        'buffer (the Cmd+Left/aaaa regression)', () {
+      FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      final completer = Completer<TuiPromptAnswer?>();
+      var updated = send(
+        model,
+        OpenPromptMsg(TextPromptSpec(question: 'Enter value:'), completer),
+      );
+      updated = send(
+        updated,
+        KeyPressMsg(
+          TeaKey(code: KeyCode.rune, text: 'a', modifiers: {KeyMod.ctrl}),
+        ),
+      );
+      expect(updated.prompt!.secretValue, '', reason: 'ctrl+a is not text');
+      // A plain char still lands.
+      updated = send(
+        updated,
+        KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'a')),
+      );
+      expect(updated.prompt!.secretValue, 'a');
     });
 
     test('openPrompt Esc cancels and resolves with TuiPromptCancelled', () {

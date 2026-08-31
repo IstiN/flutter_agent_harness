@@ -854,6 +854,116 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       tempHome.deleteSync(recursive: true);
     });
   });
+
+  group('editing keys — the Cmd+Left (aaaa) regression + secret sheet', () {
+    testWidgets('ctrl+a/ctrl+e move the composer cursor without leaking '
+        'letters; unhandled combos print nothing', (tester) async {
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      harness.sendText('hello world');
+      await harness.settle(settleMs: 300);
+      // macOS Cmd+Left arrives as ^A (0x01): readline start-of-line.
+      harness.sendText('\x01');
+      await harness.settle(settleMs: 200);
+      harness.sendText('X'); // lands at the start iff the cursor moved
+      await harness.settle(settleMs: 200);
+      // Cmd+Right → ^E: end-of-line.
+      harness.sendText('\x05');
+      await harness.settle(settleMs: 200);
+      harness.sendText('Y');
+      await harness.settle(settleMs: 200);
+      // Unhandled combos must never leak their base letter.
+      harness.sendText('\x18\x07\x1a'); // ctrl+x, ctrl+g, ctrl+z
+      await harness.settle(settleMs: 200);
+      harness.sendText('Z');
+      await harness.settle(settleMs: 300);
+
+      await harness.screenshot(shotsDir, '102_composer_ctrl_keys');
+      final flat = harness.screenText.replaceAll('\n', '');
+      expect(flat, contains('Xhello worldYZ'));
+      expect(flat, isNot(contains('Xhello worldYZxgz')));
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+
+    testWidgets('request_secret sheet: Ctrl+U clears, dots mask, Ctrl+R '
+        'reveals, the saved secret never echoes', (tester) async {
+      final server = await _startAnsweringServer(
+        tester,
+        18780,
+        null, // steer/secret mode: 'deploy the app' → request_secret
+      );
+      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:18780/v1');
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      harness.sendText('deploy the app');
+      await harness.settle(settleMs: 300);
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'Name (UPPER_SNAKE)',
+        timeout: const Duration(seconds: 30),
+      );
+      await harness.screenshot(shotsDir, '103_secret_sheet_suggested_name');
+      expect(harness.screenText, contains('SUDO_PASSWORD'));
+      expect(harness.screenText, contains('Ctrl+R reveals'));
+
+      // Ctrl+U on name focus: one keystroke erases the suggested name
+      // (the 16-backspace nuisance).
+      harness.sendText('\x15');
+      await harness.settle(settleMs: 300);
+      await harness.screenshot(shotsDir, '104_secret_name_cleared');
+      expect(harness.screenText, isNot(contains('SUDO_PASSWORD')));
+      expect(harness.screenText, contains('Name must match'));
+
+      // A fresh name, then Tab into the value field.
+      harness.sendText('SUDO_X');
+      await harness.settle(settleMs: 200);
+      harness.sendText('\t');
+      await harness.settle(settleMs: 200);
+      harness.sendText('hunter2');
+      await harness.settle(settleMs: 300);
+      await harness.screenshot(shotsDir, '105_secret_dots');
+      final dotsScreen = harness.screenText.replaceAll('\n', '');
+      expect(dotsScreen, contains('•••••••'));
+      expect(dotsScreen, isNot(contains('hunter2')));
+
+      // Ctrl+R reveals the typed value for verification.
+      harness.sendText('\x12');
+      await harness.settle(settleMs: 300);
+      await harness.screenshot(shotsDir, '106_secret_revealed');
+      expect(harness.screenText, contains('hunter2'));
+      expect(harness.screenText, contains('Ctrl+R hides'));
+
+      // Ctrl+U on value focus kills the field back to the cursor.
+      harness.sendText('\x15');
+      await harness.settle(settleMs: 300);
+      await harness.screenshot(shotsDir, '107_secret_value_cleared');
+      final cleared = harness.screenText.replaceAll('\n', '');
+      expect(cleared, isNot(contains('hunter2')));
+      expect(cleared, isNot(contains('•••')));
+
+      // Retype and save: the grant completes the turn; the transcript
+      // must NEVER echo the secret value.
+      harness.sendText('hunter2');
+      await harness.settle(settleMs: 200);
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'Secret received',
+        timeout: const Duration(seconds: 30),
+      );
+      await harness.screenshot(shotsDir, '108_secret_saved_no_echo');
+      expect(
+        harness.screenText.replaceAll('\n', ''),
+        isNot(contains('hunter2')),
+      );
+
+      await harness.close();
+      await _stopServer(tester, server);
+      tempHome.deleteSync(recursive: true);
+    });
+  });
 }
 
 /// Walks up from the CWD until a directory containing `bin/fah.dart` is
@@ -974,6 +1084,26 @@ class H(http.server.BaseHTTPRequestHandler):
                             'name': 'bash',
                             'arguments': '{"command":"sleep 300"}'}}]}}]},
                     {'choices': [{'delta': {}, 'finish_reason': 'tool_calls'}]},
+                ]
+            elif ('deploy the app' in last_user
+                    and not any(m.get('role') == 'tool' for m in messages)):
+                # request_secret once: the follow-up request carries the
+                # tool result (role 'tool') and must get a text answer,
+                # not the same tool call again.
+                deltas = [
+                    {'choices': [{'delta': {'tool_calls': [
+                        {'index': 0, 'id': 'call_1', 'function': {
+                            'name': 'request_secret',
+                            'arguments': json.dumps({
+                                'name': 'SUDO_PASSWORD',
+                                'reason': 'deploy Fa.app to /Applications'})}}]}}]},
+                    {'choices': [{'delta': {}, 'finish_reason': 'tool_calls'}]},
+                ]
+            elif 'deploy the app' in last_user:
+                deltas = [
+                    {'choices': [{'delta': {'content':
+                        'Secret received — deploying now.'}}]},
+                    {'choices': [{'delta': {}, 'finish_reason': 'stop'}]},
                 ]
             else:
                 deltas = [

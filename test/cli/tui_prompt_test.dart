@@ -342,6 +342,35 @@ void main() {
       expect(state.secretName, 'FOO');
     });
 
+    test('Ctrl+U clears the suggested name on name focus', () {
+      final spec = SecretPromptSpec(name: 'SUDO_PASSWORD', reason: 'deploy');
+      var state = TuiPromptState(spec);
+      expect(state.secretCursor, -1, reason: 'name focus');
+      state = handleTuiPromptKey(state, const PromptCtrlU()).state;
+      expect(state.secretName, '');
+    });
+
+    test('Ctrl+U kills the value back to the cursor', () {
+      var state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'secret', secretCursor: 6);
+      state = handleTuiPromptKey(state, const PromptCtrlU()).state;
+      expect(state.secretValue, '');
+      expect(state.secretCursor, 0);
+
+      state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'secret', secretCursor: 3);
+      state = handleTuiPromptKey(state, const PromptCtrlU()).state;
+      expect(state.secretValue, 'ret');
+      expect(state.secretCursor, 0);
+    });
+
+    test('the sheet hint names Ctrl+U next to Ctrl+R', () {
+      final rows = renderTuiPrompt(TuiPromptState(spec), 60).join('\n');
+      expect(rows, contains('Ctrl+U clears'));
+    });
+
     test('Ctrl+R toggles the value visibility (hidden by default)', () {
       var state = TuiPromptState(spec);
       expect(state.secretValueVisible, isFalse);

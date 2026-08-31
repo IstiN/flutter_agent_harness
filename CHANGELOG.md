@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.264
+
+- fix(cli): macOS Cmd+Left/Right no longer types "aaaa" in the composer —
+  those keys arrive as ^A/^E control bytes, and the dart_tui decoder puts
+  the BASE LETTER into the event text, so every unhandled ctrl combo
+  leaked its letter through the catch-all insert. Three insert paths
+  (composer, picker type-to-filter, prompt re-shaper) now drop
+  command-modified keystrokes (ctrl/alt/meta/hyper/super — shift stays,
+  kitty-protocol shifted letters carry real text), and ctrl+a/ctrl+e do
+  what the user meant: readline start/end of line.
+- feat(cli): the `request_secret` sheet gets readline Ctrl+U — one
+  keystroke clears the suggested name on name focus (the 16-backspace
+  "erase SUDO_PASSWORD" nuisance) and kills the value back to the cursor
+  on value focus; both hints name the key.
+- test(cli): PTY visual coverage with screenshots — a real terminal run
+  proves the composer edits (`Xhello worldYZ` after ^A/^E plus silent
+  ctrl+x/g/z) and the full secret-sheet lifecycle end-to-end through a
+  canned LLM that emits `request_secret`: suggested name, Ctrl+U clear,
+  dot masking, Ctrl+R reveal, value kill, save — with the grant never
+  echoing the secret into the transcript (screens 102–108).
+
 ## 0.1.263
 
 - feat(cli): the `request_secret` TUI sheet can reveal the typed value —

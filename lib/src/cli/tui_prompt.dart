@@ -40,6 +40,13 @@ final class PromptCtrlR extends PromptKey {
   const PromptCtrlR();
 }
 
+/// Ctrl+U — readline's kill-to-line-start: clears the name field, kills
+/// the value back to the cursor (erasing a suggested name no longer
+/// takes one backspace per character).
+final class PromptCtrlU extends PromptKey {
+  const PromptCtrlU();
+}
+
 final class PromptArrowUp extends PromptKey {
   const PromptArrowUp();
 }
@@ -646,7 +653,8 @@ bool _secretSubmittable(TuiPromptState state) {
 /// Secret prompt: value-cursor arrows → backspace → char → enter → tab →
 /// esc; ↑/↓ are ignored.
 _PromptKeyResult _handleSecretKey(TuiPromptState state, PromptKey key) {
-  return _handleSecretRevealKey(state, key) ??
+  return _handleSecretKillKey(state, key) ??
+      _handleSecretRevealKey(state, key) ??
       _handleSecretArrowKey(state, key) ??
       _handleSecretBackspaceKey(state, key) ??
       _handleSecretCharKey(state, key) ??
@@ -654,6 +662,22 @@ _PromptKeyResult _handleSecretKey(TuiPromptState state, PromptKey key) {
       _handleSecretTabKey(state, key) ??
       _handleEscapeKey(state, key) ??
       (state: state, resolved: null);
+}
+
+/// Ctrl+U: name focus clears the suggested name, value focus kills from
+/// the cursor back to the field start (readline's unix-line-discard).
+_PromptKeyResult? _handleSecretKillKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptCtrlU) return null;
+  if (state.secretCursor < 0) {
+    return (state: state.copyWith(secretName: ''), resolved: null);
+  }
+  return (
+    state: state.copyWith(
+      secretValue: state.secretValue.substring(state.secretCursor),
+      secretCursor: 0,
+    ),
+    resolved: null,
+  );
 }
 
 /// Ctrl+R toggles the value's clear-text rendering; null for other keys.
@@ -1131,8 +1155,8 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
   rows.add(_wrapBodyLine(state.secretName, inner, bold: true));
   final focusedOnValue = state.secretCursor >= 0;
   final hint = focusedOnValue
-      ? 'Enter to save · Esc to cancel'
-      : 'Start typing the value · Esc to cancel';
+      ? 'Enter to save · Ctrl+U clears to cursor · Esc to cancel'
+      : 'Start typing the value · Ctrl+U clears the name · Esc to cancel';
   rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
   final display = visible
       ? state.secretValue

@@ -1230,8 +1230,10 @@ final class FaTuiModel extends Model {
   (Model, Cmd?)? _handleHomeEndKey(KeyMsg msg) {
     switch (msg.key) {
       case 'home':
+      case 'ctrl+a': // readline — also what macOS Cmd+Left sends (^A)
         return (copyWith(cursor: 0), null);
       case 'end':
+      case 'ctrl+e': // readline — macOS Cmd+Right (^E)
         return (copyWith(cursor: inputText.length), null);
       default:
         return null;
@@ -1310,9 +1312,25 @@ final class FaTuiModel extends Model {
     }
   }
 
+  /// Whether [keystroke] carries a command modifier (ctrl/alt/meta/hyper/
+  /// super). The dart_tui decoder puts the BASE LETTER into `text` for
+  /// control bytes (0x01 → ctrl+a with text 'a'), so a catch-all insert
+  /// that trusts `text` prints the letter of every unhandled combo —
+  /// macOS Cmd+Left (sends ^A) typed "aaaa" in the composer. Shift is
+  /// deliberately NOT blocked: shifted letters arrive as plain runes in
+  /// legacy mode and as `shift+<key>` with text under the kitty protocol.
+  static bool _isCommandKeystroke(String keystroke) {
+    return keystroke.startsWith('ctrl+') ||
+        keystroke.startsWith('alt+') ||
+        keystroke.startsWith('meta+') ||
+        keystroke.startsWith('hyper+') ||
+        keystroke.startsWith('super+');
+  }
+
   /// Normal-mode character insert: the editing cluster's catch-all for
   /// single-character keys.
   (Model, Cmd?) _handleCharInsertKey(KeyMsg msg) {
+    if (_isCommandKeystroke(msg.key)) return (this, null);
     final text = msg.keyEvent.text;
     if (text.isNotEmpty && text.length == 1) {
       final nextText =
@@ -1504,6 +1522,7 @@ final class FaTuiModel extends Model {
   /// rebuilds the item list (host callback for the models picker, a local
   /// [menuAllItems] filter for generic pickers).
   (Model, Cmd?) _pickerTypeFilter(KeyMsg msg) {
+    if (_isCommandKeystroke(msg.key)) return (this, null);
     final text = msg.keyEvent.text;
     if (text.isNotEmpty && text.length == 1) {
       if (text == ' ' && modelFilter.isEmpty) return (this, null);
@@ -1535,6 +1554,7 @@ final class FaTuiModel extends Model {
       // ctrl+c is NOT mapped here: it stays the global interrupt/quit key.
       'enter' || 'ctrl+j' => const PromptEnter(),
       'ctrl+r' => const PromptCtrlR(),
+      'ctrl+u' => const PromptCtrlU(),
       'esc' => const PromptEscape(),
       'tab' => const PromptTab(),
       'up' => const PromptArrowUp(),
@@ -1542,7 +1562,10 @@ final class FaTuiModel extends Model {
       'left' => const PromptArrowLeft(),
       'right' => const PromptArrowRight(),
       'backspace' => const PromptBackspace(),
-      _ => msg.keyEvent.text.length == 1 ? PromptChar(msg.keyEvent.text) : null,
+      _ =>
+        !_isCommandKeystroke(msg.key) && msg.keyEvent.text.length == 1
+            ? PromptChar(msg.keyEvent.text)
+            : null,
     };
   }
 
