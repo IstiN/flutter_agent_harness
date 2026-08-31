@@ -564,6 +564,17 @@ class AgentCli {
   void startProviderEditWizardForTest(CustomProviderEntry? entry) =>
       _startProviderEditWizard(entry);
 
+  /// The rows of the "Add provider" preset picker — the test asserts every
+  /// catalog provider with a typed `/provider <name>` flow is listed
+  /// (Copilot shipped missing: the list is hand-maintained).
+  @visibleForTesting
+  List<MenuItem> addProviderItemsForTest() => _addProviderItems();
+
+  /// Test seam routing an "Add provider" picker selection in line mode.
+  @visibleForTesting
+  Future<void> tuiPickAddProviderForTest(String key) =>
+      _tuiPickAddProvider(key);
+
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in

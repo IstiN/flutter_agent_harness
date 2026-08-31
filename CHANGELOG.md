@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.257
+
+- fix(cli): GitHub Copilot appears in the TUI "Add provider" picker — the
+  preset list is hand-maintained and shipped without a Copilot row even
+  though `/provider copilot` (device flow) worked; the row routes to the
+  same connect command, and a picker test now pins every preset key to a
+  handler so a future provider can't silently miss the menu.
+
 ## 0.1.256
 
 - fix(cli): `/model <id>` on a saved CodeMie/custom entry no longer fails
