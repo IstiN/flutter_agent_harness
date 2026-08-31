@@ -829,6 +829,56 @@ class AppsStore {
     }
   }
 
+  /// Installed CATALOG widgets as `{id: version}` (origin == 'catalog').
+  Future<Map<String, String>> installedCatalogVersions() async {
+    final meta = await _readInstalled();
+    return {
+      for (final entry in meta.entries)
+        if (entry.value['origin'] == 'catalog')
+          entry.key: entry.value['version']?.toString() ?? '',
+    };
+  }
+
+  /// True when the install is exactly what we wrote: every recorded file
+  /// is byte-identical on disk and the user added no code files of their
+  /// own (`storage.json` is user data and ignored). Used by the silent
+  /// auto-update — a modified widget stays on the manual Update path so
+  /// user work is never moved underfoot.
+  Future<bool> isCleanInstall(String id) async {
+    final meta = await _readInstalled();
+    final entry = meta[id];
+    if (entry == null) return false;
+    final files = entry['files'];
+    if (files is! Map) return false;
+    final recorded = files.cast<String, String>();
+    final onDisk = <String>[];
+    Future<void> walk(String dir, String prefix) async {
+      final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
+      for (final item in entries) {
+        final rel = prefix.isEmpty ? item.name : '$prefix/${item.name}';
+        if (item.kind == FileKind.directory) {
+          await walk('$dir/${item.name}', rel);
+        } else {
+          onDisk.add(rel);
+        }
+      }
+    }
+
+    await walk('apps/$id', '');
+    for (final name in onDisk) {
+      if (name == 'storage.json') continue;
+      if (!recorded.containsKey(name)) return false; // user-added
+    }
+    for (final file in recorded.entries) {
+      final current = (await _env.readBinaryFile(
+        'apps/$id/${file.key}',
+      )).valueOrNull;
+      if (current == null) return false; // user-deleted
+      if (sha256.convert(current).toString() != file.value) return false;
+    }
+    return true;
+  }
+
   Future<void> _writeInstalled(Map<String, Map<String, dynamic>> meta) async {
     await _env.writeFile(installedMetaFile, jsonEncode(meta));
   }

@@ -68,7 +68,7 @@
 		<true/>
 	</dict>
 	<key>FLTEnableImpeller</key>
-	<false/>
+	<true/>
 	<key>FLTEnableFlutterGPU</key>
 	<true/>
 </dict>
