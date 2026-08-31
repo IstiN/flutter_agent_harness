@@ -1844,6 +1844,25 @@
 - feat(app): the sidebar shows the CLI-written session_info names
 - fix(app): reset/remove/install refresh the grid + sane dialog width
 
+## 0.1.253
+
+- fix(cli): the busy row stops lying about compaction hangs
+- feat(catalog): category filter chips above the widget list
+- refactor(cli): split for the 2800-line size gate
+- feat(providers): multi-account ChatGPT — per-entry keys, account picker, app parity
+- fix(providers): review fixes — string-typed oauth json, pre-send cookie baseline, SSE incomplete/failed as stream events
+- fix: drop duplicate models_for_endpoint import left by the main merge
+- fix(codex): pin chatgpt catalog visibility; note review fixes in changelog
+- fix(codex): terminate failed/incomplete SSE turns as error events
+- fix(codex): serialize OAuth expiry as a string; decode stays tolerant of int blobs
+- docs(goal): codex gpt auth — tick checklist, fill implementation log
+- feat(providers): unhide chatgpt provider — ship docs, changelog, live smoke
+- test(providers): chatgpt oauth token-leak guard — persisted registry + transcript carry no tokens
+- feat(providers): codex models — live GET /models with bundled-catalog fallback
+- feat(providers): codex http sse transport — header parity, cloudflare cookie replay, full event coverage
+- feat(providers): chatgpt oauth expiry tracking — expiresAt + needsRefresh
+- feat(providers): codex transport helpers — header parity, cloudflare cookie jar, rate-limit parsing
+
 ## Unreleased
 
 ## Unreleased
