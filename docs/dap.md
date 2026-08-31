@@ -5,8 +5,8 @@ signing and end-to-end encryption scheme, the channel/invite/presence
 model, how to run a hub, and an end-to-end setup walkthrough.
 
 Everything here is reconstructed from the code that speaks the protocol —
-the vendored client at `vendor/fah_hub_client/` (checksum-pinned by its
-`MANIFEST.txt`) and the bin-side plugin adapter. Citations name the file
+the hosted pub.dev package `fah_hub_client` (version-pinned by
+`pubspec.lock`) and the bin-side plugin adapter. Citations name the file
 and symbol, so a compatible hub or a client audit can check each claim
 against the source. The client's doc comments cite an upstream
 `docs/protocol.md`; this document is the in-repo equivalent.
@@ -15,15 +15,15 @@ Code map:
 
 | Concern | File |
 |---|---|
-| Connection, hello/welcome, sends, whois, reconnect | `vendor/fah_hub_client/lib/src/hub/hub_client.dart` (`HubClient`) |
-| Frame signing, canonical JSON, frame ids | `vendor/fah_hub_client/lib/src/hub/canonical.dart` |
-| Identity keys and the key file | `vendor/fah_hub_client/lib/src/hub/identity.dart` (`HubIdentity`) |
-| Payload encryption (E2E) | `vendor/fah_hub_client/lib/src/hub/payload_crypto.dart` |
-| Channel keypairs and the shared channels file | `vendor/fah_hub_client/lib/src/hub/channels.dart` (`ChannelStore`) |
-| Config files, env vars, `~/.dap` layout | `vendor/fah_hub_client/lib/src/hub/dap_settings.dart`, `hub_config.dart` |
-| Plugin wiring, inbox drain, invites host-side | `vendor/fah_hub_client/lib/src/hub/hub_plugin.dart` (`HubPlugin`) |
+| Connection, hello/welcome, sends, whois, reconnect | `package:fah_hub_client/src/hub/hub_client.dart` (`HubClient`) |
+| Frame signing, canonical JSON, frame ids | `package:fah_hub_client/src/hub/canonical.dart` |
+| Identity keys and the key file | `package:fah_hub_client/src/hub/identity.dart` (`HubIdentity`) |
+| Payload encryption (E2E) | `package:fah_hub_client/src/hub/payload_crypto.dart` |
+| Channel keypairs and the shared channels file | `package:fah_hub_client/src/hub/channels.dart` (`ChannelStore`) |
+| Config files, env vars, `~/.dap` layout | `package:fah_hub_client/src/hub/dap_settings.dart`, `hub_config.dart` |
+| Plugin wiring, inbox drain, invites host-side | `package:fah_hub_client/src/hub/hub_plugin.dart` (`HubPlugin`) |
 | CLI adapter: `/dap`, `dap_*` tools | `bin/fah_hub_plugin.dart` (`HubPluginHost`) |
-| Reference hub (executable server semantics) | `vendor/fah_hub_client/test/fake_hub.dart` (`FakeHub`), mirrored at `test/hub/fake_hub.dart` |
+| Reference hub (executable server semantics) | `test/hub/fake_hub.dart` (`FakeHub`, mirrors the package's own test hub) |
 
 
 ## 1. Overview

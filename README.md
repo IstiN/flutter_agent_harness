@@ -134,7 +134,7 @@ The CLI core (`AgentCli` + `CliIO`) is pure Dart and lives in
 ## Agent-to-agent messaging (DAP)
 
 The CLI ships a default-on DAP/1 hub plugin (`bin/fah_hub_plugin.dart` +
-`vendor/fah_hub_client`): agents connect to a hub over a signed
+the hosted `fah_hub_client` pub package): agents connect to a hub over a signed
 WebSocket, exchange end-to-end encrypted channel messages and DMs (the
 hub only ever sees ciphertext), and see each other's presence. Inbound
 hub mail is drained into the agent loop as steering messages; `/dap` and
