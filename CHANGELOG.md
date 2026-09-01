@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.268
+
+- fix(tui): the "Working… Ns" immortal-spinner wedge (found live: a
+  session burned 100% CPU for 8 hours after the run had cleanly ended —
+  `Working… 28301s`). Root cause in the TUI busy state machine: a raw
+  `BusyMsg(true)` landing on an IDLE model — a post-run straggler like a
+  compaction finally-branch calling `setBusyPhase('')` after the busy
+  bracket released — re-armed the spinner with a fresh elapsed window and
+  scheduled a NEW 100ms tick chain; nothing ever sent the matching
+  `BusyMsg(false)`, and every chain re-rendered the full transcript
+  (268k tokens) ten times a second — the 99.8% CPU storm. Two guards now
+  close the class: the model drops phase-relabels and duplicate busy
+  starts while idle/already-busy (no new window, no extra chain — one
+  chain per busy stretch), and the controller's `setBusyPhase` no-ops at
+  busy-depth zero. Regression tests: post-run straggler cannot resurrect
+  the row, duplicate starts keep the single chain.
+
 ## 0.1.267
 
 - feat(memory): flutter_agent_memory 0.2.0 — merge-friendly note ids

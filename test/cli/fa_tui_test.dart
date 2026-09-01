@@ -402,6 +402,46 @@ void main() {
     expect(relabel.$2, isNull);
   });
 
+  test('a post-run phase straggler cannot resurrect the busy row', () {
+    // The 01a03f85 wedge (2026-09-01): the run settled (BusyMsg(false)),
+    // then a compaction finally-branch fired setBusyPhase('') — a raw
+    // BusyMsg(true, phase: '') on an IDLE model re-armed the spinner with
+    // a fresh elapsed window, and the tick chain re-rendered the giant
+    // transcript at 100% CPU for 8 hours ("Working… 28301s").
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+    model = model.update(BusyMsg(false)).$1 as FaTuiModel;
+    expect(model.busy, isFalse);
+
+    final straggler = model.update(const BusyMsg(true, phase: ''));
+    model = straggler.$1 as FaTuiModel;
+    expect(model.busy, isFalse, reason: 'idle relabel must be a no-op');
+    expect(straggler.$2, isNull, reason: 'no new tick chain while idle');
+    expect(model.view().content, isNot(contains('Working…')));
+
+    final lateCompact = model.update(
+      const BusyMsg(true, phase: 'Compacting context…'),
+    );
+    model = lateCompact.$1 as FaTuiModel;
+    expect(model.busy, isFalse);
+    expect(lateCompact.$2, isNull);
+  });
+
+  test('a duplicate busy start keeps the window and the single chain', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    final start = model.update(BusyMsg(true));
+    model = start.$1 as FaTuiModel;
+    final started = model.busyStartedAtMs;
+
+    // A raw BusyMsg(true) while ALREADY busy (no phase — e.g. a nested
+    // trigger that bypassed the refcount) must neither restart the elapsed
+    // window nor stack a second tick chain.
+    final dup = model.update(BusyMsg(true));
+    model = dup.$1 as FaTuiModel;
+    expect(dup.$2, isNull, reason: 'one chain per busy stretch');
+    expect(model.busyStartedAtMs, started);
+  });
+
   test('escape aborts the run via onInterrupt without quitting', () {
     var interrupted = 0;
     var model = FaTuiModel(

@@ -647,12 +647,20 @@ final class FaTuiModel extends Model {
     // An in-busy phase relabel (silent post-answer work like auto-compaction
     // or durable-memory extraction): swap the label over the SAME elapsed
     // window and never schedule another tick here — extra chains would
-    // multiply repaint timers. Guarded on [busy] so an idle-host relabel
-    // cannot strand a stale label.
+    // multiply repaint timers. On an IDLE model a relabel is a post-run
+    // straggler (a compaction finally-branch landing after the bracket
+    // released): dropping it is the whole point — re-arming the spinner
+    // here wedged a session at "Working… Ns" burning 100% CPU for hours
+    // (each chain re-renders the full transcript every 100ms).
     final phase = msg.phase;
-    if (msg.busy && phase != null && busy) {
+    if (msg.busy && phase != null) {
+      if (!busy) return (this, null);
       return (copyWith(busyPhase: phase), null);
     }
+    // A raw re-start while ALREADY busy (a trigger that bypassed the
+    // controller's refcount): keep the elapsed window and the single tick
+    // chain instead of stacking another one.
+    if (msg.busy && busy) return (this, null);
     // Kick the spinner loop when going busy; the loop stops itself on the
     // first tick that finds the model idle again. Going idle also unpins
     // the sticky user echo and clears any phase, so the next run starts
@@ -2281,6 +2289,11 @@ final class FaTuiController {
   /// spinner loop or resetting the elapsed window — the user sees WHAT is
   /// happening instead of a growing "Working… Ns" that reads like a hang.
   void setBusyPhase(String phase) {
+    // Suppress post-run stragglers: at depth zero there is no live busy
+    // stretch to relabel, and a raw BusyMsg(true) reaching an idle model
+    // would resurrect the row (the model guards too — belt and braces for
+    // a bug class that already burned a night at 100% CPU).
+    if (_busyDepth <= 0) return;
     _send(BusyMsg(true, phase: phase));
   }
 
