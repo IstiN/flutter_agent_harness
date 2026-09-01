@@ -883,7 +883,12 @@ extension ApprovalCommands on AgentCli {
         if (authExpiredProvider(message.errorMessage ?? '') == 'codemie') {
           return;
         }
-        io.writeln(_errorLine(message.errorMessage ?? 'unknown error'));
+        io.writeln(
+          _keyStatusView.errorLine(
+            message.errorMessage ?? 'unknown error',
+            _agent.state.model.baseUrl,
+          ),
+        );
       case StopReason.aborted:
         // A TTSR abort is a rule trigger, not a failure — the
         // controller already announced it (omp renders a
