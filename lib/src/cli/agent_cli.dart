@@ -1936,73 +1936,112 @@ class AgentCli {
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
 
+  /// Runs one prompt turn: pre-flight ([_beginUserPrompt]) → the agent
+  /// stream → outcome settle ([_settleAfterPrompt], `true` = turn finished
+  /// normally) → finalize ([_afterRun]); thrown errors land in
+  /// [_handleRunError]. Auto-continuations recurse with [isAutoContinue]
+  /// set, which skips the pre-flight phases.
   Future<void> _runPrompt(String text, {bool isAutoContinue = false}) async {
-    // One auto-continuation per real user prompt: when the over-window
-    // guard stops a run, the post-run compaction frees the window and the
-    // turn continues on its own (see the guard branch below). The flag is
-    // reset here so a fresh user prompt gets its own budget, while the
-    // recursive continuation call (isAutoContinue: true) keeps it — a
-    // turn that re-inflates the window after the resume stops for real
-    // instead of looping trim→continue forever.
-    if (!isAutoContinue) _overWindowAutoResumed = false;
-    // Pre-flight context guard: when the LIVE context already exceeds the
-    // compaction threshold, compact BEFORE sending the request — a failed
-    // post-run compaction (quota-limited smol role, provider outage) used to
-    // leave every request carrying an over-window payload (ctx 240% gauge).
-    if (!isAutoContinue) await _maybeAutoCompact();
+    await _beginUserPrompt(isAutoContinue: isAutoContinue);
     try {
       await _agent.prompt(text);
 
       final lastMessage = _agent.state.messages.lastOrNull;
-      if (lastMessage is AssistantMessage &&
-          lastMessage.stopReason == StopReason.error) {
-        if (await _maybeHandleCodeMieError(lastMessage.errorMessage ?? '')) {
-          return;
-        }
-        // The loop's over-window guard refused to send: the transcript is
-        // still over the window, so compact now and — when the compaction
-        // actually freed it — continue the interrupted task on its own.
-        // Ending the run here left live agents idle mid-task (a 200k/200k
-        // glm session stopped dead after its trim and waited for a manual
-        // "continue"), which reads as a harness hang.
-        if (!isAutoContinue &&
-            _overWindowAutoResumed == false &&
-            isContextWindowExhaustedError(lastMessage.errorMessage)) {
-          _overWindowAutoResumed = true;
-          await _ttsr?.settled;
-          await _persistMessages();
-          if (await _maybeAutoCompact()) {
-            io.writeln(
-              _style.yellow(
-                '[context overflowed — auto-compacted; continuing the turn]',
-              ),
-            );
-            await _runPrompt(
-              _overWindowContinuationNotice,
-              isAutoContinue: true,
-            );
-            return;
-          }
-          // Compaction could not free the window (nothing droppable):
-          // surface the guard error as-is and keep the resume budget for
-          // the next user prompt.
-          _overWindowAutoResumed = false;
-        }
-      }
-
-      if (!isAutoContinue &&
-          lastMessage is AssistantMessage &&
-          lastMessage.stopReason != StopReason.error &&
-          lastMessage.stopReason != StopReason.aborted &&
-          _assistantMessageIsEmpty(lastMessage)) {
-        await _runPrompt('continue', isAutoContinue: true);
-        return;
-      }
-
-      await _afterRun();
+      final finished = await _settleAfterPrompt(
+        lastMessage,
+        isAutoContinue: isAutoContinue,
+      );
+      if (finished) await _afterRun();
     } catch (error) {
       await _handleRunError(error);
     }
+  }
+
+  /// [_runPrompt] pre-flight, real user prompts only: fresh over-window
+  /// resume budget (see [_overWindowAutoResumed]) plus pre-flight
+  /// compaction of an already-over-window transcript.
+  Future<void> _beginUserPrompt({required bool isAutoContinue}) async {
+    if (isAutoContinue) return;
+    _overWindowAutoResumed = false;
+    // Pre-flight context guard: when the LIVE context already exceeds the
+    // compaction threshold, compact BEFORE sending the request — a failed
+    // post-run compaction (quota-limited smol role, provider outage) used to
+    // leave every request carrying an over-window payload (ctx 240% gauge).
+    await _maybeAutoCompact();
+  }
+
+  /// Settles a finished agent stream: error-stop handling and the
+  /// auto-continuations. Returns `true` when the turn completed and the
+  /// caller should finalize with [_afterRun].
+  Future<bool> _settleAfterPrompt(
+    Message? lastMessage,
+    {required bool isAutoContinue}
+  ) async {
+    if (lastMessage is AssistantMessage &&
+        lastMessage.stopReason == StopReason.error) {
+      if (await _maybeHandleCodeMieError(lastMessage.errorMessage ?? '')) {
+        return false;
+      }
+      // The loop's over-window guard refused to send: compact and continue.
+      if (await _maybeOverWindowContinue(
+        lastMessage,
+        isAutoContinue: isAutoContinue,
+      )) {
+        return false;
+      }
+    }
+
+    // An assistant turn that produced nothing actionable (no text, no tool
+    // calls) reads as a hang; nudge the model once with "continue".
+    if (_shouldContinueAfterEmptyReply(lastMessage, isAutoContinue)) {
+      await _runPrompt('continue', isAutoContinue: true);
+      return false;
+    }
+    return true;
+  }
+
+  /// One-shot over-window auto-continuation: on a context-window-exhausted
+  /// stop, persist, auto-compact and — when the window was actually freed —
+  /// resume the interrupted task on its own (ending the run there left
+  /// live agents idle mid-task, a harness hang). `true` = turn consumed.
+  Future<bool> _maybeOverWindowContinue(
+    AssistantMessage lastMessage,
+    {required bool isAutoContinue}
+  ) async {
+    if (isAutoContinue ||
+        _overWindowAutoResumed ||
+        !isContextWindowExhaustedError(lastMessage.errorMessage)) {
+      return false;
+    }
+    _overWindowAutoResumed = true;
+    await _ttsr?.settled;
+    await _persistMessages();
+    if (!await _maybeAutoCompact()) {
+      // Compaction freed nothing droppable: surface the guard error as-is
+      // and keep the resume budget for the next user prompt.
+      _overWindowAutoResumed = false;
+      return false;
+    }
+    io.writeln(
+      _style.yellow(
+        '[context overflowed — auto-compacted; continuing the turn]',
+      ),
+    );
+    await _runPrompt(_overWindowContinuationNotice, isAutoContinue: true);
+    return true;
+  }
+
+  /// Whether an empty assistant reply should get the one-shot "continue"
+  /// nudge: real prompt, clean stop, nothing actionable.
+  bool _shouldContinueAfterEmptyReply(
+    Message? lastMessage,
+    bool isAutoContinue,
+  ) {
+    return !isAutoContinue &&
+        lastMessage is AssistantMessage &&
+        lastMessage.stopReason != StopReason.error &&
+        lastMessage.stopReason != StopReason.aborted &&
+        _assistantMessageIsEmpty(lastMessage);
   }
 
   /// Persists a single message as soon as the agent adds it to the transcript.
