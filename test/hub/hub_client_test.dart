@@ -267,7 +267,9 @@ void main() {
     () async {
       final client = await connect(hub, await HubIdentity.generate());
       final ghost = await connect(hub, await HubIdentity.generate());
+      final ghostGone = hub.agentOffline.firstWhere((id) => id == ghost.agentId);
       await ghost.disconnect(); // registered but gone → offline in presence
+      await ghostGone; // hub cleaned up its connection row — query can't race it
 
       final online = await client.peers();
       expect(online.map((p) => p.agentId), isNot(contains(ghost.agentId)));
