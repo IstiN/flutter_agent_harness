@@ -402,6 +402,68 @@ void main() {
     expect(relabel.$2, isNull);
   });
 
+  test('busy row renders the provenance source tag', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    model =
+        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    expect(model.busySource, 'run');
+    expect(model.view().content, contains('· run'));
+    model = model.update(BusyMsg(false)).$1 as FaTuiModel;
+    expect(model.busySource, isEmpty);
+    expect(model.view().content, isNot(contains('· run')));
+  });
+
+  test('busy transitions are logged to the diagnostics sink', () {
+    final lines = <String>[];
+    faTuiBusyDiagnostics = lines.add;
+    addTearDown(() => faTuiBusyDiagnostics = null);
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    model =
+        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.update(BusyMsg(false)).$1 as FaTuiModel;
+    model.update(const BusyMsg(true, phase: 'Compacting context…'));
+    expect(lines.any((l) => l.startsWith('busy on source=run')), isTrue);
+    expect(lines.any((l) => l.startsWith('busy off source=run')), isTrue);
+    expect(
+      lines.any((l) => l.contains('relabel dropped (idle)')),
+      isTrue,
+      reason: 'the dropped straggler must leave a forensic trace',
+    );
+  });
+
+  test('a silent busy stretch shows the quiet hint', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    model =
+        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    // Simulate four minutes of silence (no deltas, no keys).
+    model = model.copyWith(
+      busyLastEventMs:
+          DateTime.now().millisecondsSinceEpoch - 4 * 60 * 1000,
+    );
+    expect(model.view().content, contains('quiet 4m'));
+  });
+
+  test('the watchdog releases a wedged busy row after ten silent minutes',
+      () {
+    final lines = <String>[];
+    faTuiBusyDiagnostics = lines.add;
+    addTearDown(() => faTuiBusyDiagnostics = null);
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    model =
+        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.copyWith(
+      busyLastEventMs:
+          DateTime.now().millisecondsSinceEpoch -
+          (FaTuiModel.busyWatchdogMs + 1000),
+    );
+    final tick = model.update(SpinnerTickMsg());
+    model = tick.$1 as FaTuiModel;
+    expect(model.busy, isFalse, reason: 'watchdog must release the wedge');
+    expect(tick.$2, isNull, reason: 'the tick chain dies with the wedge');
+    expect(model.view().content, isNot(contains('Working…')));
+    expect(lines.any((l) => l.startsWith('busy watchdog release')), isTrue);
+  });
+
   test('a post-run phase straggler cannot resurrect the busy row', () {
     // The 01a03f85 wedge (2026-09-01): the run settled (BusyMsg(false)),
     // then a compaction finally-branch fired setBusyPhase('') — a raw

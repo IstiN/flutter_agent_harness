@@ -132,7 +132,7 @@ final class _QuitRequestedMsg extends Msg {}
 
 /// Message toggling the busy ("thinking") indicator while a run streams.
 final class BusyMsg extends Msg {
-  const BusyMsg(this.busy, {this.phase});
+  const BusyMsg(this.busy, {this.phase, this.source});
 
   /// `true` starts a busy stretch, `false` ends it.
   final bool busy;
@@ -141,7 +141,16 @@ final class BusyMsg extends Msg {
   /// ALREADY-busy message means relabel-only: the spinner chain and the
   /// elapsed window stay untouched.
   final String? phase;
+
+  /// Who armed/released the row ('run', 'submit', …) — rendered next to the
+  /// label and logged on every transition so a wedged row names its owner.
+  final String? source;
 }
+
+/// Busy-row forensic sink: the host (agent_cli) points this at its
+/// diagnostic log so every arm/release/relabel/drop/watchdog-fire is
+/// attributable — the answer to "who left Working… on".
+void Function(String line)? faTuiBusyDiagnostics;
 
 /// Internal spinner-frame tick; re-scheduled while the model stays busy.
 final class SpinnerTickMsg extends Msg {}
@@ -235,6 +244,8 @@ final class FaTuiModel extends Model {
     this.busy = false,
     this.busyStartedAtMs = -1,
     this.busyPhase = '',
+    this.busySource = '',
+    this.busyLastEventMs = -1,
     this.mouseCapture = true,
     this.spinnerFrame = 0,
     this.stickyLines = const [],
@@ -306,6 +317,13 @@ final class FaTuiModel extends Model {
   /// ("Compacting context…", "Extracting memory…"); cleared whenever a
   /// busy stretch ends so the next run starts generic.
   final String busyPhase;
+
+  /// Provenance tag of the current busy stretch ('run', 'submit', …).
+  final String busySource;
+
+  /// Last activity timestamp while busy (any non-tick message). Feeds the
+  /// "quiet Nm" hint and the watchdog.
+  final int busyLastEventMs;
 
   /// Whether the TUI captures the mouse (wheel scrolling) instead of
   /// leaving it to the terminal's native text selection. Default on: the
@@ -540,6 +558,8 @@ final class FaTuiModel extends Model {
     bool? busy,
     int? busyStartedAtMs,
     String? busyPhase,
+    String? busySource,
+    int? busyLastEventMs,
     bool? mouseCapture,
     int? spinnerFrame,
     List<String>? stickyLines,
@@ -572,6 +592,8 @@ final class FaTuiModel extends Model {
       busy: busy ?? this.busy,
       busyStartedAtMs: busyStartedAtMs ?? this.busyStartedAtMs,
       busyPhase: busyPhase ?? this.busyPhase,
+      busySource: busySource ?? this.busySource,
+      busyLastEventMs: busyLastEventMs ?? this.busyLastEventMs,
       mouseCapture: mouseCapture ?? this.mouseCapture,
       spinnerFrame: spinnerFrame ?? this.spinnerFrame,
       stickyLines: stickyLines ?? this.stickyLines,
@@ -607,6 +629,17 @@ final class FaTuiModel extends Model {
 
   @override
   (Model, Cmd?) update(Msg msg) {
+    // Activity heartbeat for the busy row: any real message while busy
+    // (stream deltas, tool rows, key input) proves the stretch is alive;
+    // only spinner ticks and busy bookkeeping are excluded.
+    final FaTuiModel self =
+        (busy && msg is! SpinnerTickMsg && msg is! BusyMsg)
+        ? copyWith(busyLastEventMs: DateTime.now().millisecondsSinceEpoch)
+        : this;
+    return self._updateWithHeartbeat(msg);
+  }
+
+  (Model, Cmd?) _updateWithHeartbeat(Msg msg) {
     // Output is handled before the exit check so trailing writes (e.g. the
     // 'bye' line from /exit) still render before the program quits; the host
     // sends _QuitRequestedMsg once it has marked exit.
@@ -654,13 +687,29 @@ final class FaTuiModel extends Model {
     // (each chain re-renders the full transcript every 100ms).
     final phase = msg.phase;
     if (msg.busy && phase != null) {
-      if (!busy) return (this, null);
+      if (!busy) {
+        faTuiBusyDiagnostics?.call(
+          'busy relabel dropped (idle) phase=$phase',
+        );
+        return (this, null);
+      }
       return (copyWith(busyPhase: phase), null);
     }
     // A raw re-start while ALREADY busy (a trigger that bypassed the
     // controller's refcount): keep the elapsed window and the single tick
     // chain instead of stacking another one.
-    if (msg.busy && busy) return (this, null);
+    if (msg.busy && busy) {
+      faTuiBusyDiagnostics?.call(
+        'busy re-start ignored (already busy) source=${msg.source}',
+      );
+      return (this, null);
+    }
+    faTuiBusyDiagnostics?.call(
+      msg.busy
+          ? 'busy on source=${msg.source ?? '?'}'
+          : 'busy off source=${busySource.isEmpty ? '?' : busySource} '
+              'elapsed=${busyStartedAtMs < 0 ? 0 : (DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) ~/ 1000}s',
+    );
     // Kick the spinner loop when going busy; the loop stops itself on the
     // first tick that finds the model idle again. Going idle also unpins
     // the sticky user echo and clears any phase, so the next run starts
@@ -670,6 +719,9 @@ final class FaTuiModel extends Model {
         busy: msg.busy,
         busyStartedAtMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
         busyPhase: '',
+        busySource: msg.busy ? (msg.source ?? '') : '',
+        busyLastEventMs:
+            msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
         spinnerFrame: 0,
         stickyLines: msg.busy ? null : const [],
         stickyIndex: msg.busy ? null : -1,
@@ -678,8 +730,34 @@ final class FaTuiModel extends Model {
     );
   }
 
+  /// Last-resort busy bracket: a row with zero activity for this long is a
+  /// wedge — every arm site has a matching release, so a fire means a bug.
+  /// The diagnostic log names the last armer.
+  static const busyWatchdogMs = 10 * 60 * 1000;
+
   (Model, Cmd?) _handleSpinnerTick() {
     if (!busy) return (this, null);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (busyLastEventMs > 0 && now - busyLastEventMs > busyWatchdogMs) {
+      faTuiBusyDiagnostics?.call(
+        'busy watchdog release source='
+        '${busySource.isEmpty ? '?' : busySource} '
+        'elapsed=${busyStartedAtMs < 0 ? 0 : (now - busyStartedAtMs) ~/ 1000}s '
+        'quiet=${(now - busyLastEventMs) ~/ 1000}s',
+      );
+      return (
+        copyWith(
+          busy: false,
+          busyStartedAtMs: -1,
+          busyPhase: '',
+          busySource: '',
+          busyLastEventMs: -1,
+          stickyLines: const [],
+          stickyIndex: -1,
+        ),
+        null,
+      );
+    }
     return (copyWith(spinnerFrame: spinnerFrame + 1), _scheduleSpinnerTick());
   }
 
@@ -1993,7 +2071,21 @@ final class FaTuiModel extends Model {
           : ((DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) / 1000)
                 .floor();
       final label = busyPhase.isEmpty ? 'Working…' : busyPhase;
-      b.writeln('${_accent2Plain(frame)} ${_dim('$label ${elapsedSeconds}s')}');
+      final quietSeconds = busyLastEventMs < 0
+          ? 0
+          : ((DateTime.now().millisecondsSinceEpoch - busyLastEventMs) / 1000)
+                .floor();
+      // Honesty suffixes: WHO armed the row (provenance) and whether the
+      // stretch went quiet (no deltas/keys for minutes — reads as a hang,
+      // now says so instead of pretending steady progress).
+      final provenance = busySource.isEmpty ? '' : ' · $busySource';
+      final quiet = quietSeconds >= 180
+          ? ' · quiet ${quietSeconds ~/ 60}m'
+          : '';
+      b.writeln(
+        '${_accent2Plain(frame)} '
+        '${_dim('$label ${elapsedSeconds}s$quiet$provenance')}',
+      );
     }
     if (queue.isNotEmpty) {
       for (final queued in queue) {
@@ -2274,14 +2366,14 @@ final class FaTuiController {
   /// commands work mid-stream) must NOT reset the elapsed timer + sticky
   /// echo on re-enter, and its finally-branch must NOT switch the spinner
   /// off while the first run is still streaming.
-  void sendBusy(bool busy) {
+  void sendBusy(bool busy, {String source = 'run'}) {
     // Clamp at zero so an unpaired release cannot poison the count.
     final depth = math.max(0, _busyDepth + (busy ? 1 : -1));
     final wasBusy = _busyDepth > 0;
     _busyDepth = depth;
     // Only the 0→1 / 1→0 edges reach the model; a re-entrant submit
     // (slash command mid-stream) keeps the spinner and elapsed timer.
-    if ((depth > 0) != wasBusy) _send(BusyMsg(busy));
+    if ((depth > 0) != wasBusy) _send(BusyMsg(busy, source: source));
   }
 
   /// Relabels the busy row while a run streams (silent post-answer phases:

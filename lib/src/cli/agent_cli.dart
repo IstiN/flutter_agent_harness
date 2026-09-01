@@ -1047,6 +1047,9 @@ class AgentCli {
   }
 
   Future<void> _runTuiRepl() async {
+    // Busy-row forensics: every arm/release/drop/watchdog-fire lands in
+    // fa.log with its source — a wedged "Working…" names its owner.
+    faTuiBusyDiagnostics = _logDiagnostic;
     final controller = _createTuiController();
     _tuiController = controller;
     _setTuiIo(controller);
@@ -1140,7 +1143,7 @@ class AgentCli {
   /// queued messages, and schedules the quit when `/exit` marked the
   /// session exited.
   Future<void> _handleTuiSubmit(FaTuiController controller, String line) async {
-    controller.sendBusy(true);
+    controller.sendBusy(true, source: 'submit');
     try {
       await _handleLine(line);
       // Runs are fire-and-forget (_startRun only records the future):
@@ -1150,7 +1153,7 @@ class AgentCli {
       await _drainTuiQueue(controller);
     } finally {
       _abortRequested = false;
-      controller.sendBusy(false);
+      controller.sendBusy(false, source: 'submit');
     }
     // `/exit` marks the session exited during handling. Quit in a later
     // event-loop batch: dart_tui drains the whole queue before rendering
@@ -2087,7 +2090,7 @@ class AgentCli {
     // settles (the "Working… forever with an idle agent" wedge). The
     // counter is reference-counted, so the submit handler's own bracket
     // nests safely.
-    _tuiController?.sendBusy(true);
+    _tuiController?.sendBusy(true, source: 'run');
     // Path-gated skills (`paths:` frontmatter) join the prompt once the
     // agent has touched a matching file; recomposing here is idempotent.
     _applyPromptComposition();
@@ -2102,7 +2105,7 @@ class AgentCli {
     _settled = settled;
     unawaited(
       settled.whenComplete(() {
-        _tuiController?.sendBusy(false);
+        _tuiController?.sendBusy(false, source: 'run');
         _runStarting = false;
         if (!_exited) _writeIdlePrompt();
       }),

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.271
+
+- fix(tui): the busy row now names its owner and dies on its own. Every
+  arm/release carries a provenance tag rendered in the row
+  (`Working… 91s · run`) and logged to fa.log; a stretch silent for 3+
+  minutes shows a `quiet Nm` hint instead of pretending steady progress;
+  and a model-level watchdog force-releases any row with zero activity
+  for 10 minutes — the last-resort finally for the immortal "Working…"
+  class, with the last armer named in the diagnostic log.
+- test(tui): provenance render, transition forensics, quiet hint, and
+  the watchdog release are all pinned in fa_tui_test.
+
 ## 0.1.270
 
 - fix(memory): flutter_agent_memory 0.2.1 — the deletion ledger is now
