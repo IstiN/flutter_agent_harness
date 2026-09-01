@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_map/flutter_map.dart' show TileProvider;
+import 'package:fa/apps/fa_media_host.dart';
 import 'package:fa/apps/fa_js3d_host.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
@@ -351,6 +352,9 @@ class _AppTileHostState extends State<AppTileHost> {
           // 3D scenes render in tiles too (display-only — no tap picking:
           // any tap opens the full app).
           js3dHost: createFaJs3dHost(widget.env),
+          // Without a media host the renderer falls back to a placeholder
+          // for video/audio nodes — live tiles with media need it too.
+          mediaHost: const FaMediaHost(),
           // Display-only tile (default): any UI event opens the full app.
           // An interactive tile (`"widget": {"interactive": true}`) gets
           // its taps routed to the tile engine's jsr.onEvent instead —
