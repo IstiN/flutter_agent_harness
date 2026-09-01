@@ -2093,4 +2093,9 @@
 - memory: flutter_agent_memory roadmap hints (LLM role, graph screen, multi-root)
 - feat(memory): flutter_agent_memory 0.2.0 — merge-friendly ids, git support, policy-driven memory_add (0.1.267)
 
+## 0.1.269
+
+- memory: maintain() leveling pass (level: 2 on 13 notes)
+- fix(tui): immortal Working… spinner wedge — 100% CPU for 8h after run end (0.1.268)
+
 ## Unreleased
