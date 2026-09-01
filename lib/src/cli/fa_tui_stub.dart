@@ -18,6 +18,10 @@ library;
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
 
+/// Stub mirror of fa_tui.dart's busy forensic sink (never fires here).
+void Function(String line)? faTuiBusyDiagnostics;
+
+
 /// Host callbacks supplied by [AgentCli] to the dart_tui REPL. See
 /// `fa_tui.dart` for field docs.
 final class FaTuiCallbacks {
@@ -81,7 +85,7 @@ final class FaTuiController {
 
   void sendInputText(String text) {}
 
-  void sendBusy(bool busy) {}
+  void sendBusy(bool busy, {String source = 'run'}) {}
 
   /// No-op on web: the stub controller renders nothing, so silent
   /// post-answer phase relabels (auto-compaction, memory extraction) have

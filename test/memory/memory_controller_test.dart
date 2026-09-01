@@ -2,6 +2,8 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/memory/execution_env_kb_storage.dart';
+import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import 'package:test/test.dart';
 
 /// Minimal fake KBStorage so we don't need the full memory backend in tests.
@@ -15,6 +17,22 @@ void main() {
       expect(entry.text, 'hello world');
       expect(entry.type, 'note');
       expect(entry.scope, 'project');
+    });
+
+    test('the storage adapter is append-capable (ledger race fix 0.2.1)',
+        () async {
+      // flutter_agent_memory 0.2.1: parallel deletes append tombstones via
+      // KbAppendCapable — the read-modify-write race that clobbered our
+      // 144-entry ledger is closed for storages implementing it.
+      final env = MemoryExecutionEnv();
+      final storage = ExecutionEnvKbStorage(env, '/mem');
+      await storage.initialize();
+      expect(storage, isA<KbAppendCapable>());
+      await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- a\n');
+      await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- b\n');
+      final content =
+          (await env.readTextFile('/mem/DELETIONS.md')).valueOrNull ?? '';
+      expect(content, '- a\n- b\n');
     });
 
     test('the project store gets git support files (idempotent)', () async {
