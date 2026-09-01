@@ -2070,3 +2070,10 @@
   coverage ≥ 80%, duplication < 1%), GOAL.md with the pi-mono port roadmap.
 - Seeded `CancelToken` / `CancelTokenSource` / `CancelledException` — the
   universal cancellation primitive (Dart counterpart of web `AbortSignal`).
+
+## 0.1.268
+
+- memory: flutter_agent_memory roadmap hints (LLM role, graph screen, multi-root)
+- feat(memory): flutter_agent_memory 0.2.0 — merge-friendly ids, git support, policy-driven memory_add (0.1.267)
+
+## Unreleased
