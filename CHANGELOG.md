@@ -2176,4 +2176,11 @@
 - memory: maintain() leveling pass (level: 2 on 13 notes)
 - fix(tui): immortal Working… spinner wedge — 100% CPU for 8h after run end (0.1.268)
 
+## 0.1.275
+
+- fix(compaction): bounded compactor budgets + attempt progress; loop over-window guard (0.1.274)
+- feat(app): copilot connect picks the model explicitly; restart hydrates the entry-scoped key
+- fix(agent): run watchdog disarms on abort; AgentService.dispose aborts in-flight runs (0.1.273)
+- fix(providers): explicit model picks everywhere — no default models, copilot picker filter (0.1.272)
+
 ## Unreleased
