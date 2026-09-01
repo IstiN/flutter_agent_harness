@@ -32,7 +32,8 @@ extension on AgentCli {
   }
 
   /// The distinct provider names behind the cross-provider candidates, in
-  /// menu order (saved entries first, the active provider last).
+  /// menu order: saved entries first, then env-keyed catalog providers,
+  /// the active provider last.
   List<String> _modelProviderNames() {
     final seen = <String>{};
     return [
@@ -154,10 +155,36 @@ extension on AgentCli {
     final modelId = key.substring(pipe + 1);
     try {
       await _maybeSwitchToSavedEntry(providerName);
-      await _switchModel(modelId);
+      if (!await _switchToEnvCatalogProvider(providerName, modelId)) {
+        await _switchModel(modelId);
+      }
     } on Object catch (e) {
       io.writeln('error: model switch to $providerName/$modelId failed: $e');
     }
+  }
+
+  /// Lands a cross-provider pick on an env-keyed CATALOG provider (no
+  /// saved registry entry): switches to the provider's catalog endpoint
+  /// (the key resolves env-first inside [_switchProvider]) with the
+  /// picked model id applied by that same switch. Returns false when
+  /// [providerName] is not such a provider or the pick is already served
+  /// (it is the active provider or a saved entry) — the caller then runs
+  /// the plain model switch. No second [_switchModel] after a catalog
+  /// switch: it would print the switch twice and re-pin the roles chain
+  /// on the new provider.
+  Future<bool> _switchToEnvCatalogProvider(
+    String providerName,
+    String modelId,
+  ) async {
+    final spec = catalogProvider(providerName);
+    if (spec == null) return false;
+    if (providerName == _agent.state.model.provider &&
+        _activeCustomName == null) {
+      return false;
+    }
+    if (_activeCustomName == providerName) return false;
+    await _switchProvider(spec, spec.defaultBaseUrl, modelId);
+    return true;
   }
 
   /// Lands a cross-provider model pick on its own endpoint: switches to
@@ -205,11 +232,49 @@ extension on AgentCli {
         _allProvidersModelCache[activeProvider] =
             _knownModels[activeProvider] ?? [_agent.state.model.id];
       }
+      await _refreshEnvKeyedProviders(activeProvider);
       _allProvidersCacheRefreshed = true;
       _tuiController?.sendModelsRefresh();
     } finally {
       _modelCacheFuture = null;
       completer.complete();
+    }
+  }
+
+  /// Fetches model lists for the env-keyed catalog providers (a key in the
+  /// environment but no saved entry — the FA_PROVIDER_* / out-of-the-box
+  /// path). Split out of [_refreshAllProvidersModelCache] to keep its
+  /// cyclomatic complexity under the CRAP ratchet; behavior unchanged.
+  Future<void> _refreshEnvKeyedProviders(String activeProvider) async {
+    // Env-keyed catalog providers: a provider whose key sits in the
+    // environment (ZAI_API_KEY, MINIMAX_API_KEY, ...) is usable out of
+    // the box even without a saved registry entry — fetch its live
+    // /models list so the picker shows the endpoint's realtime answer,
+    // seeding from the remote catalog + the catalog default when the
+    // endpoint won't talk to us. A provider with neither a live answer
+    // nor seeds stays hidden (never listed with zero models).
+    for (final spec in enabledProviders()) {
+      if (spec.name == activeProvider ||
+          _allProvidersModelCache.containsKey(spec.name)) {
+        continue;
+      }
+      final envKey = _envKeyEntry(spec);
+      if (envKey == null) continue;
+      try {
+        final ids = await _fetchProviderModelIds(
+          spec.name,
+          spec.defaultBaseUrl,
+          envKey.$2,
+        );
+        if (ids.isNotEmpty) {
+          _allProvidersModelCache[spec.name] = ids;
+          continue;
+        }
+      } on Object {
+        // Dead endpoint — the seeds below keep the provider listed.
+      }
+      final seeds = _envCatalogSeedModels(spec);
+      if (seeds.isNotEmpty) _allProvidersModelCache[spec.name] = seeds;
     }
   }
 
@@ -280,13 +345,60 @@ extension on AgentCli {
   /// included, even when the registry has other saved providers.
   List<(String, String)> _crossProviderCandidates([String filter = '']) {
     final registryEntries = _collectRegistryCandidates();
+    final envCatalogEntries = _envKeyedCatalogCandidates();
     final activeEntries = _activeProviderFallback();
     final seen = <String>{};
     final entries = <(String, String)>[
-      for (final e in [...registryEntries, ...activeEntries])
+      for (final e in [
+        ...registryEntries,
+        ...envCatalogEntries,
+        ...activeEntries,
+      ])
         if (seen.add('${e.$1}|${e.$2}')) e,
     ];
     return _filterCandidates(entries, filter);
+  }
+
+  /// The catalog providers usable right now through an environment key
+  /// but with no saved registry entry that is not the active provider —
+  /// both are covered by the other candidate sources. This is what makes
+  /// an out-of-the-box provider (key set, nothing saved) visible in the
+  /// `/model` picker: the realtime `/models` cache when the fetch
+  /// answered, the remote-catalog seeds otherwise.
+  List<(String, String)> _envKeyedCatalogCandidates() {
+    final activeProvider = _agent.state.model.provider;
+    final savedNames = {
+      for (final entry
+          in config.customProviders?.entries ?? const <CustomProviderEntry>[])
+        entry.name,
+    };
+    return [
+      for (final spec in enabledProviders())
+        if (spec.name != activeProvider &&
+            !savedNames.contains(spec.name) &&
+            _envKeyEntry(spec) != null)
+          for (final modelId
+              in _allProvidersModelCache[spec.name] ??
+                  _envCatalogSeedModels(spec))
+            (spec.name, modelId),
+    ];
+  }
+
+  /// The offline seed ids for a catalog provider: the remote catalog's
+  /// chat fallback merged with the catalog's default model id (nulls
+  /// dropped, deduped). Empty when the catalog ships neither — such a
+  /// provider is never listed with zero models.
+  List<String> _envCatalogSeedModels(ProviderSpec spec) {
+    final defaultId = catalogDefaultModelId(spec.name);
+    final merged = <String>[
+      ...remoteCatalogEnrichment.chatFallbackFor(spec.name),
+      ?defaultId,
+    ];
+    final seen = <String>{};
+    return [
+      for (final id in merged)
+        if (id.isNotEmpty && seen.add(id)) id,
+    ];
   }
 
   /// Collects `(provider, model)` pairs from all saved custom providers.
@@ -766,6 +878,10 @@ extension on AgentCli {
       ]);
       rolesResolver.applyToAgent(_agent);
       _streamFunction = _agent.streamFunction;
+      // Same invariant as _switchProvider: the session key field must name
+      // THIS endpoint's key, or a later /model switch re-seeds the pinned
+      // chain with the stale startup key.
+      _apiKey = _providerKeyFor(spec, def.baseUrl) ?? '';
     } else {
       final key = _providerKeyFor(spec, def.baseUrl) ?? '';
       _providerKind = spec.kind;
@@ -825,10 +941,32 @@ extension on AgentCli {
     // defaults) when the id is known to /models.
     final window = _modelContextWindows[modelId] ?? current.contextWindow;
     final cap = _modelMaxTokens[modelId] ?? current.maxTokens;
-    if (rolesResolver != null) {
+    // Cookie-header auth (CodeMie SSO) can never ride a roles chain — the
+    // chain stream would send the cookie as Bearer. Keep the direct model
+    // set (the cookie stays in model.headers), mirroring
+    // [_switchCodeMieProvider]'s resolver bypass.
+    final cookieAuth = current.headers?.containsKey('cookie') ?? false;
+    if (rolesResolver != null && !cookieAuth) {
       // Roles mode: pin the default role to the requested model id on the
       // current provider (a single-entry chain for this session). The
       // endpoint's scoped key name rides along (see _switchProvider).
+      final pinnedKeyName =
+          _rolesKeyNameFor(current.provider, current.baseUrl) ??
+          _scopedKeyNameForNonDefault(current.provider, current.baseUrl);
+      // Seed the resolver with the session's LIVE key material under the
+      // pinned name BEFORE resolving the chain: saved-entry keys (CodeMie
+      // JWT, typed custom keys) live in the secure store / session, never
+      // in the resolver's startup snapshot — an unseeded pin resolves
+      // nothing and chainFor throws "no usable chain entry: set
+      // OPENAI_API_KEY", which aborts the switch and leaves the status
+      // line on the old model.
+      if (pinnedKeyName != null) {
+        if (_apiKey.isNotEmpty) {
+          rolesResolver.addSecret(pinnedKeyName, _apiKey);
+        } else {
+          _seedEnvKeyStack(rolesResolver, pinnedKeyName);
+        }
+      }
       rolesResolver.setDefaultChain([
         ModelRef(
           provider: current.provider,
@@ -836,9 +974,7 @@ extension on AgentCli {
           baseUrl: current.baseUrl,
           contextWindow: window,
           maxTokens: cap,
-          apiKeyName:
-              _rolesKeyNameFor(current.provider, current.baseUrl) ??
-              _scopedKeyNameForNonDefault(current.provider, current.baseUrl),
+          apiKeyName: pinnedKeyName,
         ),
       ]);
       rolesResolver.applyToAgent(_agent);

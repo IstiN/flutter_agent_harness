@@ -415,6 +415,46 @@ void main() {
     expect(relabel.$2, isNull);
   });
 
+  test('a post-run phase straggler cannot resurrect the busy row', () {
+    // The 01a03f85 wedge (2026-09-01): the run settled (BusyMsg(false)),
+    // then a compaction finally-branch fired setBusyPhase('') — a raw
+    // BusyMsg(true, phase: '') on an IDLE model re-armed the spinner with
+    // a fresh elapsed window, and the tick chain re-rendered the giant
+    // transcript at 100% CPU for 8 hours ("Working… 28301s").
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+    model = model.update(BusyMsg(false)).$1 as FaTuiModel;
+    expect(model.busy, isFalse);
+
+    final straggler = model.update(const BusyMsg(true, phase: ''));
+    model = straggler.$1 as FaTuiModel;
+    expect(model.busy, isFalse, reason: 'idle relabel must be a no-op');
+    expect(straggler.$2, isNull, reason: 'no new tick chain while idle');
+    expect(model.view().content, isNot(contains('Working…')));
+
+    final lateCompact = model.update(
+      const BusyMsg(true, phase: 'Compacting context…'),
+    );
+    model = lateCompact.$1 as FaTuiModel;
+    expect(model.busy, isFalse);
+    expect(lateCompact.$2, isNull);
+  });
+
+  test('a duplicate busy start keeps the window and the single chain', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    final start = model.update(BusyMsg(true));
+    model = start.$1 as FaTuiModel;
+    final started = model.busyStartedAtMs;
+
+    // A raw BusyMsg(true) while ALREADY busy (no phase — e.g. a nested
+    // trigger that bypassed the refcount) must neither restart the elapsed
+    // window nor stack a second tick chain.
+    final dup = model.update(BusyMsg(true));
+    model = dup.$1 as FaTuiModel;
+    expect(dup.$2, isNull, reason: 'one chain per busy stretch');
+    expect(model.busyStartedAtMs, started);
+  });
+
   test('escape aborts the run via onInterrupt without quitting', () {
     var interrupted = 0;
     var model = FaTuiModel(
@@ -1304,6 +1344,28 @@ void main() {
       expect(model.cursor, 0);
     });
 
+    test('ctrl+a moves to the line start, ctrl+e to the end — no text '
+        'leaks (macOS Cmd+Left/Right send ^A/^E)', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'hello');
+      model = send(model, ctrl('a'));
+      expect(model.inputText, 'hello', reason: 'ctrl+a is not a character');
+      expect(model.cursor, 0);
+      model = send(model, ctrl('e'));
+      expect(model.inputText, 'hello', reason: 'ctrl+e is not a character');
+      expect(model.cursor, 5);
+    });
+
+    test('an unhandled ctrl combo never inserts its letter', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'hi');
+      model = send(model, ctrl('x'));
+      model = send(model, ctrl('g'));
+      model = send(model, ctrl('z'));
+      expect(model.inputText, 'hi');
+      expect(model.cursor, 2);
+    });
+
     test('ctrl+w kills the previous word and trailing whitespace first', () {
       var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
       model = typed(model, 'hello world  ');
@@ -1642,6 +1704,31 @@ void main() {
       expect(updated.prompt, isNull);
       expect(completer.isCompleted, isTrue);
       expect(completer.future, completion(isA<TextPromptAnswer>()));
+    });
+
+    test('prompt mode: a ctrl combo never leaks its letter into the '
+        'buffer (the Cmd+Left/aaaa regression)', () {
+      FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+      final model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      final completer = Completer<TuiPromptAnswer?>();
+      var updated = send(
+        model,
+        OpenPromptMsg(TextPromptSpec(question: 'Enter value:'), completer),
+      );
+      updated = send(
+        updated,
+        KeyPressMsg(
+          TeaKey(code: KeyCode.rune, text: 'a', modifiers: {KeyMod.ctrl}),
+        ),
+      );
+      expect(updated.prompt!.secretValue, '', reason: 'ctrl+a is not text');
+      // A plain char still lands.
+      updated = send(
+        updated,
+        KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'a')),
+      );
+      expect(updated.prompt!.secretValue, 'a');
     });
 
     test('openPrompt Esc cancels and resolves with TuiPromptCancelled', () {

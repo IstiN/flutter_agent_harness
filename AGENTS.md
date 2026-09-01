@@ -247,6 +247,28 @@ factual: paths, commands, invariants — no essays.
   smol role, non-blocking), `maintain()` (levels + consolidate, running
   guard, 24h stamp), triggers on session start + `/memory maintain`;
   `/memory` shows stats.
+- Git-backed memory (the repo IS the memory): storage paths come from the
+  `memory:` config section — project `.fah/config.yaml` wins over
+  `~/.fah/config.yaml` (`loadProjectMemoryConfig`); a relative
+  `projectPath` resolves against the project root. This repo dogfoods it:
+  `.fah/config.yaml` points at the COMMITTED `memory/` directory — clone
+  the repo, get its memory. Inside the store dir: `MemoryRepoInit.
+  ensureGitSupport()` (flutter_agent_memory 0.2.0) keeps `.gitignore`
+  (derived artifacts: GRAPH.md, MEMORY.revision, INDEX.md,
+  .last_maintenance — rebuilt on load, never committed) and
+  `.gitattributes` (`DELETIONS.md merge=union` — the append-only
+  tombstone ledger merges by union). Note ids are merge-friendly since
+  0.2.0: `n_0447_a1b2` = sequential index + 4-hex md5 of the normalized
+  text (parallel branches union-merge; legacy `n_0001` ids stay valid
+  forever). The `memory_add` description IS the package's
+  `MemoryPolicy.memoryAddPolicy` (docs/memory/memory_add_policy.md in
+  the memory repo): durable facts only, solved problems are superseded
+  via delete+add (never left to rot), project scope is PUBLIC (git) —
+  no secrets/personal data there, user scope stays machine-local.
+  `.gitignore` whitelists `.fah/config.yaml` (+rules/lsp/mcp/agents/
+  skills/packages); logs/sessions/bash_jobs stay local. Commit memory/
+  changes with the task that produced them (`memory:` prefix for
+  memory-only commits).
 - `lib/src/a2a/` — A2A (Agent2Agent) interop: `a2a_client.dart` (Agent Card
   + JSON-RPC + SSE), `a2a_config.dart` (`a2a:` yaml section, `${NAME}`
   env tokens), `a2a_manager.dart` (lazy per-server connect, A2A task state

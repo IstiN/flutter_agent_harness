@@ -11,6 +11,8 @@ import 'package:flutter/services.dart';
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/catalog_auto_update.dart';
+import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
@@ -174,6 +176,28 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     _layout?.addListener(_onLayoutChanged);
     if (_layout == null) unawaited(_loadLayout());
     unawaited(_reloadApps());
+    unawaited(_autoUpdateWidgets());
+  }
+
+  /// Silent catalog auto-update: clean (never user-modified) widget
+  /// installs follow the catalog forward on their own — a stale first-
+  /// install keeps its old layout/bugs forever otherwise (a pomodoro
+  /// 1.0.0 tile overflowed its cell and swallowed the Start button).
+  /// Modified widgets stay on the sheet's manual Update path. Offline =
+  /// no-op; the board runs from what's installed.
+  Future<void> _autoUpdateWidgets() async {
+    try {
+      final updated = await autoUpdateCleanWidgets(
+        store: _appsStore,
+        catalog: CatalogService(widget.manager.env),
+      );
+      if (updated.isNotEmpty) {
+        AppLog.i('apps', 'auto-updated widgets: ${updated.join(', ')}');
+        widget.manager.active?.service.fsRevision.value++;
+      }
+    } on Object {
+      // No network or catalog down — nothing to do.
+    }
   }
 
   @override

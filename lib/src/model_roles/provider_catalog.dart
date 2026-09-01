@@ -19,6 +19,7 @@ import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
 import '../providers/copilot.dart';
 import '../providers/copilot_oauth.dart';
+import '../providers/transient_retry_stream.dart';
 import '../providers/dial.dart';
 import '../providers/google.dart';
 import '../providers/openai_completions.dart';
@@ -183,6 +184,24 @@ const providerCatalog = <String, ProviderSpec>{
     contextWindow: 1000000,
     maxTokens: 16384,
   ),
+  'zai': ProviderSpec(
+    name: 'zai',
+    // Own kind (the minimax pattern) so `--provider zai` and the parity
+    // guards treat Z.AI as a first-class provider; chat is OpenAI-
+    // compatible, so providerStreamFunction routes it to the OpenAI
+    // completions adapter.
+    kind: 'zai',
+    api: 'openai-completions',
+    // The CODING plan endpoint — the plain /api/paas/v4 root serves a
+    // different, non-agentic model set.
+    defaultBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+    apiKeyEnvNames: ['ZAI_API_KEY', 'Z_AI_API_KEY'],
+    contextWindow: 200000,
+    maxTokens: 16384,
+    // glm-5.3 (the coding endpoint's flagship) is text-only; the per-id
+    // vision heuristic covers the `...v` variants when one is selected.
+    input: ['text'],
+  ),
 };
 
 /// The `FA_PROVIDERS` dart-define value: a comma-separated allowlist of
@@ -279,6 +298,52 @@ Model buildCatalogModel(
   );
 }
 
+/// The hardcoded fallback model ids per provider NAME, used when neither
+/// the endpoint's `/v1/models` nor the remote fa1.dev/models-catalog.json
+/// has an opinion. Per-provider knowledge that ages out — kept only as a
+/// last-resort floor; the pickers and the model resolver prefer the live
+/// endpoint. Keyed by name (not adapter kind) so the legacy
+/// openai-completions default survives on both the openrouter and openai
+/// specs; providers absent here (dial) have no universal default.
+const _catalogDefaultModelIds = <String, String>{
+  'anthropic': 'claude-sonnet-4-5',
+  'google': 'gemini-2.5-pro',
+  'minimax': 'MiniMax-M3',
+  'openrouter': 'anthropic/claude-sonnet-4',
+  'openai': 'anthropic/claude-sonnet-4',
+  'zai': 'glm-5.3',
+  // /models is the source of truth for copilot at runtime; this is only
+  // the flag default when /models has not been consulted.
+  'copilot': 'gpt-4.1',
+};
+
+/// The fallback default model id for [providerName], or null when the
+/// provider has no sane universal default (DIAL deployment names are
+/// per-deployment) and must name a model explicitly. Shared contract
+/// between the CLI default-model build, the env preconfig pick
+/// ([envPreconfiguredProvider]), and the executable's boot notice.
+String? catalogDefaultModelId(String providerName) =>
+    _catalogDefaultModelIds[providerName];
+
+/// Picks the preconfigured provider for out-of-the-box activation: the
+/// first enabled provider (catalog order) with a non-empty API-key
+/// environment value AND a universal default model id
+/// ([catalogDefaultModelId]). The id requirement skips dial/kimi/codemie —
+/// an env key alone must not activate an endpoint whose kind default would
+/// be an invalid model. Returns null when no environment key qualifies;
+/// the host then keeps its saved/default provider.
+ProviderSpec? envPreconfiguredProvider(
+  String? Function(String name) envVarValue,
+) {
+  for (final spec in enabledProviders()) {
+    final hasKey = spec.apiKeyEnvNames.any(
+      (name) => (envVarValue(name) ?? '').isNotEmpty,
+    );
+    if (hasKey && catalogDefaultModelId(spec.name) != null) return spec;
+  }
+  return null;
+}
+
 /// Builds the legacy single [Model] the `fah` executable runs when no roles
 /// are configured (`--provider`/`--model`/`--base-url` flags).
 ///
@@ -294,6 +359,7 @@ Model buildCliDefaultModel(
     'google' => providerCatalog['google']!,
     'dial' => providerCatalog['dial']!,
     'minimax' => providerCatalog['minimax']!,
+    'zai' => providerCatalog['zai']!,
     'copilot' => providerCatalog['copilot']!,
     'openai-completions' || 'openrouter' =>
       baseUrl == null
@@ -302,20 +368,7 @@ Model buildCliDefaultModel(
     _ => throw ConfigException('unknown provider: $providerKind'),
   };
 
-  /// The hardcoded fallback when neither the endpoint's `/v1/models` nor
-  /// the remote fa1.dev/models-catalog.json has an opinion. Per-provider
-  /// knowledge that ages out — kept here only as a last-resort floor;
-  /// the pickers and the model resolver prefer the live endpoint.
-  const defaultIds = {
-    'anthropic': 'claude-sonnet-4-5',
-    // /models is the source of truth for copilot at runtime; this is only
-    // the flag default when /models has not been consulted.
-    'copilot': 'gpt-4.1',
-    'google': 'gemini-2.5-pro',
-    'minimax': 'MiniMax-M3',
-    'openai-completions': 'anthropic/claude-sonnet-4',
-  };
-  final id = modelId ?? defaultIds[spec.kind];
+  final id = modelId ?? catalogDefaultModelId(spec.name);
   if (id == null) {
     // Providers without a sane universal default (DIAL deployment names are
     // per-deployment) must name the model explicitly.
@@ -335,7 +388,7 @@ Model buildCliDefaultModel(
 }
 
 /// Builds the [StreamFunction] for a provider adapter [kind]
-/// (`openai-completions`, `anthropic`, `google`, `dial`, `minimax`,
+/// (`openai-completions`, `minimax`, `zai`, `anthropic`, `google`, `dial`,
 /// `chatgpt-codex`, `copilot`)
 /// with a static [apiKey]. Throws [ConfigException] for unknown kinds.
 ///
@@ -360,12 +413,13 @@ StreamFunction providerStreamFunction(
       kind != 'google' &&
       kind != 'dial' &&
       kind != 'minimax' &&
+      kind != 'zai' &&
       kind != 'chatgpt-codex' &&
       kind != 'copilot') {
     throw ConfigException('Unknown provider kind: $kind');
   }
   // ignore: implicit_call_tearoffs
-  return _CatalogStreamFunction(
+  final inner = _CatalogStreamFunction(
     kind,
     apiKey,
     sessionId,
@@ -374,6 +428,10 @@ StreamFunction providerStreamFunction(
     dialCacheMarkersSupported,
     onChatGptCredentialsRefreshed,
   );
+  // Every provider call (chat turns, compaction summaries, memory
+  // extraction, media) rides the transient-network retry: a Wi-Fi switch
+  // mid-turn dies with "Connection reset by peer" — sleep, replay.
+  return transientRetryStreamFunction(inner.call);
 }
 
 /// The [providerStreamFunction] product: resolves the cache routing at call
@@ -408,7 +466,7 @@ final class _CatalogStreamFunction {
     final effectiveSessionId = routing?.sessionId ?? _sessionId?.call();
     final effectiveRetention = routing?.cacheRetention ?? _cacheRetention;
     return switch (_kind) {
-      'openai-completions' || 'minimax' => streamOpenAICompletions(
+      'openai-completions' || 'minimax' || 'zai' => streamOpenAICompletions(
         model,
         context,
         OpenAICompletionsOptions(

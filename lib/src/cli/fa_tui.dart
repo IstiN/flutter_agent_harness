@@ -644,18 +644,23 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleBusyMsg(BusyMsg msg) {
+    // An in-busy phase relabel (silent post-answer work like auto-compaction
+    // or durable-memory extraction): swap the label over the SAME elapsed
+    // window and never schedule another tick here — extra chains would
+    // multiply repaint timers. On an IDLE model a relabel is a post-run
+    // straggler (a compaction finally-branch landing after the bracket
+    // released): dropping it is the whole point — re-arming the spinner
+    // here wedged a session at "Working… Ns" burning 100% CPU for hours
+    // (each chain re-renders the full transcript every 100ms).
     final phase = msg.phase;
-    if (phase != null) {
-      // A phase relabel (tool phase, compaction, memory extraction) never
-      // OWNS the spinner: it only relabels while the host is busy. An
-      // idle-host relabel (a wake-run's tool call — no typed submit, so
-      // sendBusy was never paired) is dropped: falling through used to
-      // flip busy ON with depth 0, and no later sendBusy(false) could
-      // produce the 1→0 edge — the "Working… Ns" row spun forever and
-      // typed input queued behind a phantom run.
+    if (msg.busy && phase != null) {
       if (!busy) return (this, null);
       return (copyWith(busyPhase: phase), null);
     }
+    // A raw re-start while ALREADY busy (a trigger that bypassed the
+    // controller's refcount): keep the elapsed window and the single tick
+    // chain instead of stacking another one.
+    if (msg.busy && busy) return (this, null);
     // Kick the spinner loop when going busy; the loop stops itself on the
     // first tick that finds the model idle again. Going idle also unpins
     // the sticky user echo and clears any phase, so the next run starts
@@ -1233,8 +1238,10 @@ final class FaTuiModel extends Model {
   (Model, Cmd?)? _handleHomeEndKey(KeyMsg msg) {
     switch (msg.key) {
       case 'home':
+      case 'ctrl+a': // readline — also what macOS Cmd+Left sends (^A)
         return (copyWith(cursor: 0), null);
       case 'end':
+      case 'ctrl+e': // readline — macOS Cmd+Right (^E)
         return (copyWith(cursor: inputText.length), null);
       default:
         return null;
@@ -1313,9 +1320,25 @@ final class FaTuiModel extends Model {
     }
   }
 
+  /// Whether [keystroke] carries a command modifier (ctrl/alt/meta/hyper/
+  /// super). The dart_tui decoder puts the BASE LETTER into `text` for
+  /// control bytes (0x01 → ctrl+a with text 'a'), so a catch-all insert
+  /// that trusts `text` prints the letter of every unhandled combo —
+  /// macOS Cmd+Left (sends ^A) typed "aaaa" in the composer. Shift is
+  /// deliberately NOT blocked: shifted letters arrive as plain runes in
+  /// legacy mode and as `shift+<key>` with text under the kitty protocol.
+  static bool _isCommandKeystroke(String keystroke) {
+    return keystroke.startsWith('ctrl+') ||
+        keystroke.startsWith('alt+') ||
+        keystroke.startsWith('meta+') ||
+        keystroke.startsWith('hyper+') ||
+        keystroke.startsWith('super+');
+  }
+
   /// Normal-mode character insert: the editing cluster's catch-all for
   /// single-character keys.
   (Model, Cmd?) _handleCharInsertKey(KeyMsg msg) {
+    if (_isCommandKeystroke(msg.key)) return (this, null);
     final text = msg.keyEvent.text;
     if (text.isNotEmpty && text.length == 1) {
       final nextText =
@@ -1507,6 +1530,7 @@ final class FaTuiModel extends Model {
   /// rebuilds the item list (host callback for the models picker, a local
   /// [menuAllItems] filter for generic pickers).
   (Model, Cmd?) _pickerTypeFilter(KeyMsg msg) {
+    if (_isCommandKeystroke(msg.key)) return (this, null);
     final text = msg.keyEvent.text;
     if (text.isNotEmpty && text.length == 1) {
       if (text == ' ' && modelFilter.isEmpty) return (this, null);
@@ -1537,6 +1561,8 @@ final class FaTuiModel extends Model {
       // dart_tui maps CR to 'enter' and LF to 'ctrl+j' — both mean Enter.
       // ctrl+c is NOT mapped here: it stays the global interrupt/quit key.
       'enter' || 'ctrl+j' => const PromptEnter(),
+      'ctrl+r' => const PromptCtrlR(),
+      'ctrl+u' => const PromptCtrlU(),
       'esc' => const PromptEscape(),
       'tab' => const PromptTab(),
       'up' => const PromptArrowUp(),
@@ -1544,7 +1570,10 @@ final class FaTuiModel extends Model {
       'left' => const PromptArrowLeft(),
       'right' => const PromptArrowRight(),
       'backspace' => const PromptBackspace(),
-      _ => msg.keyEvent.text.length == 1 ? PromptChar(msg.keyEvent.text) : null,
+      _ =>
+        !_isCommandKeystroke(msg.key) && msg.keyEvent.text.length == 1
+            ? PromptChar(msg.keyEvent.text)
+            : null,
     };
   }
 
@@ -2085,6 +2114,27 @@ final class FaTuiModel extends Model {
 
 /// Thin wrapper around [Program] that lets [AgentCli] push output and refresh
 /// the model picker without knowing dart_tui internals.
+/// Reference-counted busy accounting for the TUI spinner: nested
+/// acquire/release pairs (a submit bracket around the run's own bracket,
+/// slash commands mid-stream) collapse into ONE 0→1 / 1→0 edge for the
+/// model, so the elapsed timer and sticky echo survive re-entry, and an
+/// unpaired release clamps at zero instead of poisoning the count.
+final class BusyDepth {
+  var _depth = 0;
+
+  /// The current nesting depth (0 = idle).
+  int get depth => _depth;
+
+  /// Records an acquire ([busy] true) or release; returns whether the model
+  /// needs a `BusyMsg` (only the 0→1 / 1→0 edge reaches it).
+  bool record(bool busy) {
+    final next = math.max(0, _depth + (busy ? 1 : -1));
+    final edge = (next > 0) != (_depth > 0);
+    _depth = next;
+    return edge;
+  }
+}
+
 final class FaTuiController {
   FaTuiController({
     required this.callbacks,
@@ -2239,6 +2289,11 @@ final class FaTuiController {
   /// spinner loop or resetting the elapsed window — the user sees WHAT is
   /// happening instead of a growing "Working… Ns" that reads like a hang.
   void setBusyPhase(String phase) {
+    // Suppress post-run stragglers: at depth zero there is no live busy
+    // stretch to relabel, and a raw BusyMsg(true) reaching an idle model
+    // would resurrect the row (the model guards too — belt and braces for
+    // a bug class that already burned a night at 100% CPU).
+    if (_busyDepth <= 0) return;
     _send(BusyMsg(true, phase: phase));
   }
 

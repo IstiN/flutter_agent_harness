@@ -32,6 +32,269 @@
   main) in BOTH the CLI and the app. Memory consolidation and semantic
   search now actually run instead of being silently skipped.
 
+## 0.1.268
+
+- fix(tui): the "Working… Ns" immortal-spinner wedge (found live: a
+  session burned 100% CPU for 8 hours after the run had cleanly ended —
+  `Working… 28301s`). Root cause in the TUI busy state machine: a raw
+  `BusyMsg(true)` landing on an IDLE model — a post-run straggler like a
+  compaction finally-branch calling `setBusyPhase('')` after the busy
+  bracket released — re-armed the spinner with a fresh elapsed window and
+  scheduled a NEW 100ms tick chain; nothing ever sent the matching
+  `BusyMsg(false)`, and every chain re-rendered the full transcript
+  (268k tokens) ten times a second — the 99.8% CPU storm. Two guards now
+  close the class: the model drops phase-relabels and duplicate busy
+  starts while idle/already-busy (no new window, no extra chain — one
+  chain per busy stretch), and the controller's `setBusyPhase` no-ops at
+  busy-depth zero. Regression tests: post-run straggler cannot resurrect
+  the row, duplicate starts keep the single chain.
+
+## 0.1.267
+
+- feat(memory): flutter_agent_memory 0.2.0 — merge-friendly note ids
+  (`n_0447_a1b2` = sequential index + 4-hex md5 of the normalized text;
+  parallel branches union-merge, legacy `n_0001` ids valid forever), and
+  `MemoryRepoInit.ensureGitSupport()` wired into the project store: the
+  memory dir self-maintains `.gitignore` (derived artifacts never
+  committed) and `.gitattributes` (`DELETIONS.md merge=union`).
+- feat(memory): the `memory_add` tool description IS the memory repo's
+  policy (`MemoryPolicy.memoryAddPolicy` —
+  docs/memory/memory_add_policy.md): durable facts only, solved problems
+  are superseded via delete+add instead of rotting, project scope is
+  PUBLIC (committed to git — no secrets or personal data), user scope
+  stays machine-local. One source of truth for every future agent.
+- fix(build): CRAP ratchet green again — `MemoryController` delegates
+  path resolution to `MemoryConfig` (one source, covered through the
+  controller tests), and `AgentCli.run` sheds the retry-notice closure
+  into `_wireTransientRetryNotice` (the 12.61 breach).
+- docs(agents): the git-backed memory layout is documented in AGENTS.md
+  (paths resolution, derived artifacts, id scheme, the commit
+  convention: memory/ changes ride with the task's commit).
+
+## 0.1.266
+
+- feat(memory): project-level `.fah/config.yaml` — the `memory:` section
+  now also resolves from the project's own config file and WINS over the
+  user-level one, so the git-backed memory pointer travels with the repo:
+  `memory: {projectPath: ./memory}` in `.fah/config.yaml` makes the
+  repo's `memory/` directory the project memory for anyone who clones it
+  (CLI and app, web keeps the default).
+- feat(repo): flutter_agent's own memory moved into git — the full
+  revision landed first (446 notes audited one by one; 142 deleted
+  through tombstone `memory_delete`: 84 duplicates, 44 stale, 14
+  superseded), the surviving 304 notes now live in the committable
+  `memory/` directory with derived artifacts (`GRAPH.md`,
+  `MEMORY.revision`, indexes) gitignored and `DELETIONS.md` under
+  `merge=union`. `.gitignore` flipped from ignoring all of `.fah/` to a
+  whitelist: `config.yaml`, `rules.yaml`, `lsp.json`, `mcp.json`,
+  `agents/`, `skills/`, `packages.yaml` are committable;
+  logs/sessions/bash_jobs stay local.
+
+## 0.1.265
+
+- feat(memory): configurable long-term memory storage paths — the new
+  `memory:` section of `~/.fah/config.yaml` (`projectPath`, `userPath`,
+  strict schema like the other sections) feeds `MemoryController`'s new
+  storage-path overrides: a relative projectPath resolves against the
+  project root, `~/` in userPath expands against the user home, and null
+  keeps the historical `.fah/memory` layout. Point `projectPath` inside
+  the repository (e.g. `./memory`) and the project memory becomes
+  committable — anyone cloning the repo gets its memory. Wired in the
+  CLI (`AgentCliConfig.memoryConfig`) and the app (`AgentService` reads
+  the same section through a conditional IO/stub loader — web keeps the
+  default). Step P0 of the git-backed memory program.
+
+## 0.1.264
+
+- fix(cli): macOS Cmd+Left/Right no longer types "aaaa" in the composer —
+  those keys arrive as ^A/^E control bytes, and the dart_tui decoder puts
+  the BASE LETTER into the event text, so every unhandled ctrl combo
+  leaked its letter through the catch-all insert. Three insert paths
+  (composer, picker type-to-filter, prompt re-shaper) now drop
+  command-modified keystrokes (ctrl/alt/meta/hyper/super — shift stays,
+  kitty-protocol shifted letters carry real text), and ctrl+a/ctrl+e do
+  what the user meant: readline start/end of line.
+- feat(cli): the `request_secret` sheet gets readline Ctrl+U — one
+  keystroke clears the suggested name on name focus (the 16-backspace
+  "erase SUDO_PASSWORD" nuisance) and kills the value back to the cursor
+  on value focus; both hints name the key.
+- test(cli): PTY visual coverage with screenshots — a real terminal run
+  proves the composer edits (`Xhello worldYZ` after ^A/^E plus silent
+  ctrl+x/g/z) and the full secret-sheet lifecycle end-to-end through a
+  canned LLM that emits `request_secret`: suggested name, Ctrl+U clear,
+  dot masking, Ctrl+R reveal, value kill, save — with the grant never
+  echoing the secret into the transcript (screens 102–108).
+
+## 0.1.263
+
+- feat(cli): the `request_secret` TUI sheet can reveal the typed value —
+  Ctrl+R toggles between the masked dots (default) and clear text, with
+  the header line naming the current state (`value hidden (Ctrl+R
+  reveals)` / `value visible (Ctrl+R hides)`). Long sudo passwords and
+  tokens pasted into a blind field were unverifiable; now one keystroke
+  shows what was actually typed before Enter.
+
+## 0.1.262
+
+- fix(providers): GitHub Copilot enterprise sign-in actually connects —
+  the token exchange sent the legacy `Authorization: token <githubToken>`
+  scheme, which `api.github.com/copilot_internal/v2/token` rejects with a
+  bare 401 for enterprise-managed (EMU) accounts; pi's actively maintained
+  `oauth/github-copilot.ts` uses `Bearer` for the exchange, and so do we
+  now (OAuth device tokens are `gho_`/`ghu_` Bearer credentials). The
+  account-type picker hardcoding also bit: an enterprise tenant's real API
+  host lives INSIDE the exchanged token (`proxy-ep=proxy.<tenant>.github
+  copilot.com`), so both the chat path and the `/models` listing now
+  derive the tenant host from the token (pi `getGitHubCopilotBaseUrl`
+  parity) and the picked tier host is only the fallback. The app gets the
+  fix for free through the shared core exchange.
+
+## 0.1.261
+
+- feat(providers): transient network retry on every provider call — a
+  Wi-Fi/VPN switch mid-turn killed the stream with "Connection reset by
+  peer" and the turn ended in a hard error. `providerStreamFunction` (the
+  one chokepoint for chat turns, roles chains, compaction summaries, and
+  memory extraction) now wraps every adapter with
+  `transientRetryStreamFunction`: a socket-level failure (reset / refused /
+  unreachable / timed out / broken pipe / TLS handshake cut — certificates
+  excluded, a bad cert never heals in 5s) sleeps 5s and replays the call,
+  up to 3 attempts. omp's observable-output guard is kept: a stream that
+  already emitted content is never replayed, so a retried generation can't
+  duplicate text. The CLI surfaces each retry as a dim `[net] connection
+  lost — retrying in 5s (attempt 2/3)` line plus an fa.log entry instead
+  of a mysterious pause; `transientRetryNotice`/`transientRetrySleeper`
+  are the host/test seams.
+
+## 0.1.260
+
+- fix(app): Copilot parity with the CLI — the app's model pickers now
+  fetch through the copilot dialect (GitHub→Copilot token exchange,
+  capabilities/limits) instead of 401ing the raw GitHub token against
+  `<host>/models`; a picked Copilot model connects as the copilot wire
+  dialect, and the entry-scoped `FA_KEY_COPILOT_<NAME>` key resolves as
+  the fallback. Deleting a Copilot account now removes its entry-scoped
+  token from the Keychain and the saved-keys store (before: only the
+  shared `FA_KEY_<HOST>` slot went away and the token leaked); the
+  duplicated name→key algorithm is gone — both surfaces use the one core
+  `CustomProviderRegistry.copilotEntryKeyName`.
+
+## 0.1.259
+
+- feat(cli): fa.log now opens with `fa boot sid=… version=…` — the shared
+  diagnostics log had no way to attribute a wedged "Working…" row to the
+  BUILD that held it (today's 1949s spinner post-mortem stalled on exactly
+  that: the wedged process predated the 0.1.255 busy-bracket fix, but only
+  circumstantial evidence proved it). Every process now names its version
+  next to its session id before any lifecycle line.
+
+## 0.1.258
+
+- fix(cli): the Copilot preset row now actually starts the connect flow —
+  the "Add provider" picker shipped the row WITHOUT its handler
+  (`null?.call()` closed the picker and nothing happened; the typed
+  `/provider copilot` always worked). The handler map gained the copilot
+  entry, and the picker test now asserts rows == handlers in BOTH
+  directions so a dead row can never ship again, plus a line-mode routing
+  test and a PTY visual test (screenshots 28/29/34) drive the real TUI
+  from `/provider` to the "Copilot sign-in" step.
+- fix(cli): `fa --session <name>` no longer opens another project's
+  session — same-named sessions resolve with the LAUNCH folder first
+  (a single local match wins); an ambiguous remainder (several in one
+  folder, or none in it) auto-resolves to the most recently updated with
+  a printed note naming every candidate id, the TUI offers the scoped
+  "which one?" picker right after boot, and mid-session `/session <name>`
+  asks with a numbered/wizard list. The switch itself now runs DETACHED
+  under the flow gate (an awaited interactive pick deadlocked the
+  sequential line REPL), redelivers lines typed during the switch instead
+  of dropping them as flow junk, and redraws the idle prompt so the
+  zeroed status meter shows.
+
+## 0.1.257
+
+- fix(cli): GitHub Copilot appears in the TUI "Add provider" picker — the
+  preset list is hand-maintained and shipped without a Copilot row even
+  though `/provider copilot` (device flow) worked; the row routes to the
+  same connect command, and a picker test now pins every preset key to a
+  handler so a future provider can't silently miss the menu.
+
+## 0.1.256
+
+- fix(cli): `/model <id>` on a saved CodeMie/custom entry no longer fails
+  with 'no usable chain entry: set OPENAI_API_KEY' — the roles-mode pin
+  carried the entry's key NAME, but the resolver's secrets never held the
+  key material (the CodeMie JWT/SSO switch paths bypass the resolver), so
+  the chain failed to resolve and the switch silently did nothing (the
+  status line kept the old model). `_switchModel` now seeds the resolver
+  with the session's live key under the pinned name (env-ring fallback)
+  before pinning, and cookie-header auth (CodeMie SSO) keeps the direct
+  model set — a cookie can never ride a Bearer chain.
+
+- chore(sync): resolve the orphaned stash-pop conflicts to origin/main
+- fix(cli): central busy bracket in _startRun — no more spinner-after-settle
+- feat(fa_ui): always-visible custom answer in the ask sheet
+- feat(apps): JsMediaHost wiring — video/audio nodes play for real
+- fix(agent): abort wedged runs — SSE event-level idle watchdog + Agent.runIdleTimeout + fa.log run forensics
+- feat(cli): env preconfig — required fields, base64 twins, all-roles default
+- feat(app): chat text-size setting + dense markdown + unclipped copy
+- feat(apps): adaptive layout host support (js_widget_runtime ^0.4.87)
+- test(integration): fix latent env-key crash in real-model test
+- feat(providers): Z.AI first-class + env-activated providers + FA_PROVIDER_* env preconfig
+
+## 0.1.255
+
+- fix(cli): the "Working… forever with an idle agent" wedge — the TUI
+  busy bracket lived only in the submit handler, so runs triggered
+  elsewhere (the idle inbox wake, a shell-job settle, a scheduled
+  message) streamed with phase labels but released nothing: the spinner
+  stayed on after the run settled. The busy bracket is now CENTRAL in
+  `_startRun` (paired with the settle future) and the counter is the
+  extracted, unit-tested `BusyDepth` — nested brackets (submit around
+  run around wake) collapse to one edge pair. Forensics: fa.log showed
+  `run end` with the spinner still up in two live sessions.
+
+## 0.1.254
+
+- **Wedged "Working…"/"Compacting…" turns now abort instead of hanging
+  forever.** Two layered fixes after three live sessions (working,
+  compacting, post-compact) pinned the busy row for 30-60 minutes with no
+  recovery:
+  - The SSE idle watchdog moved from the raw byte stream to a per-`moveNext`
+    timer on decoded events: gateways keep dead generations alive with
+    `: comment` heartbeat bytes, and the byte-level timer reset on every
+    heartbeat — event-level silence is the honest signal. (`Stream.timeout`
+    after the `async*` SseDecoder never fires at all — a Dart quirk this
+    sidesteps entirely.)
+  - New `Agent.runIdleTimeout` backstop (default 8 min, `Duration.zero`
+    disables, `onRunIdleTimeout` callback): a run with no events outside
+    tool execution is cancelled with a `TimeoutException` reason and ends
+    as `aborted`. Streaming deltas re-arm, tool phases disarm — a long
+    legitimate test gate never trips it.
+- **Run-lifecycle forensics in `~/.fah/logs/fa.log`**: one line per phase
+  transition (`run/turn/tool start|end`, `auto-compact start`, watchdog
+  fires), each tagged with the short session id — a wedged busy row can
+  now be attributed to the exact phase (provider turn vs named tool vs
+  compaction) that never finished, across parallel fa processes.
+
+## 0.1.253
+
+- fix(cli): the busy row stops lying about compaction hangs
+- feat(catalog): category filter chips above the widget list
+- refactor(cli): split for the 2800-line size gate
+- feat(providers): multi-account ChatGPT — per-entry keys, account picker, app parity
+- fix(providers): review fixes — string-typed oauth json, pre-send cookie baseline, SSE incomplete/failed as stream events
+- fix: drop duplicate models_for_endpoint import left by the main merge
+- fix(codex): pin chatgpt catalog visibility; note review fixes in changelog
+- fix(codex): terminate failed/incomplete SSE turns as error events
+- fix(codex): serialize OAuth expiry as a string; decode stays tolerant of int blobs
+- docs(goal): codex gpt auth — tick checklist, fill implementation log
+- feat(providers): unhide chatgpt provider — ship docs, changelog, live smoke
+- test(providers): chatgpt oauth token-leak guard — persisted registry + transcript carry no tokens
+- feat(providers): codex models — live GET /models with bundled-catalog fallback
+- feat(providers): codex http sse transport — header parity, cloudflare cookie replay, full event coverage
+- feat(providers): chatgpt oauth expiry tracking — expiresAt + needsRefresh
+- feat(providers): codex transport helpers — header parity, cloudflare cookie jar, rate-limit parsing
+
 ## 0.1.252
 
 - fix(cli): the busy row stops lying about compaction hangs — the
@@ -43,8 +306,17 @@
   pre-compaction size (no more no-op compaction on every resume + an
   honest context gauge).
 
-## 0.1.250
+## 0.1.251
 
+- feat(catalog): stacked equal-width action buttons on tile rows
+- feat(launcher): Open menu item + icons, icon-square-only hover
+- feat(app): interactive live tiles via widget.interactive opt-in
+- feat(app): drop bundled demos — the catalog is the source of apps
+- fix(app): actually pass sessionInfoNames to the sidebar (torn-write casualty)
+- feat(app): the sidebar shows the CLI-written session_info names
+- fix(app): reset/remove/install refresh the grid + sane dialog width
+
+## 0.1.250
 
 - feat(providers): ChatGPT goes multi-account — each account saves as its
   own named entry with its own name-scoped secure-store slot
@@ -83,8 +355,22 @@
   main) in BOTH the CLI and the app. Memory consolidation and semantic
   search now actually run instead of being silently skipped.
 
-## 0.1.248
+## 0.1.249
 
+- fix(app): self-heal stale-catalog sha mismatches + card-ify the catalog list
+- test(app): hold-release on a classic tile now expects the menu
+- fix(app): installed widgets really swap Preview for Remove + tests
+- fix(app): re-add the _localApps field declaration (clobbered again)
+- fix(app): restore the _localApps field + refresh (clobbered mid-commit)
+- feat(app): catalog sheet — Remove for installed, Created by me, real avatars
+- fix(app): tile menu opens for plain icon widgets + right-click + soft hover
+- fix(site): openPreview really uses the RUNNER url — the torn write had resurrected the /widgets/preview/ path
+- fix(site): repair torn index.html (duplicate tail after </html>) + restore the app-only marks
+- feat(site): platform widgets are marked 'runs in the Fa app' instead of a broken preview
+- fix(site): preview iframe points at the jsr repo's own Pages runner
+- feat(site): widget preview runs the real Flutter/jsr runner — DOM shim removed
+
+## 0.1.248
 
 - fix(cli): a run counts as busy from the moment it is STARTED, not from
   the first streamed byte — the inbox watcher / shell-job settle path no
@@ -125,6 +411,12 @@
   `max_output_tokens` now replace them per model when present, and
   the catalog defaults stay when the payload has no opinion.
 
+## 0.1.247
+
+- feat(tools): Hailuo 2.3 video dialect + headless pre-flight compaction
+- fix(tui): key parser never swallows a trailing control byte into a text run
+- fix(cli): restored sessions label the model with the pinned-key account
+
 ## 0.1.246
 
 - feat(tools): `HailuoVideoDialect` — Hailuo 2.3 video generation on the
@@ -155,6 +447,8 @@
   `_chainKeyNameFor`); the first-match scan remains the pin-less
   fallback.
 
+- fix(cli): status bar labels model with the ACTIVE saved provider
+
 ## 0.1.244
 
 - fix(cli): the status bar labels the model with the ACTIVE saved
@@ -165,6 +459,19 @@
   `kimi-ira1/<model>`). `_statusProviderLabel` now prefers
   `_activeCustomName` and only falls back to the endpoint scan when no
   custom entry is active; the key resolution was never affected.
+
+- fix(cli): media slot flow propagates custom provider keyName
+
+## 0.1.243
+
+- fix: gen_prompts trims description trailing newline
+- fix: skip subagent integration tests when MiniMax key missing
+- feat: v0.1.242 — MiniMax media picker fix + generate_video tool
+- fix(provider): minimax /model picker shows the full catalog, not the saved modelId
+
+## 0.1.242
+
+- feat(catalog,ui): remote models catalog + thinking markdown + table CRAP fix (0.1.241)
 
 ## 0.1.241
 
@@ -193,6 +500,8 @@
   `_renderTableLine` — CC dropped, CRAP ratchet back to 12.00
   (pre-existing method was 16.27 at 69% coverage; now 12.00 at 100%).
 
+- fix(compaction): 10-minute attempt budget — a hung summarizer can no longer wedge the turn (0.1.240)
+
 ## 0.1.240
 
 - feat(catalog): remote provider-models catalog at `fa1.dev/models-catalog.json`
@@ -210,8 +519,6 @@
   that quote function names or emphasise alternatives render properly
   instead of leaving stray `**…**` in the dim background.
 
-## 0.1.240
-
 - fix(compaction): a summarizer endpoint that accepts the request and
   never answers can no longer wedge the turn on the compaction spinner
   forever — every summarization attempt now runs under a 10-minute
@@ -221,6 +528,58 @@
 - fix(compaction): the emergency local trim zeroes the kept generations'
   usage anchors — a stale generation-time anchor kept the post-trim
   estimate over the window and retriggered the compactor every turn.
+- fix(app,test): the whole quality gate goes green — CRAP ratchet, app suite, l10n and goldens (0.1.239)
+- fix(replay): compact system-notice rows in restored transcripts (0.1.238)
+- fix(provider): entry-name status label + persist catalog model picks (0.1.237)
+- docs(goal): codex gpt auth — cross-platform notes (Rust portability does not transfer)
+- docs(goal): codex gpt auth — point the reference at the open-source GitHub repo
+- docs(goal): codex gpt auth — ship the ChatGPT/Codex-backend provider
+- perf+fix: growing-tail throttle, codemie scoped key, status bar (0.1.236)
+- docs(goal): copilot — translate to English, add tickable implementation checklist
+- docs(goal): copilot — multi-account contract, mandatory TDD plan, Keychain-only tokens
+- docs(goal): copilot provider — multi-account support as first-class scope
+- docs(goal): add copilot provider goal — migrate copilot-proxy-go protocol into fa_llm
+- deps: flutter_agent_memory ^0.1.1 (0.1.235)
+- fix(memory): tombstoned delete via KBMemoryStore; hosted dep (0.1.234)
+- feat: schedule_message + bash stdin param; crash hardening (0.1.233)
+- perf(tui): O(1) in-place rollback of grown-tail arrays (0.1.232)
+- perf(tui): flush streamed output every 16ms (0.1.231)
+- perf(tui): cache formatted sticky echo rows (0.1.230)
+- feat(memory): memory_delete tool; quote-style service blocks (0.1.229)
+- fix(tui): add the missing system_notice_render import in fa_tui (0.1.228 fixup)
+- feat(tui): render system notices as dim blockquotes with a gear marker (0.1.228)
+- perf(tui): ASCII fast path + bounded line-width memo in tuiTextWidth (0.1.227)
+- fix(tui): hoist terminal reset before SIGINT use; wire compaction delta tail (0.1.226 follow-up)
+- fix(tui): restore terminal modes on Ctrl+C exit (0.1.226)
+- fix(tui): keep the input caret visible while a run streams (0.1.225)
+- fix(messaging): cross-project agent_message delivers to the recipient root (0.1.224)
+- feat: instant key echo + Ctrl+C exits like /exit (0.1.223)
+- fix(cli): visible hint after mid-run Ctrl+C abort (0.1.222)
+- chore(tool): land the frame-build bisect probe (gitignored path)
+- fix(tui): no-newline stream deltas stay incremental — typing lag gone (0.1.221)
+- chore(tool): land the key-latency probe (path is gitignored)
+- feat(tools): warn when a stale fa build writes old-format job logs here (0.1.220)
+- fix(cli,compaction): paste-a-path sends, honest compact status, bounded extraction, per-delta ctx memo (0.1.219)
+- fix(cli): FaTuiController stub carries setBusyPhase — web build compiles again
+- fix(app,site): widgets entry points visible and verifiable
+- docs(widgets): mark C2/M1 app-catalog milestone shipped with live checks
+- feat(app): widgets catalog — install from fa_widgets releases, slim the bundle
+- test(tools): assert shell job ids by shape after unique-id change
+- chore(messaging): skip messages-registry write when unchanged
+- fix(tools): collision-proof background job ids and image filenames
+- fix(session): serialize JSONL writers per file and quarantine torn lines on open
+- chore(local): rebuild fa-local bundle binary at 0.1.218
+- fix(tui,fork): serialize tracer writes through a flush queue
+- fix(tui,fork): FA_TUI_TRACE file sink flushes per event (crash-safe)
+- perf(tui,fork): render-aware cursor dedupe — zero-byte idle frames
+- perf(tui,fork): lazy frames, output dedupe, keypress-paint tracer
+- fix(tui): replay restored messages in full — no per-message head caps
+- fix(tui): wrap overflowing table cells — keep the box grid readable
+- perf(tui,fork): drop-frame fps throttle — stop sleeping the event loop
+- chore(vendor): inline dart_tui 2.0.0 under vendor/ for perf work
+- perf(tui): amortized history-cap trim — no full re-parse per streaming flush
+- feat(tui): truthful busy-row phase labels
+- feat(cli): pre-flight context guard — compact BEFORE an over-window request
 
 ## 0.1.239
 
@@ -521,6 +880,39 @@
   streaming answers); drops repaint only the latest view via an internal
   RenderTickMsg, invisible to models.
 
+## 0.1.213
+
+- style(env): brace single-statement if in CwdOverrideEnv.backgroundJobsSupported
+
+## 0.1.212
+
+- fix(bench): drop stale fa_tui show-import from tui_stream_bench
+- fix(tui): open-table boundary invariant — streamed tables never lose rows
+- feat(site): widgets gallery page + machine index; widgets GOAL
+- perf(tui): incremental transcript markdown+wrap — streaming flush x729 faster
+- fix(cli,app): attach delivery, pasted-path attachments; split cli inbox part file
+
+## 0.1.211
+
+- fix(cli): a pasted filesystem path is not a slash command
+
+## 0.1.210
+
+- ci(mobile): skip the iOS artifact download when the IPA build was skipped
+
+## 0.1.208
+
+- feat(attach): live CLI sessions in the app — presence, 1:1 view, input handover
+
+## 0.1.207
+
+- fix(app): explain empty responses that follow an image-bearing prompt
+
+## 0.1.206
+
+- fix(app): skill discovery scans user-level roots (~/.claude, ~/.copilot, ...)
+- ci(macos): tolerate an existing keychain when packaging the TestFlight PKG
+
 ## 0.1.205
 
 - fix(cli): TUI renders rows in terminal cells (grapheme clusters) - markdown
@@ -546,1073 +938,49 @@
   opts out.
 - test(cli): waitForIt poll budget 2s -> 25s (coverage runs on loaded boxes).
 
+## 0.1.204
 
-## 0.1.0
+- fix(providers): do not close shared HTTP client during OpenRouter OAuth exchange
 
-- Initial project setup: package skeleton, quality gates (analyze, tests,
-  coverage ≥ 80%, duplication < 1%), GOAL.md with the pi-mono port roadmap.
-- Seeded `CancelToken` / `CancelTokenSource` / `CancelledException` — the
-  universal cancellation primitive (Dart counterpart of web `AbortSignal`).
+## 0.1.203
 
-## 0.1.1
+- fix(cli): provider picker, CodeMie auth refresh, skills access
+- feat(session): unify CLI and macOS app session storage
+- fix(providers): restore Kimi endpoint (api.kimi.com/coding/v1) and default model k3
+- fix(cli): auto-refresh expired CodeMie SSO cookie on startup
 
+## 0.1.202
 
-- Ported pi-mono `packages/ai`: EventStream contract (partial-first deltas,
-  errors-as-events), SSE line decoder, openai-completions (OpenRouter-ready),
-  Anthropic and Google provider adapters, usage/cost accounting,
-  context-overflow detection, `Retry-After` parsing.
-- Ported pi-mono `packages/agent`: low-level agent loop, stateful `Agent`
-  with steering/follow-up queues and hooks, `AgentTool` registry with
-  JSON-schema param validation.
-- Sessions and context management: `ExecutionEnv` abstraction (pure-Dart
-  memory impl + `dart:io` impl in `lib/io.dart`), append-only JSONL session
-  tree with branching/labels, token estimation and LLM compaction pipeline.
-- CLI harness (`bin/fah.dart`): a pi-like terminal agent with built-in
-  `read`/`write`/`ls`/`bash` tools on the `ExecutionEnv` abstraction
-  (`lib/src/tools/builtin_tools.dart`), a pure-Dart REPL core with injectable
-  IO (`lib/src/cli/agent_cli.dart`) — live streaming output, slash commands
-  (`/exit`, `/reset`, `/compact`, `/stats`, `/model`, `/help`), steering,
-  Ctrl-C abort, JSONL session persistence, and auto-compaction.
+- fix(install): remove broken Dart fallback, respect FA_INSTALL_DIR, sign macOS CLI in CI
 
-## 0.1.2
+## 0.1.200
 
-- test(providers): Ollama Cloud live integration tests (gpt-oss:20b default, OLLAMA_MODEL override)
-- ci: create placeholder .env for the example app (asset_does_not_exist)
-- fix(example): mobile sessions no longer land in a doubled host path
-- ci: fix quality gate — install Flutter SDK + example pub get for repo-wide analyze
-- ci: auto-release on push to main (patch bump + tag, OIDC publish) + OLLAMA_API_KEY in integration env
-- feat(example): file browser panel (tree + preview, collapsible on wide screens)
-- test(providers): live integration tests (OpenRouter live, Anthropic/Google key-gated)
-- feat(sandbox): pip-lite for sandbox python (pure-python wheels)
-- feat(sandbox): lua interpreter (WASI) in the mobile shell
-- feat(sandbox): small utils batch (tree, file, xz/bzip2 -d, base64+hashes on web)
-- feat(sandbox): ssh/scp/sftp exec builtins via dartssh2
-- feat(sandbox): nslookup/dig + whois network diag builtins
-- feat(sandbox): diff/patch builtins (Dart, iOS+web)
-- feat(secrets): env injection + redaction (SecretsStore)
-- feat(sandbox): web command parity with iOS shell
-- feat(example): python3/qjs on web via CDN interpreters + copy-session button
-- chore: remove ssh debug script
-- feat(sandbox): sqlite3 CLI (WASI build from official amalgamation)
-- style: curly braces in web_git remote add (lint info)
-- feat(web): local git in the browser sandbox (MemoryShell)
-- feat(sandbox): QuickJS JavaScript engine (qjs/js) + web parity checks
-- feat(sandbox): python3 (CPython 3.14 WASI) in the mobile shell
-- feat(tools): edit (str_replace) tool + sandbox path mapping + coding system prompt
-- feat(git): push over smart HTTP (receive-pack) + SSH transport (dartssh2)
-- feat(git): remote/fetch subcommands, checkout -b, branch -r, clone fixes
-- fix(mobile shell): curl/wget --version, --help, and no-URL error message
-- feat(git): smart HTTP git-upload-pack clone for any public remote
-- feat(web): pure-Dart MemoryShell for the browser + flutter build web fixed
-- feat(mobile shell): cd/export/unset, $VAR expansion, grep/wget, du/stat/tac/expr/id/relpath builtins
-- feat(mobile shell): add git support via dart-git + GitHub archive clone
-- feat(mobile shell): add dart-native curl/jq/yq builtins
-- feat(mobile shell): add WASM sed/awk/tar/gzip/zip+unzip, env builtin, redirect capture fix, POSIX double-quote escapes
-- feat(mobile shell): add shell builtins (test, which, whoami, xargs, command -v)
-- chore: remove stray temp files accidentally committed
-- test: add shell command integration tests (host + WASM sandbox catalog)
-- fix(ls tool): return basename when path points to a file
-- fix(ios): get WASM shell working on iOS simulator
-- feat(example): replace busybox with permissive uutils/ripgrep WASM sandbox
-- feat(example): sandboxed WASM bash shell for mobile/web via busybox+wasm_run
-- fix(example): cache streaming/error state in ChatScreen for immediate UI updates and add multi-turn test
-- fix(example): notify UI before persisting so streaming indicator hides immediately
-- fix(example): throttle and incrementally sync messages to avoid SliverAnimatedList crash
-- fix(example): move input bar outside Chat widget to fix layout and semantics
-- fix(example): replace package Composer with custom input bar to fix ParentDataWidget crash
-- feat(flutter_example): integrate flutter_chat_ui with markdown and tool cards
-- feat(flutter_example): load API key from .env for simulator runs
-- fix(flutter): typing indicator, error banner, 90s timeout; feat(cli): persist last model/provider/mode in ~/.fah/config.yaml
-- Add Flutter mobile example with path_provider + LocalExecutionEnv
-- Add pi-style agent modes and prompt templates to CLI
-- Clean lint info in plugin tests
-- Update GOAL.md with plugin/package extension API
-- Add plugin/package extension system with built-in inspect_image plugin
-- Add inspect_image tool: dedicated vision model analysis like pi-inspect-image
-- Add fah/fa executables, rebrand system prompt, image support in read tool
-- Add CLI harness: bin/fah REPL with builtin tools, sessions, compaction
-- Format codebase, fix lint info, shorten pubspec description (pana 160/160); add format gate to pre-commit
-- CI: GitHub Actions quality gates + OIDC pub.dev publish on version tags
-- Phase 3: token estimation and LLM compaction pipeline
-- Phase 3: ExecutionEnv abstraction and append-only JSONL session tree
-- Phase 2: AgentTool registry with JSON-schema param validation
-- Phase 2: stateful Agent with steering/follow-up queues and hooks
-- GOAL.md: TDD for new code, coverage target >90%, push after every card
-- Phase 2: port low-level agent loop with AgentEvent stream and CancelToken abort
-- Phase 1: context-overflow detection, Retry-After parsing, sealed exception hierarchy
-- Phase 1: port Google provider adapter with native functionCalling streaming
-- Phase 1: port Anthropic provider adapter with native tool_use/thinking streaming
-- Phase 0: port openai-completions provider adapter (OpenRouter-ready) with errors-as-events and CancelToken abort
-- Phase 0: port AssistantMessageEventStream contract and SSE line decoder from pi-mono
-- GOAL.md: allow agent publishing on explicit user instruction; OIDC for tagged releases
+- fix(ios): correct force_load path — pod products live in a per-pod subdir
+- fix(ios): force-load cupertino_http pod binary + CI gate on its FFI symbols
+- fix(flutter_app): project mount sets agent cwd to /project so sessions are folder-scoped
 
-## 0.1.3
+## 0.1.199
 
-- ci: fix auto-release tag push — annotated tag + --atomic (lightweight tags are not sent by --follow-tags)
-- test(providers): Ollama Cloud live integration tests (gpt-oss:20b default, OLLAMA_MODEL override)
-- ci: create placeholder .env for the example app (asset_does_not_exist)
-- fix(example): mobile sessions no longer land in a doubled host path
-- ci: fix quality gate — install Flutter SDK + example pub get for repo-wide analyze
-- ci: auto-release on push to main (patch bump + tag, OIDC publish) + OLLAMA_API_KEY in integration env
-- feat(example): file browser panel (tree + preview, collapsible on wide screens)
-- test(providers): live integration tests (OpenRouter live, Anthropic/Google key-gated)
-- feat(sandbox): pip-lite for sandbox python (pure-python wheels)
-- feat(sandbox): lua interpreter (WASI) in the mobile shell
-- feat(sandbox): small utils batch (tree, file, xz/bzip2 -d, base64+hashes on web)
-- feat(sandbox): ssh/scp/sftp exec builtins via dartssh2
-- feat(sandbox): nslookup/dig + whois network diag builtins
-- feat(sandbox): diff/patch builtins (Dart, iOS+web)
-- feat(secrets): env injection + redaction (SecretsStore)
-- feat(sandbox): web command parity with iOS shell
-- feat(example): python3/qjs on web via CDN interpreters + copy-session button
-- chore: remove ssh debug script
-- feat(sandbox): sqlite3 CLI (WASI build from official amalgamation)
-- style: curly braces in web_git remote add (lint info)
-- feat(web): local git in the browser sandbox (MemoryShell)
-- feat(sandbox): QuickJS JavaScript engine (qjs/js) + web parity checks
-- feat(sandbox): python3 (CPython 3.14 WASI) in the mobile shell
-- feat(tools): edit (str_replace) tool + sandbox path mapping + coding system prompt
-- feat(git): push over smart HTTP (receive-pack) + SSH transport (dartssh2)
-- feat(git): remote/fetch subcommands, checkout -b, branch -r, clone fixes
-- fix(mobile shell): curl/wget --version, --help, and no-URL error message
-- feat(git): smart HTTP git-upload-pack clone for any public remote
-- feat(web): pure-Dart MemoryShell for the browser + flutter build web fixed
-- feat(mobile shell): cd/export/unset, $VAR expansion, grep/wget, du/stat/tac/expr/id/relpath builtins
-- feat(mobile shell): add git support via dart-git + GitHub archive clone
-- feat(mobile shell): add dart-native curl/jq/yq builtins
-- feat(mobile shell): add WASM sed/awk/tar/gzip/zip+unzip, env builtin, redirect capture fix, POSIX double-quote escapes
-- feat(mobile shell): add shell builtins (test, which, whoami, xargs, command -v)
-- chore: remove stray temp files accidentally committed
-- test: add shell command integration tests (host + WASM sandbox catalog)
-- fix(ls tool): return basename when path points to a file
-- fix(ios): get WASM shell working on iOS simulator
-- feat(example): replace busybox with permissive uutils/ripgrep WASM sandbox
-- feat(example): sandboxed WASM bash shell for mobile/web via busybox+wasm_run
-- fix(example): cache streaming/error state in ChatScreen for immediate UI updates and add multi-turn test
-- fix(example): notify UI before persisting so streaming indicator hides immediately
-- fix(example): throttle and incrementally sync messages to avoid SliverAnimatedList crash
-- fix(example): move input bar outside Chat widget to fix layout and semantics
-- fix(example): replace package Composer with custom input bar to fix ParentDataWidget crash
-- feat(flutter_example): integrate flutter_chat_ui with markdown and tool cards
-- feat(flutter_example): load API key from .env for simulator runs
-- fix(flutter): typing indicator, error banner, 90s timeout; feat(cli): persist last model/provider/mode in ~/.fah/config.yaml
-- Add Flutter mobile example with path_provider + LocalExecutionEnv
-- Add pi-style agent modes and prompt templates to CLI
-- Clean lint info in plugin tests
-- Update GOAL.md with plugin/package extension API
-- Add plugin/package extension system with built-in inspect_image plugin
-- Add inspect_image tool: dedicated vision model analysis like pi-inspect-image
-- Add fah/fa executables, rebrand system prompt, image support in read tool
-- Add CLI harness: bin/fah REPL with builtin tools, sessions, compaction
-- Format codebase, fix lint info, shorten pubspec description (pana 160/160); add format gate to pre-commit
-- CI: GitHub Actions quality gates + OIDC pub.dev publish on version tags
-- Phase 3: token estimation and LLM compaction pipeline
-- Phase 3: ExecutionEnv abstraction and append-only JSONL session tree
-- Phase 2: AgentTool registry with JSON-schema param validation
-- Phase 2: stateful Agent with steering/follow-up queues and hooks
-- GOAL.md: TDD for new code, coverage target >90%, push after every card
-- Phase 2: port low-level agent loop with AgentEvent stream and CancelToken abort
-- Phase 1: context-overflow detection, Retry-After parsing, sealed exception hierarchy
-- Phase 1: port Google provider adapter with native functionCalling streaming
-- Phase 1: port Anthropic provider adapter with native tool_use/thinking streaming
-- Phase 0: port openai-completions provider adapter (OpenRouter-ready) with errors-as-events and CancelToken abort
-- Phase 0: port AssistantMessageEventStream contract and SSE line decoder from pi-mono
-- GOAL.md: allow agent publishing on explicit user instruction; OIDC for tagged releases
+- fix(cli): show auth-method picker when adding openrouter/codemie from TUI
 
-## 0.1.4
+## 0.1.195
 
-- chore: mark fake PEM stubs as false_secrets for pub validation
+- fix(install): macOS CLI bundle + quarantine/sign handling
 
-## 0.1.5
+## 0.1.194
 
-- refactor(prompts): extract LLM prompts to prompts/*.md + codegen (AGENTS.md convention)
+- fix(ci): merge Release.entitlements into the signed macOS build, don't strip them
 
-## 0.1.6
+## 0.1.191
 
-- feat(site): GitHub Pages landing + live web demo with BYOK
-- feat(example): BYOK connection settings with provider presets
-
-## 0.1.7
-
-- fix(example): sharpen Ollama Cloud CORS guidance in BYOK notes
-
-## 0.1.8
-
-- feat(site): SEO/GEO pack + OG share image
-
-## 0.1.9
-
-- feat(example): web file upload + IndexedDB-persisted sandbox FS
-
-## 0.1.10
-
-- feat(site): capability comparison table (Browser/macOS/iOS/Android/Windows)
-
-## 0.1.11
-
-- feat(example): WebLLM on-device provider for the web demo (no API key needed)
-
-## 0.1.12
-
-- feat(example): full WebLLM preset list matching flutter_agent_memory (22 models)
-
-## 0.1.13
-
-- feat(example): dark theme matching the landing (terminal aesthetic)
-
-## 0.1.14
-
-- feat(example): branded web loading splash (first-frame fade)
-
-## 0.1.15
-
-- feat(example): WebLLM function calling (tools for Hermes-3 FC preset)
-
-## 0.1.16
-
-- feat(example): left sidebar (model picker + sessions), files move right
-
-## 0.1.17
-
-- feat(example): custom provider management + WebLLM model cache management in settings
-
-## 0.1.18
-
-- feat(example): Gemma 4 on-device provider via flutter_gemma (iOS/Android)
-
-## 0.1.19
-
-- fix(example): settings dialogs adapt to narrow phone screens
-
-## 0.1.20
-
-- feat(core): prompt-based tool-calling wrapper (universal chat-model tools)
-
-## 0.1.21
-
-- feat(example): Gemma provider on web via flutter_gemma litert-lm web (Gemma 4 tools in-browser)
-
-## 0.1.22
-
-- refactor(example): WebLLM goes chat-only + universal prompt-tools wrapper
-
-## 0.1.23
-
-- feat(example): markdown/HTML file previews + auto-refresh on agent file mutations
-
-## 0.1.24
-
-- feat(example): brand app icon for all platforms (gradient >_ mark)
-
-## 0.1.25
-
-- ci: coalesce auto-releases to <=1 per 2h + scheduled catch-up
-
-## 0.1.26
-
-- fix(example): Gemma web uses -web.litertlm builds + Gemma cache management in settings
-
-## 0.1.27
-
-- feat(example): transformers.js Gemma provider on web (ONNX q4f16, tools via prompt wrapper)
-- feat(brand): rename visible brand to Fa + app favicon matches the site
-
-## 0.1.28
-
-- feat(example): central sandbox command registry drives the Fa system prompt
-- fix(example): web upload fix + chat uploads→uploads/ + light HTML preview + session delete
-
-## 0.1.29
-
-- fix(example): transformers.js download filter+progress, SVG/upload/attach UX, provider-error robustness
-
-## 0.1.30
-
-- feat(example): WebLLM presets refresh — Qwen3.5 + Qwen2.5-Coder (web-llm 0.2.84)
-- feat(example): visible app name is Fa (assistant label, AppBar, transcript, system prompt)
-
-## 0.1.31
-
-- feat(tools): hashline edit format with content-hash anchors (omp port)
-- feat(core): approval tiers with per-tool policy, bash interceptor, CLI/app prompt UIs
-- feat(example): model lineup — drop <1.5GB presets, add Gemma 4 E4B ONNX (~5.2GB)
-
-## 0.1.32
-
-
-- feat(tools): web_search with provider chain (DDG keyless first, Brave/Tavily behind secrets) + web_fetch markdown extraction with a pub.dev site handler
-
-## 0.1.33
-
-- feat(tools): read selector grammar (:A-B, :A+C, multi-range, :raw) + zip inner paths + SQLite reads
-- feat(tools): image read parity with pi (byte cap, pass-through, EXIF, placeholders) + transcribe_audio tool
-- feat(site): set GA4 measurement ID
-
-## 0.1.34
-
-- feat(tools): task tool — parallel subagents with schema-validated results (omp port)
-- feat(agent): TTSR stream rules — abort, inject, retry mid-generation (omp port)
-- feat(providers): model roles (default/smol/slow/plan) with fallback chains, key rotation, path overrides
-
-## 0.1.35
-
-- feat(example): persist last connection + downloaded-models quick start on setup screen
-- feat(tools): lsp tool backed by the Dart analysis server (diagnostics/definition/references/rename)
-
-## 0.1.36
-
-- fix(example): WebLLM context windows sized for the Fa system prompt + compaction scales with model window
-- feat(cli): headless mode — fa "prompt", -p alias, file-as-prompt (md/txt content, binary path ref)
-
-## 0.1.37
-
-- fix(example): halve ONNX Gemma context window to 2048 (WebGPU OOM mitigation)
-- feat: optional API token for custom providers (local servers need no key)
-- feat(cli): banner shows baseUrl+key status, connection-refused hint, version in --help
-- chore(example): ignore Firebase config files with real API keys
-- fix(site): full-width header background and Fa branding
-- feat(example): release prep — Fa branding, icons, bundle IDs, Firebase Analytics
-- feat(cli): prompt overrides (config prompts: + --system-prompt[-file]) and full --help reference
-
-## 0.1.38
-
-- feat(site): Windows PowerShell installer + generated menus from install-config.yaml
-- chore(macos): set bundle identifier to dev.fa1.macos and update copyright
-- fix(site): use correct GA4 measurement ID (G-0Z3SW38FYC) and Fa mobile app label
-- fix(ios): graceful WASM fallback — app starts without wasm shell on iOS
-- feat(prompt-tools): slim on-device system prompt — compact schemas + fewer tools
-- feat(cli): modern TUI pack — ! shell commands, /models filter, status line
-- chore(site): switch GA measurement ID to Firebase web stream
-- feat(cli): interactive installer with progress bar, provider/model picker, and config setup
-- fix(example): readable ONNX/WebGPU crash messages + verified engine recovery
-
-## 0.1.39
-
-- feat(cli): Pi-style terminal banner, status bar, and /help filtering
-- fix(site,install): remove DMTools from install dropdown and reword PATH symlink comment
-- fix(install): make fa available immediately after install without shell reload
-- feat(site): add DMTools install options to site dropdown
-- fix(example): split SandboxPlatform.mobile into android/ios and disable shell command ads on iOS
-- refactor(install): split installer into non-interactive install + interactive setup wizard
-- fix(cli,install): primary command is fa, auto-add pub-cache to PATH
-- fix(site): cache-bust web demo assets on every deploy
-- fix(example): render user messages through the harness loop
-- fix(site): mktemp compatibility on macOS
-
-## 0.1.40
-
-- fix(vendor): force-load wasm_run static lib via podspec and refresh Podfile.lock
-- refactor(site): centralize installer banner/recipe in install-config.yaml and use DMTools-style Windows PATH
-- fix(vendor): apply iOS wasm_run_flutter static-library linker flags in Podfile
-- feat(cli): numbered line-mode slash menu and guard TUI to interactive TTYs
-- fix(vendor): iOS wasm_run_flutter static library fallback
-- fix(install): use github releases/latest/download direct URLs, avoid API rate limits
-- feat(ci): build native fa binaries for win/mac/linux and download them in installers
-- feat(ios): enable WASM shell via statically linked executable
-- fix(site): repair install dropdown visibility and bust cache; make CLI raw-mode fallback graceful
-- feat(cli): add named session management via --session and /session commands
-- feat(cli): raw-mode TUI with slash menu, model picker, and dynamic version
-- feat(site): add Windows cmd.exe installer wrapper (install.bat)
-
-## 0.1.41
-
-- fix(site): quote install URLs for zsh glob safety; refine iOS wasm_run static-library flags
-- fix(cli): avoid double stdin subscription in TUI REPL
-- fix(example): use DynamicLibrary.process for iOS wasm_run static linking
-
-## 0.1.42
-
-- feat(cli): dart_tui interactive TUI with markdown rendering
-- ci: add build-mobile.yml (APK/iOS) and build-macos.yml (DMG) workflows
-- feat: multi-session support — AgentSessionManager (core) + FlutterSessionManager (app)
-- fix(example): hide empty assistant bubbles in chat
-- feat(example): debug-log system prompt platform and WASM runtime setup
-- docs(example): drop stale no-WASM-on-iOS comments after static linking fix
-- fix(example): iOS gets the full WASM sandbox command set in the system prompt
-
-## 0.1.43
-
-- feat: agent skills + project context files (all platforms)
-- feat(cli): background subagents via the task tool
-- fix(cli): keep cursor pinned to input while the spinner ticks
-- ci: create GitHub Release before binary upload + embed version
-
-## 0.1.44
-
-- ci: fix Windows binary build + installer mojibake
-
-## 0.1.45
-
-- feat(cli): fa update and fa uninstall quick commands
-- fix(ci): quote pwsh run line — leading & parsed as a YAML anchor, breaking the whole workflow
-- fix(windows): fa crash after TUI exit + installer mojibake
-- ci: installer-smoke job runs the one-line installers on every tag
-
-## 0.1.46
-
-- fix(example): manual code signing with Fa Profile for CI iOS builds
-- ci: placeholder firebase_options.dart for the repo-wide analyze
-- chore(example): untrack leftover Firebase configs from the pre-migration path
-- ci: cd /tmp before wiping the workspace in mirror checkout
-- ci(pages): tracked firebase_options template instead of git history
-- ci: self-updating mirror checkout in build-mobile.yml (same as build-macos)
-- ci(pages): placeholder firebase_options.dart for the web build
-- fix(example): keep Firebase Analytics from killing web startup
-- ci: quote pwsh run line breaking the ci.yml YAML parse
-- feat(example): unify bundle id to dev.fa1.app for a single App Store record
-- feat(cli): /provider runtime switching and OS secure key storage (/key)
-- fix(install): POSIX-clean install.sh and setup.sh for Ubuntu dash
-- docs: document app build/TestFlight workflows and secrets in AGENTS.md
-- ci: TestFlight submission for iOS and macOS (learn.ai pattern)
-- refactor(example): migrate example/flutter_example to flutter_app (fa package)
-
-## 0.1.47
-
-- ci: explicit export-options plist for iOS builds (UUID + full identity)
-- fix(example): pin the full signing identity name for iOS CI builds
-- fix(example): pin CODE_SIGN_IDENTITY iPhone Distribution for CI builds
-
-## 0.1.48
-
-
-- feat(cli): guided custom provider setup (`/provider custom`): api type
-  (openai/anthropic/google-like), base URL, optional key (saved to the OS
-  secure store), then the model — picked from the endpoint's `/models`
-  list or typed manually; the TUI provider picker gains `+ custom
-  provider…`. (Code landed inside 7082bc8, swept up by a parallel commit.)
-
-## 0.1.49
-
-- ci(ios): fix signing identity extraction
-- ci(ios): use fastlane build_only with temporary keychain
-- ci(ios): use persistent ci.keychain on self-hosted runner
-- ci(ios): use only build.keychain as default/search list, no OTHER_CODE_SIGN_FLAGS
-- ci(ios): import distribution cert into login.keychain and build without isolated keychain
-- ci(ios): download Apple WWDR G3 intermediate into build.keychain
-- ci(ios): import WWDR intermediate into build.keychain, keep it unlocked, pass --keychain
-- ci(ios): pass --keychain to codesign via OTHER_CODE_SIGN_FLAGS and add debug output
-
-## 0.1.50
-
-- ci(ios,macos): fallback to GitHub release for WasmRun iOS framework
-- ci(ios,macos): restore WasmRun frameworks from local runner copy
-- ci(ios): restore WasmRun.xcframework from pub cache before build
-- fix(ios): use SRCROOT-relative path for wasm_run force_load
-- ci(macos): set working-directory for flutter steps and create .env placeholder
-- fix(ios): use absolute path for wasm_run force_load in Podfile
-- fix(ios): force-load wasm_run via Podfile post_install for Runner target
-- test(cli): wizard/registry coverage, help keyword, docs
-- fix(ios): force-load wasm_run in pod target only
-- fix(ios): use PODS_ROOT path for wasm_run force-load
-- fix(ios): force-load wasm_run static lib for arm64
-- ci(ios): create placeholder .env asset for build
-- chore(ios): track firebase_options.dart for CI builds
-- feat(cli): custom provider registry, guided wizard menus, TUI follow latch
-- ci(ios): download missing iOS platform before build
-- ci(ios): use simulator build to avoid missing device sdk
-- ci(ios): boot simulator before flutter build to avoid attached device
-- ci(ios): fix simctl invocation in fastlane build_only
-
-## 0.1.51
-
-- ci(ios,macos): fix artifact downloads and macOS keychain password
-- ci(ios,macos): fix artifact path, macOS framework restore, action versions
-
-## 0.1.52
-
-- ci(ios): use absolute IPA path for TestFlight submit
-- ci(ios,macos): fix submit artifact path and macOS Ruby PATH
-
-## 0.1.53
-
-- ci(macos): fix provisioning profile entitlement extraction
-- fix(cli): rewind context crash and sticky echo duplication
-- ci(macos): fix provisioning profile entitlement key
-- fix(cli): enable mouse-wheel scrolling in TUI transcript
-- ci(macos): fix entitlements heredoc syntax
-- fix(cli): long user messages in TUI — ellipsis marker, calm scroll hint
-- ci(macos): embed provisioning profile, use git tags for version
-- fix(cli): degrade keychain write failures to session-only, never crash
-- fix(macos): raise deployment target to 12.0 for TestFlight
-- fix(macos): add LSApplicationCategoryType for TestFlight validation
-
-## 0.1.59
-
-- fix(ios): use development provisioning profile for Debug builds
-- ci: unblock releases — vendor gitignore rule, pubspec catch-up, tag-ahead release
-- test(example): drop the unused accessGranted param (CI fatal-warnings)
-- feat: widen shell PATH for GUI apps (Homebrew python/node)
-
-## 0.1.60
-
-- fix(ios): export wasm_run FFI symbols so Release/TestFlight builds keep them
-- ci: whitelist the tracked Firebase config for pub.dev's leak scanner
-
-## 0.1.63
-
-- test(example): end-to-end render test for the calculator demo app
-- feat(example): JS apps platform in the Fa app (js_widget_runtime)
-- docs: document the wasm_run symbol gate, strip-style pitfall, and new CI secrets/caches
-
-## 0.1.64
-
-- fix(ios,macos): keep -exported_symbol out of Debug link flags
-
-## 0.1.65
-
-- feat(example): teach the js-apps skill how to test apps before handover
-- fix(example): fit the on-device Gemma context instead of engine overflow
-- test(example): tap test — calculator key reaches the JS engine
-- fix(cli): never hang on a keychain system modal
-- fix(example): bundle demo app assets — nested asset dirs need explicit entries
-
-## 0.1.66
-
-- feat(example): stream model thinking live into the chat
-- fix(example): replace the whole-run timeout with an idle watchdog
-- feat(example): SVG app icons for JS apps
-- feat(example): restore persisted sessions in the sidebar after restart
-
-## 0.1.67
-
-- feat(example): UX batch — collapsible tool output, Fa mark, in-app work bar
-- test(example): textField onChange delivers typed text to JS
-- fix(example): render attached-image messages — add the missing imageMessageBuilder
-
-## 0.1.68
-
-- feat(cli): render provider error lines in red
-- fix(cli): hide the physical cursor while a run streams
-- feat(example): follow-tail auto-scroll + collapse long thinking blocks
-- fix(example): work bar for grid-opened apps; prove permission persistence
-
-## 0.1.69
-
-- fix(example): unblind hosted models — vision detection + settings checkbox
-- feat(example): localize the UI (en/ru) with a hardcoded-string guard test
-- perf(cli): coalesce streamed output deltas to keep typing responsive
-- fix(cli): keep the ctx gauge at the last real usage after a failed run
-- fix(example): bump js_widget_runtime to ^0.4.3 — renderer no longer crashes on array borderRadius
-- perf(cli): memoize the markdown wrap pass so scrolling stays O(1)
-- fix(cli): re-attach follow on submit so the sticky echo pins again
-
-## 0.1.70
-
-- docs: mandate golden tests for all UI work in AGENTS.md
-- feat(example): brand fonts (Inter/JetBrainsMono), marketing-grade full-screen goldens, app quality gates
-- fix(example): absolute path for upload_picker_web conditional import
-- fix(example): update imports for the sandbox/services/ui layout
-- feat(cli): name the key source (environment vs secure store) in the 401 hint
-- feat(cli): diagnose auth failures with the key source (env vs store shadowing)
-- feat(cli): print the session resume command on exit
-- test(example): golden tests for every UI widget + pipeline golden gate
-- fix(agent): repair orphaned tool calls in the request payload
-- feat(cli): replay the full restored transcript with collapsed tool runs
-
-## 0.1.72
-
-- feat(example): orbit work-bar, light theme, secrets UI, open_app + calendar tools, map node demos
-
-## 0.1.75
-
-- feat(example): animation nodes demo (entrance stagger, animatedSwitcher), theme+reply-sheet sources
-- feat(example): jsr.theme plumbing (light/dark live), Fa mini reply sheet, map-app golden
-- fix(example): chart node API alignment (0.4.7), gridView docs, bar chart demo
-
-## 0.1.76
-
-- feat(example): chrome modes, branding sweep (fah→Fa), textArea+scrolling docs (0.4.8), system-API design doc
-
-## 0.1.77
-
-- feat(example): contacts domain — channel, agent tools, js bridge, demo app
-- feat(example): jsr.fa.llm chat (multi-turn) + stream (delta events)
-- feat(example): calendar write — channel, agent tools, js bridge, demo editing
-- feat(example): back-swipe contract (jsr.onBack), privacy manifests + usage descriptions
-
-## 0.1.78
-
-- feat: Keychain key persistence (iOS/macOS), /models endpoint listing, model marks, site updates
-- refactor(example): dedupe cache sections into shared model_cache_section; bump runtime 0.4.11
-- feat(example): transcription slot wiring + read_video (frames → vision)
-- feat(example): media models config + generate_image/speak/generate_music tools + js bridge
-- feat(example): iCloud sync for sessions/apps (iOS; macOS pending signing)
-- feat(example): local push notifications — channel, notify tool, js bridge, reminders demo
-- feat(example): HomeKit control (iOS) + mic/ASR voice input
-- feat(example): HealthKit read (iOS), scene3d dep (0.4.10), Android readiness doc
-
-## 0.1.79
-
-- fix: commit the missing modifications from models-config and media UI (autostash unstaging)
-- feat(example): per-run date refresh, media models full-screen editor with /models picker
-- fix(example): dead onPressed buttons (runtime 0.4.12), calendar date-labeled lists + ±7d match, mic e2e probes
-- fix(example): current date in system prompt, foreground notification banners, contacts openUrl errors
-- feat: CLI models-config (models: config + /models set|remove|config) + media models settings UI
-
-## 0.1.82
-
-- fix(example): browser-ish UA for network images (runtime 0.4.13) + url image probes
-
-## 0.1.83
-
-- fix(example): drop the robot icon + Model header from the sidebar
-- fix(example): macOS keychain read + dead platform channels
-- feat(example): providers-first settings — provider editor page, default chat model flow, provider-based media slots
-- feat(example): providers-first settings — provider editor page, default chat model flow, provider-based media slots
-- fix(example): contacts list scroll + live search; paged full-list search with phone matching for dedup
-- fix(example): composer stop button while streaming; abort drains steer queue into transcript
-- chore(example): pin js_widget_runtime ^0.4.13 (image UA fix)
-- fix(providers): dedupe overlapping/cumulative reasoning chunks in openai-completions thinking stream
-
-## 0.1.84
-
-- feat(example): preset default-model override + two-step media slot flow
-
-## 0.1.85
-
-- feat(example): render sandbox images in chat — markdown imageBuilder + inline generate_image tiles
-- feat(example): expand Fa chat in place inside JS app views
-- fix(example): macOS pods — platform 14.0 + regenerated lock (Firebase 12.x)
-- fix(example): in-app Fa stays in the bottom sheet on first contact
-- chore(deps): update AI integration deps (firebase, flutter_gemma, js_widget_runtime) and sqlite3; migrate sqlite3 dispose -> close
-
-## 0.1.86
-
-- fix(example): regenerate iOS Podfile.lock (Firebase 12.x + media players)
-- feat(example): calendar recurrence, alarms, calendars, span, and url
-- fix(providers): thinking — dedupe reasoning vs reasoning_details + tail collapse
-- feat(example): inline audio/video playback for sandbox media in chat
-
-## 0.1.87
-
-- fix(example): iOS build — HMHomeManagerDelegate members shadow the homeManager global
-- feat(example): HomeKit maximum API, empty-homes race fix, shareable debug logs
-- feat(example): privacy-first analytics facade (Firebase Analytics)
-- fix(example): contacts — system back steps out of detail, transient call hint
-- feat(example): rename sessions, arbitrary agent keys, persist approval mode
-
-## 0.1.88
-
-- fix(example): retry deliver on Apple's bursty Connect API 500s
-- fix(example): preflight the macOS store version before deliver
-- fix(example): tolerate deliver's first-version 'No data' review-detail crash
-- fix(example): shrink RU promotional text under App Store's 170-char limit
-- ci: store-metadata workflow — App Store content upload on demand
-- feat(example): App Store content pipeline — store goldens, metadata, fastlane lanes
-
-## 0.1.89
-
-- fix(deps): revert sqlite3 to ^2.9.4 — 3.x build hooks break dart compile
-
-## 0.1.90
-
-- fix(example): set the App Store copyright field in the deliver lanes
-
-## 0.1.91
-
-- feat(example): model presets wizard in settings
-- feat(example): audio/video playback in the file preview
-- feat(example): story-driven App Store screenshots with real photos
-
-## 0.1.92
-
-- feat(example): generate_video tool — async /videos job on the videoGeneration slot
-- feat: request_secret tool — agent asks the user for missing credentials
-- fix(example): theme-aware FaWorkBar — one component with the chat overlay
-- fix(example): HomeKit entitlement + longer homes wait + notify probe
-- feat(example): resume the day's session at boot instead of stacking empties
-
-## 0.1.93
-
-- fix(cli): empty Enter submits in guided flows; parse models[]/alias /models dialect
-- docs: commit identity policy — ai.teammate for contributors
-
-## 0.1.94
-
-- refactor(test): split agent_cli_test.dart into support + provider/model topical files
-- fix(cli): spec env names resolve only for the default hosted endpoint
-- fix: video download auth on own-origin urls + provider key name dedupe + keychain preflight
-- fix(cli): fa update misdetects a native binary in pub-cache as pub-global
-
-## 0.1.95
-
-- fix(example): pin js_widget_runtime to git fix for JSC use-after-free (TestFlight crash)
-- refactor(example): share chat message rendering with the in-app Fa overlay + full state goldens
-- fix(example): Fa panel is one bottom sheet, never two stacked cards
-
-## 0.1.96
-
-- fix(example): Home + Health apps scroll — root column → listView
-
-## 0.1.97
-
-- docs(example): AGENTS.md notes for the launcher home, chat sheet and shared composer
-- feat(example): session chat bottom sheet over the launcher (pager, shared composer)
-- feat(example): apps launcher home on narrow layouts (grid, folders, system tiles)
-- fix(example): home control disambiguation (room/UUID) + duplicate-bridge-id write routing
-- fix(example): preset carousel is full-bleed — cards slide behind the edges
-
-## 0.1.98
-
-- feat(example): session chat sheet v2 — mini bar with input, smooth physics
-
-## 0.1.99
-
-- fix(example): sheet UX — full-bleed, one surface, ghost panel gone
-
-## 0.1.100
-
-- refactor(example): drop unused members left by the sheet v3 rewrite
-- feat(example): sheet v3 — ONE panel: round icon ↔ mini bar ↔ full sheet
-
-## 0.1.101
-
-- fix(example): sheet respects the top safe area + light-theme golden
-
-## 0.1.102
-
-- feat(example): iOS-style home grid — icon-unit alignment, live reflow, resizable tiles
-- fix(example): drop the border on the floating chat bar/icon — shadow only
-- feat(example): tile span sizes + floating mini chat bar, directional sheet swipes
-- feat(example): live app tiles on the launcher + chat sheet mini-by-default
-
-## 0.1.103
-
-- feat(example): first-launch onboarding, scene3d wiring + 3D game demo, sheet/tile polish
-
-## 0.1.104
-
-- fix(example): reliable tile drops, full-width grid, widget drag cards
-
-## 0.1.105
-
-- feat(example): icons-per-row setting, tight row gap, pager bounce fix
-
-## 0.1.106
-
-- feat(example): app content respects the bottom safe area + onboarding replay
-
-## 0.1.107
-
-- docs: privacy policy — PRIVACY.md + published site page, onboarding links it
-
-## 0.1.108
-
-- fix(example): TestFlight JSC crash, ownership-aware demo sync, CRAP yellow zone
-
-## 0.1.109
-
-- feat: CRAP green zone (max ≤ 8), app integration tests, tool-dup fix
-
-## 0.1.110
-
-- fix(example): visible run errors, mini last-message strip, iOS-grade drag&drop, weather timeouts
-
-## 0.1.111
-
-- fix(example): TestFlight SIGSEGV root cause — serialized engine lifecycle
-
-## 0.1.112
-
-- feat(example): iOS background execution + Live Activity, key resolution fix, crash-churn guard, mini drag pill
-
-## 0.1.113
-
-- test(example): real-agent E2E on the macOS host + store promo artwork
-
-## 0.1.114
-
-- ci(ios): scope codesign rewrite to Runner, auto-sign the FaLiveActivity extension (bundle-id collision 90685)
-- fix(example): steer button interrupts the run, queued steers run after stop, sheet opens at the latest message
-
-## 0.1.116
-
-- fix(example): close action for full-chrome JS apps (map was unclosable), store copyright name
-
-## 0.1.117
-
-- feat(example): launcher home on all layouts (legacy session sidebar removed), App Store shots v2 ('your own apps, built by chat'), golden orphan gate
-
-## 0.1.119
-
-- feat(yoclip): Fa promo video workspace — 19s promo in 3 aspects x en/ru (App Preview + social + YouTube), creative treatment, VO, music bed, frame QA
-- test(example): realistic providers in the store_providers frame; pre-commit format gate scopes to package dirs (yoclip/ is a standalone workspace)
-
-## 0.1.120
-
-- feat(fa_ui): present editor/picker pages as constrained dialogs on wide canvases
-
-## 0.1.123
-
-- feat(site): TestFlight public beta link in the hero CTA row
-
-## 0.1.125
-
-- fix(example): pin js_widget_runtime@9498d0c — revert the native-release grace that defeated the lifecycle serialization (tf-6 SIGSEGV); drop the test-only grace config
-
-## 0.1.128
-
-- fix(apps): jscore multi-instance crash override + seed-error surface + map top inset
-
-## 0.1.130
-
-- feat(launcher): 'Restore reference version' tile menu item for demo apps
-
-## 0.1.132
-
-- feat(fa_ui): extract the agent chat into the shared fa_ui package
-
-## 0.1.133
-
-- feat(fa_ui): avatar builder + theme-driven chat surfaces
-- feat(fa_ui): host surface tokens + optional app bar in FaChatScreen
-- fix(fa_ui): FaChatScreen honors the host FaUiTheme in the chat theme
-
-## 0.1.134
-
-- feat(fa_ui): userBubble/userBubbleBorder tokens in FaUiTheme
-
-## 0.1.135
-
-- feat(fa_ui): providerId through the connect flow
-
-## 0.1.136
-
-- Add fa_llm package extracted from flutter_agent_memory llm layer
-
-## 0.1.137
-
-- chore(deps): bump flutter_gemma to latest official releases
-- feat(fa_llm_flutter): add FlutterGemma on-device provider
-
-## 0.1.138
-
-- feat(gemma): enable on-device Gemma provider on macOS
-- feat(fa_ui): wire fa_llm/fa_llm_flutter into provider config
-
-## 0.1.139
-
-- docs(gemma): update platform comments for macOS support
-
-## 0.1.140
-
-- feat(settings): show on-device providers in the Providers section
-- feat(settings): voice selection for the TTS media slot
-
-## 0.1.141
-
-- fix(macos): bundle LiteRT-LM companion dylibs for flutter_gemma
-
-## 0.1.142
-
-- macOS: no-sandbox release flavor, HealthKit support, privacy entitlements
-- Local models heading, Gemma 128k context, context-fit budget fix
-- feat(flutter_app): feature-gate WebLLM, expand Gemma context window, filter BYOK picker
-
-## 0.1.143
-
-- feat(macos): privacy prompts, configurable signing, and no-sandbox release for Fa
-
-## 0.1.146
-
-- fix(macos): split Debug entitlements for local flutter run
-
-## 0.1.147
-
-- fix(macos): surface EventKit authorization failures
-- feat(macos): allow explicit calendar permission bootstrap
-
-## 0.1.148
-
-- Gate JS apps and skills by platform
-
-## 0.1.149
-
-- feat(apps): Language Tutor rewrite + fitness-trainer device-path probes
-
-## 0.1.152
-
-- fix(providers): voice sample URLs are case-sensitive on the CDN
-
-## 0.1.153
-
-- feat(providers): Google Gemini media provider + MediaModelsSection in fa_ui
-
-## 0.1.157
-
-- fix(oauth): capture OpenRouter web callback via JS object postMessage
-
-## 0.1.162
-
-- fix(app): key field no longer prefills OPENROUTER_API_KEY for non-OpenRouter providers
-- fix(oauth): native iOS/macOS OAuth via HTTPS callback + custom scheme redirect
-- fix(oauth): iOS web redirect flow with state + verifier
-
-## 0.1.164
-
-- test(cli): avoid real network in /provider custom default URL test
-- refactor(self_manage): lower fallbackZipUpdate CRAP and cover zip path
-- ci: pin crap4dart to 0.2.1 to match pre-commit ratchet
-- fix(installer): fallback to .zip extraction when raw binary not in release
-
-## 0.1.167
-
-- chore: trigger auto-release for CLI binaries + subagents 2.0
-- feat(ui): AppsPanel with search/filters/sections for wide-layout right panel
-- fix: remove unused test class + imports causing CI analyze warning
-- fix(crap): decompose + cover all new methods to pass CRAP ratchet (12.0)
-
-## 0.1.168
-
-- fix(pages): web demo build is optional (dart:ffi from sqlite3 breaks it)
-- fix(installer): $zip_asset… unbound variable — brace the var before ellipsis
-- feat(ui): 'Add app' tile in Created-by-you section (prototype style)
-- feat(ui): system app tiles grid in AppsPanel (Calendar/Files/Notes/Maps/…)
-- feat(ui): tool tiles show display names + dropdown arrows (prototype style)
-- feat(ui): user profile section in sidebar bottom (matching prototype)
-- fix: suppress dead-code warning on new sidebar null check (line 198)
-- feat(ui): permission-denied card for tool errors (prototype style)
-- fix: pub.dev publish_to removed, Windows zip uses 7z instead of zip
-- feat(ui): Customize label in AppsPanel header (matching prototype)
-- feat(ui): composer matches prototype — star icon, Ask anything, up-arrow send
-- test(goldens): AppsPanel golden coverage — dark + light variants
-- feat(ui): session date grouping + 3-dot menu + subtitle timestamps
-- feat(ui): workspace header in wide layout + session tile 3-dot menu
-
-## 0.1.169
-
-- fix: fa update now copies version.txt alongside the new binary
-- feat(ui): permission cards with working action buttons
-- ci: CodeQL workflow — Dart + JS only (no Java/Kotlin, no Gradle in root)
-- fix(security): exact hostname match for testflight.apple.com (CodeQL #7)
-- fix(ui): settings/files/model picker as popup dialogs on wide screens
-- fix: disable Impeller on macOS to prevent resize crash
-- fix(installer): copy version.txt next to binary + fix version lookup path
-- feat(ui): FaMark sparkle brand icon (no background) + files goldens update
-- fix(security): URL sanitization in analytics.js + workflow permissions
-- fix(ui): full-height dividers — panels extend to window top on macOS
-- fix(ui): address prototype feedback — tabs, calendar, timer, model switch
-- Create SECURITY.md for security policy
-
-## 0.1.171
-
-- chore: trigger CI + auto-release for v0.1.171
-- fix(ci): quote sed command to fix YAML syntax
-- fix(ci): keep publish_to: none for analyzer; strip it only in the publish job
-- fix(installer): rm -f target before cp — break symlinks so version.txt lives next to the binary
-
-## 0.1.172
-
-- fix(version): use Platform.resolvedExecutable so version works regardless of invocation path
-
-## fa_llm-v0.1.1
-
-- feat: switch to hosted flutter_agent_memory dep, remove publish_to: none
-
-## 0.1.173
-
-- fix(ci): restrict auto-release tag matching to v*.*.*; fix pubspec version
-- feat(ui): auto-focus composer input on session open/switch
-- fix(testflight): fail on submit errors; fix framework bundle IDs; cleanup publish job
-- feat: switch to hosted flutter_agent_memory dep, remove publish_to: none
-- chore: add LICENSE to fa_llm for pub.dev
-- feat: prepare fa_llm for pub.dev publishing
-
-## 0.1.175
-
-
-- feat(providers): DIAL provider kind — `{baseUrl}/openai/deployments/{model}/chat/completions` with `Api-Key` auth, optional `DIAL_API_VERSION` query, `/openai/models` listing; `--provider dial --model <deployment>` headless
-
-## 0.1.176
-
-- fix(analyze): await in try block, drop unused imports
-- test(crap): decompose + cover new subagents/a2a/memory methods (CRAP ≤ 12)
-- feat(ui): brand icon in dark + light forms, styleguide colors in onboarding
-- chore: drop unused imports
-- fix(providers): commit the FA_PROVIDERS filter + enabledProviders definitions unbreaking main
-- style: dart format task_executor
-- docs(subagents): mark all phases done + AGENTS.md bullets for memory/a2a
-- test(subagents): real-model test skips without ZAI key, longer timeout
-- feat(a2a): phase 5b — fah serve --a2a HTTP mount + full client↔server loop verified live
-- feat(ui): onboarding top padding, privacy link, centered wide layout + light macOS icon
-- feat(a2a): phase 5a — a2a: config, A2aManager lazy connect, task tool a2a:<name> remote agents, /a2a status
-- feat(memory): phase 2 — compaction extraction hook, maintain() pipeline, /memory command
-- feat(ui): onboarding redesigned pixel-close to the reference prototype
-- feat(subagents): reply tool, agent_message sibling messaging, completed_without_reply notice + pending-queue guards
-- fix(ci): remove stray file "flutter_app/\" breaking the windows checkout
-- feat(ui): Focus Timer as standalone dark card with circular progress ring
-- feat(ui): onboarding rewritten to match reference — 3-col mockups, circular Focus Timer, colorful icons
-
-## 0.1.177
-
-- feat(ui): onboarding provider step is real and mandatory
-- test(crap): decompose + cover /agents panel methods (pure helpers in agent_tree.dart), public subagentManager getter
-- fix(analyze): drop redundant null guard in agents section
-- feat(app): agents panel in settings — live subagent tree with observe/send (CLI parity)
-- test(cli): /agents tree panel integration test (keyless)
-- feat(cli): agents viz A+B — live agents badge in status line, /agents tree panel with observe/send
-- fix(ui): saturated glyph colors for the light brand icon
-- feat(task): Claude Code agent compat — .claude/agents roots + model: frontmatter alias
-- fix(ui): macOS traffic-light clearance for pushed AppBar routes
-- fix(ui): pin the onboarding Privacy link to the footer center
-- feat(ui): single brand tile everywhere, glyph rebalanced in the icon
-- fix(analyze): drop unnecessary non-null assertion
-- feat(task): subagent model role — settings-picked delegation model (TaskModelsStore + roles: config), smol/explore precedence
-
-## 0.1.178
-
-- feat(app): live agents badge in FaWorkBar (CLI bg: parity) + fix cli_visual tests for new settings hub order and /agents tree
-
-## 0.1.179
-
-- fix(crap): simplify pickAgentAction dispatch; broaden badge visual soft-skip catch
-- chore: drop unused session_repo imports
-- feat(cli): extract active-agents badge to pure helper + unit tests; soft-skip live badge visual test
-- fix(tui): soft-wrap long input lines instead of horizontal clipping
-- feat(subagents): real JSONL child sessions at completion + /agents open <id> (race-free register)
-- feat(providers): list-first model pickers everywhere — quick search, manual escape, agent models flow
-- feat(cli): /agents child → Open session action — switch into the subagent's session
-
-## 0.1.180
-
-- feat(memory): keyword-only search fallback without an LLM provider
-- fix(subagents): fire-and-forget registry persistence + per-session rehydrate
-- fix(providers): connect + idle watchdogs on provider streams
-- feat(ui): brand provider icons in onboarding, file split, iOS icon sync
-- feat(session): never keep an untouched session file
-- chore: drop unused import
-- fix(cli): provider wizard asks for the key in roles mode; switches accept it
-- feat(subagents): crash-resilient child sessions — spawn-time async creation + incremental turn flush (serialized, fire-and-forget)
-- fix(memory): inject the <memory> section into the system prompt (CLI + app)
-- test(cli): drop flaky real-model live badge visual test (unit-covered badge logic); document why
-
-## 0.1.182
-
-- test(messaging): drop unused import (dart analyze warning)
-
-## 0.1.185
-
-- feat(tui): leave the mouse to the terminal by default (FA_TUI_MOUSE=1 to capture)
-- fix(app): iOS CodeMie SSO — run the real loopback callback server
-
-## 0.1.186
-
-- fix(crap): decompose FaTuiModel._submit/_wrappedInput (CRAP 12.14/12.01 -> in budget)
-- refactor(cli): split provider key helpers out of provider_commands.dart (2800-line gate)
-- fix(providers): roles-mode switches preserve the scoped key; messaging presence
-- test(cli): visual integration coverage for the new TUI UX
-- feat(tui): shell-style input history on ↑/↓
-- feat(messaging): live cross-instance chat — discovery, self-address, idle wake
-- test(app): web-safety guard — no Platform.is without a kIsWeb guard
-- test(messaging): visual integration for the agents inbox + terminal-safe marker
-- fix(app): no crash on CodeMie/ChatGPT taps in the web build
-
-## 0.1.187
-
-- refactor(ui): sane Settings structure — providers include on-device, one Models group
+- feat(cli): add auth-method picker for CodeMie SSO/JWT and OpenRouter OAuth/key
+- feat(cli): auto-restart CodeMie SSO when the saved cookie expired
+- fix(cli): catch uncaught errors and harden provider switch against crashes
+- fix(ui): make ChatComposer transparent and regenerate goldens
+- fix(network): use platform HTTP client for sandbox env, allow local HTTP, log bookmark failures
+- fix(macos): add app-scope bookmark entitlement and surface folder picker errors
 
 ## 0.1.188
-
 
 - feat(app): js_widget_runtime back on hosted pub (`^0.4.79`, the git pin
   dropped) — JS apps gain the Material 3 catalog: appBar/navigationBar/
@@ -1692,211 +1060,1074 @@
   shared filesystem), so `bash background: true` + steer-yield work in the
   sandbox too
 
-## 0.1.191
+## 0.1.187
 
-- feat(cli): add auth-method picker for CodeMie SSO/JWT and OpenRouter OAuth/key
-- feat(cli): auto-restart CodeMie SSO when the saved cookie expired
-- fix(cli): catch uncaught errors and harden provider switch against crashes
-- fix(ui): make ChatComposer transparent and regenerate goldens
-- fix(network): use platform HTTP client for sandbox env, allow local HTTP, log bookmark failures
-- fix(macos): add app-scope bookmark entitlement and surface folder picker errors
+- refactor(ui): sane Settings structure — providers include on-device, one Models group
 
-## 0.1.194
+## 0.1.186
 
-- fix(ci): merge Release.entitlements into the signed macOS build, don't strip them
+- fix(crap): decompose FaTuiModel._submit/_wrappedInput (CRAP 12.14/12.01 -> in budget)
+- refactor(cli): split provider key helpers out of provider_commands.dart (2800-line gate)
+- fix(providers): roles-mode switches preserve the scoped key; messaging presence
+- test(cli): visual integration coverage for the new TUI UX
+- feat(tui): shell-style input history on ↑/↓
+- feat(messaging): live cross-instance chat — discovery, self-address, idle wake
+- test(app): web-safety guard — no Platform.is without a kIsWeb guard
+- test(messaging): visual integration for the agents inbox + terminal-safe marker
+- fix(app): no crash on CodeMie/ChatGPT taps in the web build
 
-## 0.1.195
+## 0.1.185
 
-- fix(install): macOS CLI bundle + quarantine/sign handling
+- feat(tui): leave the mouse to the terminal by default (FA_TUI_MOUSE=1 to capture)
+- fix(app): iOS CodeMie SSO — run the real loopback callback server
 
-## 0.1.199
+## 0.1.182
 
-- fix(cli): show auth-method picker when adding openrouter/codemie from TUI
+- test(messaging): drop unused import (dart analyze warning)
 
-## 0.1.200
+## 0.1.180
 
-- fix(ios): correct force_load path — pod products live in a per-pod subdir
-- fix(ios): force-load cupertino_http pod binary + CI gate on its FFI symbols
-- fix(flutter_app): project mount sets agent cwd to /project so sessions are folder-scoped
+- feat(memory): keyword-only search fallback without an LLM provider
+- fix(subagents): fire-and-forget registry persistence + per-session rehydrate
+- fix(providers): connect + idle watchdogs on provider streams
+- feat(ui): brand provider icons in onboarding, file split, iOS icon sync
+- feat(session): never keep an untouched session file
+- chore: drop unused import
+- fix(cli): provider wizard asks for the key in roles mode; switches accept it
+- feat(subagents): crash-resilient child sessions — spawn-time async creation + incremental turn flush (serialized, fire-and-forget)
+- fix(memory): inject the <memory> section into the system prompt (CLI + app)
+- test(cli): drop flaky real-model live badge visual test (unit-covered badge logic); document why
 
-## 0.1.202
+## 0.1.179
 
-- fix(install): remove broken Dart fallback, respect FA_INSTALL_DIR, sign macOS CLI in CI
+- fix(crap): simplify pickAgentAction dispatch; broaden badge visual soft-skip catch
+- chore: drop unused session_repo imports
+- feat(cli): extract active-agents badge to pure helper + unit tests; soft-skip live badge visual test
+- fix(tui): soft-wrap long input lines instead of horizontal clipping
+- feat(subagents): real JSONL child sessions at completion + /agents open <id> (race-free register)
+- feat(providers): list-first model pickers everywhere — quick search, manual escape, agent models flow
+- feat(cli): /agents child → Open session action — switch into the subagent's session
 
-## 0.1.203
+## 0.1.178
 
-- fix(cli): provider picker, CodeMie auth refresh, skills access
-- feat(session): unify CLI and macOS app session storage
-- fix(providers): restore Kimi endpoint (api.kimi.com/coding/v1) and default model k3
-- fix(cli): auto-refresh expired CodeMie SSO cookie on startup
+- feat(app): live agents badge in FaWorkBar (CLI bg: parity) + fix cli_visual tests for new settings hub order and /agents tree
 
-## 0.1.204
+## 0.1.177
 
-- fix(providers): do not close shared HTTP client during OpenRouter OAuth exchange
+- feat(ui): onboarding provider step is real and mandatory
+- test(crap): decompose + cover /agents panel methods (pure helpers in agent_tree.dart), public subagentManager getter
+- fix(analyze): drop redundant null guard in agents section
+- feat(app): agents panel in settings — live subagent tree with observe/send (CLI parity)
+- test(cli): /agents tree panel integration test (keyless)
+- feat(cli): agents viz A+B — live agents badge in status line, /agents tree panel with observe/send
+- fix(ui): saturated glyph colors for the light brand icon
+- feat(task): Claude Code agent compat — .claude/agents roots + model: frontmatter alias
+- fix(ui): macOS traffic-light clearance for pushed AppBar routes
+- fix(ui): pin the onboarding Privacy link to the footer center
+- feat(ui): single brand tile everywhere, glyph rebalanced in the icon
+- fix(analyze): drop unnecessary non-null assertion
+- feat(task): subagent model role — settings-picked delegation model (TaskModelsStore + roles: config), smol/explore precedence
 
-## 0.1.206
+## 0.1.176
 
-- fix(app): skill discovery scans user-level roots (~/.claude, ~/.copilot, ...)
-- ci(macos): tolerate an existing keychain when packaging the TestFlight PKG
+- fix(analyze): await in try block, drop unused imports
+- test(crap): decompose + cover new subagents/a2a/memory methods (CRAP ≤ 12)
+- feat(ui): brand icon in dark + light forms, styleguide colors in onboarding
+- chore: drop unused imports
+- fix(providers): commit the FA_PROVIDERS filter + enabledProviders definitions unbreaking main
+- style: dart format task_executor
+- docs(subagents): mark all phases done + AGENTS.md bullets for memory/a2a
+- test(subagents): real-model test skips without ZAI key, longer timeout
+- feat(a2a): phase 5b — fah serve --a2a HTTP mount + full client↔server loop verified live
+- feat(ui): onboarding top padding, privacy link, centered wide layout + light macOS icon
+- feat(a2a): phase 5a — a2a: config, A2aManager lazy connect, task tool a2a:<name> remote agents, /a2a status
+- feat(memory): phase 2 — compaction extraction hook, maintain() pipeline, /memory command
+- feat(ui): onboarding redesigned pixel-close to the reference prototype
+- feat(subagents): reply tool, agent_message sibling messaging, completed_without_reply notice + pending-queue guards
+- fix(ci): remove stray file "flutter_app/\" breaking the windows checkout
+- feat(ui): Focus Timer as standalone dark card with circular progress ring
+- feat(ui): onboarding rewritten to match reference — 3-col mockups, circular Focus Timer, colorful icons
 
-## 0.1.207
+## 0.1.175
 
-- fix(app): explain empty responses that follow an image-bearing prompt
+- feat(providers): DIAL provider kind — `{baseUrl}/openai/deployments/{model}/chat/completions` with `Api-Key` auth, optional `DIAL_API_VERSION` query, `/openai/models` listing; `--provider dial --model <deployment>` headless
 
-## 0.1.208
+## 0.1.173
 
-- feat(attach): live CLI sessions in the app — presence, 1:1 view, input handover
+- fix(ci): restrict auto-release tag matching to v*.*.*; fix pubspec version
+- feat(ui): auto-focus composer input on session open/switch
+- fix(testflight): fail on submit errors; fix framework bundle IDs; cleanup publish job
+- feat: switch to hosted flutter_agent_memory dep, remove publish_to: none
+- chore: add LICENSE to fa_llm for pub.dev
+- feat: prepare fa_llm for pub.dev publishing
 
-## 0.1.210
+## fa_llm-v0.1.1
 
-- ci(mobile): skip the iOS artifact download when the IPA build was skipped
+- feat: switch to hosted flutter_agent_memory dep, remove publish_to: none
 
-## 0.1.211
+## 0.1.172
 
-- fix(cli): a pasted filesystem path is not a slash command
+- fix(version): use Platform.resolvedExecutable so version works regardless of invocation path
 
-## 0.1.212
+## 0.1.171
 
-- fix(bench): drop stale fa_tui show-import from tui_stream_bench
-- fix(tui): open-table boundary invariant — streamed tables never lose rows
-- feat(site): widgets gallery page + machine index; widgets GOAL
-- perf(tui): incremental transcript markdown+wrap — streaming flush x729 faster
-- fix(cli,app): attach delivery, pasted-path attachments; split cli inbox part file
+- chore: trigger CI + auto-release for v0.1.171
+- fix(ci): quote sed command to fix YAML syntax
+- fix(ci): keep publish_to: none for analyzer; strip it only in the publish job
+- fix(installer): rm -f target before cp — break symlinks so version.txt lives next to the binary
 
-## 0.1.213
+## 0.1.169
 
-- style(env): brace single-statement if in CwdOverrideEnv.backgroundJobsSupported
+- fix: fa update now copies version.txt alongside the new binary
+- feat(ui): permission cards with working action buttons
+- ci: CodeQL workflow — Dart + JS only (no Java/Kotlin, no Gradle in root)
+- fix(security): exact hostname match for testflight.apple.com (CodeQL #7)
+- fix(ui): settings/files/model picker as popup dialogs on wide screens
+- fix: disable Impeller on macOS to prevent resize crash
+- fix(installer): copy version.txt next to binary + fix version lookup path
+- feat(ui): FaMark sparkle brand icon (no background) + files goldens update
+- fix(security): URL sanitization in analytics.js + workflow permissions
+- fix(ui): full-height dividers — panels extend to window top on macOS
+- fix(ui): address prototype feedback — tabs, calendar, timer, model switch
+- Create SECURITY.md for security policy
 
-## 0.1.240
+## 0.1.168
 
-- fix(app,test): the whole quality gate goes green — CRAP ratchet, app suite, l10n and goldens (0.1.239)
-- fix(replay): compact system-notice rows in restored transcripts (0.1.238)
-- fix(provider): entry-name status label + persist catalog model picks (0.1.237)
-- docs(goal): codex gpt auth — cross-platform notes (Rust portability does not transfer)
-- docs(goal): codex gpt auth — point the reference at the open-source GitHub repo
-- docs(goal): codex gpt auth — ship the ChatGPT/Codex-backend provider
-- perf+fix: growing-tail throttle, codemie scoped key, status bar (0.1.236)
-- docs(goal): copilot — translate to English, add tickable implementation checklist
-- docs(goal): copilot — multi-account contract, mandatory TDD plan, Keychain-only tokens
-- docs(goal): copilot provider — multi-account support as first-class scope
-- docs(goal): add copilot provider goal — migrate copilot-proxy-go protocol into fa_llm
-- deps: flutter_agent_memory ^0.1.1 (0.1.235)
-- fix(memory): tombstoned delete via KBMemoryStore; hosted dep (0.1.234)
-- feat: schedule_message + bash stdin param; crash hardening (0.1.233)
-- perf(tui): O(1) in-place rollback of grown-tail arrays (0.1.232)
-- perf(tui): flush streamed output every 16ms (0.1.231)
-- perf(tui): cache formatted sticky echo rows (0.1.230)
-- feat(memory): memory_delete tool; quote-style service blocks (0.1.229)
-- fix(tui): add the missing system_notice_render import in fa_tui (0.1.228 fixup)
-- feat(tui): render system notices as dim blockquotes with a gear marker (0.1.228)
-- perf(tui): ASCII fast path + bounded line-width memo in tuiTextWidth (0.1.227)
-- fix(tui): hoist terminal reset before SIGINT use; wire compaction delta tail (0.1.226 follow-up)
-- fix(tui): restore terminal modes on Ctrl+C exit (0.1.226)
-- fix(tui): keep the input caret visible while a run streams (0.1.225)
-- fix(messaging): cross-project agent_message delivers to the recipient root (0.1.224)
-- feat: instant key echo + Ctrl+C exits like /exit (0.1.223)
-- fix(cli): visible hint after mid-run Ctrl+C abort (0.1.222)
-- chore(tool): land the frame-build bisect probe (gitignored path)
-- fix(tui): no-newline stream deltas stay incremental — typing lag gone (0.1.221)
-- chore(tool): land the key-latency probe (path is gitignored)
-- feat(tools): warn when a stale fa build writes old-format job logs here (0.1.220)
-- fix(cli,compaction): paste-a-path sends, honest compact status, bounded extraction, per-delta ctx memo (0.1.219)
-- fix(cli): FaTuiController stub carries setBusyPhase — web build compiles again
-- fix(app,site): widgets entry points visible and verifiable
-- docs(widgets): mark C2/M1 app-catalog milestone shipped with live checks
-- feat(app): widgets catalog — install from fa_widgets releases, slim the bundle
-- test(tools): assert shell job ids by shape after unique-id change
-- chore(messaging): skip messages-registry write when unchanged
-- fix(tools): collision-proof background job ids and image filenames
-- fix(session): serialize JSONL writers per file and quarantine torn lines on open
-- chore(local): rebuild fa-local bundle binary at 0.1.218
-- fix(tui,fork): serialize tracer writes through a flush queue
-- fix(tui,fork): FA_TUI_TRACE file sink flushes per event (crash-safe)
-- perf(tui,fork): render-aware cursor dedupe — zero-byte idle frames
-- perf(tui,fork): lazy frames, output dedupe, keypress-paint tracer
-- fix(tui): replay restored messages in full — no per-message head caps
-- fix(tui): wrap overflowing table cells — keep the box grid readable
-- perf(tui,fork): drop-frame fps throttle — stop sleeping the event loop
-- chore(vendor): inline dart_tui 2.0.0 under vendor/ for perf work
-- perf(tui): amortized history-cap trim — no full re-parse per streaming flush
-- feat(tui): truthful busy-row phase labels
-- feat(cli): pre-flight context guard — compact BEFORE an over-window request
+- fix(pages): web demo build is optional (dart:ffi from sqlite3 breaks it)
+- fix(installer): $zip_asset… unbound variable — brace the var before ellipsis
+- feat(ui): 'Add app' tile in Created-by-you section (prototype style)
+- feat(ui): system app tiles grid in AppsPanel (Calendar/Files/Notes/Maps/…)
+- feat(ui): tool tiles show display names + dropdown arrows (prototype style)
+- feat(ui): user profile section in sidebar bottom (matching prototype)
+- fix: suppress dead-code warning on new sidebar null check (line 198)
+- feat(ui): permission-denied card for tool errors (prototype style)
+- fix: pub.dev publish_to removed, Windows zip uses 7z instead of zip
+- feat(ui): Customize label in AppsPanel header (matching prototype)
+- feat(ui): composer matches prototype — star icon, Ask anything, up-arrow send
+- test(goldens): AppsPanel golden coverage — dark + light variants
+- feat(ui): session date grouping + 3-dot menu + subtitle timestamps
+- feat(ui): workspace header in wide layout + session tile 3-dot menu
 
-## 0.1.241
+## 0.1.167
 
-- fix(compaction): 10-minute attempt budget — a hung summarizer can no longer wedge the turn (0.1.240)
+- chore: trigger auto-release for CLI binaries + subagents 2.0
+- feat(ui): AppsPanel with search/filters/sections for wide-layout right panel
+- fix: remove unused test class + imports causing CI analyze warning
+- fix(crap): decompose + cover all new methods to pass CRAP ratchet (12.0)
 
-## 0.1.242
+## 0.1.164
 
-- feat(catalog,ui): remote models catalog + thinking markdown + table CRAP fix (0.1.241)
+- test(cli): avoid real network in /provider custom default URL test
+- refactor(self_manage): lower fallbackZipUpdate CRAP and cover zip path
+- ci: pin crap4dart to 0.2.1 to match pre-commit ratchet
+- fix(installer): fallback to .zip extraction when raw binary not in release
 
-## 0.1.243
+## 0.1.162
 
-- fix: gen_prompts trims description trailing newline
-- fix: skip subagent integration tests when MiniMax key missing
-- feat: v0.1.242 — MiniMax media picker fix + generate_video tool
-- fix(provider): minimax /model picker shows the full catalog, not the saved modelId
+- fix(app): key field no longer prefills OPENROUTER_API_KEY for non-OpenRouter providers
+- fix(oauth): native iOS/macOS OAuth via HTTPS callback + custom scheme redirect
+- fix(oauth): iOS web redirect flow with state + verifier
 
-## 0.1.244
+## 0.1.157
 
-- fix(cli): media slot flow propagates custom provider keyName
+- fix(oauth): capture OpenRouter web callback via JS object postMessage
 
-## 0.1.245
+## 0.1.153
 
-- fix(cli): status bar labels model with the ACTIVE saved provider
+- feat(providers): Google Gemini media provider + MediaModelsSection in fa_ui
 
-## 0.1.247
+## 0.1.152
 
-- feat(tools): Hailuo 2.3 video dialect + headless pre-flight compaction
-- fix(tui): key parser never swallows a trailing control byte into a text run
-- fix(cli): restored sessions label the model with the pinned-key account
+- fix(providers): voice sample URLs are case-sensitive on the CDN
 
-## 0.1.249
+## 0.1.149
 
-- fix(app): self-heal stale-catalog sha mismatches + card-ify the catalog list
-- test(app): hold-release on a classic tile now expects the menu
-- fix(app): installed widgets really swap Preview for Remove + tests
-- fix(app): re-add the _localApps field declaration (clobbered again)
-- fix(app): restore the _localApps field + refresh (clobbered mid-commit)
-- feat(app): catalog sheet — Remove for installed, Created by me, real avatars
-- fix(app): tile menu opens for plain icon widgets + right-click + soft hover
-- fix(site): openPreview really uses the RUNNER url — the torn write had resurrected the /widgets/preview/ path
-- fix(site): repair torn index.html (duplicate tail after </html>) + restore the app-only marks
-- feat(site): platform widgets are marked 'runs in the Fa app' instead of a broken preview
-- fix(site): preview iframe points at the jsr repo's own Pages runner
-- feat(site): widget preview runs the real Flutter/jsr runner — DOM shim removed
+- feat(apps): Language Tutor rewrite + fitness-trainer device-path probes
 
-## 0.1.251
+## 0.1.148
 
-- feat(catalog): stacked equal-width action buttons on tile rows
-- feat(launcher): Open menu item + icons, icon-square-only hover
-- feat(app): interactive live tiles via widget.interactive opt-in
-- feat(app): drop bundled demos — the catalog is the source of apps
-- fix(app): actually pass sessionInfoNames to the sidebar (torn-write casualty)
-- feat(app): the sidebar shows the CLI-written session_info names
-- fix(app): reset/remove/install refresh the grid + sane dialog width
+- Gate JS apps and skills by platform
 
-## 0.1.253
+## 0.1.147
 
-- fix(cli): the busy row stops lying about compaction hangs
-- feat(catalog): category filter chips above the widget list
-- refactor(cli): split for the 2800-line size gate
-- feat(providers): multi-account ChatGPT — per-entry keys, account picker, app parity
-- fix(providers): review fixes — string-typed oauth json, pre-send cookie baseline, SSE incomplete/failed as stream events
-- fix: drop duplicate models_for_endpoint import left by the main merge
-- fix(codex): pin chatgpt catalog visibility; note review fixes in changelog
-- fix(codex): terminate failed/incomplete SSE turns as error events
-- fix(codex): serialize OAuth expiry as a string; decode stays tolerant of int blobs
-- docs(goal): codex gpt auth — tick checklist, fill implementation log
-- feat(providers): unhide chatgpt provider — ship docs, changelog, live smoke
-- test(providers): chatgpt oauth token-leak guard — persisted registry + transcript carry no tokens
-- feat(providers): codex models — live GET /models with bundled-catalog fallback
-- feat(providers): codex http sse transport — header parity, cloudflare cookie replay, full event coverage
-- feat(providers): chatgpt oauth expiry tracking — expiresAt + needsRefresh
-- feat(providers): codex transport helpers — header parity, cloudflare cookie jar, rate-limit parsing
+- fix(macos): surface EventKit authorization failures
+- feat(macos): allow explicit calendar permission bootstrap
 
-## Unreleased
+## 0.1.146
 
-## Unreleased
+- fix(macos): split Debug entitlements for local flutter run
+
+## 0.1.143
+
+- feat(macos): privacy prompts, configurable signing, and no-sandbox release for Fa
+
+## 0.1.142
+
+- macOS: no-sandbox release flavor, HealthKit support, privacy entitlements
+- Local models heading, Gemma 128k context, context-fit budget fix
+- feat(flutter_app): feature-gate WebLLM, expand Gemma context window, filter BYOK picker
+
+## 0.1.141
+
+- fix(macos): bundle LiteRT-LM companion dylibs for flutter_gemma
+
+## 0.1.140
+
+- feat(settings): show on-device providers in the Providers section
+- feat(settings): voice selection for the TTS media slot
+
+## 0.1.139
+
+- docs(gemma): update platform comments for macOS support
+
+## 0.1.138
+
+- feat(gemma): enable on-device Gemma provider on macOS
+- feat(fa_ui): wire fa_llm/fa_llm_flutter into provider config
+
+## 0.1.137
+
+- chore(deps): bump flutter_gemma to latest official releases
+- feat(fa_llm_flutter): add FlutterGemma on-device provider
+
+## 0.1.136
+
+- Add fa_llm package extracted from flutter_agent_memory llm layer
+
+## 0.1.135
+
+- feat(fa_ui): providerId through the connect flow
+
+## 0.1.134
+
+- feat(fa_ui): userBubble/userBubbleBorder tokens in FaUiTheme
+
+## 0.1.133
+
+- feat(fa_ui): avatar builder + theme-driven chat surfaces
+- feat(fa_ui): host surface tokens + optional app bar in FaChatScreen
+- fix(fa_ui): FaChatScreen honors the host FaUiTheme in the chat theme
+
+## 0.1.132
+
+- feat(fa_ui): extract the agent chat into the shared fa_ui package
+
+## 0.1.130
+
+- feat(launcher): 'Restore reference version' tile menu item for demo apps
+
+## 0.1.128
+
+- fix(apps): jscore multi-instance crash override + seed-error surface + map top inset
+
+## 0.1.125
+
+- fix(example): pin js_widget_runtime@9498d0c — revert the native-release grace that defeated the lifecycle serialization (tf-6 SIGSEGV); drop the test-only grace config
+
+## 0.1.123
+
+- feat(site): TestFlight public beta link in the hero CTA row
+
+## 0.1.120
+
+- feat(fa_ui): present editor/picker pages as constrained dialogs on wide canvases
+
+## 0.1.119
+
+- feat(yoclip): Fa promo video workspace — 19s promo in 3 aspects x en/ru (App Preview + social + YouTube), creative treatment, VO, music bed, frame QA
+- test(example): realistic providers in the store_providers frame; pre-commit format gate scopes to package dirs (yoclip/ is a standalone workspace)
+
+## 0.1.117
+
+- feat(example): launcher home on all layouts (legacy session sidebar removed), App Store shots v2 ('your own apps, built by chat'), golden orphan gate
+
+## 0.1.116
+
+- fix(example): close action for full-chrome JS apps (map was unclosable), store copyright name
+
+## 0.1.114
+
+- ci(ios): scope codesign rewrite to Runner, auto-sign the FaLiveActivity extension (bundle-id collision 90685)
+- fix(example): steer button interrupts the run, queued steers run after stop, sheet opens at the latest message
+
+## 0.1.113
+
+- test(example): real-agent E2E on the macOS host + store promo artwork
+
+## 0.1.112
+
+- feat(example): iOS background execution + Live Activity, key resolution fix, crash-churn guard, mini drag pill
+
+## 0.1.111
+
+- fix(example): TestFlight SIGSEGV root cause — serialized engine lifecycle
+
+## 0.1.110
+
+- fix(example): visible run errors, mini last-message strip, iOS-grade drag&drop, weather timeouts
+
+## 0.1.109
+
+- feat: CRAP green zone (max ≤ 8), app integration tests, tool-dup fix
+
+## 0.1.108
+
+- fix(example): TestFlight JSC crash, ownership-aware demo sync, CRAP yellow zone
+
+## 0.1.107
+
+- docs: privacy policy — PRIVACY.md + published site page, onboarding links it
+
+## 0.1.106
+
+- feat(example): app content respects the bottom safe area + onboarding replay
+
+## 0.1.105
+
+- feat(example): icons-per-row setting, tight row gap, pager bounce fix
+
+## 0.1.104
+
+- fix(example): reliable tile drops, full-width grid, widget drag cards
+
+## 0.1.103
+
+- feat(example): first-launch onboarding, scene3d wiring + 3D game demo, sheet/tile polish
+
+## 0.1.102
+
+- feat(example): iOS-style home grid — icon-unit alignment, live reflow, resizable tiles
+- fix(example): drop the border on the floating chat bar/icon — shadow only
+- feat(example): tile span sizes + floating mini chat bar, directional sheet swipes
+- feat(example): live app tiles on the launcher + chat sheet mini-by-default
+
+## 0.1.101
+
+- fix(example): sheet respects the top safe area + light-theme golden
+
+## 0.1.100
+
+- refactor(example): drop unused members left by the sheet v3 rewrite
+- feat(example): sheet v3 — ONE panel: round icon ↔ mini bar ↔ full sheet
+
+## 0.1.99
+
+- fix(example): sheet UX — full-bleed, one surface, ghost panel gone
+
+## 0.1.98
+
+- feat(example): session chat sheet v2 — mini bar with input, smooth physics
+
+## 0.1.97
+
+- docs(example): AGENTS.md notes for the launcher home, chat sheet and shared composer
+- feat(example): session chat bottom sheet over the launcher (pager, shared composer)
+- feat(example): apps launcher home on narrow layouts (grid, folders, system tiles)
+- fix(example): home control disambiguation (room/UUID) + duplicate-bridge-id write routing
+- fix(example): preset carousel is full-bleed — cards slide behind the edges
+
+## 0.1.96
+
+- fix(example): Home + Health apps scroll — root column → listView
+
+## 0.1.95
+
+- fix(example): pin js_widget_runtime to git fix for JSC use-after-free (TestFlight crash)
+- refactor(example): share chat message rendering with the in-app Fa overlay + full state goldens
+- fix(example): Fa panel is one bottom sheet, never two stacked cards
+
+## 0.1.94
+
+- refactor(test): split agent_cli_test.dart into support + provider/model topical files
+- fix(cli): spec env names resolve only for the default hosted endpoint
+- fix: video download auth on own-origin urls + provider key name dedupe + keychain preflight
+- fix(cli): fa update misdetects a native binary in pub-cache as pub-global
+
+## 0.1.93
+
+- fix(cli): empty Enter submits in guided flows; parse models[]/alias /models dialect
+- docs: commit identity policy — ai.teammate for contributors
+
+## 0.1.92
+
+- feat(example): generate_video tool — async /videos job on the videoGeneration slot
+- feat: request_secret tool — agent asks the user for missing credentials
+- fix(example): theme-aware FaWorkBar — one component with the chat overlay
+- fix(example): HomeKit entitlement + longer homes wait + notify probe
+- feat(example): resume the day's session at boot instead of stacking empties
+
+## 0.1.91
+
+- feat(example): model presets wizard in settings
+- feat(example): audio/video playback in the file preview
+- feat(example): story-driven App Store screenshots with real photos
+
+## 0.1.90
+
+- fix(example): set the App Store copyright field in the deliver lanes
+
+## 0.1.89
+
+- fix(deps): revert sqlite3 to ^2.9.4 — 3.x build hooks break dart compile
+
+## 0.1.88
+
+- fix(example): retry deliver on Apple's bursty Connect API 500s
+- fix(example): preflight the macOS store version before deliver
+- fix(example): tolerate deliver's first-version 'No data' review-detail crash
+- fix(example): shrink RU promotional text under App Store's 170-char limit
+- ci: store-metadata workflow — App Store content upload on demand
+- feat(example): App Store content pipeline — store goldens, metadata, fastlane lanes
+
+## 0.1.87
+
+- fix(example): iOS build — HMHomeManagerDelegate members shadow the homeManager global
+- feat(example): HomeKit maximum API, empty-homes race fix, shareable debug logs
+- feat(example): privacy-first analytics facade (Firebase Analytics)
+- fix(example): contacts — system back steps out of detail, transient call hint
+- feat(example): rename sessions, arbitrary agent keys, persist approval mode
+
+## 0.1.86
+
+- fix(example): regenerate iOS Podfile.lock (Firebase 12.x + media players)
+- feat(example): calendar recurrence, alarms, calendars, span, and url
+- fix(providers): thinking — dedupe reasoning vs reasoning_details + tail collapse
+- feat(example): inline audio/video playback for sandbox media in chat
+
+## 0.1.85
+
+- feat(example): render sandbox images in chat — markdown imageBuilder + inline generate_image tiles
+- feat(example): expand Fa chat in place inside JS app views
+- fix(example): macOS pods — platform 14.0 + regenerated lock (Firebase 12.x)
+- fix(example): in-app Fa stays in the bottom sheet on first contact
+- chore(deps): update AI integration deps (firebase, flutter_gemma, js_widget_runtime) and sqlite3; migrate sqlite3 dispose -> close
+
+## 0.1.84
+
+- feat(example): preset default-model override + two-step media slot flow
+
+## 0.1.83
+
+- fix(example): drop the robot icon + Model header from the sidebar
+- fix(example): macOS keychain read + dead platform channels
+- feat(example): providers-first settings — provider editor page, default chat model flow, provider-based media slots
+- feat(example): providers-first settings — provider editor page, default chat model flow, provider-based media slots
+- fix(example): contacts list scroll + live search; paged full-list search with phone matching for dedup
+- fix(example): composer stop button while streaming; abort drains steer queue into transcript
+- chore(example): pin js_widget_runtime ^0.4.13 (image UA fix)
+- fix(providers): dedupe overlapping/cumulative reasoning chunks in openai-completions thinking stream
+
+## 0.1.82
+
+- fix(example): browser-ish UA for network images (runtime 0.4.13) + url image probes
+
+## 0.1.79
+
+- fix: commit the missing modifications from models-config and media UI (autostash unstaging)
+- feat(example): per-run date refresh, media models full-screen editor with /models picker
+- fix(example): dead onPressed buttons (runtime 0.4.12), calendar date-labeled lists + ±7d match, mic e2e probes
+- fix(example): current date in system prompt, foreground notification banners, contacts openUrl errors
+- feat: CLI models-config (models: config + /models set|remove|config) + media models settings UI
+
+## 0.1.78
+
+- feat: Keychain key persistence (iOS/macOS), /models endpoint listing, model marks, site updates
+- refactor(example): dedupe cache sections into shared model_cache_section; bump runtime 0.4.11
+- feat(example): transcription slot wiring + read_video (frames → vision)
+- feat(example): media models config + generate_image/speak/generate_music tools + js bridge
+- feat(example): iCloud sync for sessions/apps (iOS; macOS pending signing)
+- feat(example): local push notifications — channel, notify tool, js bridge, reminders demo
+- feat(example): HomeKit control (iOS) + mic/ASR voice input
+- feat(example): HealthKit read (iOS), scene3d dep (0.4.10), Android readiness doc
+
+## 0.1.77
+
+- feat(example): contacts domain — channel, agent tools, js bridge, demo app
+- feat(example): jsr.fa.llm chat (multi-turn) + stream (delta events)
+- feat(example): calendar write — channel, agent tools, js bridge, demo editing
+- feat(example): back-swipe contract (jsr.onBack), privacy manifests + usage descriptions
+
+## 0.1.76
+
+- feat(example): chrome modes, branding sweep (fah→Fa), textArea+scrolling docs (0.4.8), system-API design doc
+
+## 0.1.75
+
+- feat(example): animation nodes demo (entrance stagger, animatedSwitcher), theme+reply-sheet sources
+- feat(example): jsr.theme plumbing (light/dark live), Fa mini reply sheet, map-app golden
+- fix(example): chart node API alignment (0.4.7), gridView docs, bar chart demo
+
+## 0.1.72
+
+- feat(example): orbit work-bar, light theme, secrets UI, open_app + calendar tools, map node demos
+
+## 0.1.70
+
+- docs: mandate golden tests for all UI work in AGENTS.md
+- feat(example): brand fonts (Inter/JetBrainsMono), marketing-grade full-screen goldens, app quality gates
+- fix(example): absolute path for upload_picker_web conditional import
+- fix(example): update imports for the sandbox/services/ui layout
+- feat(cli): name the key source (environment vs secure store) in the 401 hint
+- feat(cli): diagnose auth failures with the key source (env vs store shadowing)
+- feat(cli): print the session resume command on exit
+- test(example): golden tests for every UI widget + pipeline golden gate
+- fix(agent): repair orphaned tool calls in the request payload
+- feat(cli): replay the full restored transcript with collapsed tool runs
+
+## 0.1.69
+
+- fix(example): unblind hosted models — vision detection + settings checkbox
+- feat(example): localize the UI (en/ru) with a hardcoded-string guard test
+- perf(cli): coalesce streamed output deltas to keep typing responsive
+- fix(cli): keep the ctx gauge at the last real usage after a failed run
+- fix(example): bump js_widget_runtime to ^0.4.3 — renderer no longer crashes on array borderRadius
+- perf(cli): memoize the markdown wrap pass so scrolling stays O(1)
+- fix(cli): re-attach follow on submit so the sticky echo pins again
+
+## 0.1.68
+
+- feat(cli): render provider error lines in red
+- fix(cli): hide the physical cursor while a run streams
+- feat(example): follow-tail auto-scroll + collapse long thinking blocks
+- fix(example): work bar for grid-opened apps; prove permission persistence
+
+## 0.1.67
+
+- feat(example): UX batch — collapsible tool output, Fa mark, in-app work bar
+- test(example): textField onChange delivers typed text to JS
+- fix(example): render attached-image messages — add the missing imageMessageBuilder
+
+## 0.1.66
+
+- feat(example): stream model thinking live into the chat
+- fix(example): replace the whole-run timeout with an idle watchdog
+- feat(example): SVG app icons for JS apps
+- feat(example): restore persisted sessions in the sidebar after restart
+
+## 0.1.65
+
+- feat(example): teach the js-apps skill how to test apps before handover
+- fix(example): fit the on-device Gemma context instead of engine overflow
+- test(example): tap test — calculator key reaches the JS engine
+- fix(cli): never hang on a keychain system modal
+- fix(example): bundle demo app assets — nested asset dirs need explicit entries
+
+## 0.1.64
+
+- fix(ios,macos): keep -exported_symbol out of Debug link flags
+
+## 0.1.63
+
+- test(example): end-to-end render test for the calculator demo app
+- feat(example): JS apps platform in the Fa app (js_widget_runtime)
+- docs: document the wasm_run symbol gate, strip-style pitfall, and new CI secrets/caches
+
+## 0.1.60
+
+- fix(ios): export wasm_run FFI symbols so Release/TestFlight builds keep them
+- ci: whitelist the tracked Firebase config for pub.dev's leak scanner
+
+## 0.1.59
+
+- fix(ios): use development provisioning profile for Debug builds
+- ci: unblock releases — vendor gitignore rule, pubspec catch-up, tag-ahead release
+- test(example): drop the unused accessGranted param (CI fatal-warnings)
+- feat: widen shell PATH for GUI apps (Homebrew python/node)
+
+## 0.1.53
+
+- ci(macos): fix provisioning profile entitlement extraction
+- fix(cli): rewind context crash and sticky echo duplication
+- ci(macos): fix provisioning profile entitlement key
+- fix(cli): enable mouse-wheel scrolling in TUI transcript
+- ci(macos): fix entitlements heredoc syntax
+- fix(cli): long user messages in TUI — ellipsis marker, calm scroll hint
+- ci(macos): embed provisioning profile, use git tags for version
+- fix(cli): degrade keychain write failures to session-only, never crash
+- fix(macos): raise deployment target to 12.0 for TestFlight
+- fix(macos): add LSApplicationCategoryType for TestFlight validation
+
+## 0.1.52
+
+- ci(ios): use absolute IPA path for TestFlight submit
+- ci(ios,macos): fix submit artifact path and macOS Ruby PATH
+
+## 0.1.51
+
+- ci(ios,macos): fix artifact downloads and macOS keychain password
+- ci(ios,macos): fix artifact path, macOS framework restore, action versions
+
+## 0.1.50
+
+- ci(ios,macos): fallback to GitHub release for WasmRun iOS framework
+- ci(ios,macos): restore WasmRun frameworks from local runner copy
+- ci(ios): restore WasmRun.xcframework from pub cache before build
+- fix(ios): use SRCROOT-relative path for wasm_run force_load
+- ci(macos): set working-directory for flutter steps and create .env placeholder
+- fix(ios): use absolute path for wasm_run force_load in Podfile
+- fix(ios): force-load wasm_run via Podfile post_install for Runner target
+- test(cli): wizard/registry coverage, help keyword, docs
+- fix(ios): force-load wasm_run in pod target only
+- fix(ios): use PODS_ROOT path for wasm_run force-load
+- fix(ios): force-load wasm_run static lib for arm64
+- ci(ios): create placeholder .env asset for build
+- chore(ios): track firebase_options.dart for CI builds
+- feat(cli): custom provider registry, guided wizard menus, TUI follow latch
+- ci(ios): download missing iOS platform before build
+- ci(ios): use simulator build to avoid missing device sdk
+- ci(ios): boot simulator before flutter build to avoid attached device
+- ci(ios): fix simctl invocation in fastlane build_only
+
+## 0.1.49
+
+- ci(ios): fix signing identity extraction
+- ci(ios): use fastlane build_only with temporary keychain
+- ci(ios): use persistent ci.keychain on self-hosted runner
+- ci(ios): use only build.keychain as default/search list, no OTHER_CODE_SIGN_FLAGS
+- ci(ios): import distribution cert into login.keychain and build without isolated keychain
+- ci(ios): download Apple WWDR G3 intermediate into build.keychain
+- ci(ios): import WWDR intermediate into build.keychain, keep it unlocked, pass --keychain
+- ci(ios): pass --keychain to codesign via OTHER_CODE_SIGN_FLAGS and add debug output
+
+## 0.1.48
+
+- feat(cli): guided custom provider setup (`/provider custom`): api type
+  (openai/anthropic/google-like), base URL, optional key (saved to the OS
+  secure store), then the model — picked from the endpoint's `/models`
+  list or typed manually; the TUI provider picker gains `+ custom
+  provider…`. (Code landed inside 7082bc8, swept up by a parallel commit.)
+
+## 0.1.47
+
+- ci: explicit export-options plist for iOS builds (UUID + full identity)
+- fix(example): pin the full signing identity name for iOS CI builds
+- fix(example): pin CODE_SIGN_IDENTITY iPhone Distribution for CI builds
+
+## 0.1.46
+
+- fix(example): manual code signing with Fa Profile for CI iOS builds
+- ci: placeholder firebase_options.dart for the repo-wide analyze
+- chore(example): untrack leftover Firebase configs from the pre-migration path
+- ci: cd /tmp before wiping the workspace in mirror checkout
+- ci(pages): tracked firebase_options template instead of git history
+- ci: self-updating mirror checkout in build-mobile.yml (same as build-macos)
+- ci(pages): placeholder firebase_options.dart for the web build
+- fix(example): keep Firebase Analytics from killing web startup
+- ci: quote pwsh run line breaking the ci.yml YAML parse
+- feat(example): unify bundle id to dev.fa1.app for a single App Store record
+- feat(cli): /provider runtime switching and OS secure key storage (/key)
+- fix(install): POSIX-clean install.sh and setup.sh for Ubuntu dash
+- docs: document app build/TestFlight workflows and secrets in AGENTS.md
+- ci: TestFlight submission for iOS and macOS (learn.ai pattern)
+- refactor(example): migrate example/flutter_example to flutter_app (fa package)
+
+## 0.1.45
+
+- feat(cli): fa update and fa uninstall quick commands
+- fix(ci): quote pwsh run line — leading & parsed as a YAML anchor, breaking the whole workflow
+- fix(windows): fa crash after TUI exit + installer mojibake
+- ci: installer-smoke job runs the one-line installers on every tag
+
+## 0.1.44
+
+- ci: fix Windows binary build + installer mojibake
+
+## 0.1.43
+
+- feat: agent skills + project context files (all platforms)
+- feat(cli): background subagents via the task tool
+- fix(cli): keep cursor pinned to input while the spinner ticks
+- ci: create GitHub Release before binary upload + embed version
+
+## 0.1.42
+
+- feat(cli): dart_tui interactive TUI with markdown rendering
+- ci: add build-mobile.yml (APK/iOS) and build-macos.yml (DMG) workflows
+- feat: multi-session support — AgentSessionManager (core) + FlutterSessionManager (app)
+- fix(example): hide empty assistant bubbles in chat
+- feat(example): debug-log system prompt platform and WASM runtime setup
+- docs(example): drop stale no-WASM-on-iOS comments after static linking fix
+- fix(example): iOS gets the full WASM sandbox command set in the system prompt
+
+## 0.1.41
+
+- fix(site): quote install URLs for zsh glob safety; refine iOS wasm_run static-library flags
+- fix(cli): avoid double stdin subscription in TUI REPL
+- fix(example): use DynamicLibrary.process for iOS wasm_run static linking
+
+## 0.1.40
+
+- fix(vendor): force-load wasm_run static lib via podspec and refresh Podfile.lock
+- refactor(site): centralize installer banner/recipe in install-config.yaml and use DMTools-style Windows PATH
+- fix(vendor): apply iOS wasm_run_flutter static-library linker flags in Podfile
+- feat(cli): numbered line-mode slash menu and guard TUI to interactive TTYs
+- fix(vendor): iOS wasm_run_flutter static library fallback
+- fix(install): use github releases/latest/download direct URLs, avoid API rate limits
+- feat(ci): build native fa binaries for win/mac/linux and download them in installers
+- feat(ios): enable WASM shell via statically linked executable
+- fix(site): repair install dropdown visibility and bust cache; make CLI raw-mode fallback graceful
+- feat(cli): add named session management via --session and /session commands
+- feat(cli): raw-mode TUI with slash menu, model picker, and dynamic version
+- feat(site): add Windows cmd.exe installer wrapper (install.bat)
+
+## 0.1.39
+
+- feat(cli): Pi-style terminal banner, status bar, and /help filtering
+- fix(site,install): remove DMTools from install dropdown and reword PATH symlink comment
+- fix(install): make fa available immediately after install without shell reload
+- feat(site): add DMTools install options to site dropdown
+- fix(example): split SandboxPlatform.mobile into android/ios and disable shell command ads on iOS
+- refactor(install): split installer into non-interactive install + interactive setup wizard
+- fix(cli,install): primary command is fa, auto-add pub-cache to PATH
+- fix(site): cache-bust web demo assets on every deploy
+- fix(example): render user messages through the harness loop
+- fix(site): mktemp compatibility on macOS
+
+## 0.1.38
+
+- feat(site): Windows PowerShell installer + generated menus from install-config.yaml
+- chore(macos): set bundle identifier to dev.fa1.macos and update copyright
+- fix(site): use correct GA4 measurement ID (G-0Z3SW38FYC) and Fa mobile app label
+- fix(ios): graceful WASM fallback — app starts without wasm shell on iOS
+- feat(prompt-tools): slim on-device system prompt — compact schemas + fewer tools
+- feat(cli): modern TUI pack — ! shell commands, /models filter, status line
+- chore(site): switch GA measurement ID to Firebase web stream
+- feat(cli): interactive installer with progress bar, provider/model picker, and config setup
+- fix(example): readable ONNX/WebGPU crash messages + verified engine recovery
+
+## 0.1.37
+
+- fix(example): halve ONNX Gemma context window to 2048 (WebGPU OOM mitigation)
+- feat: optional API token for custom providers (local servers need no key)
+- feat(cli): banner shows baseUrl+key status, connection-refused hint, version in --help
+- chore(example): ignore Firebase config files with real API keys
+- fix(site): full-width header background and Fa branding
+- feat(example): release prep — Fa branding, icons, bundle IDs, Firebase Analytics
+- feat(cli): prompt overrides (config prompts: + --system-prompt[-file]) and full --help reference
+
+## 0.1.36
+
+- fix(example): WebLLM context windows sized for the Fa system prompt + compaction scales with model window
+- feat(cli): headless mode — fa "prompt", -p alias, file-as-prompt (md/txt content, binary path ref)
+
+## 0.1.35
+
+- feat(example): persist last connection + downloaded-models quick start on setup screen
+- feat(tools): lsp tool backed by the Dart analysis server (diagnostics/definition/references/rename)
+
+## 0.1.34
+
+- feat(tools): task tool — parallel subagents with schema-validated results (omp port)
+- feat(agent): TTSR stream rules — abort, inject, retry mid-generation (omp port)
+- feat(providers): model roles (default/smol/slow/plan) with fallback chains, key rotation, path overrides
+
+## 0.1.33
+
+- feat(tools): read selector grammar (:A-B, :A+C, multi-range, :raw) + zip inner paths + SQLite reads
+- feat(tools): image read parity with pi (byte cap, pass-through, EXIF, placeholders) + transcribe_audio tool
+- feat(site): set GA4 measurement ID
+
+## 0.1.32
+
+- feat(tools): web_search with provider chain (DDG keyless first, Brave/Tavily behind secrets) + web_fetch markdown extraction with a pub.dev site handler
+
+## 0.1.31
+
+- feat(tools): hashline edit format with content-hash anchors (omp port)
+- feat(core): approval tiers with per-tool policy, bash interceptor, CLI/app prompt UIs
+- feat(example): model lineup — drop <1.5GB presets, add Gemma 4 E4B ONNX (~5.2GB)
+
+## 0.1.30
+
+- feat(example): WebLLM presets refresh — Qwen3.5 + Qwen2.5-Coder (web-llm 0.2.84)
+- feat(example): visible app name is Fa (assistant label, AppBar, transcript, system prompt)
+
+## 0.1.29
+
+- fix(example): transformers.js download filter+progress, SVG/upload/attach UX, provider-error robustness
+
+## 0.1.28
+
+- feat(example): central sandbox command registry drives the Fa system prompt
+- fix(example): web upload fix + chat uploads→uploads/ + light HTML preview + session delete
+
+## 0.1.27
+
+- feat(example): transformers.js Gemma provider on web (ONNX q4f16, tools via prompt wrapper)
+- feat(brand): rename visible brand to Fa + app favicon matches the site
+
+## 0.1.26
+
+- fix(example): Gemma web uses -web.litertlm builds + Gemma cache management in settings
+
+## 0.1.25
+
+- ci: coalesce auto-releases to <=1 per 2h + scheduled catch-up
+
+## 0.1.24
+
+- feat(example): brand app icon for all platforms (gradient >_ mark)
+
+## 0.1.23
+
+- feat(example): markdown/HTML file previews + auto-refresh on agent file mutations
+
+## 0.1.22
+
+- refactor(example): WebLLM goes chat-only + universal prompt-tools wrapper
+
+## 0.1.21
+
+- feat(example): Gemma provider on web via flutter_gemma litert-lm web (Gemma 4 tools in-browser)
+
+## 0.1.20
+
+- feat(core): prompt-based tool-calling wrapper (universal chat-model tools)
+
+## 0.1.19
+
+- fix(example): settings dialogs adapt to narrow phone screens
+
+## 0.1.18
+
+- feat(example): Gemma 4 on-device provider via flutter_gemma (iOS/Android)
+
+## 0.1.17
+
+- feat(example): custom provider management + WebLLM model cache management in settings
+
+## 0.1.16
+
+- feat(example): left sidebar (model picker + sessions), files move right
+
+## 0.1.15
+
+- feat(example): WebLLM function calling (tools for Hermes-3 FC preset)
+
+## 0.1.14
+
+- feat(example): branded web loading splash (first-frame fade)
+
+## 0.1.13
+
+- feat(example): dark theme matching the landing (terminal aesthetic)
+
+## 0.1.12
+
+- feat(example): full WebLLM preset list matching flutter_agent_memory (22 models)
+
+## 0.1.11
+
+- feat(example): WebLLM on-device provider for the web demo (no API key needed)
+
+## 0.1.10
+
+- feat(site): capability comparison table (Browser/macOS/iOS/Android/Windows)
+
+## 0.1.9
+
+- feat(example): web file upload + IndexedDB-persisted sandbox FS
+
+## 0.1.8
+
+- feat(site): SEO/GEO pack + OG share image
+
+## 0.1.7
+
+- fix(example): sharpen Ollama Cloud CORS guidance in BYOK notes
+
+## 0.1.6
+
+- feat(site): GitHub Pages landing + live web demo with BYOK
+- feat(example): BYOK connection settings with provider presets
+
+## 0.1.5
+
+- refactor(prompts): extract LLM prompts to prompts/*.md + codegen (AGENTS.md convention)
+
+## 0.1.4
+
+- chore: mark fake PEM stubs as false_secrets for pub validation
+
+## 0.1.3
+
+- ci: fix auto-release tag push — annotated tag + --atomic (lightweight tags are not sent by --follow-tags)
+- test(providers): Ollama Cloud live integration tests (gpt-oss:20b default, OLLAMA_MODEL override)
+- ci: create placeholder .env for the example app (asset_does_not_exist)
+- fix(example): mobile sessions no longer land in a doubled host path
+- ci: fix quality gate — install Flutter SDK + example pub get for repo-wide analyze
+- ci: auto-release on push to main (patch bump + tag, OIDC publish) + OLLAMA_API_KEY in integration env
+- feat(example): file browser panel (tree + preview, collapsible on wide screens)
+- test(providers): live integration tests (OpenRouter live, Anthropic/Google key-gated)
+- feat(sandbox): pip-lite for sandbox python (pure-python wheels)
+- feat(sandbox): lua interpreter (WASI) in the mobile shell
+- feat(sandbox): small utils batch (tree, file, xz/bzip2 -d, base64+hashes on web)
+- feat(sandbox): ssh/scp/sftp exec builtins via dartssh2
+- feat(sandbox): nslookup/dig + whois network diag builtins
+- feat(sandbox): diff/patch builtins (Dart, iOS+web)
+- feat(secrets): env injection + redaction (SecretsStore)
+- feat(sandbox): web command parity with iOS shell
+- feat(example): python3/qjs on web via CDN interpreters + copy-session button
+- chore: remove ssh debug script
+- feat(sandbox): sqlite3 CLI (WASI build from official amalgamation)
+- style: curly braces in web_git remote add (lint info)
+- feat(web): local git in the browser sandbox (MemoryShell)
+- feat(sandbox): QuickJS JavaScript engine (qjs/js) + web parity checks
+- feat(sandbox): python3 (CPython 3.14 WASI) in the mobile shell
+- feat(tools): edit (str_replace) tool + sandbox path mapping + coding system prompt
+- feat(git): push over smart HTTP (receive-pack) + SSH transport (dartssh2)
+- feat(git): remote/fetch subcommands, checkout -b, branch -r, clone fixes
+- fix(mobile shell): curl/wget --version, --help, and no-URL error message
+- feat(git): smart HTTP git-upload-pack clone for any public remote
+- feat(web): pure-Dart MemoryShell for the browser + flutter build web fixed
+- feat(mobile shell): cd/export/unset, $VAR expansion, grep/wget, du/stat/tac/expr/id/relpath builtins
+- feat(mobile shell): add git support via dart-git + GitHub archive clone
+- feat(mobile shell): add dart-native curl/jq/yq builtins
+- feat(mobile shell): add WASM sed/awk/tar/gzip/zip+unzip, env builtin, redirect capture fix, POSIX double-quote escapes
+- feat(mobile shell): add shell builtins (test, which, whoami, xargs, command -v)
+- chore: remove stray temp files accidentally committed
+- test: add shell command integration tests (host + WASM sandbox catalog)
+- fix(ls tool): return basename when path points to a file
+- fix(ios): get WASM shell working on iOS simulator
+- feat(example): replace busybox with permissive uutils/ripgrep WASM sandbox
+- feat(example): sandboxed WASM bash shell for mobile/web via busybox+wasm_run
+- fix(example): cache streaming/error state in ChatScreen for immediate UI updates and add multi-turn test
+- fix(example): notify UI before persisting so streaming indicator hides immediately
+- fix(example): throttle and incrementally sync messages to avoid SliverAnimatedList crash
+- fix(example): move input bar outside Chat widget to fix layout and semantics
+- fix(example): replace package Composer with custom input bar to fix ParentDataWidget crash
+- feat(flutter_example): integrate flutter_chat_ui with markdown and tool cards
+- feat(flutter_example): load API key from .env for simulator runs
+- fix(flutter): typing indicator, error banner, 90s timeout; feat(cli): persist last model/provider/mode in ~/.fah/config.yaml
+- Add Flutter mobile example with path_provider + LocalExecutionEnv
+- Add pi-style agent modes and prompt templates to CLI
+- Clean lint info in plugin tests
+- Update GOAL.md with plugin/package extension API
+- Add plugin/package extension system with built-in inspect_image plugin
+- Add inspect_image tool: dedicated vision model analysis like pi-inspect-image
+- Add fah/fa executables, rebrand system prompt, image support in read tool
+- Add CLI harness: bin/fah REPL with builtin tools, sessions, compaction
+- Format codebase, fix lint info, shorten pubspec description (pana 160/160); add format gate to pre-commit
+- CI: GitHub Actions quality gates + OIDC pub.dev publish on version tags
+- Phase 3: token estimation and LLM compaction pipeline
+- Phase 3: ExecutionEnv abstraction and append-only JSONL session tree
+- Phase 2: AgentTool registry with JSON-schema param validation
+- Phase 2: stateful Agent with steering/follow-up queues and hooks
+- GOAL.md: TDD for new code, coverage target >90%, push after every card
+- Phase 2: port low-level agent loop with AgentEvent stream and CancelToken abort
+- Phase 1: context-overflow detection, Retry-After parsing, sealed exception hierarchy
+- Phase 1: port Google provider adapter with native functionCalling streaming
+- Phase 1: port Anthropic provider adapter with native tool_use/thinking streaming
+- Phase 0: port openai-completions provider adapter (OpenRouter-ready) with errors-as-events and CancelToken abort
+- Phase 0: port AssistantMessageEventStream contract and SSE line decoder from pi-mono
+- GOAL.md: allow agent publishing on explicit user instruction; OIDC for tagged releases
+
+## 0.1.2
+
+- test(providers): Ollama Cloud live integration tests (gpt-oss:20b default, OLLAMA_MODEL override)
+- ci: create placeholder .env for the example app (asset_does_not_exist)
+- fix(example): mobile sessions no longer land in a doubled host path
+- ci: fix quality gate — install Flutter SDK + example pub get for repo-wide analyze
+- ci: auto-release on push to main (patch bump + tag, OIDC publish) + OLLAMA_API_KEY in integration env
+- feat(example): file browser panel (tree + preview, collapsible on wide screens)
+- test(providers): live integration tests (OpenRouter live, Anthropic/Google key-gated)
+- feat(sandbox): pip-lite for sandbox python (pure-python wheels)
+- feat(sandbox): lua interpreter (WASI) in the mobile shell
+- feat(sandbox): small utils batch (tree, file, xz/bzip2 -d, base64+hashes on web)
+- feat(sandbox): ssh/scp/sftp exec builtins via dartssh2
+- feat(sandbox): nslookup/dig + whois network diag builtins
+- feat(sandbox): diff/patch builtins (Dart, iOS+web)
+- feat(secrets): env injection + redaction (SecretsStore)
+- feat(sandbox): web command parity with iOS shell
+- feat(example): python3/qjs on web via CDN interpreters + copy-session button
+- chore: remove ssh debug script
+- feat(sandbox): sqlite3 CLI (WASI build from official amalgamation)
+- style: curly braces in web_git remote add (lint info)
+- feat(web): local git in the browser sandbox (MemoryShell)
+- feat(sandbox): QuickJS JavaScript engine (qjs/js) + web parity checks
+- feat(sandbox): python3 (CPython 3.14 WASI) in the mobile shell
+- feat(tools): edit (str_replace) tool + sandbox path mapping + coding system prompt
+- feat(git): push over smart HTTP (receive-pack) + SSH transport (dartssh2)
+- feat(git): remote/fetch subcommands, checkout -b, branch -r, clone fixes
+- fix(mobile shell): curl/wget --version, --help, and no-URL error message
+- feat(git): smart HTTP git-upload-pack clone for any public remote
+- feat(web): pure-Dart MemoryShell for the browser + flutter build web fixed
+- feat(mobile shell): cd/export/unset, $VAR expansion, grep/wget, du/stat/tac/expr/id/relpath builtins
+- feat(mobile shell): add git support via dart-git + GitHub archive clone
+- feat(mobile shell): add dart-native curl/jq/yq builtins
+- feat(mobile shell): add WASM sed/awk/tar/gzip/zip+unzip, env builtin, redirect capture fix, POSIX double-quote escapes
+- feat(mobile shell): add shell builtins (test, which, whoami, xargs, command -v)
+- chore: remove stray temp files accidentally committed
+- test: add shell command integration tests (host + WASM sandbox catalog)
+- fix(ls tool): return basename when path points to a file
+- fix(ios): get WASM shell working on iOS simulator
+- feat(example): replace busybox with permissive uutils/ripgrep WASM sandbox
+- feat(example): sandboxed WASM bash shell for mobile/web via busybox+wasm_run
+- fix(example): cache streaming/error state in ChatScreen for immediate UI updates and add multi-turn test
+- fix(example): notify UI before persisting so streaming indicator hides immediately
+- fix(example): throttle and incrementally sync messages to avoid SliverAnimatedList crash
+- fix(example): move input bar outside Chat widget to fix layout and semantics
+- fix(example): replace package Composer with custom input bar to fix ParentDataWidget crash
+- feat(flutter_example): integrate flutter_chat_ui with markdown and tool cards
+- feat(flutter_example): load API key from .env for simulator runs
+- fix(flutter): typing indicator, error banner, 90s timeout; feat(cli): persist last model/provider/mode in ~/.fah/config.yaml
+- Add Flutter mobile example with path_provider + LocalExecutionEnv
+- Add pi-style agent modes and prompt templates to CLI
+- Clean lint info in plugin tests
+- Update GOAL.md with plugin/package extension API
+- Add plugin/package extension system with built-in inspect_image plugin
+- Add inspect_image tool: dedicated vision model analysis like pi-inspect-image
+- Add fah/fa executables, rebrand system prompt, image support in read tool
+- Add CLI harness: bin/fah REPL with builtin tools, sessions, compaction
+- Format codebase, fix lint info, shorten pubspec description (pana 160/160); add format gate to pre-commit
+- CI: GitHub Actions quality gates + OIDC pub.dev publish on version tags
+- Phase 3: token estimation and LLM compaction pipeline
+- Phase 3: ExecutionEnv abstraction and append-only JSONL session tree
+- Phase 2: AgentTool registry with JSON-schema param validation
+- Phase 2: stateful Agent with steering/follow-up queues and hooks
+- GOAL.md: TDD for new code, coverage target >90%, push after every card
+- Phase 2: port low-level agent loop with AgentEvent stream and CancelToken abort
+- Phase 1: context-overflow detection, Retry-After parsing, sealed exception hierarchy
+- Phase 1: port Google provider adapter with native functionCalling streaming
+- Phase 1: port Anthropic provider adapter with native tool_use/thinking streaming
+- Phase 0: port openai-completions provider adapter (OpenRouter-ready) with errors-as-events and CancelToken abort
+- Phase 0: port AssistantMessageEventStream contract and SSE line decoder from pi-mono
+- GOAL.md: allow agent publishing on explicit user instruction; OIDC for tagged releases
+
+## 0.1.1
+
+- Ported pi-mono `packages/ai`: EventStream contract (partial-first deltas,
+  errors-as-events), SSE line decoder, openai-completions (OpenRouter-ready),
+  Anthropic and Google provider adapters, usage/cost accounting,
+  context-overflow detection, `Retry-After` parsing.
+- Ported pi-mono `packages/agent`: low-level agent loop, stateful `Agent`
+  with steering/follow-up queues and hooks, `AgentTool` registry with
+  JSON-schema param validation.
+- Sessions and context management: `ExecutionEnv` abstraction (pure-Dart
+  memory impl + `dart:io` impl in `lib/io.dart`), append-only JSONL session
+  tree with branching/labels, token estimation and LLM compaction pipeline.
+- CLI harness (`bin/fah.dart`): a pi-like terminal agent with built-in
+  `read`/`write`/`ls`/`bash` tools on the `ExecutionEnv` abstraction
+  (`lib/src/tools/builtin_tools.dart`), a pure-Dart REPL core with injectable
+  IO (`lib/src/cli/agent_cli.dart`) — live streaming output, slash commands
+  (`/exit`, `/reset`, `/compact`, `/stats`, `/model`, `/help`), steering,
+  Ctrl-C abort, JSONL session persistence, and auto-compaction.
+
+## 0.1.0
+
+- Initial project setup: package skeleton, quality gates (analyze, tests,
+  coverage ≥ 80%, duplication < 1%), GOAL.md with the pi-mono port roadmap.
+- Seeded `CancelToken` / `CancelTokenSource` / `CancelledException` — the
+  universal cancellation primitive (Dart counterpart of web `AbortSignal`).
+
+## 0.1.268
+
+- memory: flutter_agent_memory roadmap hints (LLM role, graph screen, multi-root)
+- feat(memory): flutter_agent_memory 0.2.0 — merge-friendly ids, git support, policy-driven memory_add (0.1.267)
+
+## 0.1.269
+
+- memory: maintain() leveling pass (level: 2 on 13 notes)
+- fix(tui): immortal Working… spinner wedge — 100% CPU for 8h after run end (0.1.268)
 
 ## Unreleased

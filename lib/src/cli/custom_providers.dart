@@ -23,6 +23,7 @@ const customProviderApiTypes = [
   'dial',
   'openrouter',
   'minimax',
+  'zai',
   'kimi',
   'chatgpt',
   'copilot',

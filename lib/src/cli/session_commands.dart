@@ -12,7 +12,46 @@ extension on AgentCli {
     _subagentManager.reset();
     // The status meter belongs to the session (see _switchToMetadata).
     _usage.reset();
-    final metadata = await _findSessionByName(trimmed);
+    final matches = await _sessionNameMatches(trimmed);
+    SessionMetadata? metadata;
+    if (matches.length > 1 &&
+        [
+              for (final m in matches)
+                if (m.cwd == _env.cwd) m,
+            ].length !=
+            1) {
+      // Ambiguous: several in this folder or none in it — ask which one
+      // (the TUI wizard picker, or a numbered list in line mode). The
+      // caller's flow gate buffers an answer typed AHEAD of the prompt
+      // instead of dispatching it as a command.
+      final options = <FlowOption>[
+        for (var i = 0; i < matches.length; i++)
+          (
+            '$i',
+            '${matches[i].cwd} — ${matches[i].id}',
+            _sessionMatchDescription(matches[i]),
+          ),
+      ];
+      final picked = await _pickOption(
+        "Several sessions named '$trimmed'",
+        options,
+      );
+      if (picked == null) {
+        io.writeln('session switch cancelled');
+        return;
+      }
+      metadata = matches[int.parse(picked)];
+    } else {
+      metadata = _resolveSessionNameMatch(matches);
+      if (matches.length > 1 && metadata != null) {
+        io.writeln(
+          _style.dim(
+            "note: ${matches.length} sessions named '$trimmed' — opened "
+            'this folder\'s (${metadata.id})',
+          ),
+        );
+      }
+    }
     if (metadata != null) {
       await _switchToMetadata(metadata, trimmed);
       return;
@@ -24,6 +63,13 @@ extension on AgentCli {
     _syncMailboxPrefix();
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
+  }
+
+  /// The `/session <name>` disambiguation row's second line: when the
+  /// session was last active.
+  String _sessionMatchDescription(SessionMetadata metadata) {
+    final stamp = metadata.lastUpdatedAt ?? metadata.createdAt;
+    return 'last active ${stamp.toIso8601String()}';
   }
 
   /// Switches to an existing session by metadata (picker, /resume). Adopts
@@ -193,6 +239,36 @@ extension on AgentCli {
       io.writeln(_style.dim('rename: /rename-session <name>'));
       return;
     }
-    await _switchSession(trimmed);
+    // Detached (see _switchSessionGated): the ambiguity picker's answer
+    // must reach the pending prompt through the NEXT line dispatch.
+    unawaited(_switchSessionGated(trimmed));
+  }
+
+  /// The detached switch: runs OUTSIDE the sequential line dispatch so the
+  /// ambiguity picker's answer line can be routed to the pending prompt —
+  /// awaiting the switch inline would deadlock the line REPL (the dispatch
+  /// waits for the switch, the switch waits for the answer only the next
+  /// dispatch could deliver — the reason the guided provider flows run
+  /// detached too). The gate buffers input for the switch's lifetime; a
+  /// second `/session` while one runs is ignored.
+  Future<void> _switchSessionGated(String trimmed) {
+    if (_providerFlowActive) return Future<void>.value();
+    _providerFlowActive = true;
+    return _switchSession(trimmed).whenComplete(() {
+      _providerFlowActive = false;
+      // Lines typed DURING the switch are real input, not flow junk —
+      // redispatch them after the switch (in order), never drop them:
+      // `/session new` + a prompt typed right after used to lose the
+      // prompt to the flow-junk clear.
+      final buffered = List<String>.of(_promptLineBuffer);
+      _promptLineBuffer.clear();
+      // The switch runs outside the dispatch's prompt lifecycle: redraw
+      // the idle prompt so the status meter (zeroed by the switch) shows
+      // in the transcript like it did when the switch was awaited inline.
+      if (!_exited && !isBusy) _writeIdlePrompt();
+      for (final line in buffered) {
+        if (line.isNotEmpty) unawaited(_dispatchInput(line, line));
+      }
+    });
   }
 }

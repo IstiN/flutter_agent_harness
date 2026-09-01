@@ -14,6 +14,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'memory_config_loader.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/open_app_tool.dart';
@@ -492,8 +493,14 @@ class AgentService extends ChangeNotifier
     }
 
     _childSessionFactory = childSessionFactory;
+    // Project-level .fah/config.yaml memory: wins over the user one.
+    final memoryConfig = loadAppMemoryConfig(env.sessionCwd);
     _memoryController = MemoryController(
       env: env,
+      // `memory:` section of ~/.fah/config.yaml — the same git-backed
+      // memory path overrides the CLI honors (null = .fah/memory default).
+      projectStoragePath: memoryConfig?.projectPath,
+      userStoragePath: memoryConfig?.userPath,
       // Semantic search + consolidate() need an LLM: per call the smol
       // task-model override (resolver is built below — the closure reads it
       // lazily), else the main model.

@@ -101,10 +101,31 @@ Future<void> _runCopilotStream(
         return;
       }
       final statuses = <int>[];
+      // The token knows its tenant's API host (proxy-ep): enterprise
+      // tenants (incl. dedicated endpoints) must not be pinned to the
+      // plan-picker's tier host (pi getGitHubCopilotBaseUrl parity).
+      final derivedBaseUrl = copilotApiBaseUrlFromToken(token);
+      final effectiveModel =
+          derivedBaseUrl != null && derivedBaseUrl != model.baseUrl
+          ? Model(
+              id: model.id,
+              name: model.name,
+              api: model.api,
+              provider: model.provider,
+              baseUrl: derivedBaseUrl,
+              reasoning: model.reasoning,
+              input: model.input,
+              cost: model.cost,
+              contextWindow: model.contextWindow,
+              maxTokens: model.maxTokens,
+              headers: model.headers,
+              compat: model.compat,
+            )
+          : model;
       final inner = streamOpenAICompletions(
-        model,
+        effectiveModel,
         context,
-        _completionsOptions(model, context, options, token, statuses),
+        _completionsOptions(effectiveModel, context, options, token, statuses),
         _StatusWatch(httpClient, statuses),
       );
       // Hold the terminal error back until we know whether it is an auth

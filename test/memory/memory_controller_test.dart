@@ -17,13 +17,35 @@ void main() {
       expect(entry.scope, 'project');
     });
 
+    test('the project store gets git support files (idempotent)', () async {
+      final env = MemoryExecutionEnv();
+      final controller = MemoryController(env: env);
+      await controller.add(text: 'git support probe');
+      final gitignore =
+          (await env.readTextFile('/.fah/memory/.gitignore')).valueOrNull ?? '';
+      expect(gitignore, contains('GRAPH.md'));
+      expect(gitignore, contains('MEMORY.revision'));
+      final gitattributes =
+          (await env.readTextFile('/.fah/memory/.gitattributes')).valueOrNull ??
+          '';
+      expect(gitattributes, contains('DELETIONS.md merge=union'));
+      // A second store init keeps user content (append-only ensure).
+      await controller.add(text: 'second probe');
+      final after =
+          (await env.readTextFile('/.fah/memory/.gitignore')).valueOrNull ?? '';
+      expect(after, contains('GRAPH.md'));
+    });
+
     test('sequential adds allocate incrementing note ids', () async {
       final env = MemoryExecutionEnv();
       final controller = MemoryController(env: env);
       final first = await controller.add(text: 'first note');
       final second = await controller.add(text: 'second note');
-      expect(first.id, 'n_0001');
-      expect(second.id, 'n_0002');
+      // flutter_agent_memory 0.2.0: merge-friendly ids carry a 4-hex
+      // content-hash suffix (git-backed memory) — the sequential index
+      // stays, the suffix varies with the text.
+      expect(first.id, matches(r'^n_0001_[0-9a-f]{4}$'));
+      expect(second.id, matches(r'^n_0002_[0-9a-f]{4}$'));
       final entries = await controller.list(limit: 10);
       expect(entries.length, 2);
     });

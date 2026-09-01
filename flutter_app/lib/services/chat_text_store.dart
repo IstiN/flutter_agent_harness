@@ -70,8 +70,7 @@ class ChatTextStore extends ChangeNotifier {
     _save();
   }
 
-  double _clamp(double size) =>
-      size.clamp(minFontSize, maxFontSize).toDouble();
+  double _clamp(double size) => size.clamp(minFontSize, maxFontSize).toDouble();
 
   Future<void> _save() async {
     try {

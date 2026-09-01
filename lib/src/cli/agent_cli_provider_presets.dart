@@ -9,63 +9,76 @@ extension _AgentCliProviderPresets on AgentCli {
   /// openai-compatible path.
   void _openAddProviderPicker() {
     _tuiController?.openPicker('addProvider', 'Add provider', [
-      const MenuItem(
-        key: 'preset:openrouter',
-        label: 'OpenRouter',
-        description: 'OAuth or API key — 300+ models',
-      ),
-      const MenuItem(
-        key: 'preset:chatgpt',
-        label: 'ChatGPT (Codex)',
-        description: 'account sign-in via OAuth',
-      ),
-      const MenuItem(
-        key: 'preset:codemie',
-        label: 'CodeMie',
-        description: 'organization SSO sign-in',
-      ),
-      const MenuItem(
-        key: 'preset:dial',
-        label: 'DIAL',
-        description: 'EPAM DIAL Core — Api key + deployment',
-      ),
-      const MenuItem(
-        key: 'preset:kimi',
-        label: 'Kimi',
-        description: 'api.kimi.com/coding/v1 — key: KIMI_API_KEY',
-      ),
-      const MenuItem(
-        key: 'preset:zai',
-        label: 'Z.AI',
-        description: 'GLM models — key: z.ai/manage-apikey/apikey-list',
-      ),
-      const MenuItem(
-        key: 'preset:minimax',
-        label: 'MiniMax',
-        description: 'api.minimax.io — key: platform.minimax.io/interface-key',
-      ),
-      const MenuItem(
-        key: 'preset:openai',
-        label: 'OpenAI',
-        description: 'api.openai.com — API key',
-      ),
-      const MenuItem(
-        key: 'preset:anthropic',
-        label: 'Anthropic',
-        description: 'api.anthropic.com — API key',
-      ),
-      const MenuItem(
-        key: 'preset:google',
-        label: 'Google',
-        description: 'Gemini models — API key',
-      ),
-      const MenuItem(
-        key: 'custom',
-        label: 'Custom',
-        description: 'any OpenAI-compatible endpoint',
-      ),
+      ..._addProviderItems(),
     ]);
   }
+
+  /// The rows of [_openAddProviderPicker]. Every `preset:<name>` key MUST
+  /// have a matching entry in [_addProviderHandlers] — the picker used to
+  /// ship without Copilot even though `/provider copilot` worked, because
+  /// this list is hand-maintained (the test asserts the pairing).
+  List<MenuItem> _addProviderItems() => [
+    const MenuItem(
+      key: 'preset:openrouter',
+      label: 'OpenRouter',
+      description: 'OAuth or API key — 300+ models',
+    ),
+    const MenuItem(
+      key: 'preset:chatgpt',
+      label: 'ChatGPT (Codex)',
+      description: 'account sign-in via OAuth',
+    ),
+    const MenuItem(
+      key: 'preset:copilot',
+      label: 'GitHub Copilot',
+      description: 'account sign-in via device flow',
+    ),
+    const MenuItem(
+      key: 'preset:codemie',
+      label: 'CodeMie',
+      description: 'organization SSO sign-in',
+    ),
+    const MenuItem(
+      key: 'preset:dial',
+      label: 'DIAL',
+      description: 'EPAM DIAL Core — Api key + deployment',
+    ),
+    const MenuItem(
+      key: 'preset:kimi',
+      label: 'Kimi',
+      description: 'api.kimi.com/coding/v1 — key: KIMI_API_KEY',
+    ),
+    const MenuItem(
+      key: 'preset:zai',
+      label: 'Z.AI',
+      description: 'GLM models — key: z.ai/manage-apikey/apikey-list',
+    ),
+    const MenuItem(
+      key: 'preset:minimax',
+      label: 'MiniMax',
+      description: 'api.minimax.io — key: platform.minimax.io/interface-key',
+    ),
+    const MenuItem(
+      key: 'preset:openai',
+      label: 'OpenAI',
+      description: 'api.openai.com — API key',
+    ),
+    const MenuItem(
+      key: 'preset:anthropic',
+      label: 'Anthropic',
+      description: 'api.anthropic.com — API key',
+    ),
+    const MenuItem(
+      key: 'preset:google',
+      label: 'Google',
+      description: 'Gemini models — API key',
+    ),
+    const MenuItem(
+      key: 'custom',
+      label: 'Custom',
+      description: 'any OpenAI-compatible endpoint',
+    ),
+  ];
 
   /// Routes a preset-picker selection to the matching setup flow.
   Future<void> _tuiPickAddProvider(String key) async {
@@ -213,6 +226,7 @@ extension _AgentCliProviderPresets on AgentCli {
   Map<String, Future<void> Function()> get _addProviderHandlers => {
     'openrouter': () => _handleOpenRouterAuthMethodChoice(),
     'chatgpt': () => _handleChatGptOAuthCommand(headless: false),
+    'copilot': () => _handleCopilotConnectCommand(),
     'codemie': () => _handleCodeMieAuthMethodChoice(),
     'dial': () => _startDialProviderSetup(),
     'openai': () async => _startProviderFlow(initialType: 'openai'),
@@ -232,6 +246,15 @@ extension _AgentCliProviderPresets on AgentCli {
       initialModelId: 'MiniMax-M3',
     ),
   };
+
+  /// Catalog providers deliberately NOT offered as "Add provider" presets,
+  /// each with the reason. The picker test asserts the catalog is exactly
+  /// `presets ∪ exclusions` — adding a provider to the catalog without
+  /// touching this file fails the test, so the Copilot-style "works as a
+  /// typed command, missing from the menu" gap cannot come back silently.
+  /// Today every catalog provider has a preset: the map is empty ON
+  /// PURPOSE; an entry looks like `'name': 'why there is no preset'`.
+  Map<String, String> get _addProviderExclusions => const {};
 }
 
 /// Terminal outcomes of the kimi flow branches (gate handling differs).

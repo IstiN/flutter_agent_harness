@@ -23,6 +23,7 @@ import '../secrets/secret_redactor.dart';
 import 'cli_args.dart';
 import 'cli_config.dart';
 import 'custom_providers.dart';
+import 'env_provider_preconfig.dart';
 import 'headless_provider_key.dart';
 
 /// `fa serve --a2a [--port N] [--token T]` interception: the args parser
@@ -48,37 +49,59 @@ import 'headless_provider_key.dart';
   return (serveA2a: isServeA2a, cliArgs: cliArgs);
 }
 
-/// Provider/model restoration: an explicit `--provider` wins; without it
-/// the saved `provider:` (the persisted /provider switch) restores the last
-/// provider kind — model and baseUrl already restore from the config,
-/// losing only the kind would rebuild e.g. dial as a plain openai endpoint.
-/// Only kinds the legacy single-model path can build are restored
-/// (chatgpt-codex keeps the openai-completions default; its OAuth flow
-/// re-establishes on demand).
+/// Provider/model restoration. Precedence: an explicit `--provider` flag
+/// (full manual control, preconfigs disabled) > the `FA_PROVIDER_*` env
+/// declaration ([faProviderPreconfig]) > the pristine-config catalog pick
+/// ([envPreconfigPick]) > the saved `provider:` (the persisted /provider
+/// switch) > the parsed default. Only kinds the legacy single-model path
+/// can build are restored (chatgpt-codex keeps the openai-completions
+/// default; its OAuth flow re-establishes on demand).
 ///
-/// Returns the effective [CliArgs] (flags over saved-config fallbacks) plus
-/// the resolved provider kind — they are the same value, the explicit
-/// record field saves the caller a re-derivation.
-({CliArgs args, String provider}) resolveEffectiveCliArgs(
+/// The preconfigs supply model/baseUrl too, so the saved restore never
+/// leaks through while one is active (--model/--base-url flags still
+/// override individual fields). The pristine saved model/baseUrl are the
+/// constant defaults, not user choices: an env pick replaces them with the
+/// picked provider's catalog default model and endpoint.
+///
+/// Returns the effective [CliArgs], the resolved provider kind — the same
+/// value, the explicit record field saves the caller a re-derivation — and
+/// the `FA_PROVIDER_*` declaration when one is active (the caller needs it
+/// for the roles pinning, the key decision and the extra redaction).
+({CliArgs args, String provider, EnvProviderPreconfig? faPreconfig})
+resolveEffectiveCliArgs(
   CliArgs parsed,
-  CliConfig saved,
-) {
+  CliConfig saved, {
+  Map<String, String>? env,
+}) {
   const restorableKinds = {
     'openai-completions',
     'anthropic',
     'google',
     'dial',
     'minimax',
+    'zai',
   };
+  final faPreconfig = faProviderPreconfig(parsed, saved, env: env);
+  final (ProviderSpec, String)? envPick = faPreconfig == null
+      ? envPreconfigPick(parsed, saved, env: env)
+      : null;
   final provider = parsed.providerExplicit
       ? parsed.provider
-      : (restorableKinds.contains(saved.providerKind)
-            ? saved.providerKind
-            : parsed.provider);
+      : faPreconfig?.spec.kind ??
+            envPick?.$1.kind ??
+            (restorableKinds.contains(saved.providerKind)
+                ? saved.providerKind
+                : parsed.provider);
+  String? modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
+  String? baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
+  if (envPick != null) {
+    modelId = catalogDefaultModelId(envPick.$1.name);
+    baseUrl = null;
+  }
   final effective = CliArgs(
-    model: parsed.model ?? saved.modelId,
+    model: modelId,
     provider: provider,
-    baseUrl: parsed.baseUrl ?? saved.baseUrl,
+    baseUrl: baseUrl,
     visionModel: parsed.visionModel,
     visionBaseUrl: parsed.visionBaseUrl,
     transcribeModel: parsed.transcribeModel,
@@ -90,7 +113,75 @@ import 'headless_provider_key.dart';
     sessionRoot: parsed.sessionRoot,
     session: parsed.session,
   );
-  return (args: effective, provider: provider);
+  return (args: effective, provider: provider, faPreconfig: faPreconfig);
+}
+
+/// The explicit `FA_PROVIDER_*` env preconfig (Docker/headless):
+/// `FA_PROVIDER_TYPE` + `FA_PROVIDER_NAME` + `FA_PROVIDER_CONFIG` (a JSON
+/// object with required `baseUrl`/`model` and an optional `apiKeyEnvVar`)
+/// plus the key env var the config references. Every text input has a
+/// `_BASE64` twin (`FA_PROVIDER_CONFIG_BASE64`, `<apiKeyEnvVar>_BASE64`)
+/// for platforms that mangle special characters; when both carry the same
+/// value the plain one is used. This is an explicit declaration, so it
+/// wins over the saved config restore too — a container that declares its
+/// provider in env vars runs on it, store or config notwithstanding. An
+/// explicit `--provider` flag means full manual control and disables the
+/// preconfig entirely (mixing the flag's provider with the env endpoint
+/// would be a silent misconfiguration).
+///
+/// Throws [ConfigException] on a malformed declaration: a container that
+/// names its provider wrong must fail loud at boot, not 401 mid-run (the
+/// executable maps that to its `fa:` usage failure).
+EnvProviderPreconfig? faProviderPreconfig(
+  CliArgs parsed,
+  CliConfig saved, {
+  Map<String, String>? env,
+}) {
+  if (parsed.providerExplicit) return null;
+  final environ = env ?? Platform.environment;
+  return parseEnvProviderPreconfig(
+    providerType: environ['FA_PROVIDER_TYPE'],
+    providerName: environ['FA_PROVIDER_NAME'],
+    providerConfig: environ['FA_PROVIDER_CONFIG'],
+    providerConfigBase64: environ['FA_PROVIDER_CONFIG_BASE64'],
+    envVarValue: (name) => environ[name],
+    takenNames: [for (final entry in saved.customProviders) entry.name],
+  );
+}
+
+/// The out-of-the-box env preconfig pick — `(spec, activating env var
+/// name)`, or null. Fires only on a pristine config: [CliConfig] has
+/// non-null defaults (a fresh install reads providerKind
+/// 'openai-completions', model 'openai/gpt-4o-mini', the OpenRouter URL),
+/// so null-checks on the saved fields are dead code — "the user never
+/// configured anything" means every provider-relevant field still equals
+/// that pristine default. An explicit --provider or --model wins; any
+/// saved provider switch, base URL, roles section, or custom provider
+/// disables the pick.
+(ProviderSpec, String)? envPreconfigPick(
+  CliArgs parsed,
+  CliConfig saved, {
+  Map<String, String>? env,
+}) {
+  final environ = env ?? Platform.environment;
+  final pristine = CliConfig();
+  final untouched =
+      !parsed.providerExplicit &&
+      parsed.model == null &&
+      saved.providerKind == pristine.providerKind &&
+      saved.modelId == pristine.modelId &&
+      saved.baseUrl == pristine.baseUrl &&
+      saved.modelRoles == null &&
+      saved.customProviders.isEmpty;
+  if (!untouched) return null;
+  final picked = envPreconfiguredProvider((name) => environ[name]);
+  if (picked == null) return null;
+  return (
+    picked,
+    picked.apiKeyEnvNames.firstWhere(
+      (name) => (environ[name] ?? '').isNotEmpty,
+    ),
+  );
 }
 
 /// The explicit `apiKeyName`s referenced by a roles config (the

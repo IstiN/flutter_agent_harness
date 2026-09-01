@@ -344,5 +344,67 @@ void main() {
       expect(backend.containsKey('FA_KEY_ACME_EXAMPLE'), isFalse);
       expect(registry.keyFor(acme.id), isNull);
     });
+
+    test(
+      'removing a copilot entry deletes its entry-scoped token too',
+      () async {
+        const entryKey = 'FA_KEY_COPILOT_COPILOT_OCTOCAT';
+        final keys = SessionKeysStore.inMemory();
+        await keys.set(entryKey, 'gho_token');
+        backend[entryKey] = 'gho_token';
+        final env = MemoryExecutionEnv();
+        final registry = await ProviderRegistry.load(
+          env,
+          keychain: const KeychainStore(),
+          sessionKeys: keys,
+        );
+        final copilot = await registry.add(
+          name: 'copilot-octocat',
+          baseUrl: copilotIndividualBaseUrl,
+          modelId: 'gpt-4.1',
+        );
+        registry.rememberKey(copilot.id, 'gho_token');
+        // Fire-and-forget persistence: let the channel call land.
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          backend[ProviderRegistry.keyNameFor(copilotIndividualBaseUrl)],
+          'gho_token',
+        );
+
+        await registry.remove(copilot.id);
+
+        expect(
+          backend.containsKey(
+            ProviderRegistry.keyNameFor(copilotIndividualBaseUrl),
+          ),
+          isFalse,
+        );
+        expect(backend.containsKey(entryKey), isFalse);
+        expect(keys.has(entryKey), isFalse);
+        expect(registry.keyFor(copilot.id), isNull);
+      },
+    );
+
+    test('removing a non-copilot entry leaves copilot keys alone', () async {
+      const entryKey = 'FA_KEY_COPILOT_COPILOT_OCTOCAT';
+      final keys = SessionKeysStore.inMemory();
+      await keys.set(entryKey, 'gho_token');
+      backend[entryKey] = 'gho_token';
+      final registry = await ProviderRegistry.load(
+        MemoryExecutionEnv(),
+        keychain: const KeychainStore(),
+        sessionKeys: keys,
+      );
+      final acme = await registry.add(
+        name: 'Acme',
+        baseUrl: 'https://acme.example/v1',
+        modelId: 'acme-1',
+      );
+
+      await registry.remove(acme.id);
+
+      expect(backend[entryKey], 'gho_token');
+      expect(keys.has(entryKey), isTrue);
+    });
   });
 }

@@ -91,4 +91,14 @@ profile-reports/
 .crap_profile_temp/
 fa-local/
 # Runtime agent working directory (bash job logs, transient state).
-.fah/
+# .fah holds local-only junk (logs, sessions, bash_jobs, scratch) — but a
+# curated subset is committed on purpose: the project config, stream
+# rules, lsp/mcp settings, agents and skills.
+.fah/*
+!.fah/config.yaml
+!.fah/rules.yaml
+!.fah/lsp.json
+!.fah/mcp.json
+!.fah/agents/
+!.fah/skills/
+!.fah/packages.yaml

@@ -165,6 +165,35 @@ void main() {
       expect(resolved.args.baseUrl, 'https://flag.example/api');
       expect(resolved.args.mode, 'review');
     });
+
+    test('an FA_PROVIDER_* declaration wins over the saved kind and '
+        'supplies model and baseUrl', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(providerKind: 'google'),
+        env: const {
+          'FA_PROVIDER_TYPE': 'openai-completions',
+          'FA_PROVIDER_NAME': 'local',
+          'FA_PROVIDER_CONFIG':
+              '{"baseUrl":"http://localhost:8080/v1","model":"qwen3",'
+              '"apiKeyEnvVar":"LOCAL_KEY"}',
+          'LOCAL_KEY': 'sk-test',
+        },
+      );
+      expect(resolved.provider, 'openai-completions');
+      expect(resolved.args.model, 'qwen3');
+      expect(resolved.args.baseUrl, 'http://localhost:8080/v1');
+      expect(resolved.faPreconfig?.apiKeyEnvVar, 'LOCAL_KEY');
+    });
+
+    test('a saved restorable kind is restored (zai joined the set)', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(providerKind: 'zai'),
+        env: const {},
+      );
+      expect(resolved.provider, 'zai');
+    });
   });
 
   group('roleKeyNames', () {

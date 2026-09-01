@@ -1535,6 +1535,52 @@ void main() {
     });
   });
 
+  testWidgets('fa.asr.stop ends an in-flight recording early', (tester) async {
+    await tester.runAsync(() async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget.js', '''
+(function() {
+  jsr.onEvent(function(action) {
+    if (action === 'stop') jsr.fa.asr.stop();
+  });
+  jsr.fa.asr.record({seconds: 120}).then(function(result) {
+    jsr.exportState({result: result});
+  }, function(error) {
+    jsr.exportState({result: {__error: '' + error}});
+  });
+  jsr.render({type: 'text', data: 'x'});
+})();
+''');
+
+      final asr = _FakeAsrApi();
+      final engine = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(microphone: true),
+        asr: asr,
+      );
+      try {
+        await engine.start();
+        // Let the record bridge call start, then ask it to stop — the
+        // record promise must resolve NOW, not after the 120 s guard.
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        expect(asr.startCalls, 1);
+        final sw = Stopwatch()..start();
+        engine.callEvent('stop');
+        await waitForState(engine);
+        sw.stop();
+        expect(asr.stopCalls, 1);
+        final result = jsonEncode(engine.exportedState?['result']);
+        expect(result, contains('/tmp/fah-mic-test.m4a'));
+        expect(result, isNot(contains('__error')));
+        // Well under the 120 s max: the stop signal cut the wait short.
+        expect(sw.elapsed.inSeconds, lessThan(30));
+      } finally {
+        await engine.dispose();
+      }
+    });
+  });
+
   testWidgets('fa.asr.record answers with the denial guidance when OS '
       'access is denied', (tester) async {
     await tester.runAsync(() async {

@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'dart:async' show unawaited;
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/services/copilot_connect_flow.dart' show copilotEntryKeyName;
 import 'package:fa/services/app_log.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
@@ -118,14 +117,19 @@ Future<void> main() async {
   // iOS/macOS persist API keys in the platform Keychain (see
   // [KeychainStore]); other platforms fall back to file/session storage.
   const keychain = KeychainStore();
-  final registry = await ProviderRegistry.load(env, keychain: keychain);
+  final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
+  final registry = await ProviderRegistry.load(
+    env,
+    keychain: keychain,
+    // Copilot deletes must reach the entry-scoped token's fallback home.
+    sessionKeys: sessionKeys,
+  );
   debugPrint('[fah] provider registry loaded');
   final lastConnection = await LastConnectionStore.load(env);
   debugPrint('[fah] last connection loaded');
   final themeController = await ThemeController.load(env);
   final onboardingStore = await OnboardingStore.load(env);
   final skillsAccessStore = SkillsAccessStore(env);
-  final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
   final mediaModels = await MediaModelsStore.load(env);
   final taskModels = await TaskModelsStore.load(env);
   final onDeviceConfig = await OnDeviceConfigStore.load(env);
@@ -440,7 +444,10 @@ AgentConfig? restorableBootConfig({
   if (key.isEmpty && custom != null && kind == 'copilot') {
     // Copilot GitHub tokens are stored entry-scoped (FA_KEY_COPILOT_<NAME>,
     // the CLI contract); the entry name is the registry provider's name.
-    key = settingsKeyEnv(copilotEntryKeyName(custom.name), sessionKeysStore);
+    key = settingsKeyEnv(
+      CustomProviderRegistry.copilotEntryKeyName(custom.name),
+      sessionKeysStore,
+    );
   }
   if (key.isEmpty) {
     // Hosted catalog kinds resolve their standard key names

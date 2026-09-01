@@ -23,6 +23,7 @@ const cliProviderKinds = {
   'google',
   'dial',
   'minimax',
+  'zai',
   'copilot',
 };
 

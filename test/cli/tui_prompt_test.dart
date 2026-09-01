@@ -342,6 +342,61 @@ void main() {
       expect(state.secretName, 'FOO');
     });
 
+    test('Ctrl+U clears the suggested name on name focus', () {
+      final spec = SecretPromptSpec(name: 'SUDO_PASSWORD', reason: 'deploy');
+      var state = TuiPromptState(spec);
+      expect(state.secretCursor, -1, reason: 'name focus');
+      state = handleTuiPromptKey(state, const PromptCtrlU()).state;
+      expect(state.secretName, '');
+    });
+
+    test('Ctrl+U kills the value back to the cursor', () {
+      var state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'secret', secretCursor: 6);
+      state = handleTuiPromptKey(state, const PromptCtrlU()).state;
+      expect(state.secretValue, '');
+      expect(state.secretCursor, 0);
+
+      state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'secret', secretCursor: 3);
+      state = handleTuiPromptKey(state, const PromptCtrlU()).state;
+      expect(state.secretValue, 'ret');
+      expect(state.secretCursor, 0);
+    });
+
+    test('the sheet hint names Ctrl+U next to Ctrl+R', () {
+      final rows = renderTuiPrompt(TuiPromptState(spec), 60).join('\n');
+      expect(rows, contains('Ctrl+U clears'));
+    });
+
+    test('Ctrl+R toggles the value visibility (hidden by default)', () {
+      var state = TuiPromptState(spec);
+      expect(state.secretValueVisible, isFalse);
+      state = handleTuiPromptKey(state, const PromptCtrlR()).state;
+      expect(state.secretValueVisible, isTrue);
+      state = handleTuiPromptKey(state, const PromptCtrlR()).state;
+      expect(state.secretValueVisible, isFalse);
+    });
+
+    test('hidden renders dots, revealed renders the typed value', () {
+      var state = TuiPromptState(spec).copyWith(secretCursor: 0);
+      state = handleTuiPromptKey(state, PromptChar('s')).state;
+      state = handleTuiPromptKey(state, PromptChar('3')).state;
+      state = handleTuiPromptKey(state, PromptChar('c')).state;
+
+      final hidden = renderTuiPrompt(state, 60).join('\n');
+      expect(hidden, contains('•••'));
+      expect(hidden, isNot(contains('s3c')));
+      expect(hidden, contains('Ctrl+R reveals'));
+
+      state = handleTuiPromptKey(state, const PromptCtrlR()).state;
+      final shown = renderTuiPrompt(state, 60).join('\n');
+      expect(shown, contains('s3c'));
+      expect(shown, contains('Ctrl+R hides'));
+    });
+
     test('PromptEscape resolves with TuiPromptCancelled', () {
       final state = TuiPromptState(spec);
       final result = handleTuiPromptKey(state, const PromptEscape());

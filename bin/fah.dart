@@ -658,7 +658,20 @@ Future<void> _runApp(List<String> args) async {
   // read by the adapters' connect/idle watchdogs on every request.
   providerTimeoutsOverride = saved.providerTimeouts;
 
-  final (args: effective, :provider) = resolveEffectiveCliArgs(parsed, saved);
+  late final ({
+    CliArgs args,
+    String provider,
+    EnvProviderPreconfig? faPreconfig,
+  })
+  cliStartup;
+  try {
+    cliStartup = resolveEffectiveCliArgs(parsed, saved);
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
+  final effective = cliStartup.args;
+  final provider = cliStartup.provider;
+  final faPreconfig = cliStartup.faPreconfig;
   final baseUrl = effective.baseUrl;
 
   final model = _buildModel(effective);
@@ -735,6 +748,26 @@ Future<void> _runApp(List<String> args) async {
       cwd: cwd,
       homeDir: home,
     );
+    // FA_PROVIDER_* preconfig = one explicit provider switch for the whole
+    // session: pin the default role to a single-entry chain on the env
+    // provider — the same setDefaultChain + applyToAgent path a runtime
+    // `/provider <name>` switch takes in roles mode. Roles the config
+    // pins explicitly keep their chains; unpinned roles inherit the
+    // default, so every resolution (default/smol/slow/plan) lands on the
+    // env provider. A keyless declaration cannot form a chain entry
+    // (chains require a key) — roles keep owning selection there, and
+    // the boot note says so.
+    if (faPreconfig case final preconfig? when preconfig.apiKeyEnvVar != null) {
+      rolesResolver.addSecret(preconfig.apiKeyEnvVar!, preconfig.apiKey);
+      rolesResolver.setDefaultChain([
+        ModelRef(
+          provider: preconfig.spec.name,
+          modelId: preconfig.modelId,
+          baseUrl: preconfig.baseUrl,
+          apiKeyName: preconfig.apiKeyEnvVar,
+        ),
+      ]);
+    }
     try {
       defaultRoleResolved = rolesResolver.resolveRole(defaultModelRole) != null;
     } on ConfigException catch (error) {
@@ -743,14 +776,21 @@ Future<void> _runApp(List<String> args) async {
   }
   late final String apiKey;
   try {
-    apiKey = startupApiKey(
-      provider,
-      keyCache,
-      baseUrl: baseUrl,
-      customProviders: saved.customProviders,
-      defaultRoleResolved: defaultRoleResolved,
-      interactive: headlessPrompt == null,
-    );
+    // The FA_PROVIDER_* declaration carries its own key resolution (the
+    // apiKeyEnvVar ref, or its _BASE64 twin): the env value IS the source
+    // of truth for the booted session — store and config never override
+    // it. Empty means a keyless endpoint (no ref declared — the spec's
+    // env names are never probed).
+    apiKey = faPreconfig != null
+        ? faPreconfig.apiKey
+        : startupApiKey(
+            provider,
+            keyCache,
+            baseUrl: baseUrl,
+            customProviders: saved.customProviders,
+            defaultRoleResolved: defaultRoleResolved,
+            interactive: headlessPrompt == null,
+          );
   } on ConfigException catch (error) {
     _fail(error.message);
   }
@@ -762,6 +802,13 @@ Future<void> _runApp(List<String> args) async {
     roleSecrets: roleSecrets,
     keys: keyCache,
   );
+  // The FA_PROVIDER_* key ref may name ANY env var (not one of the
+  // well-known catalog names) — redact it under its own name so the ref'd
+  // value can never reach the transcript. A keyless declaration (no ref)
+  // carries no secret.
+  if (faPreconfig case final preconfig? when preconfig.apiKey.isNotEmpty) {
+    redactor.register(preconfig.apiKeyEnvVar!, preconfig.apiKey);
+  }
   // Whether the redactor is attached to the agent. A keyless startup leaves
   // it detached; a `/provider` token arriving at runtime attaches it then.
   var redactorAttached = !redactor.isEmpty;
@@ -793,7 +840,6 @@ Future<void> _runApp(List<String> args) async {
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
     _fail('unknown mode: ${effective.mode}');
   }
-
   final promptTemplateDirs = <String>[
     '$cwd/.fah/prompts',
     '$home/.fah/prompts',
@@ -801,6 +847,40 @@ Future<void> _runApp(List<String> args) async {
   ];
 
   final io = _TerminalCliIO(headless: headlessPrompt != null);
+  // The one boot notice for env preconfig (same channel as the raw-mode
+  // note below): names the provider and the env var that activated it,
+  // never the key value.
+  final envPreconfig = faPreconfig == null
+      ? envPreconfigPick(parsed, saved)
+      : null;
+  if (envPreconfig case (final picked, final envName)?) {
+    io.writeln(
+      'note: ${picked.name} activated from $envName '
+      '(model ${catalogDefaultModelId(picked.name)})',
+    );
+  }
+  // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
+  // key ref — or its keyless absence) — never the key value. The pinned
+  // declaration is the session default for every model role; only a
+  // keyless declaration under an active roles: section (which cannot pin
+  // a chain) stays fallback-only, and the note says so.
+  if (faPreconfig case final preconfig?) {
+    io.writeln(
+      'note: provider ${preconfig.name} (${preconfig.spec.name}) '
+      'from FA_PROVIDER_* env — key: '
+      '${preconfig.apiKeyEnvVar ?? 'none (keyless endpoint)'}',
+    );
+    if (defaultRoleResolved) {
+      io.writeln(
+        preconfig.apiKeyEnvVar == null
+            ? 'note: FA_PROVIDER_* preconfig applies to the fallback model '
+                  'only (roles: section is active; a keyless declaration '
+                  'cannot pin a roles chain)'
+            : 'note: FA_PROVIDER_* preconfig is the session default — all '
+                  'model roles resolve to it unless roles: pins a chain',
+      );
+    }
+  }
   if (io.isInteractive && !io.supportsRawMode) {
     io.writeln(
       'note: this terminal does not support raw-mode input; '
@@ -916,6 +996,8 @@ Future<void> _runApp(List<String> args) async {
       // TTSR stream rules: user config (~/.fah/config.yaml `ttsr:`) merged
       // with project rules (.fah/rules.yaml), project first.
       ttsr: _resolveTtsr(saved, cwd),
+      // Project-level .fah/config.yaml memory: wins over the user one.
+      memoryConfig: loadProjectMemoryConfig(cwd) ?? saved.memory,
       onModelChanged: (_) async => persistConfig(),
       // `/provider` switches: redact an explicitly passed session token so
       // it cannot leak into tool results or session files, then persist the

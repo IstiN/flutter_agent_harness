@@ -162,6 +162,12 @@ final class _ActiveRun {
 
 /// Stateful wrapper around the low-level agent loop.
 ///
+/// Default for [Agent.runIdleTimeout]: eight minutes of event silence
+/// outside tool execution. Legitimate silent windows are bounded well below
+/// this — the connect timeout (180s) covers request setup and the provider
+/// stream idle watchdog (300s) covers mid-stream gaps.
+const defaultRunIdleTimeout = Duration(minutes: 8);
+
 /// `Agent` owns the current transcript, emits lifecycle events, executes
 /// tools, and exposes queueing APIs for steering and follow-up messages.
 /// Port of pi's `Agent`.
@@ -189,6 +195,8 @@ class Agent {
     QueueMode followUpMode = QueueMode.oneAtATime,
     this.toolExecution = ToolExecutionMode.parallel,
     this.maxEmptyRetries = 1,
+    this.runIdleTimeout = defaultRunIdleTimeout,
+    this.onRunIdleTimeout,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -210,6 +218,22 @@ class Agent {
   final _PendingMessageQueue _followUpQueue;
   final _steeringArrived = StreamController<void>.broadcast(sync: true);
   _ActiveRun? _activeRun;
+  Timer? _runWatchdogTimer;
+
+  /// Backstop for wedged runs: when no [AgentEvent] arrives for this long
+  /// outside tool execution (a stalled provider connection whose socket
+  /// never errors, a hook future that never completes), the run's cancel
+  /// token is cancelled with a [TimeoutException] reason and
+  /// [onRunIdleTimeout] fires, so the turn ends as `aborted` instead of
+  /// pinning the host's busy state forever. Streaming deltas and tool
+  /// phases reset/disarm the timer — a long legitimate tool call (a full
+  /// test gate) never trips it. [Duration.zero] disables the watchdog.
+  /// Defaults to [defaultRunIdleTimeout].
+  final Duration runIdleTimeout;
+
+  /// Reports every run-idle watchdog fire (after [runIdleTimeout] of event
+  /// silence); hosts log it for post-mortem "who held the busy row".
+  final void Function(Object error)? onRunIdleTimeout;
 
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;
@@ -467,6 +491,7 @@ class Agent {
     _state._isStreaming = true;
     _state._streamingMessage = null;
     _state._errorMessage = null;
+    _armRunWatchdog();
 
     try {
       await executor(run.source.token);
@@ -515,6 +540,7 @@ class Agent {
   }
 
   void _finishRun() {
+    _disarmRunWatchdog();
     _state._isStreaming = false;
     _state._streamingMessage = null;
     _state._pendingToolCalls.clear();
@@ -529,6 +555,7 @@ class Agent {
   /// finish and [_finishRun] clears runtime-owned state (pi semantics).
   Future<void> _processEvent(AgentEvent event) async {
     _reduceState(event);
+    _touchRunWatchdog(event);
 
     final token = _activeRun?.source.token;
     if (token == null) {
@@ -537,6 +564,47 @@ class Agent {
     for (final listener in List.of(_listeners)) {
       await listener(event, token);
     }
+  }
+
+  /// Re-arms the run idle watchdog on progress and disarms it while tool
+  /// calls are in flight (a long legitimate tool must never trip it) and on
+  /// terminal events. Must run after [_reduceState] so `_pendingToolCalls`
+  /// reflects the event being processed.
+  void _touchRunWatchdog(AgentEvent event) {
+    if (runIdleTimeout == Duration.zero) return;
+    if (event is AgentEndEvent || event is AgentSettledEvent) {
+      _disarmRunWatchdog();
+      return;
+    }
+    if (_state._pendingToolCalls.isEmpty) {
+      _armRunWatchdog();
+    } else {
+      _disarmRunWatchdog();
+    }
+  }
+
+  void _armRunWatchdog() {
+    if (runIdleTimeout == Duration.zero) return;
+    _runWatchdogTimer?.cancel();
+    _runWatchdogTimer = Timer(runIdleTimeout, _onRunWatchdogFired);
+  }
+
+  void _disarmRunWatchdog() {
+    _runWatchdogTimer?.cancel();
+    _runWatchdogTimer = null;
+  }
+
+  void _onRunWatchdogFired() {
+    _runWatchdogTimer = null;
+    final run = _activeRun;
+    if (run == null) return;
+    final error = TimeoutException(
+      'agent run produced no events for '
+      '${runIdleTimeout.inSeconds}s (run idle watchdog)',
+      runIdleTimeout,
+    );
+    onRunIdleTimeout?.call(error);
+    run.source.cancel(error);
   }
 
   /// Folds the message-lifecycle and turn events into [_state].

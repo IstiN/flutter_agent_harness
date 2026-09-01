@@ -584,3 +584,31 @@ per fact.)
 - Multi-account contract honored: one entry = one GitHub token; entry-scoped secure-store key FA_KEY_COPILOT_<SANITIZED_NAME> (CLI CustomProviderRegistry.copilotEntryKeyName and the app's copilotEntryKeyName byte-identical), per-entry CopilotTokenManager instances (harness registry keyed by GitHub token; fa_llm one-instance-per-account), no cross-account fallback, tokens never in config.yaml/JSONL/logs (leak-guard tests + SecretRedactor registration on the existing onProviderChanged/onSecretStored paths).
 - fa_llm publish: version 0.2.0 + curated CHANGELOG section; `dart pub publish --dry-run` 0 errors; release via the existing fa_llm-v* tag workflow (publish-fa-llm.yml).
 - Known pre-existing root-test carve-out (carried from the codex-goal baseline): test/agent/auto_compactor_test.dart fixture missing AutoCompactorHooks.onDelta — still failing to load, byte-identical on pristine origin/main (verified again by the gates agent against a clean worktree baseline).
+- App-parity round (2026-08-31, branch fix/goals-cli-app-parity): a surface
+  audit against BOTH required surfaces found the CLI complete but two app
+  gaps; both closed. (1) Model lists: the app pickers never dispatched
+  copilot baseUrls to the copilot dialect — the raw GitHub token hit
+  <host>/models and 401'd (empty list, manual entry only). Fix: one shared
+  `modelsDispatchHintFor(baseUrl)` in fa_ui provider_preset.dart (dial /
+  chatgpt-codex / copilot / null) now feeds core fetchModelsForEndpoint
+  from UnifiedModelPickerPage and MediaSlotModelPage; resolveProviderKey
+  resolves the entry-scoped FA_KEY_COPILOT_<NAME> slot as the key fallback;
+  `_providerKindFor`/`_mediaSlotProviderKind` return 'copilot' so a picked
+  model connects on the copilot wire (was: downgraded to
+  openai-completions → 401 on every message); media-slot saves keep
+  'openai-completions' per the media-tools contract. (2) Delete leak:
+  ProviderRegistry.remove deleted only the shared FA_KEY_<HOST> slot — the
+  entry-scoped FA_KEY_COPILOT_<NAME> token stayed in the
+  Keychain/saved-keys (multi-account security contract violation). Fix:
+  remove() also deletes the entry-scoped key from the Keychain AND the
+  SessionKeysStore when `isCopilotBaseUrl` (new shared core helper,
+  exported; `_CopilotDialect.matches` refactored onto it); the app's
+  copilotEntryKeyName twin deleted — both surfaces use the one
+  CustomProviderRegistry.copilotEntryKeyName. Tests: core 40 green
+  (copilot + models_for_endpoint), fa_ui 43 green (new
+  copilot_model_parity_test + registry remove tests), app
+  copilot_model_picker_wiring 2 green. flutter_app suites importing
+  agent_service.dart still fail to LOAD from the known pre-existing
+  flame_3d 0.3.0 vs Flutter 3.47 skew (logged above) — proven pre-existing
+  at HEAD in a clean worktree; analyze clean on all touched files (the 5
+  remaining root infos sit in untouched upstream files).

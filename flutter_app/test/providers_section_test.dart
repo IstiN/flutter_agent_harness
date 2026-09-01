@@ -293,6 +293,64 @@ void main() {
       expect(connection.baseUrl, 'https://acme.example/v1');
     });
 
+    testWidgets('a Copilot entry lists real models through the app fetcher '
+        'and applies the copilot kind', (tester) async {
+      final env = MemoryExecutionEnv();
+      final store = await LastConnectionStore.load(env);
+      final registry = ProviderRegistry.inMemory();
+      final provider = await registry.add(
+        name: 'Copilot Work',
+        baseUrl: 'https://api.individual.githubcopilot.com',
+        modelId: 'gpt-4.1',
+      );
+      registry.rememberKey(provider.id, 'gho_session');
+      final service = _fakeService();
+      await service.initialize();
+
+      final fetchedUrls = <String>[];
+      final fetchedKeys = <String>[];
+      await _pump(
+        tester,
+        DefaultChatModelSection(
+          service: service,
+          registry: registry,
+          lastConnectionStore: store,
+          modelsFetcher: (baseUrl, {required apiKey}) async {
+            fetchedUrls.add(baseUrl);
+            fetchedKeys.add(apiKey);
+            return (
+              const ['gpt-4.1', 'claude-sonnet-4'],
+              const <String, int>{},
+              const <String, int>{},
+            );
+          },
+        ),
+      );
+
+      await tester.tap(find.text('test-model · example.com'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copilot Work'));
+      await tester.pumpAndSettle();
+
+      // The app fetcher reached the Copilot endpoint with the entry's
+      // GitHub token, and the fetched (real) models render.
+      expect(fetchedUrls.single, 'https://api.individual.githubcopilot.com');
+      expect(fetchedKeys.single, 'gho_session');
+      expect(find.text('claude-sonnet-4'), findsOneWidget);
+
+      await tester.tap(find.text('claude-sonnet-4'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Save'));
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      // The connection applies AS copilot — not openai-completions, which
+      // would 401 the raw GitHub token against the Copilot API.
+      expect(service.providerKind, 'copilot');
+      expect(service.modelId, 'claude-sonnet-4');
+      expect(service.activeBaseUrl, 'https://api.individual.githubcopilot.com');
+    });
+
     testWidgets('add provider from the picker returns to the picker', (
       tester,
     ) async {

@@ -1,0 +1,9 @@
+# Derived artifacts — rebuilt from the notes on load; never committed
+# (they would only merge-conflict). The source of truth is note/,
+# question/, answer/ + the append-only DELETIONS.md tombstone log.
+GRAPH.md
+MEMORY.revision
+INDEX.md
+.last_maintenance
+stats/
+# flutter_agent_memory derivatives - rebuilt from records, do not commit

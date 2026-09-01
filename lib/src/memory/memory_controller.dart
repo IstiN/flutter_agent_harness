@@ -10,6 +10,7 @@ import 'dart:async';
 import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 
 import '../env/execution_env.dart';
+import '../memory_config.dart';
 import 'execution_env_kb_storage.dart';
 
 /// Formats the `/memory` stats block (pure, testable): counts per type,
@@ -69,6 +70,8 @@ final class MemoryController {
     String? projectRoot,
     this._userRoot,
     this._llmProvider,
+    this._projectStoragePath,
+    this._userStoragePath,
   }) : _env = env,
        _projectRoot = projectRoot ?? env.cwd;
 
@@ -76,6 +79,14 @@ final class MemoryController {
   final String _projectRoot;
   final String? _userRoot;
   final LlmProvider? _llmProvider;
+
+  /// Optional storage path overrides (the `memory:` config section —
+  /// git-backed memory points projectPath inside the repo). Null = the
+  /// historical `<root>/.fah/memory`. Relative project paths resolve
+  /// against the project root; a user path's leading `~/` expands
+  /// against the user root.
+  final String? _projectStoragePath;
+  final String? _userStoragePath;
 
   ExecutionEnvKbStorage? _projectStorage;
   ExecutionEnvKbStorage? _userStorage;
@@ -87,8 +98,14 @@ final class MemoryController {
   /// Lazily initializes the project-scope store + search engine.
   Future<KBMemoryStore> get projectStore async {
     if (_projectStore != null) return _projectStore!;
-    _projectStorage = ExecutionEnvKbStorage(_env, '$_projectRoot/.fah/memory');
+    _projectStorage = ExecutionEnvKbStorage(_env, _resolvedProjectPath());
     await _projectStorage!.initialize();
+    // Git-backed memory: the store dir carries .gitignore (derived
+    // artifacts never committed) + .gitattributes (DELETIONS.md
+    // merge=union). Idempotent — appends only missing lines, never
+    // touches user content. Project scope only: the user store is
+    // machine-local by design.
+    await MemoryRepoInit(_projectStorage!).ensureGitSupport();
     _projectStore = KBMemoryStore(_projectStorage!, provider: _llmProvider);
     _projectSearch = KBSearchEngine(_projectStorage!, provider: _llmProvider);
     return _projectStore!;
@@ -98,12 +115,21 @@ final class MemoryController {
   Future<KBMemoryStore?> get userStore async {
     if (_userRoot == null) return null;
     if (_userStore != null) return _userStore;
-    _userStorage = ExecutionEnvKbStorage(_env, '$_userRoot/.fah/memory');
+    _userStorage = ExecutionEnvKbStorage(_env, _resolvedUserPath());
     await _userStorage!.initialize();
     _userStore = KBMemoryStore(_userStorage!, provider: _llmProvider);
     _userSearch = KBSearchEngine(_userStorage!, provider: _llmProvider);
     return _userStore!;
   }
+
+  // The resolution rules live in MemoryConfig (the `memory:` yaml
+  // section) — one source of truth, shared with the config consumers.
+  String _resolvedProjectPath() => MemoryConfig(
+    projectPath: _projectStoragePath,
+  ).resolveProjectPath(_projectRoot);
+
+  String _resolvedUserPath() =>
+      MemoryConfig(userPath: _userStoragePath).resolveUserPath(_userRoot!);
 
   /// Adds a memory entry (project scope by default).
   Future<MemoryEntry> add({

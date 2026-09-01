@@ -429,6 +429,7 @@ jsr.fa.home = {
 // transcribe({path}) → {text}.
 jsr.fa.asr = {
   record: function(args) { return jsr.fa.call('asr.record', args); },
+  stop: function() { return jsr.fa.call('asr.stop', {}); },
   transcribe: function(args) { return jsr.fa.call('asr.transcribe', args); },
 };
 
@@ -658,6 +659,12 @@ Object.defineProperty(jsr, 'onBack', {
       }
       if (method == 'asr.record') {
         _resolve?.call(id, await _asrRecord(args));
+        return;
+      }
+      if (method == 'asr.stop') {
+        final signal = _asrStopSignal;
+        if (signal != null && !signal.isCompleted) signal.complete();
+        _resolve?.call(id, {'stopped': signal != null});
         return;
       }
       if (method == 'asr.transcribe') {
@@ -1290,15 +1297,34 @@ Object.defineProperty(jsr, 'onBack', {
     return api;
   }
 
+  /// In-flight microphone recording's early-stop signal: `asr.stop`
+  /// completes it so a pending `asr.record` resolves immediately instead
+  /// of waiting out its max-seconds guard.
+  Completer<void>? _asrStopSignal;
+
   /// `jsr.fa.asr.record({seconds?})` → `{path, durationMs, sampleRate}` —
   /// records `seconds` (1–[asrMaxRecordSeconds], default 10) from the
   /// microphone into a temporary .m4a, gated on the `microphone`
   /// permission.
   Future<Map<String, Object?>> _asrRecord(Map<String, Object?> args) async {
     final api = await _gatedAsr();
+    if (_asrStopSignal != null) {
+      throw StateError('a recording is already in progress');
+    }
     final seconds = asrRecordSeconds(args['seconds'] as num?);
     await api.startRecording();
-    await Future<void>.delayed(Duration(seconds: seconds));
+    final stop = Completer<void>();
+    _asrStopSignal = stop;
+    try {
+      // The max-seconds guard OR an explicit jsr.fa.asr.stop() — whichever
+      // comes first — ends the take.
+      await Future.any<void>([
+        Future<void>.delayed(Duration(seconds: seconds)),
+        stop.future,
+      ]);
+    } finally {
+      if (identical(_asrStopSignal, stop)) _asrStopSignal = null;
+    }
     final recording = await api.stopRecording();
     return {
       'path': recording.path,

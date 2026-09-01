@@ -70,6 +70,7 @@ import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
 import '../providers/provider_common.dart'
     show authExpiredProvider, stripAuthExpiredMarker;
+import '../providers/transient_retry_stream.dart';
 import '../prompts/prompt_overrides.dart';
 import 'chatgpt_oauth_server.dart';
 import 'codemie_sso_server.dart';
@@ -95,6 +96,7 @@ import '../tools/transcribe_audio.dart';
 import '../memory/compaction_memory_hook.dart';
 import '../memory/harness_llm_provider.dart';
 import '../memory/memory_controller.dart';
+import '../memory_config.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
 import '../messaging/schedule_message_tool.dart';
@@ -184,6 +186,10 @@ class AgentCli {
       env: _env,
       projectRoot: _env.cwd,
       userRoot: config.homeDir,
+      // `memory:` config section — git-backed memory points projectPath
+      // inside the repo; null keeps the .fah/memory default.
+      projectStoragePath: config.memoryConfig?.projectPath,
+      userStoragePath: config.memoryConfig?.userPath,
       // Semantic search + consolidate() need an LLM: memory → smol → main.
       llmProvider: HarnessLlmProvider(resolve: () => _resolveMemoryLlmSlot()),
     );
@@ -359,6 +365,10 @@ class AgentCli {
       // The CLI handles empty-response retries itself with a 'continue' nudge
       // so the transcript reflects the retry explicitly.
       maxEmptyRetries: 0,
+      // Post-mortem "who held the busy row": the run idle watchdog's fire
+      // lands in fa.log with the session id.
+      onRunIdleTimeout: (error) =>
+          _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
@@ -555,6 +565,30 @@ class AgentCli {
   @visibleForTesting
   void startProviderEditWizardForTest(CustomProviderEntry? entry) =>
       _startProviderEditWizard(entry);
+
+  /// The rows of the "Add provider" preset picker — the test asserts every
+  /// catalog provider with a typed `/provider <name>` flow is listed
+  /// (Copilot shipped missing: the list is hand-maintained).
+  @visibleForTesting
+  List<MenuItem> addProviderItemsForTest() => _addProviderItems();
+
+  /// The deliberate picker exclusions (provider name → reason) — with
+  /// [addProviderItemsForTest] the test asserts the catalog is exactly
+  /// presets ∪ exclusions.
+  @visibleForTesting
+  Map<String, String> addProviderExclusionsForTest() => _addProviderExclusions;
+
+  /// The preset names with a routing handler — the test asserts
+  /// presets == handlers (a preset row without a handler is a dead menu
+  /// entry: the picker closes and nothing happens — the live Copilot bug).
+  @visibleForTesting
+  Set<String> addProviderHandlerKeysForTest() =>
+      _addProviderHandlers.keys.toSet();
+
+  /// Test seam routing an "Add provider" picker selection in line mode.
+  @visibleForTesting
+  Future<void> tuiPickAddProviderForTest(String key) =>
+      _tuiPickAddProvider(key);
 
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
@@ -805,10 +839,34 @@ class AgentCli {
   bool _runStarting = false;
 
   /// Runs the REPL until `/exit` or the input stream closes.
+
+  /// Transient network retry visibility (the Wi-Fi-switch case): the
+  /// retry itself lives in providerStreamFunction; here it gets a voice —
+  /// a dim transcript line + an fa.log entry instead of a silent 5s pause.
+  void _wireTransientRetryNotice() {
+    transientRetryNotice = (attempt, maxAttempts, delay, reason) {
+      io.writeln(
+        _style.dim(
+          '[net] connection lost ($reason) — retrying in '
+          '${delay.inSeconds}s (attempt ${attempt + 1}/$maxAttempts)',
+        ),
+      );
+      _logDiagnostic(
+        'transient retry sid=$_logSid attempt=${attempt + 1}/$maxAttempts '
+        'reason=$reason',
+      );
+    };
+  }
+
   Future<void> run() async {
     await _loadAgentContext();
     _session = await _initializeSession();
     _syncMailboxPrefix();
+    // Boot marker: every wedge post-mortem starts with "which BUILD held
+    // the busy row?" — parallel fa processes share this log, so name the
+    // version next to the session id before any lifecycle line.
+    _logDiagnostic('fa boot sid=$_logSid version=$_version');
+    _wireTransientRetryNotice();
     // Live-session presence: this process now owns the session — the Fa
     // app (sharing the sessions root) marks it live and can attach. The
     // heartbeat refreshes on the inbox timer; unregistering happens in
@@ -1005,6 +1063,11 @@ class AgentCli {
     // One-time consent question for third-party skill roots: a TUI picker
     // over the first frame (Esc = "Not now", asked again next launch).
     unawaited(_maybePromptSkillsAccess());
+
+    // An ambiguous `--session <name>` (same name in several folders or
+    // several in one): the scoped choice picker over the first frame —
+    // the auto-resolved session stays when dismissed.
+    unawaited(_offerStartupSessionChoice());
 
     await controller.run();
     _setTuiIo(null);
@@ -1354,8 +1417,27 @@ class AgentCli {
   Future<Session> _initializeSession() async {
     final name = config.sessionName?.trim();
     if (name != null && name.isNotEmpty) {
-      final metadata = await _findSessionByName(name);
+      final matches = await _sessionNameMatches(name);
+      final metadata = _resolveSessionNameMatch(
+        matches,
+        onAmbiguous: (all) {
+          // Interactive prompting is impossible this early (the input pump
+          // starts after init): auto-resolve and let the TUI offer the
+          // scoped picker after boot; line mode gets the printed hint.
+          _startupAmbiguousSessions = all;
+          _startupAmbiguousName = name;
+        },
+      );
       if (metadata != null) {
+        if (matches.length > 1) {
+          io.writeln(
+            _style.dim(
+              "note: ${matches.length} sessions named '$name' — opened "
+              '${metadata.id} (${metadata.cwd}); pick another with '
+              '/sessions or restart with fa --session <id>',
+            ),
+          );
+        }
         return _loadSession(metadata);
       }
       return _createSession(name: name);
@@ -1426,20 +1508,81 @@ class AgentCli {
     }
   }
 
-  /// Finds a session by display name OR by exact id across every workspace
-  /// (the exit hint prints `fa --session '<id>'` for unnamed sessions, so ids
-  /// must resolve too).
-  Future<SessionMetadata?> _findSessionByName(String name) async {
+  /// Every session whose id IS [name] (exact id short-circuits — ids are
+  /// unique) or whose session_info name equals it, across every workspace
+  /// (the exit hint prints `fa --session '<id>'` for unnamed sessions, so
+  /// ids must resolve too). Several sessions can share a NAME — different
+  /// project folders, or renamed twice — so callers get the full list and
+  /// disambiguate (see [_resolveSessionNameMatch]).
+  Future<List<SessionMetadata>> _sessionNameMatches(String name) async {
     final sessions = await _repo.list();
+    final matches = <SessionMetadata>[];
     for (final metadata in sessions) {
-      if (metadata.id == name.trim()) return metadata;
+      if (metadata.id == name.trim()) return [metadata];
       final session = await _repo.open(metadata);
       final sessionName = await session.getSessionName();
       if (sessionName != null && sessionName.trim() == name.trim()) {
-        return metadata;
+        matches.add(metadata);
       }
     }
-    return null;
+    return matches;
+  }
+
+  /// Finds a session by display name OR exact id — the first match. Kept
+  /// for the rename-conflict check ("the name is taken anywhere").
+  Future<SessionMetadata?> _findSessionByName(String name) async {
+    final matches = await _sessionNameMatches(name);
+    return matches.isEmpty ? null : matches.first;
+  }
+
+  /// Disambiguates same-named sessions: the LAUNCH folder's session beats a
+  /// namesake from another project (the "fa --session X opens the wrong
+  /// folder's session" bug); a clear single local wins silently, anything
+  /// else is ambiguous and [onAmbiguous] receives the full match list so
+  /// the caller can offer a choice. The fallback pick is the most recently
+  /// updated local (or global when the folder has none).
+  SessionMetadata? _resolveSessionNameMatch(
+    List<SessionMetadata> matches, {
+    void Function(List<SessionMetadata> matches)? onAmbiguous,
+  }) {
+    if (matches.isEmpty) return null;
+    if (matches.length == 1) return matches.single;
+    final local = [
+      for (final m in matches)
+        if (m.cwd == _env.cwd) m,
+    ];
+    if (local.length == 1) return local.single;
+    onAmbiguous?.call(matches);
+    final pool = local.isNotEmpty ? local : matches;
+    pool.sort(
+      (a, b) => (b.lastUpdatedAt ?? b.createdAt).compareTo(
+        a.lastUpdatedAt ?? a.createdAt,
+      ),
+    );
+    return pool.first;
+  }
+
+  /// Same-named matches pending a startup choice: set when `--session X`
+  /// resolved ambiguously, consumed by [_runTuiRepl] to offer the sessions
+  /// picker scoped to these matches once the TUI owns the screen.
+  List<SessionMetadata>? _startupAmbiguousSessions;
+  String? _startupAmbiguousName;
+
+  /// Offers the startup ambiguity choice: the sessions picker scoped to
+  /// the same-named matches. The current session stays the auto-resolved
+  /// one; picking another switches, Esc keeps it.
+  Future<void> _offerStartupSessionChoice() async {
+    final matches = _startupAmbiguousSessions;
+    final name = _startupAmbiguousName;
+    _startupAmbiguousSessions = null;
+    _startupAmbiguousName = null;
+    if (matches == null || name == null) return;
+    _lastSessionList = matches;
+    _tuiController?.openPicker(
+      'sessions',
+      "Several sessions named '$name' — which one?",
+      await _sessionPickerItems(matches),
+    );
   }
 
   Future<Session> _loadSession(SessionMetadata metadata) async {
@@ -1939,6 +2082,13 @@ class AgentCli {
     // before the first streamed byte, and isBusy readers (inbox watcher,
     // shell-job settle, steer-vs-start) must not start a parallel run here.
     _runStarting = true;
+    // Busy bracket HERE, not in the TUI submit handler: every run trigger
+    // (submit, inbox wake, shell-job settle, scheduled message) must spin,
+    // and an unbracketed trigger leaves the spinner on after the run
+    // settles (the "Working… forever with an idle agent" wedge). The
+    // counter is reference-counted, so the submit handler's own bracket
+    // nests safely.
+    _tuiController?.sendBusy(true);
     // Path-gated skills (`paths:` frontmatter) join the prompt once the
     // agent has touched a matching file; recomposing here is idempotent.
     _applyPromptComposition();
@@ -1952,7 +2102,8 @@ class AgentCli {
     final settled = _runPrompt(resolved);
     _settled = settled;
     unawaited(
-      settled.then((_) {
+      settled.whenComplete(() {
+        _tuiController?.sendBusy(false);
         _runStarting = false;
         if (!_exited) _writeIdlePrompt();
       }),
@@ -2188,6 +2339,7 @@ class AgentCli {
       return;
     }
     _tuiController?.setBusyPhase('Compacting context…');
+    _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
     await _runAutoCompact('[auto-compacted]');
     // Hand the busy row back to the run: a stale 'Compacting context…'
     // over the streamed turn reads as a compaction hang.
@@ -2275,6 +2427,15 @@ class AgentCli {
     final path = _diagnosticLogPath;
     if (path == null) return;
     unawaited(_appendDiagnosticLog(path, message));
+  }
+
+  /// Short session id for diagnostic log lines: parallel fa processes share
+  /// one fa.log, so every lifecycle line names its session (post-mortem
+  /// "who held the busy row" starts here).
+  String get _logSid {
+    final id = _session?.cachedId;
+    if (id == null || id.isEmpty) return '-';
+    return id.length <= 8 ? id : id.substring(0, 8);
   }
 
   /// Appends one timestamped [message] to [path], creating the log directory
