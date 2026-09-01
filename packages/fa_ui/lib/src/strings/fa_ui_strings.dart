@@ -290,6 +290,13 @@ abstract class FaUiStrings {
   /// The finish button.
   String get copilotConnectButton;
 
+  /// Model step: label above the fetched model list / manual id field.
+  String get copilotModelLabel;
+
+  /// Model step: note shown when the live fetch returned nothing and a
+  /// manual model id is required.
+  String get copilotModelsFetchFailed;
+
   /// Error shown when the Copilot endpoint rejects the exchange (plan
   /// disabled by the org, no subscription) — points at the paste-token path.
   String get copilotEndpointDisabled;
@@ -505,6 +512,11 @@ class FaUiStringsEn extends FaUiStrings {
   String get copilotEntryNameLabel => 'Entry name';
   @override
   String get copilotConnectButton => 'Connect Copilot';
+  @override
+  String get copilotModelLabel => 'Model';
+  @override
+  String get copilotModelsFetchFailed =>
+      'Could not fetch the model list — enter a model id manually.';
   @override
   String get copilotEndpointDisabled =>
       'Copilot rejected the sign-in — the plan may be disabled for this '
@@ -723,6 +735,11 @@ class FaUiStringsRu extends FaUiStrings {
   String get copilotEntryNameLabel => 'Имя записи';
   @override
   String get copilotConnectButton => 'Подключить Copilot';
+  @override
+  String get copilotModelLabel => 'Модель';
+  @override
+  String get copilotModelsFetchFailed =>
+      'Не удалось получить список моделей — введите id модели вручную.';
   @override
   String get copilotEndpointDisabled =>
       'Copilot отклонил вход — возможно, тариф отключён для этого аккаунта '

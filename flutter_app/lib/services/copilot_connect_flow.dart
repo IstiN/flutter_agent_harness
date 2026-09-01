@@ -9,13 +9,9 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa_llm/fa_llm.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show CustomProviderRegistry;
+    show CustomProviderRegistry, fetchModelsForEndpoint;
 import 'package:fa_ui/fa_ui.dart'
     show CopilotConnectCallbacks, CopilotConnectResult, showCopilotConnectSheet;
-
-/// The default Copilot model — the provider catalog's flag default
-/// (`/models` is the runtime source of truth, like the CLI).
-const copilotDefaultModelId = 'gpt-4.1';
 
 /// Runs the full GitHub Copilot connect flow: the device-flow sheet (real
 /// fa_llm wiring unless [callbacks] is injected — the device flow needs no
@@ -66,6 +62,15 @@ Future<bool> runCopilotConnectFlow({
         pollAccessToken: (deviceCode) =>
             pollCopilotAccessToken(deviceCode: deviceCode.deviceCode),
         fetchLogin: (token) => fetchGithubLogin(githubToken: token),
+        // The connect sheet's model step: the live /models of the resolved
+        // endpoint (the Copilot token exchange runs inside the dialect) —
+        // no default model exists.
+        fetchModels: (token, baseUrl) async =>
+            (await fetchModelsForEndpoint(
+              baseUrl,
+              apiKey: token,
+              provider: 'copilot',
+            )).$1,
       );
 
   CopilotConnectResult? result;
@@ -93,7 +98,7 @@ Future<bool> runCopilotConnectFlow({
       await registry.add(
         name: connect.entryName,
         baseUrl: baseUrl,
-        modelId: copilotDefaultModelId,
+        modelId: connect.modelId,
       );
 
   // Session key for the running app (Keychain-backed when available).

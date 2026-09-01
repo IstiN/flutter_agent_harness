@@ -43,6 +43,11 @@ final class _RecordingService extends AgentService {
       );
 
   AgentConfig? reconfigured;
+
+  @override
+  Future<void> reconfigure(AgentConfig config) async {
+    reconfigured = config;
+  }
 }
 
 CopilotConnectCallbacks _fixedCallbacks() => CopilotConnectCallbacks(
@@ -55,6 +60,7 @@ CopilotConnectCallbacks _fixedCallbacks() => CopilotConnectCallbacks(
   ),
   pollAccessToken: (_) async => 'gho_token',
   fetchLogin: (_) async => 'octocat',
+  fetchModels: (_, _) async => const ['gpt-4.1', 'claude-sonnet-5'],
 );
 
 /// Pumps a 'go' button that launches the flow with in-memory stores; the
@@ -87,6 +93,8 @@ Future<(Future<bool>, _RecordingService)> _launch(WidgetTester tester) async {
   );
   await tester.tap(find.text('go'));
   await tester.pumpAndSettle();
+  await tester.tap(find.text('Sign in with GitHub'));
+  await tester.pumpAndSettle();
   return (done!, service);
 }
 
@@ -114,6 +122,9 @@ void main() {
     tester,
   ) async {
     final (done, service) = await _launch(tester);
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+    // The sheet's model step (first fetched id preselected) finishes it.
     await tester.tap(find.text('Connect Copilot'));
     await tester.pumpAndSettle();
     expect(await done, isTrue);
@@ -155,6 +166,11 @@ void main() {
     );
     await tester.tap(find.text('go'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Sign in with GitHub'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+    // The sheet's model step (first fetched id preselected) finishes it.
     await tester.tap(find.text('Connect Copilot'));
     await tester.pumpAndSettle();
     expect(await done, isTrue);
@@ -204,6 +220,11 @@ void main() {
     );
     await tester.tap(find.text('go'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Sign in with GitHub'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+    // The sheet's model step (first fetched id preselected) finishes it.
     await tester.tap(find.text('Connect Copilot'));
     await tester.pumpAndSettle();
     expect(await done, isTrue);
