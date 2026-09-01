@@ -632,8 +632,7 @@ final class FaTuiModel extends Model {
     // Activity heartbeat for the busy row: any real message while busy
     // (stream deltas, tool rows, key input) proves the stretch is alive;
     // only spinner ticks and busy bookkeeping are excluded.
-    final FaTuiModel self =
-        (busy && msg is! SpinnerTickMsg && msg is! BusyMsg)
+    final FaTuiModel self = (busy && msg is! SpinnerTickMsg && msg is! BusyMsg)
         ? copyWith(busyLastEventMs: DateTime.now().millisecondsSinceEpoch)
         : this;
     return self._updateWithHeartbeat(msg);
@@ -677,51 +676,58 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleBusyMsg(BusyMsg msg) {
-    // An in-busy phase relabel (silent post-answer work like auto-compaction
-    // or durable-memory extraction): swap the label over the SAME elapsed
-    // window and never schedule another tick here — extra chains would
-    // multiply repaint timers. On an IDLE model a relabel is a post-run
-    // straggler (a compaction finally-branch landing after the bracket
-    // released): dropping it is the whole point — re-arming the spinner
-    // here wedged a session at "Working… Ns" burning 100% CPU for hours
-    // (each chain re-renders the full transcript every 100ms).
-    final phase = msg.phase;
-    if (msg.busy && phase != null) {
-      if (!busy) {
-        faTuiBusyDiagnostics?.call(
-          'busy relabel dropped (idle) phase=$phase',
-        );
-        return (this, null);
-      }
-      return (copyWith(busyPhase: phase), null);
-    }
+    // An in-busy phase relabel (silent post-answer work like
+    // auto-compaction or durable-memory extraction) takes priority.
+    if (msg.busy && msg.phase != null) return _handlePhaseRelabel(msg);
     // A raw re-start while ALREADY busy (a trigger that bypassed the
     // controller's refcount): keep the elapsed window and the single tick
     // chain instead of stacking another one.
-    if (msg.busy && busy) {
-      faTuiBusyDiagnostics?.call(
-        'busy re-start ignored (already busy) source=${msg.source}',
-      );
+    if (msg.busy && busy) return _ignoreBusyRestart(msg);
+    return _applyBusyTransition(msg);
+  }
+
+  /// A phase relabel on a BUSY model: swap the label over the SAME elapsed
+  /// window and never schedule another tick here — extra chains would
+  /// multiply repaint timers.
+  (Model, Cmd?) _handlePhaseRelabel(BusyMsg msg) {
+    final phase = msg.phase!;
+    if (!busy) {
+      // A relabel on an IDLE model is a post-run straggler (a compaction
+      // finally-branch landing after the bracket released): dropping it is
+      // the whole point — re-arming the spinner here wedged a session at
+      // "Working… Ns" burning 100% CPU for hours (each chain re-renders
+      // the full transcript every 100ms).
+      faTuiBusyDiagnostics?.call('busy relabel dropped (idle) phase=$phase');
       return (this, null);
     }
+    return (copyWith(busyPhase: phase), null);
+  }
+
+  (Model, Cmd?) _ignoreBusyRestart(BusyMsg msg) {
+    faTuiBusyDiagnostics?.call(
+      'busy re-start ignored (already busy) source=${msg.source}',
+    );
+    return (this, null);
+  }
+
+  /// The busy↔idle bracket itself. Kick the spinner loop when going busy;
+  /// the loop stops itself on the first tick that finds the model idle
+  /// again. Going idle also unpins the sticky user echo and clears any
+  /// phase, so the next run starts as plain "Working…".
+  (Model, Cmd?) _applyBusyTransition(BusyMsg msg) {
     faTuiBusyDiagnostics?.call(
       msg.busy
           ? 'busy on source=${msg.source ?? '?'}'
           : 'busy off source=${busySource.isEmpty ? '?' : busySource} '
-              'elapsed=${busyStartedAtMs < 0 ? 0 : (DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) ~/ 1000}s',
+                'elapsed=${busyStartedAtMs < 0 ? 0 : (DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) ~/ 1000}s',
     );
-    // Kick the spinner loop when going busy; the loop stops itself on the
-    // first tick that finds the model idle again. Going idle also unpins
-    // the sticky user echo and clears any phase, so the next run starts
-    // as plain "Working…".
     return (
       copyWith(
         busy: msg.busy,
         busyStartedAtMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
         busyPhase: '',
         busySource: msg.busy ? (msg.source ?? '') : '',
-        busyLastEventMs:
-            msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
+        busyLastEventMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
         spinnerFrame: 0,
         stickyLines: msg.busy ? null : const [],
         stickyIndex: msg.busy ? null : -1,

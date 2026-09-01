@@ -494,4 +494,136 @@ void main() {
       expect(await store.readAll(), isEmpty);
     });
   });
+
+  group('envPreconfigPick', () {
+    // Pristine args + saved config = the out-of-the-box state the pick
+    // fires on; every case below diverges one field to disable it.
+    const pristineArgs = CliArgs();
+
+    test('fires on a pristine config with a qualifying env key', () {
+      final pick = envPreconfigPick(
+        pristineArgs,
+        CliConfig(),
+        env: const {'OPENROUTER_API_KEY': 'k'},
+      );
+      expect(pick, isNotNull);
+      expect(pick!.$1.name, 'openrouter');
+      expect(pick.$1.kind, 'openai-completions');
+      expect(pick.$2, 'OPENROUTER_API_KEY');
+    });
+
+    test('names the secondary key env when the primary is absent', () {
+      final pick = envPreconfigPick(
+        pristineArgs,
+        CliConfig(),
+        env: const {'OPENAI_API_KEY': 'k'},
+      );
+      expect(pick!.$1.name, 'openrouter');
+      expect(pick.$2, 'OPENAI_API_KEY');
+    });
+
+    test('returns null when no env key qualifies', () {
+      expect(
+        envPreconfigPick(pristineArgs, CliConfig(), env: const {}),
+        isNull,
+      );
+    });
+
+    test('an explicit --provider disables the pick', () {
+      expect(
+        envPreconfigPick(
+          const CliArgs(providerExplicit: true),
+          CliConfig(),
+          env: const {'OPENROUTER_API_KEY': 'k'},
+        ),
+        isNull,
+      );
+    });
+
+    test('an explicit --model disables the pick', () {
+      expect(
+        envPreconfigPick(
+          const CliArgs(model: 'anthropic/claude-sonnet-4'),
+          CliConfig(),
+          env: const {'OPENROUTER_API_KEY': 'k'},
+        ),
+        isNull,
+      );
+    });
+
+    test('a saved provider switch disables the pick', () {
+      expect(
+        envPreconfigPick(
+          pristineArgs,
+          CliConfig(providerKind: 'anthropic'),
+          env: const {'OPENROUTER_API_KEY': 'k'},
+        ),
+        isNull,
+      );
+    });
+
+    test('a saved model id disables the pick', () {
+      expect(
+        envPreconfigPick(
+          pristineArgs,
+          CliConfig(modelId: 'z-ai/glm-5.3'),
+          env: const {'OPENROUTER_API_KEY': 'k'},
+        ),
+        isNull,
+      );
+    });
+
+    test('a saved base URL disables the pick', () {
+      expect(
+        envPreconfigPick(
+          pristineArgs,
+          CliConfig(baseUrl: 'https://api.openai.com/v1'),
+          env: const {'OPENROUTER_API_KEY': 'k'},
+        ),
+        isNull,
+      );
+    });
+
+    test('a saved roles section disables the pick', () {
+      expect(
+        envPreconfigPick(
+          pristineArgs,
+          CliConfig(
+            modelRoles: ModelRolesConfig(
+              roles: {
+                'coder': const [
+                  ModelRef(
+                    provider: 'openrouter',
+                    modelId: 'anthropic/claude-sonnet-4',
+                  ),
+                ],
+              },
+            ),
+          ),
+          env: const {'OPENROUTER_API_KEY': 'k'},
+        ),
+        isNull,
+      );
+    });
+
+    test('a saved custom provider disables the pick', () {
+      expect(
+        envPreconfigPick(
+          pristineArgs,
+          CliConfig(
+            customProviders: [
+              CustomProviderEntry(
+                name: 'corp',
+                apiType: 'openai-completions',
+                baseUrl: 'https://llm.corp/v1',
+                modelId: 'corp/model',
+              ),
+            ],
+          ),
+          env: const {'OPENROUTER_API_KEY': 'k'},
+        ),
+        isNull,
+      );
+    });
+  });
 }
