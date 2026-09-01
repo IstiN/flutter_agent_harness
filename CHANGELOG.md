@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.270
+
+- fix(memory): flutter_agent_memory 0.2.1 — the deletion ledger is now
+  strictly append-only (a delete never rewrites existing content;
+  tolerant parser infers a missing `type:` from the id prefix and
+  recomputes missing fingerprints), closing the clobber class that
+  erased 144 tombstones in production. `ExecutionEnvKbStorage`
+  implements the new `KbAppendCapable` through the existing
+  `ExecutionEnv.appendFile` — racing deletes append instead of
+  read-modify-write last-writer-wins.
+- test(memory): regression pins the incident: a legacy 144-entry
+  ledger with the `count:` header survives a delete with every
+  tombstone intact and the new entry appended; the adapter's native
+  append is asserted directly.
+
 ## 0.1.268
 
 - fix(tui): the "Working… Ns" immortal-spinner wedge (found live: a
