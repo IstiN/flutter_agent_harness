@@ -903,8 +903,13 @@ class AgentCli {
     var heartbeatTick = 0;
     final inboxTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       unawaited(_wakeOnInboxMail());
-      if (presence != null && sessionId != null && heartbeatTick++ % 2 == 0) {
-        unawaited(presence.touch(sessionId));
+      if (heartbeatTick++ % 2 == 0) {
+        if (presence != null && sessionId != null) {
+          unawaited(presence.touch(sessionId));
+        }
+        // The messaging-fabric heartbeat: agent_directory reports this
+        // instance as live even when no mail is pending.
+        _touchFabricHeartbeat();
       }
     });
     try {

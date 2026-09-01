@@ -124,6 +124,16 @@ extension AgentCliMessagingFlow on AgentCli {
     }
   }
 
+  /// Best-effort fabric heartbeat: refreshes this instance's mailbox
+  /// liveness marker so agent_directory reports it as live between mails.
+  void _touchFabricHeartbeat() {
+    final fabric = _subagentManager.messaging;
+    if (fabric == null) return;
+    unawaited(
+      fabric.touch(_subagentManager.mailboxOf(_subagentManager.selfId)),
+    );
+  }
+
   /// The inbox watcher tick: while IDLE, new inter-agent mail starts a turn
   /// (the loop's first steering poll drains the inbox into the run). Mid-run
   /// mail needs no wake — the per-turn steering poll already delivers it.

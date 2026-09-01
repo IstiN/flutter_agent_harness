@@ -17,8 +17,14 @@ void main() {
     test('toString includes all fields', () {
       expect(
         entry.toString(),
-        'MailboxEntry(sess1/main, cwd: /work, slug: sess1)',
+        'MailboxEntry(sess1/main, cwd: /work, slug: sess1, '
+        'lastActivity: null)',
       );
+      final stamped = MailboxEntry(
+        id: 'sess1/main',
+        lastActivity: DateTime.utc(2026, 1, 1),
+      );
+      expect(stamped.toString(), contains('lastActivity: 2026-01-01'));
     });
 
     test('supports value equality', () {

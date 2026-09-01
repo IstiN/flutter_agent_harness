@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- fix(messaging): `agent_directory` no longer drowns in graveyard mailboxes —
+  it lists LIVE mailboxes (recent activity) plus anything holding pending
+  mail and the agent's own address; stale mailboxes from long-finished
+  sessions appear only with the new `all: true` parameter. Liveness is
+  source-defined `MailboxEntry.lastActivity` (`MailboxEntry.isLive`,
+  15-minute default window): the file repository scans the `.heartbeat`
+  marker plus `inbox`/`read` content mtimes (the `.id` identity marker and
+  `_scheduled`/dot directories are excluded), and running hosts keep the
+  heartbeat fresh from their existing inbox-watch timers via the new
+  `MessagingRepository.touch` (CLI every ~4s, app every ~6s; best-effort).
+  Unknown-activity entries (custom repositories) are never hidden.
+
 - refactor(cli): the `fah` executable's startup is decomposed — the pure
   phases (`serve --a2a` argument interception, provider/model restoration,
   the secure-store preload set, the startup API-key decision, roles-secret
