@@ -8,10 +8,7 @@ import '../cli/agent_cli_test_support.dart';
 List<AssistantMessageEvent> _errorTurn(String message) => [
   ErrorEvent(
     reason: StopReason.error,
-    error: testAssistant(
-      stopReason: StopReason.error,
-      errorMessage: message,
-    ),
+    error: testAssistant(stopReason: StopReason.error, errorMessage: message),
   ),
 ];
 
@@ -31,10 +28,7 @@ void main() {
 
     test('defaultModel reflects the per-call resolution', () {
       final provider = HarnessLlmProvider(
-        resolve: () => (
-          model: testModel,
-          stream: FakeStreamFunction([]).call,
-        ),
+        resolve: () => (model: testModel, stream: FakeStreamFunction([]).call),
       );
       expect(provider.defaultModel, testModel.id);
     });

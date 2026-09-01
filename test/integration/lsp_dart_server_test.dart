@@ -77,15 +77,11 @@ void main() {
     return result.content.whereType<TextContent>().map((c) => c.text).join();
   }
 
-  test(
-    'diagnostics reports the analyzer error',
-    () async {
-      final output = await run({'op': 'diagnostics', 'path': 'lib/main.dart'});
-      expect(output, contains('error'));
-      expect(output, contains('undefined_call_here'));
-    },
-    skip: hasDart ? false : 'dart not on PATH',
-  );
+  test('diagnostics reports the analyzer error', () async {
+    final output = await run({'op': 'diagnostics', 'path': 'lib/main.dart'});
+    expect(output, contains('error'));
+    expect(output, contains('undefined_call_here'));
+  }, skip: hasDart ? false : 'dart not on PATH');
 
   test('definition jumps to the class', () async {
     final output = await run({
@@ -98,39 +94,31 @@ void main() {
     expect(output, contains('lib/b.dart'));
   }, skip: hasDart ? false : 'dart not on PATH');
 
-  test(
-    'references finds the construction site',
-    () async {
-      final output = await run({
-        'op': 'references',
-        'path': 'lib/b.dart',
-        'line': 1,
-        'character': 7,
-      });
-      expect(output, contains('reference'));
-      expect(output, contains('lib/main.dart'));
-    },
-    skip: hasDart ? false : 'dart not on PATH',
-  );
+  test('references finds the construction site', () async {
+    final output = await run({
+      'op': 'references',
+      'path': 'lib/b.dart',
+      'line': 1,
+      'character': 7,
+    });
+    expect(output, contains('reference'));
+    expect(output, contains('lib/main.dart'));
+  }, skip: hasDart ? false : 'dart not on PATH');
 
-  test(
-    'rename updates the declaration and the reference atomically',
-    () async {
-      final output = await run({
-        'op': 'rename',
-        'path': 'lib/b.dart',
-        'line': 2,
-        'character': 8,
-        'newName': 'welcome',
-      });
-      expect(output, contains('Applied rename'));
-      final b = await File('${workspace.path}/lib/b.dart').readAsString();
-      final main = await File('${workspace.path}/lib/main.dart').readAsString();
-      expect(b, contains('void welcome(String name)'));
-      expect(main, contains('greeter.welcome('));
-    },
-    skip: hasDart ? false : 'dart not on PATH',
-  );
+  test('rename updates the declaration and the reference atomically', () async {
+    final output = await run({
+      'op': 'rename',
+      'path': 'lib/b.dart',
+      'line': 2,
+      'character': 8,
+      'newName': 'welcome',
+    });
+    expect(output, contains('Applied rename'));
+    final b = await File('${workspace.path}/lib/b.dart').readAsString();
+    final main = await File('${workspace.path}/lib/main.dart').readAsString();
+    expect(b, contains('void welcome(String name)'));
+    expect(main, contains('greeter.welcome('));
+  }, skip: hasDart ? false : 'dart not on PATH');
 }
 
 bool _dartOnPath() {

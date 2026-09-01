@@ -37,9 +37,11 @@ final class HarnessLlmProvider extends LlmProvider {
     String prompt, {
     String? model,
     void Function()? onCancel,
-  }) => chatMessages([
-    LlmMessage(role: 'user', content: prompt),
-  ], model: model, onCancel: onCancel);
+  }) => chatMessages(
+    [LlmMessage(role: 'user', content: prompt)],
+    model: model,
+    onCancel: onCancel,
+  );
 
   /// Sends the conversation and returns the generated text. The [model]
   /// override is ignored — the resolved role slot is authoritative (it
@@ -80,13 +82,15 @@ final class HarnessLlmProvider extends LlmProvider {
           mapped.add(UserMessage.text(m.content));
       }
     }
-    final response = await slot.stream(
-      slot.model,
-      Context(
-        systemPrompt: systemParts.isEmpty ? null : systemParts.join('\n\n'),
-        messages: mapped,
-      ),
-    ).result;
+    final response = await slot
+        .stream(
+          slot.model,
+          Context(
+            systemPrompt: systemParts.isEmpty ? null : systemParts.join('\n\n'),
+            messages: mapped,
+          ),
+        )
+        .result;
     if (response.stopReason == StopReason.error ||
         response.stopReason == StopReason.aborted) {
       onCancel?.call();
