@@ -164,8 +164,32 @@ extension _AgentCliProviderPresets on AgentCli {
     // A catalog switch (resolved key): the previously-active custom entry
     // must stop receiving `/model` memory updates.
     _activeCustomName = null;
-    await _switchProvider(spec, url, 'k3');
+    final picked = await _kimiPickModel(spec, url, null);
+    if (picked == null) {
+      io.writeln('kimi setup cancelled');
+      return _KimiOutcome.switched;
+    }
+    await _switchProvider(spec, url, picked);
     return _KimiOutcome.switched;
+  }
+
+  /// The Kimi model step for the direct-switch branches: providers carry
+  /// no default model anymore, so the id comes from the endpoint's live
+  /// /models (user picks) or a manual entry — never a hardcoded 'k3'.
+  /// Null = cancelled.
+  Future<String?> _kimiPickModel(
+    ProviderSpec spec,
+    String url,
+    String? key,
+  ) async {
+    // The fetch authenticates with the typed key when present, else the
+    // saved entry's own key resolution inside the fetch (empty = the
+    // endpoint decides; failure falls back to manual entry).
+    final ids = await _fetchProviderModelIds(spec.name, url, key ?? '');
+    if (ids.isNotEmpty) return _pickModelFromList(ids, title: 'Kimi model');
+    final manual = await _askLine('Kimi model id: ');
+    final trimmed = manual?.trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
   }
 
   /// The no-resolved-key branch of [_handleKimiCommand]: ask for a key
@@ -196,7 +220,12 @@ extension _AgentCliProviderPresets on AgentCli {
       // registry there is nothing to save an entry into — the plain
       // catalog switch still stores the typed key under the host slot.
       _activeCustomName = null;
-      await _switchProvider(spec, url, 'k3', token: typed);
+      final picked = await _kimiPickModel(spec, url, typed ?? resolved);
+      if (picked == null) {
+        io.writeln('kimi setup cancelled');
+        return _KimiOutcome.switched;
+      }
+      await _switchProvider(spec, url, picked, token: typed);
       return _KimiOutcome.switched;
     }
     // A freshly typed key is a NEW account: save it as a named entry (the
@@ -210,12 +239,17 @@ extension _AgentCliProviderPresets on AgentCli {
       io.writeln('kimi setup cancelled');
       return _KimiOutcome.switched;
     }
+    final picked = await _kimiPickModel(spec, url, typed);
+    if (picked == null) {
+      io.writeln('kimi setup cancelled');
+      return _KimiOutcome.switched;
+    }
     await _applyCustomProviderSetup(
       CustomProviderSetup(
         spec: spec,
         baseUrl: url,
         name: name,
-        modelId: 'k3',
+        modelId: picked,
         token: typed,
       ),
     );

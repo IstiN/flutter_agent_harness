@@ -66,6 +66,7 @@ const _doneChunk = 'data: [DONE]\n\n';
 String chatSse({String text = 'Hel lo'}) =>
     sseChunk({
       'id': 'chatcmpl-1',
+      'model_picker_enabled': true,
       'choices': [
         {
           'delta': {'content': text.substring(0, 3)},
@@ -74,6 +75,7 @@ String chatSse({String text = 'Hel lo'}) =>
     }) +
     sseChunk({
       'id': 'chatcmpl-1',
+      'model_picker_enabled': true,
       'choices': [
         {
           'delta': {'content': text.substring(3)},
@@ -82,6 +84,7 @@ String chatSse({String text = 'Hel lo'}) =>
     }) +
     sseChunk({
       'id': 'chatcmpl-1',
+      'model_picker_enabled': true,
       'choices': [
         {'delta': {}, 'finish_reason': 'stop'},
       ],
@@ -635,6 +638,7 @@ void main() {
           'data': [
             {
               'id': 'gpt-4.1',
+              'model_picker_enabled': true,
               'capabilities': {
                 'limits': {
                   'max_context_window_tokens': 1000000,
@@ -645,6 +649,7 @@ void main() {
             },
             {
               'id': 'claude-sonnet-4',
+              'model_picker_enabled': true,
               'capabilities': {
                 'limits': {
                   'max_context_window_tokens': 200000,
@@ -652,7 +657,7 @@ void main() {
                 },
               },
             },
-            {'id': 'no-limits-model'},
+            {'id': 'no-limits-model', 'model_picker_enabled': true},
           ],
         }),
       );
@@ -732,8 +737,8 @@ void main() {
       expect(() => providerStreamFunction('copilot', 'gh-1'), returnsNormally);
     });
 
-    test('buildCliDefaultModel defaults to gpt-4.1', () {
-      final model = buildCliDefaultModel('copilot');
+    test('buildCliDefaultModel requires an explicit model id', () {
+      final model = buildCliDefaultModel('copilot', modelId: 'gpt-4.1');
       expect(model.id, 'gpt-4.1');
       expect(model.baseUrl, 'https://api.githubcopilot.com');
     });
@@ -830,6 +835,7 @@ void main() {
             'data': [
               {
                 'id': 'gpt-4.1',
+                'model_picker_enabled': true,
                 'capabilities': {
                   'limits': {
                     'max_context_window_tokens': 1000000,

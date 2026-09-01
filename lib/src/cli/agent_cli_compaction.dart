@@ -46,6 +46,18 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
     cli._tuiController?.setBusyPhase('Compacting context… $_compactionTail');
   }
 
+  @override
+  void onAttemptStart(String label, int attempt, Duration budget) {
+    // A slow/dead summarizer endpoint must read as a bounded wait, not a
+    // silent hang: name the endpoint being tried and its time cap.
+    cli._tuiController?.setBusyPhase(
+      'Compacting context… $label (attempt $attempt, '
+      '${budget.inSeconds}s cap)',
+    );
+    _compactionTail = '';
+    _lastDeltaPhase = null;
+  }
+
   /// The last 60 chars of the merged tail (newlines flattened) — a helper
   /// so [onDelta] stays at the repo's CC gate.
   static String _rollingTail(String merged) =>

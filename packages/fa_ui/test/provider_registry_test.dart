@@ -326,6 +326,31 @@ void main() {
       expect(reloaded.keyFor(acme.id), 'sk-acme');
     });
 
+    test('load hydrates a Copilot entry from its entry-scoped slot', () async {
+      // The connect flow persists the GitHub token entry-scoped
+      // (`FA_KEY_COPILOT_<NAME>`, the CLI contract), never host-scoped —
+      // a restart must still resolve it, or every /models fetch silently
+      // 401s and the picker falls back to the saved model alone.
+      backend['FA_KEY_COPILOT_COPILOT_OCTOCAT'] = 'gh-token';
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      final copilot = await registry.add(
+        name: 'copilot-octocat',
+        baseUrl: 'https://api.githubcopilot.com',
+        modelId: 'gpt-4.1',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final reloaded = await ProviderRegistry.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      expect(reloaded.keyFor(copilot.id), 'gh-token');
+    });
+
     test('remove deletes the provider and its Keychain slot', () async {
       backend['FA_KEY_ACME_EXAMPLE'] = 'sk-acme';
       final env = MemoryExecutionEnv();

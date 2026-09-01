@@ -9,12 +9,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('addProviderPresetEnabled follows the catalog visibility rules', () {
-    // ChatGPT Codex is visible:false in the catalog (WebSocket adapter
-    // pending) — it must never be offered, even though a preset exists.
+    // ChatGPT Codex shipped (b6b85c66 unhid it): the catalog marks it
+    // visible, so the preset is enabled — the TILE is gated on the host's
+    // OAuth callback instead (see the picker tests below).
     final chatgpt = defaultAddProviderPresets.firstWhere(
       (p) => p.key == 'chatgpt',
     );
-    expect(addProviderPresetEnabled(chatgpt), isFalse);
+    expect(addProviderPresetEnabled(chatgpt), isTrue);
 
     // Visible catalog providers stay enabled without a build filter.
     final dial = defaultAddProviderPresets.firstWhere((p) => p.key == 'dial');
@@ -82,19 +83,21 @@ void main() {
     }
   });
 
-  testWidgets('the Add-provider picker never lists hidden catalog providers', (
-    tester,
-  ) async {
+  testWidgets('the ChatGPT tile hides without the OAuth callback and shows '
+      'with one', (tester) async {
+    // The catalog marks chatgpt visible — the tile gating is the host's
+    // OAuth callback (same pattern as the Copilot tile).
     await tester.pumpWidget(
-      const MaterialApp(
-        home: AddProviderPresetPickerPage(
-          // Even with an OAuth callback wired the ChatGPT tile stays
-          // hidden — the catalog marks the provider not visible.
-          onChatGptOAuth: _noop,
-        ),
-      ),
+      const MaterialApp(home: AddProviderPresetPickerPage()),
     );
     expect(find.text('ChatGPT (Codex)'), findsNothing);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: AddProviderPresetPickerPage(onChatGptOAuth: _noop),
+      ),
+    );
+    expect(find.text('ChatGPT (Codex)'), findsOneWidget);
     expect(find.text('DIAL'), findsOneWidget);
     // Off-screen tiles are lazy-built by the ListView — include offstage.
     expect(find.text('Ollama Cloud', skipOffstage: false), findsOneWidget);

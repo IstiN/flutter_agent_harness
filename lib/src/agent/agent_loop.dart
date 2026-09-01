@@ -36,6 +36,7 @@ library;
 import 'dart:async';
 
 import '../cancel_token.dart';
+import '../compaction/token_estimation.dart' show estimateContextTokens;
 import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
@@ -1092,6 +1093,35 @@ Future<AssistantMessage> _streamAssistantResponse(
     config,
     cancelToken,
   );
+
+  // Mid-turn over-window guard: tool outputs can balloon one turn far past
+  // the model window (a 287k-token live context on a 200k model was seen in
+  // the wild because compaction only runs at turn boundaries). Stop BEFORE
+  // the request instead of silently sending a context the model cannot
+  // fit — the run ends with a clear error, the tool results stay in the
+  // session, and the post-run auto-compaction (with its local-trim valve)
+  // shrinks the transcript for the next turn. Only a GROSS overflow trips
+  // this (past the window itself): between the compaction trigger
+  // (window - reserve) and the window, the normal post-run compaction
+  // flow still owns the decision.
+  final window = config.model.contextWindow;
+  if (window > 0) {
+    final tokens = estimateContextTokens(requestContext.messages).tokens;
+    if (tokens > window) {
+      return _finishWithoutStream(
+        context,
+        emit,
+        _terminalMessage(
+          config.model,
+          StopReason.error,
+          'Context window exhausted: the outgoing context is ~$tokens tokens, '
+          'the ${config.model.id} window is $window. The request was not '
+          'sent. Auto-compaction runs next; if it keeps failing, run '
+          '/compact or start a fresh session.',
+        ),
+      );
+    }
+  }
 
   AssistantMessageEventStream response;
   try {

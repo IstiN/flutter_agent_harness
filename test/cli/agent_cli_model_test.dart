@@ -78,6 +78,27 @@ void main() {
     expect(fake.contexts.single.systemPrompt, isNotNull);
   });
 
+  test('/model switch prints the role-models note', () async {
+    // The note tells the user which models the OTHER roles still run
+    // (smol/subagent/memory), so a main-model switch never silently
+    // strands a mismatched combination.
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('/model new-model');
+    await waitForIt(
+      () => io.out.toString().contains('switched model to new-model'),
+    );
+    await waitForIt(
+      () => io.out.toString().contains('smol/subagent/memory roles'),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    expect(io.out.toString(), contains('/settings → Agent models'));
+  });
+
   test('/models lists known models for the active provider', () async {
     final fake = FakeStreamFunction([]);
     final cli = cliFor(

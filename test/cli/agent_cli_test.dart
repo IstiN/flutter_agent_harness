@@ -795,16 +795,19 @@ void main() {
   });
 
   test('auto-compacts after a turn over the threshold', () async {
+    // Window 800, reserve 400: the first request (~1 token) passes the
+    // loop's mid-turn over-window guard, while the ~500-token answer
+    // pushes the post-turn transcript over the compaction threshold.
     const tinyWindow = Model(
       id: 'tiny',
       api: 'test-api',
       provider: 'test-provider',
       baseUrl: 'https://example.test',
-      contextWindow: 100,
+      contextWindow: 800,
       maxTokens: 4096,
     );
     final fake = FakeStreamFunction([
-      textTurn('a reasonably long answer that exceeds the tiny window'),
+      textTurn('a' * 2000),
       textTurn('AUTO SUMMARY'),
     ]);
     final cli = cliFor(fake.call, model: tinyWindow);

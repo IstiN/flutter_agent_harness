@@ -848,17 +848,7 @@ Future<void> _runApp(List<String> args) async {
 
   final io = _TerminalCliIO(headless: headlessPrompt != null);
   // The one boot notice for env preconfig (same channel as the raw-mode
-  // note below): names the provider and the env var that activated it,
-  // never the key value.
-  final envPreconfig = faPreconfig == null
-      ? envPreconfigPick(parsed, saved)
-      : null;
-  if (envPreconfig case (final picked, final envName)?) {
-    io.writeln(
-      'note: ${picked.name} activated from $envName '
-      '(model ${catalogDefaultModelId(picked.name)})',
-    );
-  }
+
   // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
   // key ref — or its keyless absence) — never the key value. The pinned
   // declaration is the session default for every model role; only a

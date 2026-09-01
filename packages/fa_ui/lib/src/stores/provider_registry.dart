@@ -316,6 +316,18 @@ class ProviderRegistry extends ChangeNotifier {
         final value = secure[keyNameFor(provider.baseUrl)];
         if (value != null && value.isNotEmpty) {
           _sessionKeys[provider.id] = value;
+          continue;
+        }
+        // Copilot entries persist the GitHub token ENTRY-scoped
+        // (`FA_KEY_COPILOT_<NAME>`, the connect flow / CLI contract), never
+        // host-scoped — hydrate from that slot or a restart loses the key
+        // and every model fetch silently 401s.
+        if (isCopilotBaseUrl(provider.baseUrl)) {
+          final scoped =
+              secure[CustomProviderRegistry.copilotEntryKeyName(provider.name)];
+          if (scoped != null && scoped.isNotEmpty) {
+            _sessionKeys[provider.id] = scoped;
+          }
         }
       }
     }

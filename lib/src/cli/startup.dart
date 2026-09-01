@@ -51,17 +51,17 @@ import 'headless_provider_key.dart';
 
 /// Provider/model restoration. Precedence: an explicit `--provider` flag
 /// (full manual control, preconfigs disabled) > the `FA_PROVIDER_*` env
-/// declaration ([faProviderPreconfig]) > the pristine-config catalog pick
-/// ([envPreconfigPick]) > the saved `provider:` (the persisted /provider
-/// switch) > the parsed default. Only kinds the legacy single-model path
-/// can build are restored (chatgpt-codex keeps the openai-completions
-/// default; its OAuth flow re-establishes on demand).
+/// declaration ([faProviderPreconfig]) > the saved `provider:` (the
+/// persisted /provider switch) > the parsed default. Only kinds the legacy
+/// single-model path can build are restored (chatgpt-codex keeps the
+/// openai-completions default; its OAuth flow re-establishes on demand).
 ///
-/// The preconfigs supply model/baseUrl too, so the saved restore never
-/// leaks through while one is active (--model/--base-url flags still
-/// override individual fields). The pristine saved model/baseUrl are the
-/// constant defaults, not user choices: an env pick replaces them with the
-/// picked provider's catalog default model and endpoint.
+/// The preconfig supplies model/baseUrl too, so the saved restore never
+/// leaks through while it is active (--model/--base-url flags still
+/// override individual fields). No env-key auto-pick: a bare API key in
+/// the environment never activates a provider — the model would be an
+/// implicit default, and providers carry none by design. FA_PROVIDER_*
+/// stays: it names the model explicitly.
 ///
 /// Returns the effective [CliArgs], the resolved provider kind — the same
 /// value, the explicit record field saves the caller a re-derivation — and
@@ -82,22 +82,14 @@ resolveEffectiveCliArgs(
     'zai',
   };
   final faPreconfig = faProviderPreconfig(parsed, saved, env: env);
-  final (ProviderSpec, String)? envPick = faPreconfig == null
-      ? envPreconfigPick(parsed, saved, env: env)
-      : null;
   final provider = parsed.providerExplicit
       ? parsed.provider
       : faPreconfig?.spec.kind ??
-            envPick?.$1.kind ??
             (restorableKinds.contains(saved.providerKind)
                 ? saved.providerKind
                 : parsed.provider);
-  String? modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
-  String? baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
-  if (envPick != null) {
-    modelId = catalogDefaultModelId(envPick.$1.name);
-    baseUrl = null;
-  }
+  final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
+  final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(
     model: modelId,
     provider: provider,
@@ -146,41 +138,6 @@ EnvProviderPreconfig? faProviderPreconfig(
     providerConfigBase64: environ['FA_PROVIDER_CONFIG_BASE64'],
     envVarValue: (name) => environ[name],
     takenNames: [for (final entry in saved.customProviders) entry.name],
-  );
-}
-
-/// The out-of-the-box env preconfig pick — `(spec, activating env var
-/// name)`, or null. Fires only on a pristine config: [CliConfig] has
-/// non-null defaults (a fresh install reads providerKind
-/// 'openai-completions', model 'openai/gpt-4o-mini', the OpenRouter URL),
-/// so null-checks on the saved fields are dead code — "the user never
-/// configured anything" means every provider-relevant field still equals
-/// that pristine default. An explicit --provider or --model wins; any
-/// saved provider switch, base URL, roles section, or custom provider
-/// disables the pick.
-(ProviderSpec, String)? envPreconfigPick(
-  CliArgs parsed,
-  CliConfig saved, {
-  Map<String, String>? env,
-}) {
-  final environ = env ?? Platform.environment;
-  final pristine = CliConfig();
-  final untouched =
-      !parsed.providerExplicit &&
-      parsed.model == null &&
-      saved.providerKind == pristine.providerKind &&
-      saved.modelId == pristine.modelId &&
-      saved.baseUrl == pristine.baseUrl &&
-      saved.modelRoles == null &&
-      saved.customProviders.isEmpty;
-  if (!untouched) return null;
-  final picked = envPreconfiguredProvider((name) => environ[name]);
-  if (picked == null) return null;
-  return (
-    picked,
-    picked.apiKeyEnvNames.firstWhere(
-      (name) => (environ[name] ?? '').isNotEmpty,
-    ),
   );
 }
 

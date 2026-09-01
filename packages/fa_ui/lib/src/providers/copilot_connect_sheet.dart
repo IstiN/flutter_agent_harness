@@ -17,6 +17,7 @@ class CopilotConnectCallbacks {
     required this.requestDeviceCode,
     required this.pollAccessToken,
     required this.fetchLogin,
+    required this.fetchModels,
   });
 
   /// Starts the GitHub OAuth device flow.
@@ -28,6 +29,13 @@ class CopilotConnectCallbacks {
 
   /// Resolves the GitHub login for a token (the default entry name seed).
   final Future<String> Function(String githubToken) fetchLogin;
+
+  /// Lists the models the resolved endpoint serves (the GitHub token +
+  /// the plan's base URL; the host runs the Copilot token exchange
+  /// inside). An empty list drops the model step to a manual id field —
+  /// no provider carries a default model.
+  final Future<List<String>> Function(String githubToken, String baseUrl)
+  fetchModels;
 }
 
 /// What a completed Copilot connect hands back to the host.
@@ -38,6 +46,7 @@ class CopilotConnectResult {
     required this.login,
     required this.entryName,
     required this.accountType,
+    required this.modelId,
     this.baseUrlOverride,
   });
 
@@ -57,6 +66,10 @@ class CopilotConnectResult {
   /// Explicit base URL for the `Custom endpoint` plan; null when the
   /// account type default applies.
   final String? baseUrlOverride;
+
+  /// The model id the user picked (or typed) in the model step — every
+  /// provider needs an explicit model; nothing defaults.
+  final String modelId;
 }
 
 /// Runs the GitHub Copilot connect flow as a modal bottom sheet:
@@ -78,7 +91,7 @@ Future<void> showCopilotConnectSheet({
   );
 }
 
-enum _Step { start, waiting, form }
+enum _Step { start, waiting, form, model }
 
 class _CopilotConnectSheet extends StatefulWidget {
   const _CopilotConnectSheet({required this.callbacks, required this.onResult});
@@ -99,9 +112,13 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
   String _login = '';
   CopilotAccountType _accountType = CopilotAccountType.individual;
   bool _custom = false;
+  List<String> _modelIds = const [];
+  String _modelId = '';
+  bool _modelsFetchFailed = false;
   final _tokenController = TextEditingController();
   final _entryNameController = TextEditingController();
   final _baseUrlController = TextEditingController();
+  final _modelController = TextEditingController();
 
   /// Builds the outcome; `Custom endpoint` rides [CopilotConnectResult.baseUrlOverride].
   CopilotConnectResult _buildResult() => CopilotConnectResult(
@@ -110,6 +127,14 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
     entryName: _entryNameController.text.trim(),
     accountType: _custom ? CopilotAccountType.individual : _accountType,
     baseUrlOverride: _custom ? _baseUrlController.text.trim() : null,
+    modelId: _modelId,
+  );
+
+  /// The endpoint the form currently describes (plan default or the custom
+  /// override) — the model fetch targets it.
+  String get _effectiveBaseUrl => copilotBaseUrl(
+    accountType: _accountType,
+    baseUrlOverride: _custom ? _baseUrlController.text.trim() : null,
   );
 
   @override
@@ -117,6 +142,7 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
     _tokenController.dispose();
     _entryNameController.dispose();
     _baseUrlController.dispose();
+    _modelController.dispose();
     super.dispose();
   }
 
@@ -173,6 +199,30 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
     );
   }
 
+  /// The form's Connect button: fetch the endpoint's models, then show the
+  /// model step (a fetched list to pick from, or a manual id field when
+  /// the fetch came back empty — no default model exists).
+  Future<void> _loadModels() async {
+    setState(() {
+      _error = null;
+      _modelsFetchFailed = false;
+      _step = _Step.model;
+      _modelIds = const [];
+    });
+    List<String> ids;
+    try {
+      ids = await widget.callbacks.fetchModels(_token, _effectiveBaseUrl);
+    } on Object {
+      ids = const [];
+    }
+    if (!mounted) return;
+    setState(() {
+      _modelIds = ids;
+      _modelsFetchFailed = ids.isEmpty;
+      if (ids.isNotEmpty) _modelId = ids.first;
+    });
+  }
+
   void _finish() {
     widget.onResult(_buildResult());
     Navigator.of(context).pop();
@@ -192,6 +242,7 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
         _Step.start => _buildStart(strings),
         _Step.waiting => _buildWaiting(strings),
         _Step.form => _buildForm(strings),
+        _Step.model => _buildModel(strings),
       },
     );
   }
@@ -353,7 +404,59 @@ class _CopilotConnectSheetState extends State<_CopilotConnectSheet> {
         ),
         const SizedBox(height: 12),
         FilledButton(
-          onPressed: _finish,
+          onPressed: _loadModels,
+          child: Text(strings.copilotConnectButton),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildModel(FaUiStrings strings) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          strings.copilotSheetTitle,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 12),
+        Text(strings.copilotModelLabel),
+        const SizedBox(height: 8),
+        if (_modelIds.isEmpty && !_modelsFetchFailed)
+          const Center(child: CircularProgressIndicator())
+        else if (_modelIds.isNotEmpty)
+          Flexible(
+            child: RadioGroup<String>(
+              groupValue: _modelId,
+              onChanged: (value) =>
+                  setState(() => _modelId = value ?? _modelId),
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final id in _modelIds)
+                    RadioListTile<String>(title: Text(id), value: id),
+                ],
+              ),
+            ),
+          )
+        else ...[
+          Text(
+            strings.copilotModelsFetchFailed,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _modelController,
+            onChanged: (value) => setState(() => _modelId = value.trim()),
+            decoration: InputDecoration(
+              labelText: strings.copilotModelLabel,
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: _modelId.isEmpty ? null : _finish,
           child: Text(strings.copilotConnectButton),
         ),
       ],

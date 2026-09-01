@@ -228,6 +228,7 @@ void main() {
             'data': [
               {
                 'id': 'gpt-4.1',
+                'model_picker_enabled': true,
                 'capabilities': {
                   'limits': {
                     'max_context_window_tokens': 128000,
@@ -235,7 +236,7 @@ void main() {
                   },
                 },
               },
-              {'id': 'claude-sonnet-4'},
+              {'id': 'claude-sonnet-4', 'model_picker_enabled': true},
             ],
           }),
           200,

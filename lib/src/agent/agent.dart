@@ -333,8 +333,14 @@ class Agent {
   /// Active cancel token for the current run, if any.
   CancelToken? get cancelToken => _activeRun?.source.token;
 
-  /// Abort the current run, if one is active.
-  void abort() => _activeRun?.source.cancel();
+  /// Aborts the current run, if one is active. Also disarms the idle
+  /// watchdog: it guards against a WEDGED stream going silent, not against
+  /// a host that cancelled on purpose — keeping it armed after an explicit
+  /// abort (or host teardown) leaks the timer past the run's grave.
+  void abort() {
+    _disarmRunWatchdog();
+    _activeRun?.source.cancel();
+  }
 
   /// Resolves when the current run and all awaited event listeners have
   /// finished (after `agent_end` listeners settle).

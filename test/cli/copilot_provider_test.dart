@@ -1,8 +1,32 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
+
+/// Serves the Copilot token exchange and the copilot-shaped /models
+/// payload (`{data: [{id, capabilities.limits}]}`) so connect flows never
+/// touch the network.
+final http_testing.MockClient _copilotModelsMockClient =
+    http_testing.MockClient((request) async {
+      if (request.url.host == 'api.github.com') {
+        return http.Response(
+          '{"token":"tid=fake;proxy-ep=proxy.individual.githubcopilot.com",'
+          '"expires_at":9999999999,"refresh_in":1500}',
+          200,
+        );
+      }
+      if (request.url.path.endsWith('/models')) {
+        return http.Response(
+          '{"data":[{"id":"gpt-4.1","model_picker_enabled":true,'
+          '"capabilities":{"supports":{"tool_calls":true},"limits":'
+          '{"max_context_window_tokens":128000,"max_output_tokens":16384}}}]}',
+          200,
+        );
+      }
+      return http.Response('not found', 404);
+    });
 
 void main() {
   late MemoryExecutionEnv env;
@@ -102,6 +126,7 @@ void main() {
       final changes = <(String, String)>[];
       final statuses = <String>[];
       final cli = cliFor(
+        modelsHttpClient: _copilotModelsMockClient,
         fake.call,
         envVarValue: (_) => null,
         secureKeys: cache,
@@ -129,6 +154,8 @@ void main() {
       io.sendLine(''); // keep the default copilot-octocat
       await waitForIt(() => io.out.toString().contains('Copilot plan'));
       io.sendLine('1'); // individual
+      await waitForIt(() => io.out.toString().contains('Copilot model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('switched provider to copilot'),
       );
@@ -159,6 +186,7 @@ void main() {
       await cache.probe();
       final registry = CustomProviderRegistry([]);
       final cli = cliFor(
+        modelsHttpClient: _copilotModelsMockClient,
         fake.call,
         envVarValue: (_) => null,
         secureKeys: cache,
@@ -178,6 +206,8 @@ void main() {
       io.sendLine('');
       await waitForIt(() => io.out.toString().contains('Copilot plan'));
       io.sendLine('2'); // business
+      await waitForIt(() => io.out.toString().contains('Copilot model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('switched provider to copilot'),
       );
@@ -225,6 +255,7 @@ void main() {
         ),
       ]);
       final cli = cliFor(
+        modelsHttpClient: _copilotModelsMockClient,
         fake.call,
         envVarValue: (_) => null,
         secureKeys: cache,
@@ -249,6 +280,8 @@ void main() {
       io.sendLine(''); // default copilot-a — the same account again
       await waitForIt(() => io.out.toString().contains('Copilot plan'));
       io.sendLine('1'); // individual
+      await waitForIt(() => io.out.toString().contains('Copilot model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('switched provider to copilot'),
       );
@@ -271,6 +304,7 @@ void main() {
       () async {
         final fake = FakeStreamFunction([textTurn('ok')]);
         final cli = cliFor(
+          modelsHttpClient: _copilotModelsMockClient,
           fake.call,
           envVarValue: (_) => null,
           copilotDeviceFlowFn: ({clientId, onStatus}) async {
@@ -313,6 +347,7 @@ void main() {
         ),
       ]);
       final cli = cliFor(
+        modelsHttpClient: _copilotModelsMockClient,
         fake.call,
         envVarValue: (_) => null,
         secureKeys: cache,
@@ -339,6 +374,7 @@ void main() {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final registry = CustomProviderRegistry([]);
       final cli = cliFor(
+        modelsHttpClient: _copilotModelsMockClient,
         fake.call,
         envVarValue: (_) => null,
         customProviders: registry,
@@ -358,6 +394,8 @@ void main() {
       io.sendLine('4'); // custom base URL
       await waitForIt(() => io.out.toString().contains('base URL:'));
       io.sendLine('https://copilot.corp.example/v1');
+      await waitForIt(() => io.out.toString().contains('Copilot model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('switched provider to copilot'),
       );

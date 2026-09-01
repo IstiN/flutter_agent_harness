@@ -10,6 +10,24 @@ import 'package:test/test.dart';
 
 import 'pty_harness.dart';
 
+/// Non-null when the real config pins provider keys that are absent from
+/// this environment (secure-store-only `apiKeyName`s): the spawned CLI
+/// cannot boot, so every test here is skipped with this reason.
+final String? bootBlocker = _bootBlocker();
+
+String? _bootBlocker() {
+  final config = File('${Platform.environment['HOME']}/.fah/config.yaml');
+  if (!config.existsSync()) return null;
+  final content = config.readAsStringSync();
+  final keyRefs = RegExp(
+    r'apiKeyName:\s*([A-Z0-9_]+)',
+  ).allMatches(content).map((m) => m.group(1)!).toSet();
+  final missing = keyRefs.where((v) => (Platform.environment[v] ?? '').isEmpty);
+  if (missing.isEmpty) return null;
+  return 'config references keys not in the environment: '
+      '${missing.join(', ')}';
+}
+
 void main() {
   late Directory tempHome;
 
@@ -23,23 +41,6 @@ void main() {
         ..createSync(recursive: true);
       tempConfig.writeAsStringSync(realConfig.readAsStringSync());
     }
-    // Skip when the copied config references a provider key that is not in
-    // the environment (e.g. MiniMax on a machine without MINIMAX_API_KEY).
-    // The test would fail at boot with an invalid model roles config.
-    final env = Platform.environment;
-    if (env['MINIMAX_API_KEY'] == null || env['MINIMAX_API_KEY']!.isEmpty) {
-      // Check if the copied config actually references MiniMax.
-      final configFile = File('${tempHome.path}/.fah/config.yaml');
-      if (configFile.existsSync()) {
-        final content = configFile.readAsStringSync();
-        if (content.contains('minimax') && content.contains('MiniMax')) {
-          // MiniMax is configured but no key — skip the whole suite.
-          // We can't run integration tests against a config that won't boot.
-          print('SKIP: MiniMax configured but MINIMAX_API_KEY not set');
-          return;
-        }
-      }
-    }
   });
 
   tearDownAll(() {
@@ -48,6 +49,7 @@ void main() {
 
   test(
     'task tool spawns a subagent that completes',
+    skip: bootBlocker,
     timeout: const Timeout(Duration(minutes: 3)),
     () async {
       final harness = await FaCliHarness.spawn(
@@ -86,7 +88,7 @@ void main() {
     },
   );
 
-  test('/agents lists built-in agent types', () async {
+  test('/agents lists built-in agent types', skip: bootBlocker, () async {
     final harness = await FaCliHarness.spawn(extraEnv: {'HOME': tempHome.path});
     harness.startListening();
     addTearDown(() async => harness.close());
@@ -103,12 +105,17 @@ void main() {
     expect(harness.screenText, contains('review'));
   });
 
-  test('/agents bare shows the live tree with main and children', () async {
-    // Keyless test-model config (localhost:9999 is never contacted here).
-    final keylessHome = Directory.systemTemp.createTempSync('fa_agents_tree_');
-    File('${keylessHome.path}/.fah/config.yaml')
-      ..createSync(recursive: true)
-      ..writeAsStringSync('''
+  test(
+    '/agents bare shows the live tree with main and children',
+    skip: bootBlocker,
+    () async {
+      // Keyless test-model config (localhost:9999 is never contacted here).
+      final keylessHome = Directory.systemTemp.createTempSync(
+        'fa_agents_tree_',
+      );
+      File('${keylessHome.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('''
 provider: openai-completions
 model: test-model
 baseUrl: http://localhost:9999/v1
@@ -116,53 +123,60 @@ mode: code
 approvalMode: yolo
 allowedTools: []
 ''');
-    addTearDown(() => keylessHome.deleteSync(recursive: true));
+      addTearDown(() => keylessHome.deleteSync(recursive: true));
 
-    final harness = await FaCliHarness.spawn(
-      extraEnv: {'HOME': keylessHome.path},
-    );
-    harness.startListening();
-    addTearDown(() async => harness.close());
-
-    await harness.waitForBoot();
-
-    await harness.runSlashCommand('/agents');
-
-    // TUI picker shows the main orchestrator row (no subagents spawned yet).
-    await harness.waitForText(
-      'main (orchestrator)',
-      timeout: const Duration(seconds: 15),
-    );
-    final screen = harness.screenText;
-    expect(screen, contains('main (orchestrator)'));
-  });
-
-  test('memory_add and memory_search tools are available', () async {
-    final harness = await FaCliHarness.spawn(extraEnv: {'HOME': tempHome.path});
-    harness.startListening();
-    addTearDown(() async => harness.close());
-
-    await harness.waitForBoot();
-
-    // Check that memory tools are in the /help output.
-    await harness.runSlashCommand('/help');
-    await harness.waitForOutput(settleMs: 500);
-
-    // The tools should be registered — verify via a direct tool call.
-    harness.sendText(
-      'Use the memory_add tool to save this fact: "The project uses Dart 3.12". Then use memory_search to find it.',
-    );
-    harness.sendEnter();
-
-    // Wait for a response that indicates memory was saved.
-    try {
-      await harness.waitForText(
-        'saved memory',
-        timeout: const Duration(seconds: 60),
+      final harness = await FaCliHarness.spawn(
+        extraEnv: {'HOME': keylessHome.path},
       );
-      expect(harness.screenText, contains('saved memory'));
-    } on TimeoutException {
-      // Model may not call the tool — that's OK for this infrastructure test.
-    }
-  });
+      harness.startListening();
+      addTearDown(() async => harness.close());
+
+      await harness.waitForBoot();
+
+      await harness.runSlashCommand('/agents');
+
+      // TUI picker shows the main orchestrator row (no subagents spawned yet).
+      await harness.waitForText(
+        'main (orchestrator)',
+        timeout: const Duration(seconds: 15),
+      );
+      final screen = harness.screenText;
+      expect(screen, contains('main (orchestrator)'));
+    },
+  );
+
+  test(
+    'memory_add and memory_search tools are available',
+    skip: bootBlocker,
+    () async {
+      final harness = await FaCliHarness.spawn(
+        extraEnv: {'HOME': tempHome.path},
+      );
+      harness.startListening();
+      addTearDown(() async => harness.close());
+
+      await harness.waitForBoot();
+
+      // Check that memory tools are in the /help output.
+      await harness.runSlashCommand('/help');
+      await harness.waitForOutput(settleMs: 500);
+
+      // The tools should be registered — verify via a direct tool call.
+      harness.sendText(
+        'Use the memory_add tool to save this fact: "The project uses Dart 3.12". Then use memory_search to find it.',
+      );
+      harness.sendEnter();
+
+      // Wait for a response that indicates memory was saved.
+      try {
+        await harness.waitForText(
+          'saved memory',
+          timeout: const Duration(seconds: 60),
+        );
+        expect(harness.screenText, contains('saved memory'));
+      } on TimeoutException {
+        // Model may not call the tool — that's OK for this infrastructure test.
+      }
+    },
+  );
 }

@@ -385,14 +385,12 @@ extension on AgentCli {
   }
 
   /// The offline seed ids for a catalog provider: the remote catalog's
-  /// chat fallback merged with the catalog's default model id (nulls
-  /// dropped, deduped). Empty when the catalog ships neither — such a
-  /// provider is never listed with zero models.
+  /// chat fallback (deduped). Empty when the catalog ships nothing — such
+  /// a provider is never listed with zero models. No local default id is
+  /// merged: providers carry no default model by design.
   List<String> _envCatalogSeedModels(ProviderSpec spec) {
-    final defaultId = catalogDefaultModelId(spec.name);
     final merged = <String>[
       ...remoteCatalogEnrichment.chatFallbackFor(spec.name),
-      ?defaultId,
     ];
     final seen = <String>{};
     return [
@@ -929,6 +927,40 @@ extension on AgentCli {
     config.onModelChanged?.call(_agent.state.model);
   }
 
+  /// Compact post-switch note: the role models that did NOT move with the
+  /// main one, so the user can go adjust them (/settings → Agent models)
+  /// when the combination no longer makes sense (a free main model paired
+  /// with a paid smol summarizer, a flash main with a flagship subagent).
+  void _printRoleModelsNote() {
+    final resolver = config.modelRolesResolver;
+    if (resolver == null) {
+      io.writeln(
+        _style.dim(
+          '  note: smol/subagent/memory roles inherit the main model — '
+          'pin them via /settings → Agent models',
+        ),
+      );
+      return;
+    }
+    String label(String role) {
+      final chain = resolver.config.chainFor(
+        role,
+        cwd: resolver.cwd,
+        homeDir: resolver.homeDir,
+      );
+      if (chain == null) return 'inherits main';
+      return chain.map((ref) => ref.modelId).join(' → ');
+    }
+
+    io.writeln(
+      _style.dim(
+        '  note: role models unchanged — smol (compaction): '
+        '${label(smolModelRole)} · subagent: ${label("subagent")} · '
+        'memory: ${label("memory")} — /settings → Agent models to adjust',
+      ),
+    );
+  }
+
   Future<void> _switchModel(String modelId) async {
     final current = _agent.state.model;
     final rolesResolver = config.modelRolesResolver;
@@ -984,6 +1016,7 @@ extension on AgentCli {
         modelId: modelId,
       );
       io.writeln('switched model to $modelId');
+      _printRoleModelsNote();
       // _recordCustomModel persists via its own onModelChanged (the
       // per-provider model memory write must survive restarts even when
       // nothing else changed).
@@ -1013,6 +1046,7 @@ extension on AgentCli {
       modelId: modelId,
     );
     io.writeln('switched model to $modelId');
+    _printRoleModelsNote();
     _recordCustomModel(modelId);
     config.onModelChanged?.call(_agent.state.model);
   }

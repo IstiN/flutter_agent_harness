@@ -155,8 +155,8 @@ const defaultAddProviderPresets = <AddProviderPreset>[
 /// Whether a quick-add preset is offered to the user right now.
 ///
 /// Presets backed by the CLI provider catalog ([harness.providerCatalog])
-/// follow the catalog's visibility rules: a `visible: false` spec (ChatGPT
-/// Codex until its WebSocket adapter ships) is hidden, and the
+/// follow the catalog's visibility rules: a `visible: false` spec is
+/// hidden, and the
 /// `FA_PROVIDERS` build/runtime filter ([harness.providerEnabledInBuild])
 /// drops filtered-out providers. App-only presets (Kimi, Z.AI, Ollama,
 /// Custom — no catalog entry) are always enabled.

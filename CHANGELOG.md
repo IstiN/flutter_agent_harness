@@ -43,6 +43,56 @@
   streaming contract and is resolved per call (`memory` role → `smol` →
   main) in BOTH the CLI and the app. Memory consolidation and semantic
   search now actually run instead of being silently skipped.
+## 0.1.274
+
+- fix(compaction): the summarizer can no longer hold the turn hostage.
+  A dead/dribbling summarizer endpoint used to keep the "Compacting
+  context…" row up for up to ~20 minutes (10-minute per-attempt budget
+  from 0.1.240, smol + main): the per-attempt budget is now 90 s and a
+  new whole-run `totalBudget` (4 min) skips any further attempts once
+  burned, falling to the mechanical local trim. New
+  `AutoCompactorHooks.onAttemptStart` surfaces each attempt in the busy
+  row ("smol=provider/model, attempt 1, 90s cap") so the wait reads as
+  bounded, and the CLI resets its delta tail per attempt.
+- fix(agent-loop): mid-turn over-window guard — before each provider
+  request the outgoing context is estimated; past the model's window
+  the run stops with a clear "Context window exhausted" error instead
+  of silently sending a 287k-token context to a 200k model (seen live:
+  compaction only runs at turn boundaries, and a single verification
+  turn with full-suite logs ballooned far past it). Gross overflow
+  only — between the compaction trigger and the window the post-run
+  compaction flow still owns the decision.
+
+## 0.1.273
+
+- fix(agent): `Agent.abort()` disarms the run idle watchdog — it guards a
+  WEDGED stream going silent, not a host that cancelled on purpose; an
+  8-minute timer no longer outlives an aborted run. The app's
+  `AgentService.dispose` now aborts an in-flight run (its error callback
+  skips `notifyListeners` once disposed), which un-wedged the widget-test
+  floor: 8 pre-existing flutter_app failures from the 0.1.271 watchdog
+  (chat screen, session binding, work bar, session chat sheet) pass again.
+- refactor(tui): split `_handleBusyMsg`'s transition diagnostic/copy out
+  of the dispatcher (CRAP 15.15 → under the pinned 12.0 ratchet).
+
+## 0.1.272
+
+- fix(providers): no provider carries a default model anymore — every
+  connect/switch flow picks the model explicitly. `/provider kimi` and
+  `/provider copilot` now fetch the endpoint's /models (the Copilot
+  dialect runs the GitHub→Copilot token exchange first) and ask the user
+  to pick, falling back to a manual id entry when the fetch is empty; the
+  silent `gpt-4.1` seed is gone from the Copilot connect flow.
+- fix(providers): the Copilot /models dialect lists only picker-eligible
+  chat models — pi-mono parity (`model_picker_enabled`, `policy.state`,
+  `supports.tool_calls`) plus a `supported_endpoints` check: responses-only
+  models (e.g. `gpt-5.6-sol`) 400 with "not accessible via the
+  /chat/completions endpoint" on our chat transport and are no longer
+  offered.
+- feat(cli): `/model` and `/provider` switches print a role-models note
+  naming the models the smol/subagent/memory roles still run, so a
+  main-model switch never silently strands a mismatched combination
+  ("/settings → Agent models to adjust").
 ## 0.1.271
 
 - fix(tui): the busy row now names its owner and dies on its own. Every
@@ -2167,5 +2217,12 @@
 
 - memory: maintain() leveling pass (level: 2 on 13 notes)
 - fix(tui): immortal Working… spinner wedge — 100% CPU for 8h after run end (0.1.268)
+
+## 0.1.275
+
+- fix(compaction): bounded compactor budgets + attempt progress; loop over-window guard (0.1.274)
+- feat(app): copilot connect picks the model explicitly; restart hydrates the entry-scoped key
+- fix(agent): run watchdog disarms on abort; AgentService.dispose aborts in-flight runs (0.1.273)
+- fix(providers): explicit model picks everywhere — no default models, copilot picker filter (0.1.272)
 
 ## Unreleased

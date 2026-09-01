@@ -23,11 +23,13 @@ CopilotConnectCallbacks _fakes({
   Future<CopilotDeviceCode> Function()? start,
   Future<String> Function(CopilotDeviceCode deviceCode)? poll,
   Future<String> Function(String githubToken)? login,
+  Future<List<String>> Function(String githubToken, String baseUrl)? models,
 }) {
   return CopilotConnectCallbacks(
     requestDeviceCode: start ?? (() async => _deviceCode),
     pollAccessToken: poll ?? ((_) async => 'gho_token'),
     fetchLogin: login ?? ((_) async => 'octocat'),
+    fetchModels: models ?? ((_, _) async => const ['gpt-4.1', 'gpt-4o']),
   );
 }
 
@@ -77,6 +79,10 @@ void main() {
 
     await tester.tap(find.text('Connect Copilot'));
     await tester.pumpAndSettle();
+    // The form hands off to the model step (the fetched list,
+    // first id preselected); its Connect finishes the flow.
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
 
     expect(result, isNotNull);
     expect(result!.githubToken, 'gho_token');
@@ -84,6 +90,7 @@ void main() {
     expect(result!.entryName, 'copilot-octocat');
     expect(result!.accountType, CopilotAccountType.individual);
     expect(result!.baseUrlOverride, isNull);
+    expect(result!.modelId, 'gpt-4.1'); // first fetched id preselected
     // The sheet popped after finishing.
     expect(find.text('Connect Copilot'), findsNothing);
   });
@@ -113,6 +120,7 @@ void main() {
           },
         ),
         fetchLogin: (_) async => 'octocat',
+        fetchModels: (_, _) async => const ['gpt-4.1'],
       );
 
       CopilotConnectResult? result;
@@ -126,6 +134,10 @@ void main() {
       // slow_down grew the interval: 5s after pending, 10s after slow_down.
       expect(waits, [const Duration(seconds: 5), const Duration(seconds: 10)]);
 
+      await tester.tap(find.text('Connect Copilot'));
+      await tester.pumpAndSettle();
+      // The form hands off to the model step (the fetched list,
+      // first id preselected); its Connect finishes the flow.
       await tester.tap(find.text('Connect Copilot'));
       await tester.pumpAndSettle();
       expect(result!.githubToken, 'gho_slow');
@@ -164,6 +176,10 @@ void main() {
     expect(polled, isFalse);
     await tester.tap(find.text('Connect Copilot'));
     await tester.pumpAndSettle();
+    // The form hands off to the model step (the fetched list,
+    // first id preselected); its Connect finishes the flow.
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
     expect(result!.githubToken, 'ghp_pasted');
   });
 
@@ -195,6 +211,10 @@ void main() {
     );
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+    // The form hands off to the model step (the fetched list,
+    // first id preselected); its Connect finishes the flow.
     await tester.tap(find.text('Connect Copilot'));
     await tester.pumpAndSettle();
     expect(result!.githubToken, 'ghp_after_error');
@@ -245,9 +265,67 @@ void main() {
     );
     await tester.tap(find.text('Connect Copilot'));
     await tester.pumpAndSettle();
+    // The form hands off to the model step (the fetched list,
+    // first id preselected); its Connect finishes the flow.
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
 
     expect(result!.accountType, CopilotAccountType.individual);
     expect(result!.baseUrlOverride, 'https://copilot-proxy.corp/api');
+  });
+
+  testWidgets('the model step reports the picked (non-first) model', (
+    tester,
+  ) async {
+    CopilotConnectResult? result;
+    await _pump(tester, _fakes(), (r) => result = r);
+
+    await tester.tap(find.text('Sign in with GitHub'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+
+    // The fetched list is shown; pick the second id.
+    expect(find.text('gpt-4o'), findsOneWidget);
+    await tester.tap(find.text('gpt-4o'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+
+    expect(result!.modelId, 'gpt-4o');
+  });
+
+  testWidgets('an empty model fetch falls back to a manual model id', (
+    tester,
+  ) async {
+    CopilotConnectResult? result;
+    await _pump(
+      tester,
+      _fakes(models: (_, _) async => const []),
+      (r) => result = r,
+    );
+
+    await tester.tap(find.text('Sign in with GitHub'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+
+    // No list, no default: the manual id field keeps Connect disabled
+    // until a value is typed.
+    expect(
+      find.textContaining('enter a model id manually'),
+      findsOneWidget,
+    );
+    expect(result, isNull);
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Model'),
+      'my-copilot-model',
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+
+    expect(result!.modelId, 'my-copilot-model');
   });
 
   testWidgets('business plan is reported in the result', (tester) async {
@@ -258,6 +336,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Business'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect Copilot'));
+    await tester.pumpAndSettle();
+    // The form hands off to the model step (the fetched list,
+    // first id preselected); its Connect finishes the flow.
     await tester.tap(find.text('Connect Copilot'));
     await tester.pumpAndSettle();
 

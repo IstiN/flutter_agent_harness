@@ -1926,6 +1926,9 @@ class AgentService extends ChangeNotifier
       _idleWatchdog?.cancel();
       isStreaming = false;
       error = e.toString();
+      // dispose() aborts an in-flight run — its error lands here after the
+      // service is gone; notifying a disposed ChangeNotifier throws.
+      if (_disposed) return;
       notifyListeners();
     });
   }
@@ -1987,6 +1990,10 @@ class AgentService extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    // Disposing the service cancels an in-flight run: the agent's idle
+    // watchdog would otherwise outlive the host by minutes (and wedge
+    // widget tests' fake_async invariants on a pending timer).
+    _agent.abort();
     _inboxWatchTimer?.cancel();
     _idleWatchdog?.cancel();
     _liveActivityEndTimer?.cancel();
@@ -2680,6 +2687,9 @@ class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
 
   @override
   void onDelta(String delta) {}
+
+  @override
+  void onAttemptStart(String label, int attempt, Duration budget) {}
 
   @override
   void onPass(AutoCompactorPass pass) {}

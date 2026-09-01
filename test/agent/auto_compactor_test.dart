@@ -17,9 +17,14 @@ final class _RecordingHooks implements AutoCompactorHooks {
   int? donePasses;
   int doneTokens = 0;
   final deltas = <String>[];
+  final attempts = <(String, int, Duration)>[];
 
   @override
   void onDelta(String delta) => deltas.add(delta);
+
+  @override
+  void onAttemptStart(String label, int attempt, Duration budget) =>
+      attempts.add((label, attempt, budget));
 
   @override
   void onPass(AutoCompactorPass pass) => passes.add(pass);
@@ -323,5 +328,140 @@ void main() {
     expect(ok, isFalse);
     expect(hooks.passes.single.ok, isFalse);
     expect(hooks.passes.single.fallback, isNull);
+  });
+
+  test('default budgets are tight — 90 s per attempt, 4 min total', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    final state = AgentState(model: _model, messages: const []);
+    final fake = _FakeSummarizer([SummarizationResult.success('S')]);
+    final compactor = AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: fake.call,
+      mainSummary: fake.call,
+      smolModel: null,
+      hooks: _RecordingHooks(),
+    );
+    expect(compactor.attemptBudget, const Duration(seconds: 90));
+    expect(compactor.totalBudget, const Duration(minutes: 4));
+  });
+
+  test('an exhausted total budget skips further summarizer attempts and '
+      'falls to the local trim', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // 400 chars = ~100 estimated tokens each: the last one fits the
+    // keepRecentTokens budget (150), the pair busts it — so exactly one
+    // message is droppable and the local trim has something to keep.
+    await session.appendMessage(UserMessage.text('a' * 400));
+    await session.appendMessage(UserMessage.text('b' * 400));
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+
+    var attempts = 0;
+    Future<SummarizationResult> failing(SummarizationRequest request) async {
+      attempts++;
+      throw const CompactionException('connection closed');
+    }
+
+    final hooks = _RecordingHooks();
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: failing,
+      mainSummary: failing,
+      smolModel: null,
+      hooks: hooks,
+      force: true,
+      totalBudget: Duration.zero,
+    ).run();
+
+    expect(attempts, 0);
+    expect(ok, isTrue);
+    expect(hooks.passes.single.fallback, 'local-trim');
+    final marker = state.messages.first;
+    expect(marker, isA<UserMessage>());
+    expect(
+      (marker as UserMessage).content as String,
+      contains('trimmed locally'),
+    );
+  });
+
+  test(
+    'onAttemptStart reports each summarizer attempt with its budget',
+    () async {
+      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+      await session.appendMessage(UserMessage.text('a' * 1200));
+      final state = AgentState(
+        model: _model,
+        messages: await session.buildContextMessages(),
+      );
+      const smolModel = Model(
+        id: 'smol-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 1000,
+        maxTokens: 4096,
+      );
+
+      Future<SummarizationResult> failing(SummarizationRequest request) async {
+        throw const CompactionException('nope');
+      }
+
+      final mainFake = _FakeSummarizer([
+        SummarizationResult.success('SUMMARY'),
+      ]);
+      final hooks = _RecordingHooks();
+      await AutoCompactor(
+        session: session,
+        state: state,
+        window: 1000,
+        settings: settings,
+        summary: failing,
+        mainSummary: mainFake.call,
+        smolModel: smolModel,
+        hooks: hooks,
+        force: true,
+        attemptBudget: const Duration(seconds: 7),
+      ).run();
+
+      expect(hooks.attempts, [
+        ('smol=test-provider/smol-model', 1, const Duration(seconds: 7)),
+        ('main=test-provider/test-model', 1, const Duration(seconds: 7)),
+      ]);
+    },
+  );
+
+  test('the factory forwards attempt and total budgets', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    final state = AgentState(model: _model, messages: const []);
+    AssistantMessageEventStream dummy(
+      Model m,
+      Context c, {
+      CancelToken? cancelToken,
+    }) => throw UnimplementedError('never called by build()');
+    final compactor = AutoCompactorFactory(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      sources: AutoCompactorSources(
+        smolStream: null,
+        smolModel: null,
+        mainStream: dummy,
+        mainModel: _model,
+      ),
+      hooks: _RecordingHooks(),
+      attemptBudget: const Duration(seconds: 7),
+      totalBudget: const Duration(minutes: 9),
+    ).build();
+    expect(compactor.attemptBudget, const Duration(seconds: 7));
+    expect(compactor.totalBudget, const Duration(minutes: 9));
   });
 }
