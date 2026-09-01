@@ -1628,9 +1628,108 @@ void main() {
       expect(service.compactionSettings.keepRecentTokens, 20000);
     });
 
+    test('over-window guard: the chat auto-compacts and continues the '
+        'interrupted turn', () async {
+      // Window 8192: reserve 2048 (trigger 6144), keep 2048. A tool call
+      // returns ~8500 tokens of output mid-run → the loop's guard refuses
+      // the second request. The service must then compact and CONTINUE
+      // the turn on its own — once — instead of idling with an error.
+      var streamCalls = 0;
+      AssistantMessageEventStream hugeToolThenText(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        streamCalls++;
+        final stream = AssistantMessageEventStream();
+        if (streamCalls == 1) {
+          stream.push(
+            DoneEvent(
+              reason: StopReason.toolUse,
+              message: AssistantMessage(
+                content: [
+                  ToolCall(
+                    id: 'tc-1',
+                    name: 'echo',
+                    arguments: const {'x': 'go'},
+                  ),
+                ],
+                api: model.api,
+                provider: model.provider,
+                model: model.id,
+                usage: Usage.zero,
+                stopReason: StopReason.toolUse,
+                timestamp: DateTime.now(),
+              ),
+            ),
+          );
+        } else {
+          stream.push(
+            DoneEvent(
+              reason: StopReason.stop,
+              message: AssistantMessage(
+                content: [TextContent(text: 'continued')],
+                api: model.api,
+                provider: model.provider,
+                model: model.id,
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.now(),
+              ),
+            ),
+          );
+        }
+        stream.end();
+        return stream;
+      }
+
+      final echoTool = AgentTool(
+        name: 'echo',
+        description: 'echo',
+        parameters: const {
+          'type': 'object',
+          'properties': {
+            'x': {'type': 'string'},
+          },
+          'required': ['x'],
+        },
+        execute: (arguments, cancelToken, onUpdate) async =>
+            ToolExecutionResult.text('y' * 34000),
+      );
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(
+          hugeToolThenText,
+          contextWindow: 8192,
+          systemPrompt: '',
+          tools: [echoTool],
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      await service.initialize();
+
+      await service.sendText('go');
+      await service.waitForIdle();
+
+      // The turn continued to the final answer on its own.
+      expect(service.messages.last.content, 'continued');
+      expect(streamCalls, 2);
+      expect(service.error, isNull);
+      // The transcript was compacted: the huge tool result is gone.
+      expect(
+        service.messages.map((m) => m.content).join('\n'),
+        isNot(contains('y' * 500)),
+      );
+      // Exactly one continuation: no trim→continue loop.
+      expect(
+        service.messages.where((m) => m.content == 'continued').length,
+        1,
+      );
+    });
+
     test('compacts the transcript once it crosses the scaled threshold, and '
-        'the chat keeps working', () async {
-      // Window 512 (no on-device overhead here): reserve 128, keep 256,
+        'the chat keeps working', () async {      // Window 512 (no on-device overhead here): reserve 128, keep 256,
       // trigger at 384 transcript tokens.
       final env = MemoryExecutionEnv();
       final service = AgentService(

@@ -524,14 +524,20 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
                       onPressed: () => _launchApp(app, app.id),
                       child: const Text('Open'), // l10n:ignore
                     ),
-                    OutlinedButton.icon(
+                    OutlinedButton(
                       onPressed: () => _remove(app.id),
-                      icon: const Icon(Icons.delete_outline, size: 16),
-                      label: const Text('Remove'), // l10n:ignore
                       style: OutlinedButton.styleFrom(
                         visualDensity: VisualDensity.compact,
                         foregroundColor: theme.colorScheme.error,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 36),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
+                      child: const Text(
+                        'Remove',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ), // l10n:ignore
                     ),
                   ],
                 ),
@@ -690,28 +696,41 @@ class _CatalogTile extends StatelessWidget {
                 if (installedVersion != null && !hasUpdate)
                   // Installed & current: Preview == Open, so the secondary
                   // action is Remove instead.
-                  OutlinedButton.icon(
+                  // Text-only + maxLines 1: icon+label OutlinedButtons
+                  // wrapped ("Remo / ve") inside the 108px column at the
+                  // user's system text scale.
+                  OutlinedButton(
                     onPressed: busy ? null : onRemove,
-                    icon: const Icon(Icons.delete_outline, size: 16),
-                    label: const Text('Remove'), // l10n:ignore
                     style: OutlinedButton.styleFrom(
                       foregroundColor: theme.colorScheme.error,
                       side: BorderSide(
                         color: theme.colorScheme.error.withValues(alpha: 0.4),
                       ),
                       visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      minimumSize: const Size(0, 36),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
+                    child: const Text(
+                      'Remove',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ), // l10n:ignore
                   )
                 else
-                  OutlinedButton.icon(
+                  OutlinedButton(
                     onPressed: busy ? null : onPreview,
-                    icon: const Icon(Icons.play_arrow, size: 16),
-                    label: const Text('Preview'), // l10n:ignore
                     style: OutlinedButton.styleFrom(
                       visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      minimumSize: const Size(0, 36),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
+                    child: const Text(
+                      'Preview',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ), // l10n:ignore
                   ),
               ],
             ),

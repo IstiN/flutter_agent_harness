@@ -519,10 +519,15 @@ extension on AgentCli {
         if (ids.isNotEmpty) {
           _modelCache = ids;
           _tuiController?.sendModelsRefresh();
-          if (config.modelRolesResolver == null) {
-            _applyDetectedContextWindow(model);
-            _applyDetectedMaxTokens(model);
-          }
+          // Endpoint-reported limits are authoritative EXCEPT where the
+          // roles chain pins explicit values: roles mode used to skip the
+          // detection entirely, so a chain entry riding the catalog
+          // default (e.g. the copilot 1M default for a 256k kimi model)
+          // never learned the real window and the compaction thresholds
+          // silently ran against the wrong number.
+          final pinned = _rolesPinnedLimits(model);
+          if (!pinned.window) _applyDetectedContextWindow(model);
+          if (!pinned.cap) _applyDetectedMaxTokens(model);
         }
       }
     } on Object {
@@ -542,10 +547,33 @@ extension on AgentCli {
     return _fetchProviderModelIds(model.provider, model.baseUrl, _apiKey);
   }
 
+  /// Whether the roles chain pins explicit limits for [model]: a chain
+  /// entry with a `contextWindow`/`maxTokens` in the `roles:` config means
+  /// the user set them deliberately and the endpoint-reported values must
+  /// not override them. Entries riding the catalog defaults (the common
+  /// case) report both flags false, so detection applies.
+  ({bool window, bool cap}) _rolesPinnedLimits(Model model) {
+    final resolver = config.modelRolesResolver;
+    if (resolver == null) return (window: false, cap: false);
+    final refs = resolver.config.chainFor(
+      defaultModelRole,
+      cwd: resolver.cwd,
+      homeDir: resolver.homeDir,
+    );
+    if (refs == null) return (window: false, cap: false);
+    for (final ref in refs) {
+      if (ref.modelId != model.id) continue;
+      return (
+        window: ref.contextWindow != null,
+        cap: ref.maxTokens != null,
+      );
+    }
+    return (window: false, cap: false);
+  }
+
   /// Applies the endpoint-reported context window for [model] when it
-  /// differs from the carried one (called from [_refreshModelCache], which
-  /// skips both detections in roles mode — the chain's configured limits
-  /// win there).
+  /// differs from the carried one (called from [_refreshModelCache];
+  /// [_rolesPinnedLimits] keeps user-pinned `roles:` limits winning).
   void _applyDetectedContextWindow(Model model) {
     final detected = _modelContextWindows[model.id];
     if (detected != null && detected != model.contextWindow) {

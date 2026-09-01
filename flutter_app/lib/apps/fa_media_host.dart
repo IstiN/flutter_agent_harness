@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:flutter/widgets.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 import 'package:video_player/video_player.dart';
@@ -17,12 +18,16 @@ class FaMediaHost extends JsMediaHost {
   const FaMediaHost();
 
   @override
-  JsVideoController createVideoController(String src) =>
-      VideoPlayerJsController(src);
+  JsVideoController createVideoController(String src) {
+    AppLog.i('media', 'video controller: $src');
+    return VideoPlayerJsController(src);
+  }
 
   @override
-  JsAudioController createAudioController(String src) =>
-      AudioPlayersJsController(src);
+  JsAudioController createAudioController(String src) {
+    AppLog.i('media', 'audio controller: $src');
+    return AudioPlayersJsController(src);
+  }
 }
 
 /// Forwards `VideoPlayerController` value-listenable state into the
@@ -33,12 +38,27 @@ class VideoPlayerJsController extends JsVideoController {
         ? VideoPlayerController.networkUrl(Uri.parse(src))
         : VideoPlayerController.asset(src);
     _controller.addListener(_onUpdate);
-    _initFuture = _controller.initialize().then((_) {
-      _aspect = _controller.value.aspectRatio;
-      _aspectCtrl.add(_aspect);
-      _durationCtrl.add(_controller.value.duration);
-      _onUpdate();
-    });
+    _initFuture = _controller.initialize().then(
+      (_) {
+        _aspect = _controller.value.aspectRatio;
+        _aspectCtrl.add(_aspect);
+        _durationCtrl.add(_controller.value.duration);
+        _onUpdate();
+        AppLog.i(
+          'media',
+          'video initialized: $src '
+              '(${_controller.value.duration.inSeconds}s, '
+              '${_controller.value.size.width.toInt()}x'
+              '${_controller.value.size.height.toInt()})',
+        );
+      },
+      onError: (Object error) {
+        // Swallowed init errors were the "black 00:00 player" reports —
+        // surface them in the app log instead.
+        AppLog.i('media', 'video init FAILED: $src — $error');
+        throw error;
+      },
+    );
   }
 
   late final VideoPlayerController _controller;
@@ -75,8 +95,17 @@ class VideoPlayerJsController extends JsVideoController {
 
   @override
   Future<void> play() async {
-    await _initFuture;
-    await _controller.play();
+    try {
+      await _initFuture;
+      await _controller.play();
+      AppLog.i('media', 'video play: ${_controller.dataSource}');
+    } on Object catch (error) {
+      AppLog.i(
+        'media',
+        'video play FAILED: ${_controller.dataSource} — $error',
+      );
+      rethrow;
+    }
   }
 
   @override
@@ -149,7 +178,13 @@ class AudioPlayersJsController extends JsAudioController {
   Future<void> _ensureStarted() async {
     if (_started) return;
     _started = true;
-    await _player.play(_source);
+    try {
+      await _player.play(_source);
+      AppLog.i('media', 'audio play: $_source');
+    } on Object catch (error) {
+      AppLog.i('media', 'audio play FAILED: $_source — $error');
+      rethrow;
+    }
   }
 
   @override

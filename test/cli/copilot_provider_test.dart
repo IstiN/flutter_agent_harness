@@ -421,4 +421,95 @@ void main() {
       await run;
     });
   });
+
+  group('endpoint-reported context window in roles mode', () {
+    // Roles mode used to skip the /models limits detection entirely, so a
+    // chain entry riding the catalog default (copilot = 1M) never learned
+    // the real window — e.g. kimi-k2.7-code is 256000 on the endpoint.
+    AgentCli rolesCli(
+      List<ModelRef> defaultChain, {
+      required FakeStreamFunction fake,
+    }) {
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {'default': defaultChain},
+          retry: const ModelRolesRetryPolicy(retriesPerEntry: 0),
+        ),
+        secrets: const {'COPILOT_GITHUB_TOKEN': 'test-key'},
+        streamFactory: (kind, apiKey) => (model, context, {cancelToken}) {
+          final stream = AssistantMessageEventStream();
+          stream.push(StartEvent(partial: testAssistant()));
+          stream.push(
+            DoneEvent(
+              reason: StopReason.stop,
+              message: testAssistant(
+                content: [TextContent(text: 'ok')],
+              ),
+            ),
+          );
+          stream.end();
+          return stream;
+        },
+      );
+      return AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          modelRolesResolver: resolver,
+          modelsHttpClient: _copilotModelsMockClient,
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+    }
+
+    test('a chain entry on catalog defaults learns the real window', () async {
+      // Copilot catalog default is 1M; the endpoint reports 128000 for
+      // gpt-4.1 (see _copilotModelsMockClient).
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = rolesCli(
+        [ModelRef(provider: 'copilot', modelId: 'gpt-4.1')],
+        fake: fake,
+      );
+      final run = cli.run();
+
+      await waitForIt(
+        () => io.out.toString().contains('model context window: 128000'),
+        reason: 'endpoint window applied in roles mode',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.agent.state.model.contextWindow, 128000);
+      expect(io.out.toString(), contains('(from endpoint)'));
+    });
+
+    test('an explicitly pinned roles window wins over the endpoint',
+        () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = rolesCli(
+        [
+          ModelRef(
+            provider: 'copilot',
+            modelId: 'gpt-4.1',
+            contextWindow: 123456,
+            maxTokens: 8192,
+          ),
+        ],
+        fake: fake,
+      );
+      final run = cli.run();
+
+      await waitForIt(() => io.out.toString().contains('[Model]'));
+      // Give the background model-cache refresh time to (not) apply.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.agent.state.model.contextWindow, 123456);
+      expect(io.out.toString(), isNot(contains('(from endpoint)')));
+    });
+  });
 }

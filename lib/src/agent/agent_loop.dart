@@ -44,6 +44,18 @@ import '../model.dart';
 import '../types.dart';
 import 'agent_tool.dart';
 
+/// Marker embedded in the over-window guard's error message (see
+/// [_streamAssistantResponse]): hosts match it to recognize "the loop
+/// refused to send because the outgoing context exceeded the model
+/// window" and can then auto-compact + continue the interrupted turn.
+const String contextWindowExhaustedMarker = 'Context window exhausted';
+
+/// Whether an assistant [AssistantMessage.errorMessage] was produced by
+/// the loop's mid-turn over-window guard (as opposed to a provider
+/// error, a tool failure, or an abort).
+bool isContextWindowExhaustedError(String? errorMessage) =>
+    errorMessage != null && errorMessage.contains(contextWindowExhaustedMarker);
+
 /// Provider adapter contract consumed by the agent loop.
 ///
 /// Matches the shape of the provider adapters (`streamOpenAICompletions`,
@@ -1114,7 +1126,8 @@ Future<AssistantMessage> _streamAssistantResponse(
         _terminalMessage(
           config.model,
           StopReason.error,
-          'Context window exhausted: the outgoing context is ~$tokens tokens, '
+          '$contextWindowExhaustedMarker: the outgoing context is '
+          '~$tokens tokens, '
           'the ${config.model.id} window is $window. The request was not '
           'sent. Auto-compaction runs next; if it keeps failing, run '
           '/compact or start a fresh session.',
