@@ -972,6 +972,10 @@ class AgentCli {
   /// read-dispatch loop.
   Future<void> _runLineRepl() async {
     await _printBanner();
+    // Warm the model cache here too (the TUI path does): the endpoint-
+    // reported context window lands on the active model only through this
+    // refresh, and line-mode `/model <id>` switches read the same map.
+    unawaited(_refreshModelCache());
     final resumedLabel = await _resumedSessionLabel();
     if (resumedLabel != null) {
       _replayRestoredHistory(_agent.state.messages, resumedLabel);

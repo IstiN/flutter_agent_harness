@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.277
+
+- fix(cli): endpoint-reported context windows now apply in roles mode.
+  The Copilot `/models` limits (`capabilities.limits.
+  max_context_window_tokens` / `max_output_tokens`) were parsed and
+  applied only when no `roles:` resolver was configured; with one, a
+  chain entry riding the catalog default silently kept the provider's
+  default window — the copilot default is 1M, so a 256k model (live-
+  verified: the endpoint reports kimi-k2.7-code = 256000/32000) ran
+  with compaction thresholds sized for 1M and the over-window guard
+  never fired in time. Roles entries with EXPLICIT `contextWindow`/
+  `maxTokens` still win over the endpoint (per-limit).
+- fix(cli): the line REPL warms the model cache like the TUI, so
+  `/model <id>` switches see endpoint limits there too.
+
 ## 0.1.276
 
 - fix(cli): the over-window guard no longer strands the agent mid-task.
