@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
+import 'package:fa/apps/fa_js3d_host.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/apps/apps_store.dart';
@@ -272,7 +273,7 @@ class JsAppEngine {
       // The dispatcher singleton (cube for primitives/OBJ, flame_3d for
       // GLB/GLTF) — shared with the renderer's `js3dHost`, which resolves
       // the same per-sceneId controllers the bridge mutates.
-      js3dHost: createJs3dHost(),
+      js3dHost: createFaJs3dHost(env),
     );
     final engine = JsWidgetEngine(config: config);
     _engine = engine;

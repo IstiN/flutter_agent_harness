@@ -13,6 +13,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_map/flutter_map.dart' show TileProvider;
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:fa/apps/fa_js3d_host.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/services/agent_service.dart';
@@ -766,7 +767,7 @@ class _JsAppViewState extends State<JsAppView> {
           // 3D scenes: the dispatcher singleton shared with the engine's
           // JsRuntimeConfig (see JsAppEngine.start); taps raycast into
           // `jsr.scene3d.onTap` handlers in the app.
-          js3dHost: createJs3dHost(),
+          js3dHost: createFaJs3dHost(widget.env),
           onScene3dTap: (sceneId, payload) =>
               engine.dispatchHostEvent('scene3d.tap:$sceneId', payload),
           onEvent: (actionId, payload) {
