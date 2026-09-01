@@ -795,9 +795,10 @@ void main() {
   });
 
   test('auto-compacts after a turn over the threshold', () async {
-    // Window 800, reserve 400: the first request (~1 token) passes the
-    // loop's mid-turn over-window guard, while the ~500-token answer
-    // pushes the post-turn transcript over the compaction threshold.
+    // Window 800 (forWindow: reserve 200, keep 400, trigger at 600): the
+    // first request (~1 token) passes the loop's mid-turn over-window
+    // guard, while the ~700-token answer pushes the post-turn transcript
+    // over the compaction threshold.
     const tinyWindow = Model(
       id: 'tiny',
       api: 'test-api',
@@ -807,7 +808,7 @@ void main() {
       maxTokens: 4096,
     );
     final fake = FakeStreamFunction([
-      textTurn('a' * 2000),
+      textTurn('a' * 2800),
       textTurn('AUTO SUMMARY'),
     ]);
     final cli = cliFor(fake.call, model: tinyWindow);
@@ -821,6 +822,88 @@ void main() {
 
     final entries = await sessionEntries();
     expect(entries.whereType<CompactionRecord>(), hasLength(1));
+  });
+
+  test('over-window guard auto-compacts and continues the turn', () async {
+    // The guard refuses to send when a mid-run tool result balloons the
+    // outgoing request past the window. Stopping there is only half the
+    // job: after the post-run auto-compaction frees the window, the CLI
+    // must CONTINUE the interrupted task on its own — exactly once —
+    // instead of idling until the user types "continue".
+    const window8k = Model(
+      id: 'test-model',
+      api: 'test-api',
+      provider: 'test-provider',
+      baseUrl: 'https://example.test',
+      contextWindow: 8192,
+      maxTokens: 4096,
+    );
+    final fake = FakeStreamFunction([
+      // 1. Three tool calls whose outputs (~3000 tokens each) balloon the
+      //    next request past the window — each one is droppable (under the
+      //    4096-token keep region) so the summarizer can free the window.
+      toolTurn([
+        ToolCall(
+          id: 'c1',
+          name: 'bash',
+          arguments: const {'command': 'cat a.log'},
+        ),
+        ToolCall(
+          id: 'c2',
+          name: 'bash',
+          arguments: const {'command': 'cat b.log'},
+        ),
+        ToolCall(
+          id: 'c3',
+          name: 'bash',
+          arguments: const {'command': 'cat c.log'},
+        ),
+      ]),
+      // 2. Consumed as the compaction summary.
+      textTurn('S'),
+      // 3. After the guard + compaction + auto-continue, the model
+      //    finishes the task against the compacted transcript.
+      textTurn('continued after compaction'),
+    ]);
+    final shell = FakeShell(stdout: 'x' * 12000);
+    final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
+    final cli = cliFor(
+      fake.call,
+      model: window8k,
+      envOverride: shellEnv,
+    );
+    final run = cli.run();
+
+    io.sendLine('go');
+    await waitForIt(
+      () => fake.calls == 3 && !cli.isBusy,
+      reason: 'auto-continuation after guard + compaction',
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    // The guard fired, the trim recovered the window…
+    expect(output, contains('Context window exhausted'));
+    expect(output, contains('[auto-compacted]'));
+    // …and the turn visibly continued on its own.
+    expect(output, contains('auto-compacted; continuing'));
+    // request 1 (tool turn) + summarizer + the continuation request.
+    expect(fake.calls, 3);
+    final repo = JsonlSessionRepo(fs: shellEnv, sessionsRoot: '/sessions');
+    final sessions = await repo.list(cwd: '/work');
+    final session = await repo.open(sessions.first);
+    final entries = await session.getEntries();
+    expect(entries.whereType<CompactionRecord>(), hasLength(1));
+    // The continuation prompt lands as a system notice (user-role record
+    // the way shell-job settle notices are), not as typed user chatter.
+    final notice = entries
+        .whereType<MessageRecord>()
+        .map((r) => r.message)
+        .whereType<UserMessage>()
+        .last;
+    expect((notice.content as String), contains('<system-notice>'));
+    expect((notice.content as String), contains('context-window guard'));
   });
 
   test('/help lists the slash commands', () async {

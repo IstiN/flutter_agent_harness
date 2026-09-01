@@ -137,6 +137,12 @@ void main() {
       final assistant = messages.whereType<AssistantMessage>().single;
       expect(assistant.stopReason, StopReason.error);
       expect(assistant.errorMessage, contains('Context window'));
+      // Hosts recognize the guard (to auto-compact + continue the turn)
+      // via the shared marker, not by parsing numbers out of the text.
+      expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
+      expect(isContextWindowExhaustedError(assistant.errorMessage), isTrue);
+      expect(isContextWindowExhaustedError('provider exploded'), isFalse);
+      expect(isContextWindowExhaustedError(null), isFalse);
     });
     test('single turn without tools emits full lifecycle in order', () async {
       final fake = _FakeStreamFunction([_textTurn('hello')]);

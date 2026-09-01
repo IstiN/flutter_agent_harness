@@ -1590,6 +1590,24 @@ class AgentService extends ChangeNotifier
   var _inboxWakeStreak = 0;
   static const _maxInboxWakeStreak = 10;
 
+  /// Whether the over-window guard's one-shot auto-continuation was used
+  /// for the current user text (reset on every real [sendText] entry).
+  var _overWindowAutoResumed = false;
+
+  /// Delivered to the model when the over-window guard stopped a run and
+  /// the post-run compaction freed the window: names what happened and
+  /// how to avoid re-filling the context.
+  static const String _overWindowContinuationNotice =
+      '<system-notice>\n'
+      'The previous run was stopped by the context-window guard: the '
+      'outgoing request exceeded the model window and was NOT sent. The '
+      'transcript was auto-compacted just now (most of it is preserved as '
+      'a summary; the session file keeps the full history). Continue the '
+      'interrupted task from where it stopped. Avoid re-reading whatever '
+      'filled the window (huge tool outputs, whole files) — use targeted '
+      'reads (offset/limit or :A-B selectors) instead.\n'
+      '</system-notice>';
+
   void _startInboxWatcher() {
     if (!enableInboxWatcher) return;
     _inboxWatchTimer ??= Timer.periodic(
@@ -1662,6 +1680,8 @@ class AgentService extends ChangeNotifier
     // Real user input resets the inbox wake streak (the ping-pong guard);
     // the watcher itself calls sendText with the flag set.
     if (!_inboxWakeRunning) _inboxWakeStreak = 0;
+    // A fresh user text gets a fresh over-window auto-continuation budget.
+    _overWindowAutoResumed = false;
     _clearError();
     if (_agent.state.isStreaming) {
       _agent.steer(UserMessage.text(trimmed));
@@ -2387,7 +2407,24 @@ class AgentService extends ChangeNotifier
           // The transcript stays in memory; the next run retries the
           // missed appends (see _persistedCount).
         }
-        await _maybeAutoCompact();
+        final compacted = await _maybeAutoCompact();
+        // The loop's over-window guard stopped the run: once the
+        // post-run compaction freed the window, continue the interrupted
+        // turn on its own (once per user text) instead of idling with an
+        // error — a live session that hit the guard mid-task (200676/200k
+        // on glm) used to sit dead until a manual "continue".
+        final lastMessage = _agent.state.messages.lastOrNull;
+        if (!_overWindowAutoResumed &&
+            compacted &&
+            lastMessage is AssistantMessage &&
+            isContextWindowExhaustedError(lastMessage.errorMessage)) {
+          _overWindowAutoResumed = true;
+          Future(
+            () => _runWithTimeout(
+              () => _agent.prompt(_overWindowContinuationNotice),
+            ),
+          );
+        }
         // Steering/follow-up messages queued during the run get their own
         // run once this lifecycle fully finished — also after a manual
         // stop, so a queued message never silently dies in the transcript.
@@ -2596,21 +2633,21 @@ class AgentService extends ChangeNotifier
   /// fallback + transient retry. This wrapper only builds the per-host
   /// smol/main summarizers and the [AutoCompactorHooks] that mirrors the
   /// compacted transcript into the chat list.
-  Future<void> _maybeAutoCompact() async {
+  Future<bool> _maybeAutoCompact() async {
     final conversationWindow = _conversationWindow;
-    if (_session == null || conversationWindow <= 0) return;
+    if (_session == null || conversationWindow <= 0) return false;
     final settings = compactionSettings;
     final transcriptTokens = estimateContextTokens(
       _agent.state.messages,
     ).tokens;
     if (!shouldCompact(transcriptTokens, conversationWindow, settings)) {
-      return;
+      return false;
     }
     // The whole transcript fits in the kept region: compaction could not
     // drop anything. (A single oversized message can still overflow the
     // engine — that surfaces as a readable run error, not a compaction
     // loop.)
-    if (transcriptTokens <= settings.keepRecentTokens) return;
+    if (transcriptTokens <= settings.keepRecentTokens) return false;
 
     // Resolve the smol summarizer from the task-models store, or fall
     // back to the main stream. The harness core doesn't know about
@@ -2662,6 +2699,10 @@ class AgentService extends ChangeNotifier
       ..clear()
       ..addAll(_agent.state.messages.map(_toChatMessage));
     notifyListeners();
+    // Success signal for the over-window guard's auto-continuation: the
+    // transcript actually shrank.
+    final afterTokens = estimateContextTokens(_agent.state.messages).tokens;
+    return afterTokens < transcriptTokens;
   }
 }
 

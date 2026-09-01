@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.276
+
+- fix(cli): the over-window guard no longer strands the agent mid-task.
+  When the guard stops a run (outgoing context past the model window),
+  the post-run auto-compaction frees the window and the CLI CONTINUES
+  the interrupted turn on its own — once per user prompt, delivering a
+  `<system-notice>` that names what happened and tells the model to
+  avoid re-reading the outputs that filled the window. Ending the run
+  there left live sessions idle until a manual "continue" (seen on a
+  glm-5.3-flash session: guard at 200676/200k, local trim to 20k, then
+  silence). `_maybeAutoCompact` now reports whether it actually shrank
+  the transcript; the continuation fires only when the window was
+  really freed.
+- fix(cli): compaction settings scale with the model window
+  (`CompactionSettings.forWindow`) unless `compactionSettings:` is
+  pinned in the config — matching the Flutter app's existing rule. The
+  pi-fixed defaults (keep 20000) structurally prevented compaction on
+  small-window models: with keep 20000 on an 8k window the kept region
+  always covers the whole transcript, so nothing could ever be
+  summarized away and the over-window guard could never be satisfied.
+- app: the same guard + compact + continue flow in `AgentService` (once
+  per user text, reset on the next real input).
+- agent_loop: exported `contextWindowExhaustedMarker` and
+  `isContextWindowExhaustedError` so hosts recognize the guard without
+  parsing numbers out of the error text.
+
 ## 0.1.274
 
 - fix(compaction): the summarizer can no longer hold the turn hostage.

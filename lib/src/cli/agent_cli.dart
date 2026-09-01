@@ -2116,7 +2116,34 @@ class AgentCli {
   /// opens the browser SSO flow to refresh the token automatically. Other
   /// provider errors are printed through [_errorLine]. An empty assistant
   /// message (no text, no tool calls) is retried once with 'continue'.
+  /// Delivered to the model when the over-window guard stopped a run and
+  /// the post-run compaction freed the window: names what happened and
+  /// how to avoid re-filling the context.
+  static const String _overWindowContinuationNotice =
+      '<system-notice>\n'
+      'The previous run was stopped by the context-window guard: the '
+      'outgoing request exceeded the model window and was NOT sent. The '
+      'transcript was auto-compacted just now (most of it is preserved as '
+      'a summary; the session file keeps the full history). Continue the '
+      'interrupted task from where it stopped. Avoid re-reading whatever '
+      'filled the window (huge tool outputs, whole files) — use targeted '
+      'reads (offset/limit or :A-B selectors) instead.\n'
+      '</system-notice>';
+
+  /// Whether the over-window guard's one-shot auto-continuation was used
+  /// for the current user prompt (reset at every non-auto-continue
+  /// [_runPrompt] entry).
+  bool _overWindowAutoResumed = false;
+
   Future<void> _runPrompt(String text, {bool isAutoContinue = false}) async {
+    // One auto-continuation per real user prompt: when the over-window
+    // guard stops a run, the post-run compaction frees the window and the
+    // turn continues on its own (see the guard branch below). The flag is
+    // reset here so a fresh user prompt gets its own budget, while the
+    // recursive continuation call (isAutoContinue: true) keeps it — a
+    // turn that re-inflates the window after the resume stops for real
+    // instead of looping trim→continue forever.
+    if (!isAutoContinue) _overWindowAutoResumed = false;
     // Pre-flight context guard: when the LIVE context already exceeds the
     // compaction threshold, compact BEFORE sending the request — a failed
     // post-run compaction (quota-limited smol role, provider outage) used to
@@ -2130,6 +2157,35 @@ class AgentCli {
           lastMessage.stopReason == StopReason.error) {
         if (await _maybeHandleCodeMieError(lastMessage.errorMessage ?? '')) {
           return;
+        }
+        // The loop's over-window guard refused to send: the transcript is
+        // still over the window, so compact now and — when the compaction
+        // actually freed it — continue the interrupted task on its own.
+        // Ending the run here left live agents idle mid-task (a 200k/200k
+        // glm session stopped dead after its trim and waited for a manual
+        // "continue"), which reads as a harness hang.
+        if (!isAutoContinue &&
+            _overWindowAutoResumed == false &&
+            isContextWindowExhaustedError(lastMessage.errorMessage)) {
+          _overWindowAutoResumed = true;
+          await _ttsr?.settled;
+          await _persistMessages();
+          if (await _maybeAutoCompact()) {
+            io.writeln(
+              _style.yellow(
+                '[context overflowed — auto-compacted; continuing the turn]',
+              ),
+            );
+            await _runPrompt(
+              _overWindowContinuationNotice,
+              isAutoContinue: true,
+            );
+            return;
+          }
+          // Compaction could not free the window (nothing droppable):
+          // surface the guard error as-is and keep the resume budget for
+          // the next user prompt.
+          _overWindowAutoResumed = false;
         }
       }
 
@@ -2328,17 +2384,35 @@ class AgentCli {
     _persistedCount++;
   }
 
-  Future<void> _maybeAutoCompact() async {
+  /// Compaction settings for the live model: the config override when the
+  /// user pinned one, else pi's fixed defaults SCALED to the model window
+  /// (`CompactionSettings.forWindow`) — the same rule the Flutter app
+  /// applies. The fixed 20k-keep defaults are right for 128k windows but
+  /// structurally prevent compaction on small models: with keep 20000 on
+  /// an 8k-window model the compactor always "keeps" the whole transcript
+  /// (nothing is older than the kept region), so an over-window guard can
+  /// never be satisfied by compacting.
+  CompactionSettings get _effectiveCompactionSettings {
+    final override = config.compactionSettings;
+    if (override != null) return override;
+    return CompactionSettings.forWindow(_agent.state.model.contextWindow);
+  }
+
+  /// Runs the auto-compaction when the live transcript crosses the
+  /// threshold. Returns whether a compaction pass actually ran and
+  /// succeeded — the over-window guard's auto-continuation keys off this
+  /// to resume only when the window was really freed.
+  Future<bool> _maybeAutoCompact() async {
     final session = _session;
-    if (session == null) return;
-    if (_agent.state.messages.isEmpty) return;
+    if (session == null) return false;
+    if (_agent.state.messages.isEmpty) return false;
     final tokens = estimateContextTokens(_agent.state.messages).tokens;
     if (!shouldCompact(
       tokens,
       _agent.state.model.contextWindow,
-      config.compactionSettings ?? defaultCompactionSettings,
+      _effectiveCompactionSettings,
     )) {
-      return;
+      return false;
     }
     _tuiController?.setBusyPhase('Compacting context…');
     _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
@@ -2346,6 +2420,10 @@ class AgentCli {
     // Hand the busy row back to the run: a stale 'Compacting context…'
     // over the streamed turn reads as a compaction hang.
     _tuiController?.setBusyPhase('');
+    // [_runAutoCompact] reports '[auto-compacted]' only on success; treat
+    // the transcript size as the source of truth for the caller.
+    final after = estimateContextTokens(_agent.state.messages).tokens;
+    return after < tokens;
   }
 
   /// `/compact` manual override: same AutoCompactor pipeline as the
@@ -2371,7 +2449,7 @@ class AgentCli {
       session: _session!,
       state: _agent.state,
       window: _agent.state.model.contextWindow,
-      settings: config.compactionSettings ?? defaultCompactionSettings,
+      settings: _effectiveCompactionSettings,
       sources: AutoCompactorSources(
         smolStream: smol?.stream,
         smolModel: smol?.model,
