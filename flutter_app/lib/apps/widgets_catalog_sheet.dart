@@ -462,6 +462,9 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
           style: theme.textTheme.titleSmall,
         ),
       ),
+      // Same visual language as the catalog rows below: framed icon,
+      // name + description, two equal-width stacked action buttons —
+      // the group differs only by its section header.
       for (final app in mine)
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -474,33 +477,63 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
             ),
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
+              Container(
                 width: 40,
                 height: 40,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: theme.colorScheme.outlineVariant),
+                ),
                 child: Center(
                   child: AppIcon(app: app, env: widget.env, size: 26),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  app.name,
-                  style: theme.textTheme.titleSmall,
-                  overflow: TextOverflow.ellipsis,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      app.name,
+                      style: theme.textTheme.titleSmall,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (app.description.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          app.description,
+                          style: theme.textTheme.bodySmall,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
                 ),
               ),
-              FilledButton.tonal(
-                onPressed: () => _launchApp(app, app.id),
-                child: const Text('Open'), // l10n:ignore
-              ),
-              TextButton.icon(
-                onPressed: () => _remove(app.id),
-                icon: const Icon(Icons.delete_outline, size: 18),
-                label: const Text('Remove'), // l10n:ignore
-                style: TextButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  foregroundColor: theme.colorScheme.error,
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 108,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FilledButton.tonal(
+                      onPressed: () => _launchApp(app, app.id),
+                      child: const Text('Open'), // l10n:ignore
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => _remove(app.id),
+                      icon: const Icon(Icons.delete_outline, size: 16),
+                      label: const Text('Remove'), // l10n:ignore
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        foregroundColor: theme.colorScheme.error,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
