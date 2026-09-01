@@ -298,52 +298,11 @@ Model buildCatalogModel(
   );
 }
 
-/// The hardcoded fallback model ids per provider NAME, used when neither
-/// the endpoint's `/v1/models` nor the remote fa1.dev/models-catalog.json
-/// has an opinion. Per-provider knowledge that ages out — kept only as a
-/// last-resort floor; the pickers and the model resolver prefer the live
-/// endpoint. Keyed by name (not adapter kind) so the legacy
-/// openai-completions default survives on both the openrouter and openai
-/// specs; providers absent here (dial) have no universal default.
-const _catalogDefaultModelIds = <String, String>{
-  'anthropic': 'claude-sonnet-4-5',
-  'google': 'gemini-2.5-pro',
-  'minimax': 'MiniMax-M3',
-  'openrouter': 'anthropic/claude-sonnet-4',
-  'openai': 'anthropic/claude-sonnet-4',
-  'zai': 'glm-5.3',
-  // /models is the source of truth for copilot at runtime; this is only
-  // the flag default when /models has not been consulted.
-  'copilot': 'gpt-4.1',
-};
-
-/// The fallback default model id for [providerName], or null when the
-/// provider has no sane universal default (DIAL deployment names are
-/// per-deployment) and must name a model explicitly. Shared contract
-/// between the CLI default-model build, the env preconfig pick
-/// ([envPreconfiguredProvider]), and the executable's boot notice.
-String? catalogDefaultModelId(String providerName) =>
-    _catalogDefaultModelIds[providerName];
-
-/// Picks the preconfigured provider for out-of-the-box activation: the
-/// first enabled provider (catalog order) with a non-empty API-key
-/// environment value AND a universal default model id
-/// ([catalogDefaultModelId]). The id requirement skips dial/kimi/codemie —
-/// an env key alone must not activate an endpoint whose kind default would
-/// be an invalid model. Returns null when no environment key qualifies;
-/// the host then keeps its saved/default provider.
-ProviderSpec? envPreconfiguredProvider(
-  String? Function(String name) envVarValue,
-) {
-  for (final spec in enabledProviders()) {
-    final hasKey = spec.apiKeyEnvNames.any(
-      (name) => (envVarValue(name) ?? '').isNotEmpty,
-    );
-    if (hasKey && catalogDefaultModelId(spec.name) != null) return spec;
-  }
-  return null;
-}
-
+/// Providers carry NO default model: a model is always an explicit choice
+/// (`--model`, a saved switch, a roles chain, or a picker's live `/models`
+/// list). Silent defaults chose paid flagships over free tiers behind the
+/// user's back (zai's `glm-5.3` vs `glm-5.3-flash` — real spend nobody
+/// ordered), so the mechanism was removed, not re-seeded.
 /// Builds the legacy single [Model] the `fah` executable runs when no roles
 /// are configured (`--provider`/`--model`/`--base-url` flags).
 ///
@@ -368,10 +327,9 @@ Model buildCliDefaultModel(
     _ => throw ConfigException('unknown provider: $providerKind'),
   };
 
-  final id = modelId ?? catalogDefaultModelId(spec.name);
+  final id = modelId;
   if (id == null) {
-    // Providers without a sane universal default (DIAL deployment names are
-    // per-deployment) must name the model explicitly.
+    // No provider has a default model — the choice is always explicit.
     throw ConfigException('provider "$providerKind" requires --model <id>');
   }
   return Model(

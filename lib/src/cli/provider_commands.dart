@@ -746,21 +746,31 @@ extension on AgentCli {
         registry?.find(name)?.keyName ??
         CustomProviderRegistry.copilotEntryKeyName(name);
     await _storeProviderToken(spec, baseUrl, githubToken, keyName: keyName);
+    // No provider carries a default model — the id comes from the live
+    // /models list (user picks) or a manual entry.
+    final ids = await _fetchProviderModelIds(spec.name, baseUrl, githubToken);
+    final picked = ids.isNotEmpty
+        ? await _pickModelFromList(ids, title: 'Copilot model')
+        : await _manualModelId();
+    if (picked == null) {
+      io.writeln('Copilot connect cancelled');
+      return;
+    }
     registry?.add(
       CustomProviderEntry(
         name: name,
         apiType: 'copilot',
         baseUrl: baseUrl,
-        modelId: buildCliDefaultModel('copilot').id,
+        modelId: picked,
         keyName: keyName,
       ),
     );
     _activeCustomName = name;
-    io.writeln('saved provider $name (listed in /provider)');
+    io.writeln('saved provider \$name (listed in /provider)');
     await _switchProvider(
       spec,
       baseUrl,
-      buildCliDefaultModel('copilot').id,
+      picked,
       token: githubToken,
       tokenKeyName: keyName,
     );
@@ -1566,6 +1576,7 @@ extension on AgentCli {
     io.writeln('  endpoint: $baseUrl');
     io.writeln('  key: SSO cookie (saved as $keyName)');
     io.writeln(modelLine);
+    _printRoleModelsNote();
     config.onProviderChanged?.call(_providerKind, _apiKey);
   }
 
@@ -1608,8 +1619,11 @@ extension on AgentCli {
   }
 
   /// Picks a model from the fetched list, falling back to manual entry.
-  Future<String?> _pickModelFromList(List<String> models) async {
-    final modelPick = await _pickOption('CodeMie model', [
+  Future<String?> _pickModelFromList(
+    List<String> models, {
+    String title = 'CodeMie model',
+  }) async {
+    final modelPick = await _pickOption(title, [
       for (final id in models) (id, id, visionMarker(id)),
       ('', '+ enter manually', ''),
     ]);
@@ -1925,6 +1939,7 @@ extension on AgentCli {
         );
         io.writeln('switched provider to ${spec.name} (endpoint: $baseUrl)');
         io.writeln(modelLine);
+        _printRoleModelsNote();
         config.onModelChanged?.call(_agent.state.model);
         return;
       }
@@ -1982,6 +1997,7 @@ extension on AgentCli {
       io.writeln('  endpoint: $baseUrl');
       io.writeln('  $keyLine');
       io.writeln(modelLine);
+      _printRoleModelsNote();
       config.onProviderChanged?.call(_providerKind, _apiKey);
     } on ConfigException catch (error) {
       io.writeln('cannot switch provider: ${error.message}');

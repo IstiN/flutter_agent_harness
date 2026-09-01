@@ -2025,12 +2025,16 @@ void main() {
         fake.call,
         envVarValue: (_) => null,
         secureKeys: cache,
+        modelsFetcher: (baseUrl, {required apiKey}) async => ['k3'],
       );
       final run = cli.run();
 
       io.sendLine('/provider kimi');
       await waitForIt(() => io.out.toString().contains('Kimi API key'));
       io.sendLine('sk-kimi-test');
+      // No provider carries a default model anymore — the flow asks.
+      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('switched provider to kimi'),
       );
@@ -2060,6 +2064,7 @@ void main() {
         envVarValue: (_) => null,
         secureKeys: cache,
         customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => ['k3'],
       );
       final run = cli.run();
 
@@ -2070,6 +2075,8 @@ void main() {
         () => io.out.toString().contains('provider name [api.kimi.com]'),
       );
       io.sendLine('work');
+      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      io.sendLine('1');
       await waitForIt(() => io.out.toString().contains('saved provider work'));
       io.sendLine('/exit');
       await run;
@@ -2101,6 +2108,7 @@ void main() {
         envVarValue: (_) => null,
         secureKeys: cache,
         customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => ['k3'],
       );
       final run = cli.run();
 
@@ -2115,6 +2123,8 @@ void main() {
         () => io.out.toString().contains('is a built-in provider name'),
       );
       io.sendLine('personal');
+      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('saved provider personal'),
       );
@@ -2144,12 +2154,15 @@ void main() {
         fake.call,
         envVarValue: (name) => name == 'KIMI_API_KEY' ? 'sk-env-kimi' : null,
         customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => ['k3'],
       );
       final run = cli.run();
 
       io.sendLine('/provider kimi');
       await waitForIt(() => io.out.toString().contains('type a number:'));
       io.sendLine('1'); // Use the resolved key → plain catalog switch
+      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('switched provider to kimi'),
       );
@@ -2188,6 +2201,7 @@ void main() {
           envVarValue: (_) => null,
           secureKeys: cache,
           customProviders: registry,
+          modelsFetcher: (baseUrl, {required apiKey}) async => ['k3'],
         );
         final run = cli.run();
 
@@ -2203,6 +2217,8 @@ void main() {
           isNot(contains('Kimi API key (empty to skip')),
         );
         io.sendLine('1'); // Use the resolved key
+        await waitForIt(() => io.out.toString().contains('Kimi model'));
+        io.sendLine('1');
         await waitForIt(
           () => io.out.toString().contains('switched provider to kimi'),
         );
@@ -2220,12 +2236,15 @@ void main() {
         final cli = cliFor(
           fake.call,
           envVarValue: (name) => name == 'KIMI_API_KEY' ? 'sk-env-kimi' : null,
+          modelsFetcher: (baseUrl, {required apiKey}) async => ['k3'],
         );
         final run = cli.run();
 
         io.sendLine('/provider kimi');
         await waitForIt(() => io.out.toString().contains('type a number:'));
         io.sendLine('1'); // Use the resolved key
+        await waitForIt(() => io.out.toString().contains('Kimi model'));
+        io.sendLine('1');
         await waitForIt(
           () => io.out.toString().contains('switched provider to kimi'),
         );
@@ -2288,12 +2307,18 @@ void main() {
 
     test('/provider kimi with an empty key answer switches keyless', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
-      final cli = cliFor(fake.call, envVarValue: (_) => null);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        modelsFetcher: (baseUrl, {required apiKey}) async => ['k3'],
+      );
       final run = cli.run();
 
       io.sendLine('/provider kimi');
       await waitForIt(() => io.out.toString().contains('Kimi API key'));
       io.sendLine('');
+      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      io.sendLine('1');
       await waitForIt(
         () => io.out.toString().contains('switched provider to kimi'),
       );
@@ -2320,6 +2345,7 @@ void main() {
         envVarValue: (name) => name == 'KIMI_API_KEY' ? 'sk-env-kimi' : null,
         secureKeys: cache,
         customProviders: registry,
+        modelsFetcher: (baseUrl, {required apiKey}) async => ['k3'],
       );
       final run = cli.run();
 
@@ -2330,6 +2356,8 @@ void main() {
         () => io.out.toString().contains('provider name [kimi-proxy'),
       );
       io.sendLine('');
+      await waitForIt(() => io.out.toString().contains('Kimi model'));
+      io.sendLine('1');
       await waitForIt(() => io.out.toString().contains('saved provider'));
       io.sendLine('/exit');
       await run;
@@ -2449,6 +2477,9 @@ void main() {
         io.sendLine('/provider kimi https://api.kimi.com/coding/v1');
         await waitForIt(() => io.out.toString().contains('Kimi API key'));
         io.sendLine(''); // keyless kimi switch — active model is now kimi
+        // The models fetch is stubbed empty → manual model id entry.
+        await waitForIt(() => io.out.toString().contains('Kimi model id'));
+        io.sendLine('k3');
         await waitForIt(
           () => io.out.toString().contains('switched provider to kimi'),
         );

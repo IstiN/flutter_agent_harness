@@ -267,5 +267,58 @@ void main() {
         }
       },
     );
+
+    test(
+      'copilot: only picker-enabled, chat-completions models are listed',
+      () async {
+        // The dialect exchanges the GitHub token first, then filters the
+        // payload pi-style (model_picker_enabled + policy.state +
+        // supports.tool_calls) — plus, for payloads declaring
+        // supported_endpoints, /chat/completions must be among them:
+        // responses-only models (gpt-5.6-sol) 400 on our chat transport.
+        final client = http_testing.MockClient((request) async {
+          if (request.url.host == 'api.github.com') {
+            return http.Response(
+              '{"token":"tid=x","expires_at":9999999999}',
+              200,
+            );
+          }
+          expect(request.url.path, endsWith('/models'));
+          return http.Response(
+            '{"data":['
+            // kept: picker-enabled, no supported_endpoints field
+            '{"id":"gpt-4.1","model_picker_enabled":true,'
+            '"capabilities":{"supports":{"tool_calls":true},"limits":'
+            '{"max_context_window_tokens":128000}}},'
+            // kept: explicitly served on /chat/completions
+            '{"id":"claude-sonnet-5","model_picker_enabled":true,'
+            '"supported_endpoints":["/chat/completions","/responses"]},'
+            // dropped: picker-disabled (embeddings/legacy)
+            '{"id":"text-embedding-3-small","model_picker_enabled":false},'
+            // dropped: policy-disabled
+            '{"id":"old-model","model_picker_enabled":true,'
+            '"policy":{"state":"disabled"}},'
+            // dropped: no tool calls
+            '{"id":"no-tools","model_picker_enabled":true,'
+            '"capabilities":{"supports":{"tool_calls":false}}},'
+            // dropped: responses-only (the gpt-5.6-sol 400)
+            '{"id":"gpt-5.6-sol","model_picker_enabled":true,'
+            '"policy":{"state":"enabled"},'
+            '"capabilities":{"supports":{"tool_calls":true}},'
+            '"supported_endpoints":["/responses","ws:/responses"]}'
+            ']}',
+            200,
+          );
+        });
+        final (ids, windows, _) = await fetchModelsForEndpoint(
+          'https://api.enterprise.githubcopilot.com',
+          apiKey: 'gh-token',
+          provider: 'copilot',
+          client: client,
+        );
+        expect(ids, ['claude-sonnet-5', 'gpt-4.1']);
+        expect(windows['gpt-4.1'], 128000);
+      },
+    );
   });
 }

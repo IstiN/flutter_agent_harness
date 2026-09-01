@@ -282,8 +282,10 @@ final class _CopilotDialect extends ModelListDialect {
       // Same proxy-ep derivation as the chat path: the token names the
       // tenant's API host; the configured tier host is only the fallback.
       final effectiveBase =
-          (copilotApiBaseUrlFromToken(apiToken.token) ?? baseUrl)
-              .replaceAll(RegExp(r'/+$'), '');
+          (copilotApiBaseUrlFromToken(apiToken.token) ?? baseUrl).replaceAll(
+            RegExp(r'/+$'),
+            '',
+          );
       final uri = Uri.parse('$effectiveBase/models');
       final response = await gClient
           .get(uri, headers: copilotApiHeaders(copilotToken: apiToken.token))
@@ -303,6 +305,7 @@ final class _CopilotDialect extends ModelListDialect {
 /// Maps the Copilot `{data: [{id, capabilities.limits.{max_context_window_
 /// tokens, max_output_tokens}}]}` shape into [ModelsEndpointInfo] (the
 /// limits are nested, so [parseModelsResponse] reads only the ids).
+/// Non-chat entries are filtered out — see [_isSelectableCopilotModel].
 ModelsEndpointInfo _parseCopilotModelsResponse(String body) {
   final decoded = jsonDecode(body);
   final data = decoded is Map<String, dynamic> ? decoded['data'] : null;
@@ -316,6 +319,7 @@ ModelsEndpointInfo _parseCopilotModelsResponse(String body) {
     if (entry is! Map<String, dynamic>) continue;
     final id = entry['id'];
     if (id is! String || id.isEmpty) continue;
+    if (!_isSelectableCopilotModel(entry)) continue;
     ids.add(id);
     final limits =
         ((entry['capabilities'] as Map<String, dynamic>?)?['limits']
@@ -327,6 +331,30 @@ ModelsEndpointInfo _parseCopilotModelsResponse(String body) {
   }
   ids.sort();
   return (ids, windows, maxTokens);
+}
+
+/// The picker-eligibility filter — pi-mono parity
+/// (`packages/ai/src/auth/oauth/github-copilot.ts`
+/// `isSelectableCopilotModel`): the entry must be picker-enabled, not
+/// policy-disabled, and tool-call capable (embeddings and completion-only
+/// entries carry `model_picker_enabled: false` already). On top of pi:
+/// when the payload declares `supported_endpoints`, `/chat/completions`
+/// must be among them — our provider streams there, and responses-only
+/// models (e.g. `gpt-5.6-sol` on `["/responses", "ws:/responses"]`) 400
+/// with "not accessible via the /chat/completions endpoint". Payloads
+/// without the field (older/self-hosted proxies) are kept.
+bool _isSelectableCopilotModel(Map<String, dynamic> entry) {
+  if (entry['model_picker_enabled'] != true) return false;
+  final policy = entry['policy'];
+  if (policy is Map && policy['state'] == 'disabled') return false;
+  final capabilities = entry['capabilities'];
+  final supports = capabilities is Map ? capabilities['supports'] : null;
+  if (supports is Map && supports['tool_calls'] == false) return false;
+  final endpoints = entry['supported_endpoints'];
+  if (endpoints is List && !endpoints.contains('/chat/completions')) {
+    return false;
+  }
+  return true;
 }
 
 // ── OpenAI-compatible (Bearer + /models) — the default fallback ────────

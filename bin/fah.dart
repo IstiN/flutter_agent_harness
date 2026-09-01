@@ -192,35 +192,6 @@ Model _buildModel(CliArgs args) {
 }
 
 /// The env preconfig pick for this invocation — `(spec, activating env var
-/// name)`, or null. Fires only on a pristine config: [CliConfig] has
-/// non-null defaults (a fresh install reads providerKind
-/// 'openai-completions', model 'openai/gpt-4o-mini', the OpenRouter URL),
-/// so null-checks on the saved fields are dead code — "the user never
-/// configured anything" means every provider-relevant field still equals
-/// that pristine default. An explicit --provider or --model wins; any
-/// saved provider switch, base URL, roles section, or custom provider
-/// disables the pick.
-(ProviderSpec, String)? _envPreconfigPick(CliArgs parsed, CliConfig saved) {
-  final pristine = CliConfig();
-  final untouched =
-      !parsed.providerExplicit &&
-      parsed.model == null &&
-      saved.providerKind == pristine.providerKind &&
-      saved.modelId == pristine.modelId &&
-      saved.baseUrl == pristine.baseUrl &&
-      saved.modelRoles == null &&
-      saved.customProviders.isEmpty;
-  if (!untouched) return null;
-  final picked = envPreconfiguredProvider((name) => Platform.environment[name]);
-  if (picked == null) return null;
-  return (
-    picked,
-    picked.apiKeyEnvNames.firstWhere(
-      (name) => (Platform.environment[name] ?? '').isNotEmpty,
-    ),
-  );
-}
-
 /// The `FA_PROVIDER_*` env preconfig (Docker/headless): `FA_PROVIDER_TYPE` +
 /// `FA_PROVIDER_NAME` + `FA_PROVIDER_CONFIG` (a JSON object with required
 /// `baseUrl`/`model` and an optional `apiKeyEnvVar`) plus the key env var
@@ -810,30 +781,18 @@ Future<void> _runApp(List<String> args) async {
   // model/baseUrl too, so the saved restore never leaks through while it is
   // active (--model/--base-url flags still override individual fields).
   final faPreconfig = _faProviderPreconfig(parsed, saved);
-  // Out-of-the-box env preconfig: on a pristine config (nothing the user
-  // saved) an API key in the environment activates its catalog provider —
-  // `ZAI_API_KEY=... fa` just runs. The pick wins over the pristine
-  // (default) saved kind; anything configured skips it entirely — including
-  // the explicit FA_PROVIDER_* declaration above.
-  final (ProviderSpec, String)? envPreconfig = faPreconfig == null
-      ? _envPreconfigPick(parsed, saved)
-      : null;
   final provider = parsed.providerExplicit
       ? parsed.provider
       : faPreconfig?.spec.kind ??
-            envPreconfig?.$1.kind ??
             (restorableKinds.contains(saved.providerKind)
                 ? saved.providerKind
                 : parsed.provider);
+  // No env-key auto-pick: a bare API key in the environment never
+  // activates a provider — the model would be an implicit default, and
+  // providers carry none by design. FA_PROVIDER_* stays: it names the
+  // model explicitly.
   String? modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   String? baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
-  // The pristine saved model/baseUrl are the constant defaults, not user
-  // choices: the picked provider's catalog default model and endpoint
-  // replace them.
-  if (envPreconfig != null) {
-    modelId = catalogDefaultModelId(envPreconfig.$1.name);
-    baseUrl = null;
-  }
   final mode = parsed.mode ?? saved.mode;
 
   final effective = CliArgs(
@@ -881,7 +840,8 @@ Future<void> _runApp(List<String> args) async {
       // configured endpoint, and every saved custom provider's.
       CustomProviderRegistry.keyNameFor(spec.defaultBaseUrl),
     ],
-    if (baseUrl case final url?) CustomProviderRegistry.keyNameFor(url),
+    // Promoted non-null above (parsed → FA_PROVIDER_* → saved chain).
+    CustomProviderRegistry.keyNameFor(baseUrl),
     for (final entry in saved.customProviders)
       entry.keyName ?? CustomProviderRegistry.keyNameFor(entry.baseUrl),
     'VISION_API_KEY',
@@ -1082,14 +1042,6 @@ Future<void> _runApp(List<String> args) async {
 
   final io = _TerminalCliIO(headless: headlessPrompt != null);
   // The one boot notice for env preconfig (same channel as the raw-mode
-  // note below): names the provider and the env var that activated it,
-  // never the key value.
-  if (envPreconfig case (final picked, final envName)?) {
-    io.writeln(
-      'note: ${picked.name} activated from $envName '
-      '(model ${catalogDefaultModelId(picked.name)})',
-    );
-  }
   // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
   // key ref — or its keyless absence) — never the key value. The pinned
   // declaration is the session default for every model role; only a

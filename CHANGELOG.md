@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.272
+
+- fix(providers): no provider carries a default model anymore — every
+  connect/switch flow picks the model explicitly. `/provider kimi` and
+  `/provider copilot` now fetch the endpoint's /models (the Copilot
+  dialect runs the GitHub→Copilot token exchange first) and ask the user
+  to pick, falling back to a manual id entry when the fetch is empty; the
+  silent `gpt-4.1` seed is gone from the Copilot connect flow.
+- fix(providers): the Copilot /models dialect lists only picker-eligible
+  chat models — pi-mono parity (`model_picker_enabled`, `policy.state`,
+  `supports.tool_calls`) plus a `supported_endpoints` check: responses-only
+  models (e.g. `gpt-5.6-sol`) 400 with "not accessible via the
+  /chat/completions endpoint" on our chat transport and are no longer
+  offered.
+- feat(cli): `/model` and `/provider` switches print a role-models note
+  naming the models the smol/subagent/memory roles still run, so a
+  main-model switch never silently strands a mismatched combination
+  ("/settings → Agent models to adjust").
+
 ## 0.1.271
 
 - fix(tui): the busy row now names its owner and dies on its own. Every

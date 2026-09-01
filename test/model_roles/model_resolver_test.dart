@@ -97,18 +97,28 @@ void main() {
       );
     });
 
-    test('buildCliDefaultModel keeps the legacy CLI defaults', () {
-      final anthropic = buildCliDefaultModel('anthropic');
+    test('buildCliDefaultModel builds only from an explicit model id', () {
+      // Providers carry NO default model (silent defaults picked paid
+      // flagships behind the user's back): every provider without
+      // --model throws.
+      final anthropic = buildCliDefaultModel(
+        'anthropic',
+        modelId: 'claude-sonnet-4-5',
+      );
       expect(anthropic.id, 'claude-sonnet-4-5');
       expect(anthropic.api, 'anthropic-messages');
-      final google = buildCliDefaultModel('google');
+      final google = buildCliDefaultModel('google', modelId: 'gemini-2.5-pro');
       expect(google.id, 'gemini-2.5-pro');
       expect(google.contextWindow, 1000000);
-      final openrouter = buildCliDefaultModel('openai-completions');
+      final openrouter = buildCliDefaultModel(
+        'openai-completions',
+        modelId: 'anthropic/claude-sonnet-4',
+      );
       expect(openrouter.provider, 'openrouter');
       expect(openrouter.baseUrl, 'https://openrouter.ai/api/v1');
       final custom = buildCliDefaultModel(
         'openai-completions',
+        modelId: 'x',
         baseUrl: 'https://proxy.example/v1',
       );
       expect(custom.provider, 'openai');
@@ -116,18 +126,29 @@ void main() {
       final dial = buildCliDefaultModel('dial', modelId: 'gpt-4o');
       expect(dial.provider, 'dial');
       expect(dial.baseUrl, 'https://ai-proxy.lab.epam.com');
-      final zai = buildCliDefaultModel('zai');
-      expect(zai.id, 'glm-5.3');
+      final zai = buildCliDefaultModel('zai', modelId: 'glm-5.3-flash');
+      expect(zai.id, 'glm-5.3-flash');
       expect(zai.provider, 'zai');
       expect(zai.api, 'openai-completions');
       expect(zai.baseUrl, 'https://api.z.ai/api/coding/paas/v4');
-      // DIAL deployment names are per-deployment: no universal default.
+      // No provider has a universal default anymore.
+      for (final kind in [
+        'anthropic',
+        'google',
+        'openai-completions',
+        'dial',
+        'zai',
+        'minimax',
+        'copilot',
+      ]) {
+        expect(
+          () => buildCliDefaultModel(kind),
+          throwsA(isA<ConfigException>()),
+          reason: kind,
+        );
+      }
       expect(
-        () => buildCliDefaultModel('dial'),
-        throwsA(isA<ConfigException>()),
-      );
-      expect(
-        () => buildCliDefaultModel('bogus'),
+        () => buildCliDefaultModel('bogus', modelId: 'x'),
         throwsA(isA<ConfigException>()),
       );
     });
