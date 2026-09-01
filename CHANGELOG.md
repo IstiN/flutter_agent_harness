@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.273
+
+- fix(agent): `Agent.abort()` disarms the run idle watchdog — it guards a
+  WEDGED stream going silent, not a host that cancelled on purpose; an
+  8-minute timer no longer outlives an aborted run. The app's
+  `AgentService.dispose` now aborts an in-flight run (its error callback
+  skips `notifyListeners` once disposed), which un-wedged the widget-test
+  floor: 8 pre-existing flutter_app failures from the 0.1.271 watchdog
+  (chat screen, session binding, work bar, session chat sheet) pass again.
+- refactor(tui): split `_handleBusyMsg`'s transition diagnostic/copy out
+  of the dispatcher (CRAP 15.15 → under the pinned 12.0 ratchet).
+
 ## 0.1.272
 
 - fix(providers): no provider carries a default model anymore — every

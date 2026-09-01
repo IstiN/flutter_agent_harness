@@ -632,8 +632,7 @@ final class FaTuiModel extends Model {
     // Activity heartbeat for the busy row: any real message while busy
     // (stream deltas, tool rows, key input) proves the stretch is alive;
     // only spinner ticks and busy bookkeeping are excluded.
-    final FaTuiModel self =
-        (busy && msg is! SpinnerTickMsg && msg is! BusyMsg)
+    final FaTuiModel self = (busy && msg is! SpinnerTickMsg && msg is! BusyMsg)
         ? copyWith(busyLastEventMs: DateTime.now().millisecondsSinceEpoch)
         : this;
     return self._updateWithHeartbeat(msg);
@@ -688,9 +687,7 @@ final class FaTuiModel extends Model {
     final phase = msg.phase;
     if (msg.busy && phase != null) {
       if (!busy) {
-        faTuiBusyDiagnostics?.call(
-          'busy relabel dropped (idle) phase=$phase',
-        );
+        faTuiBusyDiagnostics?.call('busy relabel dropped (idle) phase=$phase');
         return (this, null);
       }
       return (copyWith(busyPhase: phase), null);
@@ -704,29 +701,37 @@ final class FaTuiModel extends Model {
       );
       return (this, null);
     }
-    faTuiBusyDiagnostics?.call(
-      msg.busy
-          ? 'busy on source=${msg.source ?? '?'}'
-          : 'busy off source=${busySource.isEmpty ? '?' : busySource} '
-              'elapsed=${busyStartedAtMs < 0 ? 0 : (DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) ~/ 1000}s',
-    );
+    faTuiBusyDiagnostics?.call(_busyTransitionDiagnostic(msg));
     // Kick the spinner loop when going busy; the loop stops itself on the
     // first tick that finds the model idle again. Going idle also unpins
     // the sticky user echo and clears any phase, so the next run starts
     // as plain "Working…".
-    return (
-      copyWith(
-        busy: msg.busy,
-        busyStartedAtMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
-        busyPhase: '',
-        busySource: msg.busy ? (msg.source ?? '') : '',
-        busyLastEventMs:
-            msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
-        spinnerFrame: 0,
-        stickyLines: msg.busy ? null : const [],
-        stickyIndex: msg.busy ? null : -1,
-      ),
-      msg.busy ? _scheduleSpinnerTick() : null,
+    return (_busyTransitionCopy(msg), msg.busy ? _scheduleSpinnerTick() : null);
+  }
+
+  /// The diagnostic line for a busy on/off transition (reads the
+  /// PRE-transition state for the release side).
+  String _busyTransitionDiagnostic(BusyMsg msg) {
+    if (msg.busy) return 'busy on source=${msg.source ?? '?'}';
+    final elapsed = busyStartedAtMs < 0
+        ? 0
+        : (DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) ~/ 1000;
+    return 'busy off source=${busySource.isEmpty ? '?' : busySource} '
+        'elapsed=${elapsed}s';
+  }
+
+  /// The state copy for a busy on/off transition.
+  Model _busyTransitionCopy(BusyMsg msg) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return copyWith(
+      busy: msg.busy,
+      busyStartedAtMs: msg.busy ? now : -1,
+      busyPhase: '',
+      busySource: msg.busy ? (msg.source ?? '') : '',
+      busyLastEventMs: msg.busy ? now : -1,
+      spinnerFrame: 0,
+      stickyLines: msg.busy ? null : const [],
+      stickyIndex: msg.busy ? null : -1,
     );
   }
 
