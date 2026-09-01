@@ -16,7 +16,7 @@ import '../env/execution_env.dart';
 /// A [KbStorage] backed by an [ExecutionEnv] under [baseDir].
 final class ExecutionEnvKbStorage
     with KbStorageContextMixin
-    implements KbStorage {
+    implements KbStorage, KbAppendCapable {
   ExecutionEnvKbStorage(this._env, this._baseDir);
 
   final ExecutionEnv _env;
@@ -77,6 +77,14 @@ final class ExecutionEnvKbStorage
   @override
   FutureOr<void> writeFile(String path, String content) =>
       _env.writeFile(_filePath(path), content);
+
+  /// Native append (flutter_agent_memory 0.2.1): the deletion ledger is
+  /// append-only, so racing deletes must both land — the read-modify-write
+  /// fallback would re-open the last-writer-wins hole that clobbered a
+  /// 144-entry ledger in production.
+  @override
+  FutureOr<void> appendFile(String path, String content) =>
+      _env.appendFile(_filePath(path), content);
 
   @override
   FutureOr<List<String>> listFilePaths(String prefix) async {
