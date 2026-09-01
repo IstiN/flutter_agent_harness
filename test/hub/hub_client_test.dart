@@ -294,8 +294,9 @@ void main() {
       config: HubConfig(url: hub.url.toString()),
       identity: await HubIdentity.generate(),
       channelStore: await ChannelStore.fromFile('${home.path}/channels.json'),
-      // long enough that retarget lands while the loop parks in backoff
-      backoff: (int _) => const Duration(milliseconds: 400),
+      // long enough that retarget lands while the loop parks in backoff,
+      // even under full-suite parallel load (event-loop starvation)
+      backoff: (int _) => const Duration(milliseconds: 1200),
     );
     await client.connect();
     final firstId = client.agentId!;
@@ -334,10 +335,12 @@ void main() {
     expect((await keyFile.stat()).modeString(), 'rw-------');
     expect((await HubIdentity.load(keyFile.path)).agentId, result.agentId);
 
-    // the retired loop (asleep when retargeted) must never re-hello:
-    // a live rogue loop would reconnect and bump the count within ms
-    await Future<void>.delayed(const Duration(milliseconds: 600));
+    // the retired loop (asleep when retargeted) must never re-hello —
+    // window must exceed the 1200 ms backoff so a rogue loop, wherever
+    // it reconnects (old url or new), is caught here
+    await Future<void>.delayed(const Duration(milliseconds: 1600));
     expect(hub2.hellosSeen, 1);
+    expect(hub.hellosSeen, 1);
 
     await client.disconnect();
   }, timeout: timeout);
