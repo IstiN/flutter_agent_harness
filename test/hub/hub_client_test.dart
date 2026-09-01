@@ -267,7 +267,9 @@ void main() {
     () async {
       final client = await connect(hub, await HubIdentity.generate());
       final ghost = await connect(hub, await HubIdentity.generate());
-      final ghostGone = hub.agentOffline.firstWhere((id) => id == ghost.agentId);
+      final ghostGone = hub.agentOffline.firstWhere(
+        (id) => id == ghost.agentId,
+      );
       await ghost.disconnect(); // registered but gone → offline in presence
       await ghostGone; // hub cleaned up its connection row — query can't race it
 
@@ -339,4 +341,330 @@ void main() {
 
     await client.disconnect();
   }, timeout: timeout);
+  // ---- 0.2.3 stale-secret 401 recovery (contract from the dap side) ----
+  //
+  // The 401 fires at the HTTP upgrade (bearer rejected before any
+  // websocket), which FakeHub never simulates: it has no bearer auth.
+  // The hub side of the auth contract lives in [_AuthHub] below, kept in
+  // this file on purpose — the regression travels with the contract.
+
+  test('401 on stale config secret + master present → drop secret, '
+      're-enroll once, agentId stable, new secret persisted', () async {
+    final home = await Directory.systemTemp.createTemp('fah_401_');
+    addTearDown(() => home.delete(recursive: true));
+    final keyFile = '${home.path}/.dap/keys/fah/reg.key';
+    final cfgFile = '${home.path}/.dap/config.json';
+    const master = 'master-secret-regression';
+
+    // Phase 1 — first enrollment: master-secret dial, hub issues a
+    // client secret, client persists it to the config file.
+    final hub1 = _AuthHub(masterSecret: master);
+    await hub1.start();
+    addTearDown(hub1.stop);
+    final identity = await HubIdentity.load(keyFile);
+    final dial1 = resolveDapClientSecret(
+      environment: {'DAP_MASTER_SECRET': master},
+      config: readDapConfig(cfgFile),
+    );
+    expect(dial1.source, DapSecretSource.master);
+    final client1 = _dialClient(hub1.url, identity, dial1, cfgFile);
+    addTearDown(client1.disconnect);
+    final agentId = await client1.connect();
+    expect(agentId, identity.agentId);
+    await _persistedSecret(cfgFile, hub1.issued.single);
+    await client1.disconnect();
+    await hub1.stop();
+
+    // Phase 2 — a hub restart wiped the server-side secrets: the
+    // persisted config secret is now stale. Recovery: drop it, dial
+    // once more in enroll-mode with the master secret, same identity
+    // (production wiring: resolveDapClientSecret → HubClient).
+    final hub2 = _AuthHub(masterSecret: master, configPath: cfgFile);
+    await hub2.start();
+    addTearDown(hub2.stop);
+    final reloaded = await HubIdentity.load(keyFile);
+    final dial2 = resolveDapClientSecret(
+      environment: {'DAP_MASTER_SECRET': master},
+      config: readDapConfig(cfgFile),
+    );
+    expect(dial2.source, DapSecretSource.config);
+    final notices = <String>[];
+    final client2 = _dialClient(
+      hub2.url,
+      reloaded,
+      dial2,
+      cfgFile,
+      onNotice: notices.add,
+    );
+    addTearDown(client2.disconnect);
+
+    expect(await client2.connect(), agentId); // identity NOT wiped
+    expect(hub2.rejects, 1); // exactly one 401 …
+    expect(hub2.enrolls, 1); // … exactly one re-enroll
+    expect(hub2.bearers, [hub1.issued.single, master]);
+    // the stale secret was dropped BEFORE the retry dial went out
+    expect(hub2.configAtMasterDial, isNot(contains('clientSecret')));
+    // the hub-issued replacement is persisted through the enroll path
+    final newSecret = hub2.issued.single;
+    expect(newSecret, isNot(hub1.issued.single));
+    await _persistedSecret(cfgFile, newSecret);
+    expect(notices, contains('enrolled: client secret persisted'));
+    await client2.disconnect();
+  }, timeout: timeout);
+
+  test(
+    '401 on env-sourced secret → hard fail, frozen hint, no re-enroll',
+    () async {
+      final home = await Directory.systemTemp.createTemp('fah_401_');
+      addTearDown(() => home.delete(recursive: true));
+      final cfgFile = '${home.path}/.dap/config.json';
+      final hub = _AuthHub(masterSecret: 'master-secret-regression');
+      await hub.start();
+      addTearDown(hub.stop);
+      // the env secret wins over the master secret — explicit user intent
+      final dial = resolveDapClientSecret(
+        environment: {
+          'DAP_CLIENT_SECRET': 'env-secret-the-hub-never-issued',
+          'DAP_MASTER_SECRET': 'master-secret-regression',
+        },
+        config: readDapConfig(cfgFile),
+      );
+      expect(dial.source, DapSecretSource.env);
+      final client = _dialClient(
+        hub.url,
+        await HubIdentity.generate(),
+        dial,
+        cfgFile,
+      );
+      addTearDown(client.disconnect);
+      await expectLater(
+        client.connect(),
+        throwsA(
+          isA<HubError>()
+              .having((error) => error.code, 'code', 'unauthorized')
+              .having((error) => error.msg, 'msg', unauthorizedMsg),
+        ),
+      );
+      expect(hub.rejects, 1); // single 401, no second dial
+      expect(hub.enrolls, isZero);
+      expect(readDapConfig(cfgFile), isNot(contains('clientSecret')));
+    },
+  );
+
+  test('401 on config secret without master → frozen hint, no retry, '
+      'stale secret stays persisted', () async {
+    final home = await Directory.systemTemp.createTemp('fah_401_');
+    addTearDown(() => home.delete(recursive: true));
+    final cfgFile = '${home.path}/.dap/config.json';
+    await persistDapConfig(clientSecret: 'stale-config-secret', file: cfgFile);
+    final hub = _AuthHub(masterSecret: 'master-secret-regression');
+    await hub.start();
+    addTearDown(hub.stop);
+    final dial = resolveDapClientSecret(
+      environment: const {}, // no master secret anywhere
+      config: readDapConfig(cfgFile),
+    );
+    expect(dial.source, DapSecretSource.config);
+    expect(dial.master, isNull);
+    final client = _dialClient(
+      hub.url,
+      await HubIdentity.generate(),
+      dial,
+      cfgFile,
+    );
+    addTearDown(client.disconnect);
+    await expectLater(
+      client.connect(),
+      throwsA(
+        isA<HubError>()
+            .having((error) => error.code, 'code', 'unauthorized')
+            .having((error) => error.msg, 'msg', unauthorizedMsg),
+      ),
+    );
+    expect(hub.rejects, 1);
+    expect(hub.enrolls, isZero);
+    // nothing was dropped: without a master secret there is no recovery
+    expect(readDapConfig(cfgFile)['clientSecret'], 'stale-config-secret');
+  }, timeout: timeout);
+
+  test(
+    're-enroll retry rejected too → exactly one retry, then frozen hint',
+    () async {
+      final home = await Directory.systemTemp.createTemp('fah_401_');
+      addTearDown(() => home.delete(recursive: true));
+      final cfgFile = '${home.path}/.dap/config.json';
+      await persistDapConfig(
+        clientSecret: 'stale-config-secret',
+        file: cfgFile,
+      );
+      // the master this client holds was rotated away — both dials 401
+      final hub = _AuthHub(masterSecret: 'hub-current-secret');
+      await hub.start();
+      addTearDown(hub.stop);
+      final dial = resolveDapClientSecret(
+        environment: {'DAP_MASTER_SECRET': 'rotated-away-master'},
+        config: readDapConfig(cfgFile),
+      );
+      expect(dial.source, DapSecretSource.config);
+      final client = _dialClient(
+        hub.url,
+        await HubIdentity.generate(),
+        dial,
+        cfgFile,
+      );
+      addTearDown(client.disconnect);
+      await expectLater(
+        client.connect(),
+        throwsA(
+          isA<HubError>()
+              .having((error) => error.code, 'code', 'unauthorized')
+              .having((error) => error.msg, 'msg', unauthorizedMsg),
+        ),
+      );
+      expect(hub.rejects, 2); // stale dial + one master retry, never a loop
+      expect(hub.enrolls, isZero);
+      expect(hub.bearers, ['stale-config-secret', 'rotated-away-master']);
+      // the provably dead secret is still dropped from the config
+      expect(readDapConfig(cfgFile), isNot(contains('clientSecret')));
+    },
+  );
+}
+
+/// The test's dial wiring, exactly as production builds it
+/// (HubPlugin: resolveDapClientSecret → HubClient).
+HubClient _dialClient(
+  Uri url,
+  HubIdentity identity,
+  ({String? token, bool enroll, DapSecretSource source, String? master}) dial,
+  String configFile, {
+  void Function(String notice)? onNotice,
+}) => HubClient(
+  config: HubConfig(url: url.toString()),
+  identity: identity,
+  clientSecret: dial.token,
+  enroll: dial.enroll,
+  secretSource: dial.source,
+  masterSecret: dial.master,
+  configFile: configFile,
+  onNotice: onNotice,
+  backoff: tinyBackoff,
+);
+
+/// Polls the persisted config until the hub-issued [secret] shows up
+/// (`_onEnrolled` persists asynchronously after the welcome); fails with
+/// the last observed state instead of hanging.
+Future<void> _persistedSecret(String file, String secret) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  var config = readDapConfig(file);
+  while (config['clientSecret'] != secret) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('client secret never persisted to $file (last: $config)');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    config = readDapConfig(file);
+  }
+}
+
+/// Minimal hub-side of the bearer-auth + enrollment contract, for the
+/// 401 regression tests: FakeHub has no bearer auth, and the 401 fires
+/// at the HTTP upgrade — before any websocket frame — so it cannot be
+/// simulated through FakeHub. A dial is accepted with the master secret
+/// (enroll-mode) or any issued client secret; anything else is rejected
+/// with HTTP 401 exactly like the real hub. Signature checks are
+/// omitted on purpose: the client never verifies the hub, and the
+/// handshake itself is covered by the FakeHub suite. A `{'t':'enroll'}`
+/// frame issues and remembers a fresh client secret, answered with
+/// `{'t':'enrolled', …}`.
+class _AuthHub {
+  _AuthHub({required this.masterSecret, this.configPath});
+
+  static var _instanceCount = 0;
+
+  final String masterSecret;
+
+  /// Snapshot source for [configAtMasterDial]: the config file is read
+  /// the moment the recovery dial (master-secret bearer) arrives, so the
+  /// test can prove the stale secret was dropped before the retry.
+  final String? configPath;
+
+  final String _prefix = 'h${_instanceCount++}';
+  final List<String> issued = [];
+  final List<String> bearers = [];
+  Map<String, dynamic>? configAtMasterDial;
+  int rejects = 0;
+  int enrolls = 0;
+
+  HttpServer? _server;
+
+  Future<void> start() async {
+    _server = await HttpServer.bind('127.0.0.1', 0);
+    unawaited(_serve());
+  }
+
+  Uri get url => Uri.parse('ws://127.0.0.1:${_server!.port}/ws');
+
+  Future<void> stop() async {
+    await _server?.close(force: true);
+  }
+
+  Future<void> _serve() async {
+    await for (final request in _server!) {
+      final bearer = _bearerOf(request);
+      bearers.add(bearer ?? '');
+      if (bearer != masterSecret && !issued.contains(bearer)) {
+        rejects++;
+        request.response.statusCode = HttpStatus.unauthorized;
+        await request.response.close();
+        continue;
+      }
+      if (bearer == masterSecret && configPath != null) {
+        configAtMasterDial ??= readDapConfig(configPath!);
+      }
+      unawaited(_handle(await WebSocketTransformer.upgrade(request)));
+    }
+  }
+
+  String? _bearerOf(HttpRequest request) {
+    final header = request.headers.value(HttpHeaders.authorizationHeader);
+    return header != null && header.startsWith('Bearer ')
+        ? header.substring('Bearer '.length)
+        : null;
+  }
+
+  Future<void> _handle(WebSocket ws) async {
+    try {
+      await for (final data in ws) {
+        final frame = jsonDecode(data as String) as Map<String, dynamic>;
+        switch (frame['op'] as String?) {
+          case 'hello':
+            final digest = await Sha256().hash(
+              base64Decode(frame['pubkey'] as String),
+            );
+            final agentId = digest.bytes
+                .map((b) => b.toRadixString(16).padLeft(2, '0'))
+                .join()
+                .substring(0, 16);
+            ws.add(jsonEncode({'op': 'welcome', 'agentId': agentId}));
+          case 'flush':
+            ws.add(jsonEncode({'op': 'flushed', 'count': 0}));
+          case 'presence_query':
+            ws.add(
+              jsonEncode({
+                'op': 'presence',
+                'replyTo': frame['id'],
+                'agents': const <Map<String, dynamic>>[],
+              }),
+            );
+        }
+        if (frame['t'] == 'enroll') {
+          enrolls++;
+          final secret = 'issued-$_prefix-$enrolls';
+          issued.add(secret);
+          ws.add(jsonEncode({'t': 'enrolled', 'secret': secret}));
+        }
+      }
+    } on Object {
+      // socket error — fall through to cleanup
+    }
+  }
 }
