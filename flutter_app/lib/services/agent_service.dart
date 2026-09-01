@@ -2676,6 +2676,9 @@ class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
   void onDelta(String delta) {}
 
   @override
+  void onAttemptStart(String label, int attempt, Duration budget) {}
+
+  @override
   void onPass(AutoCompactorPass pass) {}
 
   @override

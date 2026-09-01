@@ -85,6 +85,13 @@ abstract class AutoCompactorHooks {
   /// so a host UI can show the summary being written instead of a silent
   /// spinner. Default no-op; high-frequency — hosts should throttle.
   void onDelta(String delta) {}
+
+  /// Called when a summarization attempt starts, with the summarizer
+  /// label (`smol=provider/model` / `main=provider/model`), the 1-based
+  /// attempt number and the per-attempt budget. Hosts surface this in the
+  /// busy row so a slow/dead summarizer endpoint reads as a bounded wait
+  /// ("attempt 1, 90 s cap") instead of a silent hang. Default no-op.
+  void onAttemptStart(String label, int attempt, Duration budget) {}
 }
 
 /// Compact helper that owns the multi-pass + retry + smol→main logic.
@@ -106,7 +113,8 @@ final class AutoCompactor {
     this.maxAttempts = 3,
     this.baseBackoff = const Duration(seconds: 1),
     this.force = false,
-    this.attemptBudget = const Duration(minutes: 10),
+    this.attemptBudget = const Duration(seconds: 90),
+    this.totalBudget = const Duration(minutes: 4),
   });
 
   /// The session to compact and to read the projected transcript from.
@@ -161,14 +169,25 @@ final class AutoCompactor {
 
   /// Wall-clock budget for ONE summarization attempt. A provider endpoint
   /// that accepts the request and never answers (no bytes, no error, no
-  /// done) would otherwise pend `stream.result` forever and wedge the
-  /// turn on the compaction spinner for as long as the user is willing to
+  /// done) would otherwise pend `stream.result` forever and wedge the turn
+  /// on the compaction spinner for as long as the user is willing to
   /// watch it — the provider-level connect/idle watchdogs cover clean
   /// hangs, but not dribbling keep-alives or a lost completion. When the
   /// budget fires the attempt fails with a [TimeoutException] (not
   /// transient — no retry spin), the pass falls to the next summarizer /
-  /// the local trim, and the turn goes on.
+  /// the local trim, and the turn goes on. 90 s: a summarizer writes a
+  /// bounded summary, and "Compacting context…" must never read as a
+  /// hang (the 0.1.240 default was 10 minutes per attempt — up to 20
+  /// minutes of silent spinner when both summarizers dribbled).
   final Duration attemptBudget;
+
+  /// Wall-clock budget for the WHOLE compactor run across all passes,
+  /// attempts and summarizers. Checked before each attempt: once the
+  /// elapsed time is over the budget, remaining attempts are skipped and
+  /// the run falls to the local trim. Bounds pathological combinations
+  /// (maxPasses × retries × smol+main) that would otherwise keep the UI
+  /// on the compaction spinner for tens of minutes.
+  final Duration totalBudget;
 
   /// When `true`, skip the [shouldCompact] gate and run the compactor
   /// unconditionally. Set by manual `/compact` (the user asked, so we
@@ -194,9 +213,14 @@ final class AutoCompactor {
     if (!force && !shouldCompact(initial, window, settings)) return true;
 
     final runFallback = _shouldRunFallback();
+    final clock = Stopwatch()..start();
 
     for (var pass = 1; pass <= maxPasses; pass++) {
-      final result = await _runPass(pass, runFallback: runFallback);
+      final result = await _runPass(
+        pass,
+        runFallback: runFallback,
+        clock: clock,
+      );
       if (result.done) return result.success;
     }
     final tokens = estimateContextTokens(state.messages).tokens;
@@ -219,6 +243,7 @@ final class AutoCompactor {
   Future<({bool done, bool success})> _runPass(
     int pass, {
     required bool runFallback,
+    required Stopwatch clock,
   }) async {
     final tokensBefore = estimateContextTokens(state.messages).tokens;
     final mainModel = state.model;
@@ -229,6 +254,7 @@ final class AutoCompactor {
       runFallback: runFallback,
       mainLabel: _modelLabel(mainModel),
       smolLabel: smolModel == null ? 'default' : _modelLabel(smolModel),
+      clock: clock,
     );
 
     if (!attempt.ok) {
@@ -367,12 +393,14 @@ final class AutoCompactor {
     required bool runFallback,
     required String mainLabel,
     required String smolLabel,
+    required Stopwatch clock,
   }) async {
     if (runFallback) {
       final smolOk = await _attempt(
         'smol=$smolLabel',
         summarize: summary,
         pass: pass,
+        clock: clock,
       );
       if (smolOk.ok) {
         return (
@@ -386,6 +414,7 @@ final class AutoCompactor {
         'main=$mainLabel',
         summarize: mainSummary,
         pass: pass,
+        clock: clock,
       );
       if (mainOk.ok) {
         return (
@@ -408,6 +437,7 @@ final class AutoCompactor {
       'main=$mainLabel',
       summarize: mainSummary,
       pass: pass,
+      clock: clock,
     );
     if (mainOk.ok) {
       return (
@@ -430,11 +460,24 @@ final class AutoCompactor {
     String label, {
     required SummarizeFn summarize,
     required int pass,
+    required Stopwatch clock,
   }) async {
     if (smolModel == null) {
       // Resolved via the main chain only — skip the label-based attempt.
     }
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (clock.elapsed >= totalBudget) {
+        return (
+          ok: false,
+          error: TimeoutException(
+            'compaction total budget (${totalBudget.inSeconds}s) exhausted '
+            'before the $label attempt',
+            totalBudget,
+          ),
+          noWork: false,
+        );
+      }
+      hooks.onAttemptStart(label, attempt, attemptBudget);
       try {
         final manager = CompactionManager(
           summarize: summarize,
@@ -448,7 +491,7 @@ final class AutoCompactor {
               attemptBudget,
               onTimeout: () => throw TimeoutException(
                 'compaction attempt exceeded the '
-                '${attemptBudget.inMinutes}-minute budget',
+                '${attemptBudget.inSeconds}s budget',
                 attemptBudget,
               ),
             );
@@ -526,6 +569,8 @@ class AutoCompactorFactory {
     this.maxAttempts = 3,
     this.baseBackoff = const Duration(seconds: 1),
     this.force = false,
+    this.attemptBudget = const Duration(seconds: 90),
+    this.totalBudget = const Duration(minutes: 4),
   });
 
   final Session session;
@@ -540,6 +585,12 @@ class AutoCompactorFactory {
   final int maxAttempts;
   final Duration baseBackoff;
   final bool force;
+
+  /// Per-attempt wall-clock budget, forwarded to the built [AutoCompactor].
+  final Duration attemptBudget;
+
+  /// Whole-run wall-clock budget, forwarded to the built [AutoCompactor].
+  final Duration totalBudget;
 
   /// Builds the [AutoCompactor] and runs it. Hosts that want to
   /// inspect the compactor before starting (e.g. for logging) can use
@@ -577,6 +628,8 @@ class AutoCompactorFactory {
       maxAttempts: maxAttempts,
       baseBackoff: baseBackoff,
       force: force,
+      attemptBudget: attemptBudget,
+      totalBudget: totalBudget,
     );
   }
 }

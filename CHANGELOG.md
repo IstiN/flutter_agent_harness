@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.274
+
+- fix(compaction): the summarizer can no longer hold the turn hostage.
+  A dead/dribbling summarizer endpoint used to keep the "Compacting
+  context…" row up for up to ~20 minutes (10-minute per-attempt budget
+  from 0.1.240, smol + main): the per-attempt budget is now 90 s and a
+  new whole-run `totalBudget` (4 min) skips any further attempts once
+  burned, falling to the mechanical local trim. New
+  `AutoCompactorHooks.onAttemptStart` surfaces each attempt in the busy
+  row ("smol=provider/model, attempt 1, 90s cap") so the wait reads as
+  bounded, and the CLI resets its delta tail per attempt.
+- fix(agent-loop): mid-turn over-window guard — before each provider
+  request the outgoing context is estimated; past the model's window
+  the run stops with a clear "Context window exhausted" error instead
+  of silently sending a 287k-token context to a 200k model (seen live:
+  compaction only runs at turn boundaries, and a single verification
+  turn with full-suite logs ballooned far past it). Gross overflow
+  only — between the compaction trigger and the window the post-run
+  compaction flow still owns the decision.
+
 ## 0.1.273
 
 - fix(agent): `Agent.abort()` disarms the run idle watchdog — it guards a

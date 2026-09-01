@@ -795,16 +795,19 @@ void main() {
   });
 
   test('auto-compacts after a turn over the threshold', () async {
+    // Window 800, reserve 400: the first request (~1 token) passes the
+    // loop's mid-turn over-window guard, while the ~500-token answer
+    // pushes the post-turn transcript over the compaction threshold.
     const tinyWindow = Model(
       id: 'tiny',
       api: 'test-api',
       provider: 'test-provider',
       baseUrl: 'https://example.test',
-      contextWindow: 100,
+      contextWindow: 800,
       maxTokens: 4096,
     );
     final fake = FakeStreamFunction([
-      textTurn('a reasonably long answer that exceeds the tiny window'),
+      textTurn('a' * 2000),
       textTurn('AUTO SUMMARY'),
     ]);
     final cli = cliFor(fake.call, model: tinyWindow);
@@ -1566,46 +1569,49 @@ void main() {
     );
   });
 
-  test('status line shows the saved provider entry name for its endpoint', () async {
-    const usage = Usage(
-      input: 10,
-      output: 5,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 15,
-      cost: UsageCost(input: 0, output: 0, total: 0),
-    );
-    final fake = FakeStreamFunction([textTurn('hi', usage: usage)]);
-    // The user's z.ai pick is a saved openai-compatible entry: the model's
-    // provider field carries the catalog KIND (openai) — the status bar
-    // must show the ENTRY name instead, matched by endpoint (ignoring a
-    // trailing-slash difference between the saved entry and the pin).
-    final cli = cliFor(
-      fake.call,
-      model: const Model(
-        id: 'test-model',
-        api: 'test-api',
-        provider: 'openai',
-        baseUrl: 'https://api.z.ai/api/paas/v4',
-        contextWindow: 100000,
-        maxTokens: 4096,
-      ),
-      customProviders: CustomProviderRegistry([
-        CustomProviderEntry(
-          name: 'z.ai',
-          apiType: 'openai',
-          baseUrl: 'https://api.z.ai/api/paas/v4/',
-          modelId: 'glm-5.3-flash',
+  test(
+    'status line shows the saved provider entry name for its endpoint',
+    () async {
+      const usage = Usage(
+        input: 10,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 15,
+        cost: UsageCost(input: 0, output: 0, total: 0),
+      );
+      final fake = FakeStreamFunction([textTurn('hi', usage: usage)]);
+      // The user's z.ai pick is a saved openai-compatible entry: the model's
+      // provider field carries the catalog KIND (openai) — the status bar
+      // must show the ENTRY name instead, matched by endpoint (ignoring a
+      // trailing-slash difference between the saved entry and the pin).
+      final cli = cliFor(
+        fake.call,
+        model: const Model(
+          id: 'test-model',
+          api: 'test-api',
+          provider: 'openai',
+          baseUrl: 'https://api.z.ai/api/paas/v4',
+          contextWindow: 100000,
+          maxTokens: 4096,
         ),
-      ]),
-    );
-    final run = cli.run();
-    io.sendLine('q');
-    await waitForIt(() => fake.calls == 1 && !cli.isBusy);
-    io.sendLine('/exit');
-    await run;
-    expect(io.out.toString(), contains(' · z.ai/test-model'));
-  });
+        customProviders: CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'z.ai',
+            apiType: 'openai',
+            baseUrl: 'https://api.z.ai/api/paas/v4/',
+            modelId: 'glm-5.3-flash',
+          ),
+        ]),
+      );
+      final run = cli.run();
+      io.sendLine('q');
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+      expect(io.out.toString(), contains(' · z.ai/test-model'));
+    },
+  );
 
   test('model switch without an active custom entry still persists', () async {
     // Catalog-provider `/model` switches have no active custom entry; the

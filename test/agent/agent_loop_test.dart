@@ -112,6 +112,32 @@ List<Type> _types(List<AgentEvent> events) {
 
 void main() {
   group('agentLoop', () {
+    test('an over-window outgoing context ends the run without a provider '
+        'call', () async {
+      final tinyWindow = const Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 100,
+        maxTokens: 4096,
+      );
+      final fake = _FakeStreamFunction([_textTurn('never')]);
+      final prompt = UserMessage.text('x' * 800);
+      final stream = agentLoop(
+        prompts: [prompt],
+        context: const Context(messages: []),
+        config: AgentLoopConfig(model: tinyWindow),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      final messages = await stream.result as List<dynamic>;
+      expect(fake.calls, 0);
+      final assistant = messages.whereType<AssistantMessage>().single;
+      expect(assistant.stopReason, StopReason.error);
+      expect(assistant.errorMessage, contains('Context window'));
+    });
     test('single turn without tools emits full lifecycle in order', () async {
       final fake = _FakeStreamFunction([_textTurn('hello')]);
       final prompt = UserMessage.text('hi');
