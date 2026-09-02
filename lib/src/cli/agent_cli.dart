@@ -887,8 +887,7 @@ class AgentCli {
   Future<void> run() async {
     // Cube cache: restore before the first turn, save after the last —
     // both best-effort (one warning line on failure, never a blocker).
-    final bootSpec = _cubeEnv.activeSpec;
-    if (bootSpec != null) await _cubeRestoreQuietly(bootSpec);
+    await _cubeBootRestore();
     await _loadAgentContext();
     _session = await _initializeSession();
     _syncMailboxPrefix();
@@ -954,14 +953,7 @@ class AgentCli {
       // Input ended (EOF) or the REPL is shutting down: never leave a tool
       // call waiting on an answer that cannot arrive.
       _cancelPendingAnswers();
-      final exitSpec = _cubeEnv.activeSpec;
-      if (exitSpec != null) {
-        try {
-          await CubeCacheManager(_cubeEnv, exitSpec).save();
-        } on Object catch (error) {
-          io.writeln('cube: cache save failed: $error');
-        }
-      }
+      await _cubeFinalize();
       await interruptSub.cancel();
       await taskSub.cancel();
       inboxTimer.cancel();
@@ -973,17 +965,21 @@ class AgentCli {
       }
       // A session nobody wrote to leaves no file behind.
       await deleteSessionIfEmpty();
-      // Plugins release their resources (sockets, processes, timers);
-      // one bad plugin must not block exit.
-      for (final plugin in config.plugins) {
-        try {
-          await plugin.dispose();
-        } on Object {
-          // Swallowed: shutdown is best-effort per plugin.
-        }
-      }
+      await _disposePlugins();
     }
     await printSessionResumeHint();
+  }
+
+  /// Releases plugin resources (sockets, processes, timers) on shutdown;
+  /// one bad plugin must not block exit.
+  Future<void> _disposePlugins() async {
+    for (final plugin in config.plugins) {
+      try {
+        await plugin.dispose();
+      } on Object {
+        // Swallowed: shutdown is best-effort per plugin.
+      }
+    }
   }
 
   /// Loads prompt templates, skills, and project context files, then applies
@@ -1698,8 +1694,7 @@ class AgentCli {
   Future<int> runHeadless(String prompt) async {
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
     // same cached trees a REPL session would).
-    final bootSpec = _cubeEnv.activeSpec;
-    if (bootSpec != null) await _cubeRestoreQuietly(bootSpec);
+    await _cubeBootRestore();
     _session = await _initializeSession();
     // Warm the endpoint metadata (model list, dial features, reported
     // limits) BEFORE the first turn; failures are silent — the catalog
@@ -1746,14 +1741,7 @@ class AgentCli {
       return 1;
     } finally {
       // Cube cache save, mirroring [run]'s exit path (best-effort).
-      final exitSpec = _cubeEnv.activeSpec;
-      if (exitSpec != null) {
-        try {
-          await CubeCacheManager(_cubeEnv, exitSpec).save();
-        } on Object catch (error) {
-          io.writeln('cube: cache save failed: $error');
-        }
-      }
+      await _cubeFinalize();
       await interruptSub.cancel();
       await taskSub.cancel();
     }
