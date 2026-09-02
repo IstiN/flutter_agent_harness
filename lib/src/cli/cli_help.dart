@@ -432,6 +432,8 @@ SKILLS AND CONTEXT FILES
                      summary in line mode)
   /allow [tool]      always-allow a tool (or list them)
   /mcp [list|reload] show MCP servers or reload the config
+  /dap [host ...]    DAP hub status, or connect to a hub (agent-to-agent
+                     messaging; protocol + server guide: docs/dap.md)
   /code              switch to coding mode
   /architect         switch to architect mode
   /review            switch to review mode
@@ -464,6 +466,8 @@ CONFIGURATION FILES
   .fah/rules.yaml      project TTSR stream rules
   .fah/lsp.json        project LSP server map
   .fah/prompts/        project prompt templates (~/.fah/prompts/ for user)
+  ~/.dap/              DAP hub state: identity keys, channels.json,
+                       config.json (see docs/dap.md)
   ~/.fah/sessions/     session storage root (Linux/Windows)
   ~/Library/Group Containers/group.dev.fa1.shared/fa/sessions/  session storage root (macOS)
 ''';

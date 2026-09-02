@@ -127,10 +127,7 @@ final Map<String, Future<void>> _sessionFileOps = <String, Future<void>>{};
 
 /// Runs [op] after every previously queued operation on [filePath]
 /// completes. Never lets one failure poison the chain for later callers.
-Future<T> _withSessionFileLock<T>(
-  String filePath,
-  Future<T> Function() op,
-) {
+Future<T> _withSessionFileLock<T>(String filePath, Future<T> Function() op) {
   final result = (_sessionFileOps[filePath] ?? Future<void>.value()).then(
     (_) => op(),
   );
@@ -265,10 +262,10 @@ final class JsonlSessionStorage implements SessionStorage {
     String? leafId, {
     int quarantined = 0,
   }) : _metadata = _headerToMetadata(header, _filePath),
-      _entries = entries,
-      _byId = {for (final entry in entries) entry.id: entry},
-      _currentLeafId = leafId,
-      _quarantinedEntries = quarantined {
+       _entries = entries,
+       _byId = {for (final entry in entries) entry.id: entry},
+       _currentLeafId = leafId,
+       _quarantinedEntries = quarantined {
     for (final entry in entries) {
       _updateLabelCache(_labelsById, entry);
     }
@@ -302,8 +299,7 @@ final class JsonlSessionStorage implements SessionStorage {
   static Future<JsonlSessionStorage> open(
     FileSystem fs,
     String filePath,
-  ) async =>
-      _withSessionFileLock(filePath, () => _openLocked(fs, filePath));
+  ) async => _withSessionFileLock(filePath, () => _openLocked(fs, filePath));
 
   static Future<JsonlSessionStorage> _openLocked(
     FileSystem fs,
@@ -425,10 +421,7 @@ final class JsonlSessionStorage implements SessionStorage {
     // can never interleave their byte ranges mid-record.
     await _withSessionFileLock(_filePath, () async {
       _fsOrThrow(
-        await _fs.appendFile(
-          _filePath,
-          '${jsonEncode(record.toJson())}\n',
-        ),
+        await _fs.appendFile(_filePath, '${jsonEncode(record.toJson())}\n'),
         'Failed to append session entry ${record.id}',
       );
     });

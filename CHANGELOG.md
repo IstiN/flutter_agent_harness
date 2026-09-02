@@ -1,5 +1,98 @@
 # Changelog
 
+## Unreleased
+
+- fix(cli): hub-only inbox wakes no longer die silently at the 10-run
+  wake cap — the first suppressed wake prints one dim
+  `[mail] hub wake-cap reached; waiting for user input` line (once per
+  session, not per poll), and the streak asymmetry (hub mail always
+  increments it, only real user input resets it) is documented at the
+  wake site.
+- fix(dap): a `dap_dm` to a known-but-offline peer no longer reads like
+  a typo — the no-match error lists the known online peers and points at
+  `dap_invite` for offline peers and `dap_peers` for typos.
+- feat(plugins): `FahPlugin.dispose` — the CLI calls it once per plugin
+  at shutdown (errors swallowed per plugin, so one bad plugin cannot
+  block exit); plugins override it to release sockets, processes, and
+  timers. The hub plugin host disposes the vendored hub client.
+- chore(cli): the `fah_hub_client` import in `bin/fah.dart` is now
+  marked as the ONLY core-CLI import of the hub client — downstream
+  forks wanting a different or no hub client patch that import plus the
+  `'hub'` case in `_builtInPlugin`.
+
+- fix(messaging): `agent_directory` no longer drowns in graveyard mailboxes —
+  it lists LIVE mailboxes (recent activity) plus anything holding pending
+  mail and the agent's own address; stale mailboxes from long-finished
+  sessions appear only with the new `all: true` parameter. Liveness is
+  source-defined `MailboxEntry.lastActivity` (`MailboxEntry.isLive`,
+  15-minute default window): the file repository scans the `.heartbeat`
+  marker plus `inbox`/`read` content mtimes (the `.id` identity marker and
+  `_scheduled`/dot directories are excluded), and running hosts keep the
+  heartbeat fresh from their existing inbox-watch timers via the new
+  `MessagingRepository.touch` (CLI every ~4s, app every ~6s; best-effort).
+  Unknown-activity entries (custom repositories) are never hidden.
+
+- refactor(cli): the `fah` executable's startup is decomposed — the pure
+  phases (`serve --a2a` argument interception, provider/model restoration,
+  the secure-store preload set, the startup API-key decision, roles-secret
+  collection, secret-redactor and web-search assembly) moved to
+  `lib/src/cli/startup.dart` with unit tests in `test/cli/startup_test.dart`;
+  `bin/fah.dart` keeps only process glue and `_runApp` reads as a phase
+  sequence. The CRAP ratchet is green again (worst 12.00): the
+  plugin-resolution test importing `bin/fah.dart` had dragged the whole
+  executable into the coverage trace at 0% hits, scoring `_runApp`
+  CRAP 3906.
+- fix(dap): vendored hub client warns loudly when the identity file's
+  `chmod 600` cannot be applied (no `chmod` on Windows, or the call
+  fails) — the Ed25519/X25519 private seeds would otherwise persist with
+  default permissive ACLs, readable by other local users.
+- fix(dap): vendored hub client's HKDF expand enforces the RFC 5869
+  255-block cap (throws `StateError`) — a zero-length MAC from a
+  misbehaving crypto dependency can no longer hang the hub connection.
+- fix(dap): `.fah/packages.yaml` plugin opt-out is value-aware —
+  `hub: false` (or an empty value) now really disables the plugin
+  instead of the key-only de-dup keeping it on; a failing connect to the
+  zero-config default hub prints one quiet hint line instead of a raw
+  error, so plain CLI starts stay clean.
+- fix(dap): the hub plugin's fire-and-forget connect carries a defensive
+  `.catchError`, so a future escape can never kill startup silently.
+- feat(memory): the long-term-memory LLM slot is wired — a new
+  `HarnessLlmProvider` adapts fa_llm's `LlmProvider` onto the harness
+  streaming contract and is resolved per call (`memory` role → `smol` →
+  main) in BOTH the CLI and the app. Memory consolidation and semantic
+  search now actually run instead of being silently skipped.
+## 0.1.280
+
+- fix(providers): correct the Copilot token guidance (0.1.278 had it
+  backwards). Per the official GitHub Copilot CLI docs (2026-09), the
+  supported credential types are fine-grained PATs (github_pat_…,
+  v2) WITH the "Copilot Requests" permission and OAuth tokens — while
+  classic PATs (ghp_…) are NOT supported by Copilot at all. 0.1.278
+  rejected all github_pat_ tokens up front and recommended ghp_ —
+  blocking working tokens and pointing at dead ones. Now: a pasted
+  fine-grained PAT is accepted with a hint that the "Copilot Requests"
+  permission is required (its absence is what makes the exchange 404),
+  a pasted classic ghp_ token is warned about and re-asked, and the
+  exchange 404 message names the missing permission.
+
+## 0.1.278
+
+- fix(providers): GitHub Copilot rejects fine-grained PATs clearly, at
+  connect time. The Copilot token exchange answers `github_pat_…` tokens
+  with HTTP 404 (GitHub's Copilot credential API only accepts classic
+  PATs and OAuth tokens), which used to surface as a bare "token exchange
+  failed (HTTP 404)" on the first message and, during connect, as a
+  silent fall-back to manual model entry (the `/user` lookup accepts
+  fine-grained PATs, masking the problem). Now: the paste-token step
+  rejects a fine-grained PAT immediately with the fix (use the GitHub
+  device flow or a classic `ghp_…` token), the exchange short-circuits
+  the known-dead token type without a round-trip, the 404 names both
+  likely causes (token type / no Copilot plan), and a failing exchange is
+  reported during connect instead of an unexplained empty model list.
+- chore(cli): split the banner/key-status block out of `agent_cli.dart`
+  and disentangle `_runPrompt` (error-stop and empty-continue branches
+  into named helpers) — the file-size guard and the CRAP ratchet are
+  green again.
 ## 0.1.277
 
 - fix(cli): endpoint-reported context windows now apply in roles mode.
@@ -40,7 +133,6 @@
 - agent_loop: exported `contextWindowExhaustedMarker` and
   `isContextWindowExhaustedError` so hosts recognize the guard without
   parsing numbers out of the error text.
-
 ## 0.1.274
 
 - fix(compaction): the summarizer can no longer hold the turn hostage.
@@ -91,7 +183,6 @@
   naming the models the smol/subagent/memory roles still run, so a
   main-model switch never silently strands a mismatched combination
   ("/settings → Agent models to adjust").
-
 ## 0.1.271
 
 - fix(tui): the busy row now names its owner and dies on its own. Every
@@ -2223,5 +2314,15 @@
 - feat(app): copilot connect picks the model explicitly; restart hydrates the entry-scoped key
 - fix(agent): run watchdog disarms on abort; AgentService.dispose aborts in-flight runs (0.1.273)
 - fix(providers): explicit model picks everywhere — no default models, copilot picker filter (0.1.272)
+
+## 0.1.279
+
+- fix(providers): reject Copilot fine-grained PATs at connect time (0.1.278)
+- refactor(cli): split banner/key-status out of agent_cli.dart, untangle _runPrompt
+
+## 0.1.281
+
+- fix(providers): correct the Copilot token guidance — fine-grained PATs need the Copilot Requests permission (0.1.280)
+- memory: copilot fine-grained PAT 404 root cause + flutter_app flame_3d env breakage
 
 ## Unreleased

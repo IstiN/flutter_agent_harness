@@ -799,9 +799,7 @@ extension ApprovalCommands on AgentCli {
       case ToolExecutionEndEvent(:final toolName, :final isError):
         _logDiagnostic('tool end sid=$_logSid name=$toolName error=$isError');
       case TurnEndEvent(:final message):
-        _logDiagnostic(
-          'turn end sid=$_logSid stop=${message.stopReason.name}',
-        );
+        _logDiagnostic('turn end sid=$_logSid stop=${message.stopReason.name}');
       case AgentEndEvent():
         _logDiagnostic('run end sid=$_logSid');
       default:
@@ -885,7 +883,12 @@ extension ApprovalCommands on AgentCli {
         if (authExpiredProvider(message.errorMessage ?? '') == 'codemie') {
           return;
         }
-        io.writeln(_errorLine(message.errorMessage ?? 'unknown error'));
+        io.writeln(
+          _keyStatusView.errorLine(
+            message.errorMessage ?? 'unknown error',
+            _agent.state.model.baseUrl,
+          ),
+        );
       case StopReason.aborted:
         // A TTSR abort is a rule trigger, not a failure — the
         // controller already announced it (omp renders a

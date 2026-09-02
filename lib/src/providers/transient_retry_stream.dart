@@ -134,13 +134,7 @@ Future<void> _drive(
       _pushAborted(out, model, lastFailure);
       return;
     }
-    final outcome = await _runAttempt(
-      out,
-      inner,
-      model,
-      context,
-      cancelToken,
-    );
+    final outcome = await _runAttempt(out, inner, model, context, cancelToken);
     switch (outcome) {
       case _Forwarded():
         return;
@@ -148,9 +142,7 @@ Future<void> _drive(
         lastFailure = error;
         if (attempt >= maxAttempts) {
           // Budget exhausted: the last failure stands (forward verbatim).
-          out.push(
-            ErrorEvent(reason: StopReason.error, error: error),
-          );
+          out.push(ErrorEvent(reason: StopReason.error, error: error));
           return;
         }
         final reason = (error.errorMessage ?? 'network error');
@@ -186,8 +178,7 @@ void _pushAborted(
         model: model.id,
         usage: Usage.zero,
         stopReason: StopReason.aborted,
-        errorMessage:
-            lastFailure?.errorMessage ?? 'Request was aborted',
+        errorMessage: lastFailure?.errorMessage ?? 'Request was aborted',
         timestamp: DateTime.now(),
       ),
     ),

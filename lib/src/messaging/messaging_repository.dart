@@ -13,8 +13,14 @@ import 'agent_message.dart';
 
 /// One entry in the messaging-fabric directory.
 class MailboxEntry {
-  /// Creates a directory entry with optional cwd and slug metadata.
-  const MailboxEntry({required this.id, this.cwd, this.slug});
+  /// Creates a directory entry with optional cwd, slug and activity
+  /// metadata.
+  const MailboxEntry({
+    required this.id,
+    this.cwd,
+    this.slug,
+    this.lastActivity,
+  });
 
   /// The mailbox id (e.g. `a1`, `sess1/main`).
   final String id;
@@ -25,18 +31,45 @@ class MailboxEntry {
   /// The session slug this mailbox belongs to, when known.
   final String? slug;
 
+  /// The newest activity observed in this mailbox. SOURCE-DEFINED: the file
+  /// repository reports the newest file mtime inside the mailbox (heartbeat
+  /// marker, inbox and read content); a future hub-presence feed would
+  /// report its own activity semantics — never compare values across
+  /// sources. Null when the source cannot date the mailbox.
+  final DateTime? lastActivity;
+
+  /// How recent [lastActivity] must be for a mailbox to count as live in
+  /// directory views. Generous enough that a briefly paused watcher never
+  /// makes a running peer vanish.
+  static const Duration defaultLiveWindow = Duration(minutes: 15);
+
+  /// Whether [lastActivity] counts as live: inside [window] of [now]. An
+  /// UNKNOWN timestamp (null) counts as live — a source that cannot date a
+  /// mailbox must never have it hidden from the default view.
+  static bool isLive(
+    DateTime? lastActivity, {
+    DateTime? now,
+    Duration window = defaultLiveWindow,
+  }) {
+    if (lastActivity == null) return true;
+    final reference = now ?? DateTime.now();
+    return reference.difference(lastActivity) <= window;
+  }
+
   @override
-  String toString() => 'MailboxEntry($id, cwd: $cwd, slug: $slug)';
+  String toString() =>
+      'MailboxEntry($id, cwd: $cwd, slug: $slug, lastActivity: $lastActivity)';
 
   @override
   bool operator ==(Object other) =>
       other is MailboxEntry &&
       other.id == id &&
       other.cwd == cwd &&
-      other.slug == slug;
+      other.slug == slug &&
+      other.lastActivity == lastActivity;
 
   @override
-  int get hashCode => Object.hash(id, cwd, slug);
+  int get hashCode => Object.hash(id, cwd, slug, lastActivity);
 }
 
 /// Isolated messaging backend for agent inboxes.
@@ -51,6 +84,12 @@ abstract interface class MessagingRepository {
   /// start/switch.
   Future<void> register(String agentId);
 
+  /// Refreshes [agentId]'s liveness marker (a heartbeat): hosts call this
+  /// periodically while the agent runs so directory consumers can tell live
+  /// mailboxes from abandoned ones WITHOUT any pending mail. Best-effort by
+  /// contract — a failing backend never breaks the caller's loop.
+  Future<void> touch(String agentId);
+
   /// The unread messages for [agentId], oldest first, without consuming
   /// them.
   Future<List<AgentMessage>> peek(String agentId);
@@ -59,6 +98,8 @@ abstract interface class MessagingRepository {
   /// read). A drained message never appears again.
   Future<List<AgentMessage>> drain(String agentId);
 
-  /// The known mailboxes in the fabric, with optional cwd metadata.
+  /// The known mailboxes in the fabric, with optional cwd metadata. The
+  /// FULL set (live and stale alike) — live/dead filtering is a display
+  /// policy above this layer, not a repository concern.
   Future<List<MailboxEntry>> directory();
 }

@@ -247,6 +247,60 @@ void main() {
       );
     });
 
+    test(
+      'a fine-grained PAT exchanges normally when GitHub accepts it',
+      () async {
+        http.BaseRequest? captured;
+        final client = http_testing.MockClient((request) async {
+          captured = request;
+          return http.Response(
+            exchangeJson(token: 'cop-fg', expiresAt: 1900000000),
+            200,
+          );
+        });
+
+        // Official Copilot CLI docs: fine-grained PATs (v2) WITH the
+        // "Copilot Requests" permission are a supported token type — the
+        // github_pat_ prefix alone must never reject before the exchange.
+        final token = await fetchCopilotApiToken(
+          githubToken: 'github_pat_FINEGRAINED',
+          client: client,
+        );
+
+        expect(captured, isNotNull);
+        expect(token.token, 'cop-fg');
+      },
+    );
+
+    test(
+      'a 404 names the Copilot Requests permission and the causes',
+      () async {
+        final client = http_testing.MockClient(
+          (_) async => http.Response(
+            '{"documentation_url":"https://docs.github.com/rest",'
+            '"message":"Not Found","status":"404"}',
+            404,
+          ),
+        );
+
+        await expectLater(
+          fetchCopilotApiToken(githubToken: 'ghu_no_access', client: client),
+          throwsA(
+            isA<CopilotAuthException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('404'),
+                contains('Copilot Requests'),
+                contains('github_pat_'),
+                contains('device flow'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
     test('other failures carry the response body', () async {
       final client = http_testing.MockClient(
         (_) async => http.Response('rate limited', 429),

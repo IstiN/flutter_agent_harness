@@ -14,6 +14,28 @@ Future<void> waitForTrue(Future<bool> Function() condition) async {
   fail('timed out waiting: async condition');
 }
 
+/// A hub plugin whose probe reports unread mail while [pending] is set:
+/// models a hub-only wake wave (agent-kind mail, no user input).
+class _StickyHubPlugin implements FahPlugin {
+  bool pending = false;
+
+  @override
+  String get name => 'sticky_hub';
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  void register(PluginContext context) {
+    context.registerExternalInbox(
+      ExternalInbox(
+        drain: () async => const [],
+        hasPending: () async => pending,
+      ),
+    );
+  }
+}
+
 /// The live-session presence + attached-input wiring of the CLI REPL:
 /// heartbeats appear while `run()` is alive, disappear on `/exit`, and a
 /// `user`-kind fabric message from an attached client lands as the user's
@@ -188,6 +210,70 @@ void main() {
       await run;
     },
     timeout: const Timeout(Duration(seconds: 60)),
+  );
+
+  test(
+    'hub-only mail announces the wake cap once; user input revives waking',
+    () async {
+      final fake = FakeStreamFunction([
+        textTurn('hub answer'),
+        textTurn('typed reply'),
+        textTurn('revived'),
+      ]);
+      final plugin = _StickyHubPlugin();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          plugins: [plugin],
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      final run = cli.run();
+      await waitForTrue(() async {
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        return (await repo.list(cwd: '/work')).isNotEmpty;
+      });
+
+      // Pretend nine hub-only wakes already happened; one more real hub
+      // wake burns the last slot of the cap.
+      cli.inboxWakeStreakForTest = 9;
+      plugin.pending = true;
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+      expect(cli.inboxWakeStreakForTest, 10, reason: 'hub mail increments');
+
+      // Now every wake is blocked. The FIRST blocked tick announces the
+      // cap once; later ticks stay silent.
+      await waitForIt(
+        () => io.out.toString().contains('hub wake-cap reached'),
+        reason: 'cap notice',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 2600));
+      expect(
+        'hub wake-cap reached'.allMatches(io.out.toString()),
+        hasLength(1),
+        reason: 'announced once per session, not per poll',
+      );
+      expect(fake.calls, 1, reason: 'the cap holds for hub-only mail');
+
+      // A real user line resets the streak…
+      plugin.pending = false;
+      io.sendLine('are you there');
+      await waitForIt(() => fake.calls == 2 && !cli.isBusy);
+      expect(cli.inboxWakeStreakForTest, 0, reason: 'user input resets it');
+
+      // …and hub wakes work again.
+      plugin.pending = true;
+      await waitForIt(() => fake.calls == 3 && !cli.isBusy);
+
+      io.sendLine('/exit');
+      await run;
+    },
+    timeout: const Timeout(Duration(seconds: 90)),
   );
 }
 

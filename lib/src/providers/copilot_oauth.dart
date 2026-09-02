@@ -104,8 +104,25 @@ String? copilotApiBaseUrlFromToken(String token) {
   return 'https://$apiHost';
 }
 
+/// Whether [token] is a GitHub fine-grained PAT (v2, `github_pat_…`).
+/// Per the official Copilot CLI docs this IS a supported Copilot
+/// credential — but only with the "Copilot Requests" permission, so the
+/// connect flow uses this to print an informational hint at paste time
+/// (the exchange itself decides).
+bool isFineGrainedGitHubPat(String token) => token.startsWith('github_pat_');
+
+/// Whether [token] is a GitHub classic PAT (`ghp_…`). Official Copilot
+/// CLI docs (2026-09): classic PATs are NOT a supported Copilot
+/// credential type — the connect flow warns at paste time and re-asks.
+bool isClassicGitHubPat(String token) => token.startsWith('ghp_');
+
 /// Exchanges a GitHub token for a Copilot API token (goal:
 /// copilot-proxy-go internal/auth/github_client.go).
+///
+/// Supported GitHub credentials (official Copilot CLI docs, 2026-09):
+/// fine-grained PATs (v2, `github_pat_…`) WITH the "Copilot Requests"
+/// permission, and OAuth tokens (`gho_`/`ghu_` from the Copilot CLI or gh
+/// apps). Classic PATs (`ghp_…`) are NOT supported by Copilot.
 ///
 /// Throws [CopilotAuthException] on a non-200 — HTTP 401 means the GitHub
 /// token is dead (the caller must trigger re-auth, not a token refresh);
@@ -136,6 +153,17 @@ Future<CopilotApiToken> fetchCopilotApiToken({
     throw const CopilotAuthException(
       'GitHub token rejected (401) by the Copilot token exchange — '
       're-authorize Copilot (CLI: /provider copilot).',
+    );
+  }
+  if (response.statusCode == 404) {
+    throw CopilotAuthException(
+      'Copilot token exchange failed (HTTP 404): GitHub does not grant '
+      'this token Copilot access. A fine-grained PAT (github_pat_…) needs '
+      'the "Copilot Requests" permission (github.com/settings/'
+      'personal-access-tokens → edit → Permissions); classic PATs '
+      '(ghp_…) are not supported by Copilot at all; or the account has '
+      'no Copilot seat. The GitHub device flow (/provider copilot) mints '
+      'a working OAuth token. Body: ${response.body.trim()}',
     );
   }
   if (response.statusCode != 200) {

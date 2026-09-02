@@ -15,7 +15,11 @@ extension on AgentCli {
     final matches = await _sessionNameMatches(trimmed);
     SessionMetadata? metadata;
     if (matches.length > 1 &&
-        [for (final m in matches) if (m.cwd == _env.cwd) m].length != 1) {
+        [
+              for (final m in matches)
+                if (m.cwd == _env.cwd) m,
+            ].length !=
+            1) {
       // Ambiguous: several in this folder or none in it — ask which one
       // (the TUI wizard picker, or a numbered list in line mode). The
       // caller's flow gate buffers an answer typed AHEAD of the prompt

@@ -1590,6 +1590,7 @@ class AgentService extends ChangeNotifier
   var _inboxWakeStreak = 0;
   static const _maxInboxWakeStreak = 10;
 
+  var _fabricHeartbeatTick = 0;
   /// Whether the over-window guard's one-shot auto-continuation was used
   /// for the current user text (reset on every real [sendText] entry).
   var _overWindowAutoResumed = false;
@@ -1610,10 +1611,21 @@ class AgentService extends ChangeNotifier
 
   void _startInboxWatcher() {
     if (!enableInboxWatcher) return;
-    _inboxWatchTimer ??= Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => unawaited(_wakeOnInboxMail()),
-    );
+    _inboxWatchTimer ??= Timer.periodic(const Duration(seconds: 3), (_) {
+      // Every other tick (≈6s): refresh the messaging-fabric heartbeat so
+      // agent_directory reports this instance as live between mails.
+      if (_fabricHeartbeatTick++ % 2 == 0) _touchFabricHeartbeat();
+      unawaited(_wakeOnInboxMail());
+    });
+  }
+
+  /// Best-effort fabric heartbeat; a broken fabric never breaks the watch
+  /// loop.
+  void _touchFabricHeartbeat() {
+    final manager = _subagentManager;
+    final fabric = manager?.messaging;
+    if (fabric == null) return;
+    unawaited(fabric.touch(manager!.mailboxOf(manager.selfId)));
   }
 
   /// Called when a background shell job settles: the completion re-enters

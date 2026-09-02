@@ -662,13 +662,36 @@ extension on AgentCli {
       return null;
     }
     if (mode == 'paste') {
-      final typed = await _askLine('GitHub token: ', secret: true);
-      final token = typed?.trim();
-      if (token == null || token.isEmpty) {
-        io.writeln('Copilot connect cancelled');
-        return null;
+      while (true) {
+        final typed = await _askLine('GitHub token: ', secret: true);
+        final token = typed?.trim();
+        if (token == null || token.isEmpty) {
+          io.writeln('Copilot connect cancelled');
+          return null;
+        }
+        // Official Copilot CLI docs (2026-09): classic ghp_ PATs are NOT
+        // a supported Copilot credential — reject at paste time instead
+        // of an exchange failure later.
+        if (isClassicGitHubPat(token)) {
+          io.writeln(
+            'classic personal access tokens (ghp_…) are not supported by '
+            'GitHub Copilot. Use the GitHub device flow, or a fine-grained '
+            'PAT (github_pat_…) with the "Copilot Requests" permission.',
+          );
+          continue;
+        }
+        // Fine-grained PATs work only with the "Copilot Requests"
+        // permission — hint now so an exchange 404 is self-explanatory.
+        if (isFineGrainedGitHubPat(token)) {
+          io.writeln(
+            'fine-grained PAT detected: it must carry the "Copilot '
+            'Requests" permission (github.com/settings/'
+            'personal-access-tokens → edit → Permissions), or the token '
+            'exchange will fail with 404.',
+          );
+        }
+        return token;
       }
-      return token;
     }
     try {
       return await (config.copilotDeviceFlowFn ?? _defaultCopilotDeviceFlow)(
@@ -746,6 +769,20 @@ extension on AgentCli {
         registry?.find(name)?.keyName ??
         CustomProviderRegistry.copilotEntryKeyName(name);
     await _storeProviderToken(spec, baseUrl, githubToken, keyName: keyName);
+    // Surface the token-exchange failure NOW: the /models dialect below
+    // swallows errors into an empty list, which would drop the user into
+    // manual model entry with no hint why (fine-grained PAT, no Copilot
+    // plan on the account, dead network — live finding 2026-09). One
+    // cheap GET; the model fetch exchanges again.
+    try {
+      await fetchCopilotApiToken(
+        githubToken: githubToken,
+        client: config.modelsHttpClient,
+      );
+    } on CopilotAuthException catch (error) {
+      io.writeln('warning: ${error.message}');
+      io.writeln('continuing — pick or type the model id manually');
+    }
     // No provider carries a default model — the id comes from the live
     // /models list (user picks) or a manual entry.
     final ids = await _fetchProviderModelIds(spec.name, baseUrl, githubToken);
@@ -2227,7 +2264,7 @@ extension on AgentCli {
     final model = _agent.state.model;
     io.writeln('provider: ${model.provider} (${model.api})');
     io.writeln('  endpoint: ${model.baseUrl}');
-    final keyStatus = _keyStatusLine(model);
+    final keyStatus = _keyStatusView.keyStatusLine(model);
     if (keyStatus != null) io.writeln('  $keyStatus');
     _printSavedProviders();
     io.writeln('supported providers:');
@@ -2341,7 +2378,7 @@ extension on AgentCli {
   /// friends) describe the default endpoint and must never hijack a custom
   /// one (the user's OpenRouter key silently serving api.aiin.by).
   String? _customEndpointKey(String baseUrl) {
-    final entryKey = _activeCustomKeyName();
+    final entryKey = _keyStatusView.activeCustomKeyName();
     if (entryKey != null) {
       final envStack = _envKeyStackFor(entryKey);
       if (envStack.isNotEmpty) return envStack.first.value;
@@ -2428,7 +2465,7 @@ extension on AgentCli {
 
   /// The active saved entry's key name when the store holds it, else null.
   String? _activeCustomKeyEntry(SecureKeyCache keys) {
-    final entryKey = _activeCustomKeyName();
+    final entryKey = _keyStatusView.activeCustomKeyName();
     if (entryKey != null && keys.read(entryKey) != null) return entryKey;
     return null;
   }
