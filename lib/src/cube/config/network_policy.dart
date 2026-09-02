@@ -121,16 +121,35 @@ final class CubeNetworkPolicy {
   static CubeNetworkRule _parseRule(Object? node, String where) {
     // Shorthand: a bare string is a host with any port.
     if (node is String) {
-      if (node.trim().isEmpty) {
-        throw ConfigException('$where: host must be a non-empty string');
-      }
-      return CubeNetworkRule(host: node.trim());
+      return CubeNetworkRule(host: _parseHostString(node, where));
     }
     if (node is! YamlMap) {
       throw ConfigException(
         '$where: must be a string host or a map with "host"',
       );
     }
+    _checkRuleKeys(node, where);
+    final host = node['host'];
+    if (host is! String || host.trim().isEmpty) {
+      throw ConfigException('$where.host: must be a non-empty string');
+    }
+    return CubeNetworkRule(
+      host: host.trim(),
+      ports: _parsePorts(node['ports'], where),
+    );
+  }
+
+  /// Trims a shorthand bare-string host; empty is rejected.
+  static String _parseHostString(String node, String where) {
+    final host = node.trim();
+    if (host.isEmpty) {
+      throw ConfigException('$where: host must be a non-empty string');
+    }
+    return host;
+  }
+
+  /// Rejects keys outside the `{host, ports}` schema.
+  static void _checkRuleKeys(YamlMap node, String where) {
     for (final key in node.keys) {
       if (key is! String || (key != 'host' && key != 'ports')) {
         throw ConfigException(
@@ -138,26 +157,21 @@ final class CubeNetworkPolicy {
         );
       }
     }
-    final host = node['host'];
-    if (host is! String || host.trim().isEmpty) {
-      throw ConfigException('$where.host: must be a non-empty string');
+  }
+
+  /// Parses the optional `ports:` list of integers; null means any port.
+  static Set<int>? _parsePorts(Object? node, String where) {
+    if (node == null) return null;
+    if (node is! YamlList) {
+      throw ConfigException('$where.ports: must be a list of integers');
     }
-    final portsNode = node['ports'];
-    Set<int>? ports;
-    if (portsNode != null) {
-      if (portsNode is! YamlList) {
-        throw ConfigException('$where.ports: must be a list of integers');
-      }
-      ports = {
-        for (final port in portsNode)
-          port is int
-              ? port
-              : throw ConfigException(
-                  '$where.ports: entries must be '
-                  'integers, got $port',
-                ),
-      };
-    }
-    return CubeNetworkRule(host: host.trim(), ports: ports);
+    return {
+      for (final port in node)
+        port is int
+            ? port
+            : throw ConfigException(
+                '$where.ports: entries must be integers, got $port',
+              ),
+    };
   }
 }
