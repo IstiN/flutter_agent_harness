@@ -373,7 +373,9 @@ extension SettingsFlow on AgentCli {
         (
           'test',
           'Test connection',
-          (snapshot?.ok ?? false) ? 'currently connected' : 'not connected',
+          (snapshot?.connected ?? false)
+              ? 'currently connected'
+              : 'not connected',
         ),
         (
           'optout',
@@ -429,7 +431,7 @@ extension SettingsFlow on AgentCli {
     }
     io.writeln('dap hub url: ${snapshot.url}');
     io.writeln('dap agent name: ${snapshot.name ?? '(hostname default)'}');
-    if (snapshot.ok) {
+    if (snapshot.connected ?? false) {
       io.writeln(
         'dap connection: connected as '
         '${snapshot.agentId ?? snapshot.name}',
@@ -445,7 +447,7 @@ extension SettingsFlow on AgentCli {
     final snapshot = _dapHubSnapshot;
     if (snapshot == null) {
       io.writeln('dap: hub state unavailable on this host');
-    } else if (snapshot.ok) {
+    } else if (snapshot.connected ?? false) {
       io.writeln(
         'dap: connected to ${snapshot.url} as '
         '${snapshot.agentId ?? snapshot.name}',
