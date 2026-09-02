@@ -171,8 +171,7 @@ final RegExp _assignmentPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*=');
 List<String> _splitSegments(String line) {
   final segments = <String>[];
   final current = StringBuffer();
-  var inSingle = false;
-  var inDouble = false;
+  final quotes = _QuoteState();
   var i = 0;
 
   void flush() {
@@ -183,64 +182,28 @@ List<String> _splitSegments(String line) {
 
   while (i < line.length) {
     final ch = line[i];
-    if (ch == "'" && !inDouble) {
-      inSingle = !inSingle;
+    if (quotes.toggle(ch) || quotes.inside) {
       current.write(ch);
       i++;
       continue;
     }
-    if (ch == '"' && !inSingle) {
-      inDouble = !inDouble;
-      current.write(ch);
-      i++;
+    if (_startsSubshell(line, i)) {
+      i = _addSubshellSegments(line, i, segments);
       continue;
     }
-    if (inSingle || inDouble) {
-      current.write(ch);
-      i++;
-      continue;
-    }
-    // Backticked subshell: its contents are checked as their own commands.
-    if (ch == '`') {
-      final close = line.indexOf('`', i + 1);
-      final inner = close == -1
-          ? line.substring(i + 1)
-          : line.substring(i + 1, close);
-      segments.addAll(_splitSegments(inner));
-      i = close == -1 ? line.length : close + 1;
-      continue;
-    }
-    // `$( ... )` subshell: contents extracted with paren-depth matching,
-    // then recursively split so operators inside are checked too.
-    if (ch == r'$' && i + 1 < line.length && line[i + 1] == '(') {
-      var depth = 1;
-      var j = i + 2;
-      while (j < line.length && depth > 0) {
-        if (line[j] == '(') depth++;
-        if (line[j] == ')') depth--;
-        j++;
-      }
-      final inner = line.substring(i + 2, depth == 0 ? j - 1 : line.length);
-      segments.addAll(_splitSegments(inner));
-      i = depth == 0 ? j : line.length;
-      continue;
-    }
-    if (ch == ';' || ch == '\n' || ch == '\r') {
+    if (_isSegmentBreak(ch)) {
       flush();
       i++;
       continue;
     }
-    if (ch == '|' || ch == '&') {
-      // `2>&1` and friends: `&` directly after a redirect is not a separator.
-      if (ch == '&' && current.toString().trim().endsWith('>')) {
+    if (_isSegmentOperator(ch)) {
+      if (_isRedirectFdAppend(ch, current)) {
         current.write(ch);
         i++;
         continue;
       }
       flush();
-      while (i < line.length && (line[i] == '|' || line[i] == '&')) {
-        i++;
-      }
+      i = _skipOperatorRun(line, i);
       continue;
     }
     current.write(ch);
@@ -248,6 +211,91 @@ List<String> _splitSegments(String line) {
   }
   flush();
   return segments;
+}
+
+/// Quote state while scanning a command line or splitting words.
+final class _QuoteState {
+  var inSingle = false;
+  var inDouble = false;
+
+  /// Consumes a quote character: toggles the matching quote kind unless it
+  /// is masked by the other kind being open. Returns whether [ch] was an
+  /// effective quote.
+  bool toggle(String ch) {
+    if (ch == "'" && !inDouble) {
+      inSingle = !inSingle;
+      return true;
+    }
+    if (ch == '"' && !inSingle) {
+      inDouble = !inDouble;
+      return true;
+    }
+    return false;
+  }
+
+  /// Whether a quote kind is currently open.
+  bool get inside => inSingle || inDouble;
+}
+
+/// Whether [i] starts a subshell: a backtick or a `$( ... )` group.
+bool _startsSubshell(String line, int i) =>
+    line[i] == '`' ||
+    (line[i] == r'$' && i + 1 < line.length && line[i + 1] == '(');
+
+/// Splits the subshell contents starting at [i] into [segments] so the
+/// operators inside are checked too; returns the index just past the
+/// subshell.
+int _addSubshellSegments(String line, int i, List<String> segments) {
+  final (inner, next) = line[i] == '`'
+      ? _backtickInner(line, i)
+      : _dollarParenInner(line, i);
+  segments.addAll(_splitSegments(inner));
+  return next;
+}
+
+/// Extracts a backticked subshell: `(contents, index just past it)`. An
+/// unterminated backtick runs to end of line.
+(String, int) _backtickInner(String line, int i) {
+  final close = line.indexOf('`', i + 1);
+  return close == -1
+      ? (line.substring(i + 1), line.length)
+      : (line.substring(i + 1, close), close + 1);
+}
+
+/// Extracts a `$( ... )` subshell with paren-depth matching:
+/// `(contents, index just past it)`. An unterminated group runs to end of
+/// line.
+(String, int) _dollarParenInner(String line, int i) {
+  var depth = 1;
+  var j = i + 2;
+  while (j < line.length && depth > 0) {
+    if (line[j] == '(') depth++;
+    if (line[j] == ')') depth--;
+    j++;
+  }
+  return (
+    line.substring(i + 2, depth == 0 ? j - 1 : line.length),
+    depth == 0 ? j : line.length,
+  );
+}
+
+/// Whether [ch] unconditionally ends the current segment.
+bool _isSegmentBreak(String ch) => ch == ';' || ch == '\n' || ch == '\r';
+
+/// Whether [ch] starts a `|`/`&` operator run.
+bool _isSegmentOperator(String ch) => ch == '|' || ch == '&';
+
+/// Whether [ch] is an `&` that belongs to a `2>&1`-style redirect rather
+/// than a separator.
+bool _isRedirectFdAppend(String ch, StringBuffer current) =>
+    ch == '&' && current.toString().trim().endsWith('>');
+
+/// Index just past the `|`/`&` operator run starting at [i].
+int _skipOperatorRun(String line, int i) {
+  while (i < line.length && _isSegmentOperator(line[i])) {
+    i++;
+  }
+  return i;
 }
 
 /// Splits one [segment] into words, then strips leading `VAR=value`
@@ -264,32 +312,30 @@ List<String> _commandWords(String segment) {
 List<String> _words(String segment) {
   final words = <String>[];
   final current = StringBuffer();
-  var inSingle = false;
-  var inDouble = false;
+  final quotes = _QuoteState();
   var hasWord = false;
+
+  void flushWord() {
+    if (hasWord) {
+      words.add(current.toString());
+      current.clear();
+      hasWord = false;
+    }
+  }
+
   for (var i = 0; i < segment.length; i++) {
     final ch = segment[i];
-    if (ch == "'" && !inDouble) {
-      inSingle = !inSingle;
+    if (quotes.toggle(ch)) {
       hasWord = true;
       continue;
     }
-    if (ch == '"' && !inSingle) {
-      inDouble = !inDouble;
-      hasWord = true;
-      continue;
-    }
-    if (!inSingle && !inDouble && (ch == ' ' || ch == '\t')) {
-      if (hasWord) {
-        words.add(current.toString());
-        current.clear();
-        hasWord = false;
-      }
+    if (!quotes.inside && (ch == ' ' || ch == '\t')) {
+      flushWord();
       continue;
     }
     current.write(ch);
     hasWord = true;
   }
-  if (hasWord) words.add(current.toString());
+  flushWord();
   return words;
 }

@@ -7,7 +7,6 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
 
-import '../../bin/fah.dart' as fah;
 import 'agent_cli_test_support.dart';
 
 void main() {
@@ -817,9 +816,9 @@ void main() {
     );
 
     /// Builds a CLI over a REAL temp directory so the opt-out round-trip
-    /// can assert through the production consumer (the executable's
-    /// `loadPackagesConfig` + `resolveEnabledPlugins`), not a hand-parsed
-    /// map. Empty [packagesYaml] seeds no file.
+    /// can assert through the production consumer (`loadPackagesConfig` +
+    /// `resolveEnabledPlugins`), not a hand-parsed map. Empty [packagesYaml]
+    /// seeds no file.
     Future<(AgentCli, String)> realEnvCli(
       FakeStreamFunction fake,
       String packagesYaml,
@@ -890,7 +889,7 @@ void main() {
         // The production consumer: file on disk → loadPackagesConfig →
         // resolveEnabledPlugins. Entry loading itself is pinned too (before
         // the loader fix every entry was dropped as inert).
-        final loaded = fah.loadPackagesConfig(root);
+        final loaded = await loadPackagesConfig(LocalExecutionEnv(cwd: root));
         final enabled = resolveEnabledPlugins(const [], loaded);
         expect(enabled, contains('inspect_image'));
         expect(enabled, isNot(contains('hub')));
@@ -907,7 +906,7 @@ void main() {
       );
       await runOptOut(cli);
 
-      final loaded = fah.loadPackagesConfig(root);
+      final loaded = await loadPackagesConfig(LocalExecutionEnv(cwd: root));
       expect(loaded['hub'], false);
       expect(resolveEnabledPlugins(const [], loaded), isNot(contains('hub')));
       expect(loaded['tools'], {'keep': 'yes'});
@@ -920,7 +919,10 @@ void main() {
       await runOptOut(cli);
 
       expect(File('$root/.fah/packages.yaml').existsSync(), isTrue);
-      expect(fah.loadPackagesConfig(root)['hub'], false);
+      expect(
+        (await loadPackagesConfig(LocalExecutionEnv(cwd: root)))['hub'],
+        false,
+      );
       expect(fake.calls, 0);
     });
     test('test connection reports success and failure via the seam', () async {
