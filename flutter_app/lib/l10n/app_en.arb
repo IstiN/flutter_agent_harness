@@ -363,6 +363,8 @@
   "settingsDapUrlHint": "hub.example.com or ws://hub.example.com/ws",
   "settingsDapUrlLabel": "Hub URL",
   "settingsDapUrlRequired": "Hub URL is required",
+  "settingsDapLoadFailed": "Could not read the DAP config on this machine.",
+  "settingsDapSaveFailed": "Could not save the DAP connection — check the hub URL.",
   "settingsDeleteButton": "Delete",
   "settingsDeleteProviderBody": "The provider is removed from the picker. The current connection is not affected.",
   "settingsDeleteProviderTitle": "Delete {name}?",

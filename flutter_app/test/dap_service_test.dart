@@ -4,7 +4,7 @@
 
 import 'dart:io';
 
-import 'package:fa/services/dap_service.dart';
+import 'package:fa/services/dap_service_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Behavioral tests for the IO-backed DAP hub service: the save/load
@@ -59,7 +59,14 @@ void main() {
   });
 
   test('probe against a dead hub reports unreachable, never hangs', () async {
-    final snapshot = await service().probe();
+    // A port nothing listens on — the default 8787 would race a real dev
+    // hub running on this machine.
+    final svc = IoDapHubService(
+      environment: {'HOME': home.path, 'DAP_HUB_URL': 'ws://127.0.0.1:1/ws'},
+      home: home.path,
+      probeTimeout: const Duration(milliseconds: 300),
+    );
+    final snapshot = await svc.probe();
 
     expect(snapshot.connected, isFalse);
     expect(snapshot.supported, isTrue);

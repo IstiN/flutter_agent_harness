@@ -1141,6 +1141,14 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsDapUrlRequired => 'Требуется URL хаба';
 
   @override
+  String get settingsDapLoadFailed =>
+      'Не удалось прочитать DAP-конфигурацию на этой машине.';
+
+  @override
+  String get settingsDapSaveFailed =>
+      'Не удалось сохранить подключение — проверьте URL хаба.';
+
+  @override
   String get settingsDeleteButton => 'Удалить';
 
   @override

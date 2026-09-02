@@ -79,6 +79,7 @@ class DapHubPage extends StatefulWidget {
 class _DapHubPageState extends State<DapHubPage> {
   late final DapHubService _service = widget.service ?? createDapHubService();
   DapHubSnapshot? _snapshot;
+  String? _error;
   var _probing = false;
 
   @override
@@ -89,8 +90,19 @@ class _DapHubPageState extends State<DapHubPage> {
   }
 
   Future<void> _reload() async {
-    final snapshot = await _service.load();
-    if (mounted) setState(() => _snapshot = snapshot);
+    try {
+      final snapshot = await _service.load();
+      if (mounted) {
+        setState(() {
+          _snapshot = snapshot;
+          _error = null;
+        });
+      }
+    } on Object {
+      // Corrupt/unreadable ~/.dap layout: an error state, never a spinner.
+      if (!mounted) return;
+      setState(() => _error = context.l10n.settingsDapLoadFailed);
+    }
   }
 
   Future<void> _probe() async {
@@ -122,7 +134,17 @@ class _DapHubPageState extends State<DapHubPage> {
       ),
     );
     if (draft == null) return;
-    await _service.saveConnection(url: draft.url, name: draft.name);
+    try {
+      await _service.saveConnection(url: draft.url, name: draft.name);
+    } on Object {
+      // Bad host (normalizeDapHost) or a failed config write: tell the
+      // user instead of an unhandled async exception.
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(context.l10n.settingsDapSaveFailed)),
+      );
+      return;
+    }
     AppAnalytics.instance.dapHubAction('save');
     await _reload();
   }
@@ -133,7 +155,9 @@ class _DapHubPageState extends State<DapHubPage> {
     return Scaffold(
       appBar: faAppBar(title: Text(context.l10n.settingsDapHubTitle)),
       body: snapshot == null
-          ? const Center(child: CircularProgressIndicator())
+          ? _error != null
+                ? _messageBody(context, Icons.error_outline, _error!)
+                : const Center(child: CircularProgressIndicator())
           : snapshot.supported
           ? _connectionBody(context, snapshot)
           : _unsupportedBody(context),
@@ -334,7 +358,15 @@ class _DapHubPageState extends State<DapHubPage> {
 
   /// The platform-honest state: the hub client needs `dart:io` (WebSocket
   /// transport, `~/.dap` files), so on web there is nothing to configure.
-  Widget _unsupportedBody(BuildContext context) {
+  Widget _unsupportedBody(BuildContext context) => _messageBody(
+    context,
+    Icons.hub_outlined,
+    context.l10n.settingsDapUnsupported,
+  );
+
+  /// A centered icon + message: the not-supported note and the load-error
+  /// state share this layout.
+  Widget _messageBody(BuildContext context, IconData icon, String message) {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
     return SafeArea(
@@ -344,10 +376,10 @@ class _DapHubPageState extends State<DapHubPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.hub_outlined, size: 40, color: colors.dim),
+              Icon(icon, size: 40, color: colors.dim),
               const SizedBox(height: 12),
               Text(
-                context.l10n.settingsDapUnsupported,
+                message,
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium?.copyWith(color: colors.dim),
               ),

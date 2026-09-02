@@ -2042,6 +2042,18 @@ abstract class AppLocalizations {
   /// **'Hub URL is required'**
   String get settingsDapUrlRequired;
 
+  /// No description provided for @settingsDapLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not read the DAP config on this machine.'**
+  String get settingsDapLoadFailed;
+
+  /// No description provided for @settingsDapSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the DAP connection — check the hub URL.'**
+  String get settingsDapSaveFailed;
+
   /// No description provided for @settingsDeleteButton.
   ///
   /// In en, this message translates to:

@@ -2303,7 +2303,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
-              const SizedBox(height: 16),
               const ChatTextSection(),
               const SizedBox(height: 24),
               const Divider(),

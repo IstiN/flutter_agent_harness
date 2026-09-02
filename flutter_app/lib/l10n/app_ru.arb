@@ -360,6 +360,8 @@
   "settingsDapUrlHint": "hub.example.com или ws://hub.example.com/ws",
   "settingsDapUrlLabel": "URL хаба",
   "settingsDapUrlRequired": "Требуется URL хаба",
+  "settingsDapLoadFailed": "Не удалось прочитать DAP-конфигурацию на этой машине.",
+  "settingsDapSaveFailed": "Не удалось сохранить подключение — проверьте URL хаба.",
   "settingsDeleteButton": "Удалить",
   "settingsDeleteProviderBody": "Провайдер удаляется из списка выбора. Текущее подключение не затрагивается.",
   "settingsDeleteProviderTitle": "Удалить {name}?",

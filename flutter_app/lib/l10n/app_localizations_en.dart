@@ -1130,6 +1130,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDapUrlRequired => 'Hub URL is required';
 
   @override
+  String get settingsDapLoadFailed =>
+      'Could not read the DAP config on this machine.';
+
+  @override
+  String get settingsDapSaveFailed =>
+      'Could not save the DAP connection — check the hub URL.';
+
+  @override
   String get settingsDeleteButton => 'Delete';
 
   @override
