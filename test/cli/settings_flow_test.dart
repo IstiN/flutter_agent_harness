@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart' as http_testing;
+import 'package:yaml/yaml.dart' as yaml;
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -29,6 +30,8 @@ void main() {
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     http.Client? modelsHttpClient,
+    Future<DapHubSnapshot?> Function()? dapHubState,
+    Future<void> Function({String? url, String? name})? onDapHubConfigChanged,
     ModelRolesResolver? modelRolesResolver,
   }) {
     return AgentCli(
@@ -45,6 +48,8 @@ void main() {
         modelsFetcher: modelsFetcher,
         modelsHttpClient: modelsHttpClient,
         modelRolesResolver: modelRolesResolver,
+        dapHubState: dapHubState,
+        onDapHubConfigChanged: onDapHubConfigChanged,
         providerKind: 'openai-completions',
       ),
       io: io,
@@ -611,5 +616,239 @@ void main() {
     expect(resolver.config.roles, isEmpty);
     expect(persisted, 1);
     expect(fake.calls, 0);
+  });
+
+  group('dap hub flow', () {
+    DapHubSnapshot snapshot({
+      bool ok = true,
+      String url = 'ws://hub.test:8787/ws',
+      String? name = 'cli-agent',
+      String? agentId = 'abcd1234abcd1234',
+    }) => (ok: ok, url: url, name: name, agentId: agentId);
+
+    test('view renders the injected snapshot', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, dapHubState: () async => snapshot());
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('1'); // view
+      await waitForIt(
+        () => io.out.toString().contains('dap hub url: ws://hub.test:8787/ws'),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('dap agent name: cli-agent'));
+      expect(output, contains('dap connection: connected as abcd1234abcd1234'));
+      expect(fake.calls, 0);
+    });
+
+    test('view without hub wiring reports the state as unavailable', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('1'); // view
+      await waitForIt(
+        () => io.out.toString().contains('dap: hub state unavailable'),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('set hub url persists through the hook', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      var snap = snapshot(
+        ok: false,
+        url: 'ws://127.0.0.1:8787/ws',
+        name: null,
+        agentId: null,
+      );
+      final persisted = <({String? url, String? name})>[];
+      final cli = cliFor(
+        fake.call,
+        dapHubState: () async => snap,
+        onDapHubConfigChanged: ({url, name}) async {
+          persisted.add((url: url, name: name));
+          snap = snapshot(ok: false, url: url!, name: name);
+        },
+      );
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('2'); // set hub url
+      await waitForIt(
+        () => io.out.toString().contains(
+          "hub url (empty keeps 'ws://127.0.0.1:8787/ws')",
+        ),
+      );
+      io.sendLine('ws://hub.test:8787/ws');
+      await waitForIt(
+        () => io.out.toString().contains(
+          'dap: saved hub url ws://hub.test:8787/ws',
+        ),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(persisted.single.url, 'ws://hub.test:8787/ws');
+      expect(persisted.single.name, isNull);
+      // The flow re-read the snapshot after persisting, so the re-rendered
+      // menu shows the new url as current.
+      expect(
+        io.out.toString(),
+        contains('2) Set hub URL — ws://hub.test:8787/ws'),
+      );
+      expect(fake.calls, 0);
+    });
+
+    test('set agent name persists through the hook', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final persisted = <({String? url, String? name})>[];
+      final cli = cliFor(
+        fake.call,
+        dapHubState: () async => snapshot(name: null),
+        onDapHubConfigChanged: ({url, name}) async {
+          persisted.add((url: url, name: name));
+        },
+      );
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('3'); // set agent name
+      await waitForIt(
+        () => io.out.toString().contains(
+          "agent name (empty keeps 'hostname default')",
+        ),
+      );
+      io.sendLine('telemetry-bot');
+      await waitForIt(
+        () => io.out.toString().contains('dap: saved agent name telemetry-bot'),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(persisted.single.name, 'telemetry-bot');
+      expect(persisted.single.url, isNull);
+      expect(fake.calls, 0);
+    });
+
+    test('opt-out appends hub: false and round-trips as yaml', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      await env.writeFile(
+        '/work/.fah/packages.yaml',
+        'tools:\n  keep: yes\ninspect_image: {}\n',
+      );
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('5'); // opt out
+      await waitForIt(
+        () => io.out.toString().contains(
+          'dap: hub plugin disabled in /work/.fah/packages.yaml',
+        ),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final read = await env.readTextFile('/work/.fah/packages.yaml');
+      expect(read, isA<Ok<String, FileError>>());
+      // Round-trip through the same mechanism the plugin loader reads.
+      final doc = yaml.loadYaml((read as Ok<String, FileError>).value) as Map;
+      expect(doc['hub'], false);
+      expect(doc['tools'], {'keep': 'yes'});
+      expect(doc['inspect_image'], {});
+      expect(fake.calls, 0);
+    });
+
+    test('opt-out replaces an existing hub section in place', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      await env.writeFile(
+        '/work/.fah/packages.yaml',
+        'hub:\n  url: ws://old:8787/ws\n  name: previous\ntools:\n  keep: yes\n',
+      );
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('5'); // opt out
+      await waitForIt(
+        () => io.out.toString().contains('dap: hub plugin disabled'),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final read = await env.readTextFile('/work/.fah/packages.yaml');
+      final doc = yaml.loadYaml((read as Ok<String, FileError>).value) as Map;
+      expect(doc['hub'], false);
+      expect(doc['tools'], {'keep': 'yes'});
+      expect(fake.calls, 0);
+    });
+    test('test connection reports success and failure via the seam', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      var snap = snapshot();
+      final cli = cliFor(fake.call, dapHubState: () async => snap);
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('4'); // test connection
+      await waitForIt(
+        () => io.out.toString().contains(
+          'dap: connected to ws://hub.test:8787/ws as abcd1234abcd1234',
+        ),
+      );
+      // The re-rendered menu went out before the flip; the NEXT pick is
+      // what reads the fresh (disconnected) snapshot.
+      snap = snapshot(ok: false, agentId: null);
+      io.sendLine('4'); // test connection again
+      await waitForIt(
+        () => io.out.toString().contains(
+          'dap: not connected to ws://hub.test:8787/ws',
+        ),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(fake.calls, 0);
+    });
+
+    test('/settings summary carries the dap line', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, dapHubState: () async => snapshot());
+      final run = cli.run();
+
+      io.sendLine('/settings');
+      await waitForIt(
+        () => io.out.toString().contains('dap: ws://hub.test:8787/ws'),
+      );
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
   });
 }

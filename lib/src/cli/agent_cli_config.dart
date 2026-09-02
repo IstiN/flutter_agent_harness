@@ -2,6 +2,13 @@
 /// `agent_cli.dart` to keep it under the 2800-line gate.
 part of 'agent_cli.dart';
 
+/// One DAP/1 hub snapshot: the live connection state (`ok`, `agentId`)
+/// plus the resolved config url and agent name (env > `.fah/packages.yaml`
+/// `hub:` > `~/.dap/config.json` > defaults — resolved by the host through
+/// the hub client package, so lib/ stays dart:io-free). `ok` false means
+/// the hub plugin is not connected right now.
+typedef DapHubSnapshot = ({bool ok, String url, String? name, String? agentId});
+
 /// Static configuration for an [AgentCli] session.
 final class AgentCliConfig {
   /// Creates an [AgentCliConfig]. Not const: [modelRolesResolver] and
@@ -66,6 +73,8 @@ final class AgentCliConfig {
     this.cubeSource,
     this.cubeSettings,
     this.onCubeSettingsChanged,
+    this.dapHubState,
+    this.onDapHubConfigChanged,
     this.osName,
   });
 
@@ -107,6 +116,20 @@ final class AgentCliConfig {
   /// sandbox flow) so the executable can persist it. The flow awaits the
   /// hook before confirming, so persistence lands with the feedback line.
   final Future<void> Function()? onCubeSettingsChanged;
+
+  /// Fetches one [DapHubSnapshot]: the resolved config url/name plus the
+  /// live connection state. File reads and the plugin status stay on the
+  /// host side (the hub client owns its IO; lib/ stays dart:io-free) —
+  /// null (tests without a fake, web) means no hub wiring exists and the
+  /// DAP / Hub flow reports the state as unavailable.
+  final Future<DapHubSnapshot?> Function()? dapHubState;
+
+  /// Persists a changed hub url / agent name (the settings-hub DAP / Hub
+  /// flow) through the hub client's `~/.dap/config.json` read-modify-write
+  /// — the single authority for that file's format. Null (tests without a
+  /// fake, web) keeps the change session-only.
+  final Future<void> Function({String? url, String? name})?
+  onDapHubConfigChanged;
 
   /// Optional override for the OpenRouter OAuth code exchange. Tests inject a
   /// fake here so the `/provider openrouter oauth` flow can run without

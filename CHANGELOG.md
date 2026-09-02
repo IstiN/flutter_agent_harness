@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- feat(cli): a `DAP / Hub` entry in the `/settings` hub — view the live
+  hub snapshot (resolved url, agent name, connection state), set the hub
+  url and the agent name (persisted through the hub client's
+  `~/.dap/config.json` read-modify-write, so channels and invites
+  survive), test the connection, and write the `hub: false` plugin
+  opt-out into `.fah/packages.yaml` (existing sections preserved). The
+  flow reads the hub state through an injectable snapshot seam the
+  executable wires to the hub plugin — no sockets, fully fake-drivable
+  in tests.
 - fix(cli): hub-only inbox wakes no longer die silently at the 10-run
   wake cap — the first suppressed wake prints one dim
   `[mail] hub wake-cap reached; waiting for user input` line (once per

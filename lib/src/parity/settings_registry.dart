@@ -50,6 +50,9 @@ enum SharedSetting {
 
   /// fa_cube sandbox profiles (declarative fs/shell/network clamps).
   cubeSandbox,
+
+  /// DAP/1 hub connection (URL, agent name/identity, channels).
+  dapHub,
 }
 
 /// Settings that are currently CLI-only.
@@ -137,6 +140,11 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     cliRef: '/cube',
     appRef: null, // exempted — sandbox profiles are CLI-only (see above).
     description: 'fa_cube sandbox profiles.',
+  ),
+  SharedSetting.dapHub: _SettingMeta(
+    cliRef: 'config.plugins',
+    appRef: null, // app section tracked by #6.
+    description: 'DAP/1 hub connection (URL, agent name, channels).',
   ),
 };
 
