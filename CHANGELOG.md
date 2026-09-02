@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.282
+
 
 - fix(cli): hub-only inbox wakes no longer die silently at the 10-run
   wake cap — the first suppressed wake prints one dim
@@ -61,6 +62,7 @@
   streaming contract and is resolved per call (`memory` role → `smol` →
   main) in BOTH the CLI and the app. Memory consolidation and semantic
   search now actually run instead of being silently skipped.
+
 ## 0.1.280
 
 - fix(providers): correct the Copilot token guidance (0.1.278 had it
@@ -2324,5 +2326,7 @@
 
 - fix(providers): correct the Copilot token guidance — fine-grained PATs need the Copilot Requests permission (0.1.280)
 - memory: copilot fine-grained PAT 404 root cause + flutter_app flame_3d env breakage
+
+## Unreleased
 
 ## Unreleased
