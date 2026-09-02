@@ -239,20 +239,39 @@ FahPlugin? _builtInPlugin(String name, HubPlugin hubPlugin) {
 }
 
 /// Loads plugin configuration from `.fah/packages.yaml` if it exists.
-/// Returns a map of plugin name -> config.
-Map<String, dynamic> _loadPackagesConfig(String cwd) {
+/// Returns a map of plugin name -> config. Public so tests can pin the
+/// real file → loader → `resolveEnabledPlugins` path.
+///
+/// The parsed yaml tree is converted to plain Dart values (YamlMap to
+/// Map, YamlScalar to its value): package:yaml 3.x reifies its map
+/// entries as dynamic-keyed, so a naive String-keyed `whereType` filter
+/// dropped EVERY entry (the file was inert), and nested YamlMap/YamlScalar
+/// wrappers fail the `is Map<String, dynamic>` / `is String` checks the
+/// plugin configs rely on.
+Map<String, dynamic> loadPackagesConfig(String cwd) {
   final file = File('$cwd/.fah/packages.yaml');
   if (!file.existsSync()) return const {};
   try {
     final doc = yaml.loadYaml(file.readAsStringSync());
     if (doc is! Map) return const {};
-    return Map<String, dynamic>.fromEntries(
-      doc.entries.whereType<MapEntry<String, dynamic>>(),
-    );
+    return Map<String, dynamic>.from(
+      doc,
+    ).map((name, value) => MapEntry(name, _plainYaml(value)));
   } on Object catch (error) {
     _fail('failed to parse .fah/packages.yaml: $error');
   }
 }
+
+/// Converts a parsed yaml node into plain Dart values, recursively.
+Object? _plainYaml(Object? node) => switch (node) {
+  yaml.YamlMap() => {
+    for (final entry in node.entries)
+      entry.key.toString(): _plainYaml(entry.value),
+  },
+  yaml.YamlList() => [for (final item in node) _plainYaml(item)],
+  yaml.YamlScalar() => node.value,
+  _ => node,
+};
 
 /// Loads project-level TTSR rules from `.fah/rules.yaml` when it exists
 /// (omp's project rule locations, reduced: one file, rules only — TTSR
@@ -288,7 +307,7 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
   String cwd,
   HubPlugin hubPlugin,
 ) {
-  final config = _loadPackagesConfig(cwd);
+  final config = loadPackagesConfig(cwd);
   final enabled = resolveEnabledPlugins(args.plugins, config);
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
@@ -1048,14 +1067,15 @@ Future<void> _runApp(List<String> args) async {
       // reads only, never a network dial. A missing/failed probe keeps the
       // flow honest about the state.
       dapHubState: () async {
-        final packagesFile = File('$cwd/.fah/packages.yaml');
+        // Single parse source: the same loaded packages.yaml map the
+        // plugin system consumes (loadPackagesConfig already flattened
+        // the yaml tree to plain Dart values).
+        final hubSection = resolved.config['hub'];
         final settings = resolveDapSettings(
-          config: packagesFile.existsSync()
-              ? HubConfig.fromYaml(
-                  packagesFile.readAsStringSync(),
-                  Platform.environment,
-                )
-              : const HubConfig(),
+          config: HubConfig.fromMap(
+            hubSection is Map<String, dynamic> ? hubSection : const {},
+            Platform.environment,
+          ),
           environment: Platform.environment,
         );
         try {

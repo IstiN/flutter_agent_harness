@@ -11,6 +11,13 @@
   flow reads the hub state through an injectable snapshot seam the
   executable wires to the hub plugin — no sockets, fully fake-drivable
   in tests.
+- fix(cli): `.fah/packages.yaml` entries actually load now — package:yaml
+  reifies its map entries as dynamic-keyed, so the loader's String-keyed
+  `whereType` filter dropped every entry and the whole file (plugin
+  enabling and configuration, `hub:` url/name, `hub: false` opt-outs)
+  was inert. The loader now deep-converts the parsed yaml tree to plain
+  Dart values before handing sections to plugins and the DAP / Hub
+  settings flow.
 - fix(cli): hub-only inbox wakes no longer die silently at the 10-run
   wake cap — the first suppressed wake prints one dim
   `[mail] hub wake-cap reached; waiting for user input` line (once per

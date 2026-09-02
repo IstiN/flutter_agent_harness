@@ -1,11 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart' as http_testing;
-import 'package:yaml/yaml.dart' as yaml;
 import 'package:test/test.dart';
 
+import '../../bin/fah.dart' as fah;
 import 'agent_cli_test_support.dart';
 
 void main() {
@@ -748,47 +750,103 @@ void main() {
       expect(fake.calls, 0);
     });
 
-    test('opt-out appends hub: false and round-trips as yaml', () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      await env.writeFile(
-        '/work/.fah/packages.yaml',
-        'tools:\n  keep: yes\ninspect_image: {}\n',
-      );
-      final cli = cliFor(fake.call);
-      final run = cli.run();
+    test(
+      'set hub url notes when a higher-precedence value shadows it',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(
+          fake.call,
+          // The seam keeps returning the env-resolved url no matter what was
+          // persisted — the saved value stays shadowed.
+          dapHubState: () async => snapshot(url: 'ws://env.hub:8787/ws'),
+          onDapHubConfigChanged: ({url, name}) async {},
+        );
+        final run = cli.run();
 
-      final flow = cli.startDapHubFlow();
-      await waitForIt(() => io.out.toString().contains('dap / hub'));
-      io.sendLine('5'); // opt out
-      await waitForIt(
-        () => io.out.toString().contains(
-          'dap: hub plugin disabled in /work/.fah/packages.yaml',
+        final flow = cli.startDapHubFlow();
+        await waitForIt(() => io.out.toString().contains('dap / hub'));
+        io.sendLine('2'); // set hub url
+        await waitForIt(
+          () => io.out.toString().contains(
+            "hub url (empty keeps 'ws://env.hub:8787/ws')",
+          ),
+        );
+        io.sendLine('ws://mine:8787/ws');
+        await waitForIt(
+          () => io.out.toString().contains(
+            'dap: saved hub url ws://mine:8787/ws',
+          ),
+        );
+        await waitForIt(
+          () => io.out.toString().contains(
+            'dap: effective stays ws://env.hub:8787/ws',
+          ),
+        );
+        io.sendLine('6'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'set url without a persistence hook refuses before prompting',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, dapHubState: () async => snapshot());
+        final run = cli.run();
+
+        final flow = cli.startDapHubFlow();
+        await waitForIt(() => io.out.toString().contains('dap / hub'));
+        io.sendLine('2'); // set hub url
+        await waitForIt(
+          () => io.out.toString().contains(
+            'dap: no hub config hook on this host',
+          ),
+        );
+        io.sendLine('6'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        // The prompt never ran — nothing was collected and discarded.
+        expect(io.out.toString(), isNot(contains('hub url (empty keeps')));
+        expect(fake.calls, 0);
+      },
+    );
+
+    /// Builds a CLI over a REAL temp directory so the opt-out round-trip
+    /// can assert through the production consumer (the executable's
+    /// `loadPackagesConfig` + `resolveEnabledPlugins`), not a hand-parsed
+    /// map. Empty [packagesYaml] seeds no file.
+    Future<(AgentCli, String)> realEnvCli(
+      FakeStreamFunction fake,
+      String packagesYaml,
+    ) async {
+      final tmp = await Directory.systemTemp.createTemp('fah_dap_optout');
+      addTearDown(() => tmp.delete(recursive: true));
+      final realEnv = LocalExecutionEnv(cwd: tmp.path);
+      if (packagesYaml.isNotEmpty) {
+        await realEnv.writeFile('${tmp.path}/.fah/packages.yaml', packagesYaml);
+      }
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: realEnv,
+          sessionRoot: '${tmp.path}/sessions',
+          providerKind: 'openai-completions',
         ),
+        io: io,
+        streamFunction: fake.call,
       );
-      io.sendLine('6'); // done
-      await flow;
-      io.sendLine('/exit');
-      await run;
+      return (cli, tmp.path);
+    }
 
-      final read = await env.readTextFile('/work/.fah/packages.yaml');
-      expect(read, isA<Ok<String, FileError>>());
-      // Round-trip through the same mechanism the plugin loader reads.
-      final doc = yaml.loadYaml((read as Ok<String, FileError>).value) as Map;
-      expect(doc['hub'], false);
-      expect(doc['tools'], {'keep': 'yes'});
-      expect(doc['inspect_image'], {});
-      expect(fake.calls, 0);
-    });
-
-    test('opt-out replaces an existing hub section in place', () async {
-      final fake = FakeStreamFunction([textTurn('ok')]);
-      await env.writeFile(
-        '/work/.fah/packages.yaml',
-        'hub:\n  url: ws://old:8787/ws\n  name: previous\ntools:\n  keep: yes\n',
-      );
-      final cli = cliFor(fake.call);
+    /// Drives the flow straight to the opt-out action and back out.
+    Future<void> runOptOut(AgentCli cli) async {
       final run = cli.run();
-
       final flow = cli.startDapHubFlow();
       await waitForIt(() => io.out.toString().contains('dap / hub'));
       io.sendLine('5'); // opt out
@@ -799,11 +857,52 @@ void main() {
       await flow;
       io.sendLine('/exit');
       await run;
+    }
 
-      final read = await env.readTextFile('/work/.fah/packages.yaml');
-      final doc = yaml.loadYaml((read as Ok<String, FileError>).value) as Map;
-      expect(doc['hub'], false);
-      expect(doc['tools'], {'keep': 'yes'});
+    test(
+      'opt-out appends hub: false; the real loader opts the plugin out',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final (cli, root) = await realEnvCli(
+          fake,
+          'tools:\n  keep: yes\ninspect_image: {}\n',
+        );
+        await runOptOut(cli);
+
+        // The production consumer: file on disk → loadPackagesConfig →
+        // resolveEnabledPlugins. Entry loading itself is pinned too (before
+        // the loader fix every entry was dropped as inert).
+        final loaded = fah.loadPackagesConfig(root);
+        final enabled = resolveEnabledPlugins(const [], loaded);
+        expect(enabled, contains('inspect_image'));
+        expect(enabled, isNot(contains('hub')));
+        expect(loaded['tools'], {'keep': 'yes'});
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('opt-out replaces an existing hub section in place', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final (cli, root) = await realEnvCli(
+        fake,
+        'hub:\n  url: ws://old:8787/ws\n  name: previous\ntools:\n  keep: yes\n',
+      );
+      await runOptOut(cli);
+
+      final loaded = fah.loadPackagesConfig(root);
+      expect(loaded['hub'], false);
+      expect(resolveEnabledPlugins(const [], loaded), isNot(contains('hub')));
+      expect(loaded['tools'], {'keep': 'yes'});
+      expect(fake.calls, 0);
+    });
+
+    test('opt-out creates the file when none exists yet', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final (cli, root) = await realEnvCli(fake, '');
+      await runOptOut(cli);
+
+      expect(File('$root/.fah/packages.yaml').existsSync(), isTrue);
+      expect(fah.loadPackagesConfig(root)['hub'], false);
       expect(fake.calls, 0);
     });
     test('test connection reports success and failure via the seam', () async {

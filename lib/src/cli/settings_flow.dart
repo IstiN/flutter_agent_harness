@@ -460,6 +460,11 @@ extension SettingsFlow on AgentCli {
   /// [AgentCliConfig.onDapHubConfigChanged]. Without a host hook the change
   /// is refused (never half-applied).
   Future<void> _editDapHubValue({required bool isUrl}) async {
+    final persist = config.onDapHubConfigChanged;
+    if (persist == null) {
+      io.writeln('dap: no hub config hook on this host — not saved');
+      return;
+    }
     final current = isUrl ? _dapHubSnapshot?.url : _dapHubSnapshot?.name;
     final fallback = current ?? (isUrl ? 'not configured' : 'hostname default');
     final answer = await _askLine(
@@ -467,14 +472,19 @@ extension SettingsFlow on AgentCli {
     );
     final value = answer?.trim() ?? '';
     if (value.isEmpty) return;
-    final persist = config.onDapHubConfigChanged;
-    if (persist == null) {
-      io.writeln('dap: no hub config hook on this host — not saved');
-      return;
-    }
     await persist(url: isUrl ? value : null, name: isUrl ? null : value);
     await _refreshDapHubSnapshot();
     io.writeln('dap: saved ${isUrl ? 'hub url' : 'agent name'} $value');
+    // Higher-precedence sources (env, the yaml `hub:` section, the running
+    // client's startup values) can shadow the persisted value until they
+    // clear — say so instead of letting the menu silently show another url.
+    final effective = isUrl ? _dapHubSnapshot?.url : _dapHubSnapshot?.name;
+    if (effective != null && effective != value) {
+      io.writeln(
+        'dap: effective stays $effective (env / hub: section / live '
+        'client override wins until it clears)',
+      );
+    }
   }
 
   /// The flow's opt-out: writes `hub: false` into `<cwd>/.fah/packages.yaml`
