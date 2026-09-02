@@ -365,6 +365,59 @@ void main() {
         reason: 'turn structure is independent of prepended history',
       );
     });
+
+    test('layout-synthesized record ids survive prepending older history', () {
+      TrajectoryRequestNumber request(int seq, int step) =>
+          TrajectoryRequestNumber(
+            seq: seq,
+            turn: 1,
+            step: step,
+            purpose: TrajectoryRequestPurpose.assistant,
+            provider: 'openai',
+            model: 'gpt-test',
+            status: TrajectoryRequestStatus.completed,
+            startedAt: _at(seq),
+            completedAt: _at(seq + 1),
+          );
+      const runningCall = TrajectoryRunningToolCall(
+        callId: 'c9',
+        name: 'bash',
+        turn: 1,
+        step: 1,
+      );
+      Set<String> layoutIds(List<TrajectoryTurnModel> turns) => {
+        for (final turn in turns)
+          for (final group in turn.groups)
+            for (final cell in group.cells) cell.recordId,
+      };
+      final short = deriveTrajectoryLayout(
+        _snapshot(
+          const [],
+          requests: [request(5, 2)],
+          runningCalls: const [runningCall],
+        ),
+      );
+      final long = deriveTrajectoryLayout(
+        _snapshot(
+          [_user(1), _assistant(2, turn: 1, step: 1)],
+          requests: [request(5, 2)],
+          runningCalls: const [runningCall],
+        ),
+      );
+      final shortIds = layoutIds(short);
+      expect(
+        shortIds,
+        containsAll(<String>['request\u00005', 'tool\u0000call\u0000c9']),
+        reason: 'synthesized rows use seq/callId-derived ids',
+      );
+      for (final id in shortIds) {
+        expect(
+          layoutIds(long),
+          contains(id),
+          reason: 'synthesized ids do not depend on history length',
+        );
+      }
+    });
   });
 }
 
