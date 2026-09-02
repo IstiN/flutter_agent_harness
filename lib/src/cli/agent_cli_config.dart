@@ -2,12 +2,13 @@
 /// `agent_cli.dart` to keep it under the 2800-line gate.
 part of 'agent_cli.dart';
 
-/// One DAP/1 hub snapshot: the live connection state (`ok`, `agentId`)
-/// plus the resolved config url and agent name (env > `.fah/packages.yaml`
-/// `hub:` > `~/.dap/config.json` > defaults — resolved by the host through
-/// the hub client package, so lib/ stays dart:io-free). `ok` false means
-/// the hub plugin is not connected right now.
-typedef DapHubSnapshot = ({bool ok, String url, String? name, String? agentId});
+/// One DAP/1 hub snapshot shared with the app (`DapHubSnapshot` in
+/// `src/dap/dap_hub_snapshot.dart`): the live probe outcome (`connected`,
+/// `agentId`) plus the resolved config url and agent name (env >
+/// `.fah/packages.yaml` `hub:` > `~/.dap/config.json` > defaults —
+/// resolved by the host through the hub client package, so lib/ stays
+/// dart:io-free). `connected` false means the hub plugin is not connected
+/// right now.
 
 /// Static configuration for an [AgentCli] session.
 final class AgentCliConfig {
@@ -117,7 +118,8 @@ final class AgentCliConfig {
   /// hook before confirming, so persistence lands with the feedback line.
   final Future<void> Function()? onCubeSettingsChanged;
 
-  /// Fetches one [DapHubSnapshot]: the resolved config url/name plus the
+  /// Fetches one [DapHubSnapshot] (probe outcome in
+  /// [DapHubSnapshot.connected]): the resolved config url/name plus the
   /// live connection state. File reads and the plugin status stay on the
   /// host side (the hub client owns its IO; lib/ stays dart:io-free) —
   /// null (tests without a fake, web) means no hub wiring exists and the

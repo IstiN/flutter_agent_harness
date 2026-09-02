@@ -625,7 +625,14 @@ void main() {
       String url = 'ws://hub.test:8787/ws',
       String? name = 'cli-agent',
       String? agentId = 'abcd1234abcd1234',
-    }) => (ok: ok, url: url, name: name, agentId: agentId);
+    }) => DapHubSnapshot(
+      supported: true,
+      url: url,
+      channels: const [],
+      name: name,
+      agentId: agentId,
+      connected: ok,
+    );
 
     test('view renders the injected snapshot', () async {
       final fake = FakeStreamFunction([textTurn('ok')]);

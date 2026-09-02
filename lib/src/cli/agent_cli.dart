@@ -23,6 +23,7 @@ import 'package:meta/meta.dart';
 import 'package:yaml/yaml.dart';
 
 import '../agent/agent.dart';
+import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'headless_prompt.dart';
 import 'key_event.dart';

@@ -1050,20 +1050,23 @@ Future<void> _runApp(List<String> args) async {
         );
         try {
           final status = await hubPlugin.status();
-          return (
-            ok: status.connected,
+          return DapHubSnapshot(
+            supported: true,
             url: status.url ?? settings.url,
             name: status.name ?? settings.name,
             agentId: status.agentId,
+            channels: status.channels,
+            connected: status.connected,
           );
         } on Object {
           // The plugin never started (opted out, or the connect failed):
           // report the resolved config without a live connection.
-          return (
-            ok: false,
+          return DapHubSnapshot(
+            supported: true,
             url: settings.url,
             name: settings.name,
-            agentId: null,
+            channels: const [],
+            connected: false,
           );
         }
       },
