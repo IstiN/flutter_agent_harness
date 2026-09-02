@@ -134,9 +134,17 @@ class SseDecoder extends StreamTransformerBase<String, ServerSentEvent> {
   Stream<ServerSentEvent> bind(Stream<String> stream) async* {
     final state = _SseDecoderState();
     var buffer = '';
+    // The SSE spec requires stripping a single UTF-8 BOM at the very start
+    // of the stream. Upstream byte decoding (utf8.decoder) always delivers
+    // the BOM as one leading U+FEFF character, possibly after empty chunks.
+    var atStreamStart = true;
 
     await for (final chunk in stream) {
       buffer += chunk;
+      if (atStreamStart && buffer.isNotEmpty) {
+        atStreamStart = false;
+        if (buffer.startsWith('\uFEFF')) buffer = buffer.substring(1);
+      }
       final (rest, events) = _drainSseLines(buffer, state);
       buffer = rest;
       for (final event in events) {

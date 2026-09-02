@@ -111,6 +111,31 @@ void main() {
       expect(events.single.data, 'ok');
     });
 
+    test('strips a UTF-8 BOM at the start of the stream (SSE spec)', () async {
+      // The SSE spec requires stripping a single leading BOM; without it the
+      // first field name decodes as "\uFEFFdata" and the payload is dropped.
+      final events = await decode(['\uFEFFdata: ok\n\n']);
+      expect(events.single.event, isNull);
+      expect(events.single.data, 'ok');
+    });
+
+    test('a BOM elsewhere in the stream is NOT stripped', () async {
+      // Only the very first character of the stream is a BOM; a later one
+      // is ordinary field-name content. The BOM-prefixed line degrades to
+      // an unknown field, and following well-formed lines are unaffected.
+      final events = await decode(['data: a\n\n\uFEFFjunk: x\ndata: b\n\n']);
+      expect(events, hasLength(2));
+      expect(events[1].data, 'b');
+      expect(events[1].raw, contains('\uFEFFjunk: x'));
+    });
+
+    test('a BOM after an empty first chunk is stripped', () async {
+      // Upstream decoding (utf8.decoder) always yields the BOM as one char,
+      // but it may land in a later chunk after empty leading chunks.
+      final events = await decode(['', '', '\uFEFFdata: ok\n\n']);
+      expect(events.single.data, 'ok');
+    });
+
     test('unknown fields are ignored', () async {
       final events = await decode(['id: 42\nretry: 1000\ndata: ok\n\n']);
       expect(events.single.event, isNull);
