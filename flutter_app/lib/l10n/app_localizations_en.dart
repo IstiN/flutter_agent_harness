@@ -1073,6 +1073,63 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDefaultChatModelTitle => 'Default chat model';
 
   @override
+  String get settingsDapAddConnection => 'Add connection';
+
+  @override
+  String get settingsDapAgentIdLabel => 'Agent id';
+
+  @override
+  String get settingsDapAgentNameLabel => 'Agent name';
+
+  @override
+  String get settingsDapChannelsEmpty =>
+      'No channels yet — channels appear here once the agent joins one (dap_invite / dap_connect).';
+
+  @override
+  String get settingsDapChannelsTitle => 'Channels';
+
+  @override
+  String get settingsDapEditConnection => 'Edit connection';
+
+  @override
+  String get settingsDapEnvNote =>
+      'DAP_HUB_URL or DAP_AGENT_NAME is set in the environment — env overrides the saved connection.';
+
+  @override
+  String get settingsDapHubHint => 'Hub URL, agent identity, channels';
+
+  @override
+  String get settingsDapHubTitle => 'DAP hub';
+
+  @override
+  String get settingsDapNameHint => 'alice';
+
+  @override
+  String get settingsDapProbeButton => 'Check connection';
+
+  @override
+  String get settingsDapStatusConnected => 'Connected';
+
+  @override
+  String get settingsDapStatusOffline => 'Unreachable';
+
+  @override
+  String get settingsDapStatusUnknown => 'Not checked';
+
+  @override
+  String get settingsDapUnsupported =>
+      'DAP hub is not supported on this platform.';
+
+  @override
+  String get settingsDapUrlHint => 'hub.example.com or ws://hub.example.com/ws';
+
+  @override
+  String get settingsDapUrlLabel => 'Hub URL';
+
+  @override
+  String get settingsDapUrlRequired => 'Hub URL is required';
+
+  @override
   String get settingsDeleteButton => 'Delete';
 
   @override

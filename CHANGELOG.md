@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- feat(app): DAP/Hub settings section in the Flutter app — a settings row
+  opening the hub page (resolved URL, connection probe, agent name/agentId,
+  channels) with add/edit of the machine-shared `~/.dap/config.json`
+  connection via `fah_hub_client`; web degrades to an honest
+  not-supported note (the hub client is IO-bound).
 - fix(cli): hub-only inbox wakes no longer die silently at the 10-run
   wake cap — the first suppressed wake prints one dim
   `[mail] hub wake-cap reached; waiting for user input` line (once per

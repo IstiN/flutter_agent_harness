@@ -41,6 +41,7 @@ import 'package:fa/services/theme_controller.dart';
 import 'package:fa/transformers_js/transformers_js_cache_section.dart';
 import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
+import 'package:fa/ui/screens/dap_settings_page.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
@@ -2291,6 +2292,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ],
               const ThemeModeSection(),
+
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              // The DAP/1 hub connection (machine-shared `~/.dap` config,
+              // docs/dap.md §9) — service-independent, so it shows without
+              // an active agent service too.
+              const DapHubSection(),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
               const SizedBox(height: 16),
               const ChatTextSection(),
               const SizedBox(height: 24),

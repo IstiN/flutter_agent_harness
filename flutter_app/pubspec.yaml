@@ -26,6 +26,11 @@ dependencies:
   fa_llm:
     path: ../packages/fa_llm
 
+  # The DAP/1 hub client (hosted): powers the settings DAP-hub section —
+  # the machine-shared `~/.dap` config, identity, and the connection probe.
+  # IO-bound (dart:io WebSocket + files); web gets the honest stub.
+  fah_hub_client: ^0.2.0
+
   # Mobile-friendly filesystem root and image picking.
   path_provider: ^2.1.6
   image_picker: ^1.2.3
