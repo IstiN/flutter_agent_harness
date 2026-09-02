@@ -35,7 +35,14 @@ import 'package:yaml/yaml.dart' as yaml;
 // The ONLY place the core CLI imports `fah_hub_client`: downstream forks
 // that want a different or no hub client patch this import and the 'hub'
 // case in `_builtInPlugin`.
-import 'package:fah_hub_client/fah_hub_client.dart' show HubPlugin;
+import 'package:fah_hub_client/fah_hub_client.dart'
+    show
+        HubConfig,
+        HubPlugin,
+        defaultDapConfigFile,
+        persistDapConfig,
+        resolveDapSettings;
+
 import 'fah_hub_plugin.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
@@ -220,29 +227,15 @@ String _resolveApiKey(
 }
 
 /// Built-in plugins available via `--plugin <name>` or `.fah/packages.yaml`.
-FahPlugin? _builtInPlugin(String name) {
+/// [hubPlugin] is the process's single hub client instance — the same one
+/// the settings-hub DAP / Hub flow reads its snapshot through.
+FahPlugin? _builtInPlugin(String name, HubPlugin hubPlugin) {
   return switch (name) {
-    'hub' => HubPluginHost(HubPlugin()),
+    'hub' => HubPluginHost(hubPlugin),
     'inspect_image' => const InspectImagePlugin(),
     'transcribe_audio' => const TranscribeAudioPlugin(),
     _ => null,
   };
-}
-
-/// Loads plugin configuration from `.fah/packages.yaml` if it exists.
-/// Returns a map of plugin name -> config.
-Map<String, dynamic> _loadPackagesConfig(String cwd) {
-  final file = File('$cwd/.fah/packages.yaml');
-  if (!file.existsSync()) return const {};
-  try {
-    final doc = yaml.loadYaml(file.readAsStringSync());
-    if (doc is! Map) return const {};
-    return Map<String, dynamic>.fromEntries(
-      doc.entries.whereType<MapEntry<String, dynamic>>(),
-    );
-  } on Object catch (error) {
-    _fail('failed to parse .fah/packages.yaml: $error');
-  }
 }
 
 /// Loads project-level TTSR rules from `.fah/rules.yaml` when it exists
@@ -274,15 +267,21 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
   );
 }
 
-({List<FahPlugin> plugins, Map<String, dynamic> config}) _resolvePlugins(
-  CliArgs args,
-  String cwd,
-) {
-  final config = _loadPackagesConfig(cwd);
+/// Resolves the enabled plugins and their `.fah/packages.yaml` config
+/// (the loader lives in `lib/src/plugins/packages_config.dart`). A parse
+/// failure is a hard startup error.
+Future<({List<FahPlugin> plugins, Map<String, dynamic> config})>
+_resolvePlugins(CliArgs args, ExecutionEnv env, HubPlugin hubPlugin) async {
+  final Map<String, dynamic> config;
+  try {
+    config = await loadPackagesConfig(env);
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
   final enabled = resolveEnabledPlugins(args.plugins, config);
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
-    final plugin = _builtInPlugin(name);
+    final plugin = _builtInPlugin(name, hubPlugin);
     if (plugin == null) _fail('unknown plugin: $name');
     plugins.add(plugin);
   }
@@ -867,7 +866,12 @@ Future<void> _runApp(List<String> args) async {
     );
   }
 
-  final resolved = _resolvePlugins(effective, cwd);
+  // The process's single hub client instance: registered as the `hub`
+  // plugin when enabled, and read by the settings-hub DAP / Hub flow's
+  // snapshot seam below. Constructing it has no side effects — the client
+  // connects only in `start()` (driven by the plugin host).
+  final hubPlugin = HubPlugin();
+  final resolved = await _resolvePlugins(effective, cliEnv, hubPlugin);
 
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
     _fail('unknown mode: ${effective.mode}');
@@ -1027,6 +1031,47 @@ Future<void> _runApp(List<String> args) async {
       // Cube sandbox flow rewrites it — persisted via persistConfig.
       cubeSettings: saved.cube,
       onCubeSettingsChanged: () async => persistConfig(),
+      // DAP / Hub settings flow: the snapshot seam resolves the effective
+      // config (env > `hub:` section > `~/.dap/config.json` > defaults)
+      // through the hub client and overlays the live plugin status — local
+      // reads only, never a network dial. A missing/failed probe keeps the
+      // flow honest about the state.
+      dapHubState: () async {
+        // Single parse source: the same loaded packages.yaml map the
+        // plugin system consumes (loadPackagesConfig already flattened
+        // the yaml tree to plain Dart values).
+        final hubSection = resolved.config['hub'];
+        final settings = resolveDapSettings(
+          config: HubConfig.fromMap(
+            hubSection is Map<String, dynamic> ? hubSection : const {},
+            Platform.environment,
+          ),
+          environment: Platform.environment,
+        );
+        try {
+          final status = await hubPlugin.status();
+          return DapHubSnapshot(
+            supported: true,
+            url: status.url ?? settings.url,
+            name: status.name ?? settings.name,
+            agentId: status.agentId,
+            channels: status.channels,
+            connected: status.connected,
+          );
+        } on Object {
+          // The plugin never started (opted out, or the connect failed):
+          // report the resolved config without a live connection.
+          return DapHubSnapshot(
+            supported: true,
+            url: settings.url,
+            name: settings.name,
+            channels: const [],
+            connected: false,
+          );
+        }
+      },
+      onDapHubConfigChanged: ({url, name}) =>
+          persistDapConfig(url: url, name: name, file: defaultDapConfigFile()),
       onModelChanged: (_) async => persistConfig(),
       // `/provider` switches: redact an explicitly passed session token so
       // it cannot leak into tool results or session files, then persist the

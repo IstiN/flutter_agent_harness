@@ -3,12 +3,30 @@
 ## 0.1.282
 
 
-- fix(cli): hub-only inbox wakes no longer die silently at the 10-run
-  wake cap — the first suppressed wake prints one dim
-  `[mail] hub wake-cap reached; waiting for user input` line (once per
-  session, not per poll), and the streak asymmetry (hub mail always
-  increments it, only real user input resets it) is documented at the
-  wake site.
+- feat(cli): a `DAP / Hub` entry in the `/settings` hub — view the live
+  hub snapshot (resolved url, agent name, connection state), set the hub
+  url and the agent name (persisted through the hub client's
+  `~/.dap/config.json` read-modify-write, so channels and invites
+  survive), test the connection, and write the `hub: false` plugin
+  opt-out into `.fah/packages.yaml` (existing sections preserved). The
+  flow reads the hub state through an injectable snapshot seam the
+  executable wires to the hub plugin — no sockets, fully fake-drivable
+  in tests.
+- fix(cli): `.fah/packages.yaml` entries actually load now — package:yaml
+  reifies its map entries as dynamic-keyed, so the loader's String-keyed
+  `whereType` filter dropped every entry and the whole file (plugin
+  enabling and configuration, `hub:` url/name, `hub: false` opt-outs)
+  was inert. The loader now deep-converts the parsed yaml tree to plain
+  Dart values before handing sections to plugins and the DAP / Hub
+  settings flow.
+  The loader now lives in `lib/src/plugins/packages_config.dart` (reading
+  through the ExecutionEnv), so tests can pin it without importing the
+  executable.
+- feat(app): DAP/Hub settings section in the Flutter app — a settings row
+  opening the hub page (resolved URL, connection probe, agent name/agentId,
+  channels) with add/edit of the machine-shared `~/.dap/config.json`
+  connection via `fah_hub_client`; web degrades to an honest
+  not-supported note (the hub client is IO-bound).
 - fix(dap): a `dap_dm` to a known-but-offline peer no longer reads like
   a typo — the no-match error lists the known online peers and points at
   `dap_invite` for offline peers and `dap_peers` for typos.

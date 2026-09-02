@@ -1934,6 +1934,126 @@ abstract class AppLocalizations {
   /// **'Default chat model'**
   String get settingsDefaultChatModelTitle;
 
+  /// No description provided for @settingsDapAddConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Add connection'**
+  String get settingsDapAddConnection;
+
+  /// No description provided for @settingsDapAgentIdLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent id'**
+  String get settingsDapAgentIdLabel;
+
+  /// No description provided for @settingsDapAgentNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent name'**
+  String get settingsDapAgentNameLabel;
+
+  /// No description provided for @settingsDapChannelsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No channels yet — channels appear here once the agent joins one (dap_invite / dap_connect).'**
+  String get settingsDapChannelsEmpty;
+
+  /// No description provided for @settingsDapChannelsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Channels'**
+  String get settingsDapChannelsTitle;
+
+  /// No description provided for @settingsDapEditConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit connection'**
+  String get settingsDapEditConnection;
+
+  /// No description provided for @settingsDapEnvNote.
+  ///
+  /// In en, this message translates to:
+  /// **'DAP_HUB_URL or DAP_AGENT_NAME is set in the environment — env overrides the saved connection.'**
+  String get settingsDapEnvNote;
+
+  /// No description provided for @settingsDapHubHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Hub URL, agent identity, channels'**
+  String get settingsDapHubHint;
+
+  /// No description provided for @settingsDapHubTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'DAP hub'**
+  String get settingsDapHubTitle;
+
+  /// No description provided for @settingsDapNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'alice'**
+  String get settingsDapNameHint;
+
+  /// No description provided for @settingsDapProbeButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Check connection'**
+  String get settingsDapProbeButton;
+
+  /// No description provided for @settingsDapStatusConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get settingsDapStatusConnected;
+
+  /// No description provided for @settingsDapStatusOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Unreachable'**
+  String get settingsDapStatusOffline;
+
+  /// No description provided for @settingsDapStatusUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Not checked'**
+  String get settingsDapStatusUnknown;
+
+  /// No description provided for @settingsDapUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'DAP hub is not supported on this platform.'**
+  String get settingsDapUnsupported;
+
+  /// No description provided for @settingsDapUrlHint.
+  ///
+  /// In en, this message translates to:
+  /// **'hub.example.com or ws://hub.example.com/ws'**
+  String get settingsDapUrlHint;
+
+  /// No description provided for @settingsDapUrlLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Hub URL'**
+  String get settingsDapUrlLabel;
+
+  /// No description provided for @settingsDapUrlRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Hub URL is required'**
+  String get settingsDapUrlRequired;
+
+  /// No description provided for @settingsDapLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not read the DAP config on this machine.'**
+  String get settingsDapLoadFailed;
+
+  /// No description provided for @settingsDapSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the DAP connection — check the hub URL.'**
+  String get settingsDapSaveFailed;
+
   /// No description provided for @settingsDeleteButton.
   ///
   /// In en, this message translates to:

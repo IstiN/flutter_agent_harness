@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
@@ -29,6 +31,8 @@ void main() {
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     http.Client? modelsHttpClient,
+    Future<DapHubSnapshot?> Function()? dapHubState,
+    Future<void> Function({String? url, String? name})? onDapHubConfigChanged,
     ModelRolesResolver? modelRolesResolver,
   }) {
     return AgentCli(
@@ -45,6 +49,8 @@ void main() {
         modelsFetcher: modelsFetcher,
         modelsHttpClient: modelsHttpClient,
         modelRolesResolver: modelRolesResolver,
+        dapHubState: dapHubState,
+        onDapHubConfigChanged: onDapHubConfigChanged,
         providerKind: 'openai-completions',
       ),
       io: io,
@@ -611,5 +617,364 @@ void main() {
     expect(resolver.config.roles, isEmpty);
     expect(persisted, 1);
     expect(fake.calls, 0);
+  });
+
+  group('dap hub flow', () {
+    DapHubSnapshot snapshot({
+      bool ok = true,
+      String url = 'ws://hub.test:8787/ws',
+      String? name = 'cli-agent',
+      String? agentId = 'abcd1234abcd1234',
+    }) => DapHubSnapshot(
+      supported: true,
+      url: url,
+      channels: const [],
+      name: name,
+      agentId: agentId,
+      connected: ok,
+    );
+
+    test('view renders the injected snapshot', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, dapHubState: () async => snapshot());
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('1'); // view
+      await waitForIt(
+        () => io.out.toString().contains('dap hub url: ws://hub.test:8787/ws'),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('dap agent name: cli-agent'));
+      expect(output, contains('dap connection: connected as abcd1234abcd1234'));
+      expect(fake.calls, 0);
+    });
+
+    test('view without hub wiring reports the state as unavailable', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('1'); // view
+      await waitForIt(
+        () => io.out.toString().contains('dap: hub state unavailable'),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('set hub url persists through the hook', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      var snap = snapshot(
+        ok: false,
+        url: 'ws://127.0.0.1:8787/ws',
+        name: null,
+        agentId: null,
+      );
+      final persisted = <({String? url, String? name})>[];
+      final cli = cliFor(
+        fake.call,
+        dapHubState: () async => snap,
+        onDapHubConfigChanged: ({url, name}) async {
+          persisted.add((url: url, name: name));
+          snap = snapshot(ok: false, url: url!, name: name);
+        },
+      );
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('2'); // set hub url
+      await waitForIt(
+        () => io.out.toString().contains(
+          "hub url (empty keeps 'ws://127.0.0.1:8787/ws')",
+        ),
+      );
+      io.sendLine('ws://hub.test:8787/ws');
+      await waitForIt(
+        () => io.out.toString().contains(
+          'dap: saved hub url ws://hub.test:8787/ws',
+        ),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(persisted.single.url, 'ws://hub.test:8787/ws');
+      expect(persisted.single.name, isNull);
+      // The flow re-read the snapshot after persisting, so the re-rendered
+      // menu shows the new url as current.
+      expect(
+        io.out.toString(),
+        contains('2) Set hub URL — ws://hub.test:8787/ws'),
+      );
+      expect(fake.calls, 0);
+    });
+
+    test('set agent name persists through the hook', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final persisted = <({String? url, String? name})>[];
+      final cli = cliFor(
+        fake.call,
+        dapHubState: () async => snapshot(name: null),
+        onDapHubConfigChanged: ({url, name}) async {
+          persisted.add((url: url, name: name));
+        },
+      );
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('3'); // set agent name
+      await waitForIt(
+        () => io.out.toString().contains(
+          "agent name (empty keeps 'hostname default')",
+        ),
+      );
+      io.sendLine('telemetry-bot');
+      await waitForIt(
+        () => io.out.toString().contains('dap: saved agent name telemetry-bot'),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(persisted.single.name, 'telemetry-bot');
+      expect(persisted.single.url, isNull);
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'set hub url notes when a higher-precedence value shadows it',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(
+          fake.call,
+          // The seam keeps returning the env-resolved url no matter what was
+          // persisted — the saved value stays shadowed.
+          dapHubState: () async => snapshot(url: 'ws://env.hub:8787/ws'),
+          onDapHubConfigChanged: ({url, name}) async {},
+        );
+        final run = cli.run();
+
+        final flow = cli.startDapHubFlow();
+        await waitForIt(() => io.out.toString().contains('dap / hub'));
+        io.sendLine('2'); // set hub url
+        await waitForIt(
+          () => io.out.toString().contains(
+            "hub url (empty keeps 'ws://env.hub:8787/ws')",
+          ),
+        );
+        io.sendLine('ws://mine:8787/ws');
+        await waitForIt(
+          () => io.out.toString().contains(
+            'dap: saved hub url ws://mine:8787/ws',
+          ),
+        );
+        await waitForIt(
+          () => io.out.toString().contains(
+            'dap: effective stays ws://env.hub:8787/ws',
+          ),
+        );
+        io.sendLine('6'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'set url without a persistence hook refuses before prompting',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, dapHubState: () async => snapshot());
+        final run = cli.run();
+
+        final flow = cli.startDapHubFlow();
+        await waitForIt(() => io.out.toString().contains('dap / hub'));
+        io.sendLine('2'); // set hub url
+        await waitForIt(
+          () => io.out.toString().contains(
+            'dap: no hub config hook on this host',
+          ),
+        );
+        io.sendLine('6'); // done
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        // The prompt never ran — nothing was collected and discarded.
+        expect(io.out.toString(), isNot(contains('hub url (empty keeps')));
+        expect(fake.calls, 0);
+      },
+    );
+
+    /// Builds a CLI over a REAL temp directory so the opt-out round-trip
+    /// can assert through the production consumer (`loadPackagesConfig` +
+    /// `resolveEnabledPlugins`), not a hand-parsed map. Empty [packagesYaml]
+    /// seeds no file.
+    Future<(AgentCli, String)> realEnvCli(
+      FakeStreamFunction fake,
+      String packagesYaml,
+    ) async {
+      final tmp = await Directory.systemTemp.createTemp('fah_dap_optout');
+      // The cli's run() leaves the unawaited ScheduledMessageQueue startup
+      // (an async createDir under the messages root) plus its re-arming
+      // timer running — nothing stops them on exit — so a plain delete can
+      // race a late createDir into ENOTEMPTY. Retry briefly; a swallowed
+      // leftover in systemTemp must not fail CI.
+      addTearDown(() async {
+        for (var attempt = 1; ; attempt++) {
+          try {
+            await tmp.delete(recursive: true);
+            return;
+          } on FileSystemException catch (error) {
+            if (attempt >= 3) {
+              print('teardown left ${tmp.path} behind: $error');
+              return;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          }
+        }
+      });
+      final realEnv = LocalExecutionEnv(cwd: tmp.path);
+      if (packagesYaml.isNotEmpty) {
+        await realEnv.writeFile('${tmp.path}/.fah/packages.yaml', packagesYaml);
+      }
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: realEnv,
+          sessionRoot: '${tmp.path}/sessions',
+          providerKind: 'openai-completions',
+        ),
+        io: io,
+        streamFunction: fake.call,
+      );
+      return (cli, tmp.path);
+    }
+
+    /// Drives the flow straight to the opt-out action and back out.
+    Future<void> runOptOut(AgentCli cli) async {
+      final run = cli.run();
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('5'); // opt out
+      await waitForIt(
+        () => io.out.toString().contains('dap: hub plugin disabled'),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+    }
+
+    test(
+      'opt-out appends hub: false; the real loader opts the plugin out',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final (cli, root) = await realEnvCli(
+          fake,
+          'tools:\n  keep: yes\ninspect_image: {}\n',
+        );
+        await runOptOut(cli);
+
+        // The production consumer: file on disk → loadPackagesConfig →
+        // resolveEnabledPlugins. Entry loading itself is pinned too (before
+        // the loader fix every entry was dropped as inert).
+        final loaded = await loadPackagesConfig(LocalExecutionEnv(cwd: root));
+        final enabled = resolveEnabledPlugins(const [], loaded);
+        expect(enabled, contains('inspect_image'));
+        expect(enabled, isNot(contains('hub')));
+        expect(loaded['tools'], {'keep': 'yes'});
+        expect(fake.calls, 0);
+      },
+    );
+
+    test('opt-out replaces an existing hub section in place', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final (cli, root) = await realEnvCli(
+        fake,
+        'hub:\n  url: ws://old:8787/ws\n  name: previous\ntools:\n  keep: yes\n',
+      );
+      await runOptOut(cli);
+
+      final loaded = await loadPackagesConfig(LocalExecutionEnv(cwd: root));
+      expect(loaded['hub'], false);
+      expect(resolveEnabledPlugins(const [], loaded), isNot(contains('hub')));
+      expect(loaded['tools'], {'keep': 'yes'});
+      expect(fake.calls, 0);
+    });
+
+    test('opt-out creates the file when none exists yet', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final (cli, root) = await realEnvCli(fake, '');
+      await runOptOut(cli);
+
+      expect(File('$root/.fah/packages.yaml').existsSync(), isTrue);
+      expect(
+        (await loadPackagesConfig(LocalExecutionEnv(cwd: root)))['hub'],
+        false,
+      );
+      expect(fake.calls, 0);
+    });
+    test('test connection reports success and failure via the seam', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      var snap = snapshot();
+      final cli = cliFor(fake.call, dapHubState: () async => snap);
+      final run = cli.run();
+
+      final flow = cli.startDapHubFlow();
+      await waitForIt(() => io.out.toString().contains('dap / hub'));
+      io.sendLine('4'); // test connection
+      await waitForIt(
+        () => io.out.toString().contains(
+          'dap: connected to ws://hub.test:8787/ws as abcd1234abcd1234',
+        ),
+      );
+      // The re-rendered menu went out before the flip; the NEXT pick is
+      // what reads the fresh (disconnected) snapshot.
+      snap = snapshot(ok: false, agentId: null);
+      io.sendLine('4'); // test connection again
+      await waitForIt(
+        () => io.out.toString().contains(
+          'dap: not connected to ws://hub.test:8787/ws',
+        ),
+      );
+      io.sendLine('6'); // done
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(fake.calls, 0);
+    });
+
+    test('/settings summary carries the dap line', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call, dapHubState: () async => snapshot());
+      final run = cli.run();
+
+      io.sendLine('/settings');
+      await waitForIt(
+        () => io.out.toString().contains('dap: ws://hub.test:8787/ws'),
+      );
+      io.sendLine('/exit');
+      await run;
+      expect(fake.calls, 0);
+    });
   });
 }
