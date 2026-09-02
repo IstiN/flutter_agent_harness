@@ -2179,6 +2179,11 @@ final class FaTuiModel extends Model {
     return rows;
   }
 
+  /// Matches a code-fence opener/closer line exactly like the view-time
+  /// markdown walk (ansi_markdown.dart `_fenceRe`): parity over the
+  /// retained history must agree with what the renderer will compute.
+  static final RegExp _fenceLineStart = RegExp(r'^\s*```');
+
   static List<String> _appendOutput(
     List<String> lines,
     String text,
@@ -2204,7 +2209,21 @@ final class FaTuiModel extends Model {
     const maxLines = 2000;
     const trimSlack = 400;
     if (result.length > maxLines + trimSlack) {
-      return result.sublist(result.length - maxLines);
+      // A cut landing inside a fenced code block leaves the retained
+      // history with an open fence: the block's closing ``` then toggles
+      // the walk OPEN and every markdown line after it renders verbatim
+      // (raw **/### walls after a long stream). Count fence lines in the
+      // DROPPED head — the state the rebuilt walk starts in — and prepend
+      // a synthetic closing fence when it is open. The same trick
+      // tui_replay.dart uses for truncated replays.
+      final cut = result.length - maxLines;
+      var open = false;
+      for (var i = 0; i < cut; i++) {
+        if (_fenceLineStart.hasMatch(result[i])) open = !open;
+      }
+      final trimmed = result.sublist(cut);
+      if (open) trimmed.insert(0, '```');
+      return trimmed;
     }
     return result;
   }

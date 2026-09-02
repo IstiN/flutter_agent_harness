@@ -354,6 +354,42 @@ void main() {
     expect(model.outputLines.length, lessThan(overCap));
     expect(model.outputLines.length, 2000);
   });
+
+  test('history cap never lands inside a fenced code block', () {
+    // A cut inside a fence inverts the rebuilt walk's parity: the block's
+    // closing ``` toggles the state OPEN and every markdown line after it
+    // renders verbatim (raw **/### walls after a long stream — the
+    // minimax pr_review session screenshot). The trim must keep the
+    // retained region fence-balanced.
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    // 2501 lines: the ```dart opener at line 0 is dropped, the cut lands
+    // inside the code block.
+    final fenced = ['```dart', for (var i = 0; i < 2499; i++) 'code $i'];
+    model = model.update(OutputMsg('${fenced.join('\n')}\n')).$1 as FaTuiModel;
+    // 2000 retained lines + the synthetic closing fence for the dropped
+    // ```dart opener.
+    expect(model.outputLines.length, 2001);
+    expect(model.outputLines.first, '```', reason: 'balancing fence prepended');
+
+    // The closer plus markdown: without the fix the closer flips the walk
+    // OPEN and the heading below renders verbatim.
+    model =
+        model.update(OutputMsg('```\n# Section\n**bold** tail\n')).$1
+            as FaTuiModel;
+    final md = TranscriptMarkdown(width: 100);
+    md.sync(model.outputLines);
+    final section = md.formattedLines.firstWhere(
+      (l) => l.contains('Section'),
+      orElse: () => '',
+    );
+    // A formatted H1 drops the '#' prefix (styled text instead); the raw
+    // verbatim line keeps it — red before the fix.
+    expect(
+      section,
+      isNot(contains('# Section')),
+      reason: 'heading must render as a heading, not verbatim',
+    );
+  });
   test(
     'a mid-run phase relabel swaps the label over the same elapsed window',
     () {
@@ -417,8 +453,7 @@ void main() {
 
   test('busy row renders the provenance source tag', () {
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-    model =
-        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     expect(model.busySource, 'run');
     expect(model.view().content, contains('· run'));
     model = model.update(BusyMsg(false)).$1 as FaTuiModel;
@@ -431,8 +466,7 @@ void main() {
     faTuiBusyDiagnostics = lines.add;
     addTearDown(() => faTuiBusyDiagnostics = null);
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-    model =
-        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     model = model.update(BusyMsg(false)).$1 as FaTuiModel;
     model.update(const BusyMsg(true, phase: 'Compacting context…'));
     expect(lines.any((l) => l.startsWith('busy on source=run')), isTrue);
@@ -446,24 +480,20 @@ void main() {
 
   test('a silent busy stretch shows the quiet hint', () {
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-    model =
-        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     // Simulate four minutes of silence (no deltas, no keys).
     model = model.copyWith(
-      busyLastEventMs:
-          DateTime.now().millisecondsSinceEpoch - 4 * 60 * 1000,
+      busyLastEventMs: DateTime.now().millisecondsSinceEpoch - 4 * 60 * 1000,
     );
     expect(model.view().content, contains('quiet 4m'));
   });
 
-  test('the watchdog releases a wedged busy row after ten silent minutes',
-      () {
+  test('the watchdog releases a wedged busy row after ten silent minutes', () {
     final lines = <String>[];
     faTuiBusyDiagnostics = lines.add;
     addTearDown(() => faTuiBusyDiagnostics = null);
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-    model =
-        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     model = model.copyWith(
       busyLastEventMs:
           DateTime.now().millisecondsSinceEpoch -
