@@ -203,6 +203,31 @@ void main() {
       expect(inner.commands.single, contains("FAH_MODE='sandboxed'"));
     });
 
+    test('caller options.env rides inside the clean environment', () async {
+      final inner = _RecordingShell();
+      final shell = SandboxedShell(
+        inner,
+        kernelSpec(
+          env: const CubeEnvPolicy(
+            vars: [CubeEnvValue(name: 'FAH_MODE', value: 'sandboxed')],
+          ),
+        ),
+        fs: _FakeFs(),
+        os: 'macos',
+      );
+      await shell.exec(
+        'git status',
+        options: const ShellExecOptions(
+          env: {'FAH_SESSION_ID': 'sess 42', 'FAH_MODE': 'override'},
+        ),
+      );
+      final wrapped = inner.commands.single;
+      expect(wrapped, contains("FAH_SESSION_ID='sess 42'"));
+      // Caller wins over the cube-bound value.
+      expect(wrapped, contains("FAH_MODE='override'"));
+      expect(wrapped, isNot(contains("FAH_MODE='sandboxed'")));
+    });
+
     test('policy mode never stages or wraps', () async {
       final inner = _RecordingShell();
       final fs = _FakeFs();

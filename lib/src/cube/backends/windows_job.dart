@@ -31,7 +31,11 @@ final class WindowsJobBackend implements CubeSandboxBackend {
   bool get enforces => false;
 
   @override
-  String wrapCommand(String command, {required String profilePath}) => command;
+  String wrapCommand(
+    String command, {
+    required String profilePath,
+    Map<String, String> env = const {},
+  }) => command;
 
   @override
   String describe() =>

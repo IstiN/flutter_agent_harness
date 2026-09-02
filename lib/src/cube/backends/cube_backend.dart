@@ -22,10 +22,17 @@ abstract interface class CubeSandboxBackend {
 
   /// Wraps [command] so it runs inside the OS sandbox. [profilePath] names
   /// the profile file staged for the current spec (`.fah/cube-profiles/`);
-  /// implementations that confine by other means may ignore it.
-  String wrapCommand(String command, {required String profilePath});
-
-  /// A human-readable description of the backend's current capability.
+  /// implementations that confine by other means may ignore it. [env]
+  /// carries the caller's per-exec environment ([ShellExecOptions.env]):
+  /// kernel wrapping must thread it into the clean child environment or
+  /// session vars and secrets are silently dropped — entries override the
+  /// backend's cube-bound vars. Implementations that change nothing may
+  /// ignore it too.
+  String wrapCommand(
+    String command, {
+    required String profilePath,
+    Map<String, String> env = const {},
+  });
   String describe();
 }
 

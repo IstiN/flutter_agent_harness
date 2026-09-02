@@ -38,46 +38,62 @@ final class MacOsSandboxBackend
   bool get enforces => true;
 
   @override
-  String wrapCommand(String command, {required String profilePath}) {
+  String wrapCommand(
+    String command, {
+    required String profilePath,
+    Map<String, String> env = const {},
+  }) {
     final prefix = cubeEnvPrefix(
       workspaceRoot: workspaceRoot,
       tmpdir: tmpdir,
-      envVars: envVars,
+      envVars: {...envVars, ...env},
     );
     return 'sandbox-exec -f ${shellQuote(profilePath)} '
         '/usr/bin/env -i $prefix /bin/bash -c ${shellQuote(command)}';
   }
 
   @override
+  String buildProfile(CubeSpec spec, {required String workspaceRoot}) =>
+      buildSandboxProfile(spec, workspaceRoot: workspaceRoot);
+
+  @override
   String describe() =>
       'macOS sandbox-exec (SBPL profile + clean env -i; kernel enforcement '
       'active in backend: kernel mode)';
-
-  @override
-  String buildProfile(CubeSpec spec, {required String workspaceRoot}) =>
-      buildSandboxProfile(spec, workspaceRoot: workspaceRoot);
 
   /// Renders [spec] as an SBPL profile.
   ///
   /// [workspaceRoot] overrides the spec's workspace as the writable subpath
   /// (the CLI passes the real process cwd; the cube's `/workspace` is
   /// realized as the env cwd).
+  ///
+  /// The kernel matches SBPL patterns against the RESOLVED path: macOS
+  /// firmware symlinks (`/etc`, `/tmp`, `/var` → `/private/...`) make a
+  /// symlink-form pattern silently match nothing, so every confined path is
+  /// emitted in BOTH forms. The shape stays allow-default + explicit denies
+  /// — a catch-all `(deny file-read*)` aborts exec — and per-path rules
+  /// always use `file-read*`/`file-write*` with `subpath` (the
+  /// `file-read-data`/`literal` single-file forms do not hold).
   String buildSandboxProfile(CubeSpec spec, {String? workspaceRoot}) {
     final workspace = workspaceRoot ?? spec.filesystem.workspace;
     final buffer = StringBuffer('(version 1)\n(allow default)\n');
-    buffer.writeln('(allow file-write* (subpath "$workspace"))');
+    for (final path in _resolvedVariants(workspace)) {
+      buffer.writeln('(allow file-write* (subpath "$path"))');
+    }
     for (final mount in spec.filesystem.mounts) {
-      switch (mount.access) {
-        case CubePathAccess.readOnly:
-          buffer
-            ..writeln('(allow file-read* (subpath "${mount.path}"))')
-            ..writeln('(deny file-write* (subpath "${mount.path}"))');
-        case CubePathAccess.deny:
-          buffer
-            ..writeln('(deny file-read* (subpath "${mount.path}"))')
-            ..writeln('(deny file-write* (subpath "${mount.path}"))');
-        case CubePathAccess.readWrite:
-          buffer.writeln('(allow file-write* (subpath "${mount.path}"))');
+      for (final path in _resolvedVariants(mount.path)) {
+        switch (mount.access) {
+          case CubePathAccess.readOnly:
+            buffer
+              ..writeln('(allow file-read* (subpath "$path"))')
+              ..writeln('(deny file-write* (subpath "$path"))');
+          case CubePathAccess.deny:
+            buffer
+              ..writeln('(deny file-read* (subpath "$path"))')
+              ..writeln('(deny file-write* (subpath "$path"))');
+          case CubePathAccess.readWrite:
+            buffer.writeln('(allow file-write* (subpath "$path"))');
+        }
       }
     }
     buffer.writeln(
@@ -85,4 +101,17 @@ final class MacOsSandboxBackend
     );
     return buffer.toString();
   }
+}
+
+/// Both SBPL spellings for [path]: itself plus the `/private`-resolved form
+/// when it lives under one of the firmware symlink roots. An already
+/// canonical path maps to itself only.
+List<String> _resolvedVariants(String path) {
+  const roots = ['/etc', '/tmp', '/var'];
+  for (final root in roots) {
+    if (path == root || path.startsWith('$root/')) {
+      return [path, '/private$path'];
+    }
+  }
+  return [path];
 }

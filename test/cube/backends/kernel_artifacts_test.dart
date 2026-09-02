@@ -62,13 +62,19 @@ spec:
     );
 
     final profile = backend.buildProfile(spec, workspaceRoot: workspaceRoot);
+    // Caller-side env (session vars, secrets) threads through the wrap and
+    // must be visible inside the clean environment next to the trio.
+    const callerEnv = {
+      'FAH_SESSION_ID': 'session-42',
+      'SECRET_TOKEN': 'top secret',
+    };
     final commands = [
       'echo hello-from-the-sandbox',
       "git init sandboxed-repo && git -C sandboxed-repo commit -m 'hi'",
       'curl https://example.com',
     ];
     final wrapped = commands.map(
-      (c) => backend.wrapCommand(c, profilePath: profilePath),
+      (c) => backend.wrapCommand(c, profilePath: profilePath, env: callerEnv),
     );
 
     // The wrap is a complete standalone shell line: running it with the
@@ -76,6 +82,8 @@ spec:
     for (final line in wrapped) {
       expect(line, startsWith("sandbox-exec -f '$profilePath' "));
       expect(line, contains('/usr/bin/env -i '));
+      expect(line, contains("FAH_SESSION_ID='session-42'"));
+      expect(line, contains("SECRET_TOKEN='top secret'"));
       expect(line, contains('/bin/bash -c '));
     }
 

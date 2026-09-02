@@ -143,7 +143,7 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
       return Err(ExecutionError(ExecutionErrorCode.spawnError, wrapperFailure));
     }
     return bg.startShellJob(
-      await _shell.prepare(command),
+      await _shell.prepare(command, env: options?.env),
       id: id,
       logPath: logPath,
       options: sandboxExecOptions(spec, options),

@@ -4,6 +4,7 @@ import 'package:flutter_agent_harness/src/cube/backends/macos_sandbox.dart';
 import 'package:flutter_agent_harness/src/cube/backends/no_op_backend.dart';
 import 'package:flutter_agent_harness/src/cube/backends/windows_job.dart';
 import 'package:flutter_agent_harness/src/cube/config/cube_spec.dart';
+import 'package:flutter_agent_harness/src/cube/config/env_policy.dart';
 import 'package:flutter_agent_harness/src/cube/config/fs_policy.dart';
 import 'package:flutter_agent_harness/src/cube/config/network_policy.dart';
 import 'package:flutter_agent_harness/src/cube/config/resource_limits.dart';
@@ -123,6 +124,65 @@ void main() {
       expect(describe, contains('sandbox-exec'));
       expect(describe, isNot(contains('Phase 2')));
     });
+
+    test('confined paths are emitted in original and resolved forms', () {
+      final profile = MacOsSandboxBackend().buildSandboxProfile(
+        CubeSpec(
+          name: 'test-cube',
+          filesystem: const CubeFsPolicy(
+            mounts: [
+              CubeMount(path: '/etc/hosts', access: CubePathAccess.deny),
+              CubeMount(path: '/etc', access: CubePathAccess.readOnly),
+              CubeMount(path: '/private/etc', access: CubePathAccess.readOnly),
+              CubeMount(path: '/tmp/scratch', access: CubePathAccess.readWrite),
+            ],
+          ),
+        ),
+        workspaceRoot: '/tmp/fa-cube-validation',
+      );
+      // The kernel resolves /etc → /private/etc, so the symlink form alone
+      // never matches: both spellings must be in the profile.
+      expect(profile, contains('(deny file-read* (subpath "/etc/hosts"))'));
+      expect(
+        profile,
+        contains('(deny file-read* (subpath "/private/etc/hosts"))'),
+      );
+      expect(profile, contains('(allow file-read* (subpath "/etc"))'));
+      expect(profile, contains('(allow file-read* (subpath "/private/etc"))'));
+      // An already canonical path is not rewritten twice.
+      expect(profile, isNot(contains('/private/private')));
+      // A workspace under /tmp gets the same treatment.
+      expect(
+        profile,
+        contains('(allow file-write* (subpath "/tmp/fa-cube-validation"))'),
+      );
+      expect(
+        profile,
+        contains(
+          '(allow file-write* (subpath "/private/tmp/fa-cube-validation"))',
+        ),
+      );
+    });
+
+    test('caller env rides inside the clean environment, caller wins', () {
+      const backend = MacOsSandboxBackend(
+        envVars: {'FAH_MODE': 'sandboxed', 'SECRET_KEY': 'cube'},
+      );
+      final wrapped = backend.wrapCommand(
+        'git status',
+        profilePath: '/p.sb',
+        env: {
+          'FAH_SESSION_ID': 'abc 123',
+          'FAH_MODE': 'override',
+          'SECRET_KEY': "it's",
+        },
+      );
+      expect(wrapped, contains("FAH_SESSION_ID='abc 123'"));
+      // Caller entries override the cube-bound ones.
+      expect(wrapped, contains("FAH_MODE='override'"));
+      expect(wrapped, isNot(contains("FAH_MODE='sandboxed'")));
+      expect(wrapped, contains(r"SECRET_KEY='it'\''s'"));
+    });
   });
 
   group('LinuxUnshareBackend', () {
@@ -218,6 +278,26 @@ void main() {
       expect(wrapped, isNot(contains('mount --bind')));
       // No preamble: the bash -c payload is just the quoted command.
       expect(wrapped, endsWith("/bin/bash -c 'git status'"));
+    });
+
+    test('caller env rides inside the clean environment, caller wins', () {
+      final backend = LinuxUnshareBackend(
+        spec: CubeSpec(
+          name: 'test-cube',
+          tools: const CubeToolPolicy(allow: {'git'}),
+          env: const CubeEnvPolicy(
+            vars: [CubeEnvValue(name: 'FAH_MODE', value: 'sandboxed')],
+          ),
+        ),
+      );
+      final wrapped = backend.wrapCommand(
+        'git status',
+        profilePath: '/tmp/unused.sb',
+        env: {'FAH_SESSION_ID': 'abc 123', 'FAH_MODE': 'override'},
+      );
+      expect(wrapped, contains("FAH_SESSION_ID='abc 123'"));
+      expect(wrapped, contains("FAH_MODE='override'"));
+      expect(wrapped, isNot(contains("FAH_MODE='sandboxed'")));
     });
 
     test('describe names the active mechanism', () {

@@ -103,7 +103,7 @@ final class SandboxedShell implements Shell {
     if (kernel == null) {
       return _inner.exec(command, options: sandboxExecOptions(spec, options));
     }
-    final wrapped = await kernel.wrap(command);
+    final wrapped = await kernel.wrap(command, env: options?.env);
     final result = await _inner.exec(
       wrapped,
       options: sandboxExecOptions(spec, options),
@@ -113,9 +113,11 @@ final class SandboxedShell implements Shell {
 
   /// The command a background job should start for [command]: unchanged in
   /// policy mode, wrapped in the kernel backend in kernel mode (staging the
-  /// profile on first use). The policy check stays with the caller.
-  Future<String> prepare(String command) =>
-      _kernel?.wrap(command) ?? Future.value(command);
+  /// profile on first use). [env] is the caller's per-exec environment —
+  /// threaded into the clean child env so jobs keep session vars and
+  /// secrets. The policy check stays with the caller.
+  Future<String> prepare(String command, {Map<String, String>? env}) =>
+      _kernel?.wrap(command, env: env) ?? Future.value(command);
 
   /// Swaps the enforced spec live; the next [exec] uses the new policies.
   void updateSpec(CubeSpec spec) {
@@ -296,8 +298,14 @@ final class _KernelRun {
   }
 
   /// Stages the profile, then returns [command] wrapped for the backend.
-  Future<String> wrap(String command) async {
+  /// [env] (the caller's per-exec variables) overrides the cube-bound ones
+  /// inside the clean child environment.
+  Future<String> wrap(String command, {Map<String, String>? env}) async {
     await ensureStaged();
-    return backend.wrapCommand(command, profilePath: profilePath);
+    return backend.wrapCommand(
+      command,
+      profilePath: profilePath,
+      env: env ?? const {},
+    );
   }
 }

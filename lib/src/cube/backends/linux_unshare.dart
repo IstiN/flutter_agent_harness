@@ -44,18 +44,22 @@ final class LinuxUnshareBackend
   bool get enforces => true;
 
   @override
-  String wrapCommand(String command, {required String profilePath}) {
+  String wrapCommand(
+    String command, {
+    required String profilePath,
+    Map<String, String> env = const {},
+  }) {
     // The preamble is inlined into the wrapped bash script, so the staged
     // profile file is an audit artifact only — the exec never reads it.
     final argv = buildUnshareArgv(spec);
     final prefix = argv.sublist(0, argv.length - 1).join(' ');
     final script = '${_preamble(spec)}$command';
-    final env = cubeEnvPrefix(
+    final envPrefix = cubeEnvPrefix(
       workspaceRoot: workspaceRoot,
       tmpdir: tmpdir,
-      envVars: envVars,
+      envVars: {...envVars, ...env},
     );
-    return '$prefix -i $env /bin/bash -c ${shellQuote(script)}';
+    return '$prefix -i $envPrefix /bin/bash -c ${shellQuote(script)}';
   }
 
   @override
