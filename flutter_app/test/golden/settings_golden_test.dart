@@ -32,7 +32,8 @@ import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    hide DapHubSnapshot;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'golden_test_helper.dart';

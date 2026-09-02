@@ -314,6 +314,12 @@ abstract class AppLocalizations {
   /// **'Offline — showing the last known catalog.'**
   String get widgetsCatalogOffline;
 
+  /// No description provided for @widgetsCatalogNotInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Widget is not installed yet.'**
+  String get widgetsCatalogNotInstalled;
+
   /// No description provided for @widgetsCatalogLoadFailed.
   ///
   /// In en, this message translates to:

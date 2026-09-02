@@ -136,6 +136,9 @@ class AppLocalizationsRu extends AppLocalizations {
       'Офлайн — показан последний известный каталог.';
 
   @override
+  String get widgetsCatalogNotInstalled => 'Виджет ещё не установлен.';
+
+  @override
   String widgetsCatalogLoadFailed(Object error) {
     return 'Не удалось загрузить каталог виджетов.\n$error';
   }

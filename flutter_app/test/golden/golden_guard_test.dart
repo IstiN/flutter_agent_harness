@@ -92,6 +92,8 @@ const _exempt = <String, String>{
   'lib/apps/session_chat_sheet.dart':
       'floating chat sheet over the launcher; covered indirectly by the '
       'launcher chat sheet tests in test/apps/',
+  'lib/apps/viewport_reporter.dart':
+      'layout observer; renders only its child — no visuals of its own',
   'lib/ui/screens/app_launcher_screen.dart':
       'test/golden/launcher_golden_test.dart',
   'lib/ui/widgets/apps_panel.dart': 'test/golden/apps_panel_golden_test.dart',

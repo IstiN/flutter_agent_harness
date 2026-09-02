@@ -134,6 +134,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Offline — showing the last known catalog.';
 
   @override
+  String get widgetsCatalogNotInstalled => 'Widget is not installed yet.';
+
+  @override
   String widgetsCatalogLoadFailed(Object error) {
     return 'Could not load the widgets catalog.\n$error';
   }
