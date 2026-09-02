@@ -60,6 +60,61 @@ void main() {
     expect(result.valueOrNull!.exitCode, isNot(0));
   }
 
+  group('git terminal prompts', () {
+    test(
+      'credential prompt fails fast instead of hanging the exec',
+      () async {
+        // A git remote whose smart-HTTP handshake answers 401 — the point
+        // where git would open /dev/tty and block on
+        // "Username for 'http://…':" forever while the TUI owns the
+        // terminal (seen live in a yoclip session against gitee).
+        final server = await HttpServer.bind('127.0.0.1', 0);
+        addTearDown(server.close);
+        server.listen((request) async {
+          request.response.statusCode = HttpStatus.unauthorized;
+          request.response.headers.set('WWW-Authenticate', 'Basic realm="x"');
+          await request.response.close();
+        });
+
+        final result = await env
+            .exec(
+              'git clone http://127.0.0.1:${server.port}/repo.git repo',
+              options: ShellExecOptions(cwd: tempDir.path),
+            )
+            .timeout(const Duration(seconds: 30));
+
+        // The clone errors out fast instead of blocking the agent run:
+        // GIT_TERMINAL_PROMPT=0 + GIT_ASKPASS=echo (the tool-exec
+        // defaults) exhaust git's credential sources without ever
+        // touching the terminal prompt.
+        final value = result.valueOrNull;
+        final output =
+            '${value?.stdout ?? ''}${value?.stderr ?? ''}'
+            '${result.errorOrNull?.message ?? ''}';
+        expect(output, contains('Authentication failed'));
+        expect(value?.exitCode, isNot(0));
+
+        // And the defaults that make this behavior are set for every
+        // tool exec (an explicit override still wins — tested below).
+        final prompt = await env.exec(
+          r'printf "PROMPT=%s ASKPASS=%s" "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS"',
+          options: ShellExecOptions(cwd: tempDir.path),
+        );
+        expect(prompt.valueOrNull!.stdout.trim(), 'PROMPT=0 ASKPASS=echo');
+
+        final override = await env.exec(
+          r'printf "PROMPT=%s" "$GIT_TERMINAL_PROMPT"',
+          options: ShellExecOptions(
+            cwd: tempDir.path,
+            env: {'GIT_TERMINAL_PROMPT': '1'},
+          ),
+        );
+        expect(override.valueOrNull!.stdout.trim(), 'PROMPT=1');
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+  });
+
   group('basic shell builtins', () {
     test('echo and printf', () async {
       final echo = await run('echo hello world');

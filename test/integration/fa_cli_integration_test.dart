@@ -3,6 +3,8 @@
 @Timeout(Duration(minutes: 5))
 library;
 
+import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -267,6 +269,113 @@ void main() {
       await h3.close();
       tempHome.deleteSync(recursive: true);
     });
+
+    group('approval prompt selector', () {
+      test(
+        'Cyrillic char becomes a note, 1 approves once through the PTY',
+        () async {
+          final mock = _MockOpenAiServer();
+          await mock.start();
+          addTearDown(mock.close);
+          final tempHome = _tempHomeForMock(mock.port);
+          final harness = await FaCliHarness.spawn(
+            extraEnv: {'HOME': tempHome.path, 'OPENAI_API_KEY': 'test-key'},
+          );
+          addTearDown(() async {
+            await harness.close();
+            tempHome.deleteSync(recursive: true);
+          });
+          await harness.waitForBoot();
+
+          // The mock's first answer is a bash tool call — always-ask gates
+          // it with the approval prompt.
+          harness.sendText('make the file');
+          harness.sendEnter();
+          await harness.waitForText(
+            'Approve once',
+            timeout: const Duration(seconds: 30),
+          );
+
+          // The live-bug scenario: with a Cyrillic layout the physical y
+          // key produces a different character, and typed characters used
+          // to be swallowed into the note buffer while the decision never
+          // resolved. They must still arrive as a note, AND a
+          // layout-proof key must decide.
+          harness.sendText('е');
+          await harness.waitForText(
+            'note: е',
+            timeout: const Duration(seconds: 10),
+          );
+          harness.sendText('1');
+          await harness.waitForText(
+            'turn-complete',
+            timeout: const Duration(seconds: 30),
+          );
+          // The approval really executed the command: the second model
+          // request carries the tool result with the echo's output.
+          expect(
+            mock.bodies[1].contains('ECHO-RAN-123'),
+            isTrue,
+            reason: 'approved bash call must have run',
+          );
+        },
+      );
+
+      test('arrow keys move the selection, Enter confirms the deny', () async {
+        final mock = _MockOpenAiServer();
+        await mock.start();
+        addTearDown(mock.close);
+        final tempHome = _tempHomeForMock(mock.port);
+        final harness = await FaCliHarness.spawn(
+          extraEnv: {'HOME': tempHome.path, 'OPENAI_API_KEY': 'test-key'},
+        );
+        addTearDown(() async {
+          await harness.close();
+          tempHome.deleteSync(recursive: true);
+        });
+        await harness.waitForBoot();
+
+        harness.sendText('make the file');
+        harness.sendEnter();
+        await harness.waitForText(
+          'Approve once',
+          timeout: const Duration(seconds: 30),
+        );
+        // Deny is the default highlight: move up to "Approve once" and
+        // back down to deny, then confirm with Enter.
+        harness.sendArrowUp();
+        await harness.waitForText(
+          '2. \u25b8 Always approve',
+          timeout: const Duration(seconds: 10),
+        );
+        harness.sendArrowDown();
+        await harness.waitForText(
+          '3. \u25b8 Deny',
+          timeout: const Duration(seconds: 10),
+        );
+        harness.sendEnter();
+        // The deny lands: the turn completes WITHOUT the command ever
+        // running — the second model request carries the denial, not
+        // the echo's output.
+        await harness.waitForText(
+          'turn-complete',
+          timeout: const Duration(seconds: 30),
+        );
+        // The tool result message carries the denial, not the echo's
+        // stdout.
+        final secondRequest =
+            jsonDecode(mock.bodies[1]) as Map<String, dynamic>;
+        final toolResults = (secondRequest['messages'] as List)
+            .whereType<Map<String, dynamic>>()
+            .where((m) => m['role'] == 'tool')
+            .toList();
+        expect(toolResults, hasLength(1));
+        final resultText = (toolResults.single['content'] as String)
+            .toLowerCase();
+        expect(resultText, contains('denied'));
+        expect(resultText, isNot(contains('echo-ran-123')));
+      });
+    });
   });
 }
 
@@ -322,4 +431,133 @@ approvalMode: always-ask
 allowedTools: []
 ''');
   return tempHome;
+}
+
+/// Creates a temp HOME pointing the provider at the local mock server with
+/// always-ask approval gating.
+Directory _tempHomeForMock(int port) {
+  final tempHome = Directory.systemTemp.createTempSync('fa_test_');
+  File('${tempHome.path}/.fah/config.yaml')
+    ..createSync(recursive: true)
+    ..writeAsStringSync('''
+provider: openai-completions
+model: test-model
+baseUrl: http://127.0.0.1:$port/v1
+mode: code
+approvalMode: always-ask
+allowedTools: []
+''');
+  return tempHome;
+}
+
+/// A tiny OpenAI-compatible SSE server: the first request answers with a
+/// scripted bash tool call, every later one with a plain text answer.
+final class _MockOpenAiServer {
+  HttpServer? _server;
+  final List<String> bodies = [];
+
+  int get port => _server!.port;
+
+  Future<void> start() async {
+    _server = await HttpServer.bind('127.0.0.1', 0);
+    _server!.listen((request) async {
+      // The boot-time model-cache refresh must not consume a scripted
+      // chat turn.
+      if (request.method == 'GET' && request.uri.path.endsWith('/models')) {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'object': 'list', 'data': []}));
+        await request.response.close();
+        return;
+      }
+      if (request.method != 'POST' ||
+          !request.uri.path.endsWith('/chat/completions')) {
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+        return;
+      }
+      final body = await utf8.decoder.bind(request).join();
+      bodies.add(body);
+      final n = bodies.length - 1;
+      request.response.headers.contentType = ContentType(
+        'text',
+        'event-stream',
+      );
+      final chunks = n == 0 ? _toolCallChunks() : _textChunks();
+      for (final chunk in chunks) {
+        // A blank line terminates each SSE event — without it the decoder
+        // concatenates every data line into one unreadable payload.
+        request.response.write('data: $chunk\n\n');
+      }
+      request.response.write('data: [DONE]\n\n');
+      await request.response.close();
+    });
+  }
+
+  Future<void> close() async {
+    await _server?.close(force: true);
+  }
+
+  static List<String> _toolCallChunks() => [
+    jsonEncode({
+      'id': 'chatcmpl-1',
+      'object': 'chat.completion.chunk',
+      'choices': [
+        {
+          'index': 0,
+          'delta': {
+            'role': 'assistant',
+            'tool_calls': [
+              {
+                'index': 0,
+                'id': 'call_1',
+                'type': 'function',
+                'function': {'name': 'bash', 'arguments': ''},
+              },
+            ],
+          },
+          'finish_reason': null,
+        },
+      ],
+    }),
+    jsonEncode({
+      'choices': [
+        {
+          'index': 0,
+          'delta': {
+            'tool_calls': [
+              {
+                'index': 0,
+                'function': {'arguments': '{"command": "echo ECHO-RAN-123"}'},
+              },
+            ],
+          },
+          'finish_reason': null,
+        },
+      ],
+    }),
+    jsonEncode({
+      'choices': [
+        {'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'},
+      ],
+    }),
+  ];
+
+  static List<String> _textChunks() => [
+    jsonEncode({
+      'id': 'chatcmpl-2',
+      'object': 'chat.completion.chunk',
+      'choices': [
+        {
+          'index': 0,
+          'delta': {'role': 'assistant', 'content': 'turn-complete'},
+          'finish_reason': null,
+        },
+      ],
+    }),
+    jsonEncode({
+      'choices': [
+        {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+      ],
+    }),
+  ];
 }
