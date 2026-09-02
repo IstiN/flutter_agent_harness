@@ -825,7 +825,25 @@ void main() {
       String packagesYaml,
     ) async {
       final tmp = await Directory.systemTemp.createTemp('fah_dap_optout');
-      addTearDown(() => tmp.delete(recursive: true));
+      // The cli's run() leaves the unawaited ScheduledMessageQueue startup
+      // (an async createDir under the messages root) plus its re-arming
+      // timer running — nothing stops them on exit — so a plain delete can
+      // race a late createDir into ENOTEMPTY. Retry briefly; a swallowed
+      // leftover in systemTemp must not fail CI.
+      addTearDown(() async {
+        for (var attempt = 1; ; attempt++) {
+          try {
+            await tmp.delete(recursive: true);
+            return;
+          } on FileSystemException catch (error) {
+            if (attempt >= 3) {
+              print('teardown left ${tmp.path} behind: $error');
+              return;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          }
+        }
+      });
       final realEnv = LocalExecutionEnv(cwd: tmp.path);
       if (packagesYaml.isNotEmpty) {
         await realEnv.writeFile('${tmp.path}/.fah/packages.yaml', packagesYaml);
