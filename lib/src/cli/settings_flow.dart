@@ -355,9 +355,164 @@ extension SettingsFlow on AgentCli {
     return '${override.modelId} @ ${override.baseUrl}';
   }
 
+  /// Settings → DAP / Hub: view the live hub snapshot (url, agent name,
+  /// connection state), set the hub url or the agent name (persisted
+  /// through [AgentCliConfig.onDapHubConfigChanged] — the hub client's
+  /// `~/.dap/config.json` read-modify-write, so channels and invites
+  /// survive), test the connection, or write the `hub: false` plugin
+  /// opt-out into `.fah/packages.yaml`. Loops until the pick is cancelled
+  /// or `done`.
+  Future<void> startDapHubFlow() async {
+    await _refreshDapHubSnapshot();
+    for (;;) {
+      final snapshot = _dapHubSnapshot;
+      final picked = await _pickOption('dap / hub', [
+        ('view', 'View current config', 'url, agent name, connection state'),
+        ('url', 'Set hub URL', snapshot?.url ?? 'not configured'),
+        ('name', 'Set agent name', snapshot?.name ?? 'not set'),
+        (
+          'test',
+          'Test connection',
+          (snapshot?.ok ?? false) ? 'currently connected' : 'not connected',
+        ),
+        (
+          'optout',
+          'Opt out of the hub plugin',
+          'writes hub: false to .fah/packages.yaml',
+        ),
+        ('done', 'Done', ''),
+      ]);
+      switch (picked) {
+        case null:
+        case 'done':
+          return;
+        case 'view':
+          _printDapHubConfig();
+        case 'url':
+          await _editDapHubValue(isUrl: true);
+        case 'name':
+          await _editDapHubValue(isUrl: false);
+        case 'test':
+          await _refreshDapHubSnapshot();
+          _printDapHubConnection();
+        case 'optout':
+          await _writeDapHubOptOut();
+      }
+    }
+  }
+
+  /// Re-fetches the DAP/1 hub snapshot through the host's seam — file
+  /// reads plus the hub plugin's local status snapshot, never a network
+  /// dial. A missing seam leaves the null (nothing fetched); a failing one
+  /// keeps the last good snapshot rather than blanking the UI.
+  Future<void> _refreshDapHubSnapshot() async {
+    final fetch = config.dapHubState;
+    if (fetch == null) return;
+    try {
+      _dapHubSnapshot = await fetch();
+    } on Object {
+      // Keep the last snapshot (or null) — the next render retries.
+    }
+  }
+
+  /// The settings-hub row and `/settings` summary label: the resolved hub
+  /// url, or the unconfigured note when no snapshot exists.
+  String _dapHubStatusLabel() => _dapHubSnapshot?.url ?? 'not configured';
+
+  /// The flow's "view" action: the resolved hub url, the agent name, and
+  /// the live connection state.
+  void _printDapHubConfig() {
+    final snapshot = _dapHubSnapshot;
+    if (snapshot == null) {
+      io.writeln('dap: hub state unavailable on this host');
+      return;
+    }
+    io.writeln('dap hub url: ${snapshot.url}');
+    io.writeln('dap agent name: ${snapshot.name ?? '(hostname default)'}');
+    if (snapshot.ok) {
+      io.writeln(
+        'dap connection: connected as '
+        '${snapshot.agentId ?? snapshot.name}',
+      );
+    } else {
+      io.writeln('dap connection: not connected');
+    }
+  }
+
+  /// The flow's "test" action report: one honest line about the live
+  /// plugin's connection state.
+  void _printDapHubConnection() {
+    final snapshot = _dapHubSnapshot;
+    if (snapshot == null) {
+      io.writeln('dap: hub state unavailable on this host');
+    } else if (snapshot.ok) {
+      io.writeln(
+        'dap: connected to ${snapshot.url} as '
+        '${snapshot.agentId ?? snapshot.name}',
+      );
+    } else {
+      io.writeln('dap: not connected to ${snapshot.url}');
+    }
+  }
+
+  /// The flow's set/change branch: prompts for the hub url or the agent
+  /// name, keeps the current value on an empty answer, and persists through
+  /// [AgentCliConfig.onDapHubConfigChanged]. Without a host hook the change
+  /// is refused (never half-applied).
+  Future<void> _editDapHubValue({required bool isUrl}) async {
+    final persist = config.onDapHubConfigChanged;
+    if (persist == null) {
+      io.writeln('dap: no hub config hook on this host — not saved');
+      return;
+    }
+    final current = isUrl ? _dapHubSnapshot?.url : _dapHubSnapshot?.name;
+    final fallback = current ?? (isUrl ? 'not configured' : 'hostname default');
+    final answer = await _askLine(
+      "${isUrl ? 'hub url' : 'agent name'} (empty keeps '$fallback'): ",
+    );
+    final value = answer?.trim() ?? '';
+    if (value.isEmpty) return;
+    await persist(url: isUrl ? value : null, name: isUrl ? null : value);
+    await _refreshDapHubSnapshot();
+    io.writeln('dap: saved ${isUrl ? 'hub url' : 'agent name'} $value');
+    // Higher-precedence sources (env, the yaml `hub:` section, the running
+    // client's startup values) can shadow the persisted value until they
+    // clear — say so instead of letting the menu silently show another url.
+    final effective = isUrl ? _dapHubSnapshot?.url : _dapHubSnapshot?.name;
+    if (effective != null && effective != value) {
+      io.writeln(
+        'dap: effective stays $effective (env / hub: section / live '
+        'client override wins until it clears)',
+      );
+    }
+  }
+
+  /// The flow's opt-out: writes `hub: false` into `<cwd>/.fah/packages.yaml`
+  /// — the file the plugin loader reads at startup — preserving every other
+  /// section byte-for-byte (see [_withHubOptOut]).
+  Future<void> _writeDapHubOptOut() async {
+    final path = '${_env.cwd}/.fah/packages.yaml';
+    final String updated;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        updated = _withHubOptOut(value);
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        updated = 'hub: false\n';
+      case Err():
+        io.writeln('dap: cannot read $path — opt-out not written');
+        return;
+    }
+    if (await _env.writeFile(path, updated) is Err) {
+      io.writeln('dap: could not write $path');
+      return;
+    }
+    io.writeln('dap: hub plugin disabled in $path (applies at next start)');
+  }
+
   /// `/settings`: a bare command opens the TUI settings hub; anything else
   /// (and line mode) prints the current settings summary.
   Future<void> _settingsSlash(String rest) async {
+    await _refreshDapHubSnapshot();
     if (rest.isEmpty && _useTui && _tuiController != null) {
       _openSettingsPicker();
     } else {
@@ -402,6 +557,11 @@ extension SettingsFlow on AgentCli {
         label: 'Cube sandbox',
         description: _cubeStatusLabel(),
       ),
+      MenuItem(
+        key: 'dap',
+        label: 'DAP / Hub',
+        description: _dapHubStatusLabel(),
+      ),
       const MenuItem(
         key: 'keys',
         label: 'API keys',
@@ -433,6 +593,7 @@ extension SettingsFlow on AgentCli {
     'mode': () async => _openModePicker(),
     'keys': () => _handleKeyCommand(''),
     'cube': startCubeSandboxFlow,
+    'dap': startDapHubFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
@@ -443,9 +604,43 @@ extension SettingsFlow on AgentCli {
     io.writeln('approval: ${_approval.mode.label}');
     io.writeln('mode: ${_currentMode.name}');
     io.writeln('cube: ${_cubeStatusLabel()}');
+    io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube '
       '(agent models: the /settings hub)',
     );
   }
+}
+
+/// Replaces the top-level `hub:` block of a `.fah/packages.yaml` body with
+/// the `hub: false` opt-out, or appends the key when absent. A block is the
+/// `hub:` key line plus every following blank/indented line; everything
+/// else survives byte-for-byte and the result stays parseable yaml (the
+/// plugin loader reads the same shape it always did).
+String _withHubOptOut(String source) {
+  const replacement = 'hub: false';
+  final lines = source.split('\n');
+  var start = -1;
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('hub:')) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) {
+    final separator = source.isEmpty || source.endsWith('\n') ? '' : '\n';
+    return '$source$separator$replacement\n';
+  }
+  var end = start + 1;
+  while (end < lines.length &&
+      (lines[end].isEmpty ||
+          lines[end].startsWith(' ') ||
+          lines[end].startsWith('\t'))) {
+    end++;
+  }
+  return [
+    ...lines.sublist(0, start),
+    replacement,
+    ...lines.sublist(end),
+  ].join('\n');
 }

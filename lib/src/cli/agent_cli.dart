@@ -17,6 +17,7 @@ library;
 import 'dart:async';
 
 import 'ansi_markdown.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:meta/meta.dart';
 import 'package:yaml/yaml.dart';
@@ -641,6 +642,12 @@ class AgentCli {
   /// `/cube reload` re-resolves it. Set at boot (config) and by
   /// `/cube use`; never cleared by `/cube off` (a reload re-applies it).
   String? _cubeSource;
+
+  /// The last fetched [DapHubSnapshot] — rendered by the settings hub's
+  /// DAP / Hub row and the `/settings` summary, refreshed before each
+  /// render and at the top of the DAP flow. Null until fetched or when no
+  /// hub wiring exists ([AgentCliConfig.dapHubState]).
+  DapHubSnapshot? _dapHubSnapshot;
 
   /// Retained-subagent registry (Phase 3a): tracks every spawned child so
   /// `task_status`/`task_observe`/`task_send` work after completion.

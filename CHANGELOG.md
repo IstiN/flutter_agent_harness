@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- feat(cli): a `DAP / Hub` entry in the `/settings` hub — view the live
+  hub snapshot (resolved url, agent name, connection state), set the hub
+  url and the agent name (persisted through the hub client's
+  `~/.dap/config.json` read-modify-write, so channels and invites
+  survive), test the connection, and write the `hub: false` plugin
+  opt-out into `.fah/packages.yaml` (existing sections preserved). The
+  flow reads the hub state through an injectable snapshot seam the
+  executable wires to the hub plugin — no sockets, fully fake-drivable
+  in tests.
+- fix(cli): `.fah/packages.yaml` entries actually load now — package:yaml
+  reifies its map entries as dynamic-keyed, so the loader's String-keyed
+  `whereType` filter dropped every entry and the whole file (plugin
+  enabling and configuration, `hub:` url/name, `hub: false` opt-outs)
+  was inert. The loader now deep-converts the parsed yaml tree to plain
+  Dart values before handing sections to plugins and the DAP / Hub
+  settings flow.
 - feat(app): DAP/Hub settings section in the Flutter app — a settings row
   opening the hub page (resolved URL, connection probe, agent name/agentId,
   channels) with add/edit of the machine-shared `~/.dap/config.json`
