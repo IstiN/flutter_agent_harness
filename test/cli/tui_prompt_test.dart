@@ -581,6 +581,32 @@ void main() {
       expect(result.state.approvalInput, isEmpty);
     });
 
+    test('ctrl+u clears the whole note (readline unix-line-discard)', () {
+      var state = TuiPromptState(spec).copyWith(approvalInput: 'не делать');
+      final result = handleTuiPromptKey(state, const PromptCtrlU());
+      expect(
+        result.resolved,
+        isNull,
+        reason: 'ctrl+u only clears, never submits',
+      );
+      state = result.state;
+      expect(state.approvalInput, isEmpty);
+      // And the prompt still works afterwards.
+      final answer = handleTuiPromptKey(state, PromptChar('y'));
+      expect(
+        (answer.resolved as ApprovalPromptAnswer).value,
+        ApprovalDecision.approveOnce,
+      );
+      expect((answer.resolved as ApprovalPromptAnswer).note, isEmpty);
+    });
+
+    test('ctrl+u on an empty note is a no-op', () {
+      final state = TuiPromptState(spec);
+      final result = handleTuiPromptKey(state, const PromptCtrlU());
+      expect(result.resolved, isNull);
+      expect(result.state.approvalInput, isEmpty);
+    });
+
     test('PromptEnter does not resolve while approvalInput is non-empty', () {
       final state = TuiPromptState(spec).copyWith(approvalInput: 'ф');
       final result = handleTuiPromptKey(state, const PromptEnter());

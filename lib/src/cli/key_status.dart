@@ -190,9 +190,11 @@ final class KeyStatusRenderer {
   /// 401-class detection across provider wordings (OpenAI/OpenRouter "401:
   /// API Key invalid", Anthropic "authentication_error", plain
   /// "Unauthorized").
+  static final _authErrorCode = RegExp(r'\b401\b');
+
   bool isAuthError(String compact) {
     final lower = compact.toLowerCase();
-    return RegExp(r'\b401\b').hasMatch(compact) ||
+    return _authErrorCode.hasMatch(compact) ||
         lower.contains('unauthorized') ||
         lower.contains('authentication_error') ||
         (lower.contains('api key') && lower.contains('invalid'));

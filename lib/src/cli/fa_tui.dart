@@ -1843,7 +1843,7 @@ final class FaTuiModel extends Model {
     final text = model.inputText;
 
     // `/models <filter>` opens the picker with a pre-filled filter.
-    final filterMatch = RegExp(r'^/models\s+(.*)$').firstMatch(text);
+    final filterMatch = _modelsFilterPrefix.firstMatch(text);
     if (filterMatch != null) {
       final filter = filterMatch.group(1)!;
       return model.copyWith(
@@ -2183,6 +2183,10 @@ final class FaTuiModel extends Model {
   /// markdown walk (ansi_markdown.dart `_fenceRe`): parity over the
   /// retained history must agree with what the renderer will compute.
   static final RegExp _fenceLineStart = RegExp(r'^\s*```');
+
+  /// `/models <filter>` prefix — allocated once: `_updateMenuForInput` runs
+  /// on EVERY keystroke and used to recompile this per keypress.
+  static final RegExp _modelsFilterPrefix = RegExp(r'^/models\s+(.*)$');
 
   static List<String> _appendOutput(
     List<String> lines,

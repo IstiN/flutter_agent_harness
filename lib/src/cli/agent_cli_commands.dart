@@ -5,10 +5,18 @@ part of 'agent_cli.dart';
 // approval) or to the unknown-command fallback (plugin commands, prompt
 // templates, skill aliases, filesystem paths).
 
+/// Whitespace splitter for command lines (hoisted: `_handleCommand` runs
+/// per submitted line).
+final _commandWhitespace = RegExp(r'\s+');
+
+/// A leading `/word/` or `~/` — the shape of an absolute file path typed at
+/// the prompt (hoisted: evaluated per submitted line).
+final _leadingPathLike = RegExp(r'^/[^/\s]*\/');
+
 /// Slash-command dispatch on [AgentCli].
 extension SlashCommandDispatch on AgentCli {
   Future<void> _handleCommand(String trimmed) async {
-    final command = trimmed.split(RegExp(r'\s+')).first;
+    final command = trimmed.split(_commandWhitespace).first;
     final rest = trimmed.substring(command.length).trim();
     if (await _handleInfoCommand(command, rest)) return;
     if (await _handleModelProviderCommand(command, rest)) return;
@@ -83,7 +91,7 @@ extension SlashCommandDispatch on AgentCli {
   /// `/memory [maintain]` — Phase 2 memory surface: stats by default,
   /// `maintain` runs the consolidation pipeline now.
   Future<void> _handleMemoryCommand(String rest) async {
-    final sub = rest.split(RegExp(r'\s+')).first.trim();
+    final sub = rest.split(_commandWhitespace).first.trim();
     if (sub == 'maintain') {
       await _runMemoryMaintain();
       return;
@@ -265,7 +273,7 @@ extension SlashCommandDispatch on AgentCli {
     // a nonexistent path keeps the load hint — it cannot be attached.
     if (trimmed.startsWith('/') && trimmed.length > 1) {
       final looksAbsolutePath =
-          RegExp(r'^/[^/\s]*\/').hasMatch(trimmed) || trimmed.startsWith('~/');
+          _leadingPathLike.hasMatch(trimmed) || trimmed.startsWith('~/');
       if (looksAbsolutePath) {
         if (resolveInteractiveFileReference(trimmed) != trimmed) {
           _startRun(trimmed);

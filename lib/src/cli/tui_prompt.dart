@@ -809,10 +809,20 @@ _PromptKeyResult? _handleSecretTabKey(TuiPromptState state, PromptKey key) {
 _PromptKeyResult _handleApprovalKey(TuiPromptState state, PromptKey key) {
   return _handleApprovalNumberKey(state, key) ??
       _handleApprovalSelectorKey(state, key) ??
+      _handleApprovalKillKey(state, key) ??
       _handleApprovalBackspaceKey(state, key) ??
       _handleApprovalAnswerKey(state, key) ??
       _handleApprovalDenyKey(state, key) ??
       (state: state, resolved: null);
+}
+
+/// Ctrl+U clears the whole note (readline's unix-line-discard; the note
+/// buffer has no cursor, so kill-to-line-start is clear-all). The secret
+/// prompt already treats Ctrl+U the same way. Null for other keys.
+_PromptKeyResult? _handleApprovalKillKey(TuiPromptState state, PromptKey key) {
+  if (key is! PromptCtrlU) return null;
+  if (state.approvalInput.isEmpty) return null;
+  return (state: state.copyWith(approvalInput: ''), resolved: null);
 }
 
 /// Backspace erases the last typed note character — the note buffer has no
