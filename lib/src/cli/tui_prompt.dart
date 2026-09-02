@@ -809,9 +809,26 @@ _PromptKeyResult? _handleSecretTabKey(TuiPromptState state, PromptKey key) {
 _PromptKeyResult _handleApprovalKey(TuiPromptState state, PromptKey key) {
   return _handleApprovalNumberKey(state, key) ??
       _handleApprovalSelectorKey(state, key) ??
+      _handleApprovalBackspaceKey(state, key) ??
       _handleApprovalAnswerKey(state, key) ??
       _handleApprovalDenyKey(state, key) ??
       (state: state, resolved: null);
+}
+
+/// Backspace erases the last typed note character — the note buffer has no
+/// cursor (chars append), so erase means trim the tail; a no-op on an
+/// empty buffer. Null when the key is not a backspace.
+_PromptKeyResult? _handleApprovalBackspaceKey(
+  TuiPromptState state,
+  PromptKey key,
+) {
+  if (key is! PromptBackspace) return null;
+  final deleted = _backspacedBuffer(
+    state.approvalInput,
+    state.approvalInput.length,
+  );
+  if (deleted == null) return (state: state, resolved: null);
+  return (state: state.copyWith(approvalInput: deleted.$1), resolved: null);
 }
 
 /// The 1/2/3 decision keys — the layout-proof twin of y/a/n (a Cyrillic

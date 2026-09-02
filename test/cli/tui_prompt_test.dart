@@ -560,6 +560,27 @@ void main() {
       expect(result.state.approvalInput, 'x');
     });
 
+    test('backspace erases the last typed note character', () {
+      var state = TuiPromptState(spec).copyWith(approvalInput: 'не');
+      state = handleTuiPromptKey(state, const PromptBackspace()).state;
+      expect(state.approvalInput, 'н');
+      state = handleTuiPromptKey(state, const PromptBackspace()).state;
+      expect(state.approvalInput, isEmpty);
+      // Erasing the note re-arms the Enter-submits-decision rule.
+      final result = handleTuiPromptKey(state, const PromptEnter());
+      expect(
+        (result.resolved as ApprovalPromptAnswer).value,
+        ApprovalDecision.deny,
+      );
+    });
+
+    test('backspace on an empty note is a no-op', () {
+      final state = TuiPromptState(spec);
+      final result = handleTuiPromptKey(state, const PromptBackspace());
+      expect(result.resolved, isNull);
+      expect(result.state.approvalInput, isEmpty);
+    });
+
     test('PromptEnter does not resolve while approvalInput is non-empty', () {
       final state = TuiPromptState(spec).copyWith(approvalInput: 'ф');
       final result = handleTuiPromptKey(state, const PromptEnter());
