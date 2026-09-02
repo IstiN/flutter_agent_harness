@@ -2345,6 +2345,18 @@
 - fix(providers): correct the Copilot token guidance — fine-grained PATs need the Copilot Requests permission (0.1.280)
 - memory: copilot fine-grained PAT 404 root cause + flutter_app flame_3d env breakage
 
+## 0.1.283
+
+- fix(app): shared DapHubSnapshot, probe dispose ordering, scope reverts (#15 review)
+- refactor(cli): one DapHubSnapshot type shared by CLI and app (#15 review)
+- fix(app): compile fixes after main merge — barrel import hides, l10n key for widgets catalog note
+- refactor(cli): extract packages.yaml loader into lib/ — keeps bin/ out of test coverage (CRAP gate)
+- fix(cli): make dap opt-out test teardown race-tolerant
+- fix(app): harden DAP hub page error paths and test determinism (#6)
+- feat(app): DAP/Hub settings section (#6)
+- fix(cli): review fixes for DAP/Hub /settings entry (#5)
+- feat(cli): DAP/Hub entry in /settings (#5)
+
 ## Unreleased
 
 ## Unreleased
