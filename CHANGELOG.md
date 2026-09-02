@@ -2320,4 +2320,9 @@
 - fix(providers): reject Copilot fine-grained PATs at connect time (0.1.278)
 - refactor(cli): split banner/key-status out of agent_cli.dart, untangle _runPrompt
 
+## 0.1.281
+
+- fix(providers): correct the Copilot token guidance — fine-grained PATs need the Copilot Requests permission (0.1.280)
+- memory: copilot fine-grained PAT 404 root cause + flutter_app flame_3d env breakage
+
 ## Unreleased
