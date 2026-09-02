@@ -101,7 +101,12 @@ String resolveInteractiveFileReference(
   try {
     length = file.lengthSync();
   } on Object {
-    // Stats are best-effort; an unreadable length still attaches.
+    // A length probe that cannot even run (a pasted DIRECTORY path —
+    // lengthSync throws "is a directory" — or an unreadable entry) means
+    // this is not an attachable file: the message goes through verbatim.
+    // Attaching used to swallow the whole message into a bogus
+    // [attached file: …] marker (user report: folder paths).
+    return text;
   }
   final textStats = _attachTextStats(file, length);
   final stats = [_formatAttachBytes(length), ?textStats].join(' · ');

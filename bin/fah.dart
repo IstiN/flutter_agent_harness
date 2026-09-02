@@ -689,7 +689,8 @@ Future<void> _runApp(List<String> args) async {
     sessionsRoot: sessionRoot,
     cwd: cwd,
   );
-  final applyFolderState = folderState != null &&
+  final applyFolderState =
+      folderState != null &&
       folderModelStateApplies(
         modelExplicit: parsed.model != null,
         providerExplicit: parsed.providerExplicit,
@@ -708,7 +709,6 @@ Future<void> _runApp(List<String> args) async {
           baseUrl: folderState.baseUrl,
         )
       : _buildModel(effective);
-
 
   // Initial cube (fa_cube Phase 1): --cube-config path > --cube name > the
   // project `.fah/config.yaml` `cube:` section > the saved user `cube:`
@@ -1016,6 +1016,10 @@ Future<void> _runApp(List<String> args) async {
       // active entry's last-used model — all persisted via persistConfig.
       customProviders: CustomProviderRegistry(saved.customProviders),
       sessionRoot: sessionRoot,
+      // The same launch-pin rule the boot restore used: explicit
+      // --model/--provider/--base-url or an FA_PROVIDER_* preconfig wins
+      // over per-folder memory, including later session switches.
+      folderModelStateApplies: applyFolderState || folderState == null,
       // Live-session presence: the running CLI heartbeats its session so
       // the Fa app (sharing the sessions root on macOS) marks it live and
       // can attach. Null where the root is process-local (tests).

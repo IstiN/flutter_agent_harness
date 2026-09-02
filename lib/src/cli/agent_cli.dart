@@ -82,6 +82,7 @@ import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session/attach/session_presence.dart';
 import 'custom_providers.dart';
+import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
 import '../session/session_tree.dart';
@@ -1732,7 +1733,68 @@ class AgentCli {
       _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
       await _loadAgentContext();
     }
+    // The session may live in a DIFFERENT folder than the launch cwd: the
+    // boot applied the launch folder's model memory, so a session opened
+    // across folders landed on the wrong provider (user report: a z.ai
+    // session reopened as copilot). Re-apply the session folder's saved
+    // triple.
+    await _applySessionFolderModelState(session);
     return session;
+  }
+
+  /// Re-applies the model/provider triple saved for the CURRENT folder
+  /// ([loadFolderModelState]) — the runtime twin of the boot restore in
+  /// bin/fah.dart. Best-effort: a stale or broken state file keeps the
+  /// current model.
+  Future<void> _applySessionFolderModelState(Session session) async {
+    if (!config.folderModelStateApplies) return;
+    final state = await loadFolderModelState(
+      _env,
+      sessionsRoot: config.sessionRoot,
+      cwd: _env.cwd,
+    );
+    if (state == null) return;
+    final current = _agent.state.model;
+    if (current.id == state.modelId && current.baseUrl == state.baseUrl) {
+      return; // already on this triple (the boot applied this folder)
+    }
+    final Model built;
+    try {
+      built = buildCliDefaultModel(
+        state.providerKind,
+        modelId: state.modelId,
+        baseUrl: state.baseUrl,
+      );
+    } on ConfigException {
+      io.writeln(
+        _style.dim(
+          'note: saved folder model state is stale '
+          '(${state.providerKind}) — keeping ${current.id}',
+        ),
+      );
+      return;
+    }
+    final spec = catalogProvider(built.provider)!;
+    final key = _providerKeyFor(spec, built.baseUrl) ?? '';
+    _providerKind = state.providerKind;
+    _apiKey = key;
+    _explicitToken = false;
+    _streamFunction = _catalogStreamFunction(state.providerKind, key);
+    _agent.streamFunction = _streamFunction;
+    _agent.state.model = built;
+    // The cached model list belongs to the previous provider/endpoint.
+    _modelCache = const [];
+    _modelContextWindows = const {};
+    _modelMaxTokens = const {};
+    _lastModelList = null;
+    unawaited(_refreshModelCache());
+    await session.appendModelChange(
+      provider: built.provider,
+      modelId: built.id,
+    );
+    io.writeln(
+      _style.dim('restored ${built.id} (${built.provider}) from this folder'),
+    );
   }
 
   /// The label for a startup-resumed session's replay header, or null when

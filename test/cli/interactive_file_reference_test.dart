@@ -13,6 +13,7 @@ void main() {
         path,
         doesExist: files.containsKey(path),
         content: files[path],
+        isDirectory: files[path] == null && path.endsWith('some-folder'),
       );
 
   group('resolveInteractiveFileReference', () {
@@ -27,6 +28,17 @@ void main() {
         '[attached file: $path (10 B · 2 lines · ~3 tokens est.)'
         ' — read it with your tools]\n\nsum this up',
       );
+    });
+
+    test('a directory path stays a plain message', () {
+      const path = '/tmp/pasted/some-folder';
+      final result = resolveInteractiveFileReference(
+        '$path what is in here',
+        fileOf: factory({'/tmp/pasted/some-folder': null}),
+      );
+      // The stub models the directory by making lengthSync throw the way
+      // a real one does; the resolver must leave the message untouched.
+      expect(result, '$path what is in here');
     });
 
     test('a multi-line paste gets an accurate line count', () {
@@ -183,7 +195,11 @@ final class _StubFile implements File {
     this.content,
     this.lengthOverride,
     this.onRead,
+    this.isDirectory = false,
   });
+
+  /// Models a directory: exists but has no file length.
+  final bool isDirectory;
 
   @override
   final String path;
@@ -207,7 +223,10 @@ final class _StubFile implements File {
   bool existsSync() => doesExist;
 
   @override
-  int lengthSync() => lengthOverride ?? content?.length ?? 0;
+  int lengthSync() {
+    if (isDirectory) throw FileSystemException('is a directory', path);
+    return lengthOverride ?? content?.length ?? 0;
+  }
 
   @override
   String readAsStringSync({Encoding encoding = utf8}) {

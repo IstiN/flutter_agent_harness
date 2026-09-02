@@ -12,6 +12,7 @@ final class AgentCliConfig {
     required this.apiKey,
     required this.env,
     required this.sessionRoot,
+    this.folderModelStateApplies = true,
     this.presenceStore,
     this.sessionName,
     this.providerKind = 'openai-completions',
@@ -306,6 +307,13 @@ final class AgentCliConfig {
 
   /// Root directory for JSONL sessions (cwd-encoded layout, like pi).
   final String sessionRoot;
+
+  /// Whether the saved per-folder model memory may override the resolved
+  /// config for session loads (bin/fah.dart computes it from the launch
+  /// pins: --model/--provider/--base-url and the FA_PROVIDER_* preconfig
+  /// disable it). Defaults to true so tests and embedded hosts behave like
+  /// an unpinned launch.
+  final bool folderModelStateApplies;
 
   /// Live-session presence heartbeats: the running CLI registers its
   /// session here so the Fa app (sharing the sessions root) can mark the
