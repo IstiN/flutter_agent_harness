@@ -88,11 +88,20 @@ final class IoDapHubService implements DapHubService {
       connected = (await plugin.status()).connected;
     } on Object {
       // Timeout (hub not answering) or hub rejection: honest "unreachable".
-      // dispose() below completes the abandoned start() with an error —
-      // marked handled so it never surfaces as an unhandled async error.
-      started.ignore();
     } finally {
       await plugin.dispose();
+      // fah_hub_client 0.2.5 (verified in hub_plugin.dart): dispose()
+      // neither cancels nor awaits an in-flight start() — it only tears
+      // down the fields it sees. Two interleavings matter: dispose after
+      // start() assigned _repository makes start() die on a null
+      // assertion (`_repository!`) — marked handled here, after dispose,
+      // so anything dispose induces is covered; dispose before start()
+      // touches its fields is a no-op that leaves start() running.
+      started.ignore();
+      // ponytail: residual ceiling — start() has no cancel API, so a
+      // timeout that lands before start() assigns its fields leaves the
+      // socket + reconnect loop alive with no owner. Upgrade path: a
+      // close()-style API in the package, then await it here.
     }
     return snapshot.withProbe(connected);
   }

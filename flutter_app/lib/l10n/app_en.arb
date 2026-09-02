@@ -44,7 +44,6 @@
   "appsLoadError": "Failed to load apps: {error}",
   "widgetsCatalogInstallFailed": "Install failed: {error}",
   "widgetsCatalogOffline": "Offline — showing the last known catalog.",
-  "widgetsCatalogNotInstalled": "Widget is not installed yet.",
   "widgetsCatalogLoadFailed": "Could not load the widgets catalog.\n{error}",
   "@widgetsCatalogLoadFailed": {
     "placeholders": {

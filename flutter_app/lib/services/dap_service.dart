@@ -4,61 +4,12 @@
 
 export 'dap_service_stub.dart' if (dart.library.io) 'dap_service_io.dart';
 
-/// Everything the DAP hub settings page shows, in one snapshot of the
-/// machine-shared `~/.dap` config (docs/dap.md §9): the resolved connection,
-/// the agent identity, and the channels this machine holds keys for.
-///
-/// [connected] is the live-probe outcome: `null` = not probed yet,
-/// `true` = the hub welcomed us, `false` = unreachable or rejected.
-class DapHubSnapshot {
-  const DapHubSnapshot({
-    required this.supported,
-    required this.url,
-    required this.channels,
-    this.name,
-    this.agentId,
-    this.envLocked = false,
-    this.connected,
-  });
-
-  /// False where the hub client cannot run (web — the `fah_hub_client`
-  /// package is IO-bound): the page shows the honest not-supported note.
-  final bool supported;
-
-  /// The hub URL in force (env > `~/.dap/config.json` > the zero-config
-  /// default).
-  final String url;
-
-  /// The agent display name (`~/.dap/config.json` `name`), when set.
-  final String? name;
-
-  /// The 16-hex identity derived from this machine's hub key.
-  final String? agentId;
-
-  /// Channel names this machine holds a key for (`~/.dap/channels.json`),
-  /// sorted.
-  final List<String> channels;
-
-  /// True when `DAP_HUB_URL` / `DAP_AGENT_NAME` env vars pin the
-  /// connection — env wins over the saved config, so the editor cannot
-  /// change what is in force (docs/dap.md §9.1).
-  final bool envLocked;
-
-  /// Probe outcome: `null` = not probed, `true` = welcomed by the hub,
-  /// `false` = unreachable or rejected.
-  final bool? connected;
-
-  /// A copy of this snapshot with the probe outcome set.
-  DapHubSnapshot withProbe(bool connected) => DapHubSnapshot(
-    supported: supported,
-    url: url,
-    channels: channels,
-    name: name,
-    agentId: agentId,
-    envLocked: envLocked,
-    connected: connected,
-  );
-}
+// One snapshot type shared with the CLI (package `DapHubSnapshot`); the
+// app-side service interface below stays here.
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show DapHubSnapshot;
+export 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show DapHubSnapshot;
 
 /// Read/write access to the DAP hub connection the app shares with the CLI
 /// agents (`~/.dap/config.json`, identity under `~/.dap/keys/fah/`).

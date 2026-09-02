@@ -234,7 +234,7 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
     if (app == null) {
       if (mounted) {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(content: Text(context.l10n.widgetsCatalogNotInstalled)),
+          const SnackBar(content: Text('Widget is not installed yet.')),
         );
       }
       return;

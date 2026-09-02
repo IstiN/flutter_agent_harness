@@ -41,7 +41,6 @@
   "appsLoadError": "Не удалось загрузить приложения: {error}",
   "widgetsCatalogInstallFailed": "Не удалось установить: {error}",
   "widgetsCatalogOffline": "Офлайн — показан последний известный каталог.",
-  "widgetsCatalogNotInstalled": "Виджет ещё не установлен.",
   "widgetsCatalogLoadFailed": "Не удалось загрузить каталог виджетов.\n{error}",
   "@widgetsCatalogLoadFailed": {
     "placeholders": {
