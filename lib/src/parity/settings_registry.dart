@@ -47,6 +47,9 @@ enum SharedSetting {
 
   /// Consent for reading third-party skill roots (Claude/Copilot/Codex).
   skillsAccess,
+
+  /// fa_cube sandbox profiles (declarative fs/shell/network clamps).
+  cubeSandbox,
 }
 
 /// Settings that are currently CLI-only.
@@ -60,6 +63,10 @@ const cliOnlySettings = <SharedSetting>{
   // TTSR rules monitor the raw streaming delta for regex matches and abort
   // mid-turn — the app's stream wrapper does not expose per-delta hooks yet.
   SharedSetting.ttsrRules,
+
+  // Host-process sandboxing primitives + a host shell: the app's mobile
+  // shells are already WASI/memory-confined and web has no shell at all.
+  SharedSetting.cubeSandbox,
 };
 
 /// Settings that are currently app-only.
@@ -125,6 +132,11 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     cliRef: 'skillsAccess',
     appRef: 'SkillsAccessStore',
     description: 'Consent for reading third-party skill roots.',
+  ),
+  SharedSetting.cubeSandbox: _SettingMeta(
+    cliRef: '/cube',
+    appRef: null, // exempted — sandbox profiles are CLI-only (see above).
+    description: 'fa_cube sandbox profiles.',
   ),
 };
 

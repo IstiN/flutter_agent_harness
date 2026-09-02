@@ -16,6 +16,7 @@ import '../exceptions.dart';
 import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
+import '../cube/config/cube_settings.dart';
 import '../providers/provider_common.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
@@ -72,6 +73,7 @@ final class CliConfig {
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
     this.memory,
+    this.cube,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -102,6 +104,8 @@ final class CliConfig {
       memory: map['memory'] == null
           ? null
           : MemoryConfig.fromYaml(map['memory']),
+      // The cube section (default fa_cube sandbox profile); strict too.
+      cube: map['cube'] == null ? null : CubeSettings.fromYaml(map['cube']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       customProviders: switch (map['customProviders']) {
         null => const [],
@@ -246,6 +250,11 @@ final class CliConfig {
   /// layout.
   final MemoryConfig? memory;
 
+  /// Optional `cube:` section — the default fa_cube sandbox profile applied
+  /// at startup when neither `--cube` nor `--cube-config` is passed. Parsed
+  /// strictly; `null` means the section is absent.
+  final CubeSettings? cube;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -268,6 +277,8 @@ final class CliConfig {
     if (mcpConfig != null) buffer.write(mcpConfig.toYaml());
     buffer.write(_providerTimeoutsYaml());
     buffer.write(_skillsYaml());
+    final cubeConfig = cube;
+    if (cubeConfig != null) buffer.write(cubeConfig.toYamlFragment());
     return buffer.toString();
   }
 

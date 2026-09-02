@@ -61,6 +61,9 @@ final class AgentCliConfig {
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
+    this.cubeSpec,
+    this.cubeSource,
+    this.osName,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -73,6 +76,23 @@ final class AgentCliConfig {
   /// is used (ratio 0.7, reserve 50000, keep 80000). Hosts plumb their
   /// `compaction:` yaml section through this field.
   final CompactionSettings? compactionSettings;
+
+  /// Optional fa_cube sandbox spec applied for the whole session (from the
+  /// `--cube`/`--cube-config` flags or the `cube:` config section). The
+  /// execution env wraps it in a [SandboxedExecutionEnv]: filesystem and
+  /// shell operations clamp to the cube's policies, `/cube` swaps it live.
+  /// Null = no cube — the env passes through untouched.
+  final CubeSpec? cubeSpec;
+
+  /// Where [cubeSpec] came from: an explicit manifest path (contains `/`)
+  /// or a cube name. `/cube reload` re-resolves it; `/cube use` overwrites
+  /// it. Null when no cube was requested.
+  final String? cubeSource;
+
+  /// The host OS name (e.g. `linux`, `macos`), supplied by the executable —
+  /// lib/src stays dart:io-free. `/cube` uses it to describe the OS sandbox
+  /// backend. Null (tests, web) reports a generic passthrough instead.
+  final String? osName;
 
   /// Optional override for the OpenRouter OAuth code exchange. Tests inject a
   /// fake here so the `/provider openrouter oauth` flow can run without

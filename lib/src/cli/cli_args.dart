@@ -78,6 +78,8 @@ final class CliArgs extends CliArgsResult {
     this.sessionRoot,
     this.session,
     this.prompt,
+    this.cubeName,
+    this.cubeConfigPath,
     this.positionals = const [],
   }) : super._();
 
@@ -137,6 +139,15 @@ final class CliArgs extends CliArgsResult {
   /// otherwise create a new session with that name. Applies to both the
   /// interactive REPL and headless mode.
   final String? session;
+
+  /// `--cube <name>`: apply the cube sandbox profile
+  /// `<cwd>/.fah/cubes/<name>.yaml` for this run. Wins over the `cube:`
+  /// config section; `--cube-config` beats it.
+  final String? cubeName;
+
+  /// `--cube-config <path>`: apply the cube sandbox profile from an
+  /// explicit manifest path (highest cube precedence).
+  final String? cubeConfigPath;
 
   /// The `-p`/`--prompt` headless prompt, used verbatim (no file
   /// resolution). Mutually exclusive with [positionals].
@@ -204,6 +215,8 @@ const _valueFlags = <String, _ValueFlag>{
   '--cwd': ('--cwd', _setCwd),
   '--session-root': ('--session-root', _setSessionRoot),
   '--session': ('--session', _setSession),
+  '--cube': ('--cube', _setCubeName),
+  '--cube-config': ('--cube-config', _setCubeConfigPath),
   '-p': ('--prompt', _setPrompt),
   '--prompt': ('--prompt', _setPrompt),
 };
@@ -232,6 +245,9 @@ void _setMode(_CliArgValues v, String value) => v.mode = value;
 void _setCwd(_CliArgValues v, String value) => v.cwd = value;
 void _setSessionRoot(_CliArgValues v, String value) => v.sessionRoot = value;
 void _setSession(_CliArgValues v, String value) => v.session = value;
+void _setCubeName(_CliArgValues v, String value) => v.cubeName = value;
+void _setCubeConfigPath(_CliArgValues v, String value) =>
+    v.cubeConfigPath = value;
 void _setPrompt(_CliArgValues v, String value) => v.prompt = value;
 
 /// Accumulates flag values while [parseCliArgs] walks the argument list,
@@ -253,6 +269,8 @@ final class _CliArgValues {
   String? cwd;
   String? sessionRoot;
   String? session;
+  String? cubeName;
+  String? cubeConfigPath;
   String? prompt;
   final positionals = <String>[];
 
@@ -288,6 +306,8 @@ final class _CliArgValues {
       cwd: cwd,
       sessionRoot: sessionRoot,
       session: session,
+      cubeName: cubeName,
+      cubeConfigPath: cubeConfigPath,
       prompt: prompt,
       positionals: positionals,
     );

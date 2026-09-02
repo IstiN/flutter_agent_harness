@@ -415,6 +415,64 @@ prompts:
         expect(yaml, contains('access: denied'));
         expect(yaml, contains('disableShellExecution: true'));
       });
+
+      group('cube section', () {
+        test('absent section parses as null', () {
+          expect(loadCliConfig(tmp.path).cube, isNull);
+        });
+
+        test('round-trips enabled config path', () async {
+          await saveCliConfig(
+            tmp.path,
+            CliConfig(cube: CubeSettings(configPath: '.fah/cubes/dev.yaml')),
+          );
+          final loaded = loadCliConfig(tmp.path);
+          expect(loaded.cube?.enabled, isTrue);
+          expect(loaded.cube?.configPath, '.fah/cubes/dev.yaml');
+          // Full yaml fidelity: emitting again reproduces the section.
+          expect(
+            loaded.toYaml(),
+            contains('cube:\n  config: .fah/cubes/dev.yaml\n'),
+          );
+        });
+
+        test('round-trips disabled without a path', () async {
+          await saveCliConfig(
+            tmp.path,
+            CliConfig(cube: CubeSettings(enabled: false)),
+          );
+          final loaded = loadCliConfig(tmp.path);
+          expect(loaded.cube?.enabled, isFalse);
+          expect(loaded.cube?.configPath, isNull);
+          expect(loaded.toYaml(), contains('cube:\n  enabled: false\n'));
+        });
+
+        test('rejects unknown cube keys', () async {
+          final file = File('${tmp.path}/.fah/config.yaml');
+          file.createSync(recursive: true);
+          file.writeAsStringSync('cube:\n  bogus: 1\n');
+          expect(
+            () => loadCliConfig(tmp.path),
+            throwsA(
+              isA<ConfigException>().having(
+                (e) => e.message,
+                'message',
+                contains('unknown "cube" key'),
+              ),
+            ),
+          );
+        });
+
+        test('rejects a non-boolean enabled', () async {
+          final file = File('${tmp.path}/.fah/config.yaml');
+          file.createSync(recursive: true);
+          file.writeAsStringSync('cube:\n  enabled: yes-please\n');
+          expect(
+            () => loadCliConfig(tmp.path),
+            throwsA(isA<ConfigException>()),
+          );
+        });
+      });
     });
   });
 

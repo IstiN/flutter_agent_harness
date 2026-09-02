@@ -814,6 +814,31 @@ Future<void> _runApp(List<String> args) async {
   final model = _buildModel(effective);
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
+  // The execution env shared by the CLI config (tools, session storage)
+  // and the presence store (live-session heartbeats) — also the resolver
+  // target for the initial cube lookup.
+  final cliEnv = LocalExecutionEnv(cwd: cwd);
+
+  // Initial cube (fa_cube Phase 1): --cube-config path > --cube name > the
+  // saved `cube:` config section. A broken manifest is a hard error — a
+  // requested cube must never fail open into an unconfined run.
+  String? cubeSource;
+  CubeSpec? cubeSpec;
+  try {
+    cubeSource =
+        parsed.cubeConfigPath ??
+        parsed.cubeName ??
+        ((saved.cube?.enabled ?? false) ? saved.cube!.configPath : null);
+    final isPath = cubeSource?.contains('/') ?? false;
+    cubeSpec = await CubeResolver.resolve(
+      env: cliEnv,
+      path: isPath ? cubeSource : null,
+      name: isPath ? null : cubeSource,
+      homeDir: home,
+    );
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
 
   // Remote provider catalog (fa1.dev/models-catalog.json): default model
   // ids and per-provider context-window tables for endpoints that don't
@@ -1092,9 +1117,6 @@ Future<void> _runApp(List<String> args) async {
   // startup dialog and `/skills access` change it — persisted via
   // persistConfig.
   var skillsAccess = saved.skillsAccess;
-  // The execution env shared by the CLI config (tools, session storage)
-  // and the presence store (live-session heartbeats).
-  late final LocalExecutionEnv cliEnv;
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui:
@@ -1107,7 +1129,13 @@ Future<void> _runApp(List<String> args) async {
       apiKey: apiKey,
       providerKind: provider,
       // Shared by the env config and the presence store below.
-      env: (cliEnv = LocalExecutionEnv(cwd: cwd)),
+      env: cliEnv,
+      // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the
+      // cube's policies; `/cube` inspects and switches it live. The OS
+      // name feeds the backend description (lib/src stays dart:io-free).
+      cubeSpec: cubeSpec,
+      cubeSource: cubeSource,
+      osName: Platform.operatingSystem,
       // The banner names the key env var in play (name only, never the
       // value); the catalog maps the effective provider to its var names.
       // A name counts as set when the environment OR the secure store has

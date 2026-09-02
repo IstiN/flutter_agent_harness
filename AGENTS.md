@@ -358,6 +358,22 @@ factual: paths, commands, invariants — no essays.
   `AgentCliConfig.modelRolesResolver` is mutable) and persists via
   `onModelsConfigChanged` (bin/fah.dart's persistConfig reads the live
   resolver config).
+- `lib/src/cube/` — fa_cube sandbox profiles (issue #8): strict `CubeSpec`
+  YAML (`.fah/cubes/<name>.yaml`, apiVersion fa/v1 kind Cube) with
+  tool/network/fs/env/resource/cache policies (deny-wins, empty allowlist =
+  deny-all, lexical path normalization as traversal guard), `CubeResolver`
+  (path > name lookup), Dart-layer enforcement (`SandboxedExecutionEnv`
+  decorator: `CubeFsGuard` gates the agent's own read/edit/write tools,
+  `CubePolicyEngine` gates bash incl. pipes/`$(...)` subshells, exit 127
+  denials with per-exec reason), content-addressed `CubeCacheManager` under
+  `.fah/cube-cache/<md5>/` (manifest + ttl); OS backends generate
+  profile/argv only in Phase 1 (macOS sandbox-exec SBPL, Linux unshare argv
+  with `--net` iff `!allowsAnyNetwork`) + NoOp runtime. CLI:
+  `--cube`/`--cube-config`, `cube:` section in `~/.fah/config.yaml`
+  (enabled/config), `/cube [use <name>|off|reload|list|cache status|cache
+  clear]` (`lib/src/cli/agent_cli_cube.dart`); cache restore at run start +
+  save at end. `SharedSetting.cubeSandbox` is cli-only (host process
+  sandboxing; app shells already confined).
 - `lib/src/prompts/prompt_overrides.dart` — `prompts:` config section maps
   prompt names to file path or inline text; strict validation; flags
   `--system-prompt(-file)` > config > built-in.

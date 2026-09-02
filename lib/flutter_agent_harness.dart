@@ -38,6 +38,7 @@ export 'src/compaction/branch_summarization.dart';
 export 'src/compaction/compaction.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/context.dart';
+export 'src/cube/cube.dart';
 export 'src/env/execution_env.dart';
 export 'src/a2a/a2a_client.dart';
 export 'src/a2a/a2a_server.dart';
