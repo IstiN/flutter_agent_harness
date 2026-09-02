@@ -96,14 +96,20 @@ final class LinuxUnshareBackend
   /// The bash preamble inlined before the command inside the wrapped script.
   ///
   /// - `ro` mounts are re-bound read-only (`mount --bind` + `remount,ro`).
-  /// - `memoryBytes` becomes `ulimit -v` (KiB, rounded up).
-  /// - the wall-clock timeout doubles as a CPU-seconds ceiling
-  ///   (`ulimit -t`).
+  /// - `memoryBytes` becomes `ulimit -v` (KiB, rounded up); a computed
+  ///   KiB value of 0 or less is skipped — `ulimit -v 0` means unlimited,
+  ///   which would invert the intent.
+  /// - `timeout` becomes `ulimit -t`, which caps the CPU-seconds consumed
+  ///   by the process tree — NOT wall-clock; the harness separately
+  ///   applies `spec.resources.timeout` as the wall-clock clamp, and both
+  ///   apply.
   ///
-  // ponytail: cpu "50%" has no ulimit equivalent and is ignored here —
-  // cgroup/cpu.rate enforcement is a follow-up; deny mounts likewise cannot
-  // be unmounted by an unprivileged user, so on Linux they stay covered by
-  // the Dart fs guard only (SBPL covers them on macOS).
+  // ponytail: cpu "50%" is accepted and round-tripped in the spec but
+  // enforced by NO backend today (cgroup v2 cpu.max is the follow-up;
+  // SBPL has no cpu primitive); `disk` is only the cache-prune bound,
+  // never a run quota. Deny mounts likewise cannot be unmounted by an
+  // unprivileged user, so on Linux they stay covered by the Dart fs
+  // guard only (SBPL covers them on macOS).
   String _preamble(CubeSpec spec) {
     final parts = <String>[
       for (final mount in spec.filesystem.mounts)
@@ -113,7 +119,9 @@ final class LinuxUnshareBackend
     ];
     final memory = spec.resources.memoryBytes;
     if (memory != null) {
-      parts.add('ulimit -v ${(memory + 1023) ~/ 1024};');
+      final kib = (memory + 1023) ~/ 1024;
+      // `ulimit -v 0` means unlimited — a zero cap inverts the intent.
+      if (kib > 0) parts.add('ulimit -v $kib;');
     }
     final timeout = spec.resources.timeout;
     if (timeout != null) {

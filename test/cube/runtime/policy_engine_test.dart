@@ -165,5 +165,84 @@ void main() {
     test('non-fetching commands skip the network check', () {
       expect(CubePolicyEngine(spec()).checkCommand('git push').allowed, isTrue);
     });
+
+    test('a bare-host operand is checked like a URL', () {
+      final decision = CubePolicyEngine(
+        spec(allow: {'git', 'curl'}),
+      ).checkCommand('curl example.com/x');
+      expect(decision.allowed, isFalse);
+      expect(decision.reason, contains("network access to 'example.com:80'"));
+    });
+
+    test('a bare-host operand to an allowed host is permitted', () {
+      final decision = CubePolicyEngine(
+        spec(
+          allow: {'git', 'curl', 'wget'},
+          networkAllow: [CubeNetworkRule(host: 'api.github.com')],
+        ),
+      ).checkCommand('curl api.github.com/repos');
+      expect(decision.allowed, isTrue);
+    });
+
+    test('a bare-host operand with a port is checked with that port', () {
+      final decision = CubePolicyEngine(
+        spec(allow: {'git', 'wget'}),
+      ).checkCommand('wget example.com:8080/x');
+      expect(decision.allowed, isFalse);
+      expect(decision.reason, contains("network access to 'example.com:8080'"));
+    });
+
+    test('userinfo is stripped; the host behind the last @ is checked', () {
+      final decision = CubePolicyEngine(
+        spec(allow: {'git', 'curl'}),
+      ).checkCommand('curl https://user:pass@evil.com/x');
+      expect(decision.allowed, isFalse);
+      expect(decision.reason, contains("network access to 'evil.com:443'"));
+    });
+
+    test('userinfo cannot smuggle an allowed host name', () {
+      final decision = CubePolicyEngine(
+        spec(
+          allow: {'git', 'curl'},
+          networkAllow: [CubeNetworkRule(host: 'api.github.com')],
+        ),
+      ).checkCommand('curl https://api.github.com@evil.com/');
+      expect(decision.allowed, isFalse);
+      expect(decision.reason, contains("network access to 'evil.com:443'"));
+    });
+
+    test('userinfo with an explicit port keeps the port', () {
+      final decision = CubePolicyEngine(
+        spec(
+          allow: {'git', 'curl'},
+          networkAllow: [
+            CubeNetworkRule(host: 'api.github.com', ports: {443}),
+          ],
+        ),
+      ).checkCommand('curl https://user:pass@api.github.com:8443/x');
+      expect(decision.allowed, isFalse);
+      expect(
+        decision.reason,
+        contains("network access to 'api.github.com:8443'"),
+      );
+    });
+
+    test('a flag value is not treated as a bare host', () {
+      final decision = CubePolicyEngine(
+        spec(
+          allow: {'git', 'curl'},
+          networkAllow: [CubeNetworkRule(host: 'api.github.com')],
+        ),
+      ).checkCommand('curl -H Host:x https://api.github.com/');
+      expect(decision.allowed, isTrue);
+    });
+
+    test('local paths are not treated as bare hosts', () {
+      // Deny-all network: any operand treated as a host would deny.
+      final decision = CubePolicyEngine(
+        spec(allow: {'git', 'curl'}),
+      ).checkCommand('curl ./x /etc/hosts');
+      expect(decision.allowed, isTrue);
+    });
   });
 }

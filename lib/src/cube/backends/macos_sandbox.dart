@@ -74,6 +74,12 @@ final class MacOsSandboxBackend
   /// — a catch-all `(deny file-read*)` aborts exec — and per-path rules
   /// always use `file-read*`/`file-write*` with `subpath` (the
   /// `file-read-data`/`literal` single-file forms do not hold).
+  ///
+  /// Resource honesty: SBPL has no cpu or memory primitive — `cpu` is
+  /// accepted and round-tripped in the spec but enforced by no backend
+  /// today, `memory` ceilings are Linux `ulimit -v` territory and the
+  /// timeout is a harness wall-clock clamp, and `disk` is only ever the
+  /// cache-prune bound, not a quota.
   String buildSandboxProfile(CubeSpec spec, {String? workspaceRoot}) {
     final workspace = workspaceRoot ?? spec.filesystem.workspace;
     final buffer = StringBuffer('(version 1)\n(allow default)\n');

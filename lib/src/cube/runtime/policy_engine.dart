@@ -33,7 +33,9 @@ final class CubePolicyDecision {
 /// newlines), extracts `$( ... )` and backtick subshell segments, strips
 /// leading `VAR=value` assignments, and checks every resulting command
 /// against [CubeSpec.tools]. Commands that invoke `curl` or `wget` get an
-/// additional [CubeSpec.network] check on the URLs they reference.
+/// additional [CubeSpec.network] check on every operand naming a
+/// destination: `scheme://[userinfo@]host[:port]` URLs and bare-host
+/// operands (`example.com`, `example.com:8080/x`).
 ///
 /// Global destruction (`rm -rf /`) is deliberately not special-cased: the
 /// tool allowlist is the mechanism — a cube that does not list `rm` never
@@ -83,20 +85,18 @@ final class CubePolicyEngine {
     );
   }
 
-  /// Checks the network policy when the command fetches URLs via curl/wget.
+  /// Checks the network policy when the command fetches via curl/wget:
+  /// every operand naming a destination (URL or bare host) must be
+  /// permitted.
   CubePolicyDecision _checkNetworkPolicy(List<String> words) {
     final command = words.first;
     if (command != 'curl' && command != 'wget') {
       return const CubePolicyDecision.allowed();
     }
     for (final word in words.skip(1)) {
-      final match = _urlPattern.firstMatch(word);
-      if (match == null) continue;
-      final host = match.group(2)!;
-      final explicitPort = match.group(3);
-      final port = explicitPort != null
-          ? int.parse(explicitPort)
-          : (match.group(1) == 'https' ? 443 : 80);
+      final target = _networkTarget(word);
+      if (target == null) continue;
+      final (host, port) = target;
       if (!spec.network.permits(host, port)) {
         return CubePolicyDecision.denied(
           "network access to '$host:$port' denied by cube '${spec.name}'",
@@ -107,13 +107,57 @@ final class CubePolicyEngine {
   }
 }
 
-/// URL form recognized for network checks: `scheme://host[:port]/...`.
+/// URL form recognized for network checks:
+/// `scheme://[userinfo@]host[:port]/...`.
 ///
-// ponytail: bare-host operands (`curl example.com/x`) are not URLs and are
-// not checked; the network backend (unshare --net / SBPL) is the real gate.
+/// The userinfo prefix — everything up to the LAST `@` before the host
+/// (`user`, `user:pass`, even a smuggled `allowed.com`) — is matched and
+/// discarded, so `https://user:pass@evil.com` is checked against
+/// `evil.com`, never against the userinfo.
 final RegExp _urlPattern = RegExp(
-  r'^([A-Za-z][A-Za-z0-9+.-]*)://([^/:?#@]+)(?::(\d+))?',
+  r'^([A-Za-z][A-Za-z0-9+.-]*)://(?:[^/?#]*@)?([^/:?#@]+)(?::(\d+))?',
 );
+
+/// Bare-host operand form (`example.com`, `example.com:8080/x`): curl and
+/// wget treat a scheme-less dotted operand as an `http://` URL of that
+/// host. Only applied to operands [_isHostOperand] accepts.
+final RegExp _bareHostPattern = RegExp(r'^([A-Za-z0-9.-]+)(?::(\d+))?(/.*)?$');
+
+/// Extracts the `(host, port)` a curl/wget [operand] would contact, or
+/// `null` when the operand names no destination.
+(String, int)? _networkTarget(String operand) {
+  final url = _urlPattern.firstMatch(operand);
+  if (url != null) {
+    final explicitPort = url.group(3);
+    return (
+      url.group(2)!,
+      explicitPort != null
+          ? int.parse(explicitPort)
+          : (url.group(1) == 'https' ? 443 : 80),
+    );
+  }
+  if (!_isHostOperand(operand)) return null;
+  final bare = _bareHostPattern.firstMatch(operand);
+  if (bare == null) return null;
+  final explicitPort = bare.group(2);
+  return (bare.group(1)!, explicitPort != null ? int.parse(explicitPort) : 80);
+}
+
+/// Whether [operand] is a bare-host candidate: not a flag, dotted, and not
+/// an obvious local path (`/abs`, `./rel`, `../rel`, `~/…`).
+///
+// ponytail: lexical heuristic, not a URL parser — a dotted relative name
+// is indistinguishable from a single-label host and `-o out.json` gets
+// `out.json` checked (fail-closed); the kernel backend (unshare --net /
+// SBPL) is the real gate.
+bool _isHostOperand(String operand) {
+  if (operand.startsWith('-')) return false;
+  if (!operand.contains('.')) return false;
+  return !(operand.startsWith('/') ||
+      operand.startsWith('./') ||
+      operand.startsWith('../') ||
+      operand.startsWith('~'));
+}
 
 /// Leading `VAR=value` assignment prefix stripped before command matching.
 final RegExp _assignmentPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*=');
