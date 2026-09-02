@@ -204,6 +204,7 @@ class AgentCli {
       config.cubeSpec,
       homeDir: config.homeDir,
       workspaceRoot: _env.cwd,
+      os: config.osName,
     );
     _cubeSource = config.cubeSource;
     final decoratedEnv = SessionVarsExecutionEnv(_cubeEnv, _sessionEnvVars);
@@ -1672,6 +1673,10 @@ class AgentCli {
   /// non-interactive and route [CliIO.writeln] diagnostics to stderr so
   /// [CliIO.write] (the assistant text) is the only stdout content.
   Future<int> runHeadless(String prompt) async {
+    // Cube cache restore, mirroring [run]'s boot (the headless run sees the
+    // same cached trees a REPL session would).
+    final bootSpec = _cubeEnv.activeSpec;
+    if (bootSpec != null) await _cubeRestoreQuietly(bootSpec);
     _session = await _initializeSession();
     // Warm the endpoint metadata (model list, dial features, reported
     // limits) BEFORE the first turn; failures are silent — the catalog
@@ -1715,6 +1720,15 @@ class AgentCli {
       io.writeln(_errorLine('$error'));
       return 1;
     } finally {
+      // Cube cache save, mirroring [run]'s exit path (best-effort).
+      final exitSpec = _cubeEnv.activeSpec;
+      if (exitSpec != null) {
+        try {
+          await CubeCacheManager(_cubeEnv, exitSpec).save();
+        } on Object catch (error) {
+          io.writeln('cube: cache save failed: $error');
+        }
+      }
       await interruptSub.cancel();
       await taskSub.cancel();
     }

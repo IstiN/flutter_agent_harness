@@ -1,3 +1,4 @@
+// ignore_for_file: prefer_initializing_formals
 /// Shell-level policy enforcement for cubes: a [Shell] decorator that
 /// refuses non-allowlisted commands and clamps execution to the cube's
 /// resource limits.
@@ -7,13 +8,24 @@
 /// note, exactly like a shell reporting "command not found". The inner
 /// shell is never reached for a denied command.
 ///
+/// In `backend: kernel` mode with an enforcing backend for the host
+/// platform, an allowed command is additionally wrapped in the OS sandbox
+/// primitive (sandbox-exec / unshare) and the backend's profile artifact is
+/// staged to `<cwd>/.fah/cube-profiles/<cacheKey>.sb` once per spec before
+/// the first wrapped exec. A wrapper that never starts (binary missing from
+/// PATH) or refuses the sandbox (EPERM on user namespaces, a rejected SBPL
+/// profile) surfaces as a clean `fa_cube[<name>]:` spawn error, never a raw
+/// crash.
+///
 /// The active spec is swappable at runtime ([updateSpec]/[clearSpec]), so a
 /// long-lived environment can change cubes (or leave the sandbox entirely)
 /// mid-session.
 library;
 
+import '../backends/cube_backend.dart';
 import '../config/cube_spec.dart';
 import '../../env/execution_env.dart';
+import 'cache_manager.dart';
 import 'policy_engine.dart';
 
 /// A [Shell] whose commands are gated by a cube's policies.
@@ -52,13 +64,23 @@ final class SandboxedShell implements Shell {
   /// Creates a sandbox over [inner], enforcing [spec]'s policies; a null
   /// [spec] is passthrough — every command forwards untouched until
   /// [updateSpec].
-  SandboxedShell(this._inner, CubeSpec? spec) {
+  ///
+  /// [fs] and [os] enable `backend: kernel` mode: [fs] stages the backend's
+  /// profile artifact and [os] names the host platform (`macos` or
+  /// `linux`). Either missing — or a backend that does not enforce on the
+  /// given platform — keeps the shell in pure policy mode.
+  SandboxedShell(this._inner, CubeSpec? spec, {FileSystem? fs, String? os})
+    : _fs = fs,
+      _os = os {
     if (spec != null) updateSpec(spec);
   }
 
   final Shell _inner;
+  final FileSystem? _fs;
+  final String? _os;
   CubeSpec? _spec;
   late CubePolicyEngine _engine;
+  _KernelRun? _kernel;
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
@@ -77,17 +99,205 @@ final class SandboxedShell implements Shell {
         ),
       );
     }
-    return _inner.exec(command, options: sandboxExecOptions(spec, options));
+    final kernel = _kernel;
+    if (kernel == null) {
+      return _inner.exec(command, options: sandboxExecOptions(spec, options));
+    }
+    final wrapped = await kernel.wrap(command);
+    final result = await _inner.exec(
+      wrapped,
+      options: sandboxExecOptions(spec, options),
+    );
+    return _mapKernelFailure(wrapped, result);
   }
+
+  /// The command a background job should start for [command]: unchanged in
+  /// policy mode, wrapped in the kernel backend in kernel mode (staging the
+  /// profile on first use). The policy check stays with the caller.
+  Future<String> prepare(String command) =>
+      _kernel?.wrap(command) ?? Future.value(command);
 
   /// Swaps the enforced spec live; the next [exec] uses the new policies.
   void updateSpec(CubeSpec spec) {
     _spec = spec;
     _engine = CubePolicyEngine(spec);
+    _kernel = _kernelRunFor(spec);
   }
 
   /// Leaves sandbox mode: every command is forwarded untouched.
   void clearSpec() {
     _spec = null;
+    _kernel = null;
+  }
+
+  /// Binds the kernel backend for a `backend: kernel` spec, or `null` when
+  /// the run stays in pure policy mode: no filesystem to stage with, no
+  /// platform named, no backend for the platform, or the backend not
+  /// enforcing there (Windows/web) — a kernel spec degrades to policy mode
+  /// rather than failing the run.
+  _KernelRun? _kernelRunFor(CubeSpec spec) {
+    final fs = _fs;
+    final os = _os;
+    if (spec.backend != CubeBackendMode.kernel || fs == null || os == null) {
+      return null;
+    }
+    final backend = cubeBackendForPlatform(
+      os,
+      spec: spec,
+      workspaceRoot: fs.cwd,
+      tmpdir: '${fs.cwd}/.fah/tmp',
+      envVars: spec.env.apply(const {}),
+    );
+    if (!backend.enforces) return null;
+    final profilePath =
+        '${fs.cwd}/.fah/cube-profiles/${cubeSpecCacheKey(spec)}.sb';
+    final content = switch (backend) {
+      final CubeProfileStaging staging => staging.buildProfile(
+        spec,
+        workspaceRoot: fs.cwd,
+      ),
+      _ => backend.describe(),
+    };
+    return _KernelRun(
+      backend: backend,
+      fs: fs,
+      profilePath: profilePath,
+      profileContent: content,
+    );
+  }
+
+  /// One-shot capability probe for `backend: kernel` background jobs: a
+  /// job started through [prepare] only reports a wrapper failure inside
+  /// its job log, so [startupFailure] runs a wrapped no-op command once
+  /// per spec first and yields the clean failure note up front (`null` =
+  /// the wrapper works). Foreground execs skip this — [exec] maps the
+  /// failure from the result directly.
+  Future<String?> startupFailure() async {
+    final kernel = _kernel;
+    final spec = _spec;
+    if (kernel == null || spec == null) return null;
+    if (kernel.probed) return kernel.failureNote;
+    kernel.probed = true;
+    await kernel.ensureStaged();
+    final wrapped = kernel.backend.wrapCommand(
+      'true',
+      profilePath: kernel.profilePath,
+    );
+    final failure = _wrapperFailureNote(
+      wrapped,
+      await _inner.exec(wrapped, options: sandboxExecOptions(spec, null)),
+    );
+    if (failure == null) return null;
+    return kernel.failureNote =
+        'fa_cube[${spec.name}]: kernel backend ${failure.note}';
+  }
+
+  /// Maps kernel-wrapper startup failures to clean spawn errors (the
+  /// failure shapes live in [_wrapperFailureNote]).
+  Result<ShellExecResult, ExecutionError> _mapKernelFailure(
+    String wrapped,
+    Result<ShellExecResult, ExecutionError> result,
+  ) {
+    final failure = _wrapperFailureNote(wrapped, result);
+    if (failure == null) return result;
+    return _kernelErr(failure.note, cause: failure.cause);
+  }
+
+  /// The clean `fa_cube[<name>]: kernel backend <note>` spawn error.
+  Err<ShellExecResult, ExecutionError> _kernelErr(
+    String note, {
+    Object? cause,
+  }) {
+    return Err(
+      ExecutionError(
+        ExecutionErrorCode.spawnError,
+        'fa_cube[${_spec?.name ?? 'cube'}]: kernel backend $note',
+        cause: cause,
+      ),
+    );
+  }
+}
+
+/// Classifies a kernel-wrapper startup failure for the wrapped command
+/// [wrapped] (the wrapper is its first word: `sandbox-exec`, `unshare`).
+/// Two failure shapes carry a note: the binary missing from PATH (a spawn
+/// [ExecutionError] naming it, or exit 127 with a `not found` stderr), and
+/// the binary spawning but refusing the sandbox — a non-zero exit whose
+/// stderr line starts with `<wrapper>: ` (unshare EPERM without user
+/// namespaces, a rejected SBPL profile); the payload never ran in either.
+/// A payload failure keeps its own output: the wrapper never prefixes a
+/// payload's stderr. Returns the note and its cause, or `null`.
+({String note, Object? cause})? _wrapperFailureNote(
+  String wrapped,
+  Result<ShellExecResult, ExecutionError> result,
+) {
+  final wrapper = wrapped.split(' ').first;
+  final missing = switch (result) {
+    Err(error: final error) =>
+      error.code == ExecutionErrorCode.spawnError &&
+          error.message.contains(wrapper),
+    Ok(value: final value) =>
+      value.exitCode == 127 &&
+          value.stderr.contains(wrapper) &&
+          value.stderr.contains('not found'),
+  };
+  if (missing) {
+    return (
+      note: 'requires $wrapper on PATH',
+      cause: result.errorOrNull?.cause,
+    );
+  }
+  if (result case Ok(:final value) when value.exitCode != 0) {
+    final complaint = value.stderr
+        .split('\n')
+        .firstWhere((line) => line.startsWith('$wrapper: '), orElse: () => '');
+    if (complaint.isNotEmpty) {
+      return (
+        note:
+            '$wrapper failed: '
+            '${complaint.substring('$wrapper: '.length)}',
+        cause: value.stderr,
+      );
+    }
+  }
+  return null;
+}
+
+/// The kernel-mode binding of one spec: the enforcing backend, its staged
+/// profile path and the one-shot staging state.
+final class _KernelRun {
+  _KernelRun({
+    required this.backend,
+    required this.fs,
+    required this.profilePath,
+    required this.profileContent,
+  });
+
+  final CubeSandboxBackend backend;
+  final FileSystem fs;
+  final String profilePath;
+  final String profileContent;
+  bool _staged = false;
+
+  /// Set by the [SandboxedShell.startupFailure] probe: the clean wrapper
+  /// failure note, or `null` when the probe never ran or succeeded.
+  bool probed = false;
+  String? failureNote;
+
+  /// Stages the profile once per spec (reused when the file already
+  /// exists). A concurrent first exec may write twice with identical
+  /// bytes — idempotent by content.
+  Future<void> ensureStaged() async {
+    if (_staged) return;
+    _staged = true;
+    if ((await fs.exists(profilePath)).valueOrNull != true) {
+      await fs.writeFile(profilePath, profileContent);
+    }
+  }
+
+  /// Stages the profile, then returns [command] wrapped for the backend.
+  Future<String> wrap(String command) async {
+    await ensureStaged();
+    return backend.wrapCommand(command, profilePath: profilePath);
   }
 }

@@ -126,6 +126,7 @@ void main() {
       // Cube sandbox (fa_cube).
       'cube:',
       '/cube',
+      'cube sandbox',
       '.fah/cubes',
       '.fah/rules.yaml',
       // Tools.

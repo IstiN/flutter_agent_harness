@@ -6,13 +6,17 @@ class _RecordingShell implements Shell, BackgroundShell {
   final commands = <String>[];
   final jobs = <String>[];
 
+  Result<ShellExecResult, ExecutionError> execResult = const Ok(
+    ShellExecResult(stdout: 'out', stderr: '', exitCode: 0),
+  );
+
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
     String command, {
     ShellExecOptions? options,
   }) async {
     commands.add(command);
-    return Ok(const ShellExecResult(stdout: 'out', stderr: '', exitCode: 0));
+    return execResult;
   }
 
   @override
@@ -93,6 +97,63 @@ void main() {
       );
       await env.startShellJob('git log', id: 'j1', logPath: '/tmp/j1.log');
       expect(inner.jobs, ['git log']);
+    });
+
+    test('kernel mode wraps background jobs and stages the profile', () async {
+      final inner = _RecordingShell();
+      final env = SandboxedExecutionEnv(
+        MemoryExecutionEnv(cwd: '/work', shell: inner),
+        CubeSpec(
+          name: 'test-cube',
+          backend: CubeBackendMode.kernel,
+          tools: const CubeToolPolicy(allow: {'git'}),
+          filesystem: const CubeFsPolicy(workspace: '/work'),
+        ),
+        os: 'macos',
+      );
+      await env.startShellJob('git log', id: 'j1', logPath: '/tmp/j1.log');
+      final job = inner.jobs.single;
+      expect(job, contains('sandbox-exec'));
+      expect(job, endsWith("'git log'"));
+      // The SBPL profile is staged on the delegate filesystem.
+      final profile = await env.readTextFile(
+        '/work/.fah/cube-profiles/${cubeSpecCacheKey(env.activeSpec!)}.sb',
+      );
+      expect(profile.getOrThrow(), startsWith('(version 1)'));
+    });
+
+    test('a job is denied cleanly when the kernel wrapper is broken', () async {
+      final inner = _RecordingShell()
+        ..execResult = const Ok(
+          ShellExecResult(
+            stdout: '',
+            stderr: 'unshare: unshare failed: Operation not permitted\n',
+            exitCode: 1,
+          ),
+        );
+      final env = SandboxedExecutionEnv(
+        MemoryExecutionEnv(cwd: '/work', shell: inner),
+        CubeSpec(
+          name: 'test-cube',
+          backend: CubeBackendMode.kernel,
+          tools: const CubeToolPolicy(allow: {'git'}),
+          filesystem: const CubeFsPolicy(workspace: '/work'),
+        ),
+        os: 'linux',
+      );
+      final result = await env.startShellJob(
+        'git log',
+        id: 'j1',
+        logPath: '/tmp/j1.log',
+      );
+      expect(result.isErr, isTrue);
+      expect(result.errorOrNull!.code, ExecutionErrorCode.spawnError);
+      expect(
+        result.errorOrNull!.message,
+        'fa_cube[test-cube]: kernel backend unshare failed: '
+        'unshare failed: Operation not permitted',
+      );
+      expect(inner.jobs, isEmpty);
     });
 
     test('backgroundJobsSupported delegates to the wrapped shell', () {

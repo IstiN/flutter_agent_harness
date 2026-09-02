@@ -31,13 +31,20 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   /// [homeDir] and [workspaceRoot] forward to [CubeFsGuard] (the CLI passes
   /// the real process cwd as [workspaceRoot]; the cube's `/workspace` is
   /// realized as the env cwd, not a literal directory).
+  ///
+  /// [os] names the host platform for `backend: kernel` specs (the CLI
+  /// passes `Platform.operatingSystem`; `lib/src` itself stays pure Dart).
+  /// A null [os] — or a platform without an enforcing backend — keeps
+  /// kernel-mode cubes in pure policy mode.
   SandboxedExecutionEnv(
     this._delegate,
     CubeSpec? spec, {
     String? homeDir,
     String? workspaceRoot,
+    String? os,
   }) : _homeDir = homeDir,
-       _workspaceRoot = workspaceRoot {
+       _workspaceRoot = workspaceRoot,
+       _os = os {
     if (spec == null) {
       // Passthrough from the start: the shell exists but enforces nothing.
       _shell = SandboxedShell(_delegate, null);
@@ -46,9 +53,10 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
     }
   }
 
-  final ExecutionEnv _delegate;
   final String? _homeDir;
+  final ExecutionEnv _delegate;
   final String? _workspaceRoot;
+  final String? _os;
 
   CubeFsGuard? _guard;
   late SandboxedShell _shell;
@@ -126,8 +134,16 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
         ),
       );
     }
+    // backend: kernel wraps background jobs exactly like foreground execs —
+    // probe the wrapper up front so a broken sandbox (missing binary, EPERM
+    // refusal) denies the job with a clean `fa_cube[<name>]:` note instead
+    // of surfacing the raw failure inside the job log.
+    final wrapperFailure = await _shell.startupFailure();
+    if (wrapperFailure != null) {
+      return Err(ExecutionError(ExecutionErrorCode.spawnError, wrapperFailure));
+    }
     return bg.startShellJob(
-      command,
+      await _shell.prepare(command),
       id: id,
       logPath: logPath,
       options: sandboxExecOptions(spec, options),
@@ -144,7 +160,7 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
       homeDir: _homeDir,
       workspaceRoot: _workspaceRoot,
     );
-    _shell = SandboxedShell(_delegate, spec);
+    _shell = SandboxedShell(_delegate, spec, fs: _delegate, os: _os);
     _engine = CubePolicyEngine(spec);
   }
 

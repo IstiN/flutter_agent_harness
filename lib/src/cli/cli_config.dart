@@ -407,6 +407,43 @@ MemoryConfig? loadProjectMemoryConfig(String projectDir) {
   }
 }
 
+/// Loads the PROJECT-level `cube:` section from
+/// `<projectDir>/.fah/config.yaml` — the git-backed sandbox default
+/// travels with the repo. Project wins over the user-level `cube:`
+/// section. Null when the file or the section is absent/unreadable; a
+/// present-but-invalid section throws [ConfigException] (strict, like the
+/// user config).
+CubeSettings? loadProjectCubeSettings(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['cube'];
+    return node == null ? null : CubeSettings.fromYaml(node);
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// The startup cube source (fa_cube): explicit flags win, then the project
+/// `cube:` section, then the user `cube:` section — each config section
+/// applies only when enabled. Null = start unsandboxed.
+String? resolveStartupCubeSource({
+  String? flagConfigPath,
+  String? flagName,
+  CubeSettings? project,
+  CubeSettings? user,
+}) {
+  if (flagConfigPath != null) return flagConfigPath;
+  if (flagName != null) return flagName;
+  if (project != null && project.enabled) return project.configPath;
+  if (user != null && user.enabled) return user.configPath;
+  return null;
+}
+
 /// Saves [CliConfig] to `~/.fah/config.yaml`.
 Future<void> saveCliConfig(String homeDir, CliConfig config) async {
   final dir = Directory('$homeDir/.fah');

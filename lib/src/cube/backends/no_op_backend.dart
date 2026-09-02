@@ -11,7 +11,10 @@ final class NoOpCubeBackend implements CubeSandboxBackend {
   const NoOpCubeBackend();
 
   @override
-  String wrapCommand(String command) => command;
+  bool get enforces => false;
+
+  @override
+  String wrapCommand(String command, {required String profilePath}) => command;
 
   @override
   String describe() =>

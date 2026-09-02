@@ -17,6 +17,15 @@ import 'package:crypto/crypto.dart';
 import '../config/cube_spec.dart';
 import '../../env/execution_env.dart';
 
+/// The content-addressed spec key: 10 hex chars of the md5 over the spec's
+/// [CubeSpec.toCanonicalMap] JSON. Shared by the cache root
+/// (`cube-cache/<key>`) and the kernel profile staging path
+/// (`cube-profiles/<key>.sb`).
+String cubeSpecCacheKey(CubeSpec spec) => md5
+    .convert(utf8.encode(jsonEncode(spec.toCanonicalMap())))
+    .toString()
+    .substring(0, 10);
+
 /// Saves, restores and clears a cube's cache directories.
 final class CubeCacheManager {
   /// Creates a manager operating on [env] under the cache policy of [spec].
@@ -27,12 +36,8 @@ final class CubeCacheManager {
   /// The cube spec whose cache (and workspace, for path mapping) applies.
   final CubeSpec spec;
 
-  /// The content-addressed cache key: 10 hex chars of the md5 over the
-  /// spec's [CubeSpec.toCanonicalMap] JSON.
-  String get cacheKey => _key ??= md5
-      .convert(utf8.encode(jsonEncode(spec.toCanonicalMap())))
-      .toString()
-      .substring(0, 10);
+  /// The content-addressed cache key ([cubeSpecCacheKey] of the spec).
+  String get cacheKey => _key ??= cubeSpecCacheKey(spec);
 
   String? _key;
 

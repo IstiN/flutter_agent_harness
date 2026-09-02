@@ -33,6 +33,7 @@ metadata:
       expect(spec.env.isEmpty, isTrue);
       expect(spec.resources.memoryBytes, isNull);
       expect(spec.cache.enabled, isFalse);
+      expect(spec.backend, CubeBackendMode.policy);
     });
 
     test('parses a full document', () {
@@ -202,6 +203,34 @@ extra: true
         ),
       );
     });
+
+    test('backend: kernel parses to the kernel mode', () {
+      final spec = parse('''
+apiVersion: fa/v1
+kind: Cube
+metadata: {name: web-scraper}
+spec: {backend: kernel}
+''');
+      expect(spec.backend, CubeBackendMode.kernel);
+    });
+
+    test('an unknown backend value is rejected', () {
+      expect(
+        () => parse('''
+apiVersion: fa/v1
+kind: Cube
+metadata: {name: web-scraper}
+spec: {backend: bubblewrap}
+'''),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('spec.backend: must be "policy" or "kernel"'),
+          ),
+        ),
+      );
+    });
   });
 
   group('CubeSpec.toCanonicalMap', () {
@@ -268,6 +297,18 @@ spec:
       expect(resources['timeout'], 90);
       expect(resources.containsKey('cpu'), isFalse);
       expect(resources.containsKey('memoryBytes'), isFalse);
+    });
+
+    test('canonical map includes the backend mode', () {
+      final policyMap = parse(
+        'apiVersion: fa/v1\nkind: Cube\nmetadata: {name: a}',
+      ).toCanonicalMap();
+      expect((policyMap['spec'] as Map)['backend'], 'policy');
+      final kernelMap = parse(
+        'apiVersion: fa/v1\nkind: Cube\nmetadata: {name: a}\n'
+        'spec: {backend: kernel}',
+      ).toCanonicalMap();
+      expect((kernelMap['spec'] as Map)['backend'], 'kernel');
     });
   });
 }

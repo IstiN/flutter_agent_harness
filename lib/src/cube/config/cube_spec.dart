@@ -9,6 +9,7 @@
 ///   description: "..."       # optional
 /// spec:
 ///   tools: ...
+///   backend: policy           # optional, 'policy' (default) | 'kernel'
 ///   network: ...
 ///   filesystem: ...
 ///   env: ...
@@ -40,12 +41,37 @@ import 'tool_policy.dart';
 
 final RegExp _namePattern = RegExp(r'^[a-z][a-z0-9-]*$');
 
+/// How a cube's commands are confined: `policy` (the Dart policy layers
+/// only) or `kernel` (wrapped in the OS sandbox primitive of the host
+/// platform — sandbox-exec on macOS, unshare on Linux).
+enum CubeBackendMode {
+  /// Dart policy layers only — the Phase 1 default.
+  policy,
+
+  /// OS kernel confinement for the host platform, on top of the Dart
+  /// layers. Degrades to [policy] on a platform without an enforcing
+  /// backend (e.g. Windows or web) rather than failing the run.
+  kernel;
+
+  /// Parses the `spec.backend:` label, throwing [ConfigException] on an
+  /// unknown value.
+  static CubeBackendMode parse(Object? node, String where) => switch (node) {
+    null => policy,
+    'policy' => policy,
+    'kernel' => kernel,
+    _ => throw ConfigException(
+      '$where.backend: must be "policy" or "kernel", got $node',
+    ),
+  };
+}
+
 /// A parsed cube manifest: identity plus the five policy sections.
 final class CubeSpec {
   /// Creates a spec; policies default to their safe values.
   const CubeSpec({
     required this.name,
     this.description,
+    this.backend = CubeBackendMode.policy,
     this.tools = const CubeToolPolicy(),
     this.network = const CubeNetworkPolicy(),
     this.filesystem = const CubeFsPolicy(),
@@ -59,6 +85,10 @@ final class CubeSpec {
 
   /// Optional human-readable description.
   final String? description;
+
+  /// How commands are confined — Dart policy layers only, or wrapped in
+  /// the host platform's kernel sandbox.
+  final CubeBackendMode backend;
 
   /// Which command words may run.
   final CubeToolPolicy tools;
@@ -132,6 +162,7 @@ final class CubeSpec {
       );
     }
     _checkKeys(spec, const {
+      'backend',
       'tools',
       'network',
       'filesystem',
@@ -142,6 +173,7 @@ final class CubeSpec {
     return CubeSpec(
       name: name,
       description: description,
+      backend: CubeBackendMode.parse(spec?['backend'], '$sourcePath.spec'),
       tools: CubeToolPolicy.fromYaml(spec?['tools']),
       network: CubeNetworkPolicy.fromYaml(spec?['network']),
       filesystem: CubeFsPolicy.fromYaml(spec?['filesystem']),
@@ -165,6 +197,7 @@ final class CubeSpec {
         'name': name,
       },
       'spec': {
+        'backend': backend.name,
         'cache': {
           'enabled': cache.enabled,
           if (cache.paths.isNotEmpty) 'paths': [...cache.paths]..sort(),

@@ -174,14 +174,10 @@ extension SettingsFlow on AgentCli {
     List<String> models,
     String currentModelId,
   ) {
-    return _pickOption(
-      '$title — model',
-      [
-        for (final id in models) (id, id, visionMarker(id)),
-        ('', '+ enter manually', ''),
-      ],
-      initialKey: models.contains(currentModelId) ? currentModelId : null,
-    );
+    return _pickOption('$title — model', [
+      for (final id in models) (id, id, visionMarker(id)),
+      ('', '+ enter manually', ''),
+    ], initialKey: models.contains(currentModelId) ? currentModelId : null);
   }
 
   /// The manual-entry fallback of [_pickModelStep]: an empty answer keeps
@@ -401,6 +397,11 @@ extension SettingsFlow on AgentCli {
         label: 'Agent mode',
         description: _currentMode.name,
       ),
+      MenuItem(
+        key: 'cube',
+        label: 'Cube sandbox',
+        description: _cubeStatusLabel(),
+      ),
       const MenuItem(
         key: 'keys',
         label: 'API keys',
@@ -431,7 +432,7 @@ extension SettingsFlow on AgentCli {
     'approval': () async => _openApprovalPicker(),
     'mode': () async => _openModePicker(),
     'keys': () => _handleKeyCommand(''),
-    'mcp': () async => _printMcpStatus(),
+    'cube': startCubeSandboxFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
@@ -441,8 +442,9 @@ extension SettingsFlow on AgentCli {
     io.writeln('model: ${model.id}');
     io.writeln('approval: ${_approval.mode.label}');
     io.writeln('mode: ${_currentMode.name}');
+    io.writeln('cube: ${_cubeStatusLabel()}');
     io.writeln(
-      'change via /provider, /model, /approval, /mode, /key, /mcp '
+      'change via /provider, /model, /approval, /mode, /key, /mcp, /cube '
       '(agent models: the /settings hub)',
     );
   }
