@@ -1158,9 +1158,7 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
       ? 'Enter to save · Ctrl+U clears to cursor · Esc to cancel'
       : 'Start typing the value · Ctrl+U clears the name · Esc to cancel';
   rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-  final display = visible
-      ? state.secretValue
-      : '•' * state.secretValue.length;
+  final display = visible ? state.secretValue : '•' * state.secretValue.length;
   rows.add(_wrapBodyLine(display, inner, bold: true));
   if (!_secretNamePattern.hasMatch(state.secretName)) {
     rows.add(_wrapBodyLine(_red('Name must match ^[A-Z][A-Z0-9_]*\$'), inner));

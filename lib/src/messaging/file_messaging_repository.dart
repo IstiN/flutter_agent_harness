@@ -55,6 +55,7 @@ final class FileMessagingRepository implements MessagingRepository {
     try {
       final agentDir = '$_root/${sanitizeAgentId(agentId)}';
       (await _env.createDir('$agentDir/inbox')).getOrThrow();
+      await _writeHeartbeat(agentDir);
       final marker = '$agentDir/.id';
       if ((await _env.exists(marker)).valueOrNull != true) {
         (await _env.writeFile(marker, agentId)).getOrThrow();
@@ -63,6 +64,30 @@ final class FileMessagingRepository implements MessagingRepository {
     } on Object {
       // Best-effort registration; a failure must not break process startup.
     }
+  }
+
+  @override
+  Future<void> touch(String agentId) async {
+    try {
+      final agentDir = '$_root/${sanitizeAgentId(agentId)}';
+      (await _env.createDir(agentDir, recursive: true)).getOrThrow();
+      await _writeHeartbeat(agentDir);
+      final marker = '$agentDir/.id';
+      if ((await _env.exists(marker)).valueOrNull != true) {
+        (await _env.writeFile(marker, agentId)).getOrThrow();
+      }
+    } on Object {
+      // Best-effort heartbeat; a failure must not break the caller's loop.
+    }
+  }
+
+  /// The `.heartbeat` marker: its mtime is the mailbox's liveness signal for
+  /// [directory]. Content is informational (epoch ms).
+  Future<void> _writeHeartbeat(String agentDir) async {
+    (await _env.writeFile(
+      '$agentDir/.heartbeat',
+      DateTime.now().millisecondsSinceEpoch.toString(),
+    )).getOrThrow();
   }
 
   @override
@@ -179,6 +204,11 @@ final class FileMessagingRepository implements MessagingRepository {
       final mbDirs = (await _env.listDir(messagesDir)).valueOrNull ?? const [];
       for (final mbDir in mbDirs) {
         if (mbDir.kind != FileKind.directory) continue;
+        // Reserved names are not agent mailboxes: dot-dirs are hidden
+        // state, `_scheduled` is the delayed-message store.
+        if (mbDir.name.startsWith('.') || mbDir.name.startsWith('_')) {
+          continue;
+        }
         final idMarker = (await _env.readTextFile(
           '${mbDir.path}/.id',
         )).valueOrNull?.trim();
@@ -186,10 +216,47 @@ final class FileMessagingRepository implements MessagingRepository {
             ? idMarker
             : mbDir.name;
         final cwd = _decodeSessionCwd?.call(slugDir.name);
-        entries.add(MailboxEntry(id: id, slug: _peerSlug(slugDir), cwd: cwd));
+        entries.add(
+          MailboxEntry(
+            id: id,
+            slug: _peerSlug(slugDir),
+            cwd: cwd,
+            lastActivity: await _lastActivity(mbDir.path),
+          ),
+        );
       }
     }
     return entries;
+  }
+
+  /// The newest dated file inside [mailboxDir]: the `.heartbeat` marker at
+  /// the top level plus everything in `inbox/` and `read/`. The `.id`
+  /// marker is identity (written once), not activity — ignored, and
+  /// directory mtimes are ignored too (some [ExecutionEnv] impls report 0
+  /// for directories). Null when the mailbox holds no dated files at all.
+  Future<DateTime?> _lastActivity(String mailboxDir) async {
+    var newestMs = -1;
+    void consider(int mtimeMs) {
+      if (mtimeMs > newestMs) newestMs = mtimeMs;
+    }
+
+    final top = (await _env.listDir(mailboxDir)).valueOrNull;
+    if (top != null) {
+      for (final item in top) {
+        if (item.kind == FileKind.file && item.name == '.heartbeat') {
+          consider(item.mtimeMs);
+        }
+      }
+    }
+    for (final sub in const ['inbox', 'read']) {
+      final items = (await _env.listDir('$mailboxDir/$sub')).valueOrNull;
+      if (items == null) continue;
+      for (final item in items) {
+        if (item.kind == FileKind.file) consider(item.mtimeMs);
+      }
+    }
+    if (newestMs < 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch(newestMs, isUtc: true);
   }
 
   /// The session root that contains all `<slug>/messages` directories.
@@ -284,6 +351,9 @@ final class SwappableMessagingRepository implements MessagingRepository {
 
   @override
   Future<void> register(String agentId) => _inner.register(agentId);
+
+  @override
+  Future<void> touch(String agentId) => _inner.touch(agentId);
 
   @override
   Future<void> send(AgentMessage message) => _inner.send(message);

@@ -23,7 +23,8 @@ void main() {
   );
 
   group('system-notice replay', () {
-    const settleNotice = '<system-notice>\n'
+    const settleNotice =
+        '<system-notice>\n'
         'Background shell job sh-32-hlrc finished with exit code 0.\n'
         'Command: git commit -m "fix(provider): entry-name status label\n'
         '  plus a very long multi-line commit body full of noise"\n'
@@ -32,8 +33,7 @@ void main() {
         'log file, and act on it when the result was awaited.\n'
         '</system-notice>';
 
-    test('a settled background-job notice replays as ONE dim chrome line',
-        () {
+    test('a settled background-job notice replays as ONE dim chrome line', () {
       final lines = replayLinesTui(
         UserMessage.text(settleNotice),
         width: 80,
@@ -47,10 +47,7 @@ void main() {
     });
 
     test('the notice never leaks the closing tag or the command dump', () {
-      final lines = replayLines(
-        UserMessage.text(settleNotice),
-        maxRows: 0,
-      );
+      final lines = replayLines(UserMessage.text(settleNotice), maxRows: 0);
       expect(lines, hasLength(1));
       expect(lines.single, contains('⚙'));
       expect(lines.single, isNot(contains('system-notice')));
@@ -59,7 +56,8 @@ void main() {
     });
 
     test('a one-line mail notice keeps its sentence', () {
-      const mail = '<system-notice>New inter-agent mail arrived (2 message(s))'
+      const mail =
+          '<system-notice>New inter-agent mail arrived (2 message(s))'
           ' — read it with agent_directory.</system-notice>';
       final lines = replayLinesTui(UserMessage.text(mail), width: 80, dim: dim);
       expect(lines[1], contains('New inter-agent mail arrived'));

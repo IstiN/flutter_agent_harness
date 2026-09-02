@@ -157,7 +157,8 @@ final class _ActiveRun {
   _ActiveRun(this.source);
 
   final CancelTokenSource source;
-  final completer = Completer<void>();}
+  final completer = Completer<void>();
+}
 
 /// Stateful wrapper around the low-level agent loop.
 ///

@@ -33,21 +33,13 @@ AssistantMessage _assistant() => AssistantMessage(
 
 BeforeToolCallContext _beforeContext(String toolName) => BeforeToolCallContext(
   assistantMessage: _assistant(),
-  toolCall: ToolCall(
-    id: 'call-1',
-    name: toolName,
-    arguments: const {},
-  ),
+  toolCall: ToolCall(id: 'call-1', name: toolName, arguments: const {}),
   context: Context(messages: const []),
 );
 
 AfterToolCallContext _afterContext(String toolName) => AfterToolCallContext(
   assistantMessage: _assistant(),
-  toolCall: ToolCall(
-    id: 'call-1',
-    name: toolName,
-    arguments: const {},
-  ),
+  toolCall: ToolCall(id: 'call-1', name: toolName, arguments: const {}),
   result: ToolExecutionResult.text('ok'),
   isError: false,
   context: Context(messages: const []),
@@ -68,17 +60,23 @@ void main() {
       expect(phases, ['Running bash…', '']);
     });
 
-    test('a blocked call never relabels (denied tools stay invisible)', () async {
-      final agent = _agent();
-      agent.beforeToolCall = (context, cancelToken) async =>
-          const BeforeToolCallResult(block: true, reason: 'denied');
-      final phases = <String>[];
-      attachToolPhaseLabels(agent, phases.add);
+    test(
+      'a blocked call never relabels (denied tools stay invisible)',
+      () async {
+        final agent = _agent();
+        agent.beforeToolCall = (context, cancelToken) async =>
+            const BeforeToolCallResult(block: true, reason: 'denied');
+        final phases = <String>[];
+        attachToolPhaseLabels(agent, phases.add);
 
-      final result = await agent.beforeToolCall!(_beforeContext('bash'), null);
-      expect(result?.block, isTrue);
-      expect(phases, isEmpty);
-    });
+        final result = await agent.beforeToolCall!(
+          _beforeContext('bash'),
+          null,
+        );
+        expect(result?.block, isTrue);
+        expect(phases, isEmpty);
+      },
+    );
 
     test('preserves prior hooks: before runs first, after runs last', () async {
       final agent = _agent();

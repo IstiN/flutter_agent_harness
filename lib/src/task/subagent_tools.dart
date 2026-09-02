@@ -94,50 +94,109 @@ AgentTool _taskCancelTool(TaskJobManager jobs) {
   );
 }
 
-/// `agent_directory` — the messaging fabric's phone book: every known
-/// mailbox (subagents, this instance, other Fa instances sharing the
-/// session repo) with pending counts, cwd metadata, and own address marked.
+/// `agent_directory` — the messaging fabric's phone book: the mailboxes
+/// worth talking to — LIVE boxes (recent activity), any box holding pending
+/// mail, registered subagents, and this agent's own address (marked).
+/// Long-dead mailboxes from finished sessions are hidden by default and
+/// visible with `all: true`.
 AgentTool _agentDirectoryTool(SubagentManager manager) {
   return AgentTool(
     name: 'agent_directory',
     description:
-        'List the known agent mailboxes in the messaging fabric: your '
-        'subagents, other Fa instances sharing this session repo, and your '
-        'own address (marked). Each entry shows its pending message count '
-        'and, when known, the working directory it belongs to. Combine with '
-        'agent_message to talk to any of them: plain ids for subagents, '
-        '"<sessionId>/main" for another instance\'s orchestrator.',
-    parameters: const {'type': 'object', 'properties': {}},
+        'List the agent mailboxes in the messaging fabric that are worth '
+        'talking to: LIVE mailboxes (recent activity), any mailbox holding '
+        'pending mail, your subagents, and your own address (marked). '
+        'Stale mailboxes from long-finished sessions are hidden — pass '
+        'all: true to list those too. Each entry shows its pending message '
+        'count and, when known, the working directory it belongs to. '
+        'Combine with agent_message to talk to any of them: plain ids for '
+        'subagents, "<sessionId>/main" for another instance\'s '
+        'orchestrator.',
+    parameters: const {
+      'type': 'object',
+      'properties': {
+        'all': {
+          'type': 'boolean',
+          'description':
+              'Include stale mailboxes (no recent activity, nothing '
+              'pending). Default: false.',
+        },
+      },
+    },
     tier: ApprovalTier.read,
     execute: (args, cancelToken, onUpdate) async {
-      final fabric = manager.messaging;
-      final self = manager.mailboxOf(manager.selfId);
-      final buffer = StringBuffer('agent mailboxes (you are "$self"):');
-      final entries = await fabric?.directory() ?? const <MailboxEntry>[];
-      for (final entry in entries) {
-        final pending = await fabric!.peek(entry.id);
-        buffer
-          ..writeln()
-          ..write('  ${entry.id} — ${pending.length} pending');
-        if (entry.cwd case final cwd?) buffer.write('  [$cwd]');
-        if (entry.id == self) buffer.write('  ← you');
-      }
-      // Registered children get mailboxes on first mail — list them
-      // explicitly so they are addressable before that.
-      final knownIds = entries.map((e) => e.id).toSet();
-      for (final handle in manager.handles) {
-        final mailbox = manager.mailboxOf(handle.id);
-        if (knownIds.contains(mailbox)) continue;
-        buffer
-          ..writeln()
-          ..write('  $mailbox — subagent (${handle.status.name})');
-      }
-      if (entries.isEmpty && manager.handles.isEmpty) {
-        buffer.write(' none yet — subagent mailboxes appear on first mail');
-      }
-      return ToolExecutionResult.text(buffer.toString());
+      final includeStale = args['all'] == true;
+      return ToolExecutionResult.text(
+        await _renderAgentDirectory(manager, includeStale),
+      );
     },
   );
+}
+
+/// Renders the `agent_directory` body: live mailboxes first (recent
+/// activity, pending mail, or this agent's own address — see
+/// [_directoryLine]), then registered children, then the stale-count
+/// footer. [includeStale] lifts the hiding of long-dead mailboxes.
+Future<String> _renderAgentDirectory(
+  SubagentManager manager,
+  bool includeStale,
+) async {
+  final fabric = manager.messaging;
+  final self = manager.mailboxOf(manager.selfId);
+  final entries = await fabric?.directory() ?? const <MailboxEntry>[];
+  final buffer = StringBuffer('agent mailboxes (you are "$self"):');
+  var stale = 0;
+  for (final entry in entries) {
+    final line = await _directoryLine(fabric!, entry, self, includeStale);
+    if (line == null) {
+      stale++;
+      continue;
+    }
+    buffer
+      ..writeln()
+      ..write(line);
+  }
+  // Registered children get mailboxes on first mail — list them
+  // explicitly so they are addressable before that.
+  final knownIds = entries.map((e) => e.id).toSet();
+  for (final handle in manager.handles) {
+    final mailbox = manager.mailboxOf(handle.id);
+    if (knownIds.contains(mailbox)) continue;
+    buffer
+      ..writeln()
+      ..write('  $mailbox — subagent (${handle.status.name})');
+  }
+  if (stale > 0) {
+    buffer
+      ..writeln()
+      ..write('  (+$stale stale mailbox(es) hidden — pass all: true)');
+  }
+  if (entries.isEmpty && manager.handles.isEmpty) {
+    buffer.write(' none yet — subagent mailboxes appear on first mail');
+  }
+  return buffer.toString();
+}
+
+/// Renders one directory entry, or null when the mailbox is hidden from
+/// the default view: stale (no recent activity), nothing pending, not this
+/// agent's own address, and `all: true` not passed.
+Future<String?> _directoryLine(
+  MessagingRepository fabric,
+  MailboxEntry entry,
+  String self,
+  bool includeStale,
+) async {
+  final pending = await fabric.peek(entry.id);
+  // A mailbox with unread mail is never hidden, whatever its age.
+  final live =
+      pending.isNotEmpty ||
+      entry.id == self ||
+      MailboxEntry.isLive(entry.lastActivity);
+  if (!live && !includeStale) return null;
+  final line = StringBuffer('  ${entry.id} — ${pending.length} pending');
+  if (entry.cwd case final cwd?) line.write('  [$cwd]');
+  if (entry.id == self) line.write('  ← you');
+  return line.toString();
 }
 
 /// `reply` — the CHILD-only tool: delivers the child's explicit answer to

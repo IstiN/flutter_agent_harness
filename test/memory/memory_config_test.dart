@@ -106,26 +106,27 @@ memory:
   });
 
   group('MemoryController storage paths', () {
-    test('a custom project path receives the notes (not .fah/memory)',
-        () async {
-      final env = MemoryExecutionEnv();
-      final controller = MemoryController(
-        env: env,
-        projectRoot: '/repo',
-        projectStoragePath: '/repo/memory',
-      );
-      final entry = await controller.add(text: 'git-backed note');
-      expect(entry.scope, 'project');
-      expect(
-        (await env.exists('/repo/memory/note/${entry.id}.md')).valueOrNull,
-        isTrue,
-        reason: 'the note lands in the committable repo folder',
-      );
-      expect((await env.exists('/repo/.fah/memory')).valueOrNull, isFalse);
-    });
+    test(
+      'a custom project path receives the notes (not .fah/memory)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final controller = MemoryController(
+          env: env,
+          projectRoot: '/repo',
+          projectStoragePath: '/repo/memory',
+        );
+        final entry = await controller.add(text: 'git-backed note');
+        expect(entry.scope, 'project');
+        expect(
+          (await env.exists('/repo/memory/note/${entry.id}.md')).valueOrNull,
+          isTrue,
+          reason: 'the note lands in the committable repo folder',
+        );
+        expect((await env.exists('/repo/.fah/memory')).valueOrNull, isFalse);
+      },
+    );
 
-    test('a RELATIVE project path resolves against the project root',
-        () async {
+    test('a RELATIVE project path resolves against the project root', () async {
       final env = MemoryExecutionEnv();
       final controller = MemoryController(
         env: env,
@@ -133,14 +134,20 @@ memory:
         projectStoragePath: './memory',
       );
       final entry = await controller.add(text: 'relative path note');
-      expect((await env.exists('/repo/memory/note/${entry.id}.md')).valueOrNull, isTrue);
+      expect(
+        (await env.exists('/repo/memory/note/${entry.id}.md')).valueOrNull,
+        isTrue,
+      );
     });
 
     test('no override keeps the .fah/memory default', () async {
       final env = MemoryExecutionEnv();
       final controller = MemoryController(env: env, projectRoot: '/repo');
       final entry = await controller.add(text: 'default path note');
-      expect((await env.exists('/repo/.fah/memory/note/${entry.id}.md')).valueOrNull, isTrue);
+      expect(
+        (await env.exists('/repo/.fah/memory/note/${entry.id}.md')).valueOrNull,
+        isTrue,
+      );
     });
 
     test('a custom user path with ~ expands against the user root', () async {
@@ -153,7 +160,9 @@ memory:
       );
       final entry = await controller.add(text: 'user note', scope: 'user');
       expect(
-        (await env.exists('/home/user/shared-memory/note/${entry.id}.md')).valueOrNull,
+        (await env.exists(
+          '/home/user/shared-memory/note/${entry.id}.md',
+        )).valueOrNull,
         isTrue,
       );
     });

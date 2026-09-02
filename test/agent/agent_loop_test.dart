@@ -680,6 +680,79 @@ void main() {
     );
   });
 
+  group('steering cap', () {
+    test('run settles after maxSteeringTurns extensions; over-cap batches '
+        'wait for the next run', () async {
+      const maxSteeringTurns = 3;
+      const offeredBatches = maxSteeringTurns + 5;
+      final queue = [
+        for (var i = 0; i < offeredBatches; i++) UserMessage.text('steer-$i'),
+      ];
+      var steeringPolls = 0;
+      // Always returns a turn: without the cap the loop would chase every
+      // queued batch (and never stop for an endless source).
+      final fake = _FakeStreamFunction([
+        for (var i = 0; i < offeredBatches; i++) _textTurn('reply-$i'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: const Context(messages: []),
+        config: AgentLoopConfig(
+          model: _model,
+          getSteeringMessages: () async {
+            steeringPolls++;
+            return queue.isEmpty ? const <Message>[] : [queue.removeAt(0)];
+          },
+          maxSteeringTurns: maxSteeringTurns,
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      final messages = await stream.result;
+      // Exactly maxSteeringTurns batches were consumed — one model turn per
+      // batch, i.e. the loop-internal steeringExtensions counter incremented
+      // exactly maxSteeringTurns times before the run settled.
+      expect(fake.calls, maxSteeringTurns);
+      expect(
+        messages.whereType<UserMessage>().map((m) => m.content as String),
+        ['hi', 'steer-0', 'steer-1', 'steer-2'],
+      );
+      // The loop polls one initial + maxSteeringTurns extension times; the
+      // last poll is short-circuited by the cap before reaching the source,
+      // so the source itself was hit exactly maxSteeringTurns times — NOT
+      // once per queued batch.
+      expect(steeringPolls, maxSteeringTurns);
+      // The over-cap batches were never consumed: they stay queued.
+      expect(queue, hasLength(offeredBatches - maxSteeringTurns));
+
+      // The next run's poll picks the queued batches up under its own cap.
+      final nextFake = _FakeStreamFunction([
+        for (var i = 0; i < offeredBatches; i++) _textTurn('next-$i'),
+      ]);
+      final next = await agentLoop(
+        prompts: [UserMessage.text('again')],
+        context: const Context(messages: []),
+        config: AgentLoopConfig(
+          model: _model,
+          getSteeringMessages: () async =>
+              queue.isEmpty ? const <Message>[] : [queue.removeAt(0)],
+          maxSteeringTurns: maxSteeringTurns,
+        ),
+        streamFunction: nextFake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      ).result;
+      expect(nextFake.calls, maxSteeringTurns);
+      expect(next.whereType<UserMessage>().map((m) => m.content as String), [
+        'again',
+        'steer-3',
+        'steer-4',
+        'steer-5',
+      ]);
+      expect(queue, hasLength(2));
+    });
+  });
+
   group('agentLoopContinue', () {
     test('rejects an empty context', () {
       expect(

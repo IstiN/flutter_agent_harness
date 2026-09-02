@@ -15,7 +15,6 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'ansi_markdown.dart';
 import 'package:http/http.dart' as http;
@@ -26,6 +25,8 @@ import '../agent/agent.dart';
 import 'agent_event_handler.dart';
 import 'headless_prompt.dart';
 import 'key_event.dart';
+import 'key_status.dart';
+import 'provider_error_text.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
@@ -171,6 +172,7 @@ class AgentCli {
       );
       plugin.register(context);
       pluginTools.addAll(context.tools);
+      _pluginInboxes.addAll(context.externalInboxes);
       _pluginSlashCommands.addAll(context.slashCommands);
     }
 
@@ -376,12 +378,7 @@ class AgentCli {
     _agent.externalSteeringSource = _mainInboxMessages;
     // Non-draining probe for the same inbox: mid-run mail also triggers the
     // tool phase's soft-yield so a long bash/task call does not delay it.
-    _agent.externalSteeringProbe = () async {
-      final count = await _subagentManager.pendingInboxCount(
-        _subagentManager.selfId,
-      );
-      return count > 0;
-    };
+    _agent.externalSteeringProbe = _mainInboxProbe;
     // Model roles: when the default role resolves, the agent runs through
     // the resolver's fallback stream (rotation/failover per provider call).
     // A resolver without a default role leaves the legacy wiring in place
@@ -715,6 +712,7 @@ class AgentCli {
   /// cancel (Ctrl-C, input shutdown).
   Completer<String?>? _pendingPromptAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
+  final List<ExternalInbox> _pluginInboxes = [];
   late AgentMode _currentMode;
   List<PromptTemplate> _templates = [];
 
@@ -907,8 +905,13 @@ class AgentCli {
     var heartbeatTick = 0;
     final inboxTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       unawaited(_wakeOnInboxMail());
-      if (presence != null && sessionId != null && heartbeatTick++ % 2 == 0) {
-        unawaited(presence.touch(sessionId));
+      if (heartbeatTick++ % 2 == 0) {
+        if (presence != null && sessionId != null) {
+          unawaited(presence.touch(sessionId));
+        }
+        // The messaging-fabric heartbeat: agent_directory reports this
+        // instance as live even when no mail is pending.
+        _touchFabricHeartbeat();
       }
     });
     try {
@@ -934,6 +937,15 @@ class AgentCli {
       }
       // A session nobody wrote to leaves no file behind.
       await deleteSessionIfEmpty();
+      // Plugins release their resources (sockets, processes, timers);
+      // one bad plugin must not block exit.
+      for (final plugin in config.plugins) {
+        try {
+          await plugin.dispose();
+        } on Object {
+          // Swallowed: shutdown is best-effort per plugin.
+        }
+      }
     }
     await printSessionResumeHint();
   }
@@ -1260,7 +1272,12 @@ class AgentCli {
     } on Object catch (error) {
       // Never let a broken session file kill the TUI through the picker's
       // Cmd — report inline instead.
-      io.writeln(_errorLine('failed to open session ${metadata.id}: $error'));
+      io.writeln(
+        _keyStatusView.errorLine(
+          'failed to open session ${metadata.id}: $error',
+          _agent.state.model.baseUrl,
+        ),
+      );
     }
   }
 
@@ -1317,7 +1334,12 @@ class AgentCli {
     } on Object catch (error) {
       // A failing store must surface as an inline error, never kill the TUI
       // (a Cmd exception in dart_tui terminates the whole program silently).
-      io.writeln(_errorLine('failed to list sessions: $error'));
+      io.writeln(
+        _keyStatusView.errorLine(
+          'failed to list sessions: $error',
+          _agent.state.model.baseUrl,
+        ),
+      );
       return;
     }
     if (sessions.isEmpty) {
@@ -1678,7 +1700,9 @@ class AgentCli {
         await _afterRun();
       }
     } catch (error) {
-      io.writeln(_errorLine('$error'));
+      io.writeln(
+        _keyStatusView.errorLine('$error', _agent.state.model.baseUrl),
+      );
       return 1;
     } finally {
       await interruptSub.cancel();
@@ -1693,6 +1717,21 @@ class AgentCli {
       _ => 0,
     };
   }
+
+  /// Key-status and error-line rendering over the live config values; built
+  /// per render so `/provider` switches and the active-entry marker stay
+  /// current.
+  KeyStatusRenderer get _keyStatusView => KeyStatusRenderer(
+    rolesDriven: _rolesDriven,
+    providerKind: _providerKind,
+    explicitToken: _explicitToken,
+    activeCustomName: _activeCustomName,
+    red: _style.red,
+    secureKeys: config.secureKeys,
+    customProviders: config.customProviders,
+    envVarIsSet: config.envVarIsSet,
+    envVarValue: config.envVarValue,
+  );
 
   Future<void> _handleLine(String line) async {
     final trimmed = line.trim();
@@ -1843,7 +1882,7 @@ class AgentCli {
 
   /// Runs one user prompt to completion. On a CodeMie auth-session expiry,
   /// opens the browser SSO flow to refresh the token automatically. Other
-  /// provider errors are printed through [_errorLine]. An empty assistant
+  /// provider errors are printed through [KeyStatusRenderer.errorLine]. An empty assistant
   /// message (no text, no tool calls) is retried once with 'continue'.
   /// Delivered to the model when the over-window guard stopped a run and
   /// the post-run compaction freed the window: names what happened and
@@ -1864,64 +1903,77 @@ class AgentCli {
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
 
+  /// Runs one prompt turn: pre-flight ([_beginUserPrompt]) → the agent
+  /// stream → outcome settle ([_settleAfterPrompt], `true` = turn finished
+  /// normally) → finalize ([_afterRun]); thrown errors land in
+  /// [_handleRunError]. Auto-continuations recurse with [isAutoContinue]
+  /// set, which skips the pre-flight phases.
   Future<void> _runPrompt(String text, {bool isAutoContinue = false}) async {
-    // One auto-continuation per real user prompt: when the over-window
-    // guard stops a run, the post-run compaction frees the window and the
-    // turn continues on its own (see [_handleErrorStop]). The flag is
-    // reset here so a fresh user prompt gets its own budget, while the
-    // recursive continuation call (isAutoContinue: true) keeps it — a
-    // turn that re-inflates the window after the resume stops for real
-    // instead of looping trim→continue forever.
-    if (!isAutoContinue) {
-      _overWindowAutoResumed = false;
-      // Pre-flight context guard: when the LIVE context already exceeds
-      // the compaction threshold, compact BEFORE sending the request — a
-      // failed post-run compaction (quota-limited smol role, provider
-      // outage) used to leave every request carrying an over-window
-      // payload (ctx 240% gauge).
-      await _maybeAutoCompact();
-    }
+    await _beginUserPrompt(isAutoContinue: isAutoContinue);
     try {
       await _agent.prompt(text);
       final lastMessage = _agent.state.messages.lastOrNull;
-      if (lastMessage is AssistantMessage) {
-        if (lastMessage.stopReason == StopReason.error) {
-          if (await _handleErrorStop(
-            lastMessage,
-            isAutoContinue: isAutoContinue,
-          )) {
-            return;
-          }
-        } else if (await _maybeContinueEmpty(
-          lastMessage,
-          isAutoContinue: isAutoContinue,
-        )) {
-          return;
-        }
-      }
-      await _afterRun();
+      final finished = await _settleAfterPrompt(
+        lastMessage,
+        isAutoContinue: isAutoContinue,
+      );
+      if (finished) await _afterRun();
     } catch (error) {
       await _handleRunError(error);
     }
   }
 
-  /// The error-stop branch of [_runPrompt]: handles a CodeMie auth expiry
-  /// and the over-window auto-continuation. Returns `true` when the turn
-  /// ended inside the handler (recursed or was absorbed), `false` to fall
-  /// through to [_afterRun].
-  Future<bool> _handleErrorStop(
+  /// [_runPrompt] pre-flight, real user prompts only: fresh over-window
+  /// resume budget (see [_overWindowAutoResumed]) plus pre-flight
+  /// compaction of an already-over-window transcript.
+  Future<void> _beginUserPrompt({required bool isAutoContinue}) async {
+    if (isAutoContinue) return;
+    _overWindowAutoResumed = false;
+    // Pre-flight context guard: when the LIVE context already exceeds the
+    // compaction threshold, compact BEFORE sending the request — a failed
+    // post-run compaction (quota-limited smol role, provider outage) used to
+    // leave every request carrying an over-window payload (ctx 240% gauge).
+    await _maybeAutoCompact();
+  }
+
+  /// Settles a finished agent stream: error-stop handling and the
+  /// auto-continuations. Returns `true` when the turn completed and the
+  /// caller should finalize with [_afterRun].
+  Future<bool> _settleAfterPrompt(
+    Message? lastMessage, {
+    required bool isAutoContinue,
+  }) async {
+    if (lastMessage is AssistantMessage &&
+        lastMessage.stopReason == StopReason.error) {
+      if (await _maybeHandleCodeMieError(lastMessage.errorMessage ?? '')) {
+        return false;
+      }
+      // The loop's over-window guard refused to send: compact and continue.
+      if (await _maybeOverWindowContinue(
+        lastMessage,
+        isAutoContinue: isAutoContinue,
+      )) {
+        return false;
+      }
+    }
+
+    // An assistant turn that produced nothing actionable (no text, no tool
+    // calls) reads as a hang; nudge the model once with "continue".
+    if (_shouldContinueAfterEmptyReply(lastMessage, isAutoContinue)) {
+      await _runPrompt('continue', isAutoContinue: true);
+      return false;
+    }
+    return true;
+  }
+
+  /// One-shot over-window auto-continuation: on a context-window-exhausted
+  /// stop, persist, auto-compact and — when the window was actually freed —
+  /// resume the interrupted task on its own (ending the run there left
+  /// live agents idle mid-task, a harness hang). `true` = turn consumed.
+  Future<bool> _maybeOverWindowContinue(
     AssistantMessage lastMessage, {
     required bool isAutoContinue,
   }) async {
-    if (await _maybeHandleCodeMieError(lastMessage.errorMessage ?? '')) {
-      return true;
-    }
-    // The loop's over-window guard refused to send: the transcript is
-    // still over the window, so compact now and — when the compaction
-    // actually freed it — continue the interrupted task on its own.
-    // Ending the run here left live agents idle mid-task (a 200k/200k
-    // glm session stopped dead after its trim and waited for a manual
-    // "continue"), which reads as a harness hang.
     if (isAutoContinue ||
         _overWindowAutoResumed ||
         !isContextWindowExhaustedError(lastMessage.errorMessage)) {
@@ -1930,34 +1982,32 @@ class AgentCli {
     _overWindowAutoResumed = true;
     await _ttsr?.settled;
     await _persistMessages();
-    if (await _maybeAutoCompact()) {
-      io.writeln(
-        _style.yellow(
-          '[context overflowed — auto-compacted; continuing the turn]',
-        ),
-      );
-      await _runPrompt(_overWindowContinuationNotice, isAutoContinue: true);
-      return true;
+    if (!await _maybeAutoCompact()) {
+      // Compaction freed nothing droppable: surface the guard error as-is
+      // and keep the resume budget for the next user prompt.
+      _overWindowAutoResumed = false;
+      return false;
     }
-    // Compaction could not free the window (nothing droppable): surface
-    // the guard error as-is and keep the resume budget for the next user
-    // prompt.
-    _overWindowAutoResumed = false;
-    return false;
+    io.writeln(
+      _style.yellow(
+        '[context overflowed — auto-compacted; continuing the turn]',
+      ),
+    );
+    await _runPrompt(_overWindowContinuationNotice, isAutoContinue: true);
+    return true;
   }
 
-  /// The silent-stop branch of [_runPrompt]: a plain (non-error,
-  /// non-aborted) assistant turn that produced nothing actionable gets one
-  /// automatic `continue` nudge. `true` when the nudge was sent.
-  Future<bool> _maybeContinueEmpty(
-    AssistantMessage lastMessage, {
-    required bool isAutoContinue,
-  }) async {
-    if (isAutoContinue) return false;
-    if (lastMessage.stopReason == StopReason.aborted) return false;
-    if (!_assistantMessageIsEmpty(lastMessage)) return false;
-    await _runPrompt('continue', isAutoContinue: true);
-    return true;
+  /// Whether an empty assistant reply should get the one-shot "continue"
+  /// nudge: real prompt, clean stop, nothing actionable.
+  bool _shouldContinueAfterEmptyReply(
+    Message? lastMessage,
+    bool isAutoContinue,
+  ) {
+    return !isAutoContinue &&
+        lastMessage is AssistantMessage &&
+        lastMessage.stopReason != StopReason.error &&
+        lastMessage.stopReason != StopReason.aborted &&
+        _assistantMessageIsEmpty(lastMessage);
   }
 
   /// Persists a single message as soon as the agent adds it to the transcript.
@@ -1992,7 +2042,7 @@ class AgentCli {
   Future<void> _handleRunError(Object error) async {
     final message = '$error';
     if (await _maybeHandleCodeMieError(message)) return;
-    io.writeln(_errorLine(message));
+    io.writeln(_keyStatusView.errorLine(message, _agent.state.model.baseUrl));
   }
 
   /// Whether the assistant message produced nothing actionable: no non-empty
@@ -2086,6 +2136,10 @@ class AgentCli {
   /// session never exhausts the cap.
   var _inboxWakeStreak = 0;
   static const _maxInboxWakeStreak = 10;
+
+  /// One-shot flag: the first wake the cap blocks prints one dim line
+  /// instead of leaving the CLI silently deaf to hub mail.
+  var _inboxWakeCapNoticeShown = false;
 
   /// Test seam: observe/reset the inbox-wake streak without driving ten
   /// real runs (the cap is exactly [_maxInboxWakeStreak]).

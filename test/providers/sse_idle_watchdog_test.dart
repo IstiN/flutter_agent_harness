@@ -31,7 +31,10 @@ void main() {
       );
       final sw = Stopwatch()..start();
       try {
-        await expectLater(iterator.moveNext(), throwsA(isA<TimeoutException>()));
+        await expectLater(
+          iterator.moveNext(),
+          throwsA(isA<TimeoutException>()),
+        );
         // ~120ms of true event silence, not the >1s the byte-level reset
         // would have allowed.
         expect(sw.elapsedMilliseconds, lessThan(1000));
@@ -46,9 +49,7 @@ void main() {
       var ticks = 0;
       Timer.periodic(const Duration(milliseconds: 40), (t) {
         ticks++;
-        controller.add(
-          utf8.encode('data: {"delta":$ticks}\n\n'),
-        );
+        controller.add(utf8.encode('data: {"delta":$ticks}\n\n'));
         if (ticks == 5) {
           t.cancel();
           unawaited(controller.close());

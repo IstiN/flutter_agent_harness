@@ -1,4 +1,4 @@
-import 'package:flutter_agent_harness/src/cli/agent_cli.dart';
+import 'package:flutter_agent_harness/src/cli/provider_error_text.dart';
 import 'package:test/test.dart';
 
 void main() {

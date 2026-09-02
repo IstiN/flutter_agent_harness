@@ -5,9 +5,13 @@ import 'package:test/test.dart';
 final class _RecordingRepo implements MessagingRepository {
   final sent = <AgentMessage>[];
   final registered = <String>[];
+  final touched = <String>[];
 
   @override
   Future<void> register(String agentId) async => registered.add(agentId);
+
+  @override
+  Future<void> touch(String agentId) async => touched.add(agentId);
 
   @override
   Future<void> send(AgentMessage message) async => sent.add(message);
@@ -49,5 +53,17 @@ void main() {
     fabric.register('main');
     expect(second.registered, ['main']);
     expect(first.registered, hasLength(1));
+  });
+
+  test('touch delegates to the CURRENT repo', () {
+    final first = _RecordingRepo();
+    final second = _RecordingRepo();
+    final fabric = SwappableMessagingRepository(first);
+    fabric.touch('main');
+    expect(first.touched, ['main']);
+    fabric.swap(second);
+    fabric.touch('main');
+    expect(first.touched, hasLength(1));
+    expect(second.touched, ['main']);
   });
 }

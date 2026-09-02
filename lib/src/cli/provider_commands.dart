@@ -2264,7 +2264,7 @@ extension on AgentCli {
     final model = _agent.state.model;
     io.writeln('provider: ${model.provider} (${model.api})');
     io.writeln('  endpoint: ${model.baseUrl}');
-    final keyStatus = _keyStatusLine(model);
+    final keyStatus = _keyStatusView.keyStatusLine(model);
     if (keyStatus != null) io.writeln('  $keyStatus');
     _printSavedProviders();
     io.writeln('supported providers:');
@@ -2378,7 +2378,7 @@ extension on AgentCli {
   /// friends) describe the default endpoint and must never hijack a custom
   /// one (the user's OpenRouter key silently serving api.aiin.by).
   String? _customEndpointKey(String baseUrl) {
-    final entryKey = _activeCustomKeyName();
+    final entryKey = _keyStatusView.activeCustomKeyName();
     if (entryKey != null) {
       final envStack = _envKeyStackFor(entryKey);
       if (envStack.isNotEmpty) return envStack.first.value;
@@ -2465,7 +2465,7 @@ extension on AgentCli {
 
   /// The active saved entry's key name when the store holds it, else null.
   String? _activeCustomKeyEntry(SecureKeyCache keys) {
-    final entryKey = _activeCustomKeyName();
+    final entryKey = _keyStatusView.activeCustomKeyName();
     if (entryKey != null && keys.read(entryKey) != null) return entryKey;
     return null;
   }

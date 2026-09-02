@@ -134,9 +134,9 @@ void main() {
 
         // …and the main file was rewritten without the tear: every line
         // past the header is valid JSON again.
-        final healedLines =
-            (await fs.readTextFile(path)).getOrThrow().split('\n')
-              ..removeLast();
+        final healedLines = (await fs.readTextFile(
+          path,
+        )).getOrThrow().split('\n')..removeLast();
         expect(healedLines, hasLength(3)); // header + e1 + e2
         for (final line in healedLines.skip(1)) {
           jsonDecode(line); // throws on any remaining garbage
@@ -147,34 +147,39 @@ void main() {
         expect(clean.quarantinedEntries, 0);
         await clean.appendEntry(msg('e3', 'e2', 'again'));
         final finalOpen = await JsonlSessionStorage.open(fs, path);
-        expect(
-          (await finalOpen.getEntries()).map((e) => e.id),
-          ['e1', 'e2', 'e3'],
-        );
+        expect((await finalOpen.getEntries()).map((e) => e.id), [
+          'e1',
+          'e2',
+          'e3',
+        ]);
       },
     );
 
-    test('concurrent appends serialize into whole lines in submit order', () async {
-      final storage = await createStorage();
-      const total = 40;
-      await Future.wait([
-        for (var i = 0; i < total; i++)
-          storage.appendEntry(
-            msg('c$i', i == 0 ? null : 'c${i - 1}', 'p$i ${'x' * (i * 31)}'),
-          ),
-      ]);
+    test(
+      'concurrent appends serialize into whole lines in submit order',
+      () async {
+        final storage = await createStorage();
+        const total = 40;
+        await Future.wait([
+          for (var i = 0; i < total; i++)
+            storage.appendEntry(
+              msg('c$i', i == 0 ? null : 'c${i - 1}', 'p$i ${'x' * (i * 31)}'),
+            ),
+        ]);
 
-      final reopened = await JsonlSessionStorage.open(fs, path);
-      expect(
-        (await reopened.getEntries()).map((e) => e.id),
-        [for (var i = 0; i < total; i++) 'c$i'],
-      );
-      // Every persisted line is complete JSON — writers never interleave.
-      for (final line in (await fs.readTextFile(path)).getOrThrow().split('\n')) {
-        if (line.isEmpty) continue;
-        jsonDecode(line); // throws on a torn line
-      }
-    });
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        expect((await reopened.getEntries()).map((e) => e.id), [
+          for (var i = 0; i < total; i++) 'c$i',
+        ]);
+        // Every persisted line is complete JSON — writers never interleave.
+        for (final line in (await fs.readTextFile(
+          path,
+        )).getOrThrow().split('\n')) {
+          if (line.isEmpty) continue;
+          jsonDecode(line); // throws on a torn line
+        }
+      },
+    );
 
     test('setLeafId appends a leaf record and validates the target', () async {
       final storage = await createStorage();
@@ -381,20 +386,26 @@ void main() {
       );
     });
 
-    test('open quarantines a corrupt entry line (JSON garbage) mid-file', () async {
-      await createStorage();
-      await fs.appendFile(path, '{broken json\n');
-      // A trailing valid record makes the corrupt one MID-file: a hole left
-      // by racing writers. The open still succeeds and heals the file.
-      await fs.appendFile(
-        path,
-        '${jsonEncode({'type': 'label', 'id': 'l1', 'parentId': null, 'timestamp': DateTime.utc(2026).toIso8601String(), 'targetId': 'x', 'label': 'y'})}\n',
-      );
-      final storage = await JsonlSessionStorage.open(fs, path);
-      expect(storage.quarantinedEntries, 1);
-      expect((await fs.readTextFile('$path.corrupt')).getOrThrow().trim(), '{broken json');
-      expect((await storage.getEntries()).map((e) => e.id), ['l1']);
-    });
+    test(
+      'open quarantines a corrupt entry line (JSON garbage) mid-file',
+      () async {
+        await createStorage();
+        await fs.appendFile(path, '{broken json\n');
+        // A trailing valid record makes the corrupt one MID-file: a hole left
+        // by racing writers. The open still succeeds and heals the file.
+        await fs.appendFile(
+          path,
+          '${jsonEncode({'type': 'label', 'id': 'l1', 'parentId': null, 'timestamp': DateTime.utc(2026).toIso8601String(), 'targetId': 'x', 'label': 'y'})}\n',
+        );
+        final storage = await JsonlSessionStorage.open(fs, path);
+        expect(storage.quarantinedEntries, 1);
+        expect(
+          (await fs.readTextFile('$path.corrupt')).getOrThrow().trim(),
+          '{broken json',
+        );
+        expect((await storage.getEntries()).map((e) => e.id), ['l1']);
+      },
+    );
 
     test('open quarantines an entry line missing required fields', () async {
       await createStorage();

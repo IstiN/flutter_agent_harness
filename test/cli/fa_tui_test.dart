@@ -389,6 +389,19 @@ void main() {
     },
   );
 
+  test('an idle-host phase relabel cannot strand the busy spinner', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    // A wake-run's tool call relabels without a paired sendBusy(true):
+    // the relabel must be dropped, not flip busy ON with depth 0 — no
+    // later sendBusy(false) could then produce the 1→0 idle edge and the
+    // "Working… Ns" row would spin forever.
+    final result = model.update(const BusyMsg(true, phase: 'Running dap_dm…'));
+    model = result.$1 as FaTuiModel;
+    expect(model.busy, isFalse);
+    expect(result.$2, isNull); // no spinner tick chain scheduled
+    expect(model.view().content, isNot(contains('Working…')));
+  });
+
   test('in-busy relabels never stack extra spinner tick chains', () {
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
     final start = model.update(BusyMsg(true));

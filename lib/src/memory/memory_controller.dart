@@ -128,9 +128,8 @@ final class MemoryController {
     projectPath: _projectStoragePath,
   ).resolveProjectPath(_projectRoot);
 
-  String _resolvedUserPath() => MemoryConfig(
-    userPath: _userStoragePath,
-  ).resolveUserPath(_userRoot!);
+  String _resolvedUserPath() =>
+      MemoryConfig(userPath: _userStoragePath).resolveUserPath(_userRoot!);
 
   /// Adds a memory entry (project scope by default).
   Future<MemoryEntry> add({

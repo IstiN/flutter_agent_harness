@@ -6,6 +6,10 @@ analyzer:
     - .dart_tool/**
     - example/build/**
     - vendor/**
+    # DAP hub client's own suite, vendored VERBATIM from the upstream
+    # package (checksum-pinned against its MANIFEST.txt) — lint drift there
+    # belongs upstream, not here.
+    - test/hub/**
     - example/**/vendor/**
     # Standalone video-production workspace (own pubspec/analysis_options) —
     # not part of the harness packages, gated by its own toolchain.

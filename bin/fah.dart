@@ -32,7 +32,11 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
-
+// The ONLY place the core CLI imports `fah_hub_client`: downstream forks
+// that want a different or no hub client patch this import and the 'hub'
+// case in `_builtInPlugin`.
+import 'package:fah_hub_client/fah_hub_client.dart' show HubPlugin;
+import 'fah_hub_plugin.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 
@@ -191,47 +195,6 @@ Model _buildModel(CliArgs args) {
   );
 }
 
-/// The env preconfig pick for this invocation — `(spec, activating env var
-/// The `FA_PROVIDER_*` env preconfig (Docker/headless): `FA_PROVIDER_TYPE` +
-/// `FA_PROVIDER_NAME` + `FA_PROVIDER_CONFIG` (a JSON object with required
-/// `baseUrl`/`model` and an optional `apiKeyEnvVar`) plus the key env var
-/// the config references. Every text input has a `_BASE64` twin
-/// (`FA_PROVIDER_CONFIG_BASE64`, `<apiKeyEnvVar>_BASE64`) for platforms
-/// that mangle special characters; when both carry the same value the
-/// plain one is used. Unlike the catalog auto-pick above, this is an
-/// explicit declaration, so it wins over the saved config restore too — a
-/// container that declares its provider in env vars runs on it, store or
-/// config notwithstanding, and the declaration becomes the session
-/// default for every model role (the same selection a `/provider <name>`
-/// switch performs). An explicit `--provider` flag means full manual
-/// control and disables the preconfig entirely (mixing the flag's
-/// provider with the env endpoint would be a silent misconfiguration).
-///
-/// Throws via [_fail] on a malformed declaration: a container that names its
-/// provider wrong must fail loud at boot, not 401 mid-run.
-EnvProviderPreconfig? _faProviderPreconfig(CliArgs parsed, CliConfig saved) {
-  if (parsed.providerExplicit) return null;
-  final env = Platform.environment;
-  try {
-    return parseEnvProviderPreconfig(
-      providerType: env['FA_PROVIDER_TYPE'],
-      providerName: env['FA_PROVIDER_NAME'],
-      providerConfig: env['FA_PROVIDER_CONFIG'],
-      providerConfigBase64: env['FA_PROVIDER_CONFIG_BASE64'],
-      envVarValue: (name) => env[name],
-      takenNames: [for (final entry in saved.customProviders) entry.name],
-    );
-  } on ConfigException catch (error) {
-    _fail('invalid FA_PROVIDER_* preconfig: ${error.message}');
-  }
-}
-
-/// Every catalog provider's env names (a redaction preload set: an env
-/// value of ANY supported provider key must never reach the transcript).
-List<String> _allCatalogEnvNames() => [
-  for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
-];
-
 String _resolveApiKey(
   String provider,
   SecureKeyCache keys, {
@@ -256,60 +219,10 @@ String _resolveApiKey(
   return key;
 }
 
-/// Collects the secrets snapshot for the model-roles resolver: every
-/// provider catalog env name plus its rotation stack (`NAME`, `NAME_2`,
-/// `NAME_3`, ...), plus any base name referenced by an explicit
-/// `apiKeyName` in the roles config. The platform secure store backs up
-/// base names where the environment has none (env wins; rotation stacks
-/// stay env-only — secure storage holds base names only).
-Map<String, String> _collectRoleSecrets(
-  ModelRolesConfig rolesConfig,
-  SecureKeyCache keys,
-) {
-  final baseNames = <String>{
-    for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
-    for (final chain in rolesConfig.roles.values)
-      for (final ref in chain)
-        if (ref.apiKeyName != null) ref.apiKeyName!,
-    for (final override in rolesConfig.pathOverrides)
-      for (final chain in override.roles.values)
-        for (final ref in chain)
-          if (ref.apiKeyName != null) ref.apiKeyName!,
-  };
-  final secrets = <String, String>{};
-  final env = Platform.environment;
-  for (final base in baseNames) {
-    final suffix = RegExp('^${RegExp.escape(base)}_\\d+\$');
-    for (final entry in env.entries) {
-      if (entry.key == base || suffix.hasMatch(entry.key)) {
-        if (entry.value.isNotEmpty) secrets[entry.key] = entry.value;
-      }
-    }
-    if (!secrets.containsKey(base)) {
-      final stored = keys.read(base);
-      if (stored != null) secrets[base] = stored;
-    }
-  }
-  return secrets;
-}
-
-/// The explicit `apiKeyName`s referenced by a roles config (the secure-store
-/// preload set; the catalog names are always preloaded).
-Set<String> _roleKeyNames(ModelRolesConfig rolesConfig) {
-  return {
-    for (final chain in rolesConfig.roles.values)
-      for (final ref in chain)
-        if (ref.apiKeyName != null) ref.apiKeyName!,
-    for (final override in rolesConfig.pathOverrides)
-      for (final chain in override.roles.values)
-        for (final ref in chain)
-          if (ref.apiKeyName != null) ref.apiKeyName!,
-  };
-}
-
 /// Built-in plugins available via `--plugin <name>` or `.fah/packages.yaml`.
 FahPlugin? _builtInPlugin(String name) {
   return switch (name) {
+    'hub' => HubPluginHost(HubPlugin()),
     'inspect_image' => const InspectImagePlugin(),
     'transcribe_audio' => const TranscribeAudioPlugin(),
     _ => null,
@@ -366,7 +279,7 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
   String cwd,
 ) {
   final config = _loadPackagesConfig(cwd);
-  final enabled = <String>{...args.plugins, ...config.keys};
+  final enabled = resolveEnabledPlugins(args.plugins, config);
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
     final plugin = _builtInPlugin(name);
@@ -698,26 +611,14 @@ Future<void> _runApp(List<String> args) async {
   // `--a2a` flag, so the serve form is intercepted before CliArgs parsing:
   // serve-specific flags are stripped from the parsed args and kept for the
   // late interception below (after model/key resolution).
-  final isServeA2a = args.contains('serve');
-  if (isServeA2a && !args.contains('--a2a')) {
+  final serve = splitServeA2aArgs(args);
+  if (serve.serveA2a && !args.contains('--a2a')) {
     _fail('usage: fa serve --a2a [--port N] [--token T]');
   }
-  final parseArgs = isServeA2a
-      ? [
-          for (var i = 0; i < args.length; i++)
-            if (args[i] != 'serve' &&
-                args[i] != '--a2a' &&
-                args[i] != '--port' &&
-                args[i] != '--token' &&
-                (i == 0 ||
-                    (args[i - 1] != '--port' && args[i - 1] != '--token')))
-              args[i],
-        ]
-      : args;
 
   late final CliArgs parsed;
   try {
-    parsed = switch (parseCliArgs(parseArgs)) {
+    parsed = switch (parseCliArgs(serve.cliArgs)) {
       CliArgsHelp() => _exitWithUsage(packageVersion),
       CliArgsVersion() => _exitWithVersion(packageVersion),
       final CliArgs cliArgs => cliArgs,
@@ -760,56 +661,21 @@ Future<void> _runApp(List<String> args) async {
   // read by the adapters' connect/idle watchdogs on every request.
   providerTimeoutsOverride = saved.providerTimeouts;
 
-  // An explicit --provider wins; without it the saved `provider:` (the
-  // persisted /provider switch) restores the last provider kind — model and
-  // baseUrl already restore from the config, losing only the kind would
-  // rebuild e.g. dial as a plain openai endpoint. Only kinds the legacy
-  // single-model path can build are restored (chatgpt-codex keeps the
-  // openai-completions default; its OAuth flow re-establishes on demand).
-  const restorableKinds = {
-    'openai-completions',
-    'anthropic',
-    'google',
-    'dial',
-    'minimax',
-    'zai',
-  };
-  // Explicit env preconfig (FA_PROVIDER_*): a container's declaration of its
-  // provider. Precedence: an explicit --provider flag (full manual control,
-  // preconfig disabled) > FA_PROVIDER_* > the pristine-config catalog pick
-  // below > the saved kind restore > the default. The preconfig supplies
-  // model/baseUrl too, so the saved restore never leaks through while it is
-  // active (--model/--base-url flags still override individual fields).
-  final faPreconfig = _faProviderPreconfig(parsed, saved);
-  final provider = parsed.providerExplicit
-      ? parsed.provider
-      : faPreconfig?.spec.kind ??
-            (restorableKinds.contains(saved.providerKind)
-                ? saved.providerKind
-                : parsed.provider);
-  // No env-key auto-pick: a bare API key in the environment never
-  // activates a provider — the model would be an implicit default, and
-  // providers carry none by design. FA_PROVIDER_* stays: it names the
-  // model explicitly.
-  String? modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
-  String? baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
-  final mode = parsed.mode ?? saved.mode;
-
-  final effective = CliArgs(
-    model: modelId,
-    provider: provider,
-    baseUrl: baseUrl,
-    visionModel: parsed.visionModel,
-    visionBaseUrl: parsed.visionBaseUrl,
-    transcribeModel: parsed.transcribeModel,
-    transcribeBaseUrl: parsed.transcribeBaseUrl,
-    plugins: parsed.plugins,
-    promptTemplateDirs: parsed.promptTemplateDirs,
-    mode: mode,
-    cwd: parsed.cwd,
-    sessionRoot: parsed.sessionRoot,
-    session: parsed.session,
-  );
+  late final ({
+    CliArgs args,
+    String provider,
+    EnvProviderPreconfig? faPreconfig,
+  })
+  cliStartup;
+  try {
+    cliStartup = resolveEffectiveCliArgs(parsed, saved);
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
+  final effective = cliStartup.args;
+  final provider = cliStartup.provider;
+  final faPreconfig = cliStartup.faPreconfig;
+  final baseUrl = effective.baseUrl;
 
   final model = _buildModel(effective);
   final cwd = effective.cwd ?? Directory.current.path;
@@ -833,21 +699,7 @@ Future<void> _runApp(List<String> args) async {
   // a synchronous session cache — every later lookup (startup resolution,
   // the banner, `/provider`, `/key`) hits the snapshot.
   final keyCache = SecureKeyCache(platformSecureKeyStore());
-  await keyCache.preload({
-    for (final spec in providerCatalog.values) ...[
-      ...spec.apiKeyEnvNames,
-      // Endpoint-scoped keys (FA_KEY_<HOST>): catalog defaults, the
-      // configured endpoint, and every saved custom provider's.
-      CustomProviderRegistry.keyNameFor(spec.defaultBaseUrl),
-    ],
-    // Promoted non-null above (parsed → FA_PROVIDER_* → saved chain).
-    CustomProviderRegistry.keyNameFor(baseUrl),
-    for (final entry in saved.customProviders)
-      entry.keyName ?? CustomProviderRegistry.keyNameFor(entry.baseUrl),
-    'VISION_API_KEY',
-    'TRANSCRIBE_API_KEY',
-    if (saved.modelRoles != null) ..._roleKeyNames(saved.modelRoles!),
-  });
+  await keyCache.preload(secureKeyPreloadNames(saved, baseUrl: baseUrl));
 
   // Prompt overrides: the `prompts:` section of ~/.fah/config.yaml (file
   // paths resolve against the agent cwd, `~` expands; missing files are a
@@ -889,7 +741,7 @@ Future<void> _runApp(List<String> args) async {
   final rolesConfig = saved.modelRoles;
   final roleSecrets = rolesConfig == null
       ? const <String, String>{}
-      : _collectRoleSecrets(rolesConfig, keyCache);
+      : collectRoleSecrets(rolesConfig, keyCache);
   ModelRolesResolver? rolesResolver;
   var defaultRoleResolved = false;
   if (rolesConfig != null) {
@@ -925,88 +777,46 @@ Future<void> _runApp(List<String> args) async {
       _fail('invalid model roles config: ${error.message}');
     }
   }
-  // A base URL other than the catalog default (--base-url or config baseUrl)
-  // means a user-configured endpoint: local llama.cpp/Ollama/LM Studio
-  // servers need no key at all, so the key is optional there (the hosted
-  // presets keep requiring one; the config default IS the OpenRouter URL, so
-  // compare values, not nullness). Roles mode already tolerates a missing
-  // key; the openai-completions adapter omits the Authorization header
-  // entirely when the key is empty.
-  final customEndpoint =
-      provider == 'openai-completions' &&
-      baseUrl != providerCatalog['openrouter']!.defaultBaseUrl;
-  // Interactive REPL can start without a key: the user can switch providers,
-  // models, or base URLs with slash commands before the first run. Headless
-  // mode needs a key immediately because it performs a single run and exits.
-  final interactive = headlessPrompt == null;
-  // Saved custom entries for this endpoint carry name-scoped keys
-  // (multi-account); they resolve right after the host-scoped slot.
-  final entryKeyNames = [
-    for (final entry in saved.customProviders)
-      if (entry.baseUrl == baseUrl && entry.keyName != null) entry.keyName!,
-  ];
-  // The FA_PROVIDER_* declaration carries its own key resolution (the
-  // apiKeyEnvVar ref, or its _BASE64 twin): the env value IS the source
-  // of truth for the booted session — store and config never override
-  // it. Empty means a keyless endpoint (no ref declared — the spec's env
-  // names are never probed).
-  final apiKey = faPreconfig != null
-      ? faPreconfig.apiKey
-      : defaultRoleResolved || customEndpoint || interactive
-      ? (optionalProviderApiKey(
-              provider,
-              keyCache,
-              baseUrl: baseUrl,
-              scopedKeyNames: entryKeyNames,
-            ) ??
-            '')
-      : _resolveApiKey(
-          provider,
-          keyCache,
-          baseUrl: baseUrl,
-          scopedKeyNames: entryKeyNames,
-        );
+  late final String apiKey;
+  try {
+    // The FA_PROVIDER_* declaration carries its own key resolution (the
+    // apiKeyEnvVar ref, or its _BASE64 twin): the env value IS the source
+    // of truth for the booted session — store and config never override
+    // it. Empty means a keyless endpoint (no ref declared — the spec's
+    // env names are never probed).
+    apiKey = faPreconfig != null
+        ? faPreconfig.apiKey
+        : startupApiKey(
+            provider,
+            keyCache,
+            baseUrl: baseUrl,
+            customProviders: saved.customProviders,
+            defaultRoleResolved: defaultRoleResolved,
+            interactive: headlessPrompt == null,
+          );
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
 
   // Redact the API keys this CLI knows about from tool results and the
   // provider context, so they cannot leak into the LLM conversation or the
-  // session files. The spawned shell already inherits the process
-  // environment, so no env injection is needed here.
-  final redactor = SecretRedactor();
-  for (final name in [
-    ..._allCatalogEnvNames(),
-    'BRAVE_API_KEY',
-    'TAVILY_API_KEY',
-  ]) {
-    final value = Platform.environment[name];
-    if (value != null) redactor.register(name, value);
-  }
-  // The FA_PROVIDER_* key ref may name ANY env var (not one of the well-known
-  // names above) — redact it under its own name so the ref'd value can never
-  // reach the transcript. A keyless declaration (no ref) carries no secret.
+  // session files (assembled by [buildSecretRedactor]).
+  final redactor = buildSecretRedactor(
+    roleSecrets: roleSecrets,
+    keys: keyCache,
+  );
+  // The FA_PROVIDER_* key ref may name ANY env var (not one of the
+  // well-known catalog names) — redact it under its own name so the ref'd
+  // value can never reach the transcript. A keyless declaration (no ref)
+  // carries no secret.
   if (faPreconfig case final preconfig? when preconfig.apiKey.isNotEmpty) {
     redactor.register(preconfig.apiKeyEnvVar!, preconfig.apiKey);
-  }
-  // Rotation stacks collected for the roles resolver are redacted too.
-  for (final entry in roleSecrets.entries) {
-    redactor.register(entry.key, entry.value);
-  }
-  // As are the keys preloaded from the platform secure store (keychain
-  // values must never reach the transcript either).
-  for (final name in keyCache.names) {
-    final value = keyCache.read(name);
-    if (value != null) redactor.register(name, value);
   }
   // Whether the redactor is attached to the agent. A keyless startup leaves
   // it detached; a `/provider` token arriving at runtime attaches it then.
   var redactorAttached = !redactor.isEmpty;
 
-  // Web search works out of the box via keyless DuckDuckGo; keyed providers
-  // (Brave, Tavily) join the chain when their API key is in the environment.
-  final webSearchSecrets = InMemorySecretsStore({
-    for (final name in const ['BRAVE_API_KEY', 'TAVILY_API_KEY'])
-      if (Platform.environment[name] case final value? when value.isNotEmpty)
-        name: value,
-  });
+  final webSearch = webSearchSecrets();
 
   late final Future<void> Function() persistConfig;
 
@@ -1033,7 +843,6 @@ Future<void> _runApp(List<String> args) async {
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
     _fail('unknown mode: ${effective.mode}');
   }
-
   final promptTemplateDirs = <String>[
     '$cwd/.fah/prompts',
     '$home/.fah/prompts',
@@ -1042,6 +851,7 @@ Future<void> _runApp(List<String> args) async {
 
   final io = _TerminalCliIO(headless: headlessPrompt != null);
   // The one boot notice for env preconfig (same channel as the raw-mode
+
   // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
   // key ref — or its keyless absence) — never the key value. The pinned
   // declaration is the session default for every model role; only a
@@ -1073,7 +883,7 @@ Future<void> _runApp(List<String> args) async {
 
   // `fa serve --a2a [--port N] [--token T]` — mount this agent as an A2A
   // endpoint (Phase 5b). Uses the fully-resolved model/key/provider.
-  if (isServeA2a) {
+  if (serve.serveA2a) {
     final port = _serveFlagInt(args, '--port', 8300);
     final token = _serveFlagStr(args, '--token');
     await _serveA2a(
@@ -1138,7 +948,7 @@ Future<void> _runApp(List<String> args) async {
       sessionName: effective.session,
       visionConfig: visionConfig,
       transcribeConfig: transcribeConfig,
-      webSearchConfig: WebSearchConfig(secrets: webSearchSecrets),
+      webSearchConfig: WebSearchConfig(secrets: webSearch),
       sqliteEngine: const Sqlite3Engine(),
       // The lsp tool: the io-side process transport spawns `dart
       // language-server` (and any server from .fah/lsp.json); the host pid

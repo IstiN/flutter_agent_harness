@@ -199,8 +199,11 @@ factual: paths, commands, invariants — no essays.
   on every session init/switch) namespaces mailboxes so two instances never
   drain each other — ids with `/` are absolute cross-instance addresses
   (`<sessionId>/main`). `agent_message` targets siblings, `main`, or an
-  absolute mailbox; `agent_directory` lists fabric mailboxes with pending
-  counts (`.id` markers keep real ids despite dir sanitization). The
+  absolute mailbox; `agent_directory` lists LIVE fabric mailboxes (recent
+  activity via the heartbeat hosts touch on their inbox-watch timers) plus
+  anything with pending mail — stale mailboxes from finished sessions are
+  hidden behind the tool's `all: true` (`.id` markers keep real ids despite
+  dir sanitization; `_scheduled`/dot-dirs are not mailboxes). The
   `## Agent messaging` prompt section (prompts messaging_section.md, CLI +
   app variants) tells the model its own mailbox address. Turn-boundary
   delivery: `Agent.externalSteeringSource`
