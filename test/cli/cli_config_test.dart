@@ -415,6 +415,64 @@ prompts:
         expect(yaml, contains('access: denied'));
         expect(yaml, contains('disableShellExecution: true'));
       });
+
+      group('cube section', () {
+        test('absent section parses as null', () {
+          expect(loadCliConfig(tmp.path).cube, isNull);
+        });
+
+        test('round-trips enabled config path', () async {
+          await saveCliConfig(
+            tmp.path,
+            CliConfig(cube: CubeSettings(configPath: '.fah/cubes/dev.yaml')),
+          );
+          final loaded = loadCliConfig(tmp.path);
+          expect(loaded.cube?.enabled, isTrue);
+          expect(loaded.cube?.configPath, '.fah/cubes/dev.yaml');
+          // Full yaml fidelity: emitting again reproduces the section.
+          expect(
+            loaded.toYaml(),
+            contains('cube:\n  config: .fah/cubes/dev.yaml\n'),
+          );
+        });
+
+        test('round-trips disabled without a path', () async {
+          await saveCliConfig(
+            tmp.path,
+            CliConfig(cube: CubeSettings(enabled: false)),
+          );
+          final loaded = loadCliConfig(tmp.path);
+          expect(loaded.cube?.enabled, isFalse);
+          expect(loaded.cube?.configPath, isNull);
+          expect(loaded.toYaml(), contains('cube:\n  enabled: false\n'));
+        });
+
+        test('rejects unknown cube keys', () async {
+          final file = File('${tmp.path}/.fah/config.yaml');
+          file.createSync(recursive: true);
+          file.writeAsStringSync('cube:\n  bogus: 1\n');
+          expect(
+            () => loadCliConfig(tmp.path),
+            throwsA(
+              isA<ConfigException>().having(
+                (e) => e.message,
+                'message',
+                contains('unknown "cube" key'),
+              ),
+            ),
+          );
+        });
+
+        test('rejects a non-boolean enabled', () async {
+          final file = File('${tmp.path}/.fah/config.yaml');
+          file.createSync(recursive: true);
+          file.writeAsStringSync('cube:\n  enabled: yes-please\n');
+          expect(
+            () => loadCliConfig(tmp.path),
+            throwsA(isA<ConfigException>()),
+          );
+        });
+      });
     });
   });
 
@@ -433,6 +491,112 @@ prompts:
       expect(effectiveProviderConnectTimeout, const Duration(seconds: 7));
       // Untouched field keeps the default.
       expect(effectiveProviderStreamIdleTimeout, providerStreamIdleTimeout);
+    });
+  });
+
+  group('project cube section', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-config-test-');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    void writeProjectConfig(String yaml) {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync(yaml);
+    }
+
+    test('missing project file loads as null', () {
+      expect(loadProjectCubeSettings(tmp.path), isNull);
+    });
+
+    test('parses the project cube section', () {
+      writeProjectConfig('cube:\n  config: .fah/cubes/dev.yaml\n');
+      final loaded = loadProjectCubeSettings(tmp.path);
+      expect(loaded?.enabled, isTrue);
+      expect(loaded?.configPath, '.fah/cubes/dev.yaml');
+    });
+
+    test('absent section loads as null', () {
+      writeProjectConfig('provider: anthropic\n');
+      expect(loadProjectCubeSettings(tmp.path), isNull);
+    });
+
+    test('invalid section throws ConfigException', () {
+      writeProjectConfig('cube:\n  bogus: 1\n');
+      expect(
+        () => loadProjectCubeSettings(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown "cube" key'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('startup cube precedence', () {
+    const project = CubeSettings(configPath: '.fah/cubes/dev.yaml');
+    const user = CubeSettings(configPath: '.fah/cubes/user.yaml');
+
+    test('an explicit --cube-config flag wins over everything', () {
+      expect(
+        resolveStartupCubeSource(
+          flagConfigPath: 'pinned.yaml',
+          flagName: 'named',
+          project: project,
+          user: user,
+        ),
+        'pinned.yaml',
+      );
+    });
+
+    test('an explicit --cube name wins over the config sections', () {
+      expect(
+        resolveStartupCubeSource(
+          flagName: 'named',
+          project: project,
+          user: user,
+        ),
+        'named',
+      );
+    });
+
+    test('the project section beats the user section when both set', () {
+      expect(
+        resolveStartupCubeSource(project: project, user: user),
+        '.fah/cubes/dev.yaml',
+      );
+    });
+
+    test('a disabled project section falls through to the user one', () {
+      expect(
+        resolveStartupCubeSource(
+          project: const CubeSettings(enabled: false, configPath: 'x'),
+          user: user,
+        ),
+        '.fah/cubes/user.yaml',
+      );
+    });
+
+    test('a disabled or absent user section starts unsandboxed', () {
+      expect(resolveStartupCubeSource(), isNull);
+      expect(
+        resolveStartupCubeSource(user: const CubeSettings(enabled: false)),
+        isNull,
+      );
+      expect(
+        resolveStartupCubeSource(project: const CubeSettings(enabled: true)),
+        isNull,
+        reason: 'enabled with no config path has nothing to resolve',
+      );
     });
   });
 }

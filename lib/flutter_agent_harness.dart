@@ -28,7 +28,12 @@ export 'src/cli/env_provider_preconfig.dart';
 export 'src/model_roles/provider_key_resolver.dart';
 export 'src/cli/cli_args.dart';
 export 'src/cli/cli_config.dart'
-    show CliConfig, loadCliConfig, loadProjectMemoryConfig;
+    show
+        CliConfig,
+        loadCliConfig,
+        loadProjectMemoryConfig,
+        loadProjectCubeSettings,
+        resolveStartupCubeSource;
 export 'src/cli/cli_help.dart';
 export 'src/cli/sigint_action.dart';
 export 'src/cli/key_event.dart';
@@ -38,6 +43,7 @@ export 'src/compaction/branch_summarization.dart';
 export 'src/compaction/compaction.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/context.dart';
+export 'src/cube/cube.dart';
 export 'src/env/execution_env.dart';
 export 'src/a2a/a2a_client.dart';
 export 'src/a2a/a2a_server.dart';

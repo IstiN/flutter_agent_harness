@@ -361,6 +361,34 @@ factual: paths, commands, invariants — no essays.
   `AgentCliConfig.modelRolesResolver` is mutable) and persists via
   `onModelsConfigChanged` (bin/fah.dart's persistConfig reads the live
   resolver config).
+- `lib/src/cube/` — fa_cube sandbox profiles (issue #8): strict `CubeSpec`
+  YAML (`.fah/cubes/<name>.yaml`, apiVersion fa/v1 kind Cube) with
+  tool/network/fs/env/resource/cache policies (deny-wins, empty allowlist =
+  deny-all, lexical path normalization as traversal guard), `CubeResolver`
+  (path > name lookup), Dart-layer enforcement (`SandboxedExecutionEnv`
+  decorator: `CubeFsGuard` gates the agent's own read/edit/write tools,
+  `CubePolicyEngine` gates bash incl. pipes/`$(...)` subshells, exit 127
+  denials with per-exec reason), content-addressed `CubeCacheManager` under
+  `.fah/cube-cache/<md5>/` (manifest + ttl). `spec.backend:` = `policy`
+  (default, Dart-only) | `kernel` opt-in: every command wrapped in the OS
+  sandbox via `CubeSandboxBackend.wrapCommand` — macOS `sandbox-exec -f
+  <profile>`, Linux `unshare --user --map-root-user --mount [--net iff the
+  spec allows no network]` + `ulimit -v/-t` ceilings, both over a clean
+  `env -i` environment; profiles staged `.fah/cube-profiles/<md5>.sb` once
+  per spec; Windows = Job Object descriptor only (degrades to policy); a
+  wrapper that is missing from PATH or refuses the sandbox (EPERM, SBPL
+  rejection) surfaces as a clean `fa_cube[<name>]: kernel backend ...`
+  spawn error in foreground execs and background jobs alike. CLI:
+  startup precedence flags > project `.fah/config.yaml` `cube:` > user
+  config (`resolveStartupCubeSource`), `/settings` Cube sandbox picker
+  (shared switch logic in `agent_cli_cube.dart`, persists the `cube:`
+  startup default), `/cube [use <name>|off|reload|list|cache status|cache
+  clear]`; cache restore at run start + save at end, headless included.
+  `SharedSetting.cubeSandbox` is cli-only (host process sandboxing; app
+  shells already confined). Contract + reference: `schema/cube_schema.json`
+  and `docs/cubes.md`; mock-LLM integration suite
+  `test/integration/fa_cube_integration_test.dart` (8 scenarios,
+  `--tags integration`).
 - `lib/src/prompts/prompt_overrides.dart` — `prompts:` config section maps
   prompt names to file path or inline text; strict validation; flags
   `--system-prompt(-file)` > config > built-in.

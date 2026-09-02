@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fa:cube:fa-v1",
+  "title": "Fa cube manifest (fa/v1)",
+  "description": "Strict schema for the fa/v1 Cube yaml document parsed by CubeSpec.fromYaml (.fah/cubes/<name>.yaml). Mirrors the parser exactly: every level forbids unknown keys, and where the parser is stricter than a regex can express (blank-string checks after trim, duplicate env names, exactly one of value/valueFrom/hidden), the schema encodes the same rule or notes it.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "const": "fa/v1" },
+    "kind": { "const": "Cube" },
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Cube name; lowercase letters, digits and hyphens, starting with a letter."
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "enum": ["policy", "kernel"],
+          "description": "kernel — OS confinement via the host primitive (sandbox-exec on macOS, unshare on Linux; descriptor-only elsewhere). policy (default) enforces in Dart only."
+        },
+        "tools": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "\\S",
+                "description": "Command word(s); may end with '*' for a character-level prefix match."
+              }
+            },
+            "deny": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "\\S",
+                "description": "Command word(s) always refused; deny wins over allow."
+              }
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/networkRule" }
+            },
+            "deny": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/networkRule" }
+            }
+          }
+        },
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "workspace": {
+              "type": "string",
+              "pattern": "^(~/|/)",
+              "description": "Absolute or ~/-relative read/write root; default /workspace."
+            },
+            "mounts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "access"],
+                "additionalProperties": false,
+                "properties": {
+                  "path": { "type": "string", "pattern": "\\S" },
+                  "access": { "enum": ["ro", "rw", "deny"] }
+                }
+              }
+            }
+          }
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "pattern": "\\S" },
+              "value": { "type": "string" },
+              "valueFrom": {
+                "type": "string",
+                "pattern": "^env:.+$",
+                "description": "Host environment variable read at apply() time, of the form env:NAME."
+              },
+              "hidden": {
+                "type": "boolean",
+                "description": "True removes the variable from the child environment."
+              }
+            },
+            "oneOf": [
+              {
+                "required": ["value"],
+                "not": {
+                  "anyOf": [
+                    { "required": ["valueFrom"] },
+                    { "required": ["hidden"] }
+                  ]
+                }
+              },
+              {
+                "required": ["valueFrom"],
+                "not": {
+                  "anyOf": [
+                    { "required": ["value"] },
+                    { "required": ["hidden"] }
+                  ]
+                }
+              },
+              {
+                "required": ["hidden"],
+                "not": {
+                  "anyOf": [
+                    { "required": ["value"] },
+                    { "required": ["valueFrom"] }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cpu": {
+                  "type": "string",
+                  "pattern": "\\S",
+                  "description": "Kept verbatim (e.g. \"50%\") and round-tripped in the spec; not enforced by any backend today (cgroup v2 cpu.max is future work; SBPL has no cpu primitive)."
+                },
+                "memory": { "$ref": "#/$defs/byteSize" },
+                "disk": {
+                  "$ref": "#/$defs/byteSize",
+                  "description": "Cache-prune bound only: prunes old cube-cache entries; never a run quota."
+                }
+              }
+            },
+            "timeout": { "$ref": "#/$defs/duration" }
+          }
+        },
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Defaults to true when the cache section is present."
+            },
+            "paths": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "\\S" }
+            },
+            "restore": {
+              "type": "boolean",
+              "description": "Defaults to true."
+            },
+            "ttl": { "$ref": "#/$defs/duration" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "networkRule": {
+      "description": "A bare host string (any port) or a host/ports map. Host matches exactly (case-insensitive), '*' for any host, or a single leading-label wildcard '*.domain'.",
+      "anyOf": [
+        { "type": "string", "pattern": "\\S" },
+        {
+          "type": "object",
+          "required": ["host"],
+          "additionalProperties": false,
+          "properties": {
+            "host": { "type": "string", "pattern": "\\S" },
+            "ports": {
+              "type": "array",
+              "items": { "type": "integer" },
+              "description": "Empty or omitted means any port."
+            }
+          }
+        }
+      ]
+    },
+    "byteSize": {
+      "description": "Integer byte count, or an integer plus a case-insensitive suffix: K/KiB (1024), KB (1000), M/Mi/MiB, MB, G/GiB, GB, B; optional space between magnitude and suffix.",
+      "anyOf": [
+        { "type": "integer" },
+        {
+          "type": "string",
+          "pattern": "^[0-9]+\\s*([bB]|[kK]([iI][bB])?|[kK][bB]|[mM]([iI][bB])?|[mM][bB]|[gG]([iI][bB])?|[gG][bB])?$"
+        }
+      ]
+    },
+    "duration": {
+      "description": "Integer seconds, or a single-unit duration string: 3600s, 5m, 24h. Compounds like 1h30m are rejected by the parser.",
+      "anyOf": [
+        { "type": "integer" },
+        { "type": "string", "pattern": "^[0-9]+[smh]$" }
+      ]
+    }
+  }
+}

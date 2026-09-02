@@ -71,6 +71,11 @@ OPTIONS
   --session-root <dir>         Session storage root (default: ~/.fah/sessions;
                                macOS: ~/Library/Group Containers/group.dev.fa1.shared/fa/sessions)
   --session <name>             Resume or create a named session for this cwd
+  --cube <name>                Apply a cube sandbox profile by name
+                               (.fah/cubes/<name>.yaml); wins over the
+                               config cube: section
+  --cube-config <path>         Apply a cube from an explicit manifest path
+                               (~ expanded)
   --help, -h                   Show this help
   --version                    Print the version
 
@@ -341,6 +346,10 @@ REPL COMMANDS
                      .fah/skills
   /agents             list available agent types (built-in + discovered from
                       .fah/.agents/.claude/.github/.codex agents dirs)
+  /cube [use <name|path>|off|reload|list|cache status|cache clear]
+                     show or switch the cube sandbox profile (fa_cube;
+                     manifests in .fah/cubes/<name>.yaml) and manage its
+                     cache
 
 SKILLS AND CONTEXT FILES
   Skills are SKILL.md files with YAML frontmatter (name, description),
@@ -418,8 +427,9 @@ SKILLS AND CONTEXT FILES
   /resume            switch to the most recent session
   /rename-session <n> rename the current session
   /approval [mode]   show or set tool approval (always-ask|write|yolo|unattended)
-  /settings          settings hub: provider, model, approval, keys, MCP
-                     (interactive picker in the TUI, summary in line mode)
+  /settings          settings hub: provider, model, approval, mode, cube
+                     sandbox, keys, MCP (interactive picker in the TUI,
+                     summary in line mode)
   /allow [tool]      always-allow a tool (or list them)
   /mcp [list|reload] show MCP servers or reload the config
   /dap [host ...]    DAP hub status, or connect to a hub (agent-to-agent
@@ -446,9 +456,12 @@ TERMINAL
 CONFIGURATION FILES
   ~/.fah/config.yaml   user preferences: provider, model, baseUrl, mode,
                        approvalMode, allowedTools, plus the prompts:, roles:,
-                       modelOverrides:, retry:, ttsr:, and models: sections.
-                       Invalid roles/ttsr/prompts/models sections fail
-                       loudly at startup.
+                       modelOverrides:, retry:, ttsr:, models:, and cube:
+                       sections. Invalid roles/ttsr/prompts/models/cube
+                       sections fail loudly at startup.
+  .fah/cubes/          cube sandbox manifests (--cube <name> and /cube use
+                       resolve <name>.yaml here); the project .fah/
+                       config.yaml cube: section picks the startup default
   .fah/packages.yaml   project plugin configuration
   .fah/rules.yaml      project TTSR stream rules
   .fah/lsp.json        project LSP server map

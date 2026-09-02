@@ -157,6 +157,10 @@ void main() {
                 '/sessions',
                 '--session',
                 'feature-x',
+                '--cube',
+                'dev',
+                '--cube-config',
+                '/c/dev.yaml',
               ])
               as CliArgs;
       expect(args.model, 'm');
@@ -171,6 +175,8 @@ void main() {
       expect(args.mode, 'review');
       expect(args.sessionRoot, '/sessions');
       expect(args.session, 'feature-x');
+      expect(args.cubeName, 'dev');
+      expect(args.cubeConfigPath, '/c/dev.yaml');
       expect(args.isHeadless, isFalse);
     });
 
@@ -205,6 +211,33 @@ void main() {
             (e) => e.message,
             'message',
             contains('unknown provider: bogus'),
+          ),
+        ),
+      );
+    });
+
+    test('--cube sets the cube name', () {
+      final args = parseCliArgs(const ['--cube', 'web-scraper']) as CliArgs;
+      expect(args.cubeName, 'web-scraper');
+      expect(args.cubeConfigPath, isNull);
+      expect(args.isHeadless, isFalse);
+    });
+
+    test('--cube-config sets the manifest path', () {
+      final args =
+          parseCliArgs(const ['--cube-config', '~/cubes/dev.yaml']) as CliArgs;
+      expect(args.cubeConfigPath, '~/cubes/dev.yaml');
+      expect(args.cubeName, isNull);
+    });
+
+    test('--cube with a missing value is an error', () {
+      expect(
+        () => parseCliArgs(const ['--cube']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--cube requires a value'),
           ),
         ),
       );

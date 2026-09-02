@@ -680,6 +680,35 @@ Future<void> _runApp(List<String> args) async {
   final model = _buildModel(effective);
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
+  // The execution env shared by the CLI config (tools, session storage)
+  // and the presence store (live-session heartbeats) — also the resolver
+  // target for the initial cube lookup.
+  final cliEnv = LocalExecutionEnv(cwd: cwd);
+
+  // Initial cube (fa_cube Phase 1): --cube-config path > --cube name > the
+  // project `.fah/config.yaml` `cube:` section > the saved user `cube:`
+  // section (each config section only when enabled). A broken manifest is
+  // a hard error — a requested cube must never fail open into an
+  // unconfined run.
+  String? cubeSource;
+  CubeSpec? cubeSpec;
+  try {
+    cubeSource = resolveStartupCubeSource(
+      flagConfigPath: parsed.cubeConfigPath,
+      flagName: parsed.cubeName,
+      project: loadProjectCubeSettings(cwd),
+      user: saved.cube,
+    );
+    final isPath = cubeSource?.contains('/') ?? false;
+    cubeSpec = await CubeResolver.resolve(
+      env: cliEnv,
+      path: isPath ? cubeSource : null,
+      name: isPath ? null : cubeSource,
+      homeDir: home,
+    );
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
 
   // Remote provider catalog (fa1.dev/models-catalog.json): default model
   // ids and per-provider context-window tables for endpoints that don't
@@ -902,9 +931,6 @@ Future<void> _runApp(List<String> args) async {
   // startup dialog and `/skills access` change it — persisted via
   // persistConfig.
   var skillsAccess = saved.skillsAccess;
-  // The execution env shared by the CLI config (tools, session storage)
-  // and the presence store (live-session heartbeats).
-  late final LocalExecutionEnv cliEnv;
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui:
@@ -917,7 +943,13 @@ Future<void> _runApp(List<String> args) async {
       apiKey: apiKey,
       providerKind: provider,
       // Shared by the env config and the presence store below.
-      env: (cliEnv = LocalExecutionEnv(cwd: cwd)),
+      env: cliEnv,
+      // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the
+      // cube's policies; `/cube` inspects and switches it live. The OS
+      // name feeds the backend description (lib/src stays dart:io-free).
+      cubeSpec: cubeSpec,
+      cubeSource: cubeSource,
+      osName: Platform.operatingSystem,
       // The banner names the key env var in play (name only, never the
       // value); the catalog maps the effective provider to its var names.
       // A name counts as set when the environment OR the secure store has
@@ -991,6 +1023,10 @@ Future<void> _runApp(List<String> args) async {
       ttsr: _resolveTtsr(saved, cwd),
       // Project-level .fah/config.yaml memory: wins over the user one.
       memoryConfig: loadProjectMemoryConfig(cwd) ?? saved.memory,
+      // The saved cube default (the `cube:` section): the settings-hub
+      // Cube sandbox flow rewrites it — persisted via persistConfig.
+      cubeSettings: saved.cube,
+      onCubeSettingsChanged: () async => persistConfig(),
       onModelChanged: (_) async => persistConfig(),
       // `/provider` switches: redact an explicitly passed session token so
       // it cannot leak into tool results or session files, then persist the
@@ -1078,6 +1114,9 @@ Future<void> _runApp(List<String> args) async {
         // `/skills access`); shell-execution policy is static per session.
         skillsAccess: skillsAccess,
         skillsDisableShellExecution: saved.skillsDisableShellExecution,
+        // The saved cube default (the live value the Cube sandbox flow
+        // rewrites; `saved.cube` keeps the section when nothing changed).
+        cube: cli.config.cubeSettings ?? saved.cube,
       ),
     );
   };

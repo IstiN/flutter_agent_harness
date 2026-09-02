@@ -16,6 +16,7 @@ import '../exceptions.dart';
 import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
+import '../cube/config/cube_settings.dart';
 import '../providers/provider_common.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
@@ -72,6 +73,7 @@ final class CliConfig {
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
     this.memory,
+    this.cube,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -102,6 +104,8 @@ final class CliConfig {
       memory: map['memory'] == null
           ? null
           : MemoryConfig.fromYaml(map['memory']),
+      // The cube section (default fa_cube sandbox profile); strict too.
+      cube: map['cube'] == null ? null : CubeSettings.fromYaml(map['cube']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       customProviders: switch (map['customProviders']) {
         null => const [],
@@ -246,6 +250,11 @@ final class CliConfig {
   /// layout.
   final MemoryConfig? memory;
 
+  /// Optional `cube:` section — the default fa_cube sandbox profile applied
+  /// at startup when neither `--cube` nor `--cube-config` is passed. Parsed
+  /// strictly; `null` means the section is absent.
+  final CubeSettings? cube;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -268,6 +277,8 @@ final class CliConfig {
     if (mcpConfig != null) buffer.write(mcpConfig.toYaml());
     buffer.write(_providerTimeoutsYaml());
     buffer.write(_skillsYaml());
+    final cubeConfig = cube;
+    if (cubeConfig != null) buffer.write(cubeConfig.toYamlFragment());
     return buffer.toString();
   }
 
@@ -394,6 +405,43 @@ MemoryConfig? loadProjectMemoryConfig(String projectDir) {
   } on Object {
     return null;
   }
+}
+
+/// Loads the PROJECT-level `cube:` section from
+/// `<projectDir>/.fah/config.yaml` — the git-backed sandbox default
+/// travels with the repo. Project wins over the user-level `cube:`
+/// section. Null when the file or the section is absent/unreadable; a
+/// present-but-invalid section throws [ConfigException] (strict, like the
+/// user config).
+CubeSettings? loadProjectCubeSettings(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['cube'];
+    return node == null ? null : CubeSettings.fromYaml(node);
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// The startup cube source (fa_cube): explicit flags win, then the project
+/// `cube:` section, then the user `cube:` section — each config section
+/// applies only when enabled. Null = start unsandboxed.
+String? resolveStartupCubeSource({
+  String? flagConfigPath,
+  String? flagName,
+  CubeSettings? project,
+  CubeSettings? user,
+}) {
+  if (flagConfigPath != null) return flagConfigPath;
+  if (flagName != null) return flagName;
+  if (project != null && project.enabled) return project.configPath;
+  if (user != null && user.enabled) return user.configPath;
+  return null;
 }
 
 /// Saves [CliConfig] to `~/.fah/config.yaml`.

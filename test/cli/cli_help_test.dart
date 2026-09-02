@@ -30,6 +30,8 @@ void main() {
       '--cwd',
       '--session-root',
       '--session',
+      '--cube',
+      '--cube-config',
       '--prompt',
       '-p',
     ];
@@ -121,6 +123,11 @@ void main() {
       'GOAL.md',
       'DESIGN.md',
       'ttsr:',
+      // Cube sandbox (fa_cube).
+      'cube:',
+      '/cube',
+      'cube sandbox',
+      '.fah/cubes',
       '.fah/rules.yaml',
       // Tools.
       'read',

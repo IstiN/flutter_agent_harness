@@ -4,8 +4,9 @@ part of 'agent_cli.dart';
 
 /// Static configuration for an [AgentCli] session.
 final class AgentCliConfig {
-  /// Creates an [AgentCliConfig]. Not const: [modelRolesResolver] is
-  /// mutable (the settings-hub agent-models flow creates one on demand).
+  /// Creates an [AgentCliConfig]. Not const: [modelRolesResolver] and
+  /// [cubeSettings] are mutable (the settings-hub flows create/rewrite
+  /// them on demand).
   AgentCliConfig({
     required this.model,
     required this.apiKey,
@@ -61,6 +62,11 @@ final class AgentCliConfig {
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
+    this.cubeSpec,
+    this.cubeSource,
+    this.cubeSettings,
+    this.onCubeSettingsChanged,
+    this.osName,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -73,6 +79,34 @@ final class AgentCliConfig {
   /// is used (ratio 0.7, reserve 50000, keep 80000). Hosts plumb their
   /// `compaction:` yaml section through this field.
   final CompactionSettings? compactionSettings;
+
+  /// Optional fa_cube sandbox spec applied for the whole session (from the
+  /// `--cube`/`--cube-config` flags or the `cube:` config section). The
+  /// execution env wraps it in a [SandboxedExecutionEnv]: filesystem and
+  /// shell operations clamp to the cube's policies, `/cube` swaps it live.
+  /// Null = no cube — the env passes through untouched.
+  final CubeSpec? cubeSpec;
+
+  /// Where [cubeSpec] came from: an explicit manifest path (contains `/`)
+  /// or a cube name. `/cube reload` re-resolves it; `/cube use` overwrites
+  /// it. Null when no cube was requested.
+  final String? cubeSource;
+
+  /// The host OS name (e.g. `linux`, `macos`), supplied by the executable —
+  /// lib/src stays dart:io-free. `/cube` uses it to describe the OS sandbox
+  /// backend. Null (tests, web) reports a generic passthrough instead.
+  final String? osName;
+
+  /// The live `cube:` config section (the saved sandbox startup default).
+  /// The settings-hub Cube sandbox flow rewrites it; the host persists the
+  /// new value after [onCubeSettingsChanged] fires. Mutable like
+  /// [modelRolesResolver] ([CubeSettings] itself is immutable).
+  CubeSettings? cubeSettings;
+
+  /// Called when the saved cube default changes (the settings-hub Cube
+  /// sandbox flow) so the executable can persist it. The flow awaits the
+  /// hook before confirming, so persistence lands with the feedback line.
+  final Future<void> Function()? onCubeSettingsChanged;
 
   /// Optional override for the OpenRouter OAuth code exchange. Tests inject a
   /// fake here so the `/provider openrouter oauth` flow can run without
