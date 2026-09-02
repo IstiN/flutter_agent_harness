@@ -167,6 +167,8 @@ final class TrajectoryAssistantRecord extends TrajectoryRecord {
     this.isError,
     this.errorCode,
     this.errorMessage,
+    this.requestOnly = false,
+    this.displayText = '',
   });
 
   /// Session record id of the owning message.
@@ -249,6 +251,12 @@ final class TrajectoryAssistantRecord extends TrajectoryRecord {
 
   /// Human-readable error description.
   final String? errorMessage;
+
+  /// Whether the row is a request-only separator without a message record.
+  final bool requestOnly;
+
+  /// Fallback row label when the message has no visible content.
+  final String displayText;
 
   @override
   TrajectoryCellKind get kind => TrajectoryCellKind.message;
