@@ -72,8 +72,26 @@ final class MemoryController {
     this._llmProvider,
     this._projectStoragePath,
     this._userStoragePath,
+    this.configSource,
+    this.onConfigChanged,
   }) : _env = env,
        _projectRoot = projectRoot ?? env.cwd;
+
+  /// Runtime config freshness: invoked before every memory operation; a
+  /// non-null result REPLACES the active `memory:` section — stores whose
+  /// resolved path changed are dropped and re-created lazily at the new
+  /// location (editing .fah/config.yaml takes effect without a restart).
+  /// A thrown error keeps the current config (a mid-session yaml typo
+  /// must not kill memory ops; the next successful read recovers).
+  final Future<MemoryConfig?> Function()? configSource;
+
+  /// Invoked after a config swap actually changed the resolved store
+  /// paths (the host re-composes its `<memory>` prompt section here).
+  final void Function()? onConfigChanged;
+
+  /// The config the current cached stores were built from (null =
+  /// defaults). Only a RESOLVED-path difference triggers a swap.
+  MemoryConfig? _activeConfig;
 
   final ExecutionEnv _env;
   final String _projectRoot;
@@ -85,8 +103,8 @@ final class MemoryController {
   /// historical `<root>/.fah/memory`. Relative project paths resolve
   /// against the project root; a user path's leading `~/` expands
   /// against the user root.
-  final String? _projectStoragePath;
-  final String? _userStoragePath;
+  String? _projectStoragePath;
+  String? _userStoragePath;
 
   ExecutionEnvKbStorage? _projectStorage;
   ExecutionEnvKbStorage? _userStorage;
@@ -122,6 +140,60 @@ final class MemoryController {
     return _userStore!;
   }
 
+  /// Re-reads the injected config source and swaps the stores when the
+  /// resolved paths changed. Called at the entry of every public
+  /// operation; a null source is the plain boot-fixed behavior.
+  Future<void> _refreshConfig() async {
+    final source = configSource;
+    if (source == null) return;
+    final MemoryConfig? next;
+    try {
+      next = await source();
+    } on Object {
+      return; // keep the current config; the next read may recover
+    }
+    if (next == null) return;
+    if (_sameResolution(next)) {
+      _activeConfig ??= next;
+      return;
+    }
+    await _applyConfig(next);
+  }
+
+  /// Whether [next] resolves to the SAME store paths as the active
+  /// config (the active null = the constructor-injected paths).
+  bool _sameResolution(MemoryConfig next) {
+    final active =
+        _activeConfig ??
+        MemoryConfig(
+          projectPath: _projectStoragePath,
+          userPath: _userStoragePath,
+        );
+    if (active.resolveProjectPath(_projectRoot) !=
+        next.resolveProjectPath(_projectRoot)) {
+      return false;
+    }
+    final userRoot = _userRoot;
+    if (userRoot == null) return true;
+    return active.resolveUserPath(userRoot) == next.resolveUserPath(userRoot);
+  }
+
+  /// Swaps to [next]: updates the raw paths, drops every cached store —
+  /// the next access re-initializes at the new location — and notifies
+  /// the host.
+  Future<void> _applyConfig(MemoryConfig next) async {
+    _activeConfig = next;
+    _projectStoragePath = next.projectPath;
+    _userStoragePath = next.userPath;
+    _projectStorage = null;
+    _projectStore = null;
+    _projectSearch = null;
+    _userStorage = null;
+    _userStore = null;
+    _userSearch = null;
+    onConfigChanged?.call();
+  }
+
   // The resolution rules live in MemoryConfig (the `memory:` yaml
   // section) — one source of truth, shared with the config consumers.
   String _resolvedProjectPath() => MemoryConfig(
@@ -139,6 +211,7 @@ final class MemoryController {
     double importance = 0.5,
     String scope = 'project',
   }) async {
+    await _refreshConfig();
     final store = scope == 'user' ? await userStore : await projectStore;
     if (store == null) {
       return MemoryEntry(
@@ -171,6 +244,7 @@ final class MemoryController {
   /// then user storage. Returns the scope it was deleted from, or null when
   /// the id exists in neither.
   Future<String?> delete(String id, {String? scope}) async {
+    await _refreshConfig();
     final candidateScopes = <String>[
       if (scope != null)
         scope
@@ -206,6 +280,7 @@ final class MemoryController {
 
   /// Searches both scopes (project first, then user).
   Future<List<MemoryEntry>> search(String query, {int limit = 10}) async {
+    await _refreshConfig();
     final results = <MemoryEntry>[];
     await projectStore; // ensure initialized
     await _searchScope(_projectSearch, query, limit, 'project', results);
@@ -245,6 +320,7 @@ final class MemoryController {
 
   /// Lists recent entries from both scopes (project first, then user).
   Future<List<MemoryEntry>> list({int limit = 20}) async {
+    await _refreshConfig();
     final results = <MemoryEntry>[];
     await projectStore;
     await _listScope(_projectStorage, 'project', limit, results);
@@ -292,6 +368,7 @@ final class MemoryController {
 
   /// Formats a ≤2 KiB `<memory>` block for the system prompt.
   Future<String> formatPromptSection() async {
+    await _refreshConfig();
     final entries = await list(limit: 15);
     if (entries.isEmpty) return '';
     final lines = <String>[
@@ -312,6 +389,7 @@ final class MemoryController {
   /// while one runs is a no-op returning `false`. Consolidation needs an
   /// LLM provider — without one only level maintenance runs.
   Future<bool> maintain() async {
+    await _refreshConfig();
     if (_maintaining) return false;
     _maintaining = true;
     try {

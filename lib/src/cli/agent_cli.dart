@@ -81,6 +81,7 @@ import '../secrets/secure_key_store.dart';
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session/attach/session_presence.dart';
+import 'cli_config.dart';
 import 'custom_providers.dart';
 import 'folder_model_state.dart';
 import 'provider_flow.dart';
@@ -196,9 +197,16 @@ class AgentCli {
       // inside the repo; null keeps the .fah/memory default.
       projectStoragePath: config.memoryConfig?.projectPath,
       userStoragePath: config.memoryConfig?.userPath,
+      // Runtime config freshness: every memory op re-reads the `memory:`
+      // section (project .fah/config.yaml wins over the user one — the
+      // same merge as boot), so deciding to save memory in the project
+      // takes effect without a restart.
+      configSource: () async => _liveMemoryConfig(),
+      onConfigChanged: () => unawaited(_refreshMemorySection()),
       // Semantic search + consolidate() need an LLM: memory → smol → main.
       llmProvider: HarnessLlmProvider(resolve: () => _resolveMemoryLlmSlot()),
     );
+
     // fa_cube sandbox: fs ops route through the fs guard and shell ops
     // through the policy engine while a spec is active; a null spec boots
     // the env in passthrough mode (`/cube use` swaps one in later). Sits
@@ -807,6 +815,17 @@ class AgentCli {
 
   /// Re-reads the `<memory>` section from the memory stores and recomposes
   /// the prompt when it changed.
+  /// The runtime `memory:` section (project `.fah/config.yaml` wins over
+  /// the user-level one — the same merge as boot). Re-read on every
+  /// memory operation by the controller's configSource; a broken file
+  /// keeps the last good config (the controller swallows source errors).
+  MemoryConfig? _liveMemoryConfig() {
+    final project = loadProjectMemoryConfig(_env.cwd);
+    if (project != null) return project;
+    final home = config.homeDir;
+    return home == null ? null : loadCliConfig(home).memory;
+  }
+
   Future<void> _refreshMemorySection() async {
     final section = await _memory.formatPromptSection();
     if (section == _memorySection) return;

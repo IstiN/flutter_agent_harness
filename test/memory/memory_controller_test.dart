@@ -19,21 +19,23 @@ void main() {
       expect(entry.scope, 'project');
     });
 
-    test('the storage adapter is append-capable (ledger race fix 0.2.1)',
-        () async {
-      // flutter_agent_memory 0.2.1: parallel deletes append tombstones via
-      // KbAppendCapable — the read-modify-write race that clobbered our
-      // 144-entry ledger is closed for storages implementing it.
-      final env = MemoryExecutionEnv();
-      final storage = ExecutionEnvKbStorage(env, '/mem');
-      await storage.initialize();
-      expect(storage, isA<KbAppendCapable>());
-      await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- a\n');
-      await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- b\n');
-      final content =
-          (await env.readTextFile('/mem/DELETIONS.md')).valueOrNull ?? '';
-      expect(content, '- a\n- b\n');
-    });
+    test(
+      'the storage adapter is append-capable (ledger race fix 0.2.1)',
+      () async {
+        // flutter_agent_memory 0.2.1: parallel deletes append tombstones via
+        // KbAppendCapable — the read-modify-write race that clobbered our
+        // 144-entry ledger is closed for storages implementing it.
+        final env = MemoryExecutionEnv();
+        final storage = ExecutionEnvKbStorage(env, '/mem');
+        await storage.initialize();
+        expect(storage, isA<KbAppendCapable>());
+        await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- a\n');
+        await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- b\n');
+        final content =
+            (await env.readTextFile('/mem/DELETIONS.md')).valueOrNull ?? '';
+        expect(content, '- a\n- b\n');
+      },
+    );
 
     test('the project store gets git support files (idempotent)', () async {
       final env = MemoryExecutionEnv();
@@ -157,6 +159,74 @@ void main() {
       expect(section, contains('global user fact'));
       expect(section, contains('project fact'));
       expect(section, contains('memory_search'));
+    });
+
+    test(
+      'config source hot-swaps the project store without a restart',
+      () async {
+        final env = MemoryExecutionEnv();
+        var config = const MemoryConfig(projectPath: '/mem-a');
+        final controller = MemoryController(
+          env: env,
+          configSource: () async => config,
+        );
+        await controller.add(text: 'in-a');
+
+        // The user edits .fah/config.yaml mid-session: the next memory op
+        // must land in the NEW store.
+        config = const MemoryConfig(projectPath: '/mem-b');
+        await controller.add(text: 'in-b');
+
+        Future<List<String>> textsIn(String path) async {
+          final probe = MemoryController(env: env, projectStoragePath: path);
+          return (await probe.list(limit: 50)).map((e) => e.text).toList();
+        }
+
+        expect(await textsIn('/mem-a'), contains('in-a'));
+        expect(await textsIn('/mem-a'), isNot(contains('in-b')));
+        expect(await textsIn('/mem-b'), contains('in-b'));
+        expect(await textsIn('/mem-b'), isNot(contains('in-a')));
+      },
+    );
+
+    test('a throwing config source keeps the current store', () async {
+      final env = MemoryExecutionEnv();
+      var fail = false;
+      final controller = MemoryController(
+        env: env,
+        configSource: () async {
+          if (fail) throw const ConfigException('broken yaml');
+          return null;
+        },
+      );
+      await controller.add(text: 'before');
+      fail = true;
+      final entry = await controller.add(text: 'after');
+      expect(entry.text, 'after');
+      final texts = (await controller.list(limit: 50)).map((e) => e.text);
+      expect(texts, containsAll(['before', 'after']));
+    });
+
+    test('onConfigChanged fires once per actual swap', () async {
+      final env = MemoryExecutionEnv();
+      var config = const MemoryConfig(projectPath: '/mem-a');
+      var swaps = 0;
+      // The constructor starts on /mem-a too: only a RESOLVED difference
+      // may count as a swap.
+      final controller = MemoryController(
+        env: env,
+        projectStoragePath: '/mem-a',
+        configSource: () async => config,
+        onConfigChanged: () => swaps++,
+      );
+      await controller.add(text: 'one');
+      expect(swaps, 0, reason: 'same config — no swap');
+      config = const MemoryConfig(projectPath: '/mem-a');
+      await controller.add(text: 'two');
+      expect(swaps, 0, reason: 'equal resolution — still no swap');
+      config = const MemoryConfig(projectPath: '/mem-b');
+      await controller.add(text: 'three');
+      expect(swaps, 1);
     });
   });
 }
