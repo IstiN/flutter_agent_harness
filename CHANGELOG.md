@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.280
+
+- fix(providers): correct the Copilot token guidance (0.1.278 had it
+  backwards). Per the official GitHub Copilot CLI docs (2026-09), the
+  supported credential types are fine-grained PATs (github_pat_…,
+  v2) WITH the "Copilot Requests" permission and OAuth tokens — while
+  classic PATs (ghp_…) are NOT supported by Copilot at all. 0.1.278
+  rejected all github_pat_ tokens up front and recommended ghp_ —
+  blocking working tokens and pointing at dead ones. Now: a pasted
+  fine-grained PAT is accepted with a hint that the "Copilot Requests"
+  permission is required (its absence is what makes the exchange 404),
+  a pasted classic ghp_ token is warned about and re-asked, and the
+  exchange 404 message names the missing permission.
+
 ## 0.1.278
 
 - fix(providers): GitHub Copilot rejects fine-grained PATs clearly, at

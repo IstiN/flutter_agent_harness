@@ -669,18 +669,26 @@ extension on AgentCli {
           io.writeln('Copilot connect cancelled');
           return null;
         }
-        // GitHub's Copilot API 404s fine-grained PATs — reject here, at
-        // paste time, instead of a bare "exchange failed" on first use
-        // (the /user lookup would happily accept the token and mask the
-        // problem).
-        if (isFineGrainedGitHubPat(token)) {
+        // Official Copilot CLI docs (2026-09): classic ghp_ PATs are NOT
+        // a supported Copilot credential — reject at paste time instead
+        // of an exchange failure later.
+        if (isClassicGitHubPat(token)) {
           io.writeln(
-            'GitHub Copilot does not accept fine-grained personal access '
-            'tokens (github_pat_…): the token exchange 404s for them. '
-            'Paste a classic token (ghp_…), or pick the GitHub device flow '
-            'instead.',
+            'classic personal access tokens (ghp_…) are not supported by '
+            'GitHub Copilot. Use the GitHub device flow, or a fine-grained '
+            'PAT (github_pat_…) with the "Copilot Requests" permission.',
           );
           continue;
+        }
+        // Fine-grained PATs work only with the "Copilot Requests"
+        // permission — hint now so an exchange 404 is self-explanatory.
+        if (isFineGrainedGitHubPat(token)) {
+          io.writeln(
+            'fine-grained PAT detected: it must carry the "Copilot '
+            'Requests" permission (github.com/settings/'
+            'personal-access-tokens → edit → Permissions), or the token '
+            'exchange will fail with 404.',
+          );
         }
         return token;
       }
