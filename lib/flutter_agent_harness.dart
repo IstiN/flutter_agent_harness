@@ -119,6 +119,7 @@ export 'src/ttsr/ttsr.dart';
 export 'src/plugins/plugin.dart';
 export 'src/plugins/inspect_image_plugin.dart';
 export 'src/plugins/transcribe_audio_plugin.dart';
+export 'src/plugins/packages_config.dart';
 export 'src/prompt_tools/prompt_tools.dart';
 export 'src/prompts/prompt_overrides.dart';
 export 'src/parity/settings_registry.dart';

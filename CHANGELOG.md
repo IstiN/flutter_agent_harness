@@ -18,6 +18,9 @@
   was inert. The loader now deep-converts the parsed yaml tree to plain
   Dart values before handing sections to plugins and the DAP / Hub
   settings flow.
+  The loader now lives in `lib/src/plugins/packages_config.dart` (reading
+  through the ExecutionEnv), so tests can pin it without importing the
+  executable.
 - fix(cli): hub-only inbox wakes no longer die silently at the 10-run
   wake cap — the first suppressed wake prints one dim
   `[mail] hub wake-cap reached; waiting for user input` line (once per
