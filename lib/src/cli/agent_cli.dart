@@ -1823,7 +1823,16 @@ class AgentCli {
       return;
     }
     if (isBusy) {
-      // While a run streams, typed input steers the agent (pi semantics).
+      // While a run streams, plain input steers the agent (pi semantics) —
+      // but slash and bang commands still execute: /settings, /approval or
+      // a quick !shell check must not wait out the stream (user report:
+      // settings were unreachable mid-run; the line was steered as chat
+      // text instead). Run-starting commands are refused by _startRun's
+      // busy guard below.
+      if (trimmed.startsWith('/') || trimmed.startsWith('!')) {
+        await _dispatchInput(line, trimmed);
+        return;
+      }
       _agent.steer(UserMessage.text(line));
       return;
     }
@@ -1924,6 +1933,19 @@ class AgentCli {
   }
 
   void _startRun(String text) {
+    // One streaming run at a time: a run-starting command typed mid-stream
+    // (/skill:, a command alias) lands here while isBusy — refuse it with
+    // a visible note instead of interleaving a second run into the same
+    // session.
+    if (isBusy) {
+      io.writeln(
+        _style.dim(
+          'a run is already streaming — wait for it to settle (or Ctrl+C '
+          'to stop it), then retry',
+        ),
+      );
+      return;
+    }
     // Mark the run in flight SYNCHRONOUSLY: pre-flight compaction awaits
     // before the first streamed byte, and isBusy readers (inbox watcher,
     // shell-job settle, steer-vs-start) must not start a parallel run here.

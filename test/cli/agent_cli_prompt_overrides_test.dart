@@ -175,8 +175,8 @@ void main() {
       final run = cli.run();
       io.sendLine('hello');
       await _waitFor(() => contexts.isNotEmpty);
-      // Let the run settle: a command sent while streaming would be steered
-      // into the agent instead of handled.
+      // Let the run settle before compacting (a streaming run would trip
+      // the busy guard of the compaction flow).
       await _waitFor(() => !cli.isBusy);
       io.sendLine('/compact');
       await _waitFor(() => io.out.toString().contains('[compacted]'));

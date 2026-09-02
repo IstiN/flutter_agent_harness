@@ -161,4 +161,68 @@ void main() {
       );
     },
   );
+
+  test(
+    'slash commands typed while streaming execute instead of steering',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // The user report: /settings (and any slash command) typed during a
+      // streaming run was steered into the agent as chat text — the settings
+      // stayed unreachable until the stream ended.
+      final stream = _GatedStream([
+        textTurn('first answer'),
+        textTurn('second answer'),
+      ], gateOnCall: 1);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'test-model',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+        ),
+        io: io,
+        streamFunction: stream.call,
+      );
+      final run = cli.run();
+      io.sendLine('start');
+      await waitForIt(
+        () => stream.calls >= 1 && cli.isBusy,
+        reason: 'first run is gated mid-stream',
+      );
+
+      // Busy: the command must run NOW (the line-mode summary prints), not
+      // ride along as a steered user message.
+      io.sendLine('/settings');
+      await waitForTrue(() async => io.out.toString().contains('provider:'));
+
+      stream.gate.complete();
+      await waitForIt(() => !cli.isBusy, reason: 'run settles after the gate');
+      // The fix means there is nothing to steer: the run finishes on its own
+      // single turn (the buggy behavior produced a follow-up turn carrying
+      // the steered '/settings').
+      expect(stream.calls, 1);
+      io.sendLine('/exit');
+      await run;
+
+      // No steered '/settings' may appear in any later model context.
+      for (final context in stream.contexts.skip(1)) {
+        final steered = context.messages.whereType<UserMessage>().any(
+          (m) => (m.content as String).contains('/settings'),
+        );
+        expect(steered, isFalse, reason: 'slash command was steered, not run');
+      }
+      expect(
+        io.out.toString(),
+        contains('change via /provider'),
+        reason: 'the /settings summary printed while the run was streaming',
+      );
+    },
+  );
 }
