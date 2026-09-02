@@ -2243,4 +2243,9 @@
 - fix(agent): run watchdog disarms on abort; AgentService.dispose aborts in-flight runs (0.1.273)
 - fix(providers): explicit model picks everywhere — no default models, copilot picker filter (0.1.272)
 
+## 0.1.279
+
+- fix(providers): reject Copilot fine-grained PATs at connect time (0.1.278)
+- refactor(cli): split banner/key-status out of agent_cli.dart, untangle _runPrompt
+
 ## Unreleased
