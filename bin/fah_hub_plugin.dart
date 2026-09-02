@@ -34,6 +34,9 @@ final class HubPluginHost implements FahPlugin {
   String get name => _pluginName;
 
   @override
+  Future<void> dispose() => _hub.dispose();
+
+  @override
   void register(PluginContext context) {
     _hub.register(
       hub.PluginContext(
@@ -317,8 +320,10 @@ final class HubPluginHost implements FahPlugin {
   ];
 
   /// Resolves [to] to a peer agent id: an exact id wins, otherwise the
-  /// display name must match exactly one online peer. Ambiguity and
-  /// no-match errors list the online peers so the model can retry.
+  /// display name must match exactly one online peer. The ambiguity error
+  /// and the no-match error list the online peers so the model can retry;
+  /// the no-match error also points at `dap_invite` (offline peer) and
+  /// `dap_peers` (typo).
   Future<String> _resolvePeer(String to) async {
     final peers = await _hub.peers();
     for (final peer in peers) {
@@ -333,7 +338,9 @@ final class HubPluginHost implements FahPlugin {
     ].join('\n');
     throw StateError(
       byName.isEmpty
-          ? 'no online peer matches "$to" — online peers:\n$online'
+          ? 'no online peer matches "$to" — known online peers:\n$online\n'
+                '(for an offline peer, use dap_invite; for a typo, run '
+                'dap_peers)'
           : 'peer name "$to" is ambiguous — online peers:\n$online',
     );
   }

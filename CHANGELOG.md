@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- fix(cli): hub-only inbox wakes no longer die silently at the 10-run
+  wake cap — the first suppressed wake prints one dim
+  `[mail] hub wake-cap reached; waiting for user input` line (once per
+  session, not per poll), and the streak asymmetry (hub mail always
+  increments it, only real user input resets it) is documented at the
+  wake site.
+- fix(dap): a `dap_dm` to a known-but-offline peer no longer reads like
+  a typo — the no-match error lists the known online peers and points at
+  `dap_invite` for offline peers and `dap_peers` for typos.
+- feat(plugins): `FahPlugin.dispose` — the CLI calls it once per plugin
+  at shutdown (errors swallowed per plugin, so one bad plugin cannot
+  block exit); plugins override it to release sockets, processes, and
+  timers. The hub plugin host disposes the vendored hub client.
+- chore(cli): the `fah_hub_client` import in `bin/fah.dart` is now
+  marked as the ONLY core-CLI import of the hub client — downstream
+  forks wanting a different or no hub client patch that import plus the
+  `'hub'` case in `_builtInPlugin`.
+
 - fix(messaging): `agent_directory` no longer drowns in graveyard mailboxes —
   it lists LIVE mailboxes (recent activity) plus anything holding pending
   mail and the agent's own address; stale mailboxes from long-finished

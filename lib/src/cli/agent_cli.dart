@@ -937,6 +937,15 @@ class AgentCli {
       }
       // A session nobody wrote to leaves no file behind.
       await deleteSessionIfEmpty();
+      // Plugins release their resources (sockets, processes, timers);
+      // one bad plugin must not block exit.
+      for (final plugin in config.plugins) {
+        try {
+          await plugin.dispose();
+        } on Object {
+          // Swallowed: shutdown is best-effort per plugin.
+        }
+      }
     }
     await printSessionResumeHint();
   }
@@ -2127,6 +2136,10 @@ class AgentCli {
   /// session never exhausts the cap.
   var _inboxWakeStreak = 0;
   static const _maxInboxWakeStreak = 10;
+
+  /// One-shot flag: the first wake the cap blocks prints one dim line
+  /// instead of leaving the CLI silently deaf to hub mail.
+  var _inboxWakeCapNoticeShown = false;
 
   /// Test seam: observe/reset the inbox-wake streak without driving ten
   /// real runs (the cap is exactly [_maxInboxWakeStreak]).

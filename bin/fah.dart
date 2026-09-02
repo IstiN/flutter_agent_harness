@@ -32,6 +32,9 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
+// The ONLY place the core CLI imports `fah_hub_client`: downstream forks
+// that want a different or no hub client patch this import and the 'hub'
+// case in `_builtInPlugin`.
 import 'package:fah_hub_client/fah_hub_client.dart' show HubPlugin;
 import 'fah_hub_plugin.dart';
 import 'self_manage.dart';
