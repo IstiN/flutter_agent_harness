@@ -225,4 +225,64 @@ void main() {
       );
     },
   );
+
+  test(
+    'line-mode /exit during a run settles the run before teardown',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      // Regression anchor: slash commands execute while a run streams, so
+      // `/exit` marks the exit mid-run and the line REPL breaks its loop
+      // immediately. The guarantee is `_teardownAfterRepl`'s
+      // `await _settled`: run() may not return until the in-flight turn
+      // has settled and persisted. This test pins that interleaving.
+      final stream = _GatedStream([textTurn('slow answer')], gateOnCall: 1);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+        ),
+        io: io,
+        streamFunction: stream.call,
+      );
+      final run = cli.run();
+      await waitForTrue(() async {
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        return (await repo.list(cwd: '/work')).isNotEmpty;
+      });
+      io.sendLine('hello');
+      await waitForIt(() => stream.calls >= 1);
+      await waitForIt(() => cli.isBusy, reason: 'gated run in flight');
+
+      io.sendLine('/exit');
+      await waitForIt(() => io.out.toString().contains('bye'));
+
+      // run() must still be inside the REPL: the gated turn has not
+      // settled, so the process may not exit (and may not tear down) yet.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(
+        cli.isBusy,
+        isTrue,
+        reason: '/exit during a run waits for the in-flight turn',
+      );
+
+      stream.gate.complete();
+      await waitForIt(() => !cli.isBusy, reason: 'run settles after the gate');
+      await run;
+
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final session = await repo.open((await repo.list(cwd: '/work')).first);
+      final answers = (await session.buildContextMessages())
+          .whereType<AssistantMessage>()
+          .expand((m) => m.content.whereType<TextContent>().map((c) => c.text))
+          .toList();
+      expect(
+        answers.join('\n'),
+        contains('slow answer'),
+        reason: 'the turn completed and persisted before teardown',
+      );
+    },
+  );
 }
