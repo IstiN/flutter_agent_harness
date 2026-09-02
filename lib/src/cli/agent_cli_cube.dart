@@ -17,24 +17,39 @@ extension CubeCommands on AgentCli {
   Future<void> _handleCubeCommand(String rest) async {
     final parts = rest.isEmpty ? const <String>[] : rest.split(RegExp(r'\s+'));
     final sub = parts.isEmpty ? null : parts.first;
-    switch (sub) {
-      case null:
-        _printCubeStatus();
-      case 'list':
-        await _cubeList();
-      case 'use':
-        await _cubeUse(parts.skip(1).join(' '));
-      case 'off':
-        _cubeOff();
-      case 'reload':
-        await _cubeReload();
-      case 'cache' when parts.length > 1 && parts[1] == 'clear':
-        await _cubeCacheClear();
-      case 'cache':
-        _printCubeCacheStatus();
-      default:
-        io.writeln(_cubeUsage);
+    if (sub == null) {
+      _printCubeStatus();
+      return;
     }
+    if (sub == 'cache') {
+      await _handleCubeCacheCommand(parts.skip(1).toList());
+      return;
+    }
+    final handler = _cubeSubcommands[sub];
+    if (handler == null) {
+      io.writeln(_cubeUsage);
+      return;
+    }
+    await handler(parts.skip(1).join(' '));
+  }
+
+  /// The `/cube` subcommand handlers, each taking the rest-of-line
+  /// arguments.
+  Map<String, Future<void> Function(String)> get _cubeSubcommands => {
+    'list': (_) => _cubeList(),
+    'use': _cubeUse,
+    'off': (_) async => _cubeOff(),
+    'reload': (_) => _cubeReload(),
+  };
+
+  /// `/cube cache [clear]` — cache status, or a clear when the first
+  /// argument is `clear` (further arguments are ignored, as before).
+  Future<void> _handleCubeCacheCommand(List<String> args) async {
+    if (args.isNotEmpty && args.first == 'clear') {
+      await _cubeCacheClear();
+      return;
+    }
+    _printCubeCacheStatus();
   }
 
   /// The bare `/cube` branch: the active profile's identity, backend,
@@ -152,6 +167,28 @@ extension CubeCommands on AgentCli {
       await CubeCacheManager(_cubeEnv, spec).restoreIfNeeded();
     } on Object catch (error) {
       io.writeln('cube: cache restore failed: $error');
+    }
+  }
+
+  /// Best-effort cache restore before the first turn of a CLI run — the
+  /// boot half of the run()/runHeadless cache lifecycle (restore before
+  /// the first turn, save after the last). Keeps the run() call sites
+  /// branch-free; one warning line on failure, never a blocker.
+  Future<void> _cubeBootRestore() async {
+    final bootSpec = _cubeEnv.activeSpec;
+    if (bootSpec != null) await _cubeRestoreQuietly(bootSpec);
+  }
+
+  /// Best-effort cache save on CLI exit — the exit half of the
+  /// run()/runHeadless cache lifecycle. Keeps the run() call sites
+  /// branch-free; one warning line on failure, never a blocker.
+  Future<void> _cubeFinalize() async {
+    final exitSpec = _cubeEnv.activeSpec;
+    if (exitSpec == null) return;
+    try {
+      await CubeCacheManager(_cubeEnv, exitSpec).save();
+    } on Object catch (error) {
+      io.writeln('cube: cache save failed: $error');
     }
   }
 
