@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.278
+
+- fix(providers): GitHub Copilot rejects fine-grained PATs clearly, at
+  connect time. The Copilot token exchange answers `github_pat_…` tokens
+  with HTTP 404 (GitHub's Copilot credential API only accepts classic
+  PATs and OAuth tokens), which used to surface as a bare "token exchange
+  failed (HTTP 404)" on the first message and, during connect, as a
+  silent fall-back to manual model entry (the `/user` lookup accepts
+  fine-grained PATs, masking the problem). Now: the paste-token step
+  rejects a fine-grained PAT immediately with the fix (use the GitHub
+  device flow or a classic `ghp_…` token), the exchange short-circuits
+  the known-dead token type without a round-trip, the 404 names both
+  likely causes (token type / no Copilot plan), and a failing exchange is
+  reported during connect instead of an unexplained empty model list.
+- chore(cli): split the banner/key-status block out of `agent_cli.dart`
+  and disentangle `_runPrompt` (error-stop and empty-continue branches
+  into named helpers) — the file-size guard and the CRAP ratchet are
+  green again.
+
 ## 0.1.277
 
 - fix(cli): endpoint-reported context windows now apply in roles mode.

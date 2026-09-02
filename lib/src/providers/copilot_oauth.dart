@@ -104,6 +104,13 @@ String? copilotApiBaseUrlFromToken(String token) {
   return 'https://$apiHost';
 }
 
+/// Whether [token] is a GitHub fine-grained PAT (`github_pat_…`). Live
+/// finding (2026-09): the Copilot token exchange answers these with HTTP
+/// 404 — GitHub's Copilot credential API only accepts classic PATs and
+/// OAuth tokens (ghp_/gho_/ghu_), so the connect flow rejects fine-grained
+/// PATs at paste time instead of failing later without a hint.
+bool isFineGrainedGitHubPat(String token) => token.startsWith('github_pat_');
+
 /// Exchanges a GitHub token for a Copilot API token (goal:
 /// copilot-proxy-go internal/auth/github_client.go).
 ///
@@ -114,6 +121,14 @@ Future<CopilotApiToken> fetchCopilotApiToken({
   required String githubToken,
   http.Client? client,
 }) async {
+  if (isFineGrainedGitHubPat(githubToken)) {
+    throw const CopilotAuthException(
+      'GitHub Copilot does not accept fine-grained personal access tokens '
+      '(github_pat_…): the token exchange 404s for them. Connect with the '
+      'GitHub device flow (CLI: /provider copilot) or paste a classic '
+      'token (ghp_…) instead.',
+    );
+  }
   final httpClient = client ?? sharedProviderHttpClient();
   final response = await httpClient
       .get(
@@ -136,6 +151,15 @@ Future<CopilotApiToken> fetchCopilotApiToken({
     throw const CopilotAuthException(
       'GitHub token rejected (401) by the Copilot token exchange — '
       're-authorize Copilot (CLI: /provider copilot).',
+    );
+  }
+  if (response.statusCode == 404) {
+    throw CopilotAuthException(
+      'Copilot token exchange failed (HTTP 404): GitHub does not recognize '
+      'this token as a Copilot credential. Either it is a fine-grained PAT '
+      '(github_pat_…, not accepted — use the GitHub device flow or a '
+      'classic ghp_… token), or the account has no Copilot plan. '
+      'Body: ${response.body.trim()}',
     );
   }
   if (response.statusCode != 200) {
