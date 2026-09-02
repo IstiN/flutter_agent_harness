@@ -139,6 +139,7 @@ part 'session_commands.dart';
 part 'agent_cli_provider_presets.dart';
 part 'agent_cli_inbox.dart';
 part 'agent_cli_io.dart';
+part 'agent_cli_banner.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -1708,41 +1709,6 @@ class AgentCli {
     };
   }
 
-  Future<void> _printBanner() async {
-    final model = _agent.state.model;
-    final metadata = await _session!.getMetadata();
-    io.writeln(
-      '${_style.bold(_style.teal('>_'))}${_style.bold('Fa')} '
-      '${_style.dim('v$_version')}',
-    );
-    io.writeln(
-      _style.dim('escape interrupt · ctrl+c clear/exit · / commands · ! bash'),
-    );
-    io.writeln(_style.dim('Press /help to show full commands and resources.'));
-    io.writeln('');
-    io.writeln(_style.bold('[Context]'));
-    io.writeln('  ${_env.cwd}');
-    io.writeln('');
-    io.writeln(_style.bold('[Model]'));
-    io.writeln('  ${model.id} (${model.api})');
-    io.writeln('  endpoint: ${model.baseUrl}');
-    final keyStatus = _keyStatusView.keyStatusLine(model);
-    if (keyStatus != null) {
-      io.writeln(
-        keyStatus.startsWith('key: no key set')
-            ? '  ${_style.yellow(keyStatus)}'
-            : '  $keyStatus',
-      );
-    }
-    io.writeln('');
-    io.writeln(_style.bold('[Session]'));
-    final sessionName = await _session?.getSessionName();
-    if (sessionName != null && sessionName.isNotEmpty) {
-      io.writeln('  $sessionName');
-    }
-    io.writeln('  ${metadata.path}');
-  }
-
   /// Key-status and error-line rendering over the live config values; built
   /// per render so `/provider` switches and the active-entry marker stay
   /// current.
@@ -1757,14 +1723,6 @@ class AgentCli {
     envVarIsSet: config.envVarIsSet,
     envVarValue: config.envVarValue,
   );
-
-  /// Resolves a named secret (env first, then the secure store) for media
-  /// slot `apiKeyName` overrides. Returns null when the name is unknown.
-  Future<String?> _resolveMediaKey(String name) async {
-    final value = config.envVarValue?.call(name);
-    if (value != null && value.isNotEmpty) return value;
-    return config.secureKeys?.read(name);
-  }
 
   Future<void> _handleLine(String line) async {
     final trimmed = line.trim();
@@ -1915,7 +1873,7 @@ class AgentCli {
 
   /// Runs one user prompt to completion. On a CodeMie auth-session expiry,
   /// opens the browser SSO flow to refresh the token automatically. Other
-  /// provider errors are printed through [_errorLine]. An empty assistant
+  /// provider errors are printed through [KeyStatusRenderer.errorLine]. An empty assistant
   /// message (no text, no tool calls) is retried once with 'continue'.
   /// Delivered to the model when the over-window guard stopped a run and
   /// the post-run compaction freed the window: names what happened and
@@ -1945,7 +1903,6 @@ class AgentCli {
     await _beginUserPrompt(isAutoContinue: isAutoContinue);
     try {
       await _agent.prompt(text);
-
       final lastMessage = _agent.state.messages.lastOrNull;
       final finished = await _settleAfterPrompt(
         lastMessage,
@@ -1974,9 +1931,9 @@ class AgentCli {
   /// auto-continuations. Returns `true` when the turn completed and the
   /// caller should finalize with [_afterRun].
   Future<bool> _settleAfterPrompt(
-    Message? lastMessage,
-    {required bool isAutoContinue}
-  ) async {
+    Message? lastMessage, {
+    required bool isAutoContinue,
+  }) async {
     if (lastMessage is AssistantMessage &&
         lastMessage.stopReason == StopReason.error) {
       if (await _maybeHandleCodeMieError(lastMessage.errorMessage ?? '')) {
@@ -2005,9 +1962,9 @@ class AgentCli {
   /// resume the interrupted task on its own (ending the run there left
   /// live agents idle mid-task, a harness hang). `true` = turn consumed.
   Future<bool> _maybeOverWindowContinue(
-    AssistantMessage lastMessage,
-    {required bool isAutoContinue}
-  ) async {
+    AssistantMessage lastMessage, {
+    required bool isAutoContinue,
+  }) async {
     if (isAutoContinue ||
         _overWindowAutoResumed ||
         !isContextWindowExhaustedError(lastMessage.errorMessage)) {

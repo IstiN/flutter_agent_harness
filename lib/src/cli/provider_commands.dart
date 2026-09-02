@@ -662,13 +662,28 @@ extension on AgentCli {
       return null;
     }
     if (mode == 'paste') {
-      final typed = await _askLine('GitHub token: ', secret: true);
-      final token = typed?.trim();
-      if (token == null || token.isEmpty) {
-        io.writeln('Copilot connect cancelled');
-        return null;
+      while (true) {
+        final typed = await _askLine('GitHub token: ', secret: true);
+        final token = typed?.trim();
+        if (token == null || token.isEmpty) {
+          io.writeln('Copilot connect cancelled');
+          return null;
+        }
+        // GitHub's Copilot API 404s fine-grained PATs — reject here, at
+        // paste time, instead of a bare "exchange failed" on first use
+        // (the /user lookup would happily accept the token and mask the
+        // problem).
+        if (isFineGrainedGitHubPat(token)) {
+          io.writeln(
+            'GitHub Copilot does not accept fine-grained personal access '
+            'tokens (github_pat_…): the token exchange 404s for them. '
+            'Paste a classic token (ghp_…), or pick the GitHub device flow '
+            'instead.',
+          );
+          continue;
+        }
+        return token;
       }
-      return token;
     }
     try {
       return await (config.copilotDeviceFlowFn ?? _defaultCopilotDeviceFlow)(
@@ -746,6 +761,20 @@ extension on AgentCli {
         registry?.find(name)?.keyName ??
         CustomProviderRegistry.copilotEntryKeyName(name);
     await _storeProviderToken(spec, baseUrl, githubToken, keyName: keyName);
+    // Surface the token-exchange failure NOW: the /models dialect below
+    // swallows errors into an empty list, which would drop the user into
+    // manual model entry with no hint why (fine-grained PAT, no Copilot
+    // plan on the account, dead network — live finding 2026-09). One
+    // cheap GET; the model fetch exchanges again.
+    try {
+      await fetchCopilotApiToken(
+        githubToken: githubToken,
+        client: config.modelsHttpClient,
+      );
+    } on CopilotAuthException catch (error) {
+      io.writeln('warning: ${error.message}');
+      io.writeln('continuing — pick or type the model id manually');
+    }
     // No provider carries a default model — the id comes from the live
     // /models list (user picks) or a manual entry.
     final ids = await _fetchProviderModelIds(spec.name, baseUrl, githubToken);

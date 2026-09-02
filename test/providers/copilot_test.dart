@@ -247,6 +247,59 @@ void main() {
       );
     });
 
+    test('a fine-grained PAT is rejected before any HTTP call', () async {
+      var calls = 0;
+      final client = http_testing.MockClient((request) async {
+        calls++;
+        return http.Response('{}', 200);
+      });
+
+      await expectLater(
+        fetchCopilotApiToken(
+          githubToken: 'github_pat_ABCDEFGHIPJKLMNOP',
+          client: client,
+        ),
+        throwsA(
+          isA<CopilotAuthException>()
+              .having(
+                (e) => e.message,
+                'message',
+                contains('github_pat_'),
+              )
+              .having((e) => e.message, 'message', contains('device flow')),
+        ),
+      );
+      // A known-dead token type never spends a round-trip (live finding
+      // 2026-09: GitHub answers the exchange with 404 for github_pat_).
+      expect(calls, 0);
+    });
+
+    test('a 404 names the token-type and Copilot-plan causes', () async {
+      final client = http_testing.MockClient(
+        (_) async => http.Response(
+          '{"documentation_url":"https://docs.github.com/rest",'
+          '"message":"Not Found","status":"404"}',
+          404,
+        ),
+      );
+
+      await expectLater(
+        fetchCopilotApiToken(githubToken: 'ghp_classic', client: client),
+        throwsA(
+          isA<CopilotAuthException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('404'),
+              contains('github_pat_'),
+              contains('Copilot plan'),
+              contains('device flow'),
+            ),
+          ),
+        ),
+      );
+    });
+
     test('other failures carry the response body', () async {
       final client = http_testing.MockClient(
         (_) async => http.Response('rate limited', 429),

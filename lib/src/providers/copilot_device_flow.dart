@@ -3,13 +3,16 @@
 /// the typed errors the CLI surfaces.
 ///
 /// Protocol per goal/copilot_provider.md (migrated from copilot-proxy-go
-/// internal/auth/device_flow.go). Phase-0 live finding: GitHub routes the
-/// device endpoints but rejects this app's device flow with
+/// internal/auth/device_flow.go). Phase-0 live finding: GitHub routed the
+/// device endpoints but rejected this app's device flow with
 /// 404 {"error":"Not Found"} (identical for a garbage client id) — that
 /// state surfaces as [CopilotDeviceFlowErrorKind.endpointDisabled] naming
 /// the client id, and the CLI always offers the paste-an-existing-token
-/// fallback alongside the flow. The client id stays overridable (parameter
-/// + the `FA_COPILOT_CLIENT_ID` env name at the CLI layer).
+/// fallback alongside the flow. Re-verified 2026-09: the pinned client id
+/// is accepted again (200 with a live user code), so endpointDisabled is
+/// a defensive fallback, not the steady state. The client id stays
+/// overridable (parameter + the `FA_COPILOT_CLIENT_ID` env name at the
+/// CLI layer).
 ///
 /// Pure Dart: no `dart:io`. Timings are injectable — the poller takes a
 /// REQUIRED `delay` function (tests fake it; the CLI passes a real one).
