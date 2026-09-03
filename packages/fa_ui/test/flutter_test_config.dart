@@ -4,11 +4,13 @@
 
 /// Package-wide test bootstrap.
 ///
-/// Loads the bundled MaterialIcons font (via `uses-material-design`) in
-/// the real async zone BEFORE any test body runs. Font loading uses real
-/// file I/O, which can never complete inside a `testWidgets` FakeAsync
-/// zone — done here, goldens render real icon glyphs instead of
-/// placeholder boxes. See `trajectory/golden/golden_test_setup.dart`.
+/// Loads the fonts the goldens need — the theme's text families
+/// `Inter` and `JetBrainsMono` from `test/assets/fonts/`, plus the
+/// bundled MaterialIcons font — in the real async zone BEFORE any test
+/// body runs. Font loading uses real file I/O, which can never complete
+/// inside a `testWidgets` FakeAsync zone — done here, goldens render
+/// real glyphs instead of placeholder boxes. See
+/// `trajectory/golden/golden_test_setup.dart`.
 library;
 
 import 'dart:async';
