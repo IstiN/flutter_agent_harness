@@ -227,6 +227,7 @@ class TrajectoryTimelinePainter extends CustomPainter {
     required this.mode,
     required this.colors,
     required this.laneLabels,
+    this.fontFamily,
     this.viewport,
     this.selection,
     this.draft,
@@ -252,6 +253,9 @@ class TrajectoryTimelinePainter extends CustomPainter {
 
   /// One label per lane: Input / Model / Tools.
   final List<String> laneLabels;
+
+  /// Font family for the lane labels; null keeps the engine default.
+  final String? fontFamily;
 
   /// The zoomed window, or null for the full domain.
   final TrajectoryTimelineViewport? viewport;
@@ -339,7 +343,11 @@ class TrajectoryTimelinePainter extends CustomPainter {
       final painter = TextPainter(
         text: TextSpan(
           text: laneLabels[lane],
-          style: TextStyle(color: colors.dim, fontSize: 9),
+          style: TextStyle(
+            color: colors.dim,
+            fontSize: 9,
+            fontFamily: fontFamily,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout(maxWidth: maxWidth);
@@ -457,6 +465,7 @@ class TrajectoryTimelinePainter extends CustomPainter {
       oldDelegate.mode != mode ||
       oldDelegate.colors != colors ||
       oldDelegate.laneLabels != laneLabels ||
+      oldDelegate.fontFamily != fontFamily ||
       oldDelegate.viewport != viewport ||
       oldDelegate.selection != selection ||
       oldDelegate.draft != draft ||
@@ -993,6 +1002,7 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline> {
                         strings.detailsModel,
                         strings.tabTools,
                       ],
+                      fontFamily: DefaultTextStyle.of(context).style.fontFamily,
                       viewport: _viewport,
                       selection: controller.timelineSelection,
                       draft: draft,
