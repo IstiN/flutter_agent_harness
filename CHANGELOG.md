@@ -2382,6 +2382,10 @@
 - fix(trajectory): timeline lane labels inherit theme font
 - test(trajectory): real fonts in fa_ui goldens — Inter/JetBrainsMono + monospace alias
 
+## 0.1.286
+
+- fix(trajectory): thread ToolCall.parentCallId so subtool rows replay from sessions
+
 ## Unreleased
 
 ## Unreleased
