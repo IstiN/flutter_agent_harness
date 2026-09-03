@@ -18,6 +18,7 @@ final class FaChatFeatures {
     this.copyTranscript = true,
     this.fileBrowser = true,
     this.appLauncher = true,
+    this.trajectory = true,
   });
 
   /// Minimal text chat: everything optional off.
@@ -31,7 +32,8 @@ final class FaChatFeatures {
       thinkingBlocks = false,
       copyTranscript = false,
       fileBrowser = false,
-      appLauncher = false;
+      appLauncher = false,
+      trajectory = false;
 
   /// Composer attachment button (gallery/camera/file picking + sandbox
   /// staging via [FaChatService.stageAttachment]).
@@ -64,4 +66,8 @@ final class FaChatFeatures {
   /// Launching js mini-apps from tool results (requires
   /// `FaChatHost.appLauncher`).
   final bool appLauncher;
+
+  /// The trajectory timeline action (requires
+  /// `FaChatService.trajectory`).
+  final bool trajectory;
 }

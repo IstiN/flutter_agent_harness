@@ -308,6 +308,12 @@ abstract class AppLocalizations {
   /// **'Install failed: {error}'**
   String widgetsCatalogInstallFailed(Object error);
 
+  /// No description provided for @widgetsCatalogNotInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Widget is not installed yet.'**
+  String get widgetsCatalogNotInstalled;
+
   /// No description provided for @widgetsCatalogOffline.
   ///
   /// In en, this message translates to:
