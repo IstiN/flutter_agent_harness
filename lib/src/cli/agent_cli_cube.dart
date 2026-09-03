@@ -8,8 +8,8 @@ part of 'agent_cli.dart';
 
 /// Usage line printed for an unknown `/cube` subcommand.
 const String _cubeUsage =
-    'usage: /cube [list | use <name-or-path> | off | reload | '
-    'cache status | cache clear]';
+    'usage: /cube [list | use <name-or-path> | off | reload | templates | '
+    'install <id> | cache status | cache clear]';
 
 /// The `/cube` command family on [AgentCli].
 extension CubeCommands on AgentCli {
@@ -19,6 +19,8 @@ extension CubeCommands on AgentCli {
     final sub = parts.isEmpty ? null : parts.first;
     if (sub == null) return _printCubeStatus();
     if (sub == 'cache') return _handleCubeCacheCommand(parts);
+    if (sub == 'templates') return _cubeTemplates();
+    if (sub == 'install') return _cubeInstall(parts.skip(1).join(' '));
     switch (sub) {
       case 'list':
         await _cubeList();
@@ -72,7 +74,8 @@ extension CubeCommands on AgentCli {
     io.writeln('  cache: ${_cubeCacheLine(spec)}');
   }
 
-  /// `/cube list` — the cube manifests available for this project.
+  /// `/cube list` — the cube manifests available for this project plus the
+  /// built-in security-level presets.
   Future<void> _cubeList() async {
     final dir = '${_env.cwd}/.fah/cubes';
     final names = await _projectCubeNames();
@@ -82,10 +85,14 @@ extension CubeCommands on AgentCli {
     }
     if (names.isEmpty) {
       io.writeln('cube: no cubes in $dir');
-      return;
     }
     for (final name in names) {
       io.writeln('  $name');
+    }
+    if (names.isNotEmpty) io.writeln('');
+    io.writeln('built-in presets (usable with /cube use <id>):');
+    for (final preset in CubePresets.all) {
+      io.writeln('  ${preset.id} — ${preset.title}: ${preset.description}');
     }
   }
 
@@ -124,6 +131,78 @@ extension CubeCommands on AgentCli {
     if (spec == null) return;
     await _activateCube(spec, source);
     io.writeln('cube: ${spec.name} reloaded');
+  }
+
+  /// `/cube templates` — the fa1.dev registry catalog.
+  Future<void> _cubeTemplates() async {
+    final templates = await _cubeRegistryTemplates();
+    if (templates == null) return;
+    io.writeln(
+      'cube registry (${_registryClient.baseUrl}): '
+      '${templates.length} template${templates.length == 1 ? '' : 's'}',
+    );
+    for (final template in templates) {
+      io.writeln(
+        '  ${template.id} — ${template.name}: '
+        '${template.description}',
+      );
+    }
+  }
+
+  /// `/cube install <id>` — download the template manifest, verify its
+  /// sha256 and write it to `.fah/cubes/<id>.yaml`.
+  Future<void> _cubeInstall(String id) async {
+    if (id.isEmpty) {
+      io.writeln('usage: /cube install <template-id>');
+      return;
+    }
+    final templates = await _cubeRegistryTemplates();
+    if (templates == null) return;
+    final matches = templates.where((t) => t.id == id).toList();
+    if (matches.isEmpty) {
+      io.writeln(
+        'cube registry: no template "$id" — '
+        '${templates.length} available, try /cube templates',
+      );
+      return;
+    }
+    final template = matches.single;
+    final String yaml;
+    try {
+      yaml = await _registryClient.download(template);
+    } on ConfigException catch (error) {
+      io.writeln(error.message);
+      return;
+    }
+    final path = '${_env.cwd}/.fah/cubes/${template.id}.yaml';
+    final write = await _env.writeFile(path, yaml);
+    if (write is Err) {
+      io.writeln('cube: cannot write $path');
+      return;
+    }
+    io.writeln(
+      'cube: installed $path '
+      '(sha256 ${template.sha256.substring(0, 8)}…) — '
+      'apply it with /cube use ${template.id}',
+    );
+  }
+
+  /// The registry client: fa1.dev by default, the host/test client
+  /// injected through [AgentCliConfig.cubeRegistryClient].
+  CubeRegistryClient get _registryClient => CubeRegistryClient(
+    baseUrl: CubeRegistryClient.defaultBaseUrl,
+    client: config.cubeRegistryClient,
+  );
+
+  /// Fetches the registry catalog; null (after a clean error line) on any
+  /// failure — a broken registry never crashes the REPL.
+  Future<List<CubeRegistryTemplate>?> _cubeRegistryTemplates() async {
+    try {
+      return await _registryClient.templates();
+    } on ConfigException catch (error) {
+      io.writeln(error.message);
+      return null;
+    }
   }
 
   /// `/cube cache status` — key, root and policy of the active cube's cache.

@@ -67,6 +67,7 @@ final class AgentCliConfig {
     this.cubeSource,
     this.cubeSettings,
     this.onCubeSettingsChanged,
+    this.cubeRegistryClient,
     this.osName,
   });
 
@@ -97,6 +98,12 @@ final class AgentCliConfig {
   /// lib/src stays dart:io-free. `/cube` uses it to describe the OS sandbox
   /// backend. Null (tests, web) reports a generic passthrough instead.
   final String? osName;
+
+  /// The `package:http` client for the fa1.dev cube registry
+  /// (`/cube templates` / `/cube install`). Tests inject a mock; web hosts
+  /// pass their shared browser-capable client. Null uses a fresh
+  /// `http.Client()`.
+  final http.Client? cubeRegistryClient;
 
   /// The live `cube:` config section (the saved sandbox startup default).
   /// The settings-hub Cube sandbox flow rewrites it; the host persists the

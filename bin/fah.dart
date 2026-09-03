@@ -90,36 +90,31 @@ Never _fail(String message) {
 typedef _CGEventSourceFlagsStateC = ffi.Uint64 Function(ffi.Uint32);
 typedef _CGEventSourceFlagsStateDart = int Function(int);
 
-int Function(int)? _cgEventSourceFlagsState;
-var _cgLookupAttempted = false;
+/// Resolved once at first use; null when CoreGraphics is unavailable
+/// (non-macOS hosts — the dylib path simply fails to open).
+final int Function(int)? _cgEventSourceFlagsState =
+    _lookupCGEventSourceFlagsState();
+
+int Function(int)? _lookupCGEventSourceFlagsState() {
+  try {
+    final coreGraphics = ffi.DynamicLibrary.open(
+      '/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics',
+    );
+    return coreGraphics.lookupFunction<
+      _CGEventSourceFlagsStateC,
+      _CGEventSourceFlagsStateDart
+    >('CGEventSourceFlagsState');
+  } on Object {
+    return null;
+  }
+}
 
 bool _isShiftPressed() {
-  if (!Platform.isMacOS) return false;
-  if (!_cgLookupAttempted) {
-    _cgLookupAttempted = true;
-    try {
-      final coreGraphics = ffi.DynamicLibrary.open(
-        '/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics',
-      );
-      _cgEventSourceFlagsState = coreGraphics
-          .lookupFunction<
-            _CGEventSourceFlagsStateC,
-            _CGEventSourceFlagsStateDart
-          >('CGEventSourceFlagsState');
-    } on Object {
-      _cgEventSourceFlagsState = null;
-    }
-  }
   final fn = _cgEventSourceFlagsState;
   if (fn == null) return false;
   const kCGEventSourceStateHIDSystemState = 1;
   const kCGEventFlagMaskShift = 0x00020000;
-  try {
-    final flags = fn(kCGEventSourceStateHIDSystemState);
-    return (flags & kCGEventFlagMaskShift) != 0;
-  } on Object {
-    return false;
-  }
+  return fn(kCGEventSourceStateHIDSystemState) & kCGEventFlagMaskShift != 0;
 }
 
 Never _exitWithUsage(String version) {

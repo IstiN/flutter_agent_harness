@@ -17,6 +17,7 @@ export 'config/cache_policy.dart';
 export 'config/cube_presets.dart';
 export 'config/cube_settings.dart';
 export 'config/cube_spec.dart';
+export 'registry/cube_registry.dart';
 export 'config/env_policy.dart';
 export 'config/fs_policy.dart';
 export 'config/network_policy.dart';

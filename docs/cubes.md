@@ -157,10 +157,12 @@ Slash commands (line mode):
 | Command | Effect |
 |---|---|
 | `/cube` | Show the active profile: identity, backend, policy summary, cache. |
-| `/cube list` | List manifests in `.fah/cubes/`. |
-| `/cube use <name-or-path>` | Resolve and enforce a manifest from now on. |
+| `/cube list` | List manifests in `.fah/cubes/` plus the built-in security presets. |
+| `/cube use <name-or-path>` | Resolve and enforce a manifest from now on (preset ids like `l2-full` resolve through the built-in catalog). |
 | `/cube off` | Leave sandbox mode (full host access; the boot source is kept for `/cube reload`). |
 | `/cube reload` | Re-resolve the remembered source and enforce it again. |
+| `/cube templates` | List the fa1.dev registry catalog. |
+| `/cube install <id>` | Download a registry manifest into `.fah/cubes/` (sha256-verified). |
 | `/cube cache status` | Show the cache key, root and policy. |
 | `/cube cache clear` | Drop the active cube's cache entry. |
 
