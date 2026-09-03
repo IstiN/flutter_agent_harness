@@ -17,7 +17,7 @@ import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../context.dart';
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../event_stream.dart';
 import '../model.dart';
 import '../prompts/prompts.g.dart';

@@ -7,8 +7,7 @@
 /// `<sessionsRoot>/<--encoded-cwd-->/<timestamp>_<sessionId>.jsonl`.
 library;
 
-import '../env/execution_env.dart';
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
 import 'session_tree.dart';

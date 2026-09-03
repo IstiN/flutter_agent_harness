@@ -13,7 +13,7 @@ library;
 
 import 'dart:typed_data';
 
-import 'execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// An [ExecutionEnv] that injects secret env vars into every [exec].
 final class SecretsExecutionEnv implements ExecutionEnv, BackgroundShell {

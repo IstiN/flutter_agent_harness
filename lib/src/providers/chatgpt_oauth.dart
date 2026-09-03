@@ -8,7 +8,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 const chatGptIssuer = 'https://auth.openai.com';
 const chatGptCodexBaseUrl = 'https://chatgpt.com/backend-api/codex';

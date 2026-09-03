@@ -28,9 +28,8 @@
 /// ```
 library;
 
-import '../cancel_token.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../context.dart';
-import '../exceptions.dart';
 import '../types.dart';
 import 'agent_loop.dart';
 import 'agent_tool.dart';

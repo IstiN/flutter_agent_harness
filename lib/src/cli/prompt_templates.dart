@@ -13,7 +13,7 @@ import 'dart:async';
 
 import 'package:yaml/yaml.dart' as yaml;
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../prompts/prompt_overrides.dart';
 import '../prompts/prompts.g.dart';
 

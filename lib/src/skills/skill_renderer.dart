@@ -10,7 +10,7 @@
 /// [SkillRenderException].
 library;
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../utils/frontmatter_parser.dart';
 import 'skills.dart';
 

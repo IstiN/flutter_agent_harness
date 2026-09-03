@@ -9,7 +9,7 @@ import 'dart:async';
 
 import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../memory_config.dart';
 import 'execution_env_kb_storage.dart';
 

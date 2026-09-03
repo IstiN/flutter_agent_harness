@@ -21,7 +21,7 @@ library;
 import 'dart:async';
 
 import '../agent/agent_loop.dart';
-import '../cancel_token.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';

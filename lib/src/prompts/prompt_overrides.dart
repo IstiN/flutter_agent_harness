@@ -20,7 +20,7 @@
 /// in `src/cli/cli_args.dart`.
 library;
 
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// The `system` config key: an alias for [codeModePromptName] (the base CLI
 /// system prompt).

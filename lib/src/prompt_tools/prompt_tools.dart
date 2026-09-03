@@ -63,7 +63,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import '../agent/agent_loop.dart' show StreamFunction;
-import '../cancel_token.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../context.dart';
 import '../event_stream.dart';
 import '../json_parse.dart';

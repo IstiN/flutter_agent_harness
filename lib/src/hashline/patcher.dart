@@ -18,7 +18,7 @@
 /// drifted lines, and the model re-reads. No LSP/write-guard hooks either.
 library;
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import 'apply.dart';
 import 'format.dart';
 import 'input.dart';

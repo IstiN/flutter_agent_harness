@@ -27,7 +27,7 @@ import 'dart:convert';
 
 import 'package:yaml/yaml.dart';
 
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// The remote transport spoken by an [McpHttpServerConfig].
 enum McpHttpTransportKind {

@@ -17,7 +17,7 @@ import 'package:http/http.dart' as http;
 import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../types.dart';
 
 /// Largest accepted audio payload: 25MB, matching OpenAI's upload cap for the

@@ -4,7 +4,7 @@ library;
 import 'package:flutter_agent_harness/src/a2a/a2a_client.dart';
 import 'package:flutter_agent_harness/src/a2a/a2a_config.dart';
 import 'package:flutter_agent_harness/src/a2a/a2a_manager.dart';
-import 'package:flutter_agent_harness/src/exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 

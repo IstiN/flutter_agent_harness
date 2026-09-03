@@ -563,10 +563,7 @@ extension on AgentCli {
     if (refs == null) return (window: false, cap: false);
     for (final ref in refs) {
       if (ref.modelId != model.id) continue;
-      return (
-        window: ref.contextWindow != null,
-        cap: ref.maxTokens != null,
-      );
+      return (window: ref.contextWindow != null, cap: ref.maxTokens != null);
     }
     return (window: false, cap: false);
   }

@@ -417,8 +417,7 @@ void main() {
 
   test('busy row renders the provenance source tag', () {
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-    model =
-        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     expect(model.busySource, 'run');
     expect(model.view().content, contains('· run'));
     model = model.update(BusyMsg(false)).$1 as FaTuiModel;
@@ -431,8 +430,7 @@ void main() {
     faTuiBusyDiagnostics = lines.add;
     addTearDown(() => faTuiBusyDiagnostics = null);
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-    model =
-        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     model = model.update(BusyMsg(false)).$1 as FaTuiModel;
     model.update(const BusyMsg(true, phase: 'Compacting context…'));
     expect(lines.any((l) => l.startsWith('busy on source=run')), isTrue);
@@ -446,24 +444,20 @@ void main() {
 
   test('a silent busy stretch shows the quiet hint', () {
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-    model =
-        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     // Simulate four minutes of silence (no deltas, no keys).
     model = model.copyWith(
-      busyLastEventMs:
-          DateTime.now().millisecondsSinceEpoch - 4 * 60 * 1000,
+      busyLastEventMs: DateTime.now().millisecondsSinceEpoch - 4 * 60 * 1000,
     );
     expect(model.view().content, contains('quiet 4m'));
   });
 
-  test('the watchdog releases a wedged busy row after ten silent minutes',
-      () {
+  test('the watchdog releases a wedged busy row after ten silent minutes', () {
     final lines = <String>[];
     faTuiBusyDiagnostics = lines.add;
     addTearDown(() => faTuiBusyDiagnostics = null);
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-    model =
-        model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     model = model.copyWith(
       busyLastEventMs:
           DateTime.now().millisecondsSinceEpoch -

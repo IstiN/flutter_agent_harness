@@ -28,7 +28,7 @@ import 'dart:async';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../prompts/prompts.g.dart';
 import 'lsp_client.dart';
 import 'lsp_config.dart';

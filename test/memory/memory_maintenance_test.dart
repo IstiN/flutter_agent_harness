@@ -1,7 +1,7 @@
 @TestOn('vm')
 library;
 
-import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import 'package:flutter_agent_harness/src/memory/memory_controller.dart';
 import 'package:test/test.dart';
 

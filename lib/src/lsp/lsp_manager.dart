@@ -14,7 +14,7 @@ library;
 
 import 'dart:async';
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import 'lsp_client.dart';
 import 'lsp_config.dart';
 import 'lsp_transport.dart';

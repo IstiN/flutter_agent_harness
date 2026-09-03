@@ -18,7 +18,7 @@ import 'package:http/http.dart' as http;
 import '../agent/agent_loop.dart' show ToolExecutionResult;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
-import '../cancel_token.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../secrets/secrets_store.dart';
 import 'fetch_types.dart';
 import 'providers.dart';

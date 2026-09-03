@@ -9,7 +9,7 @@ library;
 import 'dart:async';
 
 import '../agent/agent.dart';
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import 'session_repo.dart';
 import 'session_storage.dart';
 import 'session_tree.dart';

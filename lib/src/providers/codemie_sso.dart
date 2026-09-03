@@ -15,7 +15,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// The hosted CodeMie default (an on-prem org URL can always be typed).
 const defaultCodeMieBaseUrl = 'https://codemie.lab.epam.com';

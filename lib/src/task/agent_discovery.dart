@@ -16,7 +16,7 @@
 /// ```
 library;
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../model_roles/roles_config.dart';
 import '../skills/skills.dart';
 import '../utils/frontmatter_parser.dart';

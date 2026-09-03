@@ -6,7 +6,7 @@ library;
 
 import 'dart:io';
 
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../prompts/prompt_overrides.dart';
 import 'prompt_templates.dart';
 

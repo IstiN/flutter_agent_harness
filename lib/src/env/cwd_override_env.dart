@@ -7,7 +7,7 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// Wraps an [ExecutionEnv] and lets callers change the effective cwd after
 /// construction. Used by the CLI when the user switches to a session that was

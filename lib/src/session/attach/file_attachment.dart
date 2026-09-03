@@ -12,7 +12,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../../context.dart';
-import '../../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../../messaging/agent_message.dart';
 import '../../messaging/file_messaging_repository.dart';
 import '../../types.dart';

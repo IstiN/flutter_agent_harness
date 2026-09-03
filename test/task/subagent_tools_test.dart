@@ -1,7 +1,7 @@
 @TestOn('vm')
 library;
 
-import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import 'package:flutter_agent_harness/src/messaging/agent_message.dart';
 import 'package:flutter_agent_harness/src/messaging/file_messaging_repository.dart';
 import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
@@ -128,68 +128,70 @@ void main() {
       expect(text, contains('sess1/a1 — 1 pending'));
     });
 
-    test('agent_directory hides stale zero-mail mailboxes unless all',
-        () async {
-      final env = MemoryExecutionEnv(cwd: '/work');
-      final repo = FileMessagingRepository(
-        env: env,
-        root: '/sessions/--work--/messages',
-        decodeSessionCwd: decodeSessionCwd,
-      );
-      final fabricMgr = SubagentManager(parentSessionId: 'p', messaging: repo)
-        ..mailboxPrefix = 'sess1';
-      final hourAgo = DateTime.now()
-          .toUtc()
-          .subtract(const Duration(hours: 1))
-          .millisecondsSinceEpoch;
-      // Stale and empty — hidden by default. The mail is drained (read/),
-      // then everything is backdated past the live window.
-      await repo.send(
-        AgentMessage(
-          id: 'old1',
-          fromId: 'gone',
-          toId: 'old/main',
-          text: 'old',
-          sentAt: '2026-01-01T00:00:00Z',
-        ),
-      );
-      await repo.drain('old/main');
-      env.setMtime(
-        '/sessions/--work--/messages/old_main/read/old1.json',
-        hourAgo,
-      );
-      // Stale but holding unread mail — never hidden, whatever its age.
-      await repo.send(
-        AgentMessage(
-          id: 'old2',
-          fromId: 'gone',
-          toId: 'stale-mailbox',
-          text: 'pending',
-          sentAt: '2026-01-01T00:00:00Z',
-        ),
-      );
-      env.setMtime(
-        '/sessions/--work--/messages/stale-mailbox/inbox/old2.json',
-        hourAgo,
-      );
+    test(
+      'agent_directory hides stale zero-mail mailboxes unless all',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final repo = FileMessagingRepository(
+          env: env,
+          root: '/sessions/--work--/messages',
+          decodeSessionCwd: decodeSessionCwd,
+        );
+        final fabricMgr = SubagentManager(parentSessionId: 'p', messaging: repo)
+          ..mailboxPrefix = 'sess1';
+        final hourAgo = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 1))
+            .millisecondsSinceEpoch;
+        // Stale and empty — hidden by default. The mail is drained (read/),
+        // then everything is backdated past the live window.
+        await repo.send(
+          AgentMessage(
+            id: 'old1',
+            fromId: 'gone',
+            toId: 'old/main',
+            text: 'old',
+            sentAt: '2026-01-01T00:00:00Z',
+          ),
+        );
+        await repo.drain('old/main');
+        env.setMtime(
+          '/sessions/--work--/messages/old_main/read/old1.json',
+          hourAgo,
+        );
+        // Stale but holding unread mail — never hidden, whatever its age.
+        await repo.send(
+          AgentMessage(
+            id: 'old2',
+            fromId: 'gone',
+            toId: 'stale-mailbox',
+            text: 'pending',
+            sentAt: '2026-01-01T00:00:00Z',
+          ),
+        );
+        env.setMtime(
+          '/sessions/--work--/messages/stale-mailbox/inbox/old2.json',
+          hourAgo,
+        );
 
-      final tools = subagentMonitoringTools(manager: fabricMgr);
-      final directory = tools.firstWhere((t) => t.name == 'agent_directory');
-      final result = await directory.execute(const {}, null, null);
-      final text = (result.content.first as dynamic).text as String;
-      expect(text, contains('stale-mailbox — 1 pending'));
-      expect(text, isNot(contains('old/main')));
-      expect(text, contains('1 stale mailbox(es) hidden'));
+        final tools = subagentMonitoringTools(manager: fabricMgr);
+        final directory = tools.firstWhere((t) => t.name == 'agent_directory');
+        final result = await directory.execute(const {}, null, null);
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('stale-mailbox — 1 pending'));
+        expect(text, isNot(contains('old/main')));
+        expect(text, contains('1 stale mailbox(es) hidden'));
 
-      final everything = await directory.execute(
-        const {'all': true},
-        null,
-        null,
-      );
-      final allText = (everything.content.first as dynamic).text as String;
-      expect(allText, contains('old/main'));
-      expect(allText, contains('stale-mailbox — 1 pending'));
-    });
+        final everything = await directory.execute(
+          const {'all': true},
+          null,
+          null,
+        );
+        final allText = (everything.content.first as dynamic).text as String;
+        expect(allText, contains('old/main'));
+        expect(allText, contains('stale-mailbox — 1 pending'));
+      },
+    );
 
     test('agent_directory renders cwd tag for a remote mailbox', () async {
       final fabricMgr = SubagentManager(

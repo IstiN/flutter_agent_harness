@@ -57,7 +57,8 @@ sequenceDiagram
 ```
 
 - `lib/src/env/session_vars_execution_env.dart` — `SessionVarsExecutionEnv`: `ExecutionEnv` decorator injecting `FAH_SESSION_ID`/`FAH_SESSION_FILE`/`FAH_PROVIDER`/`FAH_MODEL` (resolved live per `exec`, never secrets) into bash. Wired around `builtinTools` in `AgentCli` + `AgentService`. `LocalShell` merges `ShellExecOptions.env` OVER `Platform.environment` (never replaces).
-- `lib/src/env/memory_execution_env.dart` — `MemoryExecutionEnv`: pure-Dart in-memory `ExecutionEnv` (POSIX `/`-paths, default `Shell = UnavailableShell` reporting `shellUnavailable`). Default for tests and web consumers; shell-backed variants use `LocalShell` instead.
+- `package:flutter_sandbox` `MemoryExecutionEnv` (was
+  `lib/src/env/memory_execution_env.dart`, deleted): pure-Dart in-memory `ExecutionEnv` (POSIX `/`-paths, default `Shell = UnavailableShell` reporting `shellUnavailable`). Default for tests and web consumers; shell-backed variants use `LocalShell` instead.
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools for context hygiene. `CheckpointRewindController` wraps `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.
 - `lib/src/compaction/branch_summarization.dart` — `generateBranchSummary` + `navigateSessionTree` (use instead of `Session.moveTo` for tree navigation). Summary is a `branch_summary` record on the entered branch.
 - `lib/src/agent/auto_compactor.dart` — **single source of truth** for post-run compaction. **never re-implement auto-compaction in the host**; add hooks to `AutoCompactorHooks`.

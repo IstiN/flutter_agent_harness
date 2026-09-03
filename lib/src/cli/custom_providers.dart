@@ -8,7 +8,7 @@
 /// active writes the new model id back (per-provider model memory).
 library;
 
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../model_roles/provider_catalog.dart';
 
 /// The api types a custom provider can take (the adapter dialect), mapping

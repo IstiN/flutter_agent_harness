@@ -201,7 +201,8 @@ platforms (including Windows) currently report a descriptor-only no-op.
 - **No side-channel guarantees.** Timing, cache and similar side
   channels are out of scope for the Dart layer.
 - **Kernel = hard boundary.** As the policy engine's own contract states:
-  the kernel sandbox backends (`lib/src/cube/backends/`) are the hard
+  the kernel sandbox backends (`flutter_sandbox` package,
+  `src/cube/backends/`) are the hard
   boundary; everything above is convenience. Where the full proxy egress
   filtering should live — future work.
 

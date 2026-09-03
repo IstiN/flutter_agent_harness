@@ -18,7 +18,7 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// Env var name carrying the current session id.
 const sessionIdEnvVar = 'FAH_SESSION_ID';

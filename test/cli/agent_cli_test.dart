@@ -867,11 +867,7 @@ void main() {
     ]);
     final shell = FakeShell(stdout: 'x' * 12000);
     final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
-    final cli = cliFor(
-      fake.call,
-      model: window8k,
-      envOverride: shellEnv,
-    );
+    final cli = cliFor(fake.call, model: window8k, envOverride: shellEnv);
     final run = cli.run();
 
     io.sendLine('go');

@@ -13,7 +13,7 @@
 /// answers carry text edits only (barrel files, imports).
 library;
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import 'lsp_types.dart';
 
 int _comparePosition(LspPosition a, LspPosition b) =>

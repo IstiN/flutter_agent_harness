@@ -6,7 +6,7 @@
 library;
 
 import '../agent/agent_tool.dart';
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../messaging/agent_message.dart';
 
 /// A slash-command handler registered by a plugin.

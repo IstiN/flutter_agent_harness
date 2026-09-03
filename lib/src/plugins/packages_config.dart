@@ -16,8 +16,7 @@ library;
 
 import 'package:yaml/yaml.dart' as yaml;
 
-import '../env/execution_env.dart';
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// Loads plugin configuration from the environment cwd's
 /// `.fah/packages.yaml`. Returns a map of plugin name -> config.

@@ -29,7 +29,7 @@ library;
 
 import 'dart:convert';
 
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// Validates [arguments] against the tool's JSON-schema [schema] and returns
 /// a new map with coerced values and injected defaults. Undeclared keys pass

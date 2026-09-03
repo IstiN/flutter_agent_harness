@@ -21,7 +21,7 @@
 /// agent role.
 library;
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../utils/frontmatter_parser.dart';
 
 /// The context filenames collected per directory, in priority order (all

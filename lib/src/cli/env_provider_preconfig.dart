@@ -16,7 +16,7 @@ library;
 
 import 'dart:convert';
 
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../model_roles/provider_catalog.dart';
 
 /// One resolved `FA_PROVIDER_*` preconfig: the catalog spec the type maps

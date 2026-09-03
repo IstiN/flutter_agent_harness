@@ -9,7 +9,7 @@ library;
 
 import '../agent/agent.dart';
 import '../agent/agent_loop.dart';
-import '../cancel_token.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../context.dart';
 import '../types.dart';
 

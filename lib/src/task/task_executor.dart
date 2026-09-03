@@ -26,7 +26,7 @@ import '../agent/param_validator.dart';
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_client.dart';
 import '../a2a/a2a_manager.dart';
-import '../cancel_token.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../context.dart';
 import '../json_parse.dart';
 import '../model.dart';

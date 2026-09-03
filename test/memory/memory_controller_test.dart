@@ -19,21 +19,23 @@ void main() {
       expect(entry.scope, 'project');
     });
 
-    test('the storage adapter is append-capable (ledger race fix 0.2.1)',
-        () async {
-      // flutter_agent_memory 0.2.1: parallel deletes append tombstones via
-      // KbAppendCapable — the read-modify-write race that clobbered our
-      // 144-entry ledger is closed for storages implementing it.
-      final env = MemoryExecutionEnv();
-      final storage = ExecutionEnvKbStorage(env, '/mem');
-      await storage.initialize();
-      expect(storage, isA<KbAppendCapable>());
-      await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- a\n');
-      await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- b\n');
-      final content =
-          (await env.readTextFile('/mem/DELETIONS.md')).valueOrNull ?? '';
-      expect(content, '- a\n- b\n');
-    });
+    test(
+      'the storage adapter is append-capable (ledger race fix 0.2.1)',
+      () async {
+        // flutter_agent_memory 0.2.1: parallel deletes append tombstones via
+        // KbAppendCapable — the read-modify-write race that clobbered our
+        // 144-entry ledger is closed for storages implementing it.
+        final env = MemoryExecutionEnv();
+        final storage = ExecutionEnvKbStorage(env, '/mem');
+        await storage.initialize();
+        expect(storage, isA<KbAppendCapable>());
+        await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- a\n');
+        await (storage as KbAppendCapable).appendFile('DELETIONS.md', '- b\n');
+        final content =
+            (await env.readTextFile('/mem/DELETIONS.md')).valueOrNull ?? '';
+        expect(content, '- a\n- b\n');
+      },
+    );
 
     test('the project store gets git support files (idempotent)', () async {
       final env = MemoryExecutionEnv();

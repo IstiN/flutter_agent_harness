@@ -390,7 +390,14 @@ factual: paths, commands, invariants — no essays.
   `AgentCliConfig.modelRolesResolver` is mutable) and persists via
   `onModelsConfigChanged` (bin/fah.dart's persistConfig reads the live
   resolver config).
-- `lib/src/cube/` — fa_cube sandbox profiles (issue #8): strict `CubeSpec`
+- `package:flutter_sandbox` (published dep, ^0.1.3; repo
+  vabhzw17eg2qu4m9-bit/flutter_sandbox) — the fa_cube sandbox subsystem
+  (issue #8) and the env foundation (`ExecutionEnv` family, exceptions,
+  `CancelToken`) now live there; FAH's local copies (`lib/src/cube/`,
+  `lib/src/exceptions.dart`, `lib/src/cancel_token.dart`,
+  `lib/src/env/{execution_env,io_execution_env,memory_execution_env}.dart`)
+  were deleted and are re-exported through the FAH barrels. Behavior of the
+  subsystem itself is unchanged: strict `CubeSpec`
   YAML (`.fah/cubes/<name>.yaml`, apiVersion fa/v1 kind Cube) with
   tool/network/fs/env/resource/cache policies (deny-wins, empty allowlist =
   deny-all, lexical path normalization as traversal guard), `CubeResolver`

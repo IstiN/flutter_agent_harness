@@ -19,7 +19,7 @@ library;
 import 'dart:async';
 import 'dart:math';
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 final Random _shellJobRandom = Random.secure();
 

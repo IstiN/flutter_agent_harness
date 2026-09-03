@@ -33,7 +33,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 
-import '../cancel_token.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../context.dart';
 import '../event_stream.dart';
 import '../json_parse.dart';

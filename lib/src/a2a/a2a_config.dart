@@ -16,7 +16,7 @@ library;
 
 import 'package:yaml/yaml.dart';
 
-import '../exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// One remote A2A agent endpoint.
 final class A2aServerConfig {

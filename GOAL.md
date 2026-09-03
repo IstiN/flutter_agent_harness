@@ -87,7 +87,7 @@ replayed forever in context, not portable to web.
 3. **Streaming-first**: `Stream<AgentEvent>` everywhere; `Future`-only APIs
    are conveniences built on top.
 4. **Partial-first deltas**: every event carries the current partial message.
-5. **Cancellation**: `CancelToken` (seeded in `lib/src/cancel_token.dart`) is
+5. **Cancellation**: `CancelToken` (from `package:flutter_sandbox`) is
    the universal abort mechanism — providers, loop, tools.
 6. **Token accounting inline** in provider responses; overflow detection
    ported from `utils/overflow.ts`.

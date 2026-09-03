@@ -11,7 +11,7 @@ import 'dart:async';
 
 import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// A [KbStorage] backed by an [ExecutionEnv] under [baseDir].
 final class ExecutionEnvKbStorage

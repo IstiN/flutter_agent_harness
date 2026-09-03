@@ -22,7 +22,7 @@ library;
 
 import '../utils/frontmatter_parser.dart';
 import '../utils/glob_match.dart';
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import 'skill_manifest.dart';
 
 export 'skill_manifest.dart';

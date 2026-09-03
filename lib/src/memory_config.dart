@@ -5,7 +5,7 @@
 /// project memory committable: anyone cloning the repo gets its memory.
 library;
 
-import 'exceptions.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// Parsed `memory:` section. Both fields optional; null = default path.
 final class MemoryConfig {

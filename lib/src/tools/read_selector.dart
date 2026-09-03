@@ -25,7 +25,7 @@
 ///   lines: selectors exist so the agent reads exactly the lines it needs.
 library;
 
-import '../env/execution_env.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// Inclusive line range described by one selector segment (e.g. `50-100`,
 /// `301-`, or `50+10`). A null [endLine] means open-ended ("to EOF").

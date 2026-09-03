@@ -29,7 +29,7 @@ import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../a2a/a2a_manager.dart';
-import '../cancel_token.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 import '../model.dart';
 import '../model_roles/model_resolver.dart';
 import '../session/session_tree.dart';

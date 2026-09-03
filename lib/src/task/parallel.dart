@@ -11,7 +11,7 @@ library;
 
 import 'dart:async';
 
-import '../cancel_token.dart';
+import 'package:flutter_sandbox/flutter_sandbox.dart';
 
 /// Normalizes a configured concurrency cap (omp's `normalizeConcurrencyLimit`):
 /// `max <= 0` (or any non-finite input) means unbounded — every [Semaphore.acquire]
