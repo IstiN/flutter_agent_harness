@@ -80,6 +80,7 @@ final class CliArgs extends CliArgsResult {
     this.prompt,
     this.cubeName,
     this.cubeConfigPath,
+    this.trajectory,
     this.positionals = const [],
   }) : super._();
 
@@ -158,6 +159,10 @@ final class CliArgs extends CliArgsResult {
   /// names an existing file. Empty for interactive REPL mode.
   final List<String> positionals;
 
+  /// The `fa trajectory <verb>` subcommand, when the invocation routed to
+  /// the trajectory reader instead of a prompt run.
+  final TrajectoryCliCommand? trajectory;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless => prompt != null || positionals.isNotEmpty;
@@ -169,6 +174,11 @@ final class CliArgs extends CliArgsResult {
 /// unknown provider, `--system-prompt` combined with `--system-prompt-file`,
 /// or `-p`/`--prompt` combined with positional arguments.
 CliArgsResult parseCliArgs(List<String> args) {
+  // `fa trajectory <verb> [args]` — the trajectory reader subcommand,
+  // intercepted before prompt parsing (the verb words are not prompts).
+  if (args.isNotEmpty && args.first == 'trajectory') {
+    return _parseTrajectoryArgs(args.sublist(1));
+  }
   final values = _CliArgValues();
   for (var i = 0; i < args.length; i++) {
     final arg = args[i];
@@ -192,6 +202,121 @@ CliArgsResult parseCliArgs(List<String> args) {
     values.positionals.add(arg);
   }
   return values.finish();
+}
+
+/// The `fa trajectory` subcommand: a read-only trajectory view over a
+/// stored session.
+///
+/// [positionals] carry the verb's operands: the record number for
+/// `inspect` (validated at parse time), then the optional session id; the
+/// other verbs take only the optional session id.
+final class TrajectoryCliCommand {
+  /// Creates a [TrajectoryCliCommand].
+  const TrajectoryCliCommand({
+    required this.verb,
+    this.positionals = const [],
+    this.json = false,
+    this.at,
+  });
+
+  /// One of [trajectoryVerbs].
+  final String verb;
+
+  /// The verb's positional operands (record number / session id).
+  final List<String> positionals;
+
+  /// `--json`: one compact JSON record per line.
+  final bool json;
+
+  /// `--at N` (view only): the snapshot as it stood at record N.
+  final int? at;
+}
+
+/// The verbs accepted by `fa trajectory`.
+const trajectoryVerbs = {'view', 'tail', 'cost', 'inspect'};
+
+/// Parses the `trajectory` subcommand operands (everything after the
+/// `trajectory` word). Unknown verbs and flags are usage errors so a typo
+/// never becomes a prompt sent to a model.
+CliArgsResult _parseTrajectoryArgs(List<String> args) {
+  if (args.contains('--help') || args.contains('-h')) {
+    return const CliArgsHelp();
+  }
+  if (args.isEmpty) {
+    throw const CliArgsException(
+      'usage: fa trajectory <view|tail|cost|inspect> [sessionId] '
+      '[--json] [--at N]',
+    );
+  }
+  final verb = args.first;
+  if (!trajectoryVerbs.contains(verb)) {
+    throw CliArgsException(
+      'unknown trajectory verb: $verb '
+      '(expected view|tail|cost|inspect)',
+    );
+  }
+  final positionals = <String>[];
+  var json = false;
+  int? at;
+  String? cwd;
+  String? sessionRoot;
+  for (var i = 1; i < args.length; i++) {
+    final arg = args[i];
+    switch (arg) {
+      case '--json':
+        json = true;
+      case '--cwd' || '--session-root':
+        if (i + 1 >= args.length) {
+          throw CliArgsException('$arg requires a value');
+        }
+        if (arg == '--cwd') {
+          cwd = args[++i];
+        } else {
+          sessionRoot = args[++i];
+        }
+      case '--at':
+        if (i + 1 >= args.length) {
+          throw const CliArgsException('--at requires a record number');
+        }
+        at = int.tryParse(args[++i]);
+        if (at == null) {
+          throw const CliArgsException('--at requires a record number');
+        }
+      default:
+        if (arg.startsWith('-')) {
+          throw CliArgsException('unknown argument: $arg');
+        }
+        if (positionals.length >= 2) {
+          throw CliArgsException('unexpected argument: $arg');
+        }
+        positionals.add(arg);
+    }
+  }
+  if (verb == 'inspect') {
+    if (positionals.isEmpty) {
+      throw const CliArgsException(
+        'usage: fa trajectory inspect <recordNumber> [sessionId]',
+      );
+    }
+    if (int.tryParse(positionals.first) == null) {
+      throw const CliArgsException(
+        'trajectory inspect requires a record number',
+      );
+    }
+  }
+  if (at != null && verb != 'view') {
+    throw const CliArgsException('--at only applies to fa trajectory view');
+  }
+  return CliArgs(
+    cwd: cwd,
+    sessionRoot: sessionRoot,
+    trajectory: TrajectoryCliCommand(
+      verb: verb,
+      positionals: positionals,
+      json: json,
+      at: at,
+    ),
+  );
 }
 
 /// A value-taking CLI flag: its canonical name (for error messages, so

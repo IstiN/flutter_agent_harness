@@ -30,6 +30,7 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
 // The ONLY place the core CLI imports `fah_hub_client`: downstream forks
@@ -547,6 +548,109 @@ final class _TerminalCliIO implements CliIO {
   }
 }
 
+/// `fa trajectory <verb> [args]` — read-only trajectory views over a
+/// stored session (phase 9). Runs without booting the agent: opens the
+/// session store, resolves the session (id / name match / most recent),
+/// projects the active branch, and prints through the pure renderers in
+/// `trajectory_tui.dart`. Payload goes to stdout, diagnostics to stderr.
+/// `tail` re-opens the session file on every poll until interrupted.
+Future<int> _runTrajectoryCommand(
+  TrajectoryCliCommand command,
+  CliArgs args,
+) async {
+  final io = _TerminalCliIO(headless: true);
+  final env = LocalExecutionEnv(cwd: args.cwd ?? Directory.current.path);
+  final sessionRoot = args.sessionRoot ?? _defaultSessionRoot();
+  final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionRoot);
+  final sessionId = switch (command.verb) {
+    'inspect' when command.positionals.length > 1 => command.positionals[1],
+    'inspect' => null,
+    _ => command.positionals.isEmpty ? null : command.positionals.first,
+  };
+  final session = await resolveTrajectorySession(repo, sessionId);
+  if (session == null) {
+    io.writeln(
+      sessionId == null
+          ? 'trajectory: no sessions in $sessionRoot'
+          : 'trajectory: session not found: $sessionId',
+    );
+    return 1;
+  }
+  final records = await session.getBranch();
+  switch (command.verb) {
+    case 'view':
+      final snapshot = command.at == null
+          ? trajectorySnapshotOf(records)
+          : trajectorySnapshotAt(records, command.at!);
+      if (snapshot == null) {
+        io.writeln(
+          trajectoryRangeError(
+            command.at!,
+            trajectorySnapshotOf(records).records.length,
+          ),
+        );
+        return 1;
+      }
+      return _printTrajectory(
+        io,
+        command.json
+            ? [
+                for (final record in snapshot.records)
+                  trajectoryJsonLine(record),
+              ]
+            : trajectoryLines(snapshot, width: io.columns),
+      );
+    case 'cost':
+      return _printTrajectory(
+        io,
+        trajectoryCostLines(trajectorySnapshotOf(records)),
+      );
+    case 'inspect':
+      final snapshot = trajectorySnapshotOf(records);
+      final index = int.parse(command.positionals.first);
+      final lines = trajectoryInspectLines(snapshot, index);
+      if (lines == null) {
+        io.writeln(trajectoryRangeError(index, snapshot.records.length));
+        return 1;
+      }
+      return _printTrajectory(
+        io,
+        command.json && snapshot.records.isNotEmpty
+            ? [trajectoryJsonLine(snapshot.records[index - 1])]
+            : lines,
+      );
+    case 'tail':
+      io.writeln('trajectory: following records — Ctrl+C to stop');
+      final tailer = TrajectoryTailer(width: io.columns);
+      final metadata = await session.getMetadata();
+      for (final line in tailer.tail(records)) {
+        io.write('$line\n');
+      }
+      while (true) {
+        await Future<void>.delayed(trajectoryPollInterval);
+        final List<SessionRecord> fresh;
+        try {
+          fresh = await (await repo.open(metadata)).getBranch();
+        } on Object catch (error) {
+          io.writeln('trajectory: tail failed: $error');
+          return 1;
+        }
+        for (final line in tailer.tail(fresh)) {
+          io.write('$line\n');
+        }
+      }
+  }
+  return 0;
+}
+
+/// Prints trajectory payload lines to stdout (newline-terminated).
+int _printTrajectory(CliIO io, List<String> lines) {
+  for (final line in lines) {
+    io.write('$line\n');
+  }
+  return 0;
+}
+
 /// `fa serve --a2a` — mounts the fully-configured agent as an A2A endpoint
 /// (Phase 5b). Every `message/send` runs one headless turn against the
 /// resolved provider/model; the agent's reply becomes the task artifact.
@@ -636,6 +740,13 @@ Future<void> _runApp(List<String> args) async {
       case 'uninstall':
         exit(await runSelfUninstall());
     }
+  }
+  // `fa trajectory <verb> [sessionId] [--json] [--at N]` — read-only
+  // trajectory views over a stored session; intercepted before prompt
+  // resolution so the verb words never become a prompt.
+  final trajectory = parsed.trajectory;
+  if (trajectory != null) {
+    exit(await _runTrajectoryCommand(trajectory, parsed));
   }
 
   // Headless prompt resolution: -p verbatim; a first positional naming an
