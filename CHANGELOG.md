@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.282
 
 - fix(roles): transient transport failures no longer kill the turn. A
   dropped connection ("Connection closed while receiving data", resets,
