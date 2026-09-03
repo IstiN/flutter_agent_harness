@@ -10,7 +10,8 @@ import 'package:fa_ui/fa_ui.dart'
         FaApprovalModeController,
         FaChatConnection,
         FaChatMessage,
-        FaChatService;
+        FaChatService,
+        TrajectoryServiceFeed;
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -1452,6 +1453,7 @@ class AgentService extends ChangeNotifier
       messages
         ..clear()
         ..addAll(context.messages.map(_toChatMessage));
+      await _rebuildTrajectory();
       notifyListeners();
     } on Object {
       // A torn read (the CLI mid-append): the next poll retries.
@@ -1467,6 +1469,11 @@ class AgentService extends ChangeNotifier
   String? _sessionId;
   String? _sessionFile;
   int _persistedCount = 0;
+
+  /// The producer behind [trajectory]: rebuilt from the active branch on
+  /// session open/switch, mirrored live from agent events, and fed the
+  /// finalized records on every persist.
+  final TrajectoryServiceFeed _trajectory = TrajectoryServiceFeed();
   FahChatMessage? _currentAssistantMessage;
   FahChatMessage? _currentThinkingMessage;
 
@@ -1591,6 +1598,7 @@ class AgentService extends ChangeNotifier
   static const _maxInboxWakeStreak = 10;
 
   var _fabricHeartbeatTick = 0;
+
   /// Whether the over-window guard's one-shot auto-continuation was used
   /// for the current user text (reset on every real [sendText] entry).
   var _overWindowAutoResumed = false;
@@ -2019,6 +2027,7 @@ class AgentService extends ChangeNotifier
     _sessionWatchTimer?.cancel();
     fsRevision.dispose();
     externalSessionRevision.dispose();
+    _trajectory.dispose();
     super.dispose();
   }
 
@@ -2037,6 +2046,7 @@ class AgentService extends ChangeNotifier
     messages.clear();
     error = null;
     _persistedCount = 0;
+    _trajectory.reset();
     _currentAssistantMessage = null;
     await initialize();
     notifyListeners();
@@ -2199,6 +2209,9 @@ class AgentService extends ChangeNotifier
     _subagentManager?.mailboxPrefix = metadata.id;
     // Follow external appends (a running fa CLI on the same session).
     _startSessionWatch();
+    // The ledger re-projects the active branch (records carry richer
+    // structure than the rebuilt message list).
+    await _rebuildTrajectory();
     // Restore the session's own model: same wire kind → modelId override;
     // the provider itself stays the configured connection (its key lives
     // in the Keychain, not in the session). An unresolvable or
@@ -2330,6 +2343,7 @@ class AgentService extends ChangeNotifier
   Future<void> _onAgentEvent(AgentEvent event, CancelToken cancelToken) async {
     // Any event proves the run is alive — rearm the idle watchdog.
     if (event is! AgentEndEvent) _armIdleWatchdog();
+    _trajectory.applyEvent(event);
     switch (event) {
       case AgentStartEvent():
         isStreaming = true;
@@ -2603,10 +2617,28 @@ class AgentService extends ChangeNotifier
     if (session == null) return;
     final all = _agent.state.messages;
     for (final message in all.skip(_persistedCount)) {
-      await session.appendMessage(message);
+      final id = await session.appendMessage(message);
+      // The finalized record replaces the streamed synthetic rows in the
+      // trajectory ledger (builder keys them by turn/step).
+      final record = await session.getEntry(id);
+      if (record != null) _trajectory.append(record);
     }
     _persistedCount = all.length;
   }
+
+  /// Rebuilds the trajectory ledger from the active session branch
+  /// (session open/switch/external reload).
+  Future<void> _rebuildTrajectory() async {
+    final session = _session;
+    if (session == null) return;
+    _trajectory.reset();
+    for (final record in await session.getBranch()) {
+      _trajectory.append(record);
+    }
+  }
+
+  @override
+  Stream<TrajectorySnapshot> get trajectory => _trajectory.stream;
 
   /// Compaction thresholds for the active model, scaled by
   /// [CompactionSettings.forWindow] to the conversation window (the model's

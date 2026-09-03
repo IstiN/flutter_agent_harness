@@ -132,6 +132,9 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get widgetsCatalogNotInstalled => 'Виджет ещё не установлен.';
+
+  @override
   String get widgetsCatalogOffline =>
       'Офлайн — показан последний известный каталог.';
 

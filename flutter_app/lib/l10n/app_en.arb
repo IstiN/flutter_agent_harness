@@ -43,6 +43,7 @@
   "appsGridTitle": "Apps",
   "appsLoadError": "Failed to load apps: {error}",
   "widgetsCatalogInstallFailed": "Install failed: {error}",
+  "widgetsCatalogNotInstalled": "Widget is not installed yet.",
   "widgetsCatalogOffline": "Offline — showing the last known catalog.",
   "widgetsCatalogLoadFailed": "Could not load the widgets catalog.\n{error}",
   "@widgetsCatalogLoadFailed": {

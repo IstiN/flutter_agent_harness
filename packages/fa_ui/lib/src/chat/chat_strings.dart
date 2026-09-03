@@ -31,6 +31,7 @@ abstract class FaChatStrings {
   String get chatFilesTooltip;
   String get chatCopySessionTooltip;
   String get chatSettingsTooltip;
+  String get chatTrajectoryTooltip;
   String get chatCopiedToClipboard;
   String get chatCopyMessageTooltip;
   String get chatMessageCopiedToClipboard;
@@ -101,6 +102,8 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatFilesTooltip => 'Files';
   @override
   String get chatCopySessionTooltip => 'Copy session';
+  @override
+  String get chatTrajectoryTooltip => 'Trajectory';
   @override
   String get chatSettingsTooltip => 'Connection settings';
   @override
@@ -238,6 +241,8 @@ class FaChatStringsRu extends FaChatStrings {
   String get chatFilesTooltip => 'Файлы';
   @override
   String get chatCopySessionTooltip => 'Копировать сессию';
+  @override
+  String get chatTrajectoryTooltip => 'Траектория';
   @override
   String get chatSettingsTooltip => 'Настройки подключения';
   @override

@@ -24,6 +24,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/fa_ui_theme.dart';
+import '../trajectory/trajectory_panel.dart';
 import 'approval_ui.dart';
 import 'ask_ui.dart';
 import 'chat_composer.dart';
@@ -743,6 +744,13 @@ class _FaChatScreenState extends State<FaChatScreen>
                     icon: const Icon(Icons.copy_outlined),
                     tooltip: strings.chatCopySessionTooltip,
                     onPressed: _copySession,
+                  ),
+                if (widget.features.trajectory)
+                  IconButton(
+                    icon: const Icon(Icons.timeline),
+                    tooltip: strings.chatTrajectoryTooltip,
+                    onPressed: () =>
+                        openTrajectoryPanel(context, service: widget.service),
                   ),
                 // Settings icon removed — settings are accessible from the
                 // sidebar nav and the apps panel (prototype has no settings

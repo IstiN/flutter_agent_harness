@@ -46,6 +46,35 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/compaction/branch_summarization.dart` — `generateBranchSummary` +
   `navigateSessionTree` (use instead of `Session.moveTo` for tree
   navigation); summary is a `branch_summary` record on the entered branch.
+- `lib/src/trajectory/` — the trajectory ledger core (issue #10): finalized
+  session records project into an immutable `TrajectorySnapshot` through
+  `TrajectorySnapshotBuilder.append`/`applyEvent` — streamed agent events
+  land as synthetic rows keyed `turn\0step` (`u\0turn` for prompts) and are
+  replaced when the real record lands; revision grows per append. Record
+  kinds (closed set, `TrajectoryCellKind`): system, user, context,
+  compacted, message, tool, subtool — a subtool is a
+  `TrajectoryToolRecord.parentCallId != null`, which only hosts build
+  directly (the builder never nests). Derived state folds once per
+  snapshot: `deriveTrajectoryLayout` (turns of Message/Step groups +
+  collapsible turn/assistant-run summaries), `deriveTrajectoryTimeline`
+  (four modes — `sequence` equal-width slots, `duration` with idle gaps
+  compressed out, `time` zero-width wall-clock markers, `actual` real gaps;
+  three fixed lanes: 0 system/user/context, 1 message/compacted, 2 tools),
+  `trajectoryTimelineFocusIndexes` (selection → visible ledger indexes),
+  and `ThrottledTrajectorySearchIndex` (full-text; matches are stable
+  record ids). `formatters.dart` holds the shared duration/token/throughput
+  formatting; `trajectory_preview.dart` the bounded single-line previews.
+  Consumers render, never re-derive: `packages/fa_ui`'s
+  `lib/src/trajectory/` widgets and the CLI `/trajectory` family.
+- `lib/src/cli/trajectory_commands.dart` (a `part of` `agent_cli.dart`) +
+  `lib/src/cli/trajectory_tui.dart` — the read-only REPL family
+  `/trajectory [view|cost|tail|inspect <n>]` (bare = `view`, capped at 200
+  rows; `tail` follows the live session every 500ms) and the headless
+  `fa trajectory <view|tail|cost|inspect> [sessionId] [--json] [--at N]`
+  subcommand (`--at N` replays the snapshot as it stood at record N, view
+  only). Session resolution: exact id > session-name match > most recent.
+  Rendering is pure Dart in `trajectory_tui.dart` (no `dart:io`), shared by
+  both entries; `bin/fah.dart` routes the subcommand.
 - `lib/src/hashline/` — hashline patch language: `[path#TAG]` headers
   (4-hex xxHash32 of whole file), `SWAP`/`DEL`/`INS.*` ops, all-or-nothing
   `HashlinePatcher`, stale tags reject before any write. Wired in
@@ -522,6 +551,22 @@ factual: paths, commands, invariants — no essays.
   the `FaChatService` interface (which `AgentService` implements;
   `ApprovalModeSelector` needs only the
   `FaApprovalModeController` slice).
+  The trajectory ledger UI lives in `lib/src/trajectory/` (issue #10
+  phases 11+): `TrajectoryController` (view-state owner — debounced
+  snapshot updates, turn/assistant folds, the four timeline projections
+  with selection, record selection, throttled search), `TrajectoryView`
+  (toolbar + timeline strip + virtualised table with injectable
+  table/timeline builder seams), single-line ledger cells per record kind,
+  the details bottom sheet (tab set per kind; session-scoped last-tab
+  restore, `resetTrajectoryTabHistory()` test seam), and
+  `FaTrajectoryPanel`/`openTrajectoryPanel` (wide = centered dialog page,
+  narrow = full-height bottom sheet) fed by `TrajectoryServiceFeed`
+  (broadcast snapshot stream that replays `latest` to new listeners).
+  Strings: `TrajectoryStrings` en/ru + `TrajectoryStringsScope`. Golden
+  baselines: `test/trajectory/golden/` (regenerate with
+  `flutter test test/trajectory/golden/ --update-goldens`, verify without
+  the flag) — they render with Flutter's default test font because the
+  package ships no font assets; keep it that way.
   Package strings live in `FaUiStrings`
   (en/ru defaults resolved from the locale, host-overridable via
   `FaUiStringsScope`) — never the app's gen-l10n. App-level concerns are
