@@ -143,6 +143,40 @@ void main() {
     );
 
     test(
+      'nested tool call replays as a subtool row bound to its parent',
+      () async {
+        final script = MockSessionScript()
+          ..turn(
+            'explore nested',
+            toolCalls: [
+              const MockToolCallSpec('call-1', name: 'bash'),
+              const MockToolCallSpec(
+                'call-1-1',
+                name: 'grep',
+                args: {'pattern': 'deploy'},
+                parentCallId: 'call-1',
+              ),
+            ],
+          )
+          ..assistantText('all settled');
+        final (_, snapshot) = await buildAndReplay(script);
+
+        final kinds = [for (final record in snapshot.records) record.kind.name];
+        expect(kinds, ['user', 'message', 'tool', 'subtool', 'message']);
+
+        final rows = snapshot.records;
+        final parent = rows[2] as TrajectoryToolRecord;
+        expect(parent.callId, 'call-1');
+        expect(parent.parentCallId, isNull);
+        final nested = rows[3] as TrajectoryToolRecord;
+        expect(nested.callId, 'call-1-1');
+        expect(nested.kind, TrajectoryCellKind.subtool);
+        expect(nested.parentCallId, 'call-1');
+        expect(nested.result, 'ok');
+      },
+    );
+
+    test(
       'requests: sequential numbering, compaction rows, cumulative usage',
       () async {
         final script = MockSessionScript()

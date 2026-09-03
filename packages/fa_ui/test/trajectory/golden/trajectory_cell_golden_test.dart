@@ -59,8 +59,9 @@ List<TrajectoryRecord> _rowsOf(
   ];
 }
 
-/// The subtool child row — the core builder never sets `parentCallId`, so
-/// the record is built directly (same shape fixture_details.dart uses).
+/// The subtool child row — built directly for a fixed fixture (the core
+/// builder only produces one when the session carries a nested call, same
+/// shape fixture_details.dart uses).
 final _subtoolRow = TrajectoryToolRecord(
   index: 1,
   recordId: 'goldens/subtool',

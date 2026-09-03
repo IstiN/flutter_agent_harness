@@ -57,7 +57,13 @@ ToolCall _toolCall(
   String id, {
   String name = 'bash',
   Map<String, dynamic>? args,
-}) => ToolCall(id: id, name: name, arguments: args ?? const {'cmd': 'ls'});
+  String? parentCallId,
+}) => ToolCall(
+  id: id,
+  name: name,
+  arguments: args ?? const {'cmd': 'ls'},
+  parentCallId: parentCallId,
+);
 
 MessageRecord _toolResultRecord(
   String id, {
@@ -153,6 +159,47 @@ void main() {
       final second = snapshot.records[3] as TrajectoryToolRecord;
       expect(second.callId, 'c2');
       expect(second.name, 'read');
+    });
+
+    test('nested tool calls map to subtool records bound to their parent', () {
+      final builder = TrajectorySnapshotBuilder()..append(_userRecord('u1'));
+      builder.append(
+        _assistantRecord(
+          'a1',
+          parentId: 'u1',
+          content: [
+            const TextContent(text: 'running'),
+            _toolCall('c1'),
+            _toolCall('c1-1', name: 'read', parentCallId: 'c1'),
+          ],
+        ),
+      );
+      final snapshot = builder.append(
+        _toolResultRecord('r1', parentId: 'a1', callId: 'c1'),
+      );
+      final settled = builder.append(
+        _toolResultRecord('r2', parentId: 'a1', callId: 'c1-1'),
+      );
+      expect(snapshot.records, hasLength(4));
+      final parent = snapshot.records[2] as TrajectoryToolRecord;
+      expect(parent.kind, TrajectoryCellKind.tool);
+      expect(parent.parentCallId, isNull);
+      final nested = settled.records[3] as TrajectoryToolRecord;
+      expect(nested.kind, TrajectoryCellKind.subtool);
+      expect(nested.callId, 'c1-1');
+      expect(nested.parentCallId, 'c1');
+      expect(nested.index, parent.index + 1);
+      // The result binding went through withResult and kept the link.
+      expect(nested.result, 'done');
+    });
+
+    test('ToolCall serializes parentCallId only when set', () {
+      final nested = _toolCall('c1-1', parentCallId: 'c1');
+      expect(nested.toJson()['parentCallId'], 'c1');
+      expect(ToolCall.fromJson(nested.toJson()).parentCallId, 'c1');
+      final top = _toolCall('c1');
+      expect(top.toJson().containsKey('parentCallId'), isFalse);
+      expect(ToolCall.fromJson(top.toJson()).parentCallId, isNull);
     });
 
     test('tool result updates the matching tool record', () {

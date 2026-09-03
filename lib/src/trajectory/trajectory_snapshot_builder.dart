@@ -265,7 +265,7 @@ final class TrajectorySnapshotBuilder {
       index: index,
       recordId: trajectoryRecordId(kind: 'tool', callId: call.id, index: index),
       callId: call.id,
-      parentCallId: null,
+      parentCallId: call.parentCallId,
       name: call.name,
       argsRaw: jsonEncode(call.arguments),
     );
