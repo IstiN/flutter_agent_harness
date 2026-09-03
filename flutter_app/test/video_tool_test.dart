@@ -66,6 +66,7 @@ MediaGateway _gateway(
   MediaModelsStore store, {
   String providerKind = 'openai-completions',
   String modelId = 'gpt-4o',
+  MediaKeyResolver? resolveKey,
 }) => MediaGateway(
   env: env,
   fallback: () => MediaFallback(
@@ -75,6 +76,7 @@ MediaGateway _gateway(
     apiKey: 'sk-main',
   ),
   store: store,
+  resolveKey: resolveKey,
 );
 
 String _textOf(ToolExecutionResult result) =>
@@ -255,6 +257,7 @@ void main() {
           providerKind: 'openai-completions',
           baseUrl: 'https://vision.example.com/v1',
           modelId: 'some-vision-model',
+          apiKeyName: 'VISION_KEY',
         ),
       );
       final client = _FakeHttpClient(200, _chatReply);
@@ -264,7 +267,13 @@ void main() {
           video: FakeVideoApi(),
           // The fallback model is deliberately text-only: the override must
           // win without the supports-images gate applying.
-          gateway: _gateway(env, store, modelId: 'gpt-3.5-turbo'),
+          gateway: _gateway(
+            env,
+            store,
+            modelId: 'gpt-3.5-turbo',
+            resolveKey: (name) async =>
+                name == 'VISION_KEY' ? 'sk-vision' : null,
+          ),
           httpClient: client,
         ),
       );

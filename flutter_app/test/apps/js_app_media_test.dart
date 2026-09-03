@@ -186,6 +186,7 @@ void main() {
           providerKind: 'openai-completions',
           baseUrl: 'https://video.test/v1',
           modelId: 'bytedance/seedance-1-5-pro',
+          apiKeyName: 'VIDEO_KEY',
         ),
       );
       final gateway = MediaGateway(
@@ -197,6 +198,7 @@ void main() {
           apiKey: 'sk-main',
         ),
         store: store,
+        resolveKey: (name) async => name == 'VIDEO_KEY' ? 'sk-video' : null,
         httpClient: http_testing.MockClient((request) async {
           seen.add(request);
           if (request.method == 'POST') {

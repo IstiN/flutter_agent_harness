@@ -218,7 +218,7 @@ void main() {
     });
 
     test(
-      'an override without apiKeyName reuses the main connection key',
+      'an override without apiKeyName never inherits the main key',
       () async {
         final store = MediaModelsStore.inMemory();
         await store.setOverride(
@@ -230,12 +230,14 @@ void main() {
           ),
         );
 
+        // The slot's provider is a different endpoint: sending the main
+        // connection's key there would be a credential leak, so the
+        // endpoint is unusable instead.
         final endpoint = await store.resolve(
           MediaSlot.imageGeneration,
           fallback,
         );
-        expect(endpoint!.apiKey, 'sk-main');
-        expect(endpoint.modelId, 'dall-e-3');
+        expect(endpoint, isNull);
       },
     );
 
@@ -261,10 +263,15 @@ void main() {
           providerKind: 'openai-completions',
           baseUrl: '',
           modelId: 'tts-1',
+          apiKeyName: 'TTS_KEY',
         ),
       );
 
-      final endpoint = await store.resolve(MediaSlot.audioTts, fallback);
+      final endpoint = await store.resolve(
+        MediaSlot.audioTts,
+        fallback,
+        resolveKey: (name) async => name == 'TTS_KEY' ? 'sk-tts' : null,
+      );
       expect(endpoint!.baseUrl, MediaModelsStore.defaultBaseUrl);
     });
 
@@ -277,10 +284,15 @@ void main() {
           baseUrl: 'https://api.openai.com/v1',
           modelId: 'tts-1',
           voice: 'af_heart',
+          apiKeyName: 'TTS_KEY',
         ),
       );
 
-      final endpoint = await store.resolve(MediaSlot.audioTts, fallback);
+      final endpoint = await store.resolve(
+        MediaSlot.audioTts,
+        fallback,
+        resolveKey: (name) async => name == 'TTS_KEY' ? 'sk-tts' : null,
+      );
       expect(endpoint!.voice, 'af_heart');
       // The main-connection fallback never invents a voice.
       final plain = await store.resolve(MediaSlot.imageGeneration, fallback);

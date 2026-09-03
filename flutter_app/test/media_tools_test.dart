@@ -21,14 +21,21 @@ void main() {
   String textOf(ToolExecutionResult result) =>
       result.content.whereType<TextContent>().map((b) => b.text).join();
 
+  /// Answers every slot's named key. A slot override NEVER uses the main
+  /// connection key ('sk-main') — only its own named key rides along.
+  Future<String?> slotKeyResolver(String name) async =>
+      name.endsWith('_KEY') ? 'sk-slot' : null;
+
   MediaGateway gateway(
     MemoryExecutionEnv env,
     http.Client client, {
     MediaModelsStore? store,
+    MediaKeyResolver? resolveKey,
   }) => MediaGateway(
     env: env,
     fallback: () => fallback,
     store: store ?? MediaModelsStore.inMemory(),
+    resolveKey: resolveKey ?? slotKeyResolver,
     httpClient: client,
   );
 
@@ -199,6 +206,7 @@ void main() {
           baseUrl: 'https://api.test/v1',
           modelId: 'tts-1',
           voice: 'af_heart',
+          apiKeyName: 'TTS_KEY',
         ),
       );
       return store;
@@ -247,6 +255,7 @@ void main() {
           providerKind: 'openai-completions',
           baseUrl: 'https://music.test/v1',
           modelId: 'music-1',
+          apiKeyName: 'MUSIC_KEY',
         ),
       );
       return store;
@@ -283,8 +292,8 @@ void main() {
         'prompt': 'lo-fi loop',
         'duration': 20,
       });
-      // No apiKeyName on the slot → the main connection key rides along.
-      expect(seen!.headers['authorization'], 'Bearer sk-main');
+      // The slot's own named key — never the main connection's.
+      expect(seen!.headers['authorization'], 'Bearer sk-slot');
 
       final text = textOf(result);
       expect(text, contains('generated/music-'));
@@ -343,6 +352,7 @@ void main() {
           providerKind: 'openai-completions',
           baseUrl: 'https://video.test/v1',
           modelId: 'bytedance/seedance-1-5-pro',
+          apiKeyName: 'VIDEO_KEY',
         ),
       );
       return store;
@@ -356,6 +366,7 @@ void main() {
       env: env,
       fallback: () => fallback,
       store: videoStore(),
+      resolveKey: slotKeyResolver,
       httpClient: client,
       videoPollInterval: const Duration(milliseconds: 5),
       videoPollTimeout: pollTimeout ?? const Duration(seconds: 5),
@@ -405,7 +416,7 @@ void main() {
 
       final post = seen.first;
       expect(post.url.toString(), 'https://video.test/v1/videos');
-      expect(post.headers['authorization'], 'Bearer sk-main');
+      expect(post.headers['authorization'], 'Bearer sk-slot');
       final body = jsonDecode(post.body) as Map<String, dynamic>;
       expect(body, {
         'model': 'bytedance/seedance-1-5-pro',
@@ -456,7 +467,7 @@ void main() {
           content.url.toString(),
           'https://video.test/v1/videos/job-9/content',
         );
-        expect(content.headers['authorization'], 'Bearer sk-main');
+        expect(content.headers['authorization'], 'Bearer sk-slot');
         expect(textOf(result), contains('2 bytes'));
         expect(textOf(result), contains('provider defaults'));
       },
@@ -497,7 +508,7 @@ void main() {
         download.url.toString(),
         'https://video.test/v1/videos/job-7/content?index=0',
       );
-      expect(download.headers['authorization'], 'Bearer sk-main');
+      expect(download.headers['authorization'], 'Bearer sk-slot');
       expect(textOf(result), contains('4 bytes'));
     });
 

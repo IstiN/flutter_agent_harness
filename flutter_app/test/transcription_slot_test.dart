@@ -54,7 +54,13 @@ const _override = MediaSlotOverride(
   providerKind: 'openai-completions',
   baseUrl: 'https://asr.example.com/v1',
   modelId: 'whisper-large-v3',
+  apiKeyName: 'ASR_KEY',
 );
+
+/// Answers every slot's named key. A slot override NEVER uses the main
+/// connection key — only its own named key.
+MediaKeyResolver _slotKeyResolver(String value) =>
+    (name) async => name.endsWith('_KEY') ? value : null;
 
 String _textOf(ToolExecutionResult result) =>
     result.content.whereType<TextContent>().map((b) => b.text).join();
@@ -77,23 +83,33 @@ void main() {
       },
     );
 
-    test(
-      'a configured override wins, reusing the main key by default',
-      () async {
-        final env = MemoryExecutionEnv();
-        final store = MediaModelsStore.inMemory();
-        await store.setOverride(MediaSlot.transcription, _override);
+    test('a configured override wins and uses its own named key', () async {
+      final env = MemoryExecutionEnv();
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(MediaSlot.transcription, _override);
 
-        final transcriber = await whisperTranscriberForGateway(
-          _gateway(env, store),
-        );
+      final transcriber = await whisperTranscriberForGateway(
+        _gateway(env, store, resolveKey: _slotKeyResolver('sk-slot')),
+      );
 
-        final config = (transcriber! as WhisperTranscriber).config;
-        expect(config.baseUrl, 'https://asr.example.com/v1');
-        expect(config.modelId, 'whisper-large-v3');
-        expect(config.apiKey, 'sk-main');
-      },
-    );
+      final config = (transcriber! as WhisperTranscriber).config;
+      expect(config.baseUrl, 'https://asr.example.com/v1');
+      expect(config.modelId, 'whisper-large-v3');
+      expect(config.apiKey, 'sk-slot');
+    });
+
+    test('an override without a resolvable named key is unusable', () async {
+      final env = MemoryExecutionEnv();
+      final store = MediaModelsStore.inMemory();
+      await store.setOverride(MediaSlot.transcription, _override);
+
+      // No key named ASR_KEY anywhere: the endpoint is not usable and
+      // the main connection key is never substituted.
+      final transcriber = await whisperTranscriberForGateway(
+        _gateway(env, store),
+      );
+      expect(transcriber, isNull);
+    });
 
     test('an override apiKeyName resolves through the key resolver', () async {
       final env = MemoryExecutionEnv();
@@ -167,7 +183,7 @@ void main() {
       final tool = transcriptionTool(
         env,
         () => whisperTranscriberForGateway(
-          _gateway(env, store),
+          _gateway(env, store, resolveKey: _slotKeyResolver('sk-slot')),
           httpClient: client,
         ),
       );

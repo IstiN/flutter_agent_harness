@@ -2,6 +2,19 @@
 
 ## 0.1.281
 
+- fix(tools): media slot overrides no longer fall back to the main provider
+  API key. A slot override is its own provider configuration: only its named
+  `apiKeyName` key is used, and a missing/unresolvable key makes the endpoint
+  unusable with an explicit error (CLI `generate_image` + the app's
+  `MediaModelsStore.resolve`) instead of silently leaking the chat provider's
+  key to a different endpoint.
+- fix(tools): `generate_image` surfaces MiniMax `base_resp` errors that hide
+  inside HTTP 200 responses (`{"base_resp":{"status_code":1004,...}}`).
+  Previously the MiniMax dialect reported a misleading
+  "image generation: no image in MiniMax response" for an auth failure; the
+  error now names the real cause and points at
+  `models.slots.imageGeneration.apiKeyName`.
+
 - fix(cli): per-folder model memory — `/model` and `/provider` switches are
   scoped to the launch folder (`model-state.json` under the sessions root);
   the global config keeps its seed triple, so a switch in one workspace no

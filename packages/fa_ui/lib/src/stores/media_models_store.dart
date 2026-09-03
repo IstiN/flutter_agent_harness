@@ -305,7 +305,10 @@ class MediaModelsStore extends ChangeNotifier {
         ),
       );
     }
-    var apiKey = fallback.apiKey;
+    // A slot override is its own provider configuration: it NEVER inherits
+    // the main connection key. Only the override's named key applies;
+    // without one the endpoint is unusable (no key is sent anywhere).
+    var apiKey = '';
     final keyName = override.apiKeyName;
     if (keyName != null && keyName.isNotEmpty) {
       apiKey = (await resolveKey?.call(keyName)) ?? '';

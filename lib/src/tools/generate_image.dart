@@ -91,9 +91,23 @@ Future<MediaEndpoint?> resolveImageGenerationEndpoint(
     }
     return null;
   }
-  final key = override.apiKeyName == null
-      ? mainApiKey
-      : (await resolveKey?.call(override.apiKeyName!)) ?? mainApiKey;
+  // A slot override is its own provider configuration: it NEVER uses the
+  // main provider key (that key belongs to a different endpoint — sending
+  // it is a credential leak that fails confusingly). Only the slot's named
+  // key applies; without one the endpoint is not usable.
+  final keyName = override.apiKeyName;
+  final key = (keyName == null || keyName.isEmpty)
+      ? ''
+      : (await resolveKey?.call(keyName)) ?? '';
+  if (key.isEmpty) {
+    throw MediaException(
+      'the imageGeneration slot has no resolvable API key'
+      '${(keyName == null || keyName.isEmpty) ? '' : ' (named "$keyName")'} '
+      '— a slot override never uses the main provider key; set '
+      'models.slots.imageGeneration.apiKeyName to a stored key name '
+      '(/key set <name>) or an environment variable',
+    );
+  }
   return MediaEndpoint(
     baseUrl: override.baseUrl,
     modelId: override.modelId,
@@ -232,6 +246,7 @@ final class MiniMaxImageDialect extends ImageDialect {
       );
     }
     final data = jsonDecode(response.body) as Map<String, dynamic>;
+    _throwOnMiniMaxError(data);
     final images = data['data']?['image_base64'];
     if (images is List && images.isNotEmpty && images.first is String) {
       final bytes = base64Decode(images.first as String);
@@ -239,6 +254,26 @@ final class MiniMaxImageDialect extends ImageDialect {
       return (path: path, bytes: bytes, detail: 'saved to $path');
     }
     throw MediaException('image generation: no image in MiniMax response');
+  }
+
+  /// MiniMax reports failures INSIDE HTTP 200 responses as
+  /// `{"base_resp":{"status_code":1004,"status_msg":"login fail: ..."}}` —
+  /// without this check the dialect reports a misleading
+  /// "no image in MiniMax response" instead of the auth/config problem.
+  void _throwOnMiniMaxError(Map<String, dynamic> data) {
+    final baseResp = data['base_resp'];
+    if (baseResp is! Map<String, dynamic>) return;
+    final code = baseResp['status_code'];
+    if (code is num && code != 0) {
+      final msg = baseResp['status_msg'];
+      throw MediaException(
+        'MiniMax image_generation failed: base_resp $code'
+        '${msg is String && msg.isNotEmpty ? ': $msg' : ''} '
+        '(MiniMax hides errors inside HTTP 200; the imageGeneration slot '
+        'likely needs its own MiniMax key — set '
+        'models.slots.imageGeneration.apiKeyName)',
+      );
+    }
   }
 }
 
