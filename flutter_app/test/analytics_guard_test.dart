@@ -43,6 +43,9 @@ const _documentedExemptions = <String, String>{
   'lib/ui/screens/providers_section.dart':
       'Not a screen — the settings sub-section adapter; its host '
       'SettingsScreen logs screenOpened.',
+  'lib/ui/screens/tools_availability_section.dart':
+      'Not a screen — the settings sub-section for per-tool availability; '
+      'its host SettingsScreen logs screenOpened.',
 };
 
 /// Every `lib/ui/screens/*.dart` file plus the shared non-screen surfaces.

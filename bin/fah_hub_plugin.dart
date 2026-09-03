@@ -14,6 +14,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:fah_hub_client/fah_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -25,10 +26,24 @@ const _pluginName = 'hub';
 /// plugin seam onto the real [FahPlugin] API and contributes the `dap_*`
 /// tools, the `/dap` slash command, and the hub-mail inbox.
 final class HubPluginHost implements FahPlugin {
-  /// Creates the host around [hubPlugin].
-  HubPluginHost(hub.HubPlugin hubPlugin) : _hub = hubPlugin;
+  /// Creates the host around [hubPlugin]. [environment]/[home] override
+  /// the process defaults — tests inject them so the `~/.dap` resolution
+  /// and the `DAP_*` env overrides are deterministic.
+  HubPluginHost(
+    hub.HubPlugin hubPlugin, {
+    Map<String, String>? environment,
+    String? home,
+  }) : _hub = hubPlugin,
+       // ignore: prefer_initializing_formals
+       _environment = environment ?? Platform.environment,
+       // ignore: prefer_initializing_formals
+       _home = home;
 
   final hub.HubPlugin _hub;
+  final Map<String, String> _environment;
+
+  /// Home directory override for the `~/.dap/config.json` resolution.
+  final String? _home;
 
   @override
   String get name => _pluginName;
@@ -55,8 +70,22 @@ final class HubPluginHost implements FahPlugin {
     context.registerExternalInbox(
       ExternalInbox(drain: _drainHubMail, hasPending: _hasPendingHubMail),
     );
-    for (final tool in _dapTools()) {
-      context.registerTool(tool);
+    // Issue #19 AC1: register the dap_* tools only when a hub is actually
+    // configured. On the zero-config default URL every tool call would
+    // dead-end ("no hub running"), so an unconfigured install hands the
+    // model no such tools. Resolution = the same precedence the connection
+    // uses (env > `hub:` section > `~/.dap/config.json` > default). The
+    // /dap slash command and the inbox stay unconditional: `/dap <host>`
+    // connects on demand and the tools appear on the next launch.
+    final settings = hub.resolveDapSettings(
+      config: hub.HubConfig.fromMap(context.config, _environment),
+      environment: _environment,
+      home: _home,
+    );
+    if (settings.url != hub.defaultDapUrl) {
+      for (final tool in _dapTools()) {
+        context.registerTool(tool);
+      }
     }
   }
 

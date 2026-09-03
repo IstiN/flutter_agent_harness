@@ -36,6 +36,10 @@ extension SlashCommandDispatch on AgentCli {
       await _skillsSlash(rest);
       return true;
     }
+    if (command == '/tools') {
+      await _toolsSlash(rest);
+      return true;
+    }
     if (command == '/cube') {
       await _handleCubeCommand(rest);
       return true;

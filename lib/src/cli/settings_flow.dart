@@ -403,6 +403,10 @@ extension SettingsFlow on AgentCli {
     }
   }
 
+  /// Settings → Tools: pick a tool, flip it, choose the scope to persist
+  /// in (project default). Loops until cancelled or `done`.
+  Future<void> startToolsFlow() => _toolsSettingsFlow();
+
   /// Re-fetches the DAP/1 hub snapshot through the host's seam — file
   /// reads plus the hub plugin's local status snapshot, never a network
   /// dial. A missing seam leaves the null (nothing fetched); a failing one
@@ -564,11 +568,12 @@ extension SettingsFlow on AgentCli {
         label: 'DAP / Hub',
         description: _dapHubStatusLabel(),
       ),
-      const MenuItem(
+      MenuItem(
         key: 'keys',
         label: 'API keys',
         description: 'set or inspect stored keys',
       ),
+      MenuItem(key: 'tools', label: 'Tools', description: _toolsStatusLabel()),
       const MenuItem(
         key: 'mcp',
         label: 'MCP servers',
@@ -596,6 +601,7 @@ extension SettingsFlow on AgentCli {
     'keys': () => _handleKeyCommand(''),
     'cube': startCubeSandboxFlow,
     'dap': startDapHubFlow,
+    'tools': _toolsSettingsFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
@@ -607,9 +613,10 @@ extension SettingsFlow on AgentCli {
     io.writeln('mode: ${_currentMode.name}');
     io.writeln('cube: ${_cubeStatusLabel()}');
     io.writeln('dap: ${_dapHubStatusLabel()}');
+    io.writeln('tools: ${_toolsStatusLabel()}');
     io.writeln(
-      'change via /provider, /model, /approval, /mode, /key, /mcp, /cube '
-      '(agent models: the /settings hub)',
+      'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
+      '/tools (agent models: the /settings hub)',
     );
   }
 }
@@ -619,30 +626,5 @@ extension SettingsFlow on AgentCli {
 /// `hub:` key line plus every following blank/indented line; everything
 /// else survives byte-for-byte and the result stays parseable yaml (the
 /// plugin loader reads the same shape it always did).
-String _withHubOptOut(String source) {
-  const replacement = 'hub: false';
-  final lines = source.split('\n');
-  var start = -1;
-  for (var i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith('hub:')) {
-      start = i;
-      break;
-    }
-  }
-  if (start < 0) {
-    final separator = source.isEmpty || source.endsWith('\n') ? '' : '\n';
-    return '$source$separator$replacement\n';
-  }
-  var end = start + 1;
-  while (end < lines.length &&
-      (lines[end].isEmpty ||
-          lines[end].startsWith(' ') ||
-          lines[end].startsWith('\t'))) {
-    end++;
-  }
-  return [
-    ...lines.sublist(0, start),
-    replacement,
-    ...lines.sublist(end),
-  ].join('\n');
-}
+String _withHubOptOut(String source) =>
+    _replaceTopLevelYamlBlock(source, 'hub', 'hub: false');

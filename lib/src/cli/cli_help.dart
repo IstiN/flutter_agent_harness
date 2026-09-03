@@ -76,6 +76,10 @@ OPTIONS
                                config cube: section
   --cube-config <path>         Apply a cube from an explicit manifest path
                                (~ expanded)
+  --tools <id>=on|off,...      Capability-gated tool availability for this
+                               run (csv: web_search=off,mcp:fs=on); wins
+                               over the FA_TOOLS env var and the config
+                               tools: section
   --help, -h                   Show this help
   --version                    Print the version
 
@@ -446,6 +450,15 @@ SKILLS AND CONTEXT FILES
                      summary in line mode)
   /allow [tool]      always-allow a tool (or list them)
   /mcp [list|reload] show MCP servers or reload the config
+  /tools [enable|disable <id> [global|project|session]|reload]
+                     tool availability: list every known tool id with its
+                     approval tier, on/off state, deciding scope, and the
+                     reason when off; toggle a tool per scope (global
+                     ~/.fah/config.yaml, project .fah/config.yaml, session
+                     tools.yaml; deepest scope wins, capability is the
+                     floor). Disabled tools are hidden from the model and
+                     tombstoned at execution; /tools reload re-reads the
+                     config files
   /dap [host ...]    DAP hub status, or connect to a hub (agent-to-agent
                      messaging; protocol + server guide: docs/dap.md)
   /code              switch to coding mode
@@ -470,9 +483,9 @@ TERMINAL
 CONFIGURATION FILES
   ~/.fah/config.yaml   user preferences: provider, model, baseUrl, mode,
                        approvalMode, allowedTools, plus the prompts:, roles:,
-                       modelOverrides:, retry:, ttsr:, models:, and cube:
-                       sections. Invalid roles/ttsr/prompts/models/cube
-                       sections fail loudly at startup.
+                       modelOverrides:, retry:, ttsr:, models:, cube:, and
+                       tools: sections. Invalid roles/ttsr/prompts/models/
+                       cube/tools sections fail loudly at startup.
   .fah/cubes/          cube sandbox manifests (--cube <name> and /cube use
                        resolve <name>.yaml here); the project .fah/
                        config.yaml cube: section picks the startup default

@@ -51,6 +51,7 @@ final class MockLlmServer {
   final HttpServer _server;
   final _script = <_ScriptEntry>[];
   var _chatCalls = 0;
+  final _chatBodies = <String>[];
 
   /// The base URL to pass as the CLI's `--base-url` (trailing `/v1`, so the
   /// adapter's `{baseUrl}/chat/completions` lands on `/v1/chat/completions`).
@@ -69,6 +70,11 @@ final class MockLlmServer {
 
   /// How many `/chat/completions` requests were served so far.
   int get chatCalls => _chatCalls;
+
+  /// Raw bodies of the served `/chat/completions` requests, in call order
+  /// — lets tests assert on the exact wire payload (e.g. the `tools`
+  /// array) without changing any scripted behavior.
+  List<String> get chatBodies => List.unmodifiable(_chatBodies);
 
   /// Scripts the next response as a streamed tool call.
   void enqueueToolCall(String name, String argumentsJson) {
@@ -112,6 +118,7 @@ final class MockLlmServer {
   Future<void> _handleChat(HttpRequest request) async {
     final body = await utf8.decoder.bind(request).join();
     _chatCalls++;
+    _chatBodies.add(body);
     final entry = _script.isEmpty ? null : _script.removeAt(0);
     if (entry == null) {
       await _respondJson(request, 500, {

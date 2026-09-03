@@ -36,6 +36,7 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
+import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/transformers_js/transformers_js_cache_section.dart';
@@ -2336,6 +2337,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const Divider(),
                   const SizedBox(height: 16),
                 ],
+                // Capability-gated tools (issue #19): live toggles, every
+                // platform — the tool set exists everywhere.
+                ToolsAvailabilitySection(service: service),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
               ],
               WebLlmCacheSection(engine: widget.webLlmEngine),
               // The transformers.js section is web-only (its provider is);

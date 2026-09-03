@@ -2809,6 +2809,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up).'**
   String get workspaceDialogRestrictToolsHint;
+
+  /// No description provided for @toolsAvailabilityTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Tools'**
+  String get toolsAvailabilityTitle;
+
+  /// No description provided for @toolsAvailabilityHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn tools off or on for Fa — applies immediately, no restart.'**
+  String get toolsAvailabilityHint;
+
+  /// No description provided for @toolsAvailabilityUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Unavailable: {reason}'**
+  String toolsAvailabilityUnavailable(Object reason);
 }
 
 class _AppLocalizationsDelegate

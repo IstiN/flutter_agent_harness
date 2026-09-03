@@ -1046,6 +1046,19 @@ Future<void> _runApp(List<String> args) async {
   // startup dialog and `/skills access` change it — persisted via
   // persistConfig.
   var skillsAccess = saved.skillsAccess;
+  // The RUNTIME `tools:` availability scope: the `--tools` flag wins over
+  // the `FA_TOOLS` env twin (the flag is already parsed into
+  // effective.tools). A malformed env spec is a hard startup error — a
+  // typo must never silently enable a tool the user meant to disable.
+  ToolsConfig? runtimeTools;
+  try {
+    final flagTools = effective.tools;
+    runtimeTools = flagTools != null && !flagTools.isEmpty
+        ? flagTools
+        : toolsSpecFromEnv(Platform.environment);
+  } on ConfigException catch (error) {
+    _fail('invalid --tools/FA_TOOLS spec: ${error.message}');
+  }
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui:
@@ -1125,6 +1138,7 @@ Future<void> _runApp(List<String> args) async {
       approvalMode:
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
+      runtimeTools: runtimeTools,
       modelRolesResolver: rolesResolver,
       // The live models config (`models:` section): `/models set`/`remove`
       // mutate its media slot overrides and `/model <name>` resolves its
@@ -1217,6 +1231,9 @@ Future<void> _runApp(List<String> args) async {
       },
       onModeChanged: (_) async => persistConfig(),
       onApprovalChanged: () async => persistConfig(),
+      // Global `tools:` toggles (`/tools <id> global`): the CLI owns the
+      // live scope; persistConfig writes it back (see below).
+      onToolsConfigChanged: () async => persistConfig(),
       // Third-party skills consent (`skills:` config section): the startup
       // dialog and `/skills access` set it; shell `!`cmd`` injections in
       // skill bodies follow `disableShellExecution`.
@@ -1273,6 +1290,11 @@ Future<void> _runApp(List<String> args) async {
         // The saved cube default (the live value the Cube sandbox flow
         // rewrites; `saved.cube` keeps the section when nothing changed).
         cube: cli.config.cubeSettings ?? saved.cube,
+        // The live global `tools:` scope (read at boot, updated by
+        // `/tools <id> global`); null until the first availability
+        // rebuild, in which case the loaded section is kept as-is
+        // (project/runtime scopes stay live and are never persisted).
+        tools: cli.globalTools ?? saved.tools,
       ),
     );
   };

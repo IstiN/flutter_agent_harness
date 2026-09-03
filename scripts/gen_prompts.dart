@@ -124,6 +124,10 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{maxLines}}',
   ),
   PromptSpec(
+    source: 'prompts/tools/read_sqlite.md',
+    constName: 'readSqliteSectionPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/tools/ask.md',
     constName: 'askToolDescriptionPrompt',
   ),
