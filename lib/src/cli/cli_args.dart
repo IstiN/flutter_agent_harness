@@ -255,6 +255,33 @@ CliArgsResult _parseTrajectoryArgs(List<String> args) {
       '(expected view|tail|cost|inspect)',
     );
   }
+  final operands = _parseTrajectoryOperands(args);
+  _validateTrajectoryVerb(verb, operands.positionals, operands.at);
+  return CliArgs(
+    cwd: operands.cwd,
+    sessionRoot: operands.sessionRoot,
+    trajectory: TrajectoryCliCommand(
+      verb: verb,
+      positionals: operands.positionals,
+      json: operands.json,
+      at: operands.at,
+    ),
+  );
+}
+
+/// The operands collected while walking a trajectory subcommand's
+/// arguments: positional words plus the recognized flags.
+typedef _TrajectoryOperands = ({
+  List<String> positionals,
+  bool json,
+  int? at,
+  String? cwd,
+  String? sessionRoot,
+});
+
+/// Walks the arguments after the verb, collecting positionals and the
+/// `--json`/`--at`/`--cwd`/`--session-root` flags.
+_TrajectoryOperands _parseTrajectoryOperands(List<String> args) {
   final positionals = <String>[];
   var json = false;
   int? at;
@@ -266,22 +293,16 @@ CliArgsResult _parseTrajectoryArgs(List<String> args) {
       case '--json':
         json = true;
       case '--cwd' || '--session-root':
-        if (i + 1 >= args.length) {
-          throw CliArgsException('$arg requires a value');
-        }
+        final value = _pathFlagValue(args, arg, i);
         if (arg == '--cwd') {
-          cwd = args[++i];
+          cwd = value;
         } else {
-          sessionRoot = args[++i];
+          sessionRoot = value;
         }
+        i++;
       case '--at':
-        if (i + 1 >= args.length) {
-          throw const CliArgsException('--at requires a record number');
-        }
-        at = int.tryParse(args[++i]);
-        if (at == null) {
-          throw const CliArgsException('--at requires a record number');
-        }
+        at = _atFlagValue(args, i);
+        i++;
       default:
         if (arg.startsWith('-')) {
           throw CliArgsException('unknown argument: $arg');
@@ -292,6 +313,38 @@ CliArgsResult _parseTrajectoryArgs(List<String> args) {
         positionals.add(arg);
     }
   }
+  return (
+    positionals: positionals,
+    json: json,
+    at: at,
+    cwd: cwd,
+    sessionRoot: sessionRoot,
+  );
+}
+
+/// The value following a `--cwd`/`--session-root` flag at index [i].
+String _pathFlagValue(List<String> args, String arg, int i) {
+  if (i + 1 >= args.length) {
+    throw CliArgsException('$arg requires a value');
+  }
+  return args[i + 1];
+}
+
+/// The record number following `--at` at index [i].
+int _atFlagValue(List<String> args, int i) {
+  if (i + 1 >= args.length) {
+    throw const CliArgsException('--at requires a record number');
+  }
+  final at = int.tryParse(args[i + 1]);
+  if (at == null) {
+    throw const CliArgsException('--at requires a record number');
+  }
+  return at;
+}
+
+/// Rejects verb/operand mismatches: `inspect` needs a numeric record
+/// number and `--at` applies to `view` only.
+void _validateTrajectoryVerb(String verb, List<String> positionals, int? at) {
   if (verb == 'inspect') {
     if (positionals.isEmpty) {
       throw const CliArgsException(
@@ -307,16 +360,6 @@ CliArgsResult _parseTrajectoryArgs(List<String> args) {
   if (at != null && verb != 'view') {
     throw const CliArgsException('--at only applies to fa trajectory view');
   }
-  return CliArgs(
-    cwd: cwd,
-    sessionRoot: sessionRoot,
-    trajectory: TrajectoryCliCommand(
-      verb: verb,
-      positionals: positionals,
-      json: json,
-      at: at,
-    ),
-  );
 }
 
 /// A value-taking CLI flag: its canonical name (for error messages, so

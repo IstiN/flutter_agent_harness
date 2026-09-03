@@ -50,6 +50,11 @@ void main() {
       'update',
       'uninstall',
       'Exit codes: 0 ok',
+      // Trajectory reader (fa trajectory + REPL /trajectory).
+      'fa trajectory',
+      'trajectory <view|tail|cost|inspect>',
+      '[--json] [--at N]',
+      '/trajectory',
       // Providers and keys.
       'openai-completions',
       'kimi',

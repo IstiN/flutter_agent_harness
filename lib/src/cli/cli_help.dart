@@ -85,6 +85,17 @@ QUICK COMMANDS
   uninstall                    Remove the binary and its PATH entry after a
                                y/N confirmation; ~/.fah (sessions, config)
                                is kept unless a second confirmation says yes
+  trajectory                   fa trajectory <view|tail|cost|inspect>
+                               [sessionId] [--json] [--at N]: read-only
+                               views over a stored session's trajectory
+                               ledger — view renders the rows (--at N
+                               pins the snapshot to record N), cost the
+                               per-request token/cost table, tail
+                               follows the live session, inspect <n>
+                               prints full detail for one record; --json
+                               emits one JSON object per row. An unknown
+                               session or out-of-range record exits 1
+                               with a message on stderr.
 
 PROVIDERS AND API KEYS${_providerSectionSuffix()}
   openai-completions (default)
@@ -337,6 +348,9 @@ REPL COMMANDS
   /compact           summarize history to free context
   /stats             show token and cost totals
   /tasks [cancel <id>] list (or cancel) background agents and shell jobs
+  /trajectory [view|cost|tail|inspect <n>]
+                     read-only views over the active session's trajectory
+                     ledger (same verbs as `fa trajectory`)
   /skills            skills menu (TUI): pick a skill to prefill /skill:<name>
                      in the input, manage third-party access, or import; in
                      line mode lists skills. /skill:<name> [args] invokes one

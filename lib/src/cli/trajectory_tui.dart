@@ -265,90 +265,132 @@ List<String>? trajectoryInspectLines(TrajectorySnapshot snapshot, int index) {
   final lines = <String>[
     '#${record.index} ${trajectoryKindLabel(record.kind)}',
   ];
-  void section(String label, Object? value) {
-    if (value == null) return;
-    lines.add('$label: $value');
-  }
-
-  void duration(Duration? timeSeconds) {
-    if (timeSeconds == null) return;
-    section(
-      'duration',
-      '${formatDurationMillis(timeSeconds.inMilliseconds)} ms',
-    );
-  }
-
   switch (record) {
     case final TrajectorySystemRecord r:
-      section('change', r.change.name);
-      section('text', r.text);
-      section('time', r.time?.toIso8601String());
-      section('detail', r.detail);
-      section('error', r.errorMessage);
+      _inspectSystem(lines, r);
     case final TrajectoryAssistantRecord r:
-      lines[0] += ' · turn ${r.turn} · step ${r.step}';
-      section(
-        'model',
-        r.provider == null && r.model == null
-            ? null
-            : '${r.provider ?? '—'}/${r.model ?? '—'}',
-      );
-      section('status', r.isError == true ? 'failed' : 'completed');
-      section('started', r.stepStartTime?.toIso8601String());
-      section('first token', r.firstTokenTime?.toIso8601String());
-      section('completed', r.completedTime?.toIso8601String());
-      duration(r.timeSeconds);
-      final input = r.usage?.input ?? r.inputTokens;
-      final output = r.usage?.output ?? r.outputTokens;
-      final reasoning = r.usage?.reasoning ?? r.reasoningTokens;
-      final cacheRead = r.usage?.cacheRead ?? r.cacheReadTokens;
-      final cacheWrite = r.usage?.cacheWrite ?? r.cacheWriteTokens;
-      final total = r.usage?.totalTokens;
-      if (input != null || output != null || total != null) {
-        final parts = <String>[
-          if (input != null) 'input $input',
-          if (output != null) 'output $output',
-          if (reasoning != null) 'reasoning $reasoning',
-          if (cacheRead != null) 'cache read $cacheRead',
-          if (cacheWrite != null) 'cache write $cacheWrite',
-          if (total != null) 'total $total',
-        ];
-        section('tokens', parts.join(', '));
-      }
-      if ((r.usage?.cost.total ?? 0) != 0) {
-        section('cost', '\$${r.usage!.cost.total.toStringAsFixed(4)}');
-      }
-      section('input', r.inputDetail);
-      section('output', r.outputDetail);
-      section('thinking', r.thinkingDetail);
-      if (r.isError == true) section('error', r.errorMessage);
+      _inspectAssistant(lines, r);
     case final TrajectoryToolRecord r:
-      lines[0] += ' · ${r.name}';
-      section('call', r.callId);
-      section('parent call', r.parentCallId);
-      section(
-        'status',
-        r.result.isEmpty ? 'running' : (r.isError ? 'failed' : 'completed'),
-      );
-      section('started', r.startedAt?.toIso8601String());
-      duration(r.timeSeconds);
-      section('args', r.argsRaw);
-      if (r.result.isNotEmpty) section('result', r.result);
+      _inspectTool(lines, r);
     case final TrajectoryUserRecord r:
-      section('text', r.text);
-      section('opens turn', r.opensTurn ? 'yes' : 'no');
-      section('started', r.startedAt?.toIso8601String());
-      section('input', r.inputDetail);
+      _inspectUser(lines, r);
     case final TrajectoryContextRecord r:
-      section('text', r.text);
+      _inspectContext(lines, r);
     case final TrajectoryCompactedRecord r:
-      section('summary', r.summary);
-      section('kept from', r.firstKeptEntryId);
-      section('started', r.startedAt?.toIso8601String());
-      duration(r.timeSeconds);
-      if (r.interrupted) section('interrupted', 'yes');
+      _inspectCompacted(lines, r);
   }
   return lines;
+}
+
+/// Appends a `label: value` section unless [value] is null.
+void _inspectSection(List<String> lines, String label, Object? value) {
+  if (value == null) return;
+  lines.add('$label: $value');
+}
+
+/// Appends the `duration` section for a record's optional wall time.
+void _inspectDuration(List<String> lines, Duration? timeSeconds) {
+  if (timeSeconds == null) return;
+  _inspectSection(
+    lines,
+    'duration',
+    '${formatDurationMillis(timeSeconds.inMilliseconds)} ms',
+  );
+}
+
+void _inspectSystem(List<String> lines, TrajectorySystemRecord r) {
+  _inspectSection(lines, 'change', r.change.name);
+  _inspectSection(lines, 'text', r.text);
+  _inspectSection(lines, 'time', r.time?.toIso8601String());
+  _inspectSection(lines, 'detail', r.detail);
+  _inspectSection(lines, 'error', r.errorMessage);
+}
+
+void _inspectAssistant(List<String> lines, TrajectoryAssistantRecord r) {
+  lines[0] += ' · turn ${r.turn} · step ${r.step}';
+  _inspectSection(
+    lines,
+    'model',
+    r.provider == null && r.model == null
+        ? null
+        : '${r.provider ?? '—'}/${r.model ?? '—'}',
+  );
+  _inspectSection(lines, 'status', r.isError == true ? 'failed' : 'completed');
+  _inspectSection(lines, 'started', r.stepStartTime?.toIso8601String());
+  _inspectSection(lines, 'first token', r.firstTokenTime?.toIso8601String());
+  _inspectSection(lines, 'completed', r.completedTime?.toIso8601String());
+  _inspectDuration(lines, r.timeSeconds);
+  _inspectAssistantUsage(lines, r);
+  _inspectSection(lines, 'input', r.inputDetail);
+  _inspectSection(lines, 'output', r.outputDetail);
+  _inspectSection(lines, 'thinking', r.thinkingDetail);
+  if (r.isError == true) _inspectSection(lines, 'error', r.errorMessage);
+}
+
+/// The `tokens`/`cost` sections: per-bucket counts preferring the captured
+/// usage over the record's flat fields, and the cost when non-zero.
+void _inspectAssistantUsage(List<String> lines, TrajectoryAssistantRecord r) {
+  final input = r.usage?.input ?? r.inputTokens;
+  final output = r.usage?.output ?? r.outputTokens;
+  final reasoning = r.usage?.reasoning ?? r.reasoningTokens;
+  final cacheRead = r.usage?.cacheRead ?? r.cacheReadTokens;
+  final cacheWrite = r.usage?.cacheWrite ?? r.cacheWriteTokens;
+  final total = r.usage?.totalTokens;
+  if (input != null || output != null || total != null) {
+    _inspectSection(
+      lines,
+      'tokens',
+      [
+        if (input != null) 'input $input',
+        if (output != null) 'output $output',
+        if (reasoning != null) 'reasoning $reasoning',
+        if (cacheRead != null) 'cache read $cacheRead',
+        if (cacheWrite != null) 'cache write $cacheWrite',
+        if (total != null) 'total $total',
+      ].join(', '),
+    );
+  }
+  if ((r.usage?.cost.total ?? 0) != 0) {
+    _inspectSection(
+      lines,
+      'cost',
+      '\$${r.usage!.cost.total.toStringAsFixed(4)}',
+    );
+  }
+}
+
+void _inspectTool(List<String> lines, TrajectoryToolRecord r) {
+  lines[0] += ' · ${r.name}';
+  _inspectSection(lines, 'call', r.callId);
+  _inspectSection(lines, 'parent call', r.parentCallId);
+  _inspectSection(
+    lines,
+    'status',
+    r.result.isEmpty ? 'running' : (r.isError ? 'failed' : 'completed'),
+  );
+  _inspectSection(lines, 'started', r.startedAt?.toIso8601String());
+  _inspectDuration(lines, r.timeSeconds);
+  _inspectSection(lines, 'args', r.argsRaw);
+  if (r.result.isNotEmpty) _inspectSection(lines, 'result', r.result);
+}
+
+void _inspectUser(List<String> lines, TrajectoryUserRecord r) {
+  _inspectSection(lines, 'text', r.text);
+  _inspectSection(lines, 'opens turn', r.opensTurn ? 'yes' : 'no');
+  _inspectSection(lines, 'started', r.startedAt?.toIso8601String());
+  _inspectSection(lines, 'input', r.inputDetail);
+}
+
+void _inspectContext(List<String> lines, TrajectoryContextRecord r) {
+  _inspectSection(lines, 'text', r.text);
+}
+
+void _inspectCompacted(List<String> lines, TrajectoryCompactedRecord r) {
+  _inspectSection(lines, 'summary', r.summary);
+  _inspectSection(lines, 'kept from', r.firstKeptEntryId);
+  _inspectSection(lines, 'started', r.startedAt?.toIso8601String());
+  _inspectDuration(lines, r.timeSeconds);
+  if (r.interrupted) _inspectSection(lines, 'interrupted', 'yes');
 }
 
 /// The compact per-record JSON line (`index`/`kind`/`text`/`timeSeconds`/
