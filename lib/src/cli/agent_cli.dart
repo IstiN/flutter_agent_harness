@@ -932,7 +932,14 @@ class AgentCli {
     // from previous runs — restart-survivable reminders.
     unawaited(_scheduledMessages.start());
     final interruptSub = io.interrupts.listen((_) {
-      if (isBusy) _agent.abort();
+      if (isBusy) {
+        // Line-mode abort marker: the settle path uses it to DROP the
+        // leftover steering loudly instead of re-running it (the TUI sets
+        // the same flag in its onInterrupt and resets it in its submit
+        // finally).
+        _abortRequested = true;
+        _agent.abort();
+      }
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
@@ -1116,6 +1123,9 @@ class AgentCli {
     _writeIdlePrompt();
     while (await lineIterator.moveNext()) {
       var line = lineIterator.current;
+      // A fresh user line clears the abort marker: the settle path already
+      // dropped (or ran) the interrupted run's leftover steering.
+      _abortRequested = false;
       if (line.trim() == '/') {
         final choice = await _showLineModeMenu(lineIterator);
         if (choice != null) line = choice;
@@ -1260,7 +1270,61 @@ class AgentCli {
   /// Steers every queued TUI message into the running agent.
   Future<void> _steerTuiMessages(List<String> messages) async {
     for (final message in messages) {
-      _agent.steer(UserMessage.text(message));
+      _steerResolved(message);
+    }
+  }
+
+  /// Whether [trimmed] names an existing file with its first token
+  /// (`/abs/path`, `~/…`, `./…`, `../…` + more path segments): such a
+  /// line is an attachment message, never a slash command.
+  bool _isAttachableFileInput(String trimmed) {
+    final pathLike =
+        _leadingPathLike.hasMatch(trimmed) ||
+        trimmed.startsWith('~/') ||
+        trimmed.startsWith('./') ||
+        trimmed.startsWith('../');
+    if (!pathLike) return false;
+    return resolveInteractiveFileReference(trimmed) != trimmed;
+  }
+
+  /// Steers [trimmed] into the running agent with the file-reference
+  /// resolution applied (a pasted path becomes an explicit
+  /// `[attached file: …]` marker — a bare path steered as plain text made
+  /// the model miss the attachment entirely).
+  void _steerResolved(String trimmed) {
+    final resolved = resolveInteractiveFileReference(trimmed);
+    if (resolved != trimmed) {
+      io.writeln(_style.dim('[file] attached to steered message'));
+    }
+    _agent.steer(UserMessage.text(resolved));
+  }
+
+  /// Runs or loudly drops the steering messages still queued after a run
+  /// settled (they missed every drain point: raced past the last poll, or
+  /// the run was interrupted). Running keeps "typed but never answered"
+  /// from happening; dropping prints exactly what was discarded — a silent
+  /// drop is indistinguishable from a lost message.
+  void _settleLeftoverSteering() {
+    if (_exited || !_agent.hasSteering) return;
+    final outcome = resolveLeftoverSteering(
+      drain: _agent.drainSteeringQueue,
+      abortRequested: _abortRequested,
+    );
+    if (outcome == null) return;
+    if (outcome.run) {
+      io.writeln(
+        _style.dim(
+          'steering arrived after the last checkpoint — running '
+          '${outcome.texts.length} message(s) now',
+        ),
+      );
+      _startRun(outcome.texts.join('\n'));
+      return;
+    }
+    io.writeln(_style.dim('dropped steering message(s) after interrupt:'));
+    for (final text in outcome.texts) {
+      final elided = text.length <= 80 ? text : '${text.substring(0, 80)}…';
+      io.writeln(_style.dim('  • ${elided.replaceAll('\n', ' ')}'));
     }
   }
 
@@ -1314,7 +1378,13 @@ class AgentCli {
       abortRequested: () => _abortRequested,
     ),
     abortRequested: () => _abortRequested,
-    onDropped: () => io.writeln('queued message(s) dropped'),
+    onDropped: (dropped) {
+      io.writeln('queued message(s) dropped:');
+      for (final text in dropped) {
+        final elided = text.length <= 80 ? text : '${text.substring(0, 80)}…';
+        io.writeln('  • ${elided.replaceAll('\n', ' ')}');
+      }
+    },
   );
 
   List<MenuItem> _buildSlashMenu(String prefix) => buildSlashMenuItems(
@@ -1911,10 +1981,20 @@ class AgentCli {
       // text instead). Run-starting commands are refused by _startRun's
       // busy guard below.
       if (trimmed.startsWith('/') || trimmed.startsWith('!')) {
+        // EXCEPT a leading file path: a message that begins with an
+        // existing file is chat with an attachment, not a command. It used
+        // to reach the command dispatcher, fall through to _startRun, and
+        // die on the busy guard — silently dropped (user report:
+        // "messages that start with a file go straight into the session
+        // or vanish"). Steer it with the attachment marker instead.
+        if (!trimmed.startsWith('!') && _isAttachableFileInput(trimmed)) {
+          _steerResolved(trimmed);
+          return;
+        }
         await _dispatchInput(line, trimmed);
         return;
       }
-      _agent.steer(UserMessage.text(line));
+      _steerResolved(trimmed);
       return;
     }
     await _settled;
@@ -2054,6 +2134,7 @@ class AgentCli {
       settled.whenComplete(() {
         _tuiController?.sendBusy(false, source: 'run');
         _runStarting = false;
+        _settleLeftoverSteering();
         if (!_exited) _writeIdlePrompt();
       }),
     );

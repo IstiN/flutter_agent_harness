@@ -1,4 +1,6 @@
 import 'package:flutter_agent_harness/src/cli/tui_helpers.dart';
+import 'package:flutter_agent_harness/src/context.dart';
+import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -12,7 +14,7 @@ void main() {
         },
         runRound: (_) async => fail('no round expected'),
         abortRequested: () => false,
-        onDropped: () => fail('nothing to drop'),
+        onDropped: (dropped) => fail('nothing to drop: $dropped'),
       );
       expect(drains, 1);
     });
@@ -30,7 +32,7 @@ void main() {
           drain: () async => batches.removeAt(0),
           runRound: (queued) async => ran.add(queued),
           abortRequested: () => false,
-          onDropped: () => fail('nothing to drop'),
+          onDropped: (dropped) => fail('nothing to drop: $dropped'),
         );
         expect(ran, [
           ['a'],
@@ -43,28 +45,28 @@ void main() {
       var batches = [
         ['a'],
       ];
-      var dropped = 0;
+      final dropped = <String>[];
       await drainQueueRounds(
         drain: () async => batches.removeAt(0),
         runRound: (_) async => fail('aborted round must not run'),
         abortRequested: () => true,
-        onDropped: () => dropped++,
+        onDropped: dropped.addAll,
       );
-      expect(dropped, 1);
+      expect(dropped, ['a']);
     });
 
     test('the round cap drops a self-sustaining queue', () async {
       final ran = <List<String>>[];
-      var dropped = 0;
+      final dropped = <String>[];
       await drainQueueRounds(
         drain: () async => ['x'],
         runRound: (queued) async => ran.add(queued),
         abortRequested: () => false,
-        onDropped: () => dropped++,
+        onDropped: dropped.addAll,
         maxRounds: 3,
       );
       expect(ran, hasLength(3));
-      expect(dropped, 1);
+      expect(dropped, ['x']);
     });
   });
 
@@ -99,6 +101,50 @@ void main() {
         expect(handled, ['a', 'b']);
       },
     );
+  });
+
+  group('resolveLeftoverSteering', () {
+    test('returns null when nothing is queued', () {
+      final outcome = resolveLeftoverSteering(
+        drain: () => const [],
+        abortRequested: false,
+      );
+      expect(outcome, isNull);
+    });
+
+    test('runs non-empty steering joined as the next turn prompt', () {
+      final outcome = resolveLeftoverSteering(
+        drain: () => [UserMessage.text('first'), UserMessage.text('second')],
+        abortRequested: false,
+      );
+      expect(outcome, isNotNull);
+      expect(outcome!.run, isTrue);
+      expect(outcome.texts, ['first', 'second']);
+    });
+
+    test('an abort turns the leftover into a loud drop', () {
+      final outcome = resolveLeftoverSteering(
+        drain: () => [UserMessage.text('never answered')],
+        abortRequested: true,
+      );
+      expect(outcome, isNotNull);
+      expect(outcome!.run, isFalse);
+      expect(outcome.texts, ['never answered']);
+    });
+
+    test('non-text and blank messages are skipped', () {
+      final outcome = resolveLeftoverSteering(
+        drain: () => [
+          UserMessage.text('   '),
+          UserMessage(
+            content: const [ImageContent(data: 'aGk=', mimeType: 'image/png')],
+            timestamp: DateTime.utc(2026),
+          ),
+        ],
+        abortRequested: false,
+      );
+      expect(outcome, isNull);
+    });
   });
 
   group('listItemAt', () {

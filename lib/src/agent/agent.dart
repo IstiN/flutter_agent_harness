@@ -316,6 +316,11 @@ class Agent {
   /// queued steers must land in the transcript, not vanish).
   List<Message> drainSteeringQueue() => _steeringQueue.drain();
 
+  /// Returns true when steering messages are still queued (e.g. they
+  /// arrived after the run's last drain point — the host decides whether
+  /// to run or drop them, but never silently).
+  bool get hasSteering => _steeringQueue.hasItems();
+
   /// Remove all queued follow-up messages.
   void clearFollowUpQueue() => _followUpQueue.clear();
 
