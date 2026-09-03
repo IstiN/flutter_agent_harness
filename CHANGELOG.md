@@ -2377,6 +2377,11 @@
 - feat(trajectory): event projection, request numbering, live tail, layout fold (#10 phase 2)
 - feat(trajectory): core record model, snapshot contract, JSONL walker (#10 phase 1)
 
+## 0.1.285
+
+- fix(trajectory): timeline lane labels inherit theme font
+- test(trajectory): real fonts in fa_ui goldens — Inter/JetBrainsMono + monospace alias
+
 ## Unreleased
 
 ## Unreleased
