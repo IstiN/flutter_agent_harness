@@ -153,7 +153,9 @@ void main() {
       final keyPath = '${tmp.path}/hub-key';
       addTearDown(() => tmp.delete(recursive: true));
 
-      final plugin = HubPlugin(environment: {});
+      final plugin = HubPlugin(
+        environment: const {'DAP_MASTER_SECRET': 'test-master'},
+      );
       plugin.register(
         PluginContext(
           config: {
@@ -209,7 +211,10 @@ void main() {
       file: '${tmp.path}/.dap/config.json',
     );
 
-    final plugin = HubPlugin(environment: {}, home: tmp.path);
+    final plugin = HubPlugin(
+      environment: const {'DAP_MASTER_SECRET': 'test-master'},
+      home: tmp.path,
+    );
     plugin.register(
       PluginContext(
         config: {

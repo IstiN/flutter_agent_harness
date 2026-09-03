@@ -382,7 +382,10 @@ void main() {
     final tmp = await tmpHome('fah-pend-plugin-');
     addTearDown(() => tmp.delete(recursive: true));
 
-    final plugin = HubPlugin(environment: {}, home: tmp.path);
+    final plugin = HubPlugin(
+      environment: const {'DAP_MASTER_SECRET': 'test-master'},
+      home: tmp.path,
+    );
     plugin.register(
       PluginContext(
         config: {
@@ -413,7 +416,9 @@ void main() {
     await plugin.dispose();
 
     // Before start: honest StateError, not a silent result.
-    final unstarted = HubPlugin(environment: {});
+    final unstarted = HubPlugin(
+      environment: const {'DAP_MASTER_SECRET': 'test-master'},
+    );
     unstarted.register(PluginContext());
     expect(unstarted.inviteTo('carol'), throwsStateError);
   }, timeout: timeout);

@@ -189,6 +189,7 @@ void main() {
           'HOME': home.path,
           'OPENAI_API_KEY': 'mock-key',
           'DAP_HUB_URL': hub.url.toString(),
+          'DAP_MASTER_SECRET': 'test-master',
           'DAP_AGENT_NAME': 'repro_cli',
         },
         args: [

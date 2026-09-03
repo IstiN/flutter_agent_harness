@@ -239,7 +239,10 @@ void main() {
     await persistChannelKeys(channelsFile, 'lobby', lobbyKeys);
 
     final plugin = HubPlugin(
-      environment: {envChannelsFile: channelsFile},
+      environment: {
+        envChannelsFile: channelsFile,
+        'DAP_MASTER_SECRET': 'test-master',
+      },
       home: home.path,
     );
     plugin.register(

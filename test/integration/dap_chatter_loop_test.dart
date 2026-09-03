@@ -102,11 +102,7 @@ class LoopMockProvider {
               'id': 'mock',
               'object': 'chat.completion.chunk',
               'choices': [
-                {
-                  'delta': delta,
-                  'index': 0,
-                  'finish_reason': ?finish,
-                },
+                {'delta': delta, 'index': 0, 'finish_reason': ?finish},
               ],
             }),
           )
@@ -300,6 +296,7 @@ void main() {
           'HOME': home.path,
           'OPENAI_API_KEY': 'mock-key',
           'DAP_HUB_URL': hub.url.toString(),
+          'DAP_MASTER_SECRET': 'test-master',
           'DAP_AGENT_NAME': 'loop_cli',
         },
         args: [
