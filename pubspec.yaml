@@ -41,7 +41,7 @@ dependencies:
     path: vendor/dart_tui
   fah_hub_client: ^0.2.0
   flutter_agent_memory: ^0.2.1
-  flutter_sandbox: ^0.1.3
+  flutter_sandbox: ^0.1.6
   http: ^1.6.0
   image: ^4.9.1
   meta: ^1.18.0
