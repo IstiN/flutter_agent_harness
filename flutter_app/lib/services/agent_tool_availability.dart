@@ -5,7 +5,8 @@
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Owns the capability-gated tool availability wiring for one agent
-/// (issue #19): the tool-name → availability-id map, the capability floor
+/// (issue #19): the shared [toolAvailabilityIdOf] name→id resolution, the
+/// capability floor
 /// derived from the actual wiring, the [ToolAvailabilityGate] over the
 /// initial tool set, and the apply/re-apply cycle — the tool list and
 /// prompt update without a restart.
@@ -15,7 +16,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// mutates its [config] and re-applies it.
 class AgentToolAvailability {
   /// Builds the gate from the INITIAL tool set (the full wiring, before
-  /// anything is hidden): tools grouped by id via [_toolIdByToolName] — the
+  /// anything is hidden): tools grouped by id via [toolAvailabilityIdOf] — the
   /// gate's originals — plus the capability floor, then applies
   /// [initialConfig]. Idempotent thereafter.
   ///
@@ -35,7 +36,7 @@ class AgentToolAvailability {
     _capabilities = _capabilitiesFor(agentTools, onDevice: onDevice);
     final toolsById = <String, List<AgentTool>>{};
     for (final tool in agentTools) {
-      final id = _toolIdByToolName[tool.name];
+      final id = toolAvailabilityIdOf(tool.name);
       if (id != null) toolsById.putIfAbsent(id, () => []).add(tool);
     }
     _gate = ToolAvailabilityGate(toolsById: toolsById);
@@ -89,39 +90,6 @@ class AgentToolAvailability {
   }
 }
 
-/// Maps each registered tool name to its availability id (issue #19).
-/// Aggregate families group under one id (`task`, `memory`, `web_search`);
-/// tools with no mapping here (speak, calendar, apps catalog, ...) stay
-/// ungated. The web_search id is a family: it gates BOTH web tools.
-const _toolIdByToolName = <String, String>{
-  'read': 'read',
-  'write': 'write',
-  'edit': 'edit',
-  'ls': 'ls',
-  'bash': 'bash',
-  'bash_job': 'bash_job',
-  'web_search': 'web_search',
-  'web_fetch': 'web_search',
-  'memory_add': 'memory',
-  'memory_search': 'memory',
-  'memory_list': 'memory',
-  'memory_delete': 'memory',
-  'schedule_message': 'schedule_message',
-  'ask': 'ask',
-  'request_secret': 'request_secret',
-  'task': 'task',
-  'task_status': 'task',
-  'task_observe': 'task',
-  'task_send': 'task',
-  'task_cancel': 'task',
-  'agent_directory': 'task',
-  'agent_message': 'task',
-  'reply': 'task',
-  'generate_image': 'generate_image',
-  'generate_video': 'generate_video',
-  'transcribe_audio': 'transcribe_audio',
-};
-
 /// Why the app cannot wire [id] — structural facts about this host.
 String _absentToolReason(String id, {required bool onDevice}) => switch (id) {
   'web_search' ||
@@ -144,7 +112,7 @@ Map<String, ToolCapability> _capabilitiesFor(
   required bool onDevice,
 }) {
   final wired = <String>{
-    for (final tool in tools) ?_toolIdByToolName[tool.name],
+    for (final tool in tools) ?toolAvailabilityIdOf(tool.name),
   };
   return {
     for (final id in knownToolIds)

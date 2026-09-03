@@ -113,6 +113,10 @@ without the SQLite section) and the engine change. A toggle that cannot
 persist (broken/unwritable file, no active session for the session
 scope) leaves the live state untouched.
 
+Concurrent writers to the same scope file are last-writer-wins: two
+`fah` processes toggling tools in one project can drop each other's
+`tools:` change (the same behavior as every other config write).
+
 A call to a disabled tool never executes: the executor answers a plain
 tombstone text — the tool name, the why (`disabled by <scope>` or the
 capability's absent reason), and a pointer to re-enable via `/tools` or
@@ -139,5 +143,10 @@ settings — so the model can react instead of crashing the turn.
   `~/.dap/config.json` > default — docs/dap.md §9). A zero-config
   install hands the model no hub tools (every call would dead-end); the
   `/dap <host>` command and the inbox stay unconditional, and after a
-  connect the tools appear on the next launch. Once configured, `dap:
-  false` in any scope turns the family off like any other id.
+  connect the tools appear on the next launch. Connecting mid-session
+  never exposes the family ungated: with the hub unconfigured at boot
+  the `dap_*` tools are not registered for that session at all (the
+  next launch registers them, still subject to `tools.dap`), and when
+  they were registered but disabled by config the gate keeps them
+  hidden for the whole session. Once configured, `dap: false` in any
+  scope turns the family off like any other id.

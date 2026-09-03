@@ -66,6 +66,66 @@ const knownToolIds = <String>{
   'dap',
 };
 
+/// The scope stack in resolution precedence order, shallow→deep: global,
+/// project, session, runtime. Hosts building a
+/// [resolveToolAvailability] `scopes:` list map over this instead of
+/// hand-writing the quadruple. [ToolScope.builtin] is the implicit
+/// capability floor and never a list entry.
+const toolScopeStack = <ToolScope>[
+  ToolScope.global,
+  ToolScope.project,
+  ToolScope.session,
+  ToolScope.runtime,
+];
+
+/// The canonical host-agnostic availability-id → member tool-NAMES table:
+/// aggregate families map several registered tool names onto one `tools:`
+/// id. Singletons are single-entry sets so every consumer treats the
+/// shape uniformly. Host-specific ids — `lsp`, `sqlite`, `mcp` (plus
+/// `mcp:<server>`), and `dap` — stay host-wired: dynamic tool-name
+/// prefixes (`dap_*`, `mcp__*`) cannot live in a static name table.
+const coreToolFamilies = <String, Set<String>>{
+  'read': {'read'},
+  'write': {'write'},
+  'edit': {'edit'},
+  'ls': {'ls'},
+  'bash': {'bash'},
+  'bash_job': {'bash_job'},
+  'web_search': {'web_search', 'web_fetch'},
+  'memory': {'memory_add', 'memory_search', 'memory_list', 'memory_delete'},
+  'schedule_message': {'schedule_message'},
+  'ask': {'ask'},
+  'request_secret': {'request_secret'},
+  'task': {
+    'task',
+    'task_cancel',
+    'task_status',
+    'task_observe',
+    'task_send',
+    'agent_directory',
+    'reply',
+    'agent_message',
+  },
+  'checkpoint': {'checkpoint'},
+  'rewind': {'rewind'},
+  'generate_image': {'generate_image'},
+  'generate_video': {'generate_video'},
+  'transcribe_audio': {'transcribe_audio'},
+  'inspect_image': {'inspect_image'},
+};
+
+/// Reverse index of [coreToolFamilies]: member tool name → availability
+/// id. Lazily built once by Dart's top-level-final semantics.
+final _toolIdByName = <String, String>{
+  for (final MapEntry(key: id, value: names) in coreToolFamilies.entries)
+    for (final name in names) name: id,
+};
+
+/// The availability id gating [toolName], or null when the name is
+/// outside every host-agnostic family (unknown names, host-specific
+/// tools, dynamic MCP tools).
+String? toolAvailabilityIdOf(String toolName) => _toolIdByName[toolName];
+
 /// Prefix of the flattened per-server MCP keys (`mcp:<server>`).
 const _mcpPrefix = 'mcp:';
 

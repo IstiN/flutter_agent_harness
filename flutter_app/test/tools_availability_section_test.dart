@@ -74,6 +74,37 @@ void main() {
     );
 
     test(
+      'every registered family tool resolves through the shared table',
+      () async {
+        final service = await _createService();
+        addTearDown(service.dispose);
+
+        // The old hand-maintained app table's family groupings; the shared
+        // table must imply the same id for every registered member name.
+        const legacyFamilyId = <String, String>{
+          'web_fetch': 'web_search',
+          'memory_add': 'memory',
+          'memory_search': 'memory',
+          'memory_list': 'memory',
+          'memory_delete': 'memory',
+          'task_status': 'task',
+          'task_observe': 'task',
+          'task_send': 'task',
+          'task_cancel': 'task',
+          'agent_directory': 'task',
+          'agent_message': 'task',
+          'reply': 'task',
+        };
+        for (final name in service.toolsForTest.map((tool) => tool.name)) {
+          final id = toolAvailabilityIdOf(name);
+          if (id == null) continue; // Ungated tools (speak, calendar, ...).
+          expect(id, legacyFamilyId[name] ?? name, reason: name);
+          expect(service.toolAvailability, contains(id), reason: name);
+        }
+      },
+    );
+
+    test(
       'setToolEnabled hides the tool live and persists the choice',
       () async {
         final env = MemoryExecutionEnv();

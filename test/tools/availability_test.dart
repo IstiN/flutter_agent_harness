@@ -413,4 +413,47 @@ void main() {
       );
     });
   });
+  group('coreToolFamilies', () {
+    test('every member tool name appears in exactly ONE family', () {
+      final owner = <String, String>{};
+      coreToolFamilies.forEach((id, names) {
+        for (final name in names) {
+          expect(
+            owner.containsKey(name),
+            isFalse,
+            reason: '$name assigned to both $id and ${owner[name]}',
+          );
+          owner[name] = id;
+        }
+      });
+    });
+
+    test('family ids stay inside knownToolIds; host-wired ids stay out', () {
+      expect(coreToolFamilies.keys.toSet().difference(knownToolIds), isEmpty);
+      expect(knownToolIds.difference(coreToolFamilies.keys.toSet()), {
+        'lsp',
+        'sqlite',
+        'mcp',
+        'dap',
+      });
+    });
+
+    test('toolAvailabilityIdOf spot checks', () {
+      expect(toolAvailabilityIdOf('web_fetch'), 'web_search');
+      expect(toolAvailabilityIdOf('task_send'), 'task');
+      expect(toolAvailabilityIdOf('read'), 'read');
+      expect(toolAvailabilityIdOf('no_such_tool'), isNull);
+    });
+  });
+
+  group('toolScopeStack', () {
+    test('is shallow→deep without the builtin floor', () {
+      expect(toolScopeStack, [
+        ToolScope.global,
+        ToolScope.project,
+        ToolScope.session,
+        ToolScope.runtime,
+      ]);
+    });
+  });
 }

@@ -93,43 +93,11 @@ String _dirname(String path) {
 
 /// The `/tools` command, capability mapping, and live scope resolution.
 extension AgentCliTools on AgentCli {
-  /// Static tool name → availability id. Aggregate families map several
-  /// tools onto one id; dynamic MCP tools (`mcp__*`) are absent on purpose
-  /// (per-server families, noted at registration time).
-  static const _idByToolName = <String, String>{
-    'read': 'read',
-    'write': 'write',
-    'edit': 'edit',
-    'ls': 'ls',
-    'bash': 'bash',
-    'bash_job': 'bash_job',
-    'lsp': 'lsp',
-    'web_search': 'web_search',
-    // The gate's family contract: `web_search` → [webSearchTool,
-    // webFetchTool] — one id hides/restores both (AC16 headless parity).
-    'web_fetch': 'web_search',
-    'memory_add': 'memory',
-    'memory_search': 'memory',
-    'memory_list': 'memory',
-    'memory_delete': 'memory',
-    'schedule_message': 'schedule_message',
-    'ask': 'ask',
-    'request_secret': 'request_secret',
-    'inspect_image': 'inspect_image',
-    'transcribe_audio': 'transcribe_audio',
-    'generate_image': 'generate_image',
-    'generate_video': 'generate_video',
-    'task': 'task',
-    'task_cancel': 'task',
-    'task_status': 'task',
-    'task_observe': 'task',
-    'task_send': 'task',
-    'agent_directory': 'task',
-    'reply': 'task',
-    'agent_message': 'task',
-    'checkpoint': 'checkpoint',
-    'rewind': 'rewind',
-  };
+  /// Host-specific tool name → availability id, layered over
+  /// [coreToolFamilies] (whose mappings come through
+  /// [toolAvailabilityIdOf]): the lsp tool carries its own id here
+  /// because it is host-wired, like dap.
+  static const _hostToolIds = <String, String>{'lsp': 'lsp'};
 
   /// Groups the full static tool set by availability id, from the SAME
   /// instances the constructor registered. The boot hook stores this map
@@ -149,7 +117,7 @@ extension AgentCliTools on AgentCli {
   String? _availabilityId(String name) {
     if (name.startsWith('mcp__')) return null;
     if (name.startsWith('dap_')) return 'dap';
-    return _idByToolName[name];
+    return _hostToolIds[name] ?? toolAvailabilityIdOf(name);
   }
 
   /// The host wiring as capabilities: the hard floor below config.
@@ -224,10 +192,18 @@ extension AgentCliTools on AgentCli {
     final resolution = resolveToolAvailability(
       capabilities: toolCapabilities(),
       scopes: [
-        (ToolScope.global, state.global),
-        (ToolScope.project, state.project),
-        (ToolScope.session, state.session),
-        (ToolScope.runtime, config.runtimeTools ?? const ToolsConfig()),
+        for (final scope in toolScopeStack)
+          (
+            scope,
+            switch (scope) {
+              ToolScope.global => state.global,
+              ToolScope.project => state.project,
+              ToolScope.session => state.session,
+              ToolScope.runtime => config.runtimeTools ?? const ToolsConfig(),
+              // Never reached: toolScopeStack carries no builtin floor.
+              ToolScope.builtin => const ToolsConfig(),
+            },
+          ),
       ],
     );
     _warnUnknownToolIds(resolution.unknownIds);
