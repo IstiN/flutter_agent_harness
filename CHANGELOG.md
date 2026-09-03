@@ -2357,6 +2357,26 @@
 - fix(cli): review fixes for DAP/Hub /settings entry (#5)
 - feat(cli): DAP/Hub entry in /settings (#5)
 
+## 0.1.284
+
+- memory: session access-count sync from trajectory work
+- docs(trajectory): AGENTS.md sections for core, fa_ui widgets, CLI commands (#10)
+- test(trajectory): fa_ui golden baselines (57 PNGs) + real icon glyphs (#10 phase 11)
+- refactor(trajectory): CLI CRAP ratchet — split inspect renderer, cover tail/parse arms (#10)
+- fix(trajectory): mirrored live-tail rows keep real-record durations (#10)
+- feat(trajectory): Flutter host — service stream, feature flag, AppBar icon, panel (#10 phase 10)
+- feat(trajectory): CLI /trajectory family + headless fa trajectory + TUI fallback (#10 phase 9)
+- feat(trajectory): wire view, toolbar strings, barrel exports (#10 phases 6-8 integration)
+- feat(trajectory): TrajectoryDetails tabbed sheet (#10 phase 8)
+- feat(trajectory): TrajectoryTimeline painter + gestures (#10 phase 7)
+- feat(trajectory): TrajectoryTable, per-kind cells, virtualised ledger (#10 phase 6)
+- refactor(trajectory): split CRAP-heavy layout fold and timed timeline (#10)
+- feat(trajectory): fa_ui controller, view skeleton, toolbar, strings (#10 phase 5)
+- feat(trajectory): incremental full-text search index (#10 phase 4)
+- feat(trajectory): timeline projection — sequence/duration/time/actual modes (#10 phase 3)
+- feat(trajectory): event projection, request numbering, live tail, layout fold (#10 phase 2)
+- feat(trajectory): core record model, snapshot contract, JSONL walker (#10 phase 1)
+
 ## Unreleased
 
 ## Unreleased
