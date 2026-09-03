@@ -158,6 +158,57 @@ void main() {
       expect(find.text('Choose how Fa thinks.'), findsOneWidget);
     });
 
+    testWidgets('dark theme: provider cards use dark surfaces', (tester) async {
+      // Regression: the cards were hardcoded Colors.white while the title
+      // text is near-white in dark mode — unreadable white-on-white.
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: ProviderRegistry.inMemory(),
+        lastConnectionStore: LastConnectionStore.inMemory(),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        Theme.of(tester.element(find.text('OpenRouter'))).brightness,
+        Brightness.dark,
+      );
+      final card = tester.widget<Material>(
+        find
+            .ancestor(
+              of: find.text('OpenRouter'),
+              matching: find.byType(Material),
+            )
+            .first,
+      );
+      expect(card.color, isNot(Colors.white));
+      expect(card.color, const Color(0xFF10141F));
+    });
+
+    testWidgets('dark theme: permission ghost badges stay readable', (
+      tester,
+    ) async {
+      // "Ask when needed" in the wide ghost column was brand-blue
+      // (0xFF3566FF) on a near-black background — too dark to read. The
+      // ghost column is wide-layout only, so pump a desktop-size surface.
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: ProviderRegistry.inMemory(),
+        lastConnectionStore: LastConnectionStore.inMemory(),
+      );
+      await tester.pumpAndSettle();
+
+      final colors = tester
+          .widgetList<Text>(find.text('Ask when needed'))
+          .map((t) => t.style?.color)
+          .toSet();
+      expect(colors, contains(const Color(0xFF7DA2FF)));
+    });
+
     testWidgets('configuring a provider unlocks the step and advances', (
       tester,
     ) async {

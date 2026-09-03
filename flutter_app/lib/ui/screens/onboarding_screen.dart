@@ -97,6 +97,11 @@ Color _onbBorder(BuildContext context) =>
 Color _onbSelBg(BuildContext context) =>
     _onbDark(context) ? const Color(0xFF141A2B) : _kSelBg;
 
+/// Accent that stays readable on the dark surfaces: the brand blue
+/// (0xFF3566FF) is too dark against 0xFF070A10/0xFF10141F.
+Color _onbPrimary(BuildContext context) =>
+    _onbDark(context) ? const Color(0xFF7DA2FF) : _kPrimary;
+
 List<BoxShadow> _onbCardShadow(BuildContext context) =>
     _onbDark(context) ? const [] : _kCardShadow;
 
@@ -347,7 +352,7 @@ class _Steps extends StatelessWidget {
                 left: seg / 2,
                 right: seg / 2,
                 top: dot / 2 - 1,
-                child: Container(height: 2, color: const Color(0xFFE3E5EE)),
+                child: Container(height: 2, color: _onbBorder(context)),
               ),
               Row(
                 children: [
@@ -360,11 +365,11 @@ class _Steps extends StatelessWidget {
                             height: dot,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: i <= page ? _kPrimary : Colors.white,
+                              color: i <= page ? _kPrimary : _onbCard(context),
                               border: Border.all(
                                 color: i <= page
                                     ? _kPrimary
-                                    : const Color(0xFFD6D9E4),
+                                    : _onbBorder(context),
                                 width: 2,
                               ),
                             ),
@@ -390,7 +395,7 @@ class _Steps extends StatelessWidget {
                                       ? FontWeight.w700
                                       : FontWeight.w500,
                                   color: i == page
-                                      ? _kPrimary
+                                      ? _onbPrimary(context)
                                       : _onbGrayLight(context),
                                 ),
                               ),
@@ -560,7 +565,7 @@ class _ProgressBar extends StatelessWidget {
       width: width,
       height: 3,
       decoration: BoxDecoration(
-        color: const Color(0xFFECECF3),
+        color: _onbBorder(context),
         borderRadius: BorderRadius.circular(2),
       ),
       child: Align(
@@ -595,7 +600,11 @@ class _PrimaryButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: enabled ? _kPrimary : const Color(0xFFB9C2D8),
+      color: enabled
+          ? _kPrimary
+          : (_onbDark(context)
+                ? const Color(0xFF2A3350)
+                : const Color(0xFFB9C2D8)),
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: enabled ? onTap : null,
@@ -974,11 +983,11 @@ class _MiniSteps extends StatelessWidget {
       height: 40,
       child: Stack(
         children: [
-          const Positioned(
+          Positioned(
             left: 25,
             right: 25,
             top: 5,
-            child: Divider(height: 2, thickness: 2, color: Color(0xFFE3E5EE)),
+            child: Divider(height: 2, thickness: 2, color: _onbBorder(context)),
           ),
           Row(
             children: [
@@ -991,9 +1000,9 @@ class _MiniSteps extends StatelessWidget {
                         height: 12,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: i == 0 ? _kPrimary : Colors.white,
+                          color: i == 0 ? _kPrimary : _onbCard(context),
                           border: Border.all(
-                            color: i == 0 ? _kPrimary : const Color(0xFFD6D9E4),
+                            color: i == 0 ? _kPrimary : _onbBorder(context),
                             width: 2,
                           ),
                         ),
@@ -1555,7 +1564,7 @@ class _ProviderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: configured ? _onbSelBg(context) : Colors.white,
+      color: configured ? _onbSelBg(context) : _onbCard(context),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -1753,11 +1762,11 @@ class _AccessGhost extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const Text(
+                Text(
                   'Ask when needed',
                   style: TextStyle(
                     fontSize: 9.5,
-                    color: _kPrimary,
+                    color: _onbPrimary(context),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
