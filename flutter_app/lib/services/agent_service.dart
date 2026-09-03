@@ -16,6 +16,8 @@ import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'memory_config_loader.dart';
+import 'agent_tool_availability.dart';
+
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/open_app_tool.dart';
@@ -44,6 +46,7 @@ import 'package:fa/services/notify_tool.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/video_service.dart';
 import 'package:fa/services/video_tool.dart';
+import 'package:fa/services/tools_availability_store.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -199,6 +202,7 @@ class AgentService extends ChangeNotifier
        _skillsAccessStore = null,
        _skillsHomeDir = null,
        _skillsAccess = SkillsAccess.granted,
+       _toolsAvailabilityStore = null,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
@@ -213,6 +217,16 @@ class AgentService extends ChangeNotifier
     _attachRedactor(redactor);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
+    // Pre-constructed-Agent path (tests): the caller owns the registry, so
+    // availability still resolves (capabilities from the agent's own tools)
+    // but the registry is not re-synced on toggle.
+    _toolsAvailability = AgentToolAvailability(
+      agent: _agent,
+      tools: _agent.state.tools,
+      onDevice: _isOnDeviceKind(_agent.state.model.provider),
+      registry: null,
+      rebuildPrompt: () {},
+    );
   }
 
   /// Convenience factory that creates the right [ExecutionEnv] for the
@@ -244,6 +258,8 @@ class AgentService extends ChangeNotifier
     final savedApprovalMode = await approvalModeStore.load();
     final skillsAccessStore = SkillsAccessStore(resolvedEnv);
     final savedSkillsAccess = await skillsAccessStore.load();
+    final toolsAvailabilityStore = ToolsAvailabilityStore(resolvedEnv);
+    final savedToolsConfig = await toolsAvailabilityStore.load();
     final redactor = SecretRedactor.fromSecrets(secrets);
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
@@ -283,6 +299,8 @@ class AgentService extends ChangeNotifier
       approvalModeStore: approvalModeStore,
       initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.granted,
       skillsAccessStore: skillsAccessStore,
+      initialToolsConfig: savedToolsConfig,
+      toolsAvailabilityStore: toolsAvailabilityStore,
       skillsHomeDir: desktopHomeDir(),
       // Live stores FIRST: a key edited in Settings must win over the
       // boot-time snapshot (the keychain write updates the registry, not
@@ -394,6 +412,8 @@ class AgentService extends ChangeNotifier
     this._approvalModeStore,
     SkillsAccess? initialSkillsAccess,
     this._skillsAccessStore,
+    ToolsConfig? initialToolsConfig,
+    this._toolsAvailabilityStore,
     String? skillsHomeDir,
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
@@ -668,6 +688,19 @@ class AgentService extends ChangeNotifier
     _attachRedactor(redactor);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
+    // Capability-gated tool availability (issue #19): capabilities follow
+    // the actual wiring above, the gate hides/restores per config, and the
+    // seeded store choices apply before the first run.
+    _toolsAvailability = AgentToolAvailability(
+      agent: _agent,
+      tools: registry.tools,
+      onDevice: isOnDevice,
+      registry: registry,
+      initialConfig: initialToolsConfig ?? const ToolsConfig(),
+      rebuildPrompt: () {
+        _agent.state.systemPrompt = _composeSystemPrompt(config);
+      },
+    );
     // Durable facts from past sessions join the prompt asynchronously
     // (memory stores initialize lazily; recompose on arrival).
     unawaited(_refreshMemorySection());
@@ -800,6 +833,15 @@ class AgentService extends ChangeNotifier
   /// The persisted skills-access store ([AgentService.create] path only);
   /// [setSkillsAccess] writes through fire-and-forget.
   final SkillsAccessStore? _skillsAccessStore;
+
+  /// The tool-availability wiring (issue #19): capability floor + gate +
+  /// live config, extracted to [AgentToolAvailability]. Built in both
+  /// constructors, right after the agent exists.
+  late final AgentToolAvailability _toolsAvailability;
+
+  /// The persisted tools store ([AgentService.create] path only);
+  /// [setToolEnabled] writes through fire-and-forget.
+  final ToolsAvailabilityStore? _toolsAvailabilityStore;
 
   /// Home directory for user-level skill roots (desktop only; null on
   /// mobile/web). Null in tests keeps discovery deterministic.
@@ -1020,6 +1062,25 @@ class AgentService extends ChangeNotifier
     if (access != _skillsAccess) return;
     _promptSuffix = suffix;
     _agent.state.systemPrompt = _composeSystemPrompt(config);
+  }
+
+  /// The user's per-tool availability choices (the app twin of the CLI
+  /// `tools:` section; persisted via [ToolsAvailabilityStore]).
+  ToolsConfig get toolsConfig => _toolsAvailability.config;
+
+  /// The availability decision per known tool id (capabilities + config).
+  Map<String, ResolvedToolAvailability> get toolAvailability =>
+      _toolsAvailability.availability;
+
+  /// Switches one tool's availability (the settings Tools section): the
+  /// helper re-applies the resolution to the live registry (tool list and
+  /// prompt update without a restart; an absent capability stays off),
+  /// then this persists the choice when a store is wired (fire-and-forget).
+  Future<void> setToolEnabled(String id, bool enabled) async {
+    if (!_toolsAvailability.setEnabled(id, enabled)) return;
+    notifyListeners();
+    final store = _toolsAvailabilityStore;
+    if (store != null) unawaited(store.save(_toolsAvailability.config));
   }
 
   late final Agent _agent;
@@ -2147,6 +2208,9 @@ class AgentService extends ChangeNotifier
       // Same for the skills-access consent: the live choice + shared store.
       initialSkillsAccess: _skillsAccess,
       skillsAccessStore: _skillsAccessStore,
+      // Same for the per-tool availability: the live config + shared store.
+      initialToolsConfig: _toolsAvailability.config,
+      toolsAvailabilityStore: _toolsAvailabilityStore,
     );
   }
 

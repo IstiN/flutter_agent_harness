@@ -583,6 +583,22 @@ ImageFormat? _detectImageFormat(Uint8List bytes) {
 /// `#readArchiveDirectory` DEFAULT_LIMIT).
 const defaultArchiveListLimit = 500;
 
+/// Assembles the `read` tool description: the base prompt with its size
+/// tokens substituted, plus the SQLite section ([readSqliteSectionPrompt])
+/// only when the host provides a [sqlite] engine. The substituted value
+/// carries the section's surrounding blank lines (`parseFrontmatter` trims
+/// them from the section file), so gating it out leaves exactly one blank
+/// line between the Archives and Hashline mode sections.
+String _readDescription({SqliteEngine? sqlite}) {
+  return readToolDescriptionPrompt
+      .replaceAll('{{maxLines}}', '$defaultToolMaxLines')
+      .replaceAll('{{maxBytesKb}}', '${defaultToolMaxBytes ~/ 1024}')
+      .replaceAll(
+        '{{sqlite}}',
+        sqlite == null ? '' : '\n\n$readSqliteSectionPrompt',
+      );
+}
+
 /// Creates the `read` tool: reads a text file or image with optional `offset`
 /// (1-indexed) and `limit`, truncating text output to [defaultToolMaxLines]
 /// lines or [defaultToolMaxBytes] bytes with an actionable continuation notice.
@@ -611,7 +627,8 @@ const defaultArchiveListLimit = 500;
 ///   via `sqlite/sqlite_reader.dart`): rendered as width-capped ASCII
 ///   tables. Only available when the host provides a [SqliteEngine] (FFI,
 ///   exported from `lib/io.dart`); without one the read returns a clean
-///   "not supported" note — what web hosts get.
+///   "not supported" note — what web hosts get. The tool description
+///   mirrors that gating: without an engine the SQLite section is omitted.
 ///
 /// With `hashline: true` (omp's hashline display mode), text output lines are
 /// prefixed with their 1-indexed line number (`N:text`) and the output is
@@ -638,9 +655,7 @@ AgentTool readFileTool(
     name: 'read',
     label: 'read',
     tier: ApprovalTier.read,
-    description: readToolDescriptionPrompt
-        .replaceAll('{{maxLines}}', '$defaultToolMaxLines')
-        .replaceAll('{{maxBytesKb}}', '${defaultToolMaxBytes ~/ 1024}'),
+    description: _readDescription(sqlite: sqlite),
     parameters: const {
       'type': 'object',
       'properties': {

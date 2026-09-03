@@ -12,6 +12,9 @@
 ///   `headless_prompt.dart`, exported from `lib/io.dart`).
 library;
 
+import '../exceptions.dart';
+import '../tools/availability.dart';
+
 /// The provider kinds accepted by `--provider`. Static — the set of every
 /// headless-capable catalog kind; a build filtered through the
 /// `FA_PROVIDERS` dart-define rejects the filtered kinds at resolution
@@ -80,6 +83,7 @@ final class CliArgs extends CliArgsResult {
     this.prompt,
     this.cubeName,
     this.cubeConfigPath,
+    this.tools,
     this.trajectory,
     this.positionals = const [],
   }) : super._();
@@ -149,6 +153,12 @@ final class CliArgs extends CliArgsResult {
   /// `--cube-config <path>`: apply the cube sandbox profile from an
   /// explicit manifest path (highest cube precedence).
   final String? cubeConfigPath;
+
+  /// `--tools <id>=on|off,...`: the runtime availability scope, parsed
+  /// eagerly so a malformed token fails as a usage error instead of a
+  /// startup config error. Wins over the `FA_TOOLS` env twin; both stack
+  /// over the config scopes at resolution.
+  final ToolsConfig? tools;
 
   /// The `-p`/`--prompt` headless prompt, used verbatim (no file
   /// resolution). Mutually exclusive with [positionals].
@@ -387,6 +397,7 @@ const _valueFlags = <String, _ValueFlag>{
   '--cube-config': ('--cube-config', _setCubeConfigPath),
   '-p': ('--prompt', _setPrompt),
   '--prompt': ('--prompt', _setPrompt),
+  '--tools': ('--tools', _setTools),
 };
 
 void _setModel(_CliArgValues v, String value) => v.model = value;
@@ -416,6 +427,14 @@ void _setSession(_CliArgValues v, String value) => v.session = value;
 void _setCubeName(_CliArgValues v, String value) => v.cubeName = value;
 void _setCubeConfigPath(_CliArgValues v, String value) =>
     v.cubeConfigPath = value;
+void _setTools(_CliArgValues v, String value) {
+  try {
+    v.tools = parseToolsSpec(value);
+  } on ConfigException catch (error) {
+    throw CliArgsException('invalid --tools spec: ${error.message}');
+  }
+}
+
 void _setPrompt(_CliArgValues v, String value) => v.prompt = value;
 
 /// Accumulates flag values while [parseCliArgs] walks the argument list,
@@ -439,6 +458,7 @@ final class _CliArgValues {
   String? session;
   String? cubeName;
   String? cubeConfigPath;
+  ToolsConfig? tools;
   String? prompt;
   final positionals = <String>[];
 
@@ -476,6 +496,7 @@ final class _CliArgValues {
       session: session,
       cubeName: cubeName,
       cubeConfigPath: cubeConfigPath,
+      tools: tools,
       prompt: prompt,
       positionals: positionals,
     );

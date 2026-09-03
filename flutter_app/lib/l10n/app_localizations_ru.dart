@@ -1568,4 +1568,16 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get workspaceDialogRestrictToolsHint =>
       'Отключает всё, что читало или писало бы за пределами смонтированной папки. Попытки выйти за рамки будут блокироваться (и в будущем — просить вашего подтверждения через диалог).';
+
+  @override
+  String get toolsAvailabilityTitle => 'Инструменты';
+
+  @override
+  String get toolsAvailabilityHint =>
+      'Включайте и отключайте инструменты Fa — применяется сразу, без перезапуска.';
+
+  @override
+  String toolsAvailabilityUnavailable(Object reason) {
+    return 'Недоступно: $reason';
+  }
 }

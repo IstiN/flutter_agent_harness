@@ -75,6 +75,8 @@ final class AgentCliConfig {
     this.cubeSettings,
     this.onCubeSettingsChanged,
     this.dapHubState,
+    this.runtimeTools,
+    this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
     this.osName,
   });
@@ -210,6 +212,19 @@ final class AgentCliConfig {
   /// Tools always-allowed from previous sessions (`/allow`, "approve always"
   /// answers), persisted by the embedding executable.
   final Set<String> alwaysAllowTools;
+
+  /// The RUNTIME `tools:` availability scope — the `--tools` flag value,
+  /// or the parsed `FA_TOOLS` env twin when the flag is absent (deepest of
+  /// the config scopes the wiring stacks: global, project, session,
+  /// runtime, then the builtin capability floor). Null when neither source
+  /// declared intent.
+  final ToolsConfig? runtimeTools;
+
+  /// Called when the user changes the GLOBAL `tools:` scope
+  /// (`/tools enable|disable <id> global`) so the executable can persist
+  /// the CLI's live global view (`globalTools`). Null keeps the change
+  /// session-only.
+  final Future<void> Function()? onToolsConfigChanged;
 
   /// Optional model-roles resolver (roles/fallback chains/key rotation from
   /// the CLI config). When set and its `default` role resolves, the agent

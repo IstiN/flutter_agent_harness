@@ -15,6 +15,7 @@ library;
 
 import 'dart:io';
 
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/media_models_store.dart';
@@ -30,6 +31,7 @@ import 'package:fa/ui/screens/dap_settings_page.dart';
 import 'package:fa/services/dap_service.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -300,6 +302,60 @@ void main() {
       // One row per slot: the overridden image slot shows
       // `model · provider name`, the rest fall back to the main connection.
       await expectGolden(tester, 'settings_media_models');
+    });
+
+    testWidgets('tools availability section', (tester) async {
+      // A REAL service so the rows mirror the app's actual wiring. The
+      // service's periodic watchers keep scheduling frames, so pump with
+      // bounded pumps instead of pumpGolden's pumpAndSettle.
+      late final AgentService service;
+      await tester.runAsync(() async {
+        service = await AgentService.create(
+          config: AgentConfig(
+            providerKind: 'openai-completions',
+            modelId: 'z-ai/glm-5.2',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            apiKey: 'sk-or-test-key',
+          ),
+          env: MemoryExecutionEnv(),
+        );
+      });
+      addTearDown(service.dispose);
+
+      tester.view.physicalSize = goldenSizeDesktop;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: buildFahTheme(),
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Scaffold(
+              appBar: AppBar(title: Text(context.l10n.settingsTitle)),
+              body: SafeArea(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(24),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 560),
+                      child: ToolsAvailabilitySection(service: service),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // Wired tools toggle live; absent capabilities show their reason.
+      await expectGolden(tester, 'settings_tools_availability');
     });
 
     testWidgets('providers-first settings list', (tester) async {

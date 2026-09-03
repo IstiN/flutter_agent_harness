@@ -1555,4 +1555,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get workspaceDialogRestrictToolsHint =>
       'Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up).';
+
+  @override
+  String get toolsAvailabilityTitle => 'Tools';
+
+  @override
+  String get toolsAvailabilityHint =>
+      'Turn tools off or on for Fa — applies immediately, no restart.';
+
+  @override
+  String toolsAvailabilityUnavailable(Object reason) {
+    return 'Unavailable: $reason';
+  }
 }

@@ -45,8 +45,13 @@ final class AgentCliMcpWiring {
     rebuildPrompt();
   }
 
+  /// Which configured servers the availability gate allows into the prompt
+  /// section (null: every server). Set on every tools-availability rebuild.
+  bool Function(String server)? serverFilter;
+
   /// The `## MCP servers` prompt section ('' without servers).
-  String promptSection() => manager?.promptSection() ?? '';
+  String promptSection() =>
+      manager?.promptSection(includeServer: serverFilter) ?? '';
 
   /// The full system prompt: [base] plus any non-empty optional sections.
   String composePrompt(

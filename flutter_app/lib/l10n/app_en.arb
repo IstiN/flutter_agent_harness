@@ -490,5 +490,8 @@
   "workspaceDialogMailboxCopy": "Copy",
   "workspaceDialogMailboxCopied": "Mailbox address copied",
   "workspaceDialogRestrictTools": "Restrict tools to this folder",
-  "workspaceDialogRestrictToolsHint": "Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up)."
+  "workspaceDialogRestrictToolsHint": "Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up).",
+  "toolsAvailabilityTitle": "Tools",
+  "toolsAvailabilityHint": "Turn tools off or on for Fa — applies immediately, no restart.",
+  "toolsAvailabilityUnavailable": "Unavailable: {reason}"
 }

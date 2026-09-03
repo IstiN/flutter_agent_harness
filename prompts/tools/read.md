@@ -18,11 +18,7 @@ Do not combine `offset`/`limit` with a path selector. Selectors only apply to te
 
 ## Archives
 
-Read inside `.zip`, `.tar`, `.tar.gz`/`.tgz` files: `archive.zip` lists the root, `archive.zip:dir/` lists a directory, `archive.zip:inner/file.txt` reads a member (selectors apply, e.g. `archive.zip:inner/file.txt:50-60`). Binary members return a note.
-
-## SQLite databases
-
-When the host supports it, `.db`/`.db3`/`.sqlite`/`.sqlite3` paths read as databases: `data.db` lists tables, `data.db:table` shows the schema plus sample rows, `data.db:table:key` fetches one row by primary key (or rowid), `data.db:table?limit=20&offset=40&order=col:desc&where=...` pages a table, and `data.db?q=SELECT ...` runs a raw read-only query.
+Read inside `.zip`, `.tar`, `.tar.gz`/`.tgz` files: `archive.zip` lists the root, `archive.zip:dir/` lists a directory, `archive.zip:inner/file.txt` reads a member (selectors apply, e.g. `archive.zip:inner/file.txt:50-60`). Binary members return a note.{{sqlite}}
 
 ## Hashline mode
 

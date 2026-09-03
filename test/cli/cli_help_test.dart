@@ -32,6 +32,7 @@ void main() {
       '--session',
       '--cube',
       '--cube-config',
+      '--tools',
       '--prompt',
       '-p',
     ];
@@ -147,6 +148,8 @@ void main() {
       'ask',
       'inspect_image',
       'transcribe_audio',
+      'FA_TOOLS',
+      'tools:',
       '.fah/lsp.json',
       // Plugins and templates.
       '.fah/packages.yaml',
@@ -169,8 +172,8 @@ void main() {
       '/session-new',
       '/sessions',
       '/resume',
-      '/rename-session',
       '/help',
+      '/tools',
       // Config file.
       '~/.fah/config.yaml',
     ];

@@ -2388,4 +2388,31 @@
 
 ## Unreleased
 
-## Unreleased
+- feat(tools): capability-gated tool availability (issue #19) — the pure
+  decision layer (`lib/src/tools/availability.dart`: `ToolsConfig` yaml/JSON
+  parsing with `mcp:<server>` flattening, `resolveToolAvailability` merging
+  the global < project < session < runtime scope stack over the host's hard
+  capability floor — absent tools can never be force-enabled, unknown ids
+  warn once) and the gate (`availability_gate.dart`: idempotent registry
+  hide/restore + prompt rebuild, executor tombstones for calls to disabled
+  tools, `noteHiddenNames` covering late MCP registrations).
+- feat(cli): the `/tools` family (bare list, `enable|disable <id>
+  [global|project|session]`, `reload`), a Tools entry in the `/settings`
+  hub, and the runtime scope: `--tools 'id=on|off,...'` with the `FA_TOOLS`
+  env twin (flag wins; a malformed spec is a hard startup error). Scopes
+  re-read and re-applied live — no restart; a broken scope file keeps the
+  last good one with a warning.
+- feat(dap): the `dap_*` tools register only when a hub is actually
+  configured (env > `hub:` section > `~/.dap/config.json` > default) — the
+  zero-config install hands the model no dead-end tools; `/dap <host>`
+  still connects on demand and the tools appear at the next launch.
+  `dap: false` in any `tools:` scope turns the family off.
+- feat(app): a Tools section in the app settings — one live switch per
+  known tool id (ids the app cannot wire render disabled with the
+  capability's reason), applied to the running agent without a restart and
+  persisted as `tools_availability.json` via the new `ToolsAvailabilityStore`
+  (the same `ToolsConfig` JSON envelope the CLI parses).
+- feat(read): the `read` tool follows the `sqlite` availability decision —
+  its description carries the SQLite section only while sqlite is enabled,
+  and the variant swap re-registers in place (shared snapshot store, so
+  hashline anchors recorded by either variant validate for `edit`).

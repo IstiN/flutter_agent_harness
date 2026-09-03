@@ -104,6 +104,16 @@ factual: paths, commands, invariants — no essays.
   `_onShellJobSettled`, app `sendText` system-notice) → steered mid-run or a
   fresh idle turn. A foreground call that consumed the result inline
   suppresses the notification. Job logs on disk are NOT secret-redacted.
+- `lib/src/tools/availability.dart` + `availability_gate.dart` —
+  capability-gated tool availability (issue #19): `resolveToolAvailability`
+  merges the `tools:` scope stack (global `~/.fah/config.yaml` < project
+  `.fah/config.yaml` < session `.tools/<sessionId>.yaml` < runtime
+  `--tools`/`FA_TOOLS`; deepest scope wins per key) over the host's hard
+  capability floor — absent tools can never be force-enabled, unknown ids
+  warn. The gate applies a resolution to the live registry idempotently
+  (hide/restore + prompt rebuild) and tombstones calls to disabled tools.
+  CLI surface in `lib/src/cli/agent_cli_tools.dart` (`/tools`, live
+  rebuild); docs/tool-availability.md is the user-facing page.
 - `lib/src/lsp/` — `lsp` tool (diagnostics/definition/references/rename):
   pure-Dart JSON-RPC client over `LspTransport`; `.dart` →
   `dart language-server --protocol=lsp`, projects merge `.fah/lsp.json`;
