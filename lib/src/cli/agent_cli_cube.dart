@@ -249,7 +249,7 @@ extension CubeCommands on AgentCli {
 
   /// The Cube sandbox picker rows: disabled, every project manifest (the
   /// key is the relative path the default saves, the label the file stem),
-  /// and the custom-path escape.
+  /// the built-in security-level presets, and the custom-path escape.
   Future<List<(String, String, String)>> _cubeSandboxOptions() async {
     final active = _cubeEnv.activeSpec?.name;
     final names = await _projectCubeNames();
@@ -262,6 +262,8 @@ extension CubeCommands on AgentCli {
       if (names != null)
         for (final name in names)
           ('.fah/cubes/$name.yaml', name, 'project cube manifest'),
+      for (final preset in CubePresets.all)
+        (preset.id, preset.title, preset.description),
       (_cubePickCustom, 'custom path...', 'enter a manifest path'),
     ];
   }

@@ -14,6 +14,7 @@ export 'backends/macos_sandbox.dart';
 export 'backends/no_op_backend.dart';
 export 'backends/windows_job.dart';
 export 'config/cache_policy.dart';
+export 'config/cube_presets.dart';
 export 'config/cube_settings.dart';
 export 'config/cube_spec.dart';
 export 'config/env_policy.dart';

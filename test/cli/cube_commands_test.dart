@@ -280,7 +280,7 @@ spec:
     }
 
     test(
-      'the picker lists disabled, the project manifests and the custom path',
+      'the picker lists disabled, project manifests, presets, custom path',
       () async {
         await writeCube('dev', devCube);
         await writeCube('strict', strictCube);
@@ -301,10 +301,36 @@ spec:
         expect(out, contains('1) disabled (full host access) — current'));
         expect(out, contains('2) dev — project cube manifest'));
         expect(out, contains('3) strict — project cube manifest'));
-        expect(out, contains('4) custom path...'));
+        // The built-in security-level presets sit between the project
+        // manifests and the custom path.
+        expect(out, contains('4) L1 · core apps — L1 — reads and writes'));
+        expect(out, contains('5) L1 · full system apps'));
+        expect(out, contains('6) L2 · core apps'));
+        expect(out, contains('7) L2 · full system apps'));
+        expect(out, contains('8) L3 · core apps'));
+        expect(out, contains('9) L3 · full system apps'));
+        expect(out, contains('10) custom path...'));
         expect(fake.calls, 0);
       },
     );
+
+    test('picking a built-in preset applies and persists it', () async {
+      final fake = FakeStreamFunction([]);
+      final cli = persistingCli(fake.call);
+      final run = cli.run();
+
+      final flow = cli.startCubeSandboxFlow();
+      await waitFor(() => io.out.toString().contains('custom path...'));
+      io.sendLine('5'); // L2 · full system apps
+      await waitFor(() => io.out.toString().contains('cube: l2-full active'));
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(io.out.toString(), contains('cube: l2-full active'));
+      final saved = loadCliConfig(tmp.path);
+      expect(saved.cube?.configPath, 'l2-full');
+    });
 
     test(
       'picking a cube applies it live and persists the startup default',
@@ -367,7 +393,7 @@ spec:
 
       final flow = cli.startCubeSandboxFlow();
       await waitFor(() => io.out.toString().contains('custom path...'));
-      io.sendLine('4'); // custom path
+      io.sendLine('10'); // custom path
       await waitFor(() => io.out.toString().contains('cube manifest path'));
       io.sendLine('.fah/cubes/dev.yaml');
       await waitFor(() => io.out.toString().contains('cube: saved default'));
@@ -390,7 +416,7 @@ spec:
 
       final flow = cli.startCubeSandboxFlow();
       await waitFor(() => io.out.toString().contains('custom path...'));
-      io.sendLine('4'); // custom path
+      io.sendLine('10'); // custom path
       await waitFor(() => io.out.toString().contains('cube manifest path'));
       io.sendLine('');
       await flow;
