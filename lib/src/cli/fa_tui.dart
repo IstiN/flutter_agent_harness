@@ -1121,8 +1121,12 @@ final class FaTuiModel extends Model {
         return _submit(text);
       case 'ctrl+o':
       case 'ctrl+j':
+      case 'shift+enter':
         // Fallback newline insertion (modifyOtherKeys Shift+Enter is mapped
-        // to Ctrl+O by the input preprocessor on supporting terminals).
+        // to Ctrl+O by the input preprocessor on supporting terminals;
+        // kitty-protocol terminals deliver Shift+Enter as a literal
+        // 'shift+enter' keystroke — it used to fall through and die as a
+        // no-op).
         return _insertNewlineAtCursor();
       default:
         return null;
@@ -1643,8 +1647,10 @@ final class FaTuiModel extends Model {
   PromptKey? _promptKeyFromMsg(KeyMsg msg) {
     return switch (msg.key) {
       // dart_tui maps CR to 'enter' and LF to 'ctrl+j' — both mean Enter.
-      // ctrl+c is NOT mapped here: it stays the global interrupt/quit key.
-      'enter' || 'ctrl+j' => const PromptEnter(),
+      // A kitty-protocol Shift+Enter arrives as 'shift+enter' and still
+      // means confirm inside a prompt. ctrl+c is NOT mapped here: it stays
+      // the global interrupt/quit key.
+      'enter' || 'ctrl+j' || 'shift+enter' => const PromptEnter(),
       'ctrl+r' => const PromptCtrlR(),
       'ctrl+u' => const PromptCtrlU(),
       'esc' => const PromptEscape(),
@@ -2202,6 +2208,25 @@ final class FaTuiModel extends Model {
       result.add(parts[i]);
     }
     if (newline) result.add('');
+    // A streamed paragraph with no trailing newline grows the last line
+    // without bound: minutes-long thinking bursts produced HUNDRED-KB
+    // lines, and TranscriptMarkdown's (throttled) tail passes re-format +
+    // re-wrap the WHOLE line each pass — the event loop stalled in bursts
+    // and typing froze. Cap the tail: hard-split an oversized last line
+    // into bounded chunks. Soft wrap renders them identically (the text
+    // continues at the same cell); only an inline span crossing the rare
+    // split point loses its styling into the next chunk.
+    const maxTailLineChars = 32 * 1024;
+    const tailChunkChars = 16 * 1024;
+    if (result.last.length > maxTailLineChars) {
+      final tail = result.last;
+      result
+        ..removeLast()
+        ..addAll([
+          for (var i = 0; i < tail.length; i += tailChunkChars)
+            tail.substring(i, (i + tailChunkChars).clamp(0, tail.length)),
+        ]);
+    }
     // Keep the history bounded — but AMORTIZED. Trimming back to exactly
     // maxLines on EVERY append drops the oldest line each flush, and a
     // changed first line breaks TranscriptMarkdown's boundary identity, so

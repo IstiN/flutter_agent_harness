@@ -1564,6 +1564,51 @@ void main() {
       expect(model.cursor, 3);
     });
 
+    test('a kitty-protocol shift+enter key inserts a newline', () {
+      // Kitty/modifyOtherKeys terminals encode the modifier in-band: the
+      // model sees a 'shift+enter' keystroke, not a bare enter. It used to
+      // fall through every handler and die as a no-op.
+      var model = FaTuiModel(
+        callbacks: callbacks(isShiftPressed: () => false),
+        isExited: () => false,
+      );
+      model = typed(model, 'ab');
+      model = send(
+        model,
+        KeyPressMsg(
+          const TeaKey(code: KeyCode.enter, modifiers: {KeyMod.shift}),
+        ),
+      );
+      expect(model.inputText, 'ab\n');
+      expect(model.cursor, 3);
+    });
+
+    test('a streamed paragraph is hard-split before it grows unbounded', () {
+      // Minutes-long thinking bursts arrive as deltas with no newline: the
+      // merged last line used to grow to hundreds of KB, and every throttle
+      // pass re-formatted + re-wrapped the WHOLE line — the event loop
+      // stalled and typing froze. The append path now caps the tail.
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      final chunk = 'x' * 40 * 1024;
+      model = send(model, OutputMsg(chunk));
+      model = send(model, OutputMsg(chunk));
+      model = send(model, OutputMsg(chunk));
+      final totalChars = model.outputLines.fold<int>(
+        0,
+        (sum, line) => sum + line.length,
+      );
+      expect(totalChars, 3 * chunk.length, reason: 'no bytes dropped');
+      for (final line in model.outputLines) {
+        expect(
+          line.length,
+          lessThanOrEqualTo(32 * 1024),
+          reason: 'no retained line may exceed the tail cap',
+        );
+      }
+      // And the view still renders the merged tail.
+      expect(model.view().content, isNotEmpty);
+    });
+
     test('ctrl+s submits the input when idle', () async {
       final submitted = <String>[];
       var model = FaTuiModel(
