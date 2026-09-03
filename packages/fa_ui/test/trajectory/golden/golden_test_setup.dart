@@ -4,14 +4,16 @@
 
 /// Shared scaffolding for the trajectory golden (screenshot) tests.
 ///
-/// FONTS: fa_ui bundles no text font assets (it cannot reach flutter_app's
-/// Inter/JetBrainsMono — not a dependency), so golden text renders with
-/// Flutter's default test font: placeholder glyph shapes, real layout,
-/// colors, and metrics. Icons are real: pumpGolden loads the MaterialIcons
-/// font bundled via `uses-material-design` (flutter_test does not
-/// auto-load FontManifest fonts, so without this every icon draws as a
-/// placeholder box). Deterministic and hermetic on every machine; do not
-/// add font assets to make the text prettier — the package ships none.
+/// FONTS: golden text renders with the real families the fa theme
+/// requests — `Inter` and `JetBrainsMono`, loaded from
+/// `test/assets/fonts/` (test-only copies of flutter_app's bundled
+/// TTFs; the package itself ships no font assets). Icons are real too:
+/// MaterialIcons is loaded from the font bundled via
+/// `uses-material-design` (flutter_test does not auto-load FontManifest
+/// fonts). All loading happens in the real async zone via
+/// [loadGoldenFonts] — inside a `testWidgets` body the I/O never
+/// completes (FakeAsync zone). Without the fonts every glyph draws as a
+/// placeholder box.
 ///
 /// Every golden pumps through [pumpGolden] (fixed surface size + explicit
 /// theme from the fa_ui app_theme builders) and asserts with [expectGolden].
@@ -19,7 +21,11 @@
 /// (`../fixture*.dart`) so record ids and indexes match real projection;
 /// goldens must stay deterministic — fixed snapshots, no timers or
 /// animations beyond route transitions settled by `pumpAndSettle`.
+
 library;
+
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
@@ -29,18 +35,47 @@ import 'package:flutter_test/flutter_test.dart';
 
 Future<void>? _fontsFuture;
 
-/// Loads the MaterialIcons font bundled via `uses-material-design: true`
-/// once per process. flutter_test does not auto-load FontManifest fonts,
-/// and inside a `testWidgets` body the real async I/O never completes
-/// (FakeAsync zone) — so this MUST run in the real async zone, from
-/// `test/flutter_test_config.dart`. Without it every icon renders as a
-/// placeholder box.
-Future<void> loadGoldenFonts() => _fontsFuture ??= _loadIconFont();
+/// Loads every font the goldens need, once per process: the text families
+/// the fa theme requests (`Inter`, `JetBrainsMono`) from the test-only
+/// TTF copies in `test/assets/fonts/`, plus the MaterialIcons font
+/// bundled via `uses-material-design: true`. flutter_test does not
+/// auto-load FontManifest fonts, and inside a `testWidgets` body the
+/// real async I/O never completes (FakeAsync zone) — so this MUST run in
+/// the real async zone, from `test/flutter_test_config.dart`. Without it
+/// every glyph renders as a placeholder box.
+Future<void> loadGoldenFonts() => _fontsFuture ??= _loadFonts();
 
-Future<void> _loadIconFont() async {
-  final loader = FontLoader('MaterialIcons')
+Future<void> _loadFonts() async {
+  Future<ByteData> loadTtf(String name) async {
+    final bytes = await File('test/assets/fonts/$name').readAsBytes();
+    return ByteData.sublistView(bytes);
+  }
+
+  final inter = FontLoader('Inter')
+    ..addFont(loadTtf('Inter-Regular.ttf'))
+    ..addFont(loadTtf('Inter-Medium.ttf'))
+    ..addFont(loadTtf('Inter-SemiBold.ttf'))
+    ..addFont(loadTtf('Inter-Bold.ttf'));
+  final monoTtfs = [
+    loadTtf('JetBrainsMono-Regular.ttf'),
+    loadTtf('JetBrainsMono-Bold.ttf'),
+  ];
+  // The theme's terminal-ish style resolves `JetBrainsMono`, while the
+  // trajectory widgets request the generic `monospace` family (real
+  // desktops substitute a system mono font; the test env has none).
+  // Register the same TTFs under both names so both resolve.
+  final mono = FontLoader('JetBrainsMono')
+    ..addFont(monoTtfs[0])
+    ..addFont(monoTtfs[1]);
+  final genericMono = FontLoader('monospace')
+    ..addFont(monoTtfs[0])
+    ..addFont(monoTtfs[1]);
+  final icons = FontLoader('MaterialIcons')
     ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
-  await loader.load();
+  await inter.load();
+  await mono.load();
+  await genericMono.load();
+  await icons.load();
 }
 
 /// Desktop canvas for full-frame pages.
