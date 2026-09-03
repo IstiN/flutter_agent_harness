@@ -43,6 +43,7 @@ abstract class TrajectoryStrings {
   String get toolbarCollapseCalls;
   String get toolbarSearch;
   String get toolbarSearchPlaceholder;
+  String get searchNoMatches;
 
   String get kindSystem;
   String get kindUser;
@@ -65,6 +66,7 @@ abstract class TrajectoryStrings {
   String get statusCompleted;
 
   String get timingNotAvailable;
+  String get timingDurationTooShort;
   String get timingShowLocalTime;
   String get timingShowUnixTimestamp;
   String get timingStarted;
@@ -199,6 +201,8 @@ class TrajectoryStringsEn extends TrajectoryStrings {
   String get toolbarSearch => 'Search trajectory';
   @override
   String get toolbarSearchPlaceholder => 'Search';
+  @override
+  String get searchNoMatches => 'No matches';
 
   @override
   String get kindSystem => 'SYSTEM';
@@ -238,6 +242,8 @@ class TrajectoryStringsEn extends TrajectoryStrings {
 
   @override
   String get timingNotAvailable => 'Not available';
+  @override
+  String get timingDurationTooShort => 'Duration too short';
   @override
   String get timingShowLocalTime => 'Show local time';
   @override
@@ -462,6 +468,8 @@ class TrajectoryStringsRu extends TrajectoryStrings {
   String get toolbarSearch => 'Поиск по траектории';
   @override
   String get toolbarSearchPlaceholder => 'Поиск';
+  @override
+  String get searchNoMatches => 'Нет совпадений';
 
   // Kind badges stay as the compact English tags (technical labels).
   @override
@@ -502,6 +510,8 @@ class TrajectoryStringsRu extends TrajectoryStrings {
 
   @override
   String get timingNotAvailable => 'Недоступно';
+  @override
+  String get timingDurationTooShort => 'Слишком короткий период';
   @override
   String get timingShowLocalTime => 'Показать локальное время';
   @override

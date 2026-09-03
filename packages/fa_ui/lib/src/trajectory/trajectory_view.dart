@@ -5,16 +5,19 @@
 import 'package:flutter/material.dart';
 
 import 'trajectory_controller.dart';
+import 'trajectory_details.dart';
 import 'trajectory_strings.dart';
+import 'trajectory_table.dart';
+import 'trajectory_timeline.dart';
 import 'trajectory_toolbar.dart';
 
-/// Builds the timeline strip above the ledger. Null renders nothing until
-/// the real timeline lands.
+/// Builds the timeline strip above the ledger; defaults to the real
+/// [TrajectoryTimeline]. Tests and hosts can inject a replacement.
 typedef TrajectoryTimelineBuilder =
     Widget Function(BuildContext context, TrajectoryController controller);
 
-/// Builds the ledger table. Null renders nothing until the real table
-/// lands.
+/// Builds the ledger table; defaults to the real [TrajectoryTable] wired
+/// to the details sheet. Tests and hosts can inject a replacement.
 typedef TrajectoryTableBuilder =
     Widget Function(BuildContext context, TrajectoryController controller);
 
@@ -77,10 +80,20 @@ class _TrajectoryViewState extends State<TrajectoryView> {
     final empty = controller.snapshot.records.isEmpty;
     final timeline =
         widget.timelineBuilder?.call(context, controller) ??
-        const SizedBox.shrink();
+        TrajectoryTimeline(controller: controller);
     // An empty snapshot renders the placeholder instead of the table seam,
     // so the builder is not invoked at all.
-    final table = empty ? null : widget.tableBuilder?.call(context, controller);
+    final table = empty
+        ? null
+        : widget.tableBuilder?.call(context, controller) ??
+              TrajectoryTable(
+                controller: controller,
+                onRecordTap: (record) => showTrajectoryDetails(
+                  context,
+                  record: record,
+                  snapshot: controller.snapshot,
+                ),
+              );
     return Semantics(
       container: true,
       label: strings.viewTrajectory,
