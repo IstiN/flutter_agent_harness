@@ -534,6 +534,223 @@ void main() {
         FallbackNoticeKind.retry,
       ]);
     });
+
+    group('transport errors', () {
+      List<AssistantMessageEvent> transportTurn(
+        Model model, {
+        String error =
+            'ClientException: Connection closed while receiving data',
+      }) {
+        final partial = _msg(model);
+        return [
+          StartEvent(partial: partial),
+          ErrorEvent(
+            reason: StopReason.error,
+            error: _msg(model, stop: StopReason.error, error: error),
+          ),
+        ];
+      }
+
+      test('retries the same entry on a dropped connection', () async {
+        final a = _model('openai', 'gpt-a');
+        final probe = _Probe({
+          'v-a': [transportTurn(a), _okTurn(a, 'second try')],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ]);
+
+        final events = await run(w);
+
+        // The failed pre-content attempt left no trace; the retry streamed.
+        expect(events, [
+          'start:${a.id}',
+          'textStart',
+          'delta:second try',
+          'done:${a.id}',
+        ]);
+        expect(probe.calls, ['v-a', 'v-a']);
+        expect(sleeps, [const Duration(milliseconds: 500)]);
+        expect(notices.single.kind, FallbackNoticeKind.transportRetry);
+        expect(
+          notices.single.describe(),
+          contains('connection lost on openai/gpt-a'),
+        );
+      });
+
+      test('never rotates API keys for a transport failure', () async {
+        final a = _model('openai', 'gpt-a');
+        final probe = _Probe({
+          'v-a': [transportTurn(a), _okTurn(a, 'recovered')],
+          'v-a-2': [_okTurn(a, 'wrong key')],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a', 'v-a-2']),
+        ]);
+
+        await run(w);
+
+        // Same credential retried: the sibling key is never touched.
+        expect(probe.calls, ['v-a', 'v-a']);
+        expect(
+          notices.map((n) => n.kind),
+          everyElement(FallbackNoticeKind.transportRetry),
+        );
+      });
+
+      test('fails over to the next entry when retries are spent', () async {
+        final a = _model('openai', 'gpt-a');
+        final b = _model('anthropic', 'claude-b');
+        final probe = _Probe({
+          'v-a': [transportTurn(a)],
+          'v-b': [_okTurn(b, 'hello from b')],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+          entry(probe, b, ['v-b']),
+        ], policy: const ModelRolesRetryPolicy(retriesPerEntry: 0));
+
+        final events = await run(w);
+
+        expect(events.last, 'done:${b.id}');
+        expect(probe.calls, ['v-a', 'v-b']);
+        expect(notices.single.kind, FallbackNoticeKind.modelFallback);
+      });
+
+      test(
+        'forwards the last transport error when the chain exhausts',
+        () async {
+          final a = _model('openai', 'gpt-a');
+          final probe = _Probe({
+            'v-a': [
+              transportTurn(a),
+              transportTurn(a, error: 'SocketException: Connection refused'),
+              transportTurn(a, error: 'Failed host lookup: api.example.test'),
+            ],
+          });
+          final w = wrapper([
+            entry(probe, a, ['v-a']),
+          ]);
+
+          final events = await run(w);
+
+          expect(probe.calls, hasLength(3)); // 1 + retriesPerEntry(2)
+          expect(
+            events.single,
+            'error(error):${a.id}:Failed host lookup: api.example.test',
+          );
+        },
+      );
+
+      test(
+        'a mid-stream transport drop is forwarded, never replayed',
+        () async {
+          final a = _model('openai', 'gpt-a');
+          final partial = _msg(a);
+          final probe = _Probe({
+            'v-a': [
+              [
+                StartEvent(partial: partial),
+                TextStartEvent(contentIndex: 0, partial: partial),
+                TextDeltaEvent(
+                  contentIndex: 0,
+                  delta: 'half',
+                  partial: _msg(a, text: 'half'),
+                ),
+                ErrorEvent(
+                  reason: StopReason.error,
+                  error: _msg(
+                    a,
+                    stop: StopReason.error,
+                    error: 'Connection closed while receiving data',
+                  ),
+                ),
+              ],
+              _okTurn(a, 'must not be used'),
+            ],
+          });
+          final w = wrapper([
+            entry(probe, a, ['v-a']),
+          ]);
+
+          final events = await run(w);
+
+          // Observable output already left: the failure stands (the CLI
+          // appends deltas — a silent replay would duplicate the transcript).
+          expect(events, [
+            'start:${a.id}',
+            'textStart',
+            'delta:half',
+            'error(error):${a.id}:Connection closed while receiving data',
+          ]);
+          expect(probe.calls, ['v-a']);
+          expect(notices, isEmpty);
+        },
+      );
+    });
+  });
+
+  group('isTransientTransportError', () {
+    AssistantMessage errorMessage(String text) => AssistantMessage(
+      content: const [],
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      usage: Usage.zero,
+      stopReason: StopReason.error,
+      errorMessage: text,
+      timestamp: DateTime.utc(2026),
+    );
+
+    test('classifies dropped connections, DNS, TLS, and 5xx gateways', () {
+      for (final text in [
+        'ClientException: Connection closed while receiving data',
+        'Connection reset by peer',
+        'SocketException: Connection refused',
+        'Connection aborted',
+        'Connection terminated during handshake',
+        'Connection timed out',
+        'Failed host lookup: api.openai.com',
+        'Network is unreachable',
+        'No route to host',
+        'Broken pipe',
+        '502 Bad Gateway',
+        '503 Service Unavailable',
+        '504 Gateway Timeout',
+      ]) {
+        expect(
+          isTransientTransportError(errorMessage(text)),
+          isTrue,
+          reason: text,
+        );
+      }
+    });
+
+    test('rejects rate limits, overflow, non-errors, and clean failures', () {
+      for (final text in [
+        '429: rate limit exceeded',
+        'insufficient_quota: You exceeded your current quota',
+        'prompt is too long: 5 > 3 maximum',
+        '400: invalid request',
+        '500: internal error',
+      ]) {
+        expect(
+          isTransientTransportError(errorMessage(text)),
+          isFalse,
+          reason: text,
+        );
+      }
+      final ok = AssistantMessage(
+        content: const [],
+        api: 'a',
+        provider: 'p',
+        model: 'm',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      );
+      expect(isTransientTransportError(ok), isFalse);
+    });
   });
 
   group('isRateLimitOrQuota', () {

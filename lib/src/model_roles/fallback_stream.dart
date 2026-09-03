@@ -12,10 +12,12 @@
 ///   [StreamFunction] consumer (agent turns, compaction summaries, plugins)
 ///   the same policy.
 /// - omp's trigger set is broad (overloads, 5xx, network failures, stale
-///   replays, refusals). Per the card, only rate-limit/quota failures
-///   ([isRateLimitOrQuota]) trigger rotation/fallback here; everything else
-///   is forwarded verbatim. Context overflow is explicitly excluded — it
-///   belongs to the compaction path, same boundary as omp.
+///   replays, refusals). Rate-limit/quota failures ([isRateLimitOrQuota])
+///   trigger rotation/fallback, and transient transport failures
+///   ([isTransientTransportError] — dropped connections, DNS/TLS, gateway
+///   5xx) trigger in-place retries with the same backoff budget; everything
+///   else is forwarded verbatim. Context overflow is explicitly excluded —
+///   it belongs to the compaction path, same boundary as omp.
 /// - omp's observable-output guard is kept: a stream that already emitted
 ///   content is never silently replayed; its failure stands.
 /// - omp emits session events (`auto_retry_start`, `retry_fallback_applied`).
@@ -72,6 +74,46 @@ bool isRateLimitOrQuota(AssistantMessage message, {Duration? retryAfter}) {
   return _rateLimitPatterns.any((pattern) => pattern.hasMatch(text));
 }
 
+/// Patterns classifying a provider error as a transient transport failure:
+/// dropped/refused/reset connections, DNS and TLS handshake failures, and
+/// the gateway 5xx family (502/503/504). Rate-limit wordings are
+/// deliberately excluded — they follow the rotation policy instead.
+final _transportPatterns = [
+  RegExp(r'connection closed', caseSensitive: false),
+  RegExp(r'connection reset', caseSensitive: false),
+  RegExp(r'connection refused', caseSensitive: false),
+  RegExp(r'connection aborted', caseSensitive: false),
+  RegExp(r'connection terminated', caseSensitive: false),
+  RegExp(r'connection (attempt )?timed? ?out', caseSensitive: false),
+  RegExp(r'socket ?exception', caseSensitive: false),
+  RegExp(r'client ?exception', caseSensitive: false),
+  RegExp(r'failed host lookup', caseSensitive: false),
+  RegExp(r'network is unreachable', caseSensitive: false),
+  RegExp(r'no route to host', caseSensitive: false),
+  RegExp(r'handshake (failed|error|terminated)', caseSensitive: false),
+  RegExp(r'broken pipe', caseSensitive: false),
+  RegExp(r'\b50[234]\b'),
+  RegExp(r'bad gateway', caseSensitive: false),
+  RegExp(r'service unavailable', caseSensitive: false),
+  RegExp(r'gateway time-?out', caseSensitive: false),
+];
+
+/// Whether [message] is a transient transport failure the chain may retry
+/// in place: the endpoint (or the network path to it) dropped, so rotating
+/// credentials is pointless — the same entry is retried with backoff, then
+/// the chain fails over to the next model. Context overflow and rate limits
+/// are excluded (their own policies own them).
+bool isTransientTransportError(AssistantMessage message) {
+  if (message.stopReason != StopReason.error) return false;
+  final text = message.errorMessage;
+  if (text == null || text.isEmpty) return false;
+  if (isContextOverflow(message)) return false;
+  if (_rateLimitPatterns.any((pattern) => pattern.hasMatch(text))) {
+    return false;
+  }
+  return _transportPatterns.any((pattern) => pattern.hasMatch(text));
+}
+
 /// What the wrapper is about to do after a rate-limit failure.
 enum FallbackNoticeKind {
   /// Sleeping, then retrying the same chain entry (omp `auto_retry_start`).
@@ -83,6 +125,11 @@ enum FallbackNoticeKind {
   /// Taking the run over with the next chain entry (omp
   /// `retry_fallback_applied`).
   modelFallback,
+
+  /// Re-trying the same entry after a transient transport failure (a
+  /// dropped connection, DNS/TLS failure, or a 502/503/504) — no key
+  /// rotation: the endpoint dropped, not the credential.
+  transportRetry,
 }
 
 /// The no-silent-degrade note: emitted through the listener callback before
@@ -135,6 +182,9 @@ final class FallbackNotice {
         'rate limited on $fromModel — rotating API key to $apiKeyName',
       FallbackNoticeKind.modelFallback =>
         'rate limited on $fromModel — falling back to $toModel',
+      FallbackNoticeKind.transportRetry =>
+        'connection lost on $fromModel — retrying$wait '
+            '(attempt ${attempt + 1})',
     };
   }
 }
@@ -172,10 +222,11 @@ final class _Forwarded extends _AttemptOutcome {
   const _Forwarded();
 }
 
-/// The attempt failed with a retryable rate-limit/quota error before any
-/// observable output; nothing was forwarded.
-final class _RateLimited extends _AttemptOutcome {
-  const _RateLimited(this.retryAfter, this.error);
+/// The attempt failed with a retryable error (rate-limit/quota or a
+/// transient transport failure) before any observable output; nothing was
+/// forwarded.
+final class _Retryable extends _AttemptOutcome {
+  const _Retryable(this.retryAfter, this.error, {this.isTransport = false});
 
   /// The provider's `Retry-After` hint, when sent.
   final Duration? retryAfter;
@@ -183,6 +234,11 @@ final class _RateLimited extends _AttemptOutcome {
   /// The terminal error message (kept for the final forward if the chain
   /// exhausts).
   final AssistantMessage error;
+
+  /// True for transient transport failures (dropped connection, DNS/TLS,
+  /// 502/503/504): retried in place — key rotation is pointless when the
+  /// endpoint, not the credential, failed.
+  final bool isTransport;
 }
 
 /// Mutable state of one [_drive] call, extracted so the event-loop phases
@@ -203,7 +259,7 @@ final class _DriveState {
   var failures = 0;
 
   /// The most recent retryable failure (forwarded if the chain exhausts).
-  _RateLimited? lastFailure;
+  _Retryable? lastFailure;
 
   /// The credential for the next attempt (null = re-select).
   ApiKeyCredential? credential;
@@ -231,7 +287,7 @@ final class _AttemptBuffer {
         out.push(event);
         return const _Forwarded();
       case ErrorEvent():
-        return _forwardOrRateLimit(out, event);
+        return _forwardOrRetryable(out, event);
       case StartEvent():
         _buffer.add(event);
         return null;
@@ -257,16 +313,23 @@ final class _AttemptBuffer {
     return null;
   }
 
-  /// A pre-commit error: a retryable rate-limit is held back (the buffer is
-  /// discarded and the chain retries); anything else is forwarded verbatim.
-  _AttemptOutcome _forwardOrRateLimit(
+  /// A pre-commit error: a retryable rate-limit or transport failure is
+  /// held back (the buffer is discarded and the chain retries); anything
+  /// else is forwarded verbatim.
+  _AttemptOutcome _forwardOrRetryable(
     AssistantMessageEventStream out,
     ErrorEvent event,
   ) {
     if (event.reason == StopReason.error &&
         isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
       // Not forwarded: the buffer is discarded and the chain retries.
-      return _RateLimited(event.retryAfter, event.error);
+      return _Retryable(event.retryAfter, event.error);
+    }
+    if (event.reason == StopReason.error &&
+        isTransientTransportError(event.error)) {
+      // Not forwarded: same retry path, but the in-place policy (no key
+      // rotation) — see [_onRetryable].
+      return _Retryable(event.retryAfter, event.error, isTransport: true);
     }
     _buffer.forEach(out.push);
     out.push(event);
@@ -432,8 +495,8 @@ final class FallbackStreamFunction {
     switch (outcome) {
       case _Forwarded():
         return false;
-      case _RateLimited():
-        return _onRateLimited(
+      case _Retryable():
+        return _onRetryable(
           out,
           state,
           entry,
@@ -477,13 +540,16 @@ final class FallbackStreamFunction {
     _DriveState state,
     Duration delay,
     String reason,
-    CancelToken? cancelToken,
-  ) async {
+    CancelToken? cancelToken, {
+    bool isTransport = false,
+  }) async {
     state.attemptsOnEntry++;
     state.failures++;
     _notify(
       FallbackNotice(
-        kind: FallbackNoticeKind.retry,
+        kind: isTransport
+            ? FallbackNoticeKind.transportRetry
+            : FallbackNoticeKind.retry,
         fromModel: _entries[state.entryIndex].label,
         delay: delay,
         attempt: state.failures,
@@ -544,38 +610,42 @@ final class FallbackStreamFunction {
     );
   }
 
-  /// Handles a retryable rate-limit — omp order: free credential switch
-  /// first, then paid retries, then model fallback. Returns false when the
-  /// run ends (exhausted or aborted).
-  Future<bool> _onRateLimited(
+  /// Handles a retryable failure. Rate-limits follow omp's order: free
+  /// credential switch first, then paid retries, then model fallback.
+  /// Transport failures skip the credential layer entirely (the endpoint
+  /// dropped, not the key) and go straight to paid in-place retries, then
+  /// fall over. Returns false when the run ends (exhausted or aborted).
+  Future<bool> _onRetryable(
     AssistantMessageEventStream out,
     _DriveState state,
     ChainEntry entry,
     ApiKeyCredential attemptCredential,
-    _RateLimited outcome,
+    _Retryable outcome,
     CancelToken? cancelToken,
   ) async {
     state.lastFailure = outcome;
-    entry.keyRing.reportRateLimited(
-      attemptCredential.name,
-      outcome.retryAfter ?? policy.keyBackoff,
-    );
-    final rotated = entry.keyRing.rotate(attemptCredential.name);
-    if (rotated != null) {
-      entry.keyRing.stickTo(rotated);
-      state.failures++;
-      _notify(
-        FallbackNotice(
-          kind: FallbackNoticeKind.keyRotation,
-          fromModel: entry.label,
-          apiKeyName: rotated.name,
-          delay: Duration.zero,
-          attempt: state.failures,
-          reason: _shortReasonText(outcome.error),
-        ),
+    if (!outcome.isTransport) {
+      entry.keyRing.reportRateLimited(
+        attemptCredential.name,
+        outcome.retryAfter ?? policy.keyBackoff,
       );
-      state.credential = rotated;
-      return true;
+      final rotated = entry.keyRing.rotate(attemptCredential.name);
+      if (rotated != null) {
+        entry.keyRing.stickTo(rotated);
+        state.failures++;
+        _notify(
+          FallbackNotice(
+            kind: FallbackNoticeKind.keyRotation,
+            fromModel: entry.label,
+            apiKeyName: rotated.name,
+            delay: Duration.zero,
+            attempt: state.failures,
+            reason: _shortReasonText(outcome.error),
+          ),
+        );
+        state.credential = rotated;
+        return true;
+      }
     }
     if (state.attemptsOnEntry >= policy.retriesPerEntry) {
       return _failOver(out, state);
@@ -590,6 +660,7 @@ final class FallbackStreamFunction {
       delay,
       _shortReasonText(outcome.error),
       cancelToken,
+      isTransport: outcome.isTransport,
     );
   }
 
@@ -599,7 +670,7 @@ final class FallbackStreamFunction {
   int? _failover(
     int from,
     Set<int> tried,
-    _RateLimited? lastFailure, {
+    _Retryable? lastFailure, {
     required int failures,
   }) {
     _cooldownUntil[from] = _now().add(
@@ -669,7 +740,7 @@ final class FallbackStreamFunction {
   void _forwardLastFailure(
     AssistantMessageEventStream out,
     ChainEntry entry,
-    _RateLimited? lastFailure,
+    _Retryable? lastFailure,
   ) {
     final error =
         lastFailure?.error ??

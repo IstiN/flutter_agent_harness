@@ -129,7 +129,7 @@ class FakeHub {
           case 'flush' when agentId != null:
             _flush(ws, agentId);
           case 'presence_query':
-            _presence(ws);
+            _presence(ws, frame);
           default:
             _reply(ws, {'op': 'error', 'code': 'bad_frame', 'msg': 'op?$op'});
         }
@@ -310,9 +310,15 @@ class FakeHub {
     _reply(ws, {'op': 'flushed', 'count': queued.length});
   }
 
-  void _presence(WebSocket ws) {
+  void _presence(WebSocket ws, [Map<String, dynamic>? query]) {
     _reply(ws, {
       'op': 'presence',
+      // Echo the query's frame id (protocol §presence): the 0.2.x client
+      // matches answers to waiters by `replyTo`; without the echo it falls
+      // back to the legacy one-completes-all path, where a stale warm-up
+      // answer can complete a later query with a pre-disconnect roster
+      // (the "peers: online-only always" flake).
+      'replyTo': ?query?['id'],
       'agents': [
         for (final entry in _registry.entries)
           {

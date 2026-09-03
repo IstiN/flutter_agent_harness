@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- fix(roles): transient transport failures no longer kill the turn. A
+  dropped connection ("Connection closed while receiving data", resets,
+  refusals, DNS/TLS handshake failures, 502/503/504) during a provider
+  call is now retried in place with the retry policy's backoff budget
+  (`retry.retriesPerEntry`, default 2), then falls over to the next chain
+  entry — the run survives instead of ending with an error event. Key
+  rotation is deliberately skipped for this class (the endpoint dropped,
+  not the credential), the observable-output guard still holds (a stream
+  that already emitted content is never silently replayed), and every
+  retry is announced via `FallbackNoticeKind.transportRetry` (the CLI
+  prints `[roles] connection lost on … — retrying in Ns`).
+
 ## 0.1.281
 
 - fix(tools): media slot overrides no longer fall back to the main provider
