@@ -56,6 +56,7 @@ final class MockToolCallSpec {
     this.callId, {
     this.name = 'bash',
     this.args = const {'cmd': 'ls'},
+    this.parentCallId,
     this.result = 'ok',
     this.isError = false,
   });
@@ -63,6 +64,9 @@ final class MockToolCallSpec {
   final String callId;
   final String name;
   final Map<String, Object?> args;
+
+  /// Call id of the enclosing tool call for nested (subtool) executions.
+  final String? parentCallId;
   final String result;
   final bool isError;
 }
@@ -92,7 +96,12 @@ final class MockAssistantStep extends MockStep {
     final blocks = <ContentBlock>[
       if (text.isNotEmpty) TextContent(text: text),
       for (final call in toolCalls)
-        ToolCall(id: call.callId, name: call.name, arguments: call.args),
+        ToolCall(
+          id: call.callId,
+          name: call.name,
+          arguments: call.args,
+          parentCallId: call.parentCallId,
+        ),
     ];
     return MessageRecord(
       id: id,
