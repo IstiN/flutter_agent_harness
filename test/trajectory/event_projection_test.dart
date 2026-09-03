@@ -391,27 +391,24 @@ void main() {
 
     test('a real record replaces the streamed rows for its turn:step', () {
       final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
       builder.applyEvent(MessageStartEvent(_streamMessage(content: const [])));
       final finalMessage = _streamMessage(
         content: const [TextContent(text: 'hello')],
         usage: _usage(input: 100, output: 20),
       );
       builder.applyEvent(MessageEndEvent(finalMessage));
-      final snapshot = builder.append(
-        MessageRecord(
-          id: 'a1',
-          parentId: null,
-          timestamp: _at(1),
-          message: finalMessage,
-        ),
-      );
+      final snapshot = builder.append(_assistantRecord('a1', parentId: 'u1'));
       final messages = snapshot.records
           .whereType<TrajectoryAssistantRecord>()
           .toList();
       expect(messages, hasLength(1));
       expect(messages.single.messageId, 'a1');
-      expect(messages.single.index, 1);
-      expect(snapshot.recordLocations['a1'], 0);
+      expect(messages.single.index, 2);
+      expect(snapshot.recordLocations['a1'], 1);
+      // The finalized row measures from the real user record, not from the
+      // mirrored row that briefly consumed the cursor.
+      expect(messages.single.timeSeconds, const Duration(seconds: 1));
     });
 
     test('event tool results settle the tool row and running call', () {

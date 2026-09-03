@@ -75,9 +75,10 @@ final class TrajectorySnapshotBuilder {
     _byId[record.id] = record;
     _revision++;
     final rowsBefore = _records.length;
+    var discarded = 0;
     switch (record) {
       case MessageRecord():
-        _appendMessage(record, synthetic: synthetic);
+        discarded = _appendMessage(record, synthetic: synthetic);
       case CompactionRecord() || BranchSummaryRecord():
         _appendCompacted(record);
       case ModelChangeRecord() ||
@@ -90,7 +91,11 @@ final class TrajectorySnapshotBuilder {
       default:
         break; // Not a ledger row.
     }
-    if (_records.length > rowsBefore) _prevAbsTime = record.timestamp;
+    // Only durable appends advance the cursor; replacing mirrored
+    // placeholders still counts as placing rows even when net growth is 0.
+    if (!synthetic && _records.length + discarded > rowsBefore) {
+      _prevAbsTime = record.timestamp;
+    }
     _lastRecordId = record.id;
     return _snapshot();
   }
@@ -169,20 +174,22 @@ final class TrajectorySnapshotBuilder {
     );
   }
 
-  void _appendMessage(MessageRecord record, {bool synthetic = false}) {
+  int _appendMessage(MessageRecord record, {bool synthetic = false}) {
     switch (record.message.role) {
       case 'user':
-        _appendUser(record, synthetic: synthetic);
+        return _appendUser(record, synthetic: synthetic);
       case 'assistant':
-        _appendAssistant(record, synthetic: synthetic);
+        return _appendAssistant(record, synthetic: synthetic);
       case 'toolResult':
         _applyToolResult(record);
+        return 0;
     }
+    return 0;
   }
 
-  void _appendUser(MessageRecord record, {bool synthetic = false}) {
+  int _appendUser(MessageRecord record, {bool synthetic = false}) {
     final turn = _turnStep(record).turn;
-    _discardSyntheticRows('u\u0000$turn');
+    final discarded = _discardSyntheticRows('u\u0000$turn');
     final index = _records.length + 1;
     _records.add(
       projectUserRecord(
@@ -199,12 +206,13 @@ final class TrajectorySnapshotBuilder {
     if (synthetic) _registerSyntheticRows('u\u0000$turn', index - 1);
     _liveTurn = turn;
     _liveStep = 0;
+    return discarded;
   }
 
-  void _appendAssistant(MessageRecord record, {bool synthetic = false}) {
+  int _appendAssistant(MessageRecord record, {bool synthetic = false}) {
     final message = record.message as AssistantMessage;
     final (:turn, :step) = _turnStep(record);
-    _discardSyntheticRows('$turn\u0000$step');
+    final discarded = _discardSyntheticRows('$turn\u0000$step');
     final index = _records.length + 1;
     _records.add(
       projectAssistantRecord(
@@ -242,6 +250,7 @@ final class TrajectorySnapshotBuilder {
     if (partial != null && partial.turn == turn && partial.step == step) {
       _partial = null;
     }
+    return discarded;
   }
 
   void _appendToolCall(
@@ -459,13 +468,13 @@ final class TrajectorySnapshotBuilder {
   ///
   /// Streamed rows are the live tail, so removal happens after all placed
   /// rows; tool-row indexes are rebuilt to stay robust regardless.
-  void _discardSyntheticRows(String key) {
+  int _discardSyntheticRows(String key) {
     final ids = _syntheticRowsByKey.remove(key);
-    if (ids == null || ids.isEmpty) return;
+    if (ids == null || ids.isEmpty) return 0;
     final removed = _records
         .where((row) => ids.contains(row.recordId))
         .toList();
-    if (removed.isEmpty) return;
+    if (removed.isEmpty) return 0;
     _records.removeWhere((row) => ids.contains(row.recordId));
     for (final row in removed) {
       if (row is TrajectoryToolRecord) {
@@ -478,6 +487,7 @@ final class TrajectorySnapshotBuilder {
       final row = _records[i];
       if (row is TrajectoryToolRecord) _toolIndexByCallId[row.callId] = i;
     }
+    return removed.length;
   }
 
   void _registerSyntheticRows(String key, int fromIndex) {
