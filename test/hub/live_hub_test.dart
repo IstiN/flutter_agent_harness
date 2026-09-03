@@ -27,7 +27,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:fah_hub_client/fah_hub_client.dart';
+import 'package:fa_hub_client/fa_hub_client.dart';
 import 'package:test/test.dart';
 
 /// Real agent identities on the shared live hub — the enrolled test

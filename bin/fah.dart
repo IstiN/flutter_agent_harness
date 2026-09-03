@@ -32,7 +32,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
-import 'package:fah_hub_client/fah_hub_client.dart' show HubPlugin;
+import 'package:fa_hub_client/fa_hub_client.dart' show HubPlugin;
 import 'fah_hub_plugin.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';

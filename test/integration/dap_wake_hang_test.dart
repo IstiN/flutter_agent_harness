@@ -21,7 +21,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:fah_hub_client/fah_hub_client.dart';
+import 'package:fa_hub_client/fa_hub_client.dart';
 import 'package:test/test.dart';
 
 import '../hub/fake_hub.dart';

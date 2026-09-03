@@ -39,12 +39,9 @@ dependencies:
   crypto: ^3.0.3
   dart_tui:
     path: vendor/dart_tui
-  # DAP hub client; tracks the IstiN fork until fah_hub_client 0.2.8 lands
-  # on pub.dev (backoff-overflow CPU fix — the idle reconnect storm).
-  fah_hub_client:
-    git:
-      url: https://github.com/IstiN/fah_hub_client.git
-      ref: v0.2.8
+  # DAP hub client (IstiN/fa_hub_client on GitHub). 0.2.8 carries the
+  # backoff-overflow CPU fix — the dead-hub reconnect tight loop.
+  fa_hub_client: ^0.2.8
   flutter_agent_memory: ^0.2.1
   http: ^1.6.0
   image: ^4.9.1

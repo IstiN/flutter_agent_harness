@@ -36,7 +36,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:fah_hub_client/fah_hub_client.dart';
+import 'package:fa_hub_client/fa_hub_client.dart';
 import 'package:test/test.dart';
 
 /// How the scripted hub answers application frames after the handshake.

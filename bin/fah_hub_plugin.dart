@@ -15,7 +15,7 @@ library;
 
 import 'dart:async';
 
-import 'package:fah_hub_client/fah_hub_client.dart' as hub;
+import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Plugin name used by `--plugin hub` and `.fah/packages.yaml`.
