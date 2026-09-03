@@ -127,24 +127,34 @@ void main() {
     tempFiles.clear();
   });
 
-  AgentCli buildCli(_GatedStream stream) => AgentCli(
-    config: AgentCliConfig(
-      model: const Model(
-        id: 'test-model',
-        api: 'test-api',
-        provider: 'test-provider',
-        baseUrl: 'https://example.test',
-        contextWindow: 128000,
-        maxTokens: 4096,
+  /// Builds the CLI and REBINDS [env] to the instance it uses — session
+  /// persistence probes in these tests read the same in-memory filesystem.
+  AgentCli buildCli(_GatedStream stream, {String shellStdout = ''}) {
+    env = MemoryExecutionEnv(
+      cwd: '/work',
+      shell: shellStdout.isEmpty
+          ? const UnavailableShell()
+          : FakeShell(stdout: shellStdout),
+    );
+    return AgentCli(
+      config: AgentCliConfig(
+        model: const Model(
+          id: 'test-model',
+          api: 'test-api',
+          provider: 'test-provider',
+          baseUrl: 'https://example.test',
+          contextWindow: 128000,
+          maxTokens: 4096,
+        ),
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
       ),
-      apiKey: 'test-key',
-      env: env,
-      sessionRoot: '/sessions',
-      providerKind: 'openai-completions',
-    ),
-    io: io,
-    streamFunction: stream.call,
-  );
+      io: io,
+      streamFunction: stream.call,
+    );
+  }
 
   test(
     'a file-path message typed mid-run is steered with the attachment '
@@ -250,6 +260,77 @@ void main() {
       );
       expect(text, contains('late user question'));
 
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'a bang-command typed mid-run executes immediately AND the agent is '
+    'told the user ran it',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final stream = _GatedStream([textTurn('first answer')], gateOnCall: 1);
+      final cli = buildCli(stream, shellStdout: 'bang-ran-now\n');
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      io.sendLine('!echo bang-ran-now');
+      await waitForIt(
+        () => io.out.toString().contains('bang-ran-now'),
+        reason: 'the bang command runs immediately, mid-run',
+      );
+      expect(cli.isBusy, isTrue, reason: 'the run keeps streaming');
+
+      // The model learns the user ran it: a system-notice steers into the
+      // run and lands at the next turn boundary (a second stream call).
+      stream.gate.complete();
+      await waitForIt(() => stream.calls >= 2);
+      final delivered = [
+        for (final message in stream.contexts[1].messages)
+          if (message is UserMessage) _messageText(message),
+      ].join('\n');
+      expect(delivered, contains('<system-notice>'));
+      expect(delivered, contains('echo bang-ran-now'));
+      expect(delivered, contains('ran a local shell command'));
+
+      await waitForIt(() => !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'an idle bang-command queues the notice for the next prompt',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final stream = _GatedStream([
+        textTurn('answer with notice'),
+      ], gateOnCall: 1);
+      final cli = buildCli(stream, shellStdout: 'idle-ran\n');
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('!echo idle-ran');
+      await waitForIt(
+        () => io.out.toString().contains('idle-ran'),
+        reason: 'the idle bang command runs immediately',
+      );
+      expect(stream.calls, 0, reason: 'a notice never wakes the agent');
+
+      io.sendLine('what happened?');
+      await waitForIt(() => stream.calls >= 1);
+      final delivered = [
+        for (final message in stream.contexts[0].messages)
+          if (message is UserMessage) _messageText(message),
+      ].join('\n');
+      expect(delivered, contains('echo idle-ran'));
+      expect(delivered, contains('what happened?'));
+
+      stream.gate.complete();
+      await waitForIt(() => !cli.isBusy);
       io.sendLine('/exit');
       await run;
     },

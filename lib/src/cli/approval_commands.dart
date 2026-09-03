@@ -414,9 +414,14 @@ extension ApprovalCommands on AgentCli {
   }
 
   /// Runs a raw shell command prefixed with `!` through [config.env] and
-  /// prints its stdout/stderr/exit code directly.
+  /// prints its stdout/stderr/exit code directly. The agent only SEES that
+  /// it happened: the run is told via a steering system-notice (mid-run it
+  /// lands at the next turn boundary, idle it joins the next prompt) — a
+  /// bare local exec used to be invisible to the model entirely.
   Future<void> _runShellCommand(String command) async {
     final result = await config.env.exec(command);
+    var exitCode = 0;
+    final output = StringBuffer();
     switch (result) {
       case Ok(:final value):
         if (value.stdout.isNotEmpty) {
@@ -427,9 +432,45 @@ extension ApprovalCommands on AgentCli {
         if (value.exitCode != 0) {
           io.writeln('exit code: ${value.exitCode}');
         }
+        exitCode = value.exitCode;
+        output
+          ..write(value.stdout)
+          ..write(value.stderr);
       case Err(:final error):
         io.writeln('shell error: ${error.message}');
+        exitCode = -1;
+        output.write(error.message);
     }
+    _agent.steer(
+      UserMessage.text(_shellRunNotice(command, exitCode, output.toString())),
+    );
+  }
+
+  /// The steering notice that tells the model the user ran a local shell
+  /// command (compact: output is tail-capped so a chatty `!` cannot blow
+  /// up the context).
+  String _shellRunNotice(String command, int exitCode, String rawOutput) {
+    final trimmed = rawOutput.trim();
+    final tail = trimmed.length <= 1200
+        ? trimmed
+        : '…${trimmed.substring(trimmed.length - 1200)}';
+    final buffer = StringBuffer()
+      ..writeln('<system-notice>')
+      ..writeln(
+        'The user ran a local shell command (the `!` prefix — executed '
+        'by the host, not by you; you did not run it):',
+      )
+      ..writeln('`$command`')
+      ..writeln('exit code: $exitCode');
+    if (tail.isNotEmpty) {
+      buffer
+        ..writeln('output (tail):')
+        ..writeln('```')
+        ..writeln(tail)
+        ..writeln('```');
+    }
+    buffer.writeln('</system-notice>');
+    return buffer.toString();
   }
 
   /// A compact status bar shown above every idle prompt: cwd, model, tokens,
