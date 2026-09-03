@@ -108,6 +108,13 @@ TeaKey? parseKeyFromBuffer(List<int> buffer) {
       buffer.removeRange(0, 2);
       return const TeaKey(code: KeyCode.backspace, modifiers: {KeyMod.alt});
     }
+    // Alt+Enter: ESC CR. Terminals without kitty/modifyOtherKeys support
+    // (e.g. Warp's legacy TUI passthrough) report Shift+Enter this way —
+    // decode it instead of dropping it into `unknown`.
+    if (b1 == 0x0d) {
+      buffer.removeRange(0, 2);
+      return const TeaKey(code: KeyCode.enter, modifiers: {KeyMod.alt});
+    }
 
     buffer.removeRange(0, 2);
     return const TeaKey(code: KeyCode.unknown);

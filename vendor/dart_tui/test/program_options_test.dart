@@ -26,6 +26,33 @@ final class _ImmediateQuit extends Model {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 void main() {
+  group('kitty keyboard protocol', () {
+    test('startup sets the disambiguate flag, shutdown resets it', () async {
+      final chunks = <String>[];
+      final controller = StreamController<List<int>>();
+      controller.stream.listen((d) => chunks.add(utf8.decode(d)));
+      final sink = IOSink(controller.sink);
+
+      await Program(options: [withInput(null), withOutput(sink)]).run(
+        _ImmediateQuit(),
+      );
+
+      await sink.flush();
+      final out = chunks.join();
+      await sink.close();
+      await controller.close();
+
+      // CSI = 1 ; 1 u — kitty keyboard "disambiguate escape codes": terminals
+      // that support it report Shift+Enter / Ctrl+Enter etc. as CSI-u
+      // sequences instead of swallowing them (legacy CR). Terminals without
+      // support ignore the sequence and stay legacy.
+      expect(out, contains('\x1b[=1;1u'));
+      // CSI = 0 ; 1 u — reset the flags on shutdown, so the shell after exit
+      // keeps its own keyboard state.
+      expect(out, contains('\x1b[=0;1u'));
+    });
+  });
+
   group('withAltScreen()', () {
     test('emits alt-screen enter sequence', () async {
       final chunks = <String>[];

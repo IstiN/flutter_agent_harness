@@ -145,6 +145,77 @@ void main() {
       );
     });
 
+    test(
+      'shift+enter inserts a newline (kitty + modifyOtherKeys wires)',
+      () async {
+        // Shift+Enter reached the CLI three ways depending on the terminal:
+        // bare CR (macOS CG poll covers that), the kitty CSI-u encoding, and
+        // xterm modifyOtherKeys. dart_tui requests the encodings at startup
+        // (CSI =1;1u + modifyOtherKeys=2); this test drives the REAL binary
+        // over a PTY and asserts both wire formats land as a newline.
+        final tempHome = _tempHome();
+        final harness = await FaCliHarness.spawn(
+          extraEnv: {'HOME': tempHome.path},
+        );
+        addTearDown(() async {
+          await harness.close();
+          tempHome.deleteSync(recursive: true);
+        });
+        await harness.waitForBoot();
+
+        // The keyboard-enhancement requests went out at startup: this is what
+        // makes a supporting terminal actually SEND the disambiguated keys.
+        expect(harness.rawOutput, contains('\x1b[=1;1u'));
+        expect(harness.rawOutput, contains('\x1b[>4;2m'));
+
+        Future<void> expectNewline(String rawKey) async {
+          harness.sendText('ab');
+          await harness.waitForOutput(settleMs: 200);
+          harness.sendText(rawKey);
+          await harness.waitForOutput(settleMs: 300);
+          harness.sendText('cd');
+          await harness.waitForOutput(settleMs: 300);
+          final abRow = harness.viewportLines.indexWhere(
+            (l) => l.contains('ab'),
+          );
+          final cdRow = harness.viewportLines.indexWhere(
+            (l) => l.contains('cd'),
+          );
+          expect(
+            abRow,
+            greaterThanOrEqualTo(0),
+            reason: 'input prefix lost on screen for $rawKey',
+          );
+          expect(
+            cdRow,
+            greaterThan(abRow),
+            reason:
+                '"cd" must land on a row BELOW "ab" (newline inserted), '
+                'got rows ab=$abRow cd=$cdRow for $rawKey',
+          );
+          expect(
+            harness.screenText.contains('abcd'),
+            isFalse,
+            reason: 'shift+enter submitted instead of newline for $rawKey',
+          );
+          // Reset the input for the next variant: backspace over 'cd', then
+          // over the newline and 'ab'.
+          for (var i = 0; i < 6; i++) {
+            harness.sendBackspace();
+          }
+          await harness.waitForOutput(settleMs: 150);
+        }
+
+        // kitty keyboard protocol: CSI 13;2 u (Enter + shift modifier).
+        await expectNewline('\x1b[13;2u');
+        // xterm modifyOtherKeys: CSI 27;2;13 ~ (shift+enter as a ~-key).
+        await expectNewline('\x1b[27;2;13~');
+        // Legacy ESC CR encoding (terminals without protocol support, e.g.
+        // Warp's passthrough) — decoded as alt+enter.
+        await expectNewline('\x1b\r');
+      },
+    );
+
     test('prompt zone frame is aligned (regression)', () async {
       final tempHome = _tempHome();
       final harness = await FaCliHarness.spawn(

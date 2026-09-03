@@ -27,6 +27,19 @@ void main() {
     expect(b, isEmpty);
   });
 
+  test('parseKeyFromBuffer parses ESC+CR as alt+enter (not unknown)', () {
+    // Terminals without kitty/modifyOtherKeys support (e.g. Warp's legacy
+    // TUI passthrough) report Shift+Enter as ESC CR — the classic alt+enter
+    // encoding. It must decode to a usable key, not fall into `unknown` and
+    // silently no-op.
+    final b = <int>[0x1b, 0x0d];
+    final k = parseKeyFromBuffer(b)!;
+    expect(k.code, KeyCode.enter);
+    expect(k.modifiers, contains(KeyMod.alt));
+    expect(k.keystroke(), 'alt+enter');
+    expect(b, isEmpty);
+  });
+
   test('parseKeyFromBuffer returns null until escape sequence complete', () {
     final b = <int>[0x1b];
     expect(parseKeyFromBuffer(b), isNull);

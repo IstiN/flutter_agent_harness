@@ -1583,6 +1583,24 @@ void main() {
       expect(model.cursor, 3);
     });
 
+    test('a legacy ESC+CR shift+enter (alt+enter key) inserts a newline', () {
+      // Terminals without kitty/modifyOtherKeys support (e.g. Warp's legacy
+      // TUI passthrough) send Shift+Enter as ESC CR — decoded as
+      // 'alt+enter'. It used to decode to KeyCode.unknown and silently
+      // no-op.
+      var model = FaTuiModel(
+        callbacks: callbacks(isShiftPressed: () => false),
+        isExited: () => false,
+      );
+      model = typed(model, 'ab');
+      model = send(
+        model,
+        KeyPressMsg(const TeaKey(code: KeyCode.enter, modifiers: {KeyMod.alt})),
+      );
+      expect(model.inputText, 'ab\n');
+      expect(model.cursor, 3);
+    });
+
     test('a streamed paragraph is hard-split before it grows unbounded', () {
       // Minutes-long thinking bursts arrive as deltas with no newline: the
       // merged last line used to grow to hundreds of KB, and every throttle

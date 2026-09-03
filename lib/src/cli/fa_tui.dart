@@ -1122,11 +1122,13 @@ final class FaTuiModel extends Model {
       case 'ctrl+o':
       case 'ctrl+j':
       case 'shift+enter':
+      case 'alt+enter':
         // Fallback newline insertion (modifyOtherKeys Shift+Enter is mapped
         // to Ctrl+O by the input preprocessor on supporting terminals;
         // kitty-protocol terminals deliver Shift+Enter as a literal
         // 'shift+enter' keystroke — it used to fall through and die as a
-        // no-op).
+        // no-op; legacy terminals without kitty/modifyOtherKeys send the
+        // ESC CR encoding, which decodes as 'alt+enter').
         return _insertNewlineAtCursor();
       default:
         return null;
@@ -1650,7 +1652,10 @@ final class FaTuiModel extends Model {
       // A kitty-protocol Shift+Enter arrives as 'shift+enter' and still
       // means confirm inside a prompt. ctrl+c is NOT mapped here: it stays
       // the global interrupt/quit key.
-      'enter' || 'ctrl+j' || 'shift+enter' => const PromptEnter(),
+      'enter' ||
+      'ctrl+j' ||
+      'shift+enter' ||
+      'alt+enter' => const PromptEnter(),
       'ctrl+r' => const PromptCtrlR(),
       'ctrl+u' => const PromptCtrlU(),
       'esc' => const PromptEscape(),
