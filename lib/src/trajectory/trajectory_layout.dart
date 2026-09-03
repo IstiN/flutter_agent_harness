@@ -65,23 +65,38 @@ final class TrajectoryTurnModel {
 /// their turn/step produce request-only separator rows; running calls append
 /// after the placed entries. Orphan turn-0 cells fold into Turn 1's prefix.
 List<TrajectoryTurnModel> deriveTrajectoryLayout(TrajectorySnapshot snapshot) {
-  final records = snapshot.records.toList();
-  final followingAssistantTurn = _indexFollowingAssistantTurns(records);
-  final represented = _representedRequests(snapshot);
-  final emittedCalls = {
-    for (final record in records)
-      if (record is TrajectoryToolRecord) record.callId,
-  };
+  final fold = _LayoutFold(snapshot);
+  fold
+    ..addRequestSeparators()
+    ..addRecords()
+    ..addRunningCalls();
+  return fold.build();
+}
 
+/// Mutable fold state behind [deriveTrajectoryLayout]: one pass over the
+/// snapshot's requests, records, and running calls, then the model build.
+final class _LayoutFold {
+  _LayoutFold(this.snapshot)
+    : records = snapshot.records.toList(),
+      represented = _representedRequests(snapshot) {
+    followingAssistantTurn = _indexFollowingAssistantTurns(records);
+    index = records.length;
+  }
+
+  final TrajectorySnapshot snapshot;
+  final List<TrajectoryRecord> records;
+  final Set<String> represented;
+  late final List<int?> followingAssistantTurn;
   final turns = <int, _TurnBucket>{};
   final standaloneCompactions = <_TurnBucket>[];
-  var index = records.length;
+  late int index;
   var lastAssistantTurn = 0;
   var currentTurn = 0;
   var currentStep = 0;
 
   _TurnBucket bucket(int turn) => turns.putIfAbsent(turn, _TurnBucket.new);
 
+  /// Appends to the trailing message group of [turn], else opens one.
   void pushMessage(int turn, _LaidCell laid) {
     final groups = bucket(turn).groups;
     if (groups.isNotEmpty && groups.last.kind == TrajectoryGroupKind.message) {
@@ -91,6 +106,7 @@ List<TrajectoryTurnModel> deriveTrajectoryLayout(TrajectorySnapshot snapshot) {
     groups.add(_Group(kind: TrajectoryGroupKind.message, laid: [laid]));
   }
 
+  /// Appends to the step-[step] group of [turn], else opens one.
   void pushStep(int turn, int step, _LaidCell laid) {
     final groups = bucket(turn).groups;
     for (final group in groups) {
@@ -104,126 +120,162 @@ List<TrajectoryTurnModel> deriveTrajectoryLayout(TrajectorySnapshot snapshot) {
     );
   }
 
-  for (final request in snapshot.requests) {
-    if (request.purpose != TrajectoryRequestPurpose.assistant) continue;
-    if (represented.contains('${request.turn}\u0000${request.step}')) continue;
-    pushStep(request.turn, request.step, _requestOnlyCell(request, ++index));
-  }
-
-  for (var i = 0; i < records.length; i++) {
-    final record = records[i];
-    switch (record) {
-      case final TrajectoryAssistantRecord assistant:
-        final laid = _LaidCell(
-          cell: assistant,
-          absTime: assistant.completedTime ?? assistant.stepStartTime,
-        );
-        if (assistant.step > 0) {
-          pushStep(assistant.turn, assistant.step, laid);
-        } else {
-          pushMessage(assistant.turn, laid);
-        }
-        currentTurn = assistant.turn;
-        currentStep = assistant.step;
-        lastAssistantTurn = assistant.turn;
-      case final TrajectoryToolRecord tool:
-        pushStep(
-          currentTurn,
-          currentStep == 0 ? 1 : currentStep,
-          _LaidCell(cell: tool, absTime: tool.startedAt, toolName: tool.name),
-        );
-      case TrajectoryUserRecord() || TrajectoryContextRecord():
-        pushMessage(
-          _enclosingTurn(
-            followingAssistantTurn[i],
-            snapshot.partial?.turn,
-            lastAssistantTurn,
-          ),
-          _LaidCell(
-            cell: record,
-            absTime: switch (record) {
-              final TrajectoryUserRecord user => user.startedAt,
-              _ => null,
-            },
-          ),
-        );
-      case final TrajectorySystemRecord system:
-        pushMessage(
-          system.change == TrajectorySystemChange.initial
-              ? _firstVisibleTurn(records, snapshot.partial?.turn)
-              : _enclosingTurn(
-                  followingAssistantTurn[i],
-                  snapshot.partial?.turn,
-                  lastAssistantTurn,
-                ),
-          _LaidCell(cell: system, absTime: system.time),
-        );
-      case final TrajectoryCompactedRecord compacted:
-        standaloneCompactions.add(
-          _TurnBucket([
-            _Group(
-              kind: TrajectoryGroupKind.compaction,
-              laid: [_LaidCell(cell: compacted, absTime: compacted.startedAt)],
-            ),
-          ]),
-        );
+  /// Request-only separators for assistant requests with no record.
+  void addRequestSeparators() {
+    for (final request in snapshot.requests) {
+      if (request.purpose != TrajectoryRequestPurpose.assistant) continue;
+      if (represented.contains('${request.turn}\u0000${request.step}')) {
+        continue;
+      }
+      pushStep(request.turn, request.step, _requestOnlyCell(request, ++index));
     }
   }
 
-  for (final call in snapshot.runningCalls) {
-    if (emittedCalls.contains(call.callId)) continue;
-    index++;
+  /// One fold step per ledger record.
+  void addRecords() {
+    for (var i = 0; i < records.length; i++) {
+      final record = records[i];
+      switch (record) {
+        case final TrajectoryAssistantRecord assistant:
+          addAssistant(assistant);
+        case final TrajectoryToolRecord tool:
+          addTool(tool);
+        case TrajectoryUserRecord() || TrajectoryContextRecord():
+          addEnclosed(record, i);
+        case final TrajectorySystemRecord system:
+          addSystem(system, i);
+        case final TrajectoryCompactedRecord compacted:
+          addCompacted(compacted);
+      }
+    }
+  }
+
+  void addAssistant(TrajectoryAssistantRecord assistant) {
+    final laid = _LaidCell(
+      cell: assistant,
+      absTime: assistant.completedTime ?? assistant.stepStartTime,
+    );
+    if (assistant.step > 0) {
+      pushStep(assistant.turn, assistant.step, laid);
+    } else {
+      pushMessage(assistant.turn, laid);
+    }
+    currentTurn = assistant.turn;
+    currentStep = assistant.step;
+    lastAssistantTurn = assistant.turn;
+  }
+
+  void addTool(TrajectoryToolRecord tool) {
     pushStep(
-      call.turn,
-      call.step == 0 ? 1 : call.step,
+      currentTurn,
+      currentStep == 0 ? 1 : currentStep,
+      _LaidCell(cell: tool, absTime: tool.startedAt, toolName: tool.name),
+    );
+  }
+
+  void addEnclosed(TrajectoryRecord record, int position) {
+    pushMessage(
+      _enclosingTurn(
+        followingAssistantTurn[position],
+        snapshot.partial?.turn,
+        lastAssistantTurn,
+      ),
       _LaidCell(
-        cell: TrajectoryToolRecord(
-          index: index,
-          recordId: trajectoryRecordId(
-            kind: 'tool',
-            callId: call.callId,
-            index: index,
-          ),
-          callId: call.callId,
-          parentCallId: null,
-          name: call.name,
-          argsRaw: '',
-          startedAt: call.startedAt,
-        ),
-        absTime: call.startedAt,
-        toolName: call.name,
+        cell: record,
+        absTime: switch (record) {
+          final TrajectoryUserRecord user => user.startedAt,
+          _ => null,
+        },
       ),
     );
   }
 
-  // Orphan turn-0 cells (orphaned tools) fold into Turn 1's prefix.
-  final prologue = turns.remove(0);
-  if (prologue != null) {
-    bucket(1).groups.insertAll(0, prologue.groups);
+  void addSystem(TrajectorySystemRecord system, int position) {
+    pushMessage(
+      system.change == TrajectorySystemChange.initial
+          ? _firstVisibleTurn(records, snapshot.partial?.turn)
+          : _enclosingTurn(
+              followingAssistantTurn[position],
+              snapshot.partial?.turn,
+              lastAssistantTurn,
+            ),
+      _LaidCell(cell: system, absTime: system.time),
+    );
   }
 
-  final models =
-      [
-        ...turns.entries.map((entry) => (entry.key as int?, entry.value)),
-        ...standaloneCompactions.map((entry) => (null, entry)),
-      ]..sort(
-        (left, right) => _firstCellIndex(left.$2) - _firstCellIndex(right.$2),
-      );
-  return [
-    for (final (turn, entry) in models)
-      TrajectoryTurnModel(
-        turn: turn,
-        groups: [
-          for (final group in entry.groups)
-            TrajectoryGroupModel(
-              kind: group.kind,
-              stepNumber: group.stepNumber,
-              description: _groupDescription(group.laid),
-              cells: [for (final laid in group.laid) laid.cell],
+  void addCompacted(TrajectoryCompactedRecord compacted) {
+    standaloneCompactions.add(
+      _TurnBucket([
+        _Group(
+          kind: TrajectoryGroupKind.compaction,
+          laid: [_LaidCell(cell: compacted, absTime: compacted.startedAt)],
+        ),
+      ]),
+    );
+  }
+
+  /// Synthetic tool rows for running calls with no record yet.
+  void addRunningCalls() {
+    final emittedCalls = {
+      for (final record in records)
+        if (record is TrajectoryToolRecord) record.callId,
+    };
+    for (final call in snapshot.runningCalls) {
+      if (emittedCalls.contains(call.callId)) continue;
+      index++;
+      pushStep(
+        call.turn,
+        call.step == 0 ? 1 : call.step,
+        _LaidCell(
+          cell: TrajectoryToolRecord(
+            index: index,
+            recordId: trajectoryRecordId(
+              kind: 'tool',
+              callId: call.callId,
+              index: index,
             ),
-        ],
-      ),
-  ];
+            callId: call.callId,
+            parentCallId: null,
+            name: call.name,
+            argsRaw: '',
+            startedAt: call.startedAt,
+          ),
+          absTime: call.startedAt,
+          toolName: call.name,
+        ),
+      );
+    }
+  }
+
+  /// Folds orphan turn-0 cells into Turn 1's prefix and builds the models.
+  List<TrajectoryTurnModel> build() {
+    final prologue = turns.remove(0);
+    if (prologue != null) {
+      bucket(1).groups.insertAll(0, prologue.groups);
+    }
+    final models =
+        [
+          ...turns.entries.map((entry) => (entry.key as int?, entry.value)),
+          ...standaloneCompactions.map((entry) => (null, entry)),
+        ]..sort(
+          (left, right) => _firstCellIndex(left.$2) - _firstCellIndex(right.$2),
+        );
+    return [
+      for (final (turn, entry) in models)
+        TrajectoryTurnModel(
+          turn: turn,
+          groups: [
+            for (final group in entry.groups)
+              TrajectoryGroupModel(
+                kind: group.kind,
+                stepNumber: group.stepNumber,
+                description: _groupDescription(group.laid),
+                cells: [for (final laid in group.laid) laid.cell],
+              ),
+          ],
+        ),
+    ];
+  }
 }
 
 /// Request-only separator row for an assistant request with no represented
@@ -356,7 +408,21 @@ int _firstCellIndex(_TurnBucket entry) {
 /// duration) so a single tool cell still spans call→result for the group
 /// wall clock; a lone time contributes that cell's own duration.
 String? _groupDescription(List<_LaidCell> laid) {
+  final times = _laidTimes(laid);
   final parts = <String>[];
+  final elapsed = _elapsedPart(times, laid);
+  if (elapsed != null) parts.add(elapsed);
+  for (final MapEntry(key: name, value: count) in _toolHistogram(
+    laid,
+  ).entries) {
+    parts.add(count > 1 ? '$name×$count' : name);
+  }
+  return parts.isEmpty ? null : parts.join(' ');
+}
+
+/// Wall-clock anchors of the laid cells; a tool adds its own end time so a
+/// single tool cell still spans call→result.
+List<DateTime> _laidTimes(List<_LaidCell> laid) {
   final times = <DateTime>[];
   for (final laidCell in laid) {
     final start = laidCell.absTime;
@@ -367,6 +433,12 @@ String? _groupDescription(List<_LaidCell> laid) {
       times.add(start.add(record.timeSeconds!));
     }
   }
+  return times;
+}
+
+/// Elapsed portion of the description: the wall span when two or more
+/// anchors exist, else the lone timed cell's own duration.
+String? _elapsedPart(List<DateTime> times, List<_LaidCell> laid) {
   if (times.length >= 2) {
     var latest = times.first;
     var earliest = times.first;
@@ -374,15 +446,21 @@ String? _groupDescription(List<_LaidCell> laid) {
       if (time.isAfter(latest)) latest = time;
       if (time.isBefore(earliest)) earliest = time;
     }
-    parts.add(
-      formatElapsedSeconds(latest.difference(earliest).inMilliseconds / 1000.0),
+    return formatElapsedSeconds(
+      latest.difference(earliest).inMilliseconds / 1000.0,
     );
-  } else if (times.length == 1) {
+  }
+  if (times.length == 1) {
     final own = _singleCellDuration(laid, times.single);
     if (own != null) {
-      parts.add(formatElapsedSeconds(own.inMilliseconds / 1000.0));
+      return formatElapsedSeconds(own.inMilliseconds / 1000.0);
     }
   }
+  return null;
+}
+
+/// Root tool name histogram; nested subtools don't count.
+Map<String, int> _toolHistogram(List<_LaidCell> laid) {
   final tools = <String, int>{};
   for (final laidCell in laid) {
     final record = laidCell.cell;
@@ -390,10 +468,7 @@ String? _groupDescription(List<_LaidCell> laid) {
     if (record.parentCallId != null) continue;
     tools[laidCell.toolName!] = (tools[laidCell.toolName!] ?? 0) + 1;
   }
-  for (final MapEntry(key: name, value: count) in tools.entries) {
-    parts.add(count > 1 ? '$name×$count' : name);
-  }
-  return parts.isEmpty ? null : parts.join(' ');
+  return tools;
 }
 
 /// Own duration of the lone timed cell in a single-time group.

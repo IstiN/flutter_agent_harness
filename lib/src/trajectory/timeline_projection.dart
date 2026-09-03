@@ -190,28 +190,46 @@ TrajectoryTimelineModel? _deriveTimedTimeline(
   required bool actualDuration,
   required bool compressIdle,
 }) {
+  final timedTurns = _timedTurns(turns);
+  final rawSpans = [for (final (_, turnSpans) in timedTurns) ...turnSpans];
+  if (rawSpans.isEmpty) return null;
+  _markRemovedIdle([...rawSpans]..sort(_compareRawSpans), compressIdle);
+  return _projectTimedTurns(timedTurns, actualDuration);
+}
+
+/// Timed turns in layout order, dropping request-only and untimed cells.
+List<(int?, List<_RawSpan>)> _timedTurns(List<TrajectoryTurnModel> turns) {
   final timedTurns = <(int?, List<_RawSpan>)>[];
   for (final turn in turns) {
-    final rawSpans = <_RawSpan>[];
-    for (final group in turn.groups) {
-      for (final cell in group.cells) {
-        if (_requestOnly(cell)) continue;
-        final range = _cellRange(cell);
-        if (range == null) continue;
-        rawSpans.add(_RawSpan(record: cell, start: range.$1, end: range.$2));
-      }
-    }
+    final rawSpans = _turnRawSpans(turn);
     if (rawSpans.isEmpty) continue;
     timedTurns.add((turn.turn, rawSpans));
   }
-  final rawSpans = [for (final (_, turnSpans) in timedTurns) ...turnSpans];
-  if (rawSpans.isEmpty) return null;
+  return timedTurns;
+}
 
-  final sorted = [...rawSpans]
-    ..sort((left, right) {
-      final byStart = left.start.compareTo(right.start);
-      return byStart != 0 ? byStart : left.end.compareTo(right.end);
-    });
+List<_RawSpan> _turnRawSpans(TrajectoryTurnModel turn) {
+  final rawSpans = <_RawSpan>[];
+  for (final group in turn.groups) {
+    for (final cell in group.cells) {
+      if (_requestOnly(cell)) continue;
+      final range = _cellRange(cell);
+      if (range == null) continue;
+      rawSpans.add(_RawSpan(record: cell, start: range.$1, end: range.$2));
+    }
+  }
+  return rawSpans;
+}
+
+/// Start order, ties broken by end.
+int _compareRawSpans(_RawSpan left, _RawSpan right) {
+  final byStart = left.start.compareTo(right.start);
+  return byStart != 0 ? byStart : left.end.compareTo(right.end);
+}
+
+/// Accumulates the idle each span's start has had compressed out, walking
+/// spans in [sorted] order.
+void _markRemovedIdle(List<_RawSpan> sorted, bool compressIdle) {
   var removedIdle = 0.0;
   double? coveredUntil;
   for (final span in sorted) {
@@ -224,7 +242,13 @@ TrajectoryTimelineModel? _deriveTimedTimeline(
         ? end
         : coveredUntil;
   }
+}
 
+/// Projects the timed turns into spans plus turn boundaries.
+TrajectoryTimelineModel _projectTimedTurns(
+  List<(int?, List<_RawSpan>)> timedTurns,
+  bool actualDuration,
+) {
   final spans = <TrajectoryTimelineSpan>[];
   final turnBoundaries = <TrajectoryTimelineTurnBoundary>[];
   for (final (turnNumber, turnSpans) in timedTurns) {
@@ -246,7 +270,6 @@ TrajectoryTimelineModel? _deriveTimedTimeline(
       );
     }
   }
-
   return TrajectoryTimelineModel(
     start: spans.map((span) => span.start).reduce(_minDouble),
     end: spans.map((span) => span.end).reduce(_maxDouble),

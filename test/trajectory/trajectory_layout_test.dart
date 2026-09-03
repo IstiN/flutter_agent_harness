@@ -84,12 +84,15 @@ TrajectoryCompactedRecord _compacted(int index) {
   );
 }
 
-TrajectorySystemRecord _system(int index) {
+TrajectorySystemRecord _system(
+  int index, {
+  TrajectorySystemChange change = TrajectorySystemChange.modelChange,
+}) {
   return TrajectorySystemRecord(
     index: index,
     recordId: 's$index',
     text: 'openai/gpt',
-    change: TrajectorySystemChange.modelChange,
+    change: change,
     time: _at(index),
   );
 }
@@ -417,6 +420,87 @@ void main() {
           reason: 'synthesized ids do not depend on history length',
         );
       }
+    });
+  });
+  group('initial system row placement', () {
+    /// Turn number of the model holding the system-kind cell.
+    int? turnOfSystem(List<TrajectoryTurnModel> turns) => turns
+        .singleWhere(
+          (turn) => turn.groups.any(
+            (group) => group.cells.any(
+              (cell) => cell.kind == TrajectoryCellKind.system,
+            ),
+          ),
+        )
+        .turn;
+
+    test('lands in turn 1 without assistant rows', () {
+      final turns = deriveTrajectoryLayout(
+        _snapshot([_system(1, change: TrajectorySystemChange.initial)]),
+      );
+      expect(turns, hasLength(1));
+      expect(turns.single.turn, 1);
+      expect(
+        turns.single.groups.single.cells.single,
+        isA<TrajectorySystemRecord>(),
+      );
+    });
+
+    test('follows the earliest assistant turn', () {
+      final turns = deriveTrajectoryLayout(
+        _snapshot([
+          _assistant(1, turn: 3, step: 1),
+          _assistant(2, turn: 5, step: 1),
+          _system(3, change: TrajectorySystemChange.initial),
+        ]),
+      );
+      expect(turnOfSystem(turns), 3);
+    });
+
+    test('folds into a smaller streaming partial turn', () {
+      final turns = deriveTrajectoryLayout(
+        _snapshot(
+          [
+            _assistant(1, turn: 3, step: 1),
+            _system(2, change: TrajectorySystemChange.initial),
+          ],
+          partial: const TrajectoryPartialAssistant(
+            messageId: 'p1',
+            turn: 1,
+            step: 1,
+            blocks: [],
+          ),
+        ),
+      );
+      expect(turnOfSystem(turns), 1);
+    });
+
+    test('ignores turn-0 assistant rows', () {
+      final turns = deriveTrajectoryLayout(
+        _snapshot([
+          _assistant(1, turn: 0, step: 1),
+          _system(2, change: TrajectorySystemChange.initial),
+        ]),
+      );
+      expect(turns, hasLength(1));
+      expect(turns.single.turn, 1);
+      expect(turnOfSystem(turns), 1);
+    });
+
+    test('ignores a turn-0 partial', () {
+      final turns = deriveTrajectoryLayout(
+        _snapshot(
+          [_system(1, change: TrajectorySystemChange.initial)],
+          partial: const TrajectoryPartialAssistant(
+            messageId: 'p0',
+            turn: 0,
+            step: 1,
+            blocks: [],
+          ),
+        ),
+      );
+      expect(turns, hasLength(1));
+      expect(turns.single.turn, 1);
     });
   });
 }
