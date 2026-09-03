@@ -2386,7 +2386,8 @@
 
 - fix(trajectory): thread ToolCall.parentCallId so subtool rows replay from sessions
 
-## Unreleased
+## 0.1.287
+
 
 - feat(tools): capability-gated tool availability (issue #19) — the pure
   decision layer (`lib/src/tools/availability.dart`: `ToolsConfig` yaml/JSON
@@ -2416,3 +2417,5 @@
   its description carries the SQLite section only while sqlite is enabled,
   and the variant swap re-registers in place (shared snapshot store, so
   hashline anchors recorded by either variant validate for `edit`).
+
+## Unreleased
