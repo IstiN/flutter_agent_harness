@@ -71,3 +71,4 @@ dependency_overrides:
     path: ../fa_llm
 
 flutter:
+  uses-material-design: true

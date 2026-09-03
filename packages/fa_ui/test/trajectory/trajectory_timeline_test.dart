@@ -254,6 +254,108 @@ void main() {
     });
   });
 
+  test('timed viewports clamp to the 20ms minimum zoom', () {
+    final model = TrajectoryTimelineModel(
+      start: 0,
+      end: 60000,
+      spans: const [],
+      turnBoundaries: const [],
+    );
+    final clamped = trajectoryTimelineClampViewport(
+      const TrajectoryTimelineViewport(start: 1000, duration: 2),
+      model,
+      TrajectoryTimelineMode.duration,
+    );
+    expect(clamped.duration, 20);
+    // Sequence mode keeps its 4-slot minimum instead.
+    final sequence = trajectoryTimelineClampViewport(
+      const TrajectoryTimelineViewport(start: 1000, duration: 2),
+      model,
+      TrajectoryTimelineMode.sequence,
+    );
+    expect(sequence.duration, 4);
+  });
+
+  test('record timing reads the wall clock per kind', () {
+    final base = DateTime.utc(2026, 1, 1, 12);
+    const seconds = Duration(seconds: 2);
+    (DateTime?, int?) timingOf(TrajectoryRecord record) =>
+        trajectoryTimelineRecordTiming(record);
+
+    var (at, ms) = timingOf(
+      TrajectoryAssistantRecord(
+        index: 1,
+        recordId: 'a',
+        messageId: 'm',
+        turn: 1,
+        step: 1,
+        stepStartTime: base,
+        timeSeconds: seconds,
+      ),
+    );
+    expect(at, base);
+    expect(ms, 2000);
+
+    (at, ms) = timingOf(
+      TrajectoryToolRecord(
+        index: 2,
+        recordId: 't',
+        callId: 'c',
+        parentCallId: null,
+        name: 'bash',
+        argsRaw: '',
+        startedAt: base,
+        timeSeconds: seconds,
+      ),
+    );
+    expect(at, base);
+    expect(ms, 2000);
+
+    (at, ms) = timingOf(
+      TrajectoryUserRecord(
+        index: 3,
+        recordId: 'u',
+        text: 'hi',
+        opensTurn: true,
+        startedAt: base,
+      ),
+    );
+    expect(at, base);
+    expect(ms, isNull);
+
+    (at, ms) = timingOf(
+      TrajectoryCompactedRecord(
+        index: 4,
+        recordId: 'k',
+        text: '',
+        summary: '',
+        startedAt: base,
+        timeSeconds: seconds,
+      ),
+    );
+    expect(at, base);
+    expect(ms, 2000);
+
+    (at, ms) = timingOf(
+      TrajectorySystemRecord(
+        index: 5,
+        recordId: 's',
+        text: '',
+        change: TrajectorySystemChange.initial,
+        time: base,
+      ),
+    );
+    expect(at, base);
+    expect(ms, isNull);
+
+    // Context injections carry no timing at all.
+    (at, ms) = timingOf(
+      const TrajectoryContextRecord(index: 6, recordId: 'x', text: ''),
+    );
+    expect(at, isNull);
+    expect(ms, isNull);
+  });
+
   group('assistant TTFT fraction', () {
     final base = DateTime.utc(2026, 1, 1, 12);
 

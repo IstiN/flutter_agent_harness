@@ -133,4 +133,35 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
     service.feed.dispose();
   });
+
+  testWidgets('swapping the stream rebinds the panel', (tester) async {
+    final first = TrajectoryServiceFeed();
+    final second = TrajectoryServiceFeed();
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+
+    second.append(
+      MessageRecord(
+        id: 'u9',
+        parentId: null,
+        timestamp: at,
+        message: UserMessage.text('from the second feed'),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: FaTrajectoryPanel(trajectory: first.stream)),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: FaTrajectoryPanel(trajectory: second.stream)),
+      ),
+    );
+    await tester.pump(); // deliver the replayed latest snapshot
+    await tester.pumpAndSettle();
+
+    expect(find.text('from the second feed'), findsOneWidget);
+  });
 }

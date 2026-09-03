@@ -103,6 +103,38 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('swapping the controller rebinds the view', (tester) async {
+    final first = fixtureController();
+    final second = fixtureController();
+
+    await _pump(tester, TrajectoryView(controller: first));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: TrajectoryView(controller: second)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The second controller's content renders through the same state.
+    expect(find.text('Run the deployment'), findsOneWidget);
+    first.dispose();
+    second.dispose();
+  });
+
+  testWidgets('tapping a row selects it and opens the details sheet', (
+    tester,
+  ) async {
+    final controller = fixtureController();
+
+    await _pump(tester, TrajectoryView(controller: controller));
+    await tester.tap(find.text('Deploying now'));
+    await tester.pumpAndSettle();
+
+    expect(controller.selectedRecordId, 'a1');
+    expect(find.text('Event details'), findsOneWidget);
+    controller.dispose();
+  });
+
   test('string resolution falls back by locale', () {
     expect(
       TrajectoryStrings.forLocale(const Locale('en')),
