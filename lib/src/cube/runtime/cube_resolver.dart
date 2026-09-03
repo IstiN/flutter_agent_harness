@@ -1,34 +1,41 @@
 /// Locates and parses a cube manifest for a run: by explicit file path
-/// (highest precedence) or by name from `<cwd>/.fah/cubes/<name>.yaml`.
+/// (highest precedence), by name from `<cwd>/.fah/cubes/<name>.yaml`, or —
+/// when no project file exists — as a built-in security-level preset
+/// (`l1-core` … `l3-full`, bare level = conservative core axis). A project
+/// manifest with the same id wins over the preset body.
 ///
 /// Pure Dart: all file access goes through the [ExecutionEnv] portability
 /// boundary, so resolution works identically against the real filesystem,
 /// the Flutter sandbox and [MemoryExecutionEnv] in tests.
 ///
 /// Failures are loud: a missing or unreadable file, invalid yaml or a
-/// schema violation all throw [ConfigException]. Requesting nothing
+/// schema violation all throw [ConfigException] (the not-found error lists
+/// the built-in preset ids for discoverability). Requesting nothing
 /// (neither [CubeResolver.resolve] `path` nor `name`) yields `null` — no
 /// cube requested, no cube applied.
 library;
 
 import 'package:yaml/yaml.dart';
 
-import '../../exceptions.dart';
-import '../config/cube_spec.dart';
 import '../../env/execution_env.dart';
+import '../../exceptions.dart';
+import '../config/cube_presets.dart';
+import '../config/cube_spec.dart';
 
-/// Resolves [CubeSpec] manifests by path or name.
+/// Resolves [CubeSpec] manifests by path, name or built-in preset.
 final class CubeResolver {
   /// Resolves a cube manifest.
   ///
   /// - [path] — explicit manifest file (highest precedence). A leading `~/`
   ///   is expanded with [homeDir] when known.
-  /// - [name] — looks up `<env.cwd>/.fah/cubes/<name>.yaml`.
+  /// - [name] — looks up `<env.cwd>/.fah/cubes/<name>.yaml`, falling back to
+  ///   the built-in preset with that id (project file wins over the preset).
   /// - neither — returns `null`.
   ///
   /// A missing/unreadable file throws
-  /// `ConfigException('cube: file not found: <path>')`; invalid yaml or a
-  /// schema violation propagates as [ConfigException] from the parser.
+  /// `ConfigException('cube: file not found: <path> …')` with the preset
+  /// ids appended; invalid yaml or a schema violation propagates as
+  /// [ConfigException] from the parser.
   static Future<CubeSpec?> resolve({
     required ExecutionEnv env,
     String? path,
@@ -49,10 +56,17 @@ final class CubeResolver {
     } else {
       return null;
     }
-    final content = switch (await env.readTextFile(filePath)) {
-      Ok(:final value) => value,
-      Err() => throw ConfigException('cube: file not found: $filePath'),
-    };
+    final read = await env.readTextFile(filePath);
+    if (read is Err) {
+      // A name lookup falls back to the built-in security-level presets;
+      // explicit paths and non-preset names stay loud.
+      if (name != null) {
+        final preset = CubePresets.maybeSpec(name: name, cwd: env.cwd);
+        if (preset != null) return preset;
+      }
+      throw _notFound(filePath, name);
+    }
+    final content = (read as Ok<String, FileError>).value;
     final Object? document;
     try {
       document = loadYaml(content);
@@ -62,6 +76,20 @@ final class CubeResolver {
       );
     }
     return CubeSpec.fromYaml(document, sourcePath: filePath);
+  }
+
+  /// The not-found error for a name lookup: when [name] is a built-in
+  /// preset id the resolver has already fallen back (see [resolve]); for
+  /// other names the error lists the available ids.
+  static ConfigException _notFound(String filePath, String? name) {
+    if (name != null && CubePresets.byId(name) != null) {
+      return ConfigException('cube: file not found: $filePath');
+    }
+    final ids = CubePresets.all.map((preset) => preset.id).join(', ');
+    return ConfigException(
+      'cube: file not found: $filePath '
+      '(built-in security-level presets: $ids)',
+    );
   }
 
   /// Expands a leading `~`/`~/` prefix; `null` when [homeDir] is missing.

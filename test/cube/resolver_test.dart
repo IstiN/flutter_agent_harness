@@ -68,16 +68,69 @@ void main() {
 
     test('throws a clean ConfigException for a missing file', () async {
       final env = MemoryExecutionEnv(cwd: '/work');
-      expect(
-        () => CubeResolver.resolve(env: env, name: 'missing'),
+      await expectLater(
+        CubeResolver.resolve(env: env, name: 'missing'),
         throwsA(
           isA<ConfigException>().having(
             (e) => e.message,
             'message',
-            'cube: file not found: /work/.fah/cubes/missing.yaml',
+            allOf(
+              contains('cube: file not found: /work/.fah/cubes/missing.yaml'),
+              // Discoverability: the error lists the built-in preset ids so
+              // `fa run --cube l2` still lands somewhere useful.
+              contains('l2-core'),
+              contains('l3-full'),
+            ),
           ),
         ),
       );
+    });
+
+    group('built-in preset fallback', () {
+      test('a preset id resolves to a generated manifest', () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final spec = await CubeResolver.resolve(env: env, name: 'l2-full');
+        expect(spec, isNotNull);
+        expect(spec!.name, 'l2-full');
+        expect(spec.filesystem.workspace, '/work');
+        expect(spec.filesystem.mounts, isNotEmpty);
+      });
+
+      test('a bare level id resolves to the conservative core axis', () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final spec = await CubeResolver.resolve(env: env, name: 'L3');
+        expect(spec!.name, 'l3-core');
+      });
+
+      test(
+        'a project manifest with the same id wins over the preset',
+        () async {
+          final env = await envWith('/work/.fah/cubes/l2-full.yaml', '''
+apiVersion: fa/v1
+kind: Cube
+metadata:
+  name: l2-full
+spec:
+  tools:
+    allow: [curl]
+''');
+          final spec = await CubeResolver.resolve(env: env, name: 'l2-full');
+          expect(spec!.tools.permits('curl'), isTrue);
+          expect(
+            spec.filesystem.mounts,
+            isEmpty,
+            reason: 'the project file replaces the generated preset body',
+          );
+        },
+      );
+
+      test('a non-preset name still fails loudly', () {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        expect(
+          () => CubeResolver.resolve(env: env, name: 'no-such-cube'),
+          throwsA(isA<ConfigException>()),
+        );
+      });
     });
 
     test('throws a clean ConfigException for a missing explicit path', () {
