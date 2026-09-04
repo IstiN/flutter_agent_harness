@@ -1,3 +1,6 @@
+@Tags(['integration'])
+library;
+
 import 'dart:async';
 import 'dart:io';
 
@@ -22,7 +25,7 @@ final class _OutputCollector {
 
   Future<String> waitFor(
     Pattern pattern, {
-    Duration timeout = const Duration(seconds: 5),
+    Duration timeout = const Duration(seconds: 20),
   }) async {
     final completer = Completer<String>();
     Timer? timer;

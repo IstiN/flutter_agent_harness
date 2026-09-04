@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.294
+
+- feat(redact): layered secret redaction pipeline (issue #24) — ten pure
+  layers (registered/path/vendor/prefix/pem/asn1/connection/context/
+  entropy/pii) merged priority-first into `RedactionPipeline.scan/redact`
+  with idempotent `[REDACTED:<kind>]` markers, allowlist + data-URL
+  pass-through, live `RedactionConfig`, and per-layer/per-tool stats.
+  Agent hooks mask tool results BEFORE session persist, mask the outgoing
+  context, deny credential-file read/bash in `blockMode`, and mask user
+  prompts; write-side tools (write/edit/checkpoint/MCP write-ish) are
+  never filtered. `redact:` config section, `/redact` command, app wiring,
+  docs/redaction.md.
+- test: tui_prototype_snapshot marked `integration` — the real-PTY +
+  `dart run` cold start intermittently exceeded the gate timeouts on CI,
+  which had been silently blocking every tag publish since ~0.1.214.
+
 ## 0.1.289
 
 - fix(roles): transient transport failures no longer kill the turn. A
