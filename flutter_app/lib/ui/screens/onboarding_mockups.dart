@@ -565,7 +565,7 @@ class _FlowCard extends StatelessWidget {
             child: const Icon(Icons.check, size: 18, color: _kGreen),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -574,15 +574,15 @@ class _FlowCard extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: _kInk,
+                    color: _onbInk(context),
                     height: 1.3,
                   ),
                 ),
-                SizedBox(height: 5),
+                const SizedBox(height: 5),
                 Row(
                   children: [
-                    Icon(Icons.timer_outlined, size: 13, color: _kGray),
-                    SizedBox(width: 5),
+                    const Icon(Icons.timer_outlined, size: 13, color: _kGray),
+                    const SizedBox(width: 5),
                     Flexible(
                       child: Text.rich(
                         TextSpan(
@@ -592,7 +592,7 @@ class _FlowCard extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: _kInk,
+                                color: _onbInk(context),
                               ),
                             ),
                             TextSpan(
@@ -631,17 +631,17 @@ class _FlowDiagram extends StatelessWidget {
           child: _card(
             context,
             padding: const EdgeInsets.all(12),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.auto_awesome, size: 16, color: _kPrimary),
-                SizedBox(width: 8),
+                const Icon(Icons.auto_awesome, size: 16, color: _kPrimary),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'Build a focus timer with work and break sessions.',
                     style: TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
-                      color: _kInk,
+                      color: _onbInk(context),
                       height: 1.3,
                     ),
                   ),
@@ -658,10 +658,10 @@ class _FlowDiagram extends StatelessWidget {
           child: _card(
             context,
             padding: const EdgeInsets.all(12),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.timer_outlined, size: 16, color: _kPrimary),
-                SizedBox(width: 8),
+                const Icon(Icons.timer_outlined, size: 16, color: _kPrimary),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -671,7 +671,7 @@ class _FlowDiagram extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: _kInk,
+                          color: _onbInk(context),
                         ),
                       ),
                       Text(
@@ -787,16 +787,20 @@ class _PermCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-                color: _kInk,
+                color: _onbInk(context),
               ),
             ),
             const SizedBox(height: 4),
             Text(
               desc,
-              style: const TextStyle(fontSize: 11, color: _kGray, height: 1.35),
+              style: TextStyle(
+                fontSize: 11,
+                color: _onbGray(context),
+                height: 1.35,
+              ),
             ),
             const SizedBox(height: 8),
             askPill,
@@ -820,18 +824,18 @@ class _PermCard extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w700,
-                    color: _kInk,
+                    color: _onbInk(context),
                   ),
                 ),
                 const SizedBox(height: 3),
                 Text(
                   desc,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11.5,
-                    color: _kGray,
+                    color: _onbGray(context),
                     height: 1.35,
                   ),
                 ),
@@ -858,12 +862,12 @@ class _WhatYouGet extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
+        Text(
           "What you'll get",
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: _kGray,
+            color: _onbGray(context),
           ),
         ),
         const SizedBox(height: 10),
@@ -872,7 +876,7 @@ class _WhatYouGet extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              const Column(
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
@@ -880,11 +884,14 @@ class _WhatYouGet extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 26,
                       fontWeight: FontWeight.w800,
-                      color: _kInk,
+                      color: _onbInk(context),
                       letterSpacing: -0.5,
                     ),
                   ),
-                  Text('Focus', style: TextStyle(fontSize: 11, color: _kGray)),
+                  Text(
+                    'Focus',
+                    style: TextStyle(fontSize: 11, color: _onbGray(context)),
+                  ),
                 ],
               ),
               const Spacer(),
@@ -1118,18 +1125,18 @@ class _TimelineCard extends StatelessWidget {
                     children: [
                       Text(
                         _entries[i].$2,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
-                          color: _kInk,
+                          color: _onbInk(context),
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         _entries[i].$3,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11.5,
-                          color: _kGray,
+                          color: _onbGray(context),
                           height: 1.35,
                         ),
                       ),
@@ -1137,9 +1144,9 @@ class _TimelineCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                const Text(
+                Text(
                   'Just now',
-                  style: TextStyle(fontSize: 10, color: _kGrayLight),
+                  style: TextStyle(fontSize: 10, color: _onbGrayLight(context)),
                 ),
               ],
             ),
@@ -1177,7 +1184,7 @@ class _CreatedCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1186,10 +1193,10 @@ class _CreatedCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 14.5,
                         fontWeight: FontWeight.w700,
-                        color: _kInk,
+                        color: _onbInk(context),
                       ),
                     ),
-                    SizedBox(height: 3),
+                    const SizedBox(height: 3),
                     Row(
                       children: [
                         Icon(Icons.circle, size: 6, color: _kGreen),
@@ -1347,24 +1354,24 @@ class _MyAppsPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Row(
+          Row(
             children: [
               Text(
                 'My Apps',
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
-                  color: _kInk,
+                  color: _onbInk(context),
                 ),
               ),
-              Spacer(),
-              Icon(Icons.tune, size: 14, color: _kGrayLight),
-              SizedBox(width: 4),
+              const Spacer(),
+              Icon(Icons.tune, size: 14, color: _onbGrayLight(context)),
+              const SizedBox(width: 4),
               Text(
                 'Customize',
                 style: TextStyle(
                   fontSize: 11,
-                  color: _kGray,
+                  color: _onbGray(context),
                   fontWeight: FontWeight.w500,
                 ),
               ),

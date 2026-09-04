@@ -61,14 +61,29 @@ void main() {
       await expectGolden(tester, 'onboarding_p2_dark_phone');
     });
 
+    testWidgets('page 2 — Choose provider (light, phone)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 1, theme: buildFahThemeLight());
+      await expectGolden(tester, 'onboarding_p2_light_phone');
+    });
+
     testWidgets('page 3 — Permissions (dark, phone)', (tester) async {
       await _pumpOnboardingPage(tester, page: 2);
       await expectGolden(tester, 'onboarding_p3_dark_phone');
     });
 
+    testWidgets('page 3 — Permissions (light, phone)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 2, theme: buildFahThemeLight());
+      await expectGolden(tester, 'onboarding_p3_light_phone');
+    });
+
     testWidgets('page 4 — Sandbox ready (dark, phone)', (tester) async {
       await _pumpOnboardingPage(tester, page: 3);
       await expectGolden(tester, 'onboarding_p4_dark_phone');
+    });
+
+    testWidgets('page 4 — Sandbox ready (light, phone)', (tester) async {
+      await _pumpOnboardingPage(tester, page: 3, theme: buildFahThemeLight());
+      await expectGolden(tester, 'onboarding_p4_light_phone');
     });
 
     testWidgets('page 1 — Start with an idea (dark, desktop)', (tester) async {
