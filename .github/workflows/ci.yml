@@ -130,11 +130,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The core package is currently marked private in pubspec.yaml
+      # (publish_to: none) — honor that instead of failing every tag.
+      # Removing the flag from pubspec is all it takes to re-enable this.
+      - id: gate
+        name: Publish gate
+        run: |
+          if grep -Eq '^publish_to:[[:space:]]*none' pubspec.yaml; then
+            echo "publishable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::pubspec sets publish_to: none — the core package is private, skipping pub.dev publish"
+          else
+            echo "publishable=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: dart-lang/setup-dart@v1
+        if: steps.gate.outputs.publishable == 'true'
         with:
           sdk: stable
 
       - name: Verify tag matches pubspec version
+        if: steps.gate.outputs.publishable == 'true'
         run: |
           tag="${GITHUB_REF_NAME#v}"
           version=$(grep '^version:' pubspec.yaml | awk '{print $2}')
@@ -145,8 +160,10 @@ jobs:
           fi
 
       - run: dart pub get
+        if: steps.gate.outputs.publishable == 'true'
 
       - name: Publish (automated publishing via OIDC)
+        if: steps.gate.outputs.publishable == 'true'
         run: dart pub publish --force
 
   binaries:
