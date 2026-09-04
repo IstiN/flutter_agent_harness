@@ -6,7 +6,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show ModelsEndpointFetcher, isCodeMieBaseUrl;
+    show ModelsEndpointFetcher, isCodeMieBaseUrl, isCopilotBaseUrl;
 
 import 'package:fa_ui/src/providers/add_provider_picker.dart';
 import 'package:fa_ui/src/providers/connection.dart';
@@ -316,7 +316,10 @@ class ProvidersSection extends StatelessWidget {
         registry: registry,
         // SSO-backed providers (CodeMie) get a Re-authenticate button:
         // the cookie key expires and cannot be refreshed by re-typing.
-        onReauthenticate: reauth != null && isCodeMieBaseUrl(provider.baseUrl)
+        onReauthenticate:
+            reauth != null &&
+                (isCodeMieBaseUrl(provider.baseUrl) ||
+                    isCopilotBaseUrl(provider.baseUrl))
             ? (ctx) => reauth(ctx, provider)
             : null,
         modelsFetcher: modelsFetcher,

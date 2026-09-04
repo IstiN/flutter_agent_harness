@@ -2006,6 +2006,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onProviderReauthenticate: (ctx, provider) async {
                   final registry = widget.registry;
                   if (registry == null) return false;
+                  // Copilot entries re-auth through the GitHub device-code
+                  // flow (the same sheet the connect uses; signing into the
+                  // same account refreshes the entry's key and keeps its
+                  // model). CodeMie entries re-run their SSO flow.
+                  if (isCopilotBaseUrl(provider.baseUrl)) {
+                    return runCopilotConnectFlow(
+                      context: ctx,
+                      registry: registry,
+                      service: service,
+                      lastConnectionStore:
+                          widget.lastConnectionStore ??
+                          LastConnectionStore.inMemory(),
+                    );
+                  }
                   return runCodemieSsoFlow(
                     context: ctx,
                     registry: registry,
