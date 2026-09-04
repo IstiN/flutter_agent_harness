@@ -27,7 +27,7 @@ void main() {
     String? Function(String name)? envVarValue,
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
-    void Function(String providerKind, String apiKey)? onProviderChanged,
+    Future<void> Function(String providerKind, String apiKey)? onProviderChanged,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
@@ -883,8 +883,10 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    // The guard fired, the trim recovered the window…
-    expect(output, contains('Context window exhausted'));
+    // The guard fired — as a calm yellow note, never the red error line
+    // (auto-compaction recovers right after)…
+    expect(output, contains('note: Context window exhausted'));
+    expect(output, isNot(contains('error: Context window exhausted')));
     expect(output, contains('[auto-compacted]'));
     // …and the turn visibly continued on its own.
     expect(output, contains('auto-compacted; continuing'));

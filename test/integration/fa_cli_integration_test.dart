@@ -5,6 +5,7 @@ library;
 
 import 'dart:io';
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';
@@ -189,6 +190,82 @@ void main() {
       // Cancel the prompt and the wizard.
       harness.sendEscape();
       await harness.waitForOutput();
+    });
+
+    test('/model switch is scoped to the launch folder', () async {
+      final tempHome = _tempHome();
+      final sessionsRoot = Directory.systemTemp.createTempSync('fa_sess_');
+      // The CLI resolves its cwd through getcwd(), which canonicalizes the
+      // /var → /private/var symlink on macOS; use the resolved paths for
+      // spawns and assertions alike.
+      final dirA = Directory(
+        Directory.systemTemp.createTempSync('fa_folder_a_').path,
+      ).resolveSymbolicLinksSync();
+      final dirB = Directory(
+        Directory.systemTemp.createTempSync('fa_folder_b_').path,
+      ).resolveSymbolicLinksSync();
+      addTearDown(() async {
+        if (sessionsRoot.existsSync()) {
+          sessionsRoot.deleteSync(recursive: true);
+        }
+        if (Directory(dirA).existsSync()) {
+          Directory(dirA).deleteSync(recursive: true);
+        }
+        if (Directory(dirB).existsSync()) {
+          Directory(dirB).deleteSync(recursive: true);
+        }
+      });
+      Future<FaCliHarness> spawnIn(String dir) => FaCliHarness.spawn(
+        workingDirectory: dir,
+        args: ['--session-root', sessionsRoot.path],
+        extraEnv: {'HOME': tempHome.path},
+      );
+
+      // 1) First launch in folder A: the seed model from config.yaml.
+      final h1 = await spawnIn(dirA);
+      await h1.waitForBoot();
+      expect(h1.screenText, contains('test-model'));
+      expect(h1.screenText, isNot(contains('folder-model')));
+
+      await h1.runSlashCommand('/model folder-model');
+      await h1.waitForText(
+        'switched model to folder-model',
+        timeout: const Duration(seconds: 20),
+      );
+      final stateFileA = File(
+        '$sessionsRoot/${encodeSessionCwd(dirA)}/model-state.json',
+      );
+      // The onModelChanged persistence is fire-and-forget — poll for the
+      // file before tearing the process down.
+      var saved = false;
+      final deadline = DateTime.now().add(const Duration(seconds: 30));
+      while (!saved && DateTime.now().isBefore(deadline)) {
+        saved = stateFileA.existsSync();
+        if (!saved) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        }
+      }
+      // The save rides the awaited onModelChanged chain — eventual by
+      // design; the RELAUNCH below is the user-facing guarantee.
+      await h1.close();
+      // …while the global config keeps its seed model.
+      expect(
+        File('${tempHome.path}/.fah/config.yaml').readAsStringSync(),
+        contains('test-model'),
+      );
+
+      final h2 = await spawnIn(dirA);
+      await h2.waitForBoot();
+      expect(h2.screenText, contains('folder-model'));
+      await h2.close();
+
+      //    NOT leak in (the pre-fix bug this test pins).
+      final h3 = await spawnIn(dirB);
+      await h3.waitForBoot();
+      expect(h3.screenText, contains('test-model'));
+      expect(h3.screenText, isNot(contains('folder-model')));
+      await h3.close();
+      tempHome.deleteSync(recursive: true);
     });
   });
 }

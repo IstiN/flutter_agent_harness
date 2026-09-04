@@ -98,18 +98,28 @@ Future<bool> runChatGptOAuthFlow({
   const baseUrl = chatGptCodexBaseUrl;
   final encoded = credentials.encode();
 
-  // The entry name IS the account slot (like `copilot-<login>`): it is
-  // derived from the OAuth account's email so a second ChatGPT account
-  // lands in its own entry instead of overwriting the first one's
-  // credentials.
-  final name = _chatGptEntryName(credentials, registry);
-
-  // Re-auth updates only the matching entry (matched by entry name +
-  // endpoint) and keeps its model choice; a different account creates a
-  // new entry. Multiple accounts are first-class, like the CLI.
-  final existing = registry.providers
-      .where((p) => p.name == name && p.baseUrl == baseUrl)
-      .firstOrNull;
+  // The entry name IS the signed-in account's email. Re-auth: an entry
+  // for THIS account (email + endpoint) already exists — keep its name so
+  // the flow refreshes it in place. Without an email claim the account
+  // identity is unknown — a name match is never treated as re-auth.
+  // Otherwise a new account gets a de-duplicated name (-2…), so two
+  // accounts never share one entry.
+  final email = _chatGptEmail(credentials.idToken);
+  final identity = email ?? 'ChatGPT';
+  final existing = email == null
+      ? null
+      : registry.providers
+            .where((p) => p.name == identity && p.baseUrl == baseUrl)
+            .firstOrNull;
+  var name = identity;
+  if (existing == null) {
+    var suffix = 2;
+    while (registry.providers.any(
+      (p) => p.name == name && p.baseUrl == chatGptCodexBaseUrl,
+    )) {
+      name = '$identity-${suffix++}';
+    }
+  }
   final provider =
       existing ??
       await registry.add(
@@ -161,25 +171,6 @@ String chatgptEntryKeyName(String entryName) {
   return sanitized.isEmpty || sanitized == host
       ? 'FA_KEY_$host'
       : 'FA_KEY_${host}_$sanitized';
-}
-
-/// The registry entry name for the signed-in ChatGPT account: the email
-/// claim of the OAuth id_token (the account identity, like
-/// `copilot-<login>`), de-duplicated with `-2`… so two accounts never
-/// share one entry.
-String _chatGptEntryName(
-  ChatGptOAuthCredentials credentials,
-  ProviderRegistry registry,
-) {
-  final email = _chatGptEmail(credentials.idToken) ?? 'ChatGPT';
-  var name = email;
-  var suffix = 2;
-  while (registry.providers.any(
-    (p) => p.name == name && p.baseUrl == chatGptCodexBaseUrl,
-  )) {
-    name = '$email-${suffix++}';
-  }
-  return name;
 }
 
 /// The `email` claim of the OAuth id_token JWT payload, or null when the

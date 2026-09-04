@@ -130,6 +130,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get widgetsCatalogNotInstalled => 'Widget is not installed yet.';
+
+  @override
   String get widgetsCatalogOffline =>
       'Offline — showing the last known catalog.';
 

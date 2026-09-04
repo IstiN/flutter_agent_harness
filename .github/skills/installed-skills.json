@@ -1,0 +1,5 @@
+{
+  "version": "latest",
+  "installed_skills": ["dmtools"],
+  "active_commands": ["/dmtools"]
+}

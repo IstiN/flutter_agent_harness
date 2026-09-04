@@ -150,13 +150,10 @@
                 "cpu": {
                   "type": "string",
                   "pattern": "\\S",
-                  "description": "Kept verbatim (e.g. \"50%\") and round-tripped in the spec; not enforced by any backend today (cgroup v2 cpu.max is future work; SBPL has no cpu primitive)."
+                  "description": "Kept verbatim (e.g. \"50%\"); interpreted by the enforcing backend."
                 },
                 "memory": { "$ref": "#/$defs/byteSize" },
-                "disk": {
-                  "$ref": "#/$defs/byteSize",
-                  "description": "Cache-prune bound only: prunes old cube-cache entries; never a run quota."
-                }
+                "disk": { "$ref": "#/$defs/byteSize" }
               }
             },
             "timeout": { "$ref": "#/$defs/duration" }

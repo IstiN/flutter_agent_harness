@@ -350,6 +350,22 @@ final class LocalShell implements Shell, BackgroundShell {
   static Map<String, String> _environment(ShellExecOptions? options) {
     final given = options?.env;
     final base = <String, String>{...Platform.environment, ...?given};
+    // Non-interactive tool runs: a git clone against an auth-requiring
+    // remote used to open /dev/tty ("Username for 'https://…':") and block
+    // the whole agent run on the TUI-owned terminal — the session looked
+    // stuck at the input zone with dead keyboard input. Defaults (a
+    // caller's explicit env or the host environment still wins):
+    // GIT_TERMINAL_PROMPT=0 makes git fail fast with "terminal prompts
+    // disabled", GIT_ASKPASS=echo keeps GUI credential helpers out of an
+    // unattended child (echo returns an empty credential — auth fails
+    // immediately instead of prompting).
+    const nonInteractiveDefaults = {
+      'GIT_TERMINAL_PROMPT': '0',
+      'GIT_ASKPASS': 'echo',
+    };
+    for (final entry in nonInteractiveDefaults.entries) {
+      if (!base.containsKey(entry.key)) base[entry.key] = entry.value;
+    }
     var current = base['PATH'] ?? '';
     if (current.isEmpty) {
       // An explicit env without a PATH (or a minimal GUI-app PATH): keep

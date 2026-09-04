@@ -50,26 +50,10 @@ final class CubeFsGuard implements FileSystem {
   /// The policy actually enforced: the spec's filesystem policy, with the
   /// workspace root swapped to [workspaceRoot] when supplied (the cube's
   /// `/workspace` is realized as the process cwd, so the policy must judge
-  /// paths against the real root) and every workspace mount remapped with
-  /// it via [resolveWorkspacePath] — mounts outside the workspace stay as
-  /// written.
-  CubeFsPolicy get _policy {
-    final root = _workspaceRoot;
-    final specPolicy = spec.filesystem;
-    if (root == null) return specPolicy;
-    return CubeFsPolicy(
-      workspace: root,
-      mounts: [
-        for (final mount in specPolicy.mounts)
-          CubeMount(
-            path:
-                resolveWorkspacePath(mount.path, specPolicy.workspace, root) ??
-                mount.path,
-            access: mount.access,
-          ),
-      ],
-    );
-  }
+  /// paths against the real root).
+  CubeFsPolicy get _policy => _workspaceRoot == null
+      ? spec.filesystem
+      : CubeFsPolicy(workspace: _workspaceRoot, mounts: spec.filesystem.mounts);
 
   /// The access level the policy grants to [path], with relative paths
   /// resolved against the delegate cwd first.

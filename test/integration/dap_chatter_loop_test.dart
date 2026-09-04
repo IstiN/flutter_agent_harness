@@ -105,7 +105,7 @@ class LoopMockProvider {
                 {
                   'delta': delta,
                   'index': 0,
-                  if (finish != null) 'finish_reason': finish,
+                  'finish_reason': ?finish,
                 },
               ],
             }),

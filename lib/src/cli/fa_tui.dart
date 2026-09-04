@@ -202,7 +202,7 @@ final class _WrapCache {
 }
 
 /// Physical rows in [s] — identical to `s.split('\n').length`, minus the
-/// per-frame List<String> allocation. Used by the view assembly for cursor
+/// per-frame `List<String>` allocation. Used by the view assembly for cursor
 /// row math on every rendered frame.
 int _lineCount(String s) {
   var n = 1;

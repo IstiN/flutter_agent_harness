@@ -159,7 +159,7 @@ extension on AgentCli {
       ('n', 'No, cancel', 'keep the provider'),
     ]);
     if (answer != 'y') return io.writeln('delete cancelled');
-    removeProvider(entry);
+    await removeProvider(entry);
   }
 
   /// The flow's `/models` fetch with the same key resolution the provider
@@ -432,7 +432,7 @@ extension on AgentCli {
   /// Per-provider model memory: while a saved custom provider is active, a
   /// `/model` switch rewrites the entry's last-used model (the host persists
   /// it with the usual config save).
-  void _recordCustomModel(String modelId) {
+  Future<void> _recordCustomModel(String modelId) async {
     final active = _activeCustomName;
     if (active != null) {
       config.customProviders?.updateModel(active, modelId);
@@ -442,7 +442,7 @@ extension on AgentCli {
     // catalog-provider `/model` switch (active == null) would save nothing
     // — the next start restored the last provider switch's model instead
     // of the one the user picked.
-    config.onModelChanged?.call(_agent.state.model);
+    await config.onModelChanged?.call(_agent.state.model);
   }
 
   /// The TUI provider picker (bare `/provider`): saved custom providers
@@ -1614,7 +1614,7 @@ extension on AgentCli {
     io.writeln('  key: SSO cookie (saved as $keyName)');
     io.writeln(modelLine);
     _printRoleModelsNote();
-    config.onProviderChanged?.call(_providerKind, _apiKey);
+    await config.onProviderChanged?.call(_providerKind, _apiKey);
   }
 
   Future<String?> _codemiePickProjectAndModel(
@@ -1977,7 +1977,7 @@ extension on AgentCli {
         io.writeln('switched provider to ${spec.name} (endpoint: $baseUrl)');
         io.writeln(modelLine);
         _printRoleModelsNote();
-        config.onModelChanged?.call(_agent.state.model);
+        await config.onModelChanged?.call(_agent.state.model);
         return;
       }
       final key = token ?? _providerKeyFor(spec, baseUrl) ?? '';
@@ -2035,7 +2035,7 @@ extension on AgentCli {
       io.writeln('  $keyLine');
       io.writeln(modelLine);
       _printRoleModelsNote();
-      config.onProviderChanged?.call(_providerKind, _apiKey);
+      await config.onProviderChanged?.call(_providerKind, _apiKey);
     } on ConfigException catch (error) {
       io.writeln('cannot switch provider: ${error.message}');
     } on Object catch (error) {

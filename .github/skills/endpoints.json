@@ -1,0 +1,4 @@
+{
+  "version": "latest",
+  "endpoints": [{"name":"dmtools","path":"/dmtools/dmtools"}]
+}

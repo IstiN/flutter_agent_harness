@@ -32,9 +32,6 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
-// The ONLY place the core CLI imports `fah_hub_client`: downstream forks
-// that want a different or no hub client patch this import and the 'hub'
-// case in `_builtInPlugin`.
 import 'package:fah_hub_client/fah_hub_client.dart' show HubPlugin;
 import 'fah_hub_plugin.dart';
 import 'self_manage.dart';
@@ -673,17 +670,45 @@ Future<void> _runApp(List<String> args) async {
     _fail(error.message);
   }
   final effective = cliStartup.args;
-  final provider = cliStartup.provider;
+  var provider = cliStartup.provider;
   final faPreconfig = cliStartup.faPreconfig;
-  final baseUrl = effective.baseUrl;
 
-  final model = _buildModel(effective);
   final cwd = effective.cwd ?? Directory.current.path;
   final sessionRoot = effective.sessionRoot ?? _defaultSessionRoot();
-  // The execution env shared by the CLI config (tools, session storage)
-  // and the presence store (live-session heartbeats) — also the resolver
-  // target for the initial cube lookup.
+  // The execution env shared by the CLI config (tools, session storage),
+  // the presence store (live-session heartbeats) and the per-folder model
+  // state IO. Mutable cwd: a resumed session re-points it (see _loadSession).
   final cliEnv = LocalExecutionEnv(cwd: cwd);
+
+  // Per-folder model memory: restore the model/provider triple last used
+  // in THIS folder — a `/model` switch in another workspace must not leak
+  // in across restarts. Explicit per-launch declarations win: --model,
+  // --provider, --base-url, or an FA_PROVIDER_* env preconfig.
+  final folderState = await loadFolderModelState(
+    cliEnv,
+    sessionsRoot: sessionRoot,
+    cwd: cwd,
+  );
+  final applyFolderState = folderState != null &&
+      folderModelStateApplies(
+        modelExplicit: parsed.model != null,
+        providerExplicit: parsed.providerExplicit,
+        baseUrlExplicit: parsed.baseUrl != null,
+        hasProviderPreconfig: faPreconfig != null,
+      );
+  if (applyFolderState) {
+    provider = folderState.providerKind;
+  }
+  final baseUrl = applyFolderState ? folderState.baseUrl : effective.baseUrl;
+
+  final model = applyFolderState
+      ? buildCliDefaultModel(
+          provider,
+          modelId: folderState.modelId,
+          baseUrl: folderState.baseUrl,
+        )
+      : _buildModel(effective);
+
 
   // Initial cube (fa_cube Phase 1): --cube-config path > --cube name > the
   // project `.fah/config.yaml` `cube:` section > the saved user `cube:`
@@ -931,6 +956,25 @@ Future<void> _runApp(List<String> args) async {
   // startup dialog and `/skills access` change it — persisted via
   // persistConfig.
   var skillsAccess = saved.skillsAccess;
+  // Per-folder model memory: mirror the active triple into the folder's
+  // state file (the LIVE cwd — a resumed session re-points `cliEnv.cwd`),
+  // so the next `fa` in that folder restores this model, not the global
+  // last-switch. Declared before `cli` because the model/provider change
+  // callbacks below call it; `cli` is `late final` and only reached from
+  // the closures after the assignment.
+  Future<void> persistFolderModelState() async {
+    await saveFolderModelState(
+      cliEnv,
+      sessionsRoot: sessionRoot,
+      cwd: cliEnv.cwd,
+      providerKind: cli.providerKind,
+      modelId: cli.agent.state.model.id,
+      baseUrl: cli.agent.state.model.baseUrl,
+    );
+  }
+
+  // The execution env shared by the CLI config (tools, session storage)
+  // and the presence store (live-session heartbeats) — see `cliEnv` above.
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui:
@@ -1027,7 +1071,10 @@ Future<void> _runApp(List<String> args) async {
       // Cube sandbox flow rewrites it — persisted via persistConfig.
       cubeSettings: saved.cube,
       onCubeSettingsChanged: () async => persistConfig(),
-      onModelChanged: (_) async => persistConfig(),
+      onModelChanged: (_) async {
+        await persistConfig();
+        await persistFolderModelState();
+      },
       // `/provider` switches: redact an explicitly passed session token so
       // it cannot leak into tool results or session files, then persist the
       // new provider/model/baseUrl triple (never the key itself).
@@ -1042,6 +1089,7 @@ Future<void> _runApp(List<String> args) async {
           }
         }
         await persistConfig();
+        await persistFolderModelState();
       },
       // `/key set` stored a secret: mask it from here on (same lazy attach).
       onSecretStored: (name, value) {
@@ -1087,9 +1135,15 @@ Future<void> _runApp(List<String> args) async {
     await saveCliConfig(
       home,
       CliConfig(
-        providerKind: cli.providerKind,
-        modelId: cli.agent.state.model.id,
-        baseUrl: cli.agent.state.model.baseUrl,
+        // The provider/model triple is per-folder now (folder_model_state):
+        // keep the LOADED seed in the global config so a `/model` or
+        // `/provider` switch in one workspace never leaks into the others
+        // across restarts — the switch persists through the folder's state
+        // file instead, and explicit --model/--provider/--base-url still
+        // win per launch.
+        providerKind: saved.providerKind,
+        modelId: saved.modelId,
+        baseUrl: saved.baseUrl,
         mode: cli.currentMode.name,
         approvalMode: cli.approval.mode.label,
         allowedTools: cli.approval.alwaysAllowedTools,

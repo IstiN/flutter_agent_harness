@@ -197,7 +197,8 @@ final class TuiPromptState {
         _ => 0,
       },
       secretValueVisible = false,
-      approvalInput = '';
+      approvalInput = '',
+      approvalSelected = 2;
 
   final TuiPromptSpec spec;
   final Set<int> askSelected;
@@ -215,6 +216,12 @@ final class TuiPromptState {
   /// user can leave a note for the agent alongside the decision. Any
   /// recognized answer key submits the decision and clears the buffer.
   final String approvalInput;
+
+  /// The highlighted row of the approval decision selector (0 = approve
+  /// once, 1 = always, 2 = deny). Deny is the default so a bare Enter —
+  /// the pre-selector behavior — keeps denying. Arrow keys move it,
+  /// Enter confirms it.
+  final int approvalSelected;
 
   bool get hasOptions {
     final s = spec;
@@ -240,6 +247,7 @@ final class TuiPromptState {
     int? secretCursor,
     bool? secretValueVisible,
     String? approvalInput,
+    int? approvalSelected,
   }) {
     return TuiPromptState._raw(
       spec,
@@ -251,6 +259,7 @@ final class TuiPromptState {
       secretCursor: secretCursor ?? this.secretCursor,
       secretValueVisible: secretValueVisible ?? this.secretValueVisible,
       approvalInput: approvalInput ?? this.approvalInput,
+      approvalSelected: approvalSelected ?? this.approvalSelected,
     );
   }
 
@@ -264,6 +273,7 @@ final class TuiPromptState {
     required this.secretCursor,
     this.secretValueVisible = false,
     this.approvalInput = '',
+    this.approvalSelected = 2,
   });
 }
 
@@ -794,12 +804,80 @@ _PromptKeyResult? _handleSecretTabKey(TuiPromptState state, PromptKey key) {
 // Approval
 // ---------------------------------------------------------------------------
 
-/// Approval prompt: y/a/n answer keys → enter/esc deny; anything else
-/// leaves the state untouched.
+/// Approval prompt: 1-3/y/a/n answer keys, ↑/↓ + Enter selector, Esc deny;
+/// anything else is typed into the note buffer.
 _PromptKeyResult _handleApprovalKey(TuiPromptState state, PromptKey key) {
-  return _handleApprovalAnswerKey(state, key) ??
+  return _handleApprovalNumberKey(state, key) ??
+      _handleApprovalSelectorKey(state, key) ??
+      _handleApprovalAnswerKey(state, key) ??
       _handleApprovalDenyKey(state, key) ??
       (state: state, resolved: null);
+}
+
+/// The 1/2/3 decision keys — the layout-proof twin of y/a/n (a Cyrillic
+/// layout turns the physical y/a/n keys into different characters, while
+/// the number row is layout-independent). The typed note rides along.
+/// Null when the key is not one of them.
+_PromptKeyResult? _handleApprovalNumberKey(
+  TuiPromptState state,
+  PromptKey key,
+) {
+  if (key is! PromptChar) return null;
+  final note = state.approvalInput;
+  const decisions = <String, ApprovalDecision>{
+    '1': ApprovalDecision.approveOnce,
+    '2': ApprovalDecision.approveAlways,
+    '3': ApprovalDecision.deny,
+  };
+  final decision = decisions[key.text];
+  if (decision == null) return null;
+  return (
+    state: state.copyWith(approvalInput: ''),
+    resolved: ApprovalPromptAnswer(decision, note: note),
+  );
+}
+
+/// ↑/↓ move the selector cursor (clamped to the three decisions); Enter
+/// confirms the highlighted one. Null when the key belongs to another
+/// cluster.
+_PromptKeyResult? _handleApprovalSelectorKey(
+  TuiPromptState state,
+  PromptKey key,
+) {
+  switch (key) {
+    case PromptArrowUp():
+      return (
+        state: state.copyWith(
+          approvalSelected: (state.approvalSelected - 1).clamp(0, 2),
+        ),
+        resolved: null,
+      );
+    case PromptArrowDown():
+      return (
+        state: state.copyWith(
+          approvalSelected: (state.approvalSelected + 1).clamp(0, 2),
+        ),
+        resolved: null,
+      );
+    case PromptEnter():
+      // Same rule as before the selector: Enter does not submit while the
+      // user is writing a note.
+      if (state.approvalInput.isNotEmpty) return (state: state, resolved: null);
+      const decisions = <int, ApprovalDecision>{
+        0: ApprovalDecision.approveOnce,
+        1: ApprovalDecision.approveAlways,
+        2: ApprovalDecision.deny,
+      };
+      return (
+        state: state,
+        resolved: ApprovalPromptAnswer(
+          decisions[state.approvalSelected] ?? ApprovalDecision.deny,
+          note: state.approvalInput,
+        ),
+      );
+    default:
+      return null;
+  }
 }
 
 /// The y/a/n answer keys resolve the decision (carrying the typed note) and
@@ -1167,22 +1245,33 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
 }
 
 List<String> _approvalInputRows(TuiPromptState state, int inner) {
-  final hasNote = state.approvalInput.isNotEmpty;
-  return [
+  const labels = <int, String>{
+    0: 'Approve once (y)',
+    1: 'Always approve (a)',
+    2: 'Deny (n)',
+  };
+  final rows = <String>[
     _wrapBodyLine(
-      _dim(
-        '[y] once  [a] always  [n] deny  · other keys type a note  · '
-        'Enter/Esc = deny',
-      ),
+      _dim('1-3 or y/a/n · other keys type a note · Esc = deny'),
       inner,
       dim: true,
     ),
-    if (hasNote)
-      _wrapBodyLine(_yellow('note: ${state.approvalInput}'), inner)
-    else
-      _wrapBodyLine('', inner),
-    _wrapBodyLine(_yellow('Awaiting decision…'), inner),
+    for (final entry in labels.entries)
+      _wrapBodyLine(
+        _approvalOptionRow(entry.key, entry.value, state.approvalSelected),
+        inner,
+      ),
+    if (state.approvalInput.isNotEmpty)
+      _wrapBodyLine(_yellow('note: ${state.approvalInput}'), inner),
   ];
+  return rows;
+}
+
+/// The selector row for decision [index]: number, cursor arrow and the
+/// label — accented when it is the [selected] one.
+String _approvalOptionRow(int index, String label, int selected) {
+  final row = '${index + 1}. ${selected == index ? '▸' : ' '} $label';
+  return selected == index ? _accent(row) : row;
 }
 
 /// Renders an input row with the cursor inline (reverse-video block at

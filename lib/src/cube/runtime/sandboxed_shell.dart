@@ -178,19 +178,20 @@ final class SandboxedShell implements Shell {
     final kernel = _kernel;
     final spec = _spec;
     if (kernel == null || spec == null) return null;
-    return kernel.startupProbe(() async {
-      await kernel.ensureStaged();
-      final wrapped = kernel.backend.wrapCommand(
-        'true',
-        profilePath: kernel.profilePath,
-      );
-      final failure = _wrapperFailureNote(
-        wrapped,
-        await _inner.exec(wrapped, options: sandboxExecOptions(spec, null)),
-      );
-      if (failure == null) return null;
-      return 'fa_cube[${spec.name}]: kernel backend ${failure.note}';
-    });
+    if (kernel.probed) return kernel.failureNote;
+    kernel.probed = true;
+    await kernel.ensureStaged();
+    final wrapped = kernel.backend.wrapCommand(
+      'true',
+      profilePath: kernel.profilePath,
+    );
+    final failure = _wrapperFailureNote(
+      wrapped,
+      await _inner.exec(wrapped, options: sandboxExecOptions(spec, null)),
+    );
+    if (failure == null) return null;
+    return kernel.failureNote =
+        'fa_cube[${spec.name}]: kernel backend ${failure.note}';
   }
 
   /// Maps kernel-wrapper startup failures to clean spawn errors (the
@@ -278,25 +279,19 @@ final class _KernelRun {
   final FileSystem fs;
   final String profilePath;
   final String profileContent;
+  bool _staged = false;
 
-  /// The one-shot startup probe (started by the first
-  /// [SandboxedShell.startupFailure]): every caller awaits the same future,
-  /// so nobody reads an outcome the probe has not produced yet.
-  Future<String?>? _probe;
-
-  /// The one-shot profile staging: concurrent first callers share the same
-  /// future instead of writing (or execing) around an unfinished write.
-  Future<void>? _staging;
-
-  /// Starts [probe] once; later calls await the first run's outcome.
-  Future<String?> startupProbe(Future<String?> Function() probe) =>
-      _probe ??= probe();
+  /// Set by the [SandboxedShell.startupFailure] probe: the clean wrapper
+  /// failure note, or `null` when the probe never ran or succeeded.
+  bool probed = false;
+  String? failureNote;
 
   /// Stages the profile once per spec (reused when the file already
-  /// exists). Concurrent first callers await the same write.
-  Future<void> ensureStaged() => _staging ??= _stage();
-
-  Future<void> _stage() async {
+  /// exists). A concurrent first exec may write twice with identical
+  /// bytes — idempotent by content.
+  Future<void> ensureStaged() async {
+    if (_staged) return;
+    _staged = true;
     if ((await fs.exists(profilePath)).valueOrNull != true) {
       await fs.writeFile(profilePath, profileContent);
     }

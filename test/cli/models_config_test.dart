@@ -316,7 +316,7 @@ models:
       StreamFunction streamFunction, {
       ModelsConfig? modelsConfig,
       void Function()? onModelsConfigChanged,
-      void Function(Model model)? onModelChanged,
+      Future<void> Function(Model model)? onModelChanged,
     }) {
       return AgentCli(
         config: AgentCliConfig(
@@ -486,7 +486,7 @@ models:
       final cli = cliFor(
         _FakeStreamFunction([]).call,
         modelsConfig: models,
-        onModelChanged: (model) => changed = model,
+        onModelChanged: (model) async { changed = model; }
       );
       final run = cli.run();
       io.sendLine('/model fast');

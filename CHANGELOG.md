@@ -1,24 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.1.281
 
-- fix(cli): hub-only inbox wakes no longer die silently at the 10-run
-  wake cap — the first suppressed wake prints one dim
-  `[mail] hub wake-cap reached; waiting for user input` line (once per
-  session, not per poll), and the streak asymmetry (hub mail always
-  increments it, only real user input resets it) is documented at the
-  wake site.
-- fix(dap): a `dap_dm` to a known-but-offline peer no longer reads like
-  a typo — the no-match error lists the known online peers and points at
-  `dap_invite` for offline peers and `dap_peers` for typos.
-- feat(plugins): `FahPlugin.dispose` — the CLI calls it once per plugin
-  at shutdown (errors swallowed per plugin, so one bad plugin cannot
-  block exit); plugins override it to release sockets, processes, and
-  timers. The hub plugin host disposes the vendored hub client.
-- chore(cli): the `fah_hub_client` import in `bin/fah.dart` is now
-  marked as the ONLY core-CLI import of the hub client — downstream
-  forks wanting a different or no hub client patch that import plus the
-  `'hub'` case in `_builtInPlugin`.
+- fix(cli): per-folder model memory — `/model` and `/provider` switches are
+  scoped to the launch folder (`model-state.json` under the sessions root);
+  the global config keeps its seed triple, so a switch in one workspace no
+  longer leaks into the others across restarts. Explicit `--model`,
+  `--provider`, `--base-url` and `FA_PROVIDER_*` still win per launch.
+- fix(cli): model/provider persistence callbacks are awaited — `/model x` +
+  `/exit` can no longer lose the switch.
+- fix(cli): the over-window context guard renders a calm yellow note instead
+  of a red error; explicit guidance when compaction cannot free the window.
+
+## Unreleased
 
 - fix(messaging): `agent_directory` no longer drowns in graveyard mailboxes —
   it lists LIVE mailboxes (recent activity) plus anything holding pending
@@ -61,6 +55,7 @@
   streaming contract and is resolved per call (`memory` role → `smol` →
   main) in BOTH the CLI and the app. Memory consolidation and semantic
   search now actually run instead of being silently skipped.
+
 ## 0.1.280
 
 - fix(providers): correct the Copilot token guidance (0.1.278 had it
@@ -2319,10 +2314,5 @@
 
 - fix(providers): reject Copilot fine-grained PATs at connect time (0.1.278)
 - refactor(cli): split banner/key-status out of agent_cli.dart, untangle _runPrompt
-
-## 0.1.281
-
-- fix(providers): correct the Copilot token guidance — fine-grained PATs need the Copilot Requests permission (0.1.280)
-- memory: copilot fine-grained PAT 404 root cause + flutter_app flame_3d env breakage
 
 ## Unreleased

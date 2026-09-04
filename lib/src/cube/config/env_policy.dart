@@ -135,26 +135,20 @@ final class CubeEnvPolicy {
       );
     }
     _checkVarKeys(node, where);
-    final name = _parseVarName(node, where);
-    final shapes = _declaredVarShapes(node);
-    if (shapes.length != 1) {
-      throw ConfigException(
-        '$where: exactly one of "value"/"valueFrom"/"hidden" is required '
-        '(got ${shapes.isEmpty ? 'none' : shapes.join(', ')})',
-      );
-    }
-    return switch (shapes.single) {
-      'value' => _parseVarValue(node, name, where),
-      'valueFrom' => _parseVarValueFrom(node, name, where),
-      _ => _parseVarHidden(node, name, where),
-    };
+    final name = _parseVarName(node['name'], where);
+    final value = node['value'];
+    final valueFrom = node['valueFrom'];
+    final hidden = node['hidden'];
+    _checkSingleDeclaration(value, valueFrom, hidden, where);
+    if (value != null) return _parseVarValue(value, name, where);
+    if (valueFrom != null) return _parseVarValueFrom(valueFrom, name, where);
+    return _parseVarHidden(hidden, name, where);
   }
 
-  /// Rejects keys outside the `{name, value, valueFrom, hidden}` schema.
   static void _checkVarKeys(YamlMap node, String where) {
-    const supported = {'name', 'value', 'valueFrom', 'hidden'};
     for (final key in node.keys) {
-      if (key is! String || !supported.contains(key)) {
+      if (key is! String ||
+          !const {'name', 'value', 'valueFrom', 'hidden'}.contains(key)) {
         throw ConfigException(
           '$where: unknown key "$key" — supported: name, value, valueFrom, '
           'hidden',
@@ -163,38 +157,44 @@ final class CubeEnvPolicy {
     }
   }
 
-  /// The trimmed variable name; must be a non-empty string.
-  static String _parseVarName(YamlMap node, String where) {
-    final name = node['name'];
+  static String _parseVarName(Object? name, String where) {
     if (name is! String || name.trim().isEmpty) {
       throw ConfigException('$where.name: must be a non-empty string');
     }
     return name.trim();
   }
 
-  /// The value/valueFrom/hidden keys the var declares, in schema order.
-  static List<String> _declaredVarShapes(YamlMap node) => [
-    if (node['value'] != null) 'value',
-    if (node['valueFrom'] != null) 'valueFrom',
-    if (node['hidden'] != null) 'hidden',
-  ];
+  static void _checkSingleDeclaration(
+    Object? value,
+    Object? valueFrom,
+    Object? hidden,
+    String where,
+  ) {
+    final declared = [
+      if (value != null) 'value',
+      if (valueFrom != null) 'valueFrom',
+      if (hidden != null) 'hidden',
+    ];
+    if (declared.length != 1) {
+      throw ConfigException(
+        '$where: exactly one of "value"/"valueFrom"/"hidden" is required '
+        '(got ${declared.isEmpty ? 'none' : declared.join(', ')})',
+      );
+    }
+  }
 
-  /// Parses the `value:` shape: a literal string.
-  static CubeEnvVar _parseVarValue(YamlMap node, String name, String where) {
-    final value = node['value'];
+  static CubeEnvValue _parseVarValue(Object? value, String name, String where) {
     if (value is! String) {
       throw ConfigException('$where.value: must be a string');
     }
     return CubeEnvValue(name: name, value: value);
   }
 
-  /// Parses the `valueFrom:` shape: a non-empty `env:NAME` reference.
-  static CubeEnvVar _parseVarValueFrom(
-    YamlMap node,
+  static CubeEnvValueFrom _parseVarValueFrom(
+    Object? valueFrom,
     String name,
     String where,
   ) {
-    final valueFrom = node['valueFrom'];
     if (valueFrom is! String || !valueFrom.startsWith('env:')) {
       throw ConfigException(
         '$where.valueFrom: must be a string of the form "env:NAME", '
@@ -207,9 +207,11 @@ final class CubeEnvPolicy {
     return CubeEnvValueFrom(name: name, source: valueFrom);
   }
 
-  /// Parses the `hidden:` shape: a boolean.
-  static CubeEnvVar _parseVarHidden(YamlMap node, String name, String where) {
-    final hidden = node['hidden'];
+  static CubeEnvHidden _parseVarHidden(
+    Object? hidden,
+    String name,
+    String where,
+  ) {
     if (hidden is! bool) {
       throw ConfigException('$where.hidden: must be a boolean');
     }

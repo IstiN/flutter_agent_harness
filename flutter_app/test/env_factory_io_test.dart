@@ -1,7 +1,8 @@
 import 'dart:io';
 
 import 'package:fa/sandbox/env_factory_io.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    hide SandboxedExecutionEnv;
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_test/flutter_test.dart';
 

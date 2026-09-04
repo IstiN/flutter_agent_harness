@@ -516,6 +516,8 @@ void main() {
 
       // Default pane is the formatted preview: the heading is an
       // h1-styled selectable rich text, not the raw '# Title' source.
+      // The shared fa_ui markdown sheet scales headings off the body size
+      // (h1 = 2x bodyMedium), not the theme's headline styles.
       final context = tester.element(find.byType(FilePreviewView));
       final theme = Theme.of(context);
       final heading = tester.widget<SelectableText>(
@@ -523,7 +525,7 @@ void main() {
       );
       expect(
         heading.textSpan!.style?.fontSize,
-        theme.textTheme.headlineSmall?.fontSize,
+        theme.textTheme.bodyMedium!.fontSize! * 2,
       );
       expect(
         heading.textSpan!.style?.fontSize,

@@ -32,9 +32,6 @@ final class InspectImagePlugin implements FahPlugin {
   String get name => _pluginName;
 
   @override
-  Future<void> dispose() async {}
-
-  @override
   void register(PluginContext context) {
     final config = context.config;
     final modelId = config['model'] as String?;

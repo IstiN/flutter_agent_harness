@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -379,51 +378,6 @@ void main() {
       expect(inner.commands.length, 1);
     });
 
-    test('concurrent startupFailure calls await the same probe', () async {
-      final inner = _RecordingShell()
-        ..result = const Ok(
-          ShellExecResult(
-            stdout: '',
-            stderr: 'unshare: unshare failed: Operation not permitted\n',
-            exitCode: 1,
-          ),
-        );
-      final shell = SandboxedShell(
-        inner,
-        kernelSpec(),
-        fs: _FakeFs(),
-        os: 'linux',
-      );
-      final results = await Future.wait([
-        shell.startupFailure(),
-        shell.startupFailure(),
-      ]);
-      expect(
-        results,
-        everyElement(
-          'fa_cube[test-cube]: kernel backend unshare failed: '
-          'unshare failed: Operation not permitted',
-        ),
-      );
-      expect(inner.commands.length, 1);
-    });
-
-    test('concurrent first execs stage once and await the write', () async {
-      final inner = _RecordingShell();
-      final fs = _GatedFs();
-      final shell = SandboxedShell(inner, kernelSpec(), fs: fs, os: 'macos');
-      // Both execs park inside staging before either command is wrapped.
-      final first = shell.exec('git status');
-      final second = shell.exec('git log');
-      expect(inner.commands, isEmpty);
-      fs.release();
-      await Future.wait([first, second]);
-      expect(fs.writes.keys, [
-        '/work/.fah/cube-profiles/${cubeSpecCacheKey(kernelSpec())}.sb',
-      ]);
-      expect(inner.commands, hasLength(2));
-    });
-
     test(
       'a normal non-zero result inside the sandbox passes through',
       () async {
@@ -466,19 +420,6 @@ void main() {
       expect(fs.writes, isEmpty);
     });
   });
-}
-
-/// A [_FakeFs] whose [exists] parks until [release], exposing staging races.
-class _GatedFs extends _FakeFs {
-  final Completer<void> _gate = Completer<void>();
-
-  void release() => _gate.complete();
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) async {
-    await _gate.future;
-    return super.exists(path);
-  }
 }
 
 /// A [FileSystem] recording writes; only the staging-relevant members work.

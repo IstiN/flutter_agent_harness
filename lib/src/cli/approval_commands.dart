@@ -883,6 +883,20 @@ extension ApprovalCommands on AgentCli {
         if (authExpiredProvider(message.errorMessage ?? '') == 'codemie') {
           return;
         }
+        // The over-window guard is a routine checkpoint, not a failure:
+        // the request was refused BEFORE sending and auto-compaction
+        // recovers right after — print a calm yellow note instead of the
+        // scary red error line (the continuation note follows when the
+        // compaction succeeds).
+        if (isContextWindowExhaustedError(message.errorMessage)) {
+          io.writeln(
+            _style.yellow(
+              'note: Context window exhausted — the request was not sent; '
+              'auto-compacting…',
+            ),
+          );
+          return;
+        }
         io.writeln(
           _keyStatusView.errorLine(
             message.errorMessage ?? 'unknown error',

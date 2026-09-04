@@ -43,6 +43,11 @@ final class _RecordingService extends AgentService {
       );
 
   AgentConfig? reconfigured;
+
+  @override
+  Future<void> reconfigure(AgentConfig config) async {
+    reconfigured = config;
+  }
 }
 
 /// A minimal id_token JWT whose payload carries [claims] (the flow reads
@@ -124,8 +129,16 @@ void main() {
     final entry = registry.providers.single;
     expect(entry.name, 'alice@example.com');
     expect(entry.baseUrl, chatGptCodexBaseUrl);
-    expect(registry.keyFor(entry.id), 'at-1');
-    expect(keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'), 'at-1');
+    // The stored value is the full credentials blob (refresh-able), not the
+    // bare access token.
+    expect(
+      registry.keyFor(entry.id),
+      _credentials('alice@example.com').encode(),
+    );
+    expect(
+      keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'),
+      _credentials('alice@example.com').encode(),
+    );
     expect(service.reconfigured, isNotNull);
     expect(service.reconfigured!.providerKind, 'chatgpt-codex');
     expect(service.reconfigured!.baseUrl, chatGptCodexBaseUrl);
@@ -156,8 +169,14 @@ void main() {
     expect(registry.providers.length, 1);
     expect(registry.providers.single.id, existing.id);
     expect(registry.providers.single.modelId, 'my-pick');
-    expect(registry.keyFor(existing.id), 'at-1');
-    expect(keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'), 'at-1');
+    expect(
+      registry.keyFor(existing.id),
+      _credentials('alice@example.com').encode(),
+    );
+    expect(
+      keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'),
+      _credentials('alice@example.com').encode(),
+    );
     expect(service.reconfigured!.modelId, 'my-pick');
   });
 
@@ -190,7 +209,10 @@ void main() {
     expect(bob.baseUrl, chatGptCodexBaseUrl);
     expect(registry.keyFor(alice.id), 'alice-key');
     expect(keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'), 'alice-key');
-    expect(keys.valueOf('FA_KEY_CHATGPT_COM_BOB_EXAMPLE_COM'), 'at-1');
+    expect(
+      keys.valueOf('FA_KEY_CHATGPT_COM_BOB_EXAMPLE_COM'),
+      _credentials('bob@example.com').encode(),
+    );
   });
 
   testWidgets('an id_token without an email falls back to ChatGPT and '

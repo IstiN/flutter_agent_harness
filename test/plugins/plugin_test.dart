@@ -109,52 +109,7 @@ void main() {
       );
       expect(plugin.lastConfig['value'], 42);
     });
-
-    test(
-      'plugins dispose once at shutdown; a thrower cannot block exit',
-      () async {
-        final good = _DisposeProbePlugin();
-        final bad = _DisposeThrowerPlugin();
-        final cli = cliBuilder([good, bad]);
-        final run = cli.run();
-
-        io.sendLine('/exit');
-        await run;
-
-        expect(good.disposeCount, 1);
-        expect(bad.disposeCount, 1, reason: 'throwing dispose still ran once');
-      },
-    );
   });
-}
-
-final class _DisposeProbePlugin implements FahPlugin {
-  int disposeCount = 0;
-
-  @override
-  String get name => 'dispose_probe';
-
-  @override
-  void register(PluginContext context) {}
-
-  @override
-  Future<void> dispose() async => disposeCount++;
-}
-
-final class _DisposeThrowerPlugin implements FahPlugin {
-  int disposeCount = 0;
-
-  @override
-  String get name => 'dispose_thrower';
-
-  @override
-  void register(PluginContext context) {}
-
-  @override
-  Future<void> dispose() async {
-    disposeCount++;
-    throw StateError('boom');
-  }
 }
 
 final class _DemoPlugin implements FahPlugin {
@@ -162,9 +117,6 @@ final class _DemoPlugin implements FahPlugin {
 
   @override
   String get name => 'demo';
-
-  @override
-  Future<void> dispose() async {}
 
   @override
   void register(PluginContext context) {

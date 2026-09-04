@@ -124,64 +124,6 @@ void main() {
       expect((await guard.writeFile('file.txt', 'x')).isOk, isTrue);
     });
 
-    test('workspaceRoot override remaps workspace mounts with it', () async {
-      final delegate = MemoryExecutionEnv(cwd: '/work');
-      final guard = CubeFsGuard(
-        delegate,
-        spec(
-          mounts: [
-            CubeMount(path: '/workspace/ro', access: CubePathAccess.readOnly),
-          ],
-        ),
-        workspaceRoot: '/work',
-      );
-      // The mount follows the realized root instead of the written literal.
-      expect(
-        (await guard.writeFile('/work/ro/f.txt', 'x')).errorOrNull!.code,
-        FileErrorCode.permissionDenied,
-      );
-      // Sibling paths inside the realized workspace stay read/write.
-      expect((await guard.writeFile('/work/data/f.txt', 'x')).isOk, isTrue);
-    });
-
-    test('override leaves mounts outside the spec workspace literal', () async {
-      final delegate = MemoryExecutionEnv(cwd: '/work');
-      final guard = CubeFsGuard(
-        delegate,
-        spec(
-          mounts: [
-            CubeMount(path: '/work/ro', access: CubePathAccess.readOnly),
-          ],
-        ),
-        workspaceRoot: '/work',
-      );
-      expect(
-        (await guard.writeFile('/work/ro/f.txt', 'x')).errorOrNull!.code,
-        FileErrorCode.permissionDenied,
-      );
-    });
-
-    test('no override keeps the policy identical to the spec', () async {
-      final delegate = MemoryExecutionEnv(cwd: '/work');
-      final guard = CubeFsGuard(
-        delegate,
-        spec(
-          mounts: [
-            CubeMount(path: '/workspace/ro', access: CubePathAccess.readOnly),
-          ],
-        ),
-      );
-      // Judged literally against the written /workspace, not the cwd.
-      expect(
-        (await guard.writeFile('/workspace/ro/f.txt', 'x')).errorOrNull!.code,
-        FileErrorCode.permissionDenied,
-      );
-      expect(
-        (await guard.writeFile('/work/f.txt', 'x')).errorOrNull!.code,
-        FileErrorCode.permissionDenied,
-      );
-    });
-
     test('absolutePath and joinPath forward untouched', () async {
       final delegate = MemoryExecutionEnv(cwd: '/work');
       final guard = CubeFsGuard(delegate, spec());
@@ -224,29 +166,6 @@ void main() {
         FileErrorCode.permissionDenied,
       );
       expect((await guard.createDir('/work/rw/d')).isOk, isTrue);
-    });
-  });
-
-  group('resolveWorkspacePath', () {
-    const workspace = '/workspace';
-    const root = '/real/cwd';
-
-    test('remaps the workspace itself and nested paths', () {
-      expect(resolveWorkspacePath('/workspace', workspace, root), root);
-      expect(
-        resolveWorkspacePath('/workspace/data', workspace, root),
-        '$root/data',
-      );
-      expect(
-        resolveWorkspacePath('/workspace/a/b', workspace, root),
-        '$root/a/b',
-      );
-    });
-
-    test('keeps look-alike and outside paths as written (null)', () {
-      expect(resolveWorkspacePath('/workspacefoo', workspace, root), isNull);
-      expect(resolveWorkspacePath('/workspacefoo/x', workspace, root), isNull);
-      expect(resolveWorkspacePath('/etc/.m2', workspace, root), isNull);
     });
   });
 }

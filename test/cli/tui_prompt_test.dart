@@ -567,6 +567,60 @@ void main() {
       expect(result.state.approvalInput, 'ф');
     });
 
+    test('number keys 1/2/3 resolve decisions (layout-proof)', () {
+      ApprovalDecision decisionOf(String key) =>
+          (handleTuiPromptKey(TuiPromptState(spec), PromptChar(key)).resolved!
+                  as ApprovalPromptAnswer)
+              .value;
+      expect(decisionOf('1'), ApprovalDecision.approveOnce);
+      expect(decisionOf('2'), ApprovalDecision.approveAlways);
+      expect(decisionOf('3'), ApprovalDecision.deny);
+    });
+
+    test('number keys carry the typed note and clear the buffer', () {
+      final state = TuiPromptState(spec).copyWith(approvalInput: 'ф');
+      final result = handleTuiPromptKey(state, const PromptChar('3'));
+      expect((result.resolved as ApprovalPromptAnswer).note, 'ф');
+      expect(result.state.approvalInput, '');
+    });
+
+    test('arrow keys move the selection and Enter confirms it', () {
+      var result = handleTuiPromptKey(
+        TuiPromptState(spec),
+        const PromptArrowUp(),
+      );
+      expect(result.state.approvalSelected, 1);
+      result = handleTuiPromptKey(result.state, const PromptArrowUp());
+      expect(result.state.approvalSelected, 0);
+      result = handleTuiPromptKey(result.state, const PromptEnter());
+      expect(
+        (result.resolved as ApprovalPromptAnswer).value,
+        ApprovalDecision.approveOnce,
+      );
+    });
+
+    test('selection defaults to deny and clamps at the bounds', () {
+      expect(TuiPromptState(spec).approvalSelected, 2);
+      var result = handleTuiPromptKey(
+        TuiPromptState(spec),
+        const PromptArrowDown(),
+      );
+      expect(result.state.approvalSelected, 2);
+      result = handleTuiPromptKey(result.state, const PromptArrowUp());
+      result = handleTuiPromptKey(result.state, const PromptArrowUp());
+      expect(result.state.approvalSelected, 0);
+    });
+
+    test('selection rows render the numbered options', () {
+      final rows = renderTuiPrompt(TuiPromptState(spec), 60).join('\n');
+      expect(rows, contains('1.'));
+      expect(rows, contains('Approve once'));
+      expect(rows, contains('2.'));
+      expect(rows, contains('Always approve'));
+      expect(rows, contains('3.'));
+      expect(rows, contains('Deny'));
+    });
+
     test('recognized answer key clears a stale approvalInput buffer', () {
       final state = TuiPromptState(spec).copyWith(approvalInput: 'ф');
       final result = handleTuiPromptKey(state, PromptChar('y'));

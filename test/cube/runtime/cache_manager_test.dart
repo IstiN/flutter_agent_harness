@@ -10,11 +10,9 @@ CubeSpec spec({
   Duration? ttl,
   Set<String> tools = const {'git'},
   int? diskBytes,
-  String workspace = '/workspace',
 }) => CubeSpec(
   name: 'test-cube',
   tools: CubeToolPolicy(allow: tools),
-  filesystem: CubeFsPolicy(workspace: workspace),
   resources: CubeResourceLimits(diskBytes: diskBytes),
   cache: CubeCachePolicy(
     enabled: enabled,
@@ -147,28 +145,6 @@ void main() {
       expect(
         (await env.readTextFile('/work/.m2/settings.xml')).getOrThrow(),
         'm2',
-      );
-    });
-
-    test('a custom spec workspace mirrors positionally onto the cwd', () async {
-      final env = MemoryExecutionEnv(cwd: '/work');
-      await env.writeFile('/work/.gradle/cache.bin', 'gradle');
-      final manager = CubeCacheManager(
-        env,
-        spec(paths: ['/cube/.gradle'], workspace: '/cube'),
-      );
-      await manager.save();
-      expect(
-        (await env.readTextFile(
-          '${manager.cacheRoot}/cache/.gradle/cache.bin',
-        )).getOrThrow(),
-        'gradle',
-      );
-      await env.remove('/work/.gradle', recursive: true, force: true);
-      await manager.restoreIfNeeded();
-      expect(
-        (await env.readTextFile('/work/.gradle/cache.bin')).getOrThrow(),
-        'gradle',
       );
     });
 

@@ -126,17 +126,21 @@ void main() {
         );
       });
 
-      test('unreadable file maps to permissionDenied', () async {
-        await fs.writeFile('locked.txt', 'secret');
-        final locked = '${tempDir.path}/locked.txt';
-        Process.runSync('chmod', ['000', locked]);
-        try {
-          final result = await fs.readTextFile('locked.txt');
-          expect(result.errorOrNull?.code, FileErrorCode.permissionDenied);
-        } finally {
-          Process.runSync('chmod', ['644', locked]);
-        }
-      }, skip: Platform.isWindows ? 'POSIX chmod semantics only' : false);
+      test(
+        'unreadable file maps to permissionDenied',
+        () async {
+          await fs.writeFile('locked.txt', 'secret');
+          final locked = '${tempDir.path}/locked.txt';
+          Process.runSync('chmod', ['000', locked]);
+          try {
+            final result = await fs.readTextFile('locked.txt');
+            expect(result.errorOrNull?.code, FileErrorCode.permissionDenied);
+          } finally {
+            Process.runSync('chmod', ['644', locked]);
+          }
+        },
+        skip: Platform.isWindows ? 'POSIX chmod semantics only' : false,
+      );
 
       test('path through a regular file maps to notDirectory', () async {
         await fs.writeFile('plain.txt', 'data');
@@ -144,12 +148,16 @@ void main() {
         expect(result.errorOrNull?.code, FileErrorCode.notDirectory);
       });
 
-      test('a symlink loop maps to unknown', () async {
-        Link('${tempDir.path}/loop-a').createSync('loop-b');
-        Link('${tempDir.path}/loop-b').createSync('loop-a');
-        final result = await fs.readTextFile('loop-a');
-        expect(result.errorOrNull?.code, FileErrorCode.unknown);
-      }, skip: Platform.isWindows ? 'POSIX symlink semantics only' : false);
+      test(
+        'a symlink loop maps to unknown',
+        () async {
+          Link('${tempDir.path}/loop-a').createSync('loop-b');
+          Link('${tempDir.path}/loop-b').createSync('loop-a');
+          final result = await fs.readTextFile('loop-a');
+          expect(result.errorOrNull?.code, FileErrorCode.unknown);
+        },
+        skip: Platform.isWindows ? 'POSIX symlink semantics only' : false,
+      );
     });
 
     group('remove', () {
@@ -174,12 +182,16 @@ void main() {
         expect((await fs.remove('missing.txt', force: true)).isOk, isTrue);
       });
 
-      test('non-empty directory without recursive maps to invalid', () async {
-        await fs.writeFile('full-dir/f.txt', 'data');
-        final result = await fs.remove('full-dir');
-        expect(result.errorOrNull?.code, FileErrorCode.invalid);
-        expect((await fs.exists('full-dir')).valueOrNull, isTrue);
-      }, skip: Platform.isWindows ? 'POSIX delete semantics only' : false);
+      test(
+        'non-empty directory without recursive maps to invalid',
+        () async {
+          await fs.writeFile('full-dir/f.txt', 'data');
+          final result = await fs.remove('full-dir');
+          expect(result.errorOrNull?.code, FileErrorCode.invalid);
+          expect((await fs.exists('full-dir')).valueOrNull, isTrue);
+        },
+        skip: Platform.isWindows ? 'POSIX delete semantics only' : false,
+      );
 
       test('non-empty directory with recursive succeeds', () async {
         await fs.writeFile('tree/sub/f.txt', 'data');
@@ -263,6 +275,31 @@ void main() {
       final result = await shell.exec('read line; echo "x\${line}x"');
       final exec = result.getOrThrow();
       expect(exec.stdout.trim(), 'xx');
+    });
+
+    test(
+      'git terminal prompts are disabled by default (fa_tui hang)',
+      () async {
+        // A git clone against an auth-requiring remote used to open
+        // /dev/tty ("Username for …:") and block the whole agent run on the
+        // TUI-owned terminal — the session looked stuck at the input zone.
+        const shell = LocalShell();
+        final result = await shell.exec(
+          'echo "\$GIT_TERMINAL_PROMPT|\$GIT_ASKPASS"',
+        );
+        final parts = result.getOrThrow().stdout.trim().split('|');
+        expect(parts[0], '0');
+        expect(parts[1], 'echo');
+      },
+    );
+
+    test('an explicit GIT_TERMINAL_PROMPT wins over the default', () async {
+      const shell = LocalShell();
+      final result = await shell.exec(
+        'echo "\$GIT_TERMINAL_PROMPT"',
+        options: const ShellExecOptions(env: {'GIT_TERMINAL_PROMPT': '1'}),
+      );
+      expect(result.getOrThrow().stdout.trim(), '1');
     });
   });
 

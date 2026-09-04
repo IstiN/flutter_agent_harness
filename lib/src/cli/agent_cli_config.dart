@@ -218,7 +218,11 @@ final class AgentCliConfig {
   final void Function()? onModelsConfigChanged;
 
   /// Called when the user switches the active model via `/model`.
-  final void Function(Model model)? onModelChanged;
+  ///
+  /// Awaiting the callback: the persistence it performs (global config +
+  /// the per-folder model state) must complete before the process can exit
+  /// — a `/model x` + `/exit` one-two would otherwise lose the switch.
+  final Future<void> Function(Model model)? onModelChanged;
 
   /// Called when the user switches the active provider via `/provider`
   /// (legacy wiring only; roles mode reports through [onModelChanged]).
@@ -226,7 +230,8 @@ final class AgentCliConfig {
   /// executable can redact an explicitly passed token and persist the
   /// provider/model/baseUrl triple. The key may be empty (keyless custom
   /// endpoints); it is never persisted by the executable.
-  final void Function(String providerKind, String apiKey)? onProviderChanged;
+  final Future<void> Function(String providerKind, String apiKey)?
+  onProviderChanged;
 
   /// The platform secure-storage cache (macOS Keychain / Secret Service /
   /// Windows Credential Locker), preloaded by the host at startup. Backs the

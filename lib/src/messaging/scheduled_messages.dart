@@ -21,13 +21,15 @@ final class ScheduledMessageQueue {
     required ExecutionEnv env,
     required MessagingRepository Function() repo,
     required String Function() root,
-  }) : _env = env,
+  }) :
+       // ignore: prefer_initializing_formals
+       _env = env,
+       // ignore: prefer_initializing_formals
        _repo = repo,
+       // ignore: prefer_initializing_formals
        _root = root;
 
-  // ignore: prefer_initializing_formals
   final ExecutionEnv _env;
-  // ignore: prefer_initializing_formals
   final MessagingRepository Function() _repo;
   // ignore: prefer_initializing_formals
   final String Function() _root;

@@ -91,10 +91,4 @@ abstract interface class FahPlugin {
   /// Called once when the CLI starts. Use [context] to register tools,
   /// hooks, slash commands, and read plugin-specific [context.config].
   void register(PluginContext context);
-
-  /// Releases plugin resources at CLI shutdown — sockets, processes,
-  /// timers. Called once by the CLI after the REPL exits; the default is
-  /// a no-op. One failing plugin must not block exit: the CLI swallows
-  /// dispose errors.
-  Future<void> dispose() async {}
 }

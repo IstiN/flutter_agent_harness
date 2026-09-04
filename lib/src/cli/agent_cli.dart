@@ -141,8 +141,8 @@ part 'agent_cli_cube.dart';
 part 'agent_cli_provider_presets.dart';
 part 'agent_cli_inbox.dart';
 part 'agent_cli_io.dart';
-part 'agent_cli_commands.dart';
 part 'agent_cli_banner.dart';
+part 'agent_cli_commands.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -541,13 +541,13 @@ class AgentCli {
   /// notifies [AgentCliConfig.onProviderChanged] so the host persists the
   /// registry — deletion never switches the active model, so without the
   /// notification the deletion silently vanished on restart.
-  void removeProvider(CustomProviderEntry entry) {
+  Future<void> removeProvider(CustomProviderEntry entry) async {
     final registry = config.customProviders;
     if (registry == null) return;
     registry.entries.removeWhere((e) => e.name == entry.name);
     if (_activeCustomName == entry.name) _activeCustomName = null;
     io.writeln('deleted provider ${entry.name}');
-    config.onProviderChanged?.call(_providerKind, _apiKey);
+    await config.onProviderChanged?.call(_providerKind, _apiKey);
   }
 
   /// Test seam driving the TUI model-menu builder in line mode: the same
@@ -574,7 +574,9 @@ class AgentCli {
   /// [modelId] into the active saved entry (no-op without one), the same
   /// thing a real `/model` switch does while a custom provider is active.
   @visibleForTesting
-  void recordCustomModelForTest(String modelId) => _recordCustomModel(modelId);
+  void recordCustomModelForTest(String modelId) {
+    unawaited(_recordCustomModel(modelId));
+  }
 
   /// Test seam driving the TUI picker's Edit action in line mode: opens
   /// the prefilled edit wizard for [entry] (or the active provider when
@@ -885,8 +887,6 @@ class AgentCli {
   }
 
   Future<void> run() async {
-    // Cube cache: restore before the first turn, save after the last —
-    // both best-effort (one warning line on failure, never a blocker).
     await _cubeBootRestore();
     await _loadAgentContext();
     _session = await _initializeSession();
@@ -896,15 +896,7 @@ class AgentCli {
     // version next to the session id before any lifecycle line.
     _logDiagnostic('fa boot sid=$_logSid version=$_version');
     _wireTransientRetryNotice();
-    // Live-session presence: this process now owns the session — the Fa
-    // app (sharing the sessions root) marks it live and can attach. The
-    // heartbeat refreshes on the inbox timer; unregistering happens in
-    // the finally below (crash coverage is the staleness window).
-    final presence = config.presenceStore;
-    final sessionId = _session?.cachedId;
-    if (presence != null && sessionId != null) {
-      await presence.register(sessionId, pid: config.processId);
-    }
+    final presence = await _registerLivePresence();
     // Phase 3a: rehydrate the subagent registry from the resumed session's
     // `subagent_registry` records — agents of this session are visible again
     // (across restarts AND across instances sharing the session repo).
@@ -925,22 +917,7 @@ class AgentCli {
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
     );
-    // The inbox watcher: incoming inter-agent mail while IDLE wakes the
-    // agent into a turn (mid-run mail is delivered by the steering poll).
-    // The same tick refreshes the presence heartbeat (every other tick ≈
-    // 4s, well inside the 15s staleness window).
-    var heartbeatTick = 0;
-    final inboxTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      unawaited(_wakeOnInboxMail());
-      if (heartbeatTick++ % 2 == 0) {
-        if (presence != null && sessionId != null) {
-          unawaited(presence.touch(sessionId));
-        }
-        // The messaging-fabric heartbeat: agent_directory reports this
-        // instance as live even when no mail is pending.
-        _touchFabricHeartbeat();
-      }
-    });
+    final inboxTimer = _startInboxWatcher(presence);
     try {
       if (_useTui) {
         // The TUI prints the banner itself into its output history (buffered
@@ -950,35 +927,122 @@ class AgentCli {
         await _runLineRepl();
       }
     } finally {
-      // Input ended (EOF) or the REPL is shutting down: never leave a tool
-      // call waiting on an answer that cannot arrive.
-      _cancelPendingAnswers();
-      await _cubeFinalize();
-      await interruptSub.cancel();
-      await taskSub.cancel();
-      inboxTimer.cancel();
-      await _settled;
-      // Live-session presence off: the session stops being "running in
-      // the CLI" for app viewers.
-      if (presence != null && sessionId != null) {
-        await presence.unregister(sessionId);
-      }
-      // A session nobody wrote to leaves no file behind.
-      await deleteSessionIfEmpty();
-      await _disposePlugins();
+      await _teardownAfterRepl(interruptSub, taskSub, inboxTimer, presence);
     }
     await printSessionResumeHint();
   }
 
-  /// Releases plugin resources (sockets, processes, timers) on shutdown;
-  /// one bad plugin must not block exit.
-  Future<void> _disposePlugins() async {
-    for (final plugin in config.plugins) {
-      try {
-        await plugin.dispose();
-      } on Object {
-        // Swallowed: shutdown is best-effort per plugin.
+  /// Cube cache restore before the first turn — best-effort (one warning
+  /// line on failure, never a blocker).
+  Future<void> _cubeBootRestore() async {
+    final bootSpec = _cubeEnv.activeSpec;
+    if (bootSpec != null) await _cubeRestoreQuietly(bootSpec);
+  }
+
+  /// Live-session presence: this process now owns the session — the Fa
+  /// app (sharing the sessions root) marks it live and can attach. The
+  /// heartbeat refreshes on the inbox timer; unregistering happens in
+  /// [_teardownAfterRepl] (crash coverage is the staleness window).
+  Future<({SessionPresenceStore store, String sessionId})?>
+  _registerLivePresence() async {
+    final store = config.presenceStore;
+    final sessionId = _session?.cachedId;
+    if (store != null && sessionId != null) {
+      await store.register(sessionId, pid: config.processId);
+      return (store: store, sessionId: sessionId);
+    }
+    return null;
+  }
+
+  /// The inbox watcher: incoming inter-agent mail while IDLE wakes the
+  /// agent into a turn (mid-run mail is delivered by the steering poll).
+  /// The same tick refreshes the presence heartbeat (every other tick ≈
+  /// 4s, well inside the 15s staleness window).
+  Timer _startInboxWatcher(
+    ({SessionPresenceStore store, String sessionId})? presence,
+  ) {
+    var heartbeatTick = 0;
+    return Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(_wakeOnInboxMail());
+      if (heartbeatTick++ % 2 == 0) {
+        if (presence != null) {
+          unawaited(presence.store.touch(presence.sessionId));
+        }
+        // The messaging-fabric heartbeat: agent_directory reports this
+        // instance as live even when no mail is pending.
+        _touchFabricHeartbeat();
       }
+    });
+  }
+
+  /// Input ended (EOF) or the REPL is shutting down: never leave a tool
+  /// call waiting on an answer that cannot arrive.
+  Future<void> _teardownAfterRepl(
+    StreamSubscription<dynamic> interruptSub,
+    StreamSubscription<dynamic> taskSub,
+    Timer inboxTimer,
+    ({SessionPresenceStore store, String sessionId})? presence,
+  ) async {
+    _cancelPendingAnswers();
+    final exitSpec = _cubeEnv.activeSpec;
+    if (exitSpec != null) {
+      try {
+        await CubeCacheManager(_cubeEnv, exitSpec).save();
+      } on Object catch (error) {
+        io.writeln('cube: cache save failed: $error');
+      }
+    }
+    await interruptSub.cancel();
+    await taskSub.cancel();
+    inboxTimer.cancel();
+    await _settled;
+    // Live-session presence off: the session stops being "running in
+    // the CLI" for app viewers.
+    if (presence != null) {
+      await presence.store.unregister(presence.sessionId);
+    }
+    // A session nobody wrote to leaves no file behind.
+    await deleteSessionIfEmpty();
+  }
+
+  /// Warm the endpoint metadata (model list, dial features, reported
+  /// limits) BEFORE the first turn; failures are silent — the catalog
+  /// defaults keep applying.
+  Future<void> _warmModelCacheQuietly() async {
+    try {
+      await _refreshModelCache();
+    } on Object {
+      // Swallowed: see _refreshModelCache.
+    }
+  }
+
+  /// Cube cache save mirroring [run]'s exit path (best-effort).
+  Future<void> _cubeCacheSaveQuietly() async {
+    final exitSpec = _cubeEnv.activeSpec;
+    if (exitSpec != null) {
+      try {
+        await CubeCacheManager(_cubeEnv, exitSpec).save();
+      } on Object catch (error) {
+        io.writeln('cube: cache save failed: $error');
+      }
+    }
+  }
+
+  /// Background jobs (kimi's print-mode): don't exit while agents are in
+  /// flight. Settled jobs inject async-result messages through the
+  /// listener (re-wake runs), so loop until every job is terminal and
+  /// those reaction runs settle too (capped like kimi's drain limit).
+  Future<void> _awaitHeadlessBackgroundJobs() async {
+    for (var round = 0; round < 10; round++) {
+      final hasActive = _taskConfig.jobManager.jobs.any(
+        (job) =>
+            job.status == TaskJobStatus.queued ||
+            job.status == TaskJobStatus.running,
+      );
+      if (!hasActive) break;
+      await _taskConfig.jobManager.settled;
+      await _settled;
+      await _afterRun();
     }
   }
 
@@ -1696,14 +1760,7 @@ class AgentCli {
     // same cached trees a REPL session would).
     await _cubeBootRestore();
     _session = await _initializeSession();
-    // Warm the endpoint metadata (model list, dial features, reported
-    // limits) BEFORE the first turn; failures are silent — the catalog
-    // defaults keep applying.
-    try {
-      await _refreshModelCache();
-    } on Object {
-      // Swallowed: see _refreshModelCache.
-    }
+    await _warmModelCacheQuietly();
     // The same pre-flight compaction guard as the REPL's [_runPrompt]:
     // a resumed session already over the threshold must compact BEFORE
     // the first request, or it goes out over-window and gets rejected.
@@ -1719,35 +1776,17 @@ class AgentCli {
       // Awaits any in-flight TTSR retry chain, persists the messages, and
       // auto-compacts — the same end-of-turn sequence as a REPL run.
       await _afterRun();
-      // Background jobs (kimi's print-mode): don't exit while agents are in
-      // flight. Settled jobs inject async-result messages through the
-      // listener (re-wake runs), so loop until every job is terminal and
-      // those reaction runs settle too (capped like kimi's drain limit).
-      for (var round = 0; round < 10; round++) {
-        final hasActive = _taskConfig.jobManager.jobs.any(
-          (job) =>
-              job.status == TaskJobStatus.queued ||
-              job.status == TaskJobStatus.running,
-        );
-        if (!hasActive) break;
-        await _taskConfig.jobManager.settled;
-        await _settled;
-        await _afterRun();
-      }
+      await _awaitHeadlessBackgroundJobs();
     } catch (error) {
       io.writeln(
         _keyStatusView.errorLine('$error', _agent.state.model.baseUrl),
       );
       return 1;
     } finally {
-      // Cube cache save, mirroring [run]'s exit path (best-effort).
-      await _cubeFinalize();
+      await _cubeCacheSaveQuietly();
       await interruptSub.cancel();
       await taskSub.cancel();
     }
-    // The exit code reads the final assistant message AFTER _afterRun: a
-    // TTSR abort/retry chain replaces the aborted intermediate message with
-    // the retry's outcome.
     return switch (_agent.state.messages.lastOrNull) {
       AssistantMessage(stopReason: StopReason.error) => 1,
       AssistantMessage(stopReason: StopReason.aborted) => 130,
@@ -2020,9 +2059,16 @@ class AgentCli {
     await _ttsr?.settled;
     await _persistMessages();
     if (!await _maybeAutoCompact()) {
-      // Compaction freed nothing droppable: surface the guard error as-is
-      // and keep the resume budget for the next user prompt.
+      // Compaction freed nothing droppable: keep the resume budget for the
+      // next user prompt and tell the user the way out (the guard message
+      // itself rendered as a calm note already).
       _overWindowAutoResumed = false;
+      io.writeln(
+        _style.yellow(
+          'note: could not free the context window — run /compact or '
+          'start a fresh session',
+        ),
+      );
       return false;
     }
     io.writeln(
@@ -2173,10 +2219,6 @@ class AgentCli {
   /// session never exhausts the cap.
   var _inboxWakeStreak = 0;
   static const _maxInboxWakeStreak = 10;
-
-  /// One-shot flag: the first wake the cap blocks prints one dim line
-  /// instead of leaving the CLI silently deaf to hub mail.
-  var _inboxWakeCapNoticeShown = false;
 
   /// Test seam: observe/reset the inbox-wake streak without driving ten
   /// real runs (the cap is exactly [_maxInboxWakeStreak]).

@@ -15,7 +15,6 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import '../config/cube_spec.dart';
-import '../config/fs_policy.dart';
 import '../../env/execution_env.dart';
 
 /// The content-addressed spec key: 10 hex chars of the md5 over the spec's
@@ -110,27 +109,25 @@ final class CubeCacheManager {
   }
 
   /// Maps a cube cache path to its location relative to the env cwd: a path
-  /// under the spec workspace maps positionally onto the realized workspace
-  /// ([resolveWorkspacePath] with the env cwd as the root —
-  /// `/workspace/.cache` becomes `.cache`), anything outside the workspace
-  /// lands by basename (`.m2` in the cube stays `.m2` here).
-  ///
-  // ponytail: basename fallback flattens — two outside paths sharing a
-  // basename (`/etc/.m2`, `/opt/.m2`) mirror into one directory; per-path
-  // subdirs if that ever collides in practice.
+  /// under the workspace maps positionally (`/workspace/.cache` becomes
+  /// `.cache`), anything outside the workspace lands by basename (`.m2` in
+  /// the cube stays `.m2` here).
   String _mirrorRelative(String cubePath) {
-    final realized = resolveWorkspacePath(
-      cubePath,
-      spec.filesystem.workspace,
-      _env.cwd,
-    );
-    if (realized != null && realized.length > _env.cwd.length) {
-      return realized.substring(_env.cwd.length + 1);
-    }
     final segments = [
       for (final segment in cubePath.split('/'))
         if (segment.isNotEmpty) segment,
     ];
+    final workspaceSegments = [
+      for (final segment in spec.filesystem.workspace.split('/'))
+        if (segment.isNotEmpty) segment,
+    ];
+    if (segments.length > workspaceSegments.length) {
+      var matches = true;
+      for (var i = 0; i < workspaceSegments.length; i++) {
+        if (segments[i] != workspaceSegments[i]) matches = false;
+      }
+      if (matches) return segments.skip(workspaceSegments.length).join('/');
+    }
     return segments.isEmpty ? '' : segments.last;
   }
 

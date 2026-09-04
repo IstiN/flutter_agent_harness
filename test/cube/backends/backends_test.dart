@@ -260,25 +260,6 @@ void main() {
       expect(wrapped, endsWith("ulimit -t 90; git status'"));
     });
 
-    test('a non-positive memory limit skips ulimit -v '
-        '(0 would mean unlimited)', () {
-      for (final memoryBytes in const [0, -1024]) {
-        final backend = LinuxUnshareBackend(
-          spec: CubeSpec(
-            name: 'test-cube',
-            tools: const CubeToolPolicy(allow: {'git'}),
-            resources: CubeResourceLimits(memoryBytes: memoryBytes),
-          ),
-        );
-        final wrapped = backend.wrapCommand(
-          'git status',
-          profilePath: '/tmp/unused.sb',
-        );
-        expect(wrapped, isNot(contains('ulimit -v')), reason: '$memoryBytes');
-        expect(wrapped, endsWith("/bin/bash -c 'git status'"));
-      }
-    });
-
     test('a limit-free spec with allowed network skips the preamble and '
         '--net', () {
       final backend = LinuxUnshareBackend(

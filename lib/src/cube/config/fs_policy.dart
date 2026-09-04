@@ -218,27 +218,3 @@ final class CubeFsPolicy {
   static bool _within(String path, String prefix) =>
       path == prefix || path.startsWith('$prefix/');
 }
-
-/// Remaps a spec-written [path] onto the realized workspace root: when
-/// [path] equals or lives under [specWorkspace], that prefix is swapped for
-/// [workspaceRoot] (`/workspace/data` with root `/work` becomes
-/// `/work/data`); `null` when [path] is outside the workspace — including
-/// look-alike prefixes like `/workspacefoo` — meaning the caller keeps it
-/// as written.
-///
-/// Single source of truth for the CLI workspace override: the cube's
-/// `/workspace` is realized as the process cwd, so every path written
-/// against the spec workspace must follow ([CubeFsGuard] remaps mounts
-/// with it, [CubeCacheManager] mirrors cache paths with it).
-String? resolveWorkspacePath(
-  String path,
-  String specWorkspace,
-  String workspaceRoot,
-) {
-  final base = CubeFsPolicy._normalize(specWorkspace);
-  final target = CubeFsPolicy._normalize(path);
-  if (base == null || target == null || !CubeFsPolicy._within(target, base)) {
-    return null;
-  }
-  return '$workspaceRoot${target.substring(base.length)}';
-}

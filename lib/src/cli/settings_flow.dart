@@ -212,7 +212,7 @@ extension SettingsFlow on AgentCli {
           );
           // Keep the entry's last-used model in sync (the flow bypasses
           // _switchModel, which normally records it).
-          _recordCustomModel(choice.modelId);
+          await _recordCustomModel(choice.modelId);
         } else {
           await _switchProvider(choice.spec, choice.baseUrl, choice.modelId);
         }

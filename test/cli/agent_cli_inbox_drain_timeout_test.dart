@@ -12,9 +12,6 @@ class _WedgedHubPlugin implements FahPlugin {
   String get name => 'wedged_hub';
 
   @override
-  Future<void> dispose() async {}
-
-  @override
   void register(PluginContext context) {
     context.registerExternalInbox(
       ExternalInbox(drain: () => Completer<List<AgentMessage>>().future),

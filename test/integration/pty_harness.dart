@@ -67,11 +67,10 @@ final class FaCliHarness {
     };
     final pty = PseudoTerminal.start(
       'dart',
-      // `dart bin/fah.dart`, NOT `dart run ...`: `dart run` spawns a
-      // separate child VM that escapes pty.kill() and keeps the PTY (and
-      // the whole test run) alive. Direct execution runs in-process, so
-      // kill() in close() actually terminates the CLI.
-      ['bin/fah.dart', ...args],
+      // Absolute script path so a non-default [workingDirectory] still
+      // resolves the repo's binary (folder-scoping tests launch fa in
+      // temp dirs while package resolution stays on the repo).
+      ['${Directory.current.path}/bin/fah.dart', ...args],
       workingDirectory: workingDirectory ?? Directory.current.path,
       environment: env,
       raw: true,

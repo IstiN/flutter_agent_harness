@@ -72,6 +72,9 @@ const _coverage = <String, String>{
 
 /// Widget files that legitimately cannot be snapshot-tested on the host.
 const _exempt = <String, String>{
+  'lib/apps/viewport_reporter.dart':
+      'headless plumbing: wraps js_app_view/app_tile_host subtrees and '
+      'reports sizes to the JS bridge — no standalone visual to snapshot',
   'lib/ui/widgets/html_preview_web.dart':
       'web-only conditional implementation; the '
       'stub variant (same widget API) is covered instead',

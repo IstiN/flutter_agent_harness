@@ -952,7 +952,7 @@ extension on AgentCli {
     if (rolesResolver == null) {
       io.writeln('  ${_providerKeyLine(spec, def.baseUrl, explicit: false)}');
     }
-    config.onModelChanged?.call(_agent.state.model);
+    await config.onModelChanged?.call(_agent.state.model);
   }
 
   /// Compact post-switch note: the role models that did NOT move with the
@@ -1048,7 +1048,7 @@ extension on AgentCli {
       // _recordCustomModel persists via its own onModelChanged (the
       // per-provider model memory write must survive restarts even when
       // nothing else changed).
-      _recordCustomModel(modelId);
+      await _recordCustomModel(modelId);
       return;
     }
     _agent.state.model = Model(
@@ -1075,8 +1075,9 @@ extension on AgentCli {
     );
     io.writeln('switched model to $modelId');
     _printRoleModelsNote();
-    _recordCustomModel(modelId);
-    config.onModelChanged?.call(_agent.state.model);
+    // _recordCustomModel ALWAYS notifies the host (not just with an active
+    // custom entry) — the single onModelChanged fire for this switch.
+    await _recordCustomModel(modelId);
   }
 
   /// `/model-edit [contextWindow|maxTokens <n>]`: shows or overrides the
@@ -1186,7 +1187,7 @@ extension on AgentCli {
       headers: current.headers,
       compat: current.compat,
     );
-    config.onModelChanged?.call(_agent.state.model);
+    unawaited(config.onModelChanged?.call(_agent.state.model));
   }
 }
 

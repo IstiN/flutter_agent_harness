@@ -118,10 +118,9 @@ environment through unchanged.
 
 | Key | Type | Notes |
 |---|---|---|
-| `limits.cpu` | string | Kept verbatim (e.g. `"50%"`) and round-tripped in the spec, but **not enforced** by any backend today (cgroup v2 `cpu.max` is future work; SBPL has no cpu primitive). |
-| `limits.memory` | size | Linux kernel mode: `ulimit -v` (KiB, rounded up; `0` KiB is skipped rather than meaning unlimited). No macOS equivalent (SBPL has no memory primitive). |
-| `limits.disk` | size | Cache-prune bound only: prunes old cube-cache entries. Never a run quota. |
-| `timeout` | duration | Integer seconds or `3600s` / `5m` / `24h` (single unit; `1h30m` is rejected). Wall-clock clamp per command via the harness; on Linux kernel mode it also becomes `ulimit -t` — a CPU-seconds ceiling for the process tree, not wall-clock. Both apply. |
+| `limits.cpu` | string | Kept verbatim (e.g. `"50%"`), interpreted by the enforcing backend. |
+| `limits.memory`, `limits.disk` | size | Integer bytes or `512Mi`-style: `B`, `K`/`KiB` (1024), `KB` (1000), `M`/`Mi`/`MiB`, `MB`, `G`/`GiB`, `GB`, case-insensitive. `disk` prunes old cache entries. |
+| `timeout` | duration | Integer seconds or `3600s` / `5m` / `24h` (single unit; `1h30m` is rejected). Clamps every shell command of the run. |
 
 ### `spec.cache`
 
@@ -167,21 +166,13 @@ Slash commands (line mode):
 
 ## Enforcement layers
 
-**Policy mode caveats.** The default Dart layer (`backend: policy`) is a
-convenience, not a boundary. It does NOT enforce: resource limits beyond the
-wall-clock timeout (memory/cpu/disk limits are parsed but inert — the kernel
-`ulimit` ceilings never apply), environment stripping (env handling is
-additive-only — see the Environment row), or network egress by any tool other
-than `curl`/`wget`. For hard guarantees use `backend: kernel` and read the
-confinement contract below.
-
 | Concern | Dart policy layer | Kernel layer (`backend: kernel`) |
 |---|---|---|
 | Tools | `SandboxedShell` checks every command of a line (subshells included) against the allow/deny sets; a denied command answers exit 127 with an `fa_cube[<name>]:` note. | Process confinement at exec time. |
-| Network | Lexical check on `curl`/`wget` operands: `scheme://[user:pass@]host[:port]` URLs (userinfo stripped, the host behind the last `@` is checked) plus bare-host operands (`example.com`, `example.com:8080/x`) via a lexical heuristic — flags and obvious local paths are not hosts. Non-fetching tools are NOT covered. | Egress control (`--net` when nothing is allowed). |
+| Network | Lexical URL check on `curl`/`wget` arguments only. | Egress control (`--net` when nothing is allowed). |
 | Filesystem | `CubeFsGuard` clamps file operations to the fs policy (lexical, per above). | Mount namespace; SBPL `file-read*`/`file-write*` rules. |
-| Environment | Additive only: declared `value`/`valueFrom` vars are injected into the exec env; `hidden: true` and the clean-trio filter (PATH/HOME/TMPDIR) are decorative — LocalShell merges over the inherited environment, so the host env still reaches commands. | Real `env -i` clean base; declared vars injected, caller env threaded in, hidden vars excluded. |
-| Resources | Wall-clock timeout clamp per command (harness); disk cap prunes cache entries only. | Linux: `ulimit -v` memory KiB + `ulimit -t` CPU-seconds. macOS: no SBPL resource primitives. `cpu` unenforced everywhere; `disk` never a quota. |
+| Environment | Clean base + declared vars (additive; cannot strip inherited vars). | Full environment isolation. |
+| Resources | Timeout clamp per command; disk cap prunes cache entries. | Backend-interpreted caps. |
 
 Backend selection follows the host OS: macOS generates a `sandbox-exec`
 SBPL profile, Linux an `unshare` user-namespace argv prefix, and other
@@ -194,10 +185,9 @@ platforms (including Windows) currently report a descriptor-only no-op.
 - **The Dart layer is a convenience, not a boundary.** The command
   scanner is quote-aware but not a shell parser: redirects, `eval`
   indirection and quoting inside `$( )` are above its ceiling, and the
-  network scan sees only `curl`/`wget` operands — bare-host operands are
-  covered by a lexical heuristic (flags and obvious local paths are not
-  hosts), so exotic operand shapes stay above its ceiling. The fs guard
-  resolves symlinks by their written form only.
+  network scan sees only `curl`/`wget` URL arguments — bare-host
+  operands are unchecked. The fs guard resolves symlinks by their
+  written form only.
 - **No side-channel guarantees.** Timing, cache and similar side
   channels are out of scope for the Dart layer.
 - **Kernel = hard boundary.** As the policy engine's own contract states:
@@ -229,6 +219,5 @@ crashed run.
   is missing from PATH or refuses the sandbox surfaces as a clean
   `fa_cube[<name>]:` spawn error, in foreground execs and background jobs
   alike.
-- **Network — Dart scan + kernel gate:** the policy engine checks
-  `curl`/`wget` URL and bare-host operands (userinfo-aware); full egress
-  proxy filtering is future work.
+- **Network — Dart scan only:** the policy engine checks `curl`/`wget`
+  arguments; full egress proxy filtering is future work.

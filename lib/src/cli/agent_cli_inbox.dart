@@ -137,12 +137,6 @@ extension AgentCliMessagingFlow on AgentCli {
   /// The inbox watcher tick: while IDLE, new inter-agent mail starts a turn
   /// (the loop's first steering poll drains the inbox into the run). Mid-run
   /// mail needs no wake — the per-turn steering poll already delivers it.
-  ///
-  /// Hub-only mail (plugin-inbox agent-kind messages, no user input) always
-  /// increments the streak below, and nothing on the hub side ever resets
-  /// it — only real user input (a typed line in `_handleLine`, or a
-  /// `user`-kind message in `_mainInboxMessages`) resets it. At the cap the
-  /// wake is suppressed — announced once, not per poll.
   Future<void> _wakeOnInboxMail() async {
     if (_exited || isBusy || _inboxWakeRunning) return;
     // The cap throttles AGENT-to-agent chatter only. Mail from the USER
@@ -157,12 +151,6 @@ extension AgentCliMessagingFlow on AgentCli {
       (message) => message.kind == AgentMessageKind.user,
     );
     if (!hasUserInput && _inboxWakeStreak >= AgentCli._maxInboxWakeStreak) {
-      if (!_inboxWakeCapNoticeShown) {
-        _inboxWakeCapNoticeShown = true;
-        io.writeln(
-          _style.dim('[mail] hub wake-cap reached; waiting for user input'),
-        );
-      }
       return;
     }
     _inboxWakeStreak++;

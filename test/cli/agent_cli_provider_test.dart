@@ -28,7 +28,7 @@ void main() {
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     http.Client? modelsHttpClient,
-    void Function(String providerKind, String apiKey)? onProviderChanged,
+    Future<void> Function(String providerKind, String apiKey)? onProviderChanged,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
@@ -151,7 +151,7 @@ void main() {
     final cli = cliFor(
       fake.call,
       envVarValue: (name) => name == 'ANTHROPIC_API_KEY' ? 'env-key-123' : null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
+      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
     );
     final run = cli.run();
 
@@ -182,7 +182,7 @@ void main() {
     final cli = cliFor(
       fake.call,
       envVarValue: (_) => null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
+      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
     );
     final run = cli.run();
 
@@ -208,7 +208,7 @@ void main() {
     final changes = <(String, String)>[];
     final cli = cliFor(
       fake.call,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
+      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
     );
     final run = cli.run();
 
@@ -361,7 +361,7 @@ void main() {
       final cli = cliFor(
         fake.call,
         secureKeys: cache,
-        onProviderChanged: (kind, key) => changes.add((kind, key)),
+        onProviderChanged: (kind, key) async { changes.add((kind, key)); },
       );
       final run = cli.run();
 
@@ -463,7 +463,7 @@ void main() {
       secureKeys: cache,
       envVarValue: (name) =>
           name == 'FA_KEY_127_0_0_1_1' ? cache.read(name) : null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
+      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
     );
     final run = cli.run();
 
@@ -487,7 +487,7 @@ void main() {
       fake.call,
       secureKeys: cache,
       envVarValue: (name) => name == 'OPENAI_API_KEY' ? cache.read(name) : null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
+      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
     );
     final run = cli.run();
 
@@ -517,7 +517,7 @@ void main() {
         if (name == 'FA_KEY_127_0_0_1_1') return cache.read(name);
         return null;
       },
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
+      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
     );
     final run = cli.run();
 
@@ -545,7 +545,7 @@ void main() {
     final cli = cliFor(
       fake.call,
       envVarValue: (_) => null,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
+      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
     );
     final run = cli.run();
 
@@ -932,7 +932,7 @@ void main() {
       fake.call,
       envVarValue: (_) => null,
       customProviders: registry,
-      onProviderChanged: (kind, key) => changes.add((kind, key)),
+      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
     );
     final run = cli.run();
     io.sendLine('/exit');
@@ -1265,7 +1265,7 @@ void main() {
           envVarValue: (_) => null,
           secureKeys: cache,
           customProviders: registry,
-          onProviderChanged: (kind, key) => changes.add((kind, key)),
+          onProviderChanged: (kind, key) async { changes.add((kind, key)); },
         );
         final run = cli.run();
 
@@ -2535,7 +2535,7 @@ void main() {
         secureKeys: cache,
         customProviders: registry,
         modelsFetcher: (baseUrl, {required apiKey}) async => const [],
-        onProviderChanged: (kind, key) => changes.add((kind, key)),
+        onProviderChanged: (kind, key) async { changes.add((kind, key)); },
       );
       final run = cli.run();
 

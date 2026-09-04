@@ -30,7 +30,7 @@ void main() {
     SecureKeyCache? secureKeys,
     ModelRolesResolver? modelRolesResolver,
     String? Function(String name)? envVarValue,
-    void Function(String providerKind, String apiKey)? onProviderChanged,
+    Future<void> Function(String providerKind, String apiKey)? onProviderChanged,
     String apiKey = 'test-key',
   }) {
     return AgentCli(
@@ -398,7 +398,7 @@ void main() {
         secureKeys: cache,
         envVarValue: (name) =>
             name == 'FA_KEY_COPILOT_COPILOT_X' ? 'env-tok-1' : null,
-        onProviderChanged: (kind, key) => changes.add((kind, key)),
+        onProviderChanged: (kind, key) async { changes.add((kind, key)); },
       );
       final run = cli.run();
 

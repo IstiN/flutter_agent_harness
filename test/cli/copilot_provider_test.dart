@@ -48,7 +48,7 @@ void main() {
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     http.Client? modelsHttpClient,
-    void Function(String providerKind, String apiKey)? onProviderChanged,
+    Future<void> Function(String providerKind, String apiKey)? onProviderChanged,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
@@ -131,7 +131,7 @@ void main() {
         envVarValue: (_) => null,
         secureKeys: cache,
         customProviders: registry,
-        onProviderChanged: (kind, key) => changes.add((kind, key)),
+        onProviderChanged: (kind, key) async { changes.add((kind, key)); },
         copilotDeviceFlowFn: ({clientId, onStatus}) async {
           statuses.add('called');
           onStatus?.call('open the page, enter ABCD-1234');

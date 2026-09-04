@@ -121,7 +121,10 @@ final class CubeNetworkPolicy {
   static CubeNetworkRule _parseRule(Object? node, String where) {
     // Shorthand: a bare string is a host with any port.
     if (node is String) {
-      return CubeNetworkRule(host: _parseHostString(node, where));
+      if (node.trim().isEmpty) {
+        throw ConfigException('$where: host must be a non-empty string');
+      }
+      return CubeNetworkRule(host: node.trim());
     }
     if (node is! YamlMap) {
       throw ConfigException(
@@ -129,26 +132,12 @@ final class CubeNetworkPolicy {
       );
     }
     _checkRuleKeys(node, where);
-    final host = node['host'];
-    if (host is! String || host.trim().isEmpty) {
-      throw ConfigException('$where.host: must be a non-empty string');
-    }
     return CubeNetworkRule(
-      host: host.trim(),
-      ports: _parsePorts(node['ports'], where),
+      host: _parseRuleHost(node['host'], where),
+      ports: _parseRulePorts(node['ports'], where),
     );
   }
 
-  /// Trims a shorthand bare-string host; empty is rejected.
-  static String _parseHostString(String node, String where) {
-    final host = node.trim();
-    if (host.isEmpty) {
-      throw ConfigException('$where: host must be a non-empty string');
-    }
-    return host;
-  }
-
-  /// Rejects keys outside the `{host, ports}` schema.
   static void _checkRuleKeys(YamlMap node, String where) {
     for (final key in node.keys) {
       if (key is! String || (key != 'host' && key != 'ports')) {
@@ -159,14 +148,20 @@ final class CubeNetworkPolicy {
     }
   }
 
-  /// Parses the optional `ports:` list of integers; null means any port.
-  static Set<int>? _parsePorts(Object? node, String where) {
-    if (node == null) return null;
-    if (node is! YamlList) {
+  static String _parseRuleHost(Object? host, String where) {
+    if (host is! String || host.trim().isEmpty) {
+      throw ConfigException('$where.host: must be a non-empty string');
+    }
+    return host.trim();
+  }
+
+  static Set<int>? _parseRulePorts(Object? portsNode, String where) {
+    if (portsNode == null) return null;
+    if (portsNode is! YamlList) {
       throw ConfigException('$where.ports: must be a list of integers');
     }
     return {
-      for (final port in node)
+      for (final port in portsNode)
         port is int
             ? port
             : throw ConfigException(
