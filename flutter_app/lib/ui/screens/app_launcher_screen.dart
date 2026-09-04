@@ -1448,7 +1448,6 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               unawaited(_showTileMenu(key, details.globalPosition)),
           child: _maybeSeedErrorBadge(colors, key, _tileIcon(colors, key)),
         ),
-        const SizedBox(height: 4),
         SizedBox(
           height: LauncherGridSpec.labelHeight,
           // iOS-style: the label may bleed into the (empty) inter-icon
@@ -1460,7 +1459,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             onSecondaryTapUp: (details) =>
                 unawaited(_showTileMenu(key, details.globalPosition)),
             child: OverflowBox(
-              alignment: Alignment.topCenter,
+              // Bottom-aligned: the label strip is taller than the text and
+              // that slack is the breathing room between the icon square
+              // and the label (a label glued to the tile looked cramped).
+              alignment: Alignment.bottomCenter,
               maxWidth: LauncherGridSpec.cellCrossExtent + spacing,
               child: Text(
                 _tileLabel(key),
