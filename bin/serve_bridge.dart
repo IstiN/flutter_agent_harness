@@ -73,6 +73,7 @@ final class BridgeServer {
     int port = bridgeDefaultPort,
     InternetAddress? address,
     this.onClient,
+    this.onClientsChanged,
     this.dispatch,
     this.pollInterval = bridgePollInterval,
     this.heartbeatInterval = bridgeHeartbeatInterval,
@@ -106,6 +107,11 @@ final class BridgeServer {
 
   /// Called with every connection right after the WebSocket upgrade.
   final void Function(BridgeConnection)? onClient;
+
+  /// Fires whenever [clients] changes — a connection joins or leaves.
+  /// The availability seam (phase 3) listens for the paired-client
+  /// truth value flipping so it can show/hide the browser tool family.
+  void Function()? onClientsChanged;
 
   /// The browser-op handler phase 3 injects; invoked per `browserReq` on
   /// each connection. Null: requests resolve with `no_target` errors.
@@ -188,7 +194,10 @@ final class BridgeServer {
     return _token;
   }
 
-  void _remove(BridgeConnection connection) => _clients.remove(connection);
+  void _remove(BridgeConnection connection) {
+    _clients.remove(connection);
+    onClientsChanged?.call();
+  }
 
   Future<void> _handleRequest(HttpRequest request) async {
     // Page JS can never reach the bridge: only extension contexts (which
@@ -219,6 +228,7 @@ final class BridgeServer {
       );
       _clients.add(connection);
       onClient?.call(connection);
+      onClientsChanged?.call();
       connection.listen();
     } on Object catch (error) {
       // Upgrade raced a disconnect; nothing to serve.

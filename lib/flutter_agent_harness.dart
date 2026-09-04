@@ -22,6 +22,7 @@ export 'src/approval/approval.dart';
 export 'src/approval/approval_hook.dart';
 export 'src/approval/bash_interceptor.dart';
 export 'src/browser/bridge_protocol.dart';
+export 'src/browser/browser_tools.dart';
 export 'src/cancel_token.dart';
 export 'src/dap/dap_hub_snapshot.dart';
 export 'src/cli/agent_cli.dart';

@@ -64,6 +64,12 @@ const knownToolIds = <String>{
   'inspect_image',
   'transcribe_audio',
   'dap',
+
+  /// The browser family (issue #23) plus `browser_eval` as its own id:
+  /// JS evaluation can be disabled alone (the reverse index resolves a
+  /// name that IS an availability id to itself, never to the family).
+  'browser',
+  'browser_eval',
 };
 
 /// The scope stack in resolution precedence order, shallow→deep: global,
@@ -112,13 +118,31 @@ const coreToolFamilies = <String, Set<String>>{
   'generate_video': {'generate_video'},
   'transcribe_audio': {'transcribe_audio'},
   'inspect_image': {'inspect_image'},
+  'browser': {
+    'browser_navigate',
+    'browser_tabs',
+    'browser_switch_tab',
+    'browser_click',
+    'browser_type',
+    'browser_press_key',
+    'browser_select',
+    'browser_read_dom',
+    'browser_eval',
+    'browser_screenshot',
+    'browser_wait_for',
+  },
+  'browser_eval': {'browser_eval'},
 };
 
 /// Reverse index of [coreToolFamilies]: member tool name → availability
 /// id. Lazily built once by Dart's top-level-final semantics.
 final _toolIdByName = <String, String>{
   for (final MapEntry(key: id, value: names) in coreToolFamilies.entries)
-    for (final name in names) name: id,
+    for (final name in names)
+      // A name that is itself an availability id resolves to its OWN id
+      // (the singleton rule; keeps browser_eval off the browser family's
+      // key) — the family listing never hijacks it.
+      name: name == id || coreToolFamilies.containsKey(name) ? name : id,
 };
 
 /// The availability id gating [toolName], or null when the name is
