@@ -27,18 +27,15 @@ executables:
   fah: fah
   fa: fah
 
-# The harness vendors dart_tui via a path dependency, which pub refuses to
-# publish; local installs (install_local.sh) are the distribution channel
-# until Phase 5 swaps the vendor for a hosted dep. Publishing is blocked
-# explicitly so the failure is loud and self-explaining.
-publish_to: none
-
 dependencies:
   archive: ^4.0.9
   characters: ^1.4.0
   crypto: ^3.0.3
-  dart_tui:
-    path: vendor/dart_tui
+  # Hosted for consumers (pub requires hosted deps). The local/CI builds
+  # pin the PATCHED vendor fork via pubspec_overrides.yaml (never
+  # published) — install_local.sh and the release binaries keep the
+  # keyboard-protocol fixes.
+  dart_tui: ^2.0.0
   # DAP hub client (IstiN/fa_hub_client on GitHub). 0.2.8 carries the
   # backoff-overflow CPU fix — the dead-hub reconnect tight loop.
   fa_hub_client: ^0.2.8

@@ -1,0 +1,6 @@
+# Local + CI builds use the patched vendored dart_tui fork (keyboard
+# protocol fixes); the published package depends on hosted dart_tui —
+# this file never ships to pub.dev.
+dependency_overrides:
+  dart_tui:
+    path: vendor/dart_tui
