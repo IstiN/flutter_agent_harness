@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.289
 
 - fix(roles): transient transport failures no longer kill the turn. A
   dropped connection ("Connection closed while receiving data", resets,
@@ -2464,50 +2464,3 @@
   its description carries the SQLite section only while sqlite is enabled,
   and the variant swap re-registers in place (shared snapshot store, so
   hashline anchors recorded by either variant validate for `edit`).
-
-## Unreleased
-
-- fix(roles): transient transport failures no longer kill the turn. A
-  dropped connection ("Connection closed while receiving data", resets,
-  refusals, DNS/TLS handshake failures, 502/503/504) during a provider
-  call is now retried in place with the retry policy's backoff budget
-  (`retry.retriesPerEntry`, default 2), then falls over to the next chain
-  entry — the run survives instead of ending with an error event. Key
-  rotation is deliberately skipped for this class (the endpoint dropped,
-  not the credential), the observable-output guard still holds (a stream
-  that already emitted content is never silently replayed), and every
-  retry is announced via `FallbackNoticeKind.transportRetry` (the CLI
-  prints `[roles] connection lost on … — retrying in Ns`).
-- fix(app): the onboarding flow follows the dark theme — provider cards
-  were hardcoded `Colors.white` with near-white title text (white on
-  white), the wide ghost column's "Ask when needed" used the brand blue
-  on a near-black background, and step dots/progress tracks/dividers were
-  light-themed; all now route through the `_onb*` dark-aware helpers with
-  a readable `_onbPrimary` accent in dark mode.
-- fix(cli): steering robustness — file-path-prefixed input sent while a
-  run is busy is steered with its attachment instead of dying on the busy
-  gate, steered `~/`/`./` paths resolve like interactive input, leftover
-  steering after an aborted/interrupted run runs as a fresh turn or is
-  dropped loudly (texts printed), and queue drops always show what fell
-  out instead of vanishing silently.
-- fix(cli): a `!command` executed locally now also steers a compact
-  `<system-notice>` (command + exit code + capped output tail) into the
-  conversation — the agent learns what ran without being woken.
-- deps: the DAP hub client moved to the published `fa_hub_client` 0.2.8,
-  whose reconnect backoff no longer overflows after ~64 attempts (Dart
-  int shift semantics: `1 << 64` == 0) into a zero-delay tight reconnect
-  loop against a dead hub — the root cause of the multi-hour CPU storms.
-- fix(tools): media slot overrides no longer fall back to the main
-  provider API key — a slot override is its own provider configuration
-  (CLI `generate_image` + the app's `MediaModelsStore.resolve`).
-- fix(tools): `generate_image` surfaces MiniMax `base_resp` errors that
-  hide inside HTTP 200 responses.
-- fix(cli): per-folder model memory — `/model` and `/provider` switches
-  are scoped to the launch folder; the global config keeps its seed
-  triple, so a switch in one workspace no longer leaks into the others
-  across restarts.
-- fix(cli): model/provider persistence callbacks are awaited — `/model x`
-  + `/exit` can no longer lose the switch.
-- fix(cli): the over-window context guard renders a calm yellow note
-  instead of a red error; explicit guidance when compaction cannot free
-  the window.
