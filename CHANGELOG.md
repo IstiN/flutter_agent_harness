@@ -2464,3 +2464,38 @@
   its description carries the SQLite section only while sqlite is enabled,
   and the variant swap re-registers in place (shared snapshot store, so
   hashline anchors recorded by either variant validate for `edit`).
+
+## 0.1.290
+
+- release: 0.1.289
+- release: 0.1.282
+- memory: supersede stale CPU-storm notes, record hub-test flakiness
+- feat(roles): retry transient transport failures instead of killing the turn
+- fix(app): onboarding dark theme — themed provider cards, dots, badges
+- deps: switch to fa_hub_client 0.2.8 (hosted) — the published backoff fix
+- deps: fah_hub_client 0.2.8 from the IstiN fork — backoff overflow fix (CPU storm)
+- feat(cli): tell the agent about local ! commands via a steering notice
+- fix(cli): steer file-prefixed busy input; run/drop leftover steering loudly
+- fix(tools): media slots never inherit the main provider key; generate_image surfaces MiniMax base_resp errors
+- memory: CPU burn investigation notes
+- feat(cube): fa1.dev registry client, /cube templates + /cube install
+- feat(cli): cube sandbox settings picker lists the built-in security presets
+- feat(cube): resolver falls back to built-in security presets by id
+- feat(cube): built-in security-level presets (L1-L3 x core/full) with tests
+- fix(tui): shift+enter via legacy ESC CR wire (alt+enter); pin keyboard-protocol contract
+- fix(tui): kitty shift+enter newline; cap streamed tail line growth
+- memory: note that origin is a local file mirror (no GitHub remote)
+- fix(cli): approval note Ctrl+U; hoist per-keystroke regexes
+- test(cli): pin line-mode /exit-during-run interleaving
+- fix(providers): strip a leading UTF-8 BOM in the SSE decoder
+- chore(test): drop leftover PTY debug screenshots
+- memory: session notes from the tui/gateway/debugging fixes
+- feat(memory): hot-reload the memory config at runtime
+- fix(cli): folder paths stay messages; session switches re-apply folder model memory
+- fix(cli): slash and bang commands execute while a run streams
+- fix(tui): backspace erases typed note characters in the approval prompt
+- fix(tui): keep the history-cap trim fence-balanced
+- test(integration): PTY proof for the approval selector and git-prompt fail-fast
+- snapshot: local tree 2026-09-02, grafted onto upstream 30ac68b4 (repo line was rootless)
+
+## Unreleased
