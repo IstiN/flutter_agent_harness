@@ -22,6 +22,7 @@ import '../secrets/secure_key_store.dart';
 import '../secrets/secret_redactor.dart';
 import 'cli_args.dart';
 import 'cli_config.dart';
+import '../redact/redaction_pipeline.dart';
 import 'custom_providers.dart';
 import 'env_provider_preconfig.dart';
 import 'headless_provider_key.dart';
@@ -102,6 +103,7 @@ resolveEffectiveCliArgs(
     promptTemplateDirs: parsed.promptTemplateDirs,
     mode: parsed.mode ?? saved.mode,
     tools: parsed.tools,
+    redact: parsed.redact ?? saved.redact,
     cwd: parsed.cwd,
     sessionRoot: parsed.sessionRoot,
     session: parsed.session,
@@ -302,8 +304,17 @@ SecretRedactor buildSecretRedactor({
   Map<String, String> roleSecrets = const {},
   SecureKeyCache? keys,
   Map<String, String>? env,
+  RedactionPipeline? pipeline,
 }) {
   final redactor = SecretRedactor();
+  // Every secret this function registers into the legacy exact-value
+  // redactor ALSO feeds the layered pipeline's registered layer, so both
+  // masking systems stay in sync (issue #24 stage 3).
+  void registerBoth(String name, String value) {
+    redactor.register(name, value);
+    pipeline?.registerSecret(value);
+  }
+
   final environment = env ?? Platform.environment;
   for (final name in [
     for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
@@ -311,16 +322,32 @@ SecretRedactor buildSecretRedactor({
     'TAVILY_API_KEY',
   ]) {
     final value = environment[name];
-    if (value != null) redactor.register(name, value);
+    if (value != null) registerBoth(name, value);
   }
-  redactor.registerAll(roleSecrets);
+  for (final entry in roleSecrets.entries) {
+    registerBoth(entry.key, entry.value);
+  }
   if (keys != null) {
     for (final name in keys.names) {
       final value = keys.read(name);
-      if (value != null) redactor.register(name, value);
+      if (value != null) registerBoth(name, value);
     }
   }
   return redactor;
+}
+
+/// Assembles the layered [RedactionPipeline] (issue #24) from the `redact:`
+/// config section and this process's well-known secrets. Returns `null`
+/// when the section disables redaction (`enabled: false`) so the hooks
+/// never attach. Secret registration happens through
+/// [buildSecretRedactor]'s `pipeline` parameter — call that first with this
+/// pipeline, or register later via [RedactionPipeline.registerSecret].
+RedactionPipeline? buildRedactionPipeline(RedactionConfig? config) {
+  if (config != null && !config.enabled) return null;
+  return RedactionPipeline(
+    registeredSecrets: const [],
+    config: config ?? const RedactionConfig(),
+  );
 }
 
 /// Web search works out of the box via keyless DuckDuckGo; keyed providers

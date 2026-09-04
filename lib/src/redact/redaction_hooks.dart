@@ -94,25 +94,6 @@ typedef RedactionPipelineHooks = ({
   TransformContextHook transformContext,
 });
 
-/// Per-tool redaction policy (issue #24 `redact.toolPolicy`): when
-/// [allow] is non-empty only those tools are redacted; [deny] always wins.
-class RedactionToolPolicy {
-  RedactionToolPolicy({
-    Set<String> allow = const {},
-    Set<String> deny = const {},
-  }) : allow = Set.unmodifiable(allow),
-       deny = Set.unmodifiable(deny);
-
-  /// Only these tools are redacted (empty = all).
-  final Set<String> allow;
-
-  /// These tools are never redacted (wins over [allow]).
-  final Set<String> deny;
-
-  bool appliesTo(String toolName) =>
-      !deny.contains(toolName) && (allow.isEmpty || allow.contains(toolName));
-}
-
 /// Builds the agent hooks for the layered pipeline:
 ///
 /// - `afterToolCall` masks tool result text (unless the tool is

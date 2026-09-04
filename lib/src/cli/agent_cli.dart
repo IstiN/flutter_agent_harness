@@ -116,6 +116,9 @@ import '../messaging/schedule_message_tool.dart';
 import '../messaging/scheduled_messages.dart';
 import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
+import '../redact/redaction_cli.dart';
+import '../redact/redaction_hooks.dart';
+import '../redact/redaction_pipeline.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';
 import '../usage_summary.dart';
@@ -442,6 +445,14 @@ class AgentCli {
       prompt: io.isInteractive ? _promptForApproval : null,
     );
     attachApproval(_agent, _approval);
+    // Layered redaction (issue #24): the host assembles the pipeline from
+    // the `redact:` config + this process's secrets; hooks mask tool
+    // results before they reach the transcript/session and deny
+    // credential-file reads in blockMode. The legacy SecretRedactor exact
+    // masking keeps running alongside (attached lazily on runtime tokens).
+    if (config.redactionPipeline != null) {
+      attachRedactionPipeline(_agent, config.redactionPipeline!);
+    }
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
     attachToolPhaseLabels(
@@ -1980,7 +1991,7 @@ class AgentCli {
       _onTaskJobCompleted,
     );
     try {
-      await _agent.prompt(prompt);
+      await _agent.prompt(_redactUserText(prompt));
       // Awaits any in-flight TTSR retry chain, persists the messages, and
       // auto-compacts — the same end-of-turn sequence as a REPL run.
       await _afterRun();
@@ -2225,10 +2236,19 @@ class AgentCli {
   /// normally) → finalize ([_afterRun]); thrown errors land in
   /// [_handleRunError]. Auto-continuations recurse with [isAutoContinue]
   /// set, which skips the pre-flight phases.
+  /// Masks secrets in user prompt text before it reaches the agent (and
+  /// therefore the session JSONL) — issue #24 AC8. No-op without a
+  /// pipeline (hosts without the redact wiring).
+  String _redactUserText(String text) {
+    final pipeline = config.redactionPipeline;
+    if (pipeline == null) return text;
+    return redactPrompt(pipeline, text);
+  }
+
   Future<void> _runPrompt(String text, {bool isAutoContinue = false}) async {
     await _beginUserPrompt(isAutoContinue: isAutoContinue);
     try {
-      await _agent.prompt(text);
+      await _agent.prompt(_redactUserText(text));
       final lastMessage = _agent.state.messages.lastOrNull;
       final finished = await _settleAfterPrompt(
         lastMessage,

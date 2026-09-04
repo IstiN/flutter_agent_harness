@@ -202,6 +202,7 @@ class AgentService extends ChangeNotifier
       sessionKeys: sessionKeys,
       config: config,
       redactor: redactor,
+      bootSecrets: secrets,
       streamFunction: streamFunction,
       watchExternalSessions: watchExternalSessions,
       taskModelsStore: taskModelsStore,
@@ -308,6 +309,7 @@ class AgentService extends ChangeNotifier
   }
 
   AgentService._withEnv({
+    Map<String, String> bootSecrets = const {},
     required this.env,
     required AgentConfig config,
     required String sessionsRoot,
@@ -597,7 +599,7 @@ class AgentService extends ChangeNotifier
       if (manager == null) return false;
       return await manager.pendingInboxCount(manager.selfId) > 0;
     };
-    _attachRedactor(redactor);
+    _attachRedactor(redactor, bootSecrets);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
     // Capability-gated tool availability (issue #19): capabilities follow
@@ -707,9 +709,30 @@ class AgentService extends ChangeNotifier
   /// empty redactor: `request_secret` grants register values at runtime and
   /// must be masked from that point on (an empty redactor's hooks are a
   /// cheap pass-through).
-  void _attachRedactor(SecretRedactor? redactor) {
+  void _attachRedactor(
+    SecretRedactor? redactor, [
+    Map<String, String> bootSecrets = const {},
+  ]) {
     if (redactor == null) return;
     attachSecretRedactor(_agent, redactor);
+    // The layered pipeline (issue #24) rides the same lifecycle: default
+    // config (mask mode) — the app has no `redact:` yaml section yet. Its
+    // registered layer starts from the boot secret values and grows with
+    // every `request_secret` grant via [_registerRedactionSecret].
+    _redactionPipeline ??= RedactionPipeline(
+      registeredSecrets: [
+        for (final value in bootSecrets.values)
+          if (value.length >= SecretRedactor.minValueLength) value,
+      ],
+    );
+    attachRedactionPipeline(_agent, _redactionPipeline!);
+  }
+
+  /// Registers a secret into both masking systems (legacy exact redactor
+  /// + the layered pipeline's registered layer).
+  void _registerRedactionSecret(String name, String value) {
+    _redactor?.register(name, value);
+    _redactionPipeline?.registerSecret(value);
   }
 
   /// Attaches the approval gate. The prompt surface is [approvalPromptHandler]
@@ -910,7 +933,7 @@ class AgentService extends ChangeNotifier
     // persisted or injected — [RequestSecretResult.persisted] reflects that.
     await _sessionKeys?.set(result.name, result.value);
     _secretsEnv?.addSecrets({result.name: result.value});
-    _redactor?.register(result.name, result.value);
+    _registerRedactionSecret(result.name, result.value);
     return RequestSecretResult(
       name: result.name,
       value: result.value,
@@ -1142,6 +1165,10 @@ class AgentService extends ChangeNotifier
   /// Redactor captured at construction so [reconfigure] can rebuild the
   /// system prompt's secret-name hint.
   SecretRedactor? _redactor;
+
+  /// The layered redaction pipeline (issue #24), default config; built
+  /// lazily on first attach from the redactor's registered values.
+  RedactionPipeline? _redactionPipeline;
 
   /// Rendered skills + project-context sections appended to the composed
   /// system prompt (discovered in [AgentService.create]; re-discovered by

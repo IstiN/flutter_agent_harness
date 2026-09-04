@@ -20,6 +20,7 @@ import '../cube/config/cube_settings.dart';
 import '../providers/provider_common.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
+import '../redact/redaction_types.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
 import 'custom_providers.dart';
@@ -76,6 +77,7 @@ final class CliConfig {
     this.memory,
     this.cube,
     this.tools,
+    this.redact,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -109,6 +111,11 @@ final class CliConfig {
       cube: map['cube'] == null ? null : CubeSettings.fromYaml(map['cube']),
       // The tools section (capability-gated tool availability); strict too.
       tools: map['tools'] == null ? null : ToolsConfig.fromYaml(map['tools']),
+      // The redact section (layered secret redaction); tolerant like
+      // RedactionConfig.fromJson — invalid values fall back to defaults.
+      redact: map['redact'] == null
+          ? null
+          : RedactionConfig.fromYaml(map['redact']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       customProviders: switch (map['customProviders']) {
         null => const [],
@@ -265,6 +272,12 @@ final class CliConfig {
   /// separate for the deepest-wins resolution.
   final ToolsConfig? tools;
 
+  /// Optional `redact:` section — layered secret redaction. `null` means
+  /// the section is absent (redaction still runs with default config; the
+  /// pipeline assembly happens in the host startup, see
+  /// [buildRedactionPipeline]).
+  final RedactionConfig? redact;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -293,6 +306,42 @@ final class CliConfig {
     if (toolsConfig != null && !toolsConfig.isEmpty) {
       buffer.write(toolsConfig.toYaml());
     }
+    buffer.write(_redactYaml());
+    return buffer.toString();
+  }
+
+  /// The `redact:` section, only when explicitly configured; defaults are
+  /// never written so the file stays minimal.
+  String _redactYaml() {
+    final config = redact;
+    if (config == null || config == const RedactionConfig()) return '';
+    final buffer = StringBuffer('redact:\n')
+      ..write('  enabled: ${config.enabled}\n')
+      ..write('  blockMode: ${config.blockMode}\n');
+    if (config.layerToggles.isNotEmpty) {
+      buffer.write('  layers:\n');
+      config.layerToggles.forEach(
+        (key, value) => buffer.write('    ${key.name}: $value\n'),
+      );
+    }
+    String listYaml(String key, Iterable<String> values) {
+      if (values.isEmpty) return '';
+      // Values are single-quoted: regex patterns (allowlist) routinely
+      // start with `[` or contain other YAML flow indicators.
+      final items = values
+          .map((value) => "    - '${value.replaceAll("'", "''")}'\n")
+          .join();
+      return '  $key:\n$items';
+    }
+
+    buffer
+      ..write(
+        listYaml('allowlist', [
+          for (final regex in config.allowlistRegexes) regex.pattern,
+        ]),
+      )
+      ..write(listYaml('toolAllow', config.toolAllow))
+      ..write(listYaml('toolDeny', config.toolDeny));
     return buffer.toString();
   }
 

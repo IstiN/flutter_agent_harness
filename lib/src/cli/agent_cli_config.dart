@@ -47,6 +47,7 @@ final class AgentCliConfig {
     this.modelRolesResolver,
     this.ttsr,
     this.memoryConfig,
+    this.redactionPipeline,
     this.modelsConfig,
     this.onModelsConfigChanged,
     this.onModelChanged,
@@ -248,6 +249,14 @@ final class AgentCliConfig {
   /// project rules file). When set and enabled, a [TtsrController] watches
   /// the agent's streams and drives abort/inject/retry on rule matches.
   final TtsrConfig? ttsr;
+
+  /// The layered redaction pipeline (issue #24), assembled by the host
+  /// startup from the `redact:` config + this process's secrets. When set,
+  /// the CLI attaches its hooks to the agent (tool-result masking,
+  /// blockMode credential-file denies) and masks user prompt text at the
+  /// entry points; null = redaction hooks stay off (only the legacy
+  /// [SecretRedactor] exact-value masking runs).
+  final RedactionPipeline? redactionPipeline;
 
   /// Optional `memory:` section of `~/.fah/config.yaml` — long-term memory
   /// storage path overrides (git-backed project memory). Null = the

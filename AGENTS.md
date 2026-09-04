@@ -75,6 +75,18 @@ factual: paths, commands, invariants — no essays.
   only). Session resolution: exact id > session-name match > most recent.
   Rendering is pure Dart in `trajectory_tui.dart` (no `dart:io`), shared by
   both entries; `bin/fah.dart` routes the subcommand.
+- `lib/src/redact/` — layered secret redaction (issue #24): ten pure layer
+  functions (registered/path/vendor/prefix/pem/asn1/connection/context/
+  entropy/pii) merged priority-first into `RedactionPipeline.scan/redact`
+  with `[REDACTED:<kind>]` idempotent markers, allowlist + data-URL
+  pass-through, live-mutable `RedactionConfig`, and `RedactionStats`
+  (per layer + per tool). `redaction_hooks.dart` attaches it to the agent:
+  afterToolCall masks tool results BEFORE session persist, transformContext
+  masks the outgoing context, beforeToolCall denies credential-file
+  read/bash in `blockMode`, `redactPrompt` masks user input — write-side
+  tools (`write`/`edit`/`checkpoint`/MCP write-ish) are never filtered
+  (AC7). Config: `redact:` in `~/.fah/config.yaml` or project
+  `.fah/config.yaml` (tolerant parse). CLI `/redact`; docs/redaction.md.
 - `lib/src/hashline/` — hashline patch language: `[path#TAG]` headers
   (4-hex xxHash32 of whole file), `SWAP`/`DEL`/`INS.*` ops, all-or-nothing
   `HashlinePatcher`, stale tags reject before any write. Wired in

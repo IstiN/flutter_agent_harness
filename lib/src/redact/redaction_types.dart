@@ -86,6 +86,25 @@ final class RedactionMatch {
 /// Layer toggles are sparse: a layer missing from [layerToggles] falls back
 /// to its default state (enabled, except [RedactionLayer.pii] which is
 /// opt-in).
+/// Per-tool redaction policy (issue #24 `redact.toolPolicy`): when
+/// [allow] is non-empty only those tools are redacted; [deny] always wins.
+class RedactionToolPolicy {
+  RedactionToolPolicy({
+    Set<String> allow = const {},
+    Set<String> deny = const {},
+  }) : allow = Set.unmodifiable(allow),
+       deny = Set.unmodifiable(deny);
+
+  /// Only these tools are redacted (empty = all).
+  final Set<String> allow;
+
+  /// These tools are never redacted (wins over [allow]).
+  final Set<String> deny;
+
+  bool appliesTo(String toolName) =>
+      !deny.contains(toolName) && (allow.isEmpty || allow.contains(toolName));
+}
+
 final class RedactionConfig {
   /// Creates a configuration; see each field for its default.
   const RedactionConfig({
@@ -95,6 +114,8 @@ final class RedactionConfig {
     this.allowlistRegexes = const [],
     this.minEntropy = 4.5,
     this.minLength = 32,
+    this.toolAllow = const {},
+    this.toolDeny = const {},
   });
 
   /// Master switch: when `false` the pipeline is a pass-through.
@@ -117,6 +138,40 @@ final class RedactionConfig {
 
   /// Minimum token length for the entropy layer.
   final int minLength;
+
+  /// Hook-level per-tool redaction policy (issue #24 `redact.toolPolicy`):
+  /// when non-empty only these tools are redacted; `toolDeny` always wins.
+  final Set<String> toolAllow;
+
+  /// Tools whose output is never redacted (wins over [toolAllow]).
+  final Set<String> toolDeny;
+
+  /// The hook-level policy implied by [toolAllow]/[toolDeny].
+  RedactionToolPolicy get toolPolicy =>
+      RedactionToolPolicy(allow: toolAllow, deny: toolDeny);
+
+  /// A copy with the given fields replaced (null = keep current).
+  RedactionConfig copyWith({
+    bool? enabled,
+    bool? blockMode,
+    Map<RedactionLayer, bool>? layerToggles,
+    List<RegExp>? allowlistRegexes,
+    double? minEntropy,
+    int? minLength,
+    Set<String>? toolAllow,
+    Set<String>? toolDeny,
+  }) {
+    return RedactionConfig(
+      enabled: enabled ?? this.enabled,
+      blockMode: blockMode ?? this.blockMode,
+      layerToggles: layerToggles ?? this.layerToggles,
+      allowlistRegexes: allowlistRegexes ?? this.allowlistRegexes,
+      minEntropy: minEntropy ?? this.minEntropy,
+      minLength: minLength ?? this.minLength,
+      toolAllow: toolAllow ?? this.toolAllow,
+      toolDeny: toolDeny ?? this.toolDeny,
+    );
+  }
 
   /// Whether [layer] is active under this configuration.
   bool isLayerEnabled(RedactionLayer layer) =>
@@ -154,8 +209,22 @@ final class RedactionConfig {
       minLength: json['minLength'] is num
           ? (json['minLength'] as num).toInt()
           : 32,
+      toolAllow: _stringSet(json['toolAllow']),
+      toolDeny: _stringSet(json['toolDeny']),
     );
   }
+
+  /// Parses the `redact:` yaml section (same schema as [fromJson]; invalid
+  /// values fall back to defaults like every other config section).
+  factory RedactionConfig.fromYaml(Map<dynamic, dynamic>? yaml) =>
+      RedactionConfig.fromJson(yaml);
+
+  static Set<String> _stringSet(Object? raw) => raw is List
+      ? {
+          for (final entry in raw)
+            if (entry is String) entry,
+        }
+      : const {};
 
   /// Serializes this configuration to a JSON-encodable map.
   Map<String, Object?> toJson() => <String, Object?>{
@@ -167,6 +236,8 @@ final class RedactionConfig {
     'allowlist': <String>[for (final r in allowlistRegexes) r.pattern],
     'minEntropy': minEntropy,
     'minLength': minLength,
+    'toolAllow': [...toolAllow],
+    'toolDeny': [...toolDeny],
   };
 
   @override
@@ -186,6 +257,8 @@ final class RedactionConfig {
     Object.hashAll([
       for (final entry in layerToggles.entries) ...[entry.key, entry.value],
     ]),
+    Object.hashAllUnordered(toolAllow),
+    Object.hashAllUnordered(toolDeny),
   );
 }
 
@@ -194,7 +267,12 @@ bool _scalarsDiffer(RedactionConfig a, RedactionConfig b) =>
     a.enabled != b.enabled ||
     a.blockMode != b.blockMode ||
     a.minEntropy != b.minEntropy ||
-    a.minLength != b.minLength;
+    a.minLength != b.minLength ||
+    !_stringSetEquals(a.toolAllow, b.toolAllow) ||
+    !_stringSetEquals(a.toolDeny, b.toolDeny);
+
+bool _stringSetEquals(Set<String> a, Set<String> b) =>
+    a.length == b.length && a.containsAll(b);
 
 bool _allowlistDiffers(RedactionConfig a, RedactionConfig b) {
   if (a.allowlistRegexes.length != b.allowlistRegexes.length) return true;

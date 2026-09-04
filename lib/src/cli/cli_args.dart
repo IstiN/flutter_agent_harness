@@ -13,6 +13,7 @@
 library;
 
 import '../exceptions.dart';
+import '../redact/redaction_types.dart';
 import '../tools/availability.dart';
 
 /// The provider kinds accepted by `--provider`. Static — the set of every
@@ -84,6 +85,7 @@ final class CliArgs extends CliArgsResult {
     this.cubeName,
     this.cubeConfigPath,
     this.tools,
+    this.redact,
     this.trajectory,
     this.positionals = const [],
   }) : super._();
@@ -159,6 +161,10 @@ final class CliArgs extends CliArgsResult {
   /// startup config error. Wins over the `FA_TOOLS` env twin; both stack
   /// over the config scopes at resolution.
   final ToolsConfig? tools;
+
+  /// The `redact:` section of the saved CLI config (layered secret
+  /// redaction); null = absent, defaults apply at pipeline assembly.
+  final RedactionConfig? redact;
 
   /// The `-p`/`--prompt` headless prompt, used verbatim (no file
   /// resolution). Mutually exclusive with [positionals].
@@ -459,6 +465,7 @@ final class _CliArgValues {
   String? cubeName;
   String? cubeConfigPath;
   ToolsConfig? tools;
+  RedactionConfig? redact;
   String? prompt;
   final positionals = <String>[];
 
@@ -497,6 +504,7 @@ final class _CliArgValues {
       cubeName: cubeName,
       cubeConfigPath: cubeConfigPath,
       tools: tools,
+      redact: redact,
       prompt: prompt,
       positionals: positionals,
     );

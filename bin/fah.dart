@@ -962,9 +962,14 @@ Future<void> _runApp(List<String> args) async {
   // Redact the API keys this CLI knows about from tool results and the
   // provider context, so they cannot leak into the LLM conversation or the
   // session files (assembled by [buildSecretRedactor]).
+  // The layered redaction pipeline (issue #24): assembled from the
+  // `redact:` config (null = defaults) BEFORE the secret redactor so the
+  // redactor's dual registration feeds the pipeline's registered layer.
+  final redactionPipeline = buildRedactionPipeline(effective.redact);
   final redactor = buildSecretRedactor(
     roleSecrets: roleSecrets,
     keys: keyCache,
+    pipeline: redactionPipeline,
   );
   // The FA_PROVIDER_* key ref may name ANY env var (not one of the
   // well-known catalog names) — redact it under its own name so the ref'd
@@ -972,6 +977,7 @@ Future<void> _runApp(List<String> args) async {
   // carries no secret.
   if (faPreconfig case final preconfig? when preconfig.apiKey.isNotEmpty) {
     redactor.register(preconfig.apiKeyEnvVar!, preconfig.apiKey);
+    redactionPipeline?.registerSecret(preconfig.apiKey);
   }
   // Whether the redactor is attached to the agent. A keyless startup leaves
   // it detached; a `/provider` token arriving at runtime attaches it then.
@@ -1112,6 +1118,7 @@ Future<void> _runApp(List<String> args) async {
       model: model,
       apiKey: apiKey,
       providerKind: provider,
+      redactionPipeline: redactionPipeline,
       // Shared by the env config and the presence store below.
       env: cliEnv,
       // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the
@@ -1253,6 +1260,7 @@ Future<void> _runApp(List<String> args) async {
       onProviderChanged: (kind, key) async {
         if (key.isNotEmpty) {
           redactor.register('/provider token', key);
+          redactionPipeline?.registerSecret(key);
           // A keyless startup never attached the redactor; a runtime token
           // still gets masked from here on.
           if (!redactorAttached) {
@@ -1266,6 +1274,7 @@ Future<void> _runApp(List<String> args) async {
       // `/key set` stored a secret: mask it from here on (same lazy attach).
       onSecretStored: (name, value) {
         redactor.register(name, value);
+        redactionPipeline?.registerSecret(value);
         if (!redactorAttached && !redactor.isEmpty) {
           attachSecretRedactor(cli.agent, redactor);
           redactorAttached = true;
@@ -1274,6 +1283,7 @@ Future<void> _runApp(List<String> args) async {
       // `request_secret` tool granted a secret: same redactor lazy attach.
       onSecretGranted: (name, value) {
         redactor.register(name, value);
+        redactionPipeline?.registerSecret(value);
         if (!redactorAttached && !redactor.isEmpty) {
           attachSecretRedactor(cli.agent, redactor);
           redactorAttached = true;

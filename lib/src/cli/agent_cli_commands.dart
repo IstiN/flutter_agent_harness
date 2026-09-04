@@ -48,12 +48,24 @@ extension SlashCommandDispatch on AgentCli {
       await _toolsSlash(rest);
       return true;
     }
+    if (await _handleInfoCommandLifecycle(command, rest)) return true;
+    return _handleInfoCommandSession(command, rest);
+  }
+
+  /// The tool/lifecycle info commands (/cube /memory /redact /trajectory
+  /// /agents /a2a) — split out of [_handleInfoCommand] to keep each
+  /// dispatcher's complexity inside the CRAP ratchet.
+  Future<bool> _handleInfoCommandLifecycle(String command, String rest) async {
     if (command == '/cube') {
       await _handleCubeCommand(rest);
       return true;
     }
     if (command == '/memory') {
       await _handleMemoryCommand(rest);
+      return true;
+    }
+    if (command == '/redact') {
+      await _handleRedactCommand(rest);
       return true;
     }
     if (command == '/trajectory') {
@@ -68,7 +80,7 @@ extension SlashCommandDispatch on AgentCli {
       _printA2aStatus();
       return true;
     }
-    return _handleInfoCommandSession(command, rest);
+    return false;
   }
 
   /// `/exit`, `/help`, `/stats`, `/tasks`.
@@ -127,6 +139,24 @@ extension SlashCommandDispatch on AgentCli {
       await _memory.maintenanceDue(),
     )) {
       io.writeln(line);
+    }
+  }
+
+  /// `/redact [on|off|block on|block off|stats|layers]` — layered secret
+  /// redaction status and runtime toggles (issue #24). The logic is the
+  /// pure [handleRedactCommand]; this only prints and installs the
+  /// returned config.
+  Future<void> _handleRedactCommand(String rest) async {
+    final outcome = handleRedactCommand(
+      config.redactionPipeline,
+      rest.split(_commandWhitespace).where((part) => part.isNotEmpty).toList(),
+    );
+    for (final line in outcome.lines) {
+      io.writeln(line);
+    }
+    final newConfig = outcome.newConfig;
+    if (newConfig != null) {
+      config.redactionPipeline?.config = newConfig;
     }
   }
 
