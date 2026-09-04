@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "fa — browser agent",
+  "version": "0.1.0",
+  "description": "Pairs the fa agent with this browser over a loopback WebSocket bridge.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "tabs", "scripting", "sidePanel", "alarms", "debugger", "tabGroups"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "sw/main.js", "type": "module" },
+  "side_panel": { "default_path": "panel/panel.html" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

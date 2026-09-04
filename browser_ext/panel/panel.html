@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fa — browser agent</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header>
+    <span id="dot" class="dot off"></span>
+    <span id="status">checking…</span>
+  </header>
+
+  <section>
+    <label>Bridge URL
+      <input id="url" type="text" placeholder="ws://127.0.0.1:8765" spellcheck="false">
+    </label>
+    <label>One-time token
+      <input id="token" type="password" placeholder="paste from /browser connect" spellcheck="false">
+    </label>
+    <div class="row">
+      <button id="connect">Connect</button>
+      <button id="disconnect" class="ghost">Disconnect</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Compose</h2>
+    <label>To
+      <input id="to" type="text" value="main" spellcheck="false">
+    </label>
+    <label>Text
+      <textarea id="text" rows="2" placeholder="smoke-test mail"></textarea>
+    </label>
+    <button id="send">Send mail</button>
+  </section>
+
+  <h2>Events</h2>
+  <ul id="log" aria-live="polite"></ul>
+
+  <script src="panel.js"></script>
+</body>
+</html>

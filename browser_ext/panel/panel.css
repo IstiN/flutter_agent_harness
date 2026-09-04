@@ -1,0 +1,87 @@
+/* fa side panel — dark, teal accent. */
+:root {
+  --bg: #070A10;
+  --panel: #0D1420;
+  --line: #1B2735;
+  --text: #D7E2EE;
+  --dim: #6B7A8C;
+  --accent: #2DD4BF;
+  --bad: #F87171;
+  --warn: #FBBF24;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.dot.on  { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.dot.retry { background: var(--warn); }
+.dot.off { background: var(--bad); }
+#status { color: var(--dim); overflow-wrap: anywhere; }
+
+section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+h2 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  margin: 0 0 8px;
+}
+label { display: block; margin-bottom: 8px; color: var(--dim); }
+input, textarea {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+}
+input:focus, textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.row { display: flex; gap: 8px; }
+button {
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #04211C;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.ghost { background: transparent; color: var(--accent); }
+button:hover { filter: brightness(1.15); }
+#log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+#log li {
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--line);
+  overflow-wrap: anywhere;
+}
+#log li:first-child { color: var(--text); }
