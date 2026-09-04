@@ -2498,4 +2498,8 @@
 - test(integration): PTY proof for the approval selector and git-prompt fail-fast
 - snapshot: local tree 2026-09-02, grafted onto upstream 30ac68b4 (repo line was rootless)
 
+## 0.1.291
+
+- ci(publish): honor publish_to: none instead of failing every tag
+
 ## Unreleased
