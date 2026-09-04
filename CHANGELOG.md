@@ -2506,4 +2506,13 @@
 
 - feat(widgets): live state sync between board tile and fullscreen app + 1x1 icon tiles
 
+## 0.1.293
+
+- redact: stage 2 — agent hook wiring for the layered pipeline (issue #24)
+- feat(redact): layered redaction pipeline core (issue #24 stage 1)
+- feat(pub): publishable again — hosted dart_tui dep, vendor stays local
+- feat(app): Copilot provider entries re-auth via the device-code flow
+- fix(app): launcher tile labels no longer glued to the icon square
+- fix(app): onboarding page 3/4 mockups readable in dark mode + light goldens
+
 ## Unreleased
