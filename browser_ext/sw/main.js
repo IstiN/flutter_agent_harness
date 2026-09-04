@@ -36,7 +36,7 @@ bridge.onStatus((s) => {
 bridge.onMail((m) => pushPanels({ type: 'mail', from: m.from, text: m.text, msgId: m.msgId }));
 
 bridge.onBrowserReq(async (req) => {
-  const out = await dispatch(req.op, req.args || {});
+  const out = await dispatch(req.req ?? req.op, req.args || {}); // browser op name arrives as `req` (envelope op is "browserReq")
   bridge.browserRes(req.id, out); // exactly one answer per browserReq
 });
 

@@ -27,19 +27,23 @@ import 'custom_providers.dart';
 import 'env_provider_preconfig.dart';
 import 'headless_provider_key.dart';
 
-/// `fa serve --a2a [--port N] [--token T]` interception: the args parser
-/// does not know the `--a2a` form, so [args] is scanned for the bare
+/// `fa serve [--a2a|--bridge] [--port N] [--token T]` interception: the args
+/// parser does not know the serve forms, so [args] is scanned for the bare
 /// `serve` invocation and the serve-specific flags (and their values) are
-/// stripped from the list that reaches [parseCliArgs]. The caller validates
-/// that a `serve` invocation actually carries `--a2a` and fails with the
-/// usage line before parsing.
-({bool serveA2a, List<String> cliArgs}) splitServeA2aArgs(List<String> args) {
-  final isServeA2a = args.contains('serve');
-  final cliArgs = isServeA2a
+/// stripped from the list that reaches [parseCliArgs]. Exactly one serve
+/// form must be selected: [serveA2a]/[serveBridge] say which, and the
+/// caller fails with the usage line when a `serve` invocation carries
+/// neither, both, or is missing its marker.
+({bool serveA2a, bool serveBridge, List<String> cliArgs}) splitServeA2aArgs(
+  List<String> args,
+) {
+  final isServe = args.contains('serve');
+  final cliArgs = isServe
       ? [
           for (var i = 0; i < args.length; i++)
             if (args[i] != 'serve' &&
                 args[i] != '--a2a' &&
+                args[i] != '--bridge' &&
                 args[i] != '--port' &&
                 args[i] != '--token' &&
                 (i == 0 ||
@@ -47,7 +51,11 @@ import 'headless_provider_key.dart';
               args[i],
         ]
       : args;
-  return (serveA2a: isServeA2a, cliArgs: cliArgs);
+  return (
+    serveA2a: isServe && args.contains('--a2a'),
+    serveBridge: isServe && args.contains('--bridge'),
+    cliArgs: cliArgs,
+  );
 }
 
 /// Provider/model restoration. Precedence: an explicit `--provider` flag

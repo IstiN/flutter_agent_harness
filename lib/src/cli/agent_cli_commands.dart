@@ -72,8 +72,16 @@ extension SlashCommandDispatch on AgentCli {
       await _handleTrajectoryCommand(rest);
       return true;
     }
-    if (command == '/agents') {
-      await handleAgentsCommand(rest);
+    if (command == '/browser') {
+      List<String> lines;
+      try {
+        lines = await runBrowserCommand(config.browserBridgeHandle, rest);
+      } on Object catch (error) {
+        lines = ['bridge: $error'];
+      }
+      for (final line in lines) {
+        io.writeln(line);
+      }
       return true;
     }
     if (command == '/a2a') {

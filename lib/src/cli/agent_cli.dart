@@ -25,6 +25,7 @@ import '../hashline/hashline.dart';
 import '../agent/agent.dart';
 import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
+import 'browser_bridge_commands.dart';
 import 'headless_prompt.dart';
 import 'key_event.dart';
 import 'key_status.dart';

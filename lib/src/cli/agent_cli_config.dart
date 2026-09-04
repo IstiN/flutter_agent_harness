@@ -82,6 +82,7 @@ final class AgentCliConfig {
     this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
     this.osName,
+    this.browserBridgeHandle,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -478,4 +479,10 @@ final class AgentCliConfig {
 
   /// Per-plugin configuration from `.fah/packages.yaml` (keyed by plugin name).
   final Map<String, dynamic> pluginConfig;
+
+  /// The loopback browser-bridge handle (`/browser connect`), implemented
+  /// by the host over the WebSocket bridge server (the io lives in the
+  /// executable; lib/ stays dart:io-free). Null (web hosts, plain tests)
+  /// makes `/browser` answer with a clean unavailable note.
+  final BrowserBridgeHandle? browserBridgeHandle;
 }

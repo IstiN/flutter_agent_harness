@@ -101,10 +101,29 @@ void main() {
       expect(split.cliArgs, const ['positional']);
     });
 
-    test('a serve invocation without --a2a still reports for the caller', () {
+    test('a serve invocation without a serve marker reports neither form', () {
       final split = splitServeA2aArgs(const ['serve', 'positional']);
-      expect(split.serveA2a, isTrue);
+      expect(split.serveA2a, isFalse);
+      expect(split.serveBridge, isFalse);
       expect(split.cliArgs, const ['positional']);
+    });
+
+    test('the bridge form is detected and its flags stripped', () {
+      final split = splitServeA2aArgs(const [
+        'serve',
+        '--bridge',
+        '--port',
+        '9999',
+      ]);
+      expect(split.serveBridge, isTrue);
+      expect(split.serveA2a, isFalse);
+      expect(split.cliArgs, const []);
+    });
+
+    test('both serve markers never select a form', () {
+      final split = splitServeA2aArgs(const ['serve', '--a2a', '--bridge']);
+      expect(split.serveA2a, isTrue);
+      expect(split.serveBridge, isTrue);
     });
   });
 
