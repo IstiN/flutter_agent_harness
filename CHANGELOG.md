@@ -2502,4 +2502,8 @@
 
 - ci(publish): honor publish_to: none instead of failing every tag
 
+## 0.1.292
+
+- feat(widgets): live state sync between board tile and fullscreen app + 1x1 icon tiles
+
 ## Unreleased
