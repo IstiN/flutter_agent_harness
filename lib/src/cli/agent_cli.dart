@@ -17,11 +17,15 @@ library;
 import 'dart:async';
 
 import 'ansi_markdown.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:meta/meta.dart';
 import 'package:yaml/yaml.dart';
 
+import '../hashline/hashline.dart';
+
 import '../agent/agent.dart';
+import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'headless_prompt.dart';
 import 'key_event.dart';
@@ -42,8 +46,9 @@ import '../task/subagent_manager.dart';
 import '../task/subagent_tools.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
+import '../prompts/prompts.g.dart'
+    show cliMessagingSectionPrompt, readSqliteSectionPrompt;
 import '../prompts/project_context.dart';
-import '../prompts/prompts.g.dart' show cliMessagingSectionPrompt;
 import '../approval/approval.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
@@ -87,6 +92,10 @@ import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
 import '../session/session_tree.dart';
+import '../trajectory/trajectory_snapshot.dart';
+import 'trajectory_tui.dart';
+import '../tools/availability.dart';
+import '../tools/availability_gate.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/builtin_tools.dart';
@@ -139,9 +148,11 @@ part 'agent_commands.dart';
 part 'approval_commands.dart';
 part 'skill_commands.dart';
 part 'session_commands.dart';
+part 'trajectory_commands.dart';
 part 'agent_cli_cube.dart';
 part 'agent_cli_provider_presets.dart';
 part 'agent_cli_inbox.dart';
+part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_commands.dart';
@@ -219,7 +230,12 @@ class AgentCli {
       os: config.osName,
     );
     _cubeSource = config.cubeSource;
-    final decoratedEnv = SessionVarsExecutionEnv(_cubeEnv, _sessionEnvVars);
+    _coreToolEnv = SessionVarsExecutionEnv(_cubeEnv, _sessionEnvVars);
+    final decoratedEnv = _coreToolEnv;
+    // ONE hashline snapshot store shared by `read` and `edit` (and by the
+    // sqlite-variant swap of `read` in agent_cli_tools.dart), so anchors
+    // recorded by any variant validate for edits.
+    _snapshotStore = HashlineSnapshotStore();
     // Session-scoped background shell jobs (bash background / steer-yield);
     // settle notifications re-enter the conversation like task completions.
     _shellJobs = ShellJobRegistry(
@@ -233,6 +249,7 @@ class AgentCli {
         // for the bash tool; resolved live, so `/provider` switches and
         // session (re)creation are picked up per exec.
         decoratedEnv,
+        snapshots: _snapshotStore,
         webSearch: config.webSearchConfig,
         model: () => _agent.state.model,
         sqlite: config.sqliteEngine,
@@ -447,6 +464,13 @@ class AgentCli {
     // tool list was seeded at construction and needs the explicit update.
     _toolRegistry.registerAll(_checkpoints.tools);
     _agent.state.tools = _toolRegistry.tools;
+    // Capability-gated availability (issue #19): the gate hides/restores
+    // tools per the tools: scope stack and tombstones disabled calls; the
+    // rebuild (async config reads) applies the startup resolution.
+    _toolGroupsById = AgentCliTools(this).toolGroups();
+    _toolGate = ToolAvailabilityGate(toolsById: _toolGroupsById);
+    _agent.toolExecutor = _toolGate.wrapExecutor(_agent.toolExecutor);
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
     _agent.subscribe(_onAgentEvent);
     // MCP: late tool (re)registration and prompt updates flow through the
     // manager's change callback; servers connect in the background.
@@ -653,6 +677,12 @@ class AgentCli {
   /// `/cube use`; never cleared by `/cube off` (a reload re-applies it).
   String? _cubeSource;
 
+  /// The last fetched [DapHubSnapshot] — rendered by the settings hub's
+  /// DAP / Hub row and the `/settings` summary, refreshed before each
+  /// render and at the top of the DAP flow. Null until fetched or when no
+  /// hub wiring exists ([AgentCliConfig.dapHubState]).
+  DapHubSnapshot? _dapHubSnapshot;
+
   /// Retained-subagent registry (Phase 3a): tracks every spawned child so
   /// `task_status`/`task_observe`/`task_send` work after completion.
   late final SubagentManager _subagentManager;
@@ -684,6 +714,19 @@ class AgentCli {
   late final Agent _agent;
   late final ApprovalManager _approval;
   late final ToolRegistry _toolRegistry;
+
+  /// Capability-gated tool availability (issue #19) — state for the
+  /// `agent_cli_tools.dart` extension: the static tool set grouped by
+  /// availability id (the `read` group entry swaps in place on sqlite
+  /// toggles so the gate always re-registers the current variant), the
+  /// enforcing gate (one per CLI — the wrapped executor captures it), the
+  /// shared read/edit hashline snapshot store, the tools' execution env,
+  /// and the scope caches.
+  late final Map<String, List<AgentTool>> _toolGroupsById;
+  late final ToolAvailabilityGate _toolGate;
+  late final HashlineSnapshotStore _snapshotStore;
+  late final SessionVarsExecutionEnv _coreToolEnv;
+  final _ToolsWiringState _toolsWiring = _ToolsWiringState();
 
   /// Long-term memory controller (project + user scope stores). Always
   /// constructed; search is disabled when no LLM provider is injected.
@@ -777,6 +820,12 @@ class AgentCli {
   /// server connects, fails, or drops.
   void _onMcpChanged() {
     _mcp.reRegister(_toolRegistry, _agent, _applyPromptComposition);
+    // Re-apply the availability decision to the fresh MCP surface (a
+    // no-op until the first rebuild produced a resolution).
+    final resolution = _toolGate.resolution;
+    if (resolution != null) {
+      AgentCliTools(this).refilterMcpTools(resolution);
+    }
   }
 
   /// Rebuilds the agent's system prompt from the active mode (or the
@@ -910,6 +959,8 @@ class AgentCli {
     await _cubeBootRestore();
     await _loadAgentContext();
     _session = await _initializeSession();
+    // Session scope (tools.yaml next to the session file) is live now.
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
     _syncMailboxPrefix();
     // Boot marker: every wedge post-mortem starts with "which BUILD held
     // the busy row?" — parallel fa processes share this log, so name the
@@ -1184,6 +1235,8 @@ class AgentCli {
     try {
       await _repo.delete(await session.getMetadata());
       _session = null;
+      // The session scope is gone — drop it from the resolution.
+      unawaited(AgentCliTools(this).rebuildToolAvailability());
     } on Object {
       // Best-effort cleanup.
     }
@@ -1911,6 +1964,10 @@ class AgentCli {
     // same cached trees a REPL session would).
     await _cubeBootRestore();
     _session = await _initializeSession();
+    // Session scope (tools.yaml next to the session file) is live now.
+    unawaited(AgentCliTools(this).rebuildToolAvailability());
+    // Warm the endpoint metadata (model list, dial features, reported
+    // limits) BEFORE the first turn; failures are silent.
     await _warmModelCacheQuietly();
     // The same pre-flight compaction guard as the REPL's [_runPrompt]:
     // a resumed session already over the threshold must compact BEFORE

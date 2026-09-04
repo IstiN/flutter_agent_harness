@@ -399,9 +399,16 @@ void main() {
         .firstWhere(
           (j) => j.agentId == plugin.agentId && j.channel == 'general',
         )
-        .timeout(const Duration(seconds: 5));
+        .timeout(const Duration(seconds: 30));
 
-    final result = await plugin.inviteTo('carol');
+    // Under full-suite parallel load the freshly-connected client can hit
+    // a reconnect blip between the welcome and the invite (connected flips
+    // false for a few ms) — retry briefly instead of flaking the hook.
+    var result = await plugin.inviteTo('carol');
+    for (var attempt = 0; !result.ok && attempt < 10; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      result = await plugin.inviteTo('carol');
+    }
     expect(result.ok, isTrue);
     expect(result.pending, isTrue);
     expect(

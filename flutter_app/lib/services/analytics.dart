@@ -175,6 +175,10 @@ final class AppAnalytics {
   void skillsAccessChanged(String access) =>
       _log('skills_access_changed', {'access': access});
 
+  /// A DAP hub settings interaction (open/probe/edit/save).
+  void dapHubAction(String action) =>
+      _log('dap_hub_action', {'action': action});
+
   /// A model preset was applied from the presets section.
   void modelPresetApplied(String presetId) =>
       _log('model_preset_applied', {'preset_id': presetId});

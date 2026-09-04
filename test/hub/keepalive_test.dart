@@ -157,7 +157,10 @@ void main() {
       final id = client.agentId!;
       final offline = hub.agentOffline
           .firstWhere((a) => a == id)
-          .timeout(tinyBackoff(1));
+          // A real wait budget, not the injected client backoff: under
+          // full-suite load the hub needs more than 5ms to process the
+          // socket close (this was the keepalive hook flake).
+          .timeout(const Duration(seconds: 2));
       await client.disconnect();
       await offline;
       // Several ping cycles later: no watchdog-driven re-hello churn.

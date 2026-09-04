@@ -111,4 +111,14 @@ abstract interface class FaChatService implements Listenable {
 
   /// Applies a new approval mode.
   void setApprovalMode(ApprovalMode mode);
+
+  /// The live trajectory ledger: a [TrajectorySnapshot] per change, in
+  /// append order — one snapshot per finalized session record and per
+  /// streaming agent event. Hosts implement it by feeding a core
+  /// [TrajectorySnapshotBuilder] (session records through `append`, agent
+  /// events through `applyEvent`) — see [TrajectoryServiceFeed] for a
+  /// ready-made producer. Hosts without a ledger turn
+  /// `FaChatFeatures.trajectory` off instead (a never-emitting stream
+  /// would only leave the panel loading).
+  Stream<TrajectorySnapshot> get trajectory;
 }

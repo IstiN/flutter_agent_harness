@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.282
+## Unreleased
 
 - fix(roles): transient transport failures no longer kill the turn. A
   dropped connection ("Connection closed while receiving data", resets,
@@ -13,33 +13,78 @@
   that already emitted content is never silently replayed), and every
   retry is announced via `FallbackNoticeKind.transportRetry` (the CLI
   prints `[roles] connection lost on … — retrying in Ns`).
+- fix(app): the onboarding flow follows the dark theme — provider cards
+  were hardcoded `Colors.white` with near-white title text (white on
+  white), the wide ghost column's "Ask when needed" used the brand blue
+  on a near-black background, and step dots/progress tracks/dividers were
+  light-themed; all now route through the `_onb*` dark-aware helpers with
+  a readable `_onbPrimary` accent in dark mode.
+- fix(cli): steering robustness — file-path-prefixed input sent while a
+  run is busy is steered with its attachment instead of dying on the busy
+  gate, steered `~/`/`./` paths resolve like interactive input, leftover
+  steering after an aborted/interrupted run runs as a fresh turn or is
+  dropped loudly (texts printed), and queue drops always show what fell
+  out instead of vanishing silently.
+- fix(cli): a `!command` executed locally now also steers a compact
+  `<system-notice>` (command + exit code + capped output tail) into the
+  conversation — the agent learns what ran without being woken.
+- deps: the DAP hub client moved to the published `fa_hub_client` 0.2.8,
+  whose reconnect backoff no longer overflows after ~64 attempts (Dart
+  int shift semantics: `1 << 64` == 0) into a zero-delay tight reconnect
+  loop against a dead hub — the root cause of the multi-hour CPU storms.
+- fix(tools): media slot overrides no longer fall back to the main
+  provider API key — a slot override is its own provider configuration
+  (CLI `generate_image` + the app's `MediaModelsStore.resolve`).
+- fix(tools): `generate_image` surfaces MiniMax `base_resp` errors that
+  hide inside HTTP 200 responses.
+- fix(cli): per-folder model memory — `/model` and `/provider` switches
+  are scoped to the launch folder; the global config keeps its seed
+  triple, so a switch in one workspace no longer leaks into the others
+  across restarts.
+- fix(cli): model/provider persistence callbacks are awaited — `/model x`
+  + `/exit` can no longer lose the switch.
+- fix(cli): the over-window context guard renders a calm yellow note
+  instead of a red error; explicit guidance when compaction cannot free
+  the window.
 
-## 0.1.281
+## 0.1.282
 
-- fix(tools): media slot overrides no longer fall back to the main provider
-  API key. A slot override is its own provider configuration: only its named
-  `apiKeyName` key is used, and a missing/unresolvable key makes the endpoint
-  unusable with an explicit error (CLI `generate_image` + the app's
-  `MediaModelsStore.resolve`) instead of silently leaking the chat provider's
-  key to a different endpoint.
-- fix(tools): `generate_image` surfaces MiniMax `base_resp` errors that hide
-  inside HTTP 200 responses (`{"base_resp":{"status_code":1004,...}}`).
-  Previously the MiniMax dialect reported a misleading
-  "image generation: no image in MiniMax response" for an auth failure; the
-  error now names the real cause and points at
-  `models.slots.imageGeneration.apiKeyName`.
 
-- fix(cli): per-folder model memory — `/model` and `/provider` switches are
-  scoped to the launch folder (`model-state.json` under the sessions root);
-  the global config keeps its seed triple, so a switch in one workspace no
-  longer leaks into the others across restarts. Explicit `--model`,
-  `--provider`, `--base-url` and `FA_PROVIDER_*` still win per launch.
-- fix(cli): model/provider persistence callbacks are awaited — `/model x` +
-  `/exit` can no longer lose the switch.
-- fix(cli): the over-window context guard renders a calm yellow note instead
-  of a red error; explicit guidance when compaction cannot free the window.
-
-## Unreleased
+- feat(cli): a `DAP / Hub` entry in the `/settings` hub — view the live
+  hub snapshot (resolved url, agent name, connection state), set the hub
+  url and the agent name (persisted through the hub client's
+  `~/.dap/config.json` read-modify-write, so channels and invites
+  survive), test the connection, and write the `hub: false` plugin
+  opt-out into `.fah/packages.yaml` (existing sections preserved). The
+  flow reads the hub state through an injectable snapshot seam the
+  executable wires to the hub plugin — no sockets, fully fake-drivable
+  in tests.
+- fix(cli): `.fah/packages.yaml` entries actually load now — package:yaml
+  reifies its map entries as dynamic-keyed, so the loader's String-keyed
+  `whereType` filter dropped every entry and the whole file (plugin
+  enabling and configuration, `hub:` url/name, `hub: false` opt-outs)
+  was inert. The loader now deep-converts the parsed yaml tree to plain
+  Dart values before handing sections to plugins and the DAP / Hub
+  settings flow.
+  The loader now lives in `lib/src/plugins/packages_config.dart` (reading
+  through the ExecutionEnv), so tests can pin it without importing the
+  executable.
+- feat(app): DAP/Hub settings section in the Flutter app — a settings row
+  opening the hub page (resolved URL, connection probe, agent name/agentId,
+  channels) with add/edit of the machine-shared `~/.dap/config.json`
+  connection via `fah_hub_client`; web degrades to an honest
+  not-supported note (the hub client is IO-bound).
+- fix(dap): a `dap_dm` to a known-but-offline peer no longer reads like
+  a typo — the no-match error lists the known online peers and points at
+  `dap_invite` for offline peers and `dap_peers` for typos.
+- feat(plugins): `FahPlugin.dispose` — the CLI calls it once per plugin
+  at shutdown (errors swallowed per plugin, so one bad plugin cannot
+  block exit); plugins override it to release sockets, processes, and
+  timers. The hub plugin host disposes the vendored hub client.
+- chore(cli): the `fah_hub_client` import in `bin/fah.dart` is now
+  marked as the ONLY core-CLI import of the hub client — downstream
+  forks wanting a different or no hub client patch that import plus the
+  `'hub'` case in `_builtInPlugin`.
 
 - fix(messaging): `agent_directory` no longer drowns in graveyard mailboxes —
   it lists LIVE mailboxes (recent activity) plus anything holding pending
@@ -2342,4 +2387,127 @@
 - fix(providers): reject Copilot fine-grained PATs at connect time (0.1.278)
 - refactor(cli): split banner/key-status out of agent_cli.dart, untangle _runPrompt
 
+## 0.1.281
+
+- fix(providers): correct the Copilot token guidance — fine-grained PATs need the Copilot Requests permission (0.1.280)
+- memory: copilot fine-grained PAT 404 root cause + flutter_app flame_3d env breakage
+
+## 0.1.283
+
+- fix(app): shared DapHubSnapshot, probe dispose ordering, scope reverts (#15 review)
+- refactor(cli): one DapHubSnapshot type shared by CLI and app (#15 review)
+- fix(app): compile fixes after main merge — barrel import hides, l10n key for widgets catalog note
+- refactor(cli): extract packages.yaml loader into lib/ — keeps bin/ out of test coverage (CRAP gate)
+- fix(cli): make dap opt-out test teardown race-tolerant
+- fix(app): harden DAP hub page error paths and test determinism (#6)
+- feat(app): DAP/Hub settings section (#6)
+- fix(cli): review fixes for DAP/Hub /settings entry (#5)
+- feat(cli): DAP/Hub entry in /settings (#5)
+
+## 0.1.284
+
+- memory: session access-count sync from trajectory work
+- docs(trajectory): AGENTS.md sections for core, fa_ui widgets, CLI commands (#10)
+- test(trajectory): fa_ui golden baselines (57 PNGs) + real icon glyphs (#10 phase 11)
+- refactor(trajectory): CLI CRAP ratchet — split inspect renderer, cover tail/parse arms (#10)
+- fix(trajectory): mirrored live-tail rows keep real-record durations (#10)
+- feat(trajectory): Flutter host — service stream, feature flag, AppBar icon, panel (#10 phase 10)
+- feat(trajectory): CLI /trajectory family + headless fa trajectory + TUI fallback (#10 phase 9)
+- feat(trajectory): wire view, toolbar strings, barrel exports (#10 phases 6-8 integration)
+- feat(trajectory): TrajectoryDetails tabbed sheet (#10 phase 8)
+- feat(trajectory): TrajectoryTimeline painter + gestures (#10 phase 7)
+- feat(trajectory): TrajectoryTable, per-kind cells, virtualised ledger (#10 phase 6)
+- refactor(trajectory): split CRAP-heavy layout fold and timed timeline (#10)
+- feat(trajectory): fa_ui controller, view skeleton, toolbar, strings (#10 phase 5)
+- feat(trajectory): incremental full-text search index (#10 phase 4)
+- feat(trajectory): timeline projection — sequence/duration/time/actual modes (#10 phase 3)
+- feat(trajectory): event projection, request numbering, live tail, layout fold (#10 phase 2)
+- feat(trajectory): core record model, snapshot contract, JSONL walker (#10 phase 1)
+
+## 0.1.285
+
+- fix(trajectory): timeline lane labels inherit theme font
+- test(trajectory): real fonts in fa_ui goldens — Inter/JetBrainsMono + monospace alias
+
+## 0.1.286
+
+- fix(trajectory): thread ToolCall.parentCallId so subtool rows replay from sessions
+
+## 0.1.287
+
+
+- feat(tools): capability-gated tool availability (issue #19) — the pure
+  decision layer (`lib/src/tools/availability.dart`: `ToolsConfig` yaml/JSON
+  parsing with `mcp:<server>` flattening, `resolveToolAvailability` merging
+  the global < project < session < runtime scope stack over the host's hard
+  capability floor — absent tools can never be force-enabled, unknown ids
+  warn once) and the gate (`availability_gate.dart`: idempotent registry
+  hide/restore + prompt rebuild, executor tombstones for calls to disabled
+  tools, `noteHiddenNames` covering late MCP registrations).
+- feat(cli): the `/tools` family (bare list, `enable|disable <id>
+  [global|project|session]`, `reload`), a Tools entry in the `/settings`
+  hub, and the runtime scope: `--tools 'id=on|off,...'` with the `FA_TOOLS`
+  env twin (flag wins; a malformed spec is a hard startup error). Scopes
+  re-read and re-applied live — no restart; a broken scope file keeps the
+  last good one with a warning.
+- feat(dap): the `dap_*` tools register only when a hub is actually
+  configured (env > `hub:` section > `~/.dap/config.json` > default) — the
+  zero-config install hands the model no dead-end tools; `/dap <host>`
+  still connects on demand and the tools appear at the next launch.
+  `dap: false` in any `tools:` scope turns the family off.
+- feat(app): a Tools section in the app settings — one live switch per
+  known tool id (ids the app cannot wire render disabled with the
+  capability's reason), applied to the running agent without a restart and
+  persisted as `tools_availability.json` via the new `ToolsAvailabilityStore`
+  (the same `ToolsConfig` JSON envelope the CLI parses).
+- feat(read): the `read` tool follows the `sqlite` availability decision —
+  its description carries the SQLite section only while sqlite is enabled,
+  and the variant swap re-registers in place (shared snapshot store, so
+  hashline anchors recorded by either variant validate for `edit`).
+
 ## Unreleased
+
+- fix(roles): transient transport failures no longer kill the turn. A
+  dropped connection ("Connection closed while receiving data", resets,
+  refusals, DNS/TLS handshake failures, 502/503/504) during a provider
+  call is now retried in place with the retry policy's backoff budget
+  (`retry.retriesPerEntry`, default 2), then falls over to the next chain
+  entry — the run survives instead of ending with an error event. Key
+  rotation is deliberately skipped for this class (the endpoint dropped,
+  not the credential), the observable-output guard still holds (a stream
+  that already emitted content is never silently replayed), and every
+  retry is announced via `FallbackNoticeKind.transportRetry` (the CLI
+  prints `[roles] connection lost on … — retrying in Ns`).
+- fix(app): the onboarding flow follows the dark theme — provider cards
+  were hardcoded `Colors.white` with near-white title text (white on
+  white), the wide ghost column's "Ask when needed" used the brand blue
+  on a near-black background, and step dots/progress tracks/dividers were
+  light-themed; all now route through the `_onb*` dark-aware helpers with
+  a readable `_onbPrimary` accent in dark mode.
+- fix(cli): steering robustness — file-path-prefixed input sent while a
+  run is busy is steered with its attachment instead of dying on the busy
+  gate, steered `~/`/`./` paths resolve like interactive input, leftover
+  steering after an aborted/interrupted run runs as a fresh turn or is
+  dropped loudly (texts printed), and queue drops always show what fell
+  out instead of vanishing silently.
+- fix(cli): a `!command` executed locally now also steers a compact
+  `<system-notice>` (command + exit code + capped output tail) into the
+  conversation — the agent learns what ran without being woken.
+- deps: the DAP hub client moved to the published `fa_hub_client` 0.2.8,
+  whose reconnect backoff no longer overflows after ~64 attempts (Dart
+  int shift semantics: `1 << 64` == 0) into a zero-delay tight reconnect
+  loop against a dead hub — the root cause of the multi-hour CPU storms.
+- fix(tools): media slot overrides no longer fall back to the main
+  provider API key — a slot override is its own provider configuration
+  (CLI `generate_image` + the app's `MediaModelsStore.resolve`).
+- fix(tools): `generate_image` surfaces MiniMax `base_resp` errors that
+  hide inside HTTP 200 responses.
+- fix(cli): per-folder model memory — `/model` and `/provider` switches
+  are scoped to the launch folder; the global config keeps its seed
+  triple, so a switch in one workspace no longer leaks into the others
+  across restarts.
+- fix(cli): model/provider persistence callbacks are awaited — `/model x`
+  + `/exit` can no longer lose the switch.
+- fix(cli): the over-window context guard renders a calm yellow note
+  instead of a red error; explicit guidance when compaction cannot free
+  the window.

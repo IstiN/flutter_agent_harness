@@ -30,9 +30,19 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
-import 'package:fa_hub_client/fa_hub_client.dart' show HubPlugin;
+// The ONLY place the core CLI imports the hub client package: downstream
+// forks that want a different or no hub client patch this import and the
+// 'hub' case in `_builtInPlugin`.
+import 'package:fa_hub_client/fa_hub_client.dart'
+    show
+        HubConfig,
+        HubPlugin,
+        defaultDapConfigFile,
+        persistDapConfig,
+        resolveDapSettings;
 import 'fah_hub_plugin.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
@@ -212,29 +222,15 @@ String _resolveApiKey(
 }
 
 /// Built-in plugins available via `--plugin <name>` or `.fah/packages.yaml`.
-FahPlugin? _builtInPlugin(String name) {
+/// [hubPlugin] is the process's single hub client instance — the same one
+/// the settings-hub DAP / Hub flow reads its snapshot through.
+FahPlugin? _builtInPlugin(String name, HubPlugin hubPlugin) {
   return switch (name) {
-    'hub' => HubPluginHost(HubPlugin()),
+    'hub' => HubPluginHost(hubPlugin),
     'inspect_image' => const InspectImagePlugin(),
     'transcribe_audio' => const TranscribeAudioPlugin(),
     _ => null,
   };
-}
-
-/// Loads plugin configuration from `.fah/packages.yaml` if it exists.
-/// Returns a map of plugin name -> config.
-Map<String, dynamic> _loadPackagesConfig(String cwd) {
-  final file = File('$cwd/.fah/packages.yaml');
-  if (!file.existsSync()) return const {};
-  try {
-    final doc = yaml.loadYaml(file.readAsStringSync());
-    if (doc is! Map) return const {};
-    return Map<String, dynamic>.fromEntries(
-      doc.entries.whereType<MapEntry<String, dynamic>>(),
-    );
-  } on Object catch (error) {
-    _fail('failed to parse .fah/packages.yaml: $error');
-  }
 }
 
 /// Loads project-level TTSR rules from `.fah/rules.yaml` when it exists
@@ -266,15 +262,21 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
   );
 }
 
-({List<FahPlugin> plugins, Map<String, dynamic> config}) _resolvePlugins(
-  CliArgs args,
-  String cwd,
-) {
-  final config = _loadPackagesConfig(cwd);
+/// Resolves the enabled plugins and their `.fah/packages.yaml` config
+/// (the loader lives in `lib/src/plugins/packages_config.dart`). A parse
+/// failure is a hard startup error.
+Future<({List<FahPlugin> plugins, Map<String, dynamic> config})>
+_resolvePlugins(CliArgs args, ExecutionEnv env, HubPlugin hubPlugin) async {
+  final Map<String, dynamic> config;
+  try {
+    config = await loadPackagesConfig(env);
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
   final enabled = resolveEnabledPlugins(args.plugins, config);
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
-    final plugin = _builtInPlugin(name);
+    final plugin = _builtInPlugin(name, hubPlugin);
     if (plugin == null) _fail('unknown plugin: $name');
     plugins.add(plugin);
   }
@@ -540,6 +542,109 @@ final class _TerminalCliIO implements CliIO {
   }
 }
 
+/// `fa trajectory <verb> [args]` — read-only trajectory views over a
+/// stored session (phase 9). Runs without booting the agent: opens the
+/// session store, resolves the session (id / name match / most recent),
+/// projects the active branch, and prints through the pure renderers in
+/// `trajectory_tui.dart`. Payload goes to stdout, diagnostics to stderr.
+/// `tail` re-opens the session file on every poll until interrupted.
+Future<int> _runTrajectoryCommand(
+  TrajectoryCliCommand command,
+  CliArgs args,
+) async {
+  final io = _TerminalCliIO(headless: true);
+  final env = LocalExecutionEnv(cwd: args.cwd ?? Directory.current.path);
+  final sessionRoot = args.sessionRoot ?? _defaultSessionRoot();
+  final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionRoot);
+  final sessionId = switch (command.verb) {
+    'inspect' when command.positionals.length > 1 => command.positionals[1],
+    'inspect' => null,
+    _ => command.positionals.isEmpty ? null : command.positionals.first,
+  };
+  final session = await resolveTrajectorySession(repo, sessionId);
+  if (session == null) {
+    io.writeln(
+      sessionId == null
+          ? 'trajectory: no sessions in $sessionRoot'
+          : 'trajectory: session not found: $sessionId',
+    );
+    return 1;
+  }
+  final records = await session.getBranch();
+  switch (command.verb) {
+    case 'view':
+      final snapshot = command.at == null
+          ? trajectorySnapshotOf(records)
+          : trajectorySnapshotAt(records, command.at!);
+      if (snapshot == null) {
+        io.writeln(
+          trajectoryRangeError(
+            command.at!,
+            trajectorySnapshotOf(records).records.length,
+          ),
+        );
+        return 1;
+      }
+      return _printTrajectory(
+        io,
+        command.json
+            ? [
+                for (final record in snapshot.records)
+                  trajectoryJsonLine(record),
+              ]
+            : trajectoryLines(snapshot, width: io.columns),
+      );
+    case 'cost':
+      return _printTrajectory(
+        io,
+        trajectoryCostLines(trajectorySnapshotOf(records)),
+      );
+    case 'inspect':
+      final snapshot = trajectorySnapshotOf(records);
+      final index = int.parse(command.positionals.first);
+      final lines = trajectoryInspectLines(snapshot, index);
+      if (lines == null) {
+        io.writeln(trajectoryRangeError(index, snapshot.records.length));
+        return 1;
+      }
+      return _printTrajectory(
+        io,
+        command.json && snapshot.records.isNotEmpty
+            ? [trajectoryJsonLine(snapshot.records[index - 1])]
+            : lines,
+      );
+    case 'tail':
+      io.writeln('trajectory: following records — Ctrl+C to stop');
+      final tailer = TrajectoryTailer(width: io.columns);
+      final metadata = await session.getMetadata();
+      for (final line in tailer.tail(records)) {
+        io.write('$line\n');
+      }
+      while (true) {
+        await Future<void>.delayed(trajectoryPollInterval);
+        final List<SessionRecord> fresh;
+        try {
+          fresh = await (await repo.open(metadata)).getBranch();
+        } on Object catch (error) {
+          io.writeln('trajectory: tail failed: $error');
+          return 1;
+        }
+        for (final line in tailer.tail(fresh)) {
+          io.write('$line\n');
+        }
+      }
+  }
+  return 0;
+}
+
+/// Prints trajectory payload lines to stdout (newline-terminated).
+int _printTrajectory(CliIO io, List<String> lines) {
+  for (final line in lines) {
+    io.write('$line\n');
+  }
+  return 0;
+}
+
 /// `fa serve --a2a` — mounts the fully-configured agent as an A2A endpoint
 /// (Phase 5b). Every `message/send` runs one headless turn against the
 /// resolved provider/model; the agent's reply becomes the task artifact.
@@ -629,6 +734,13 @@ Future<void> _runApp(List<String> args) async {
       case 'uninstall':
         exit(await runSelfUninstall());
     }
+  }
+  // `fa trajectory <verb> [sessionId] [--json] [--at N]` — read-only
+  // trajectory views over a stored session; intercepted before prompt
+  // resolution so the verb words never become a prompt.
+  final trajectory = parsed.trajectory;
+  if (trajectory != null) {
+    exit(await _runTrajectoryCommand(trajectory, parsed));
   }
 
   // Headless prompt resolution: -p verbatim; a first positional naming an
@@ -887,7 +999,12 @@ Future<void> _runApp(List<String> args) async {
     );
   }
 
-  final resolved = _resolvePlugins(effective, cwd);
+  // The process's single hub client instance: registered as the `hub`
+  // plugin when enabled, and read by the settings-hub DAP / Hub flow's
+  // snapshot seam below. Constructing it has no side effects — the client
+  // connects only in `start()` (driven by the plugin host).
+  final hubPlugin = HubPlugin();
+  final resolved = await _resolvePlugins(effective, cliEnv, hubPlugin);
 
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
     _fail('unknown mode: ${effective.mode}');
@@ -951,6 +1068,20 @@ Future<void> _runApp(List<String> args) async {
   // startup dialog and `/skills access` change it — persisted via
   // persistConfig.
   var skillsAccess = saved.skillsAccess;
+  // The RUNTIME `tools:` availability scope: the `--tools` flag wins over
+  // the `FA_TOOLS` env twin (the flag is already parsed into
+  // effective.tools). A malformed env spec is a hard startup error — a
+  // typo must never silently enable a tool the user meant to disable.
+  ToolsConfig? runtimeTools;
+  try {
+    final flagTools = effective.tools;
+    runtimeTools = flagTools != null && !flagTools.isEmpty
+        ? flagTools
+        : toolsSpecFromEnv(Platform.environment);
+  } on ConfigException catch (error) {
+    _fail('invalid --tools/FA_TOOLS spec: ${error.message}');
+  }
+
   // Per-folder model memory: mirror the active triple into the folder's
   // state file (the LIVE cwd — a resumed session re-points `cliEnv.cwd`),
   // so the next `fa` in that folder restores this model, not the global
@@ -1053,6 +1184,7 @@ Future<void> _runApp(List<String> args) async {
       approvalMode:
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
+      runtimeTools: runtimeTools,
       modelRolesResolver: rolesResolver,
       // The live models config (`models:` section): `/models set`/`remove`
       // mutate its media slot overrides and `/model <name>` resolves its
@@ -1070,6 +1202,47 @@ Future<void> _runApp(List<String> args) async {
       // Cube sandbox flow rewrites it — persisted via persistConfig.
       cubeSettings: saved.cube,
       onCubeSettingsChanged: () async => persistConfig(),
+      // DAP / Hub settings flow: the snapshot seam resolves the effective
+      // config (env > `hub:` section > `~/.dap/config.json` > defaults)
+      // through the hub client and overlays the live plugin status — local
+      // reads only, never a network dial. A missing/failed probe keeps the
+      // flow honest about the state.
+      dapHubState: () async {
+        // Single parse source: the same loaded packages.yaml map the
+        // plugin system consumes (loadPackagesConfig already flattened
+        // the yaml tree to plain Dart values).
+        final hubSection = resolved.config['hub'];
+        final settings = resolveDapSettings(
+          config: HubConfig.fromMap(
+            hubSection is Map<String, dynamic> ? hubSection : const {},
+            Platform.environment,
+          ),
+          environment: Platform.environment,
+        );
+        try {
+          final status = await hubPlugin.status();
+          return DapHubSnapshot(
+            supported: true,
+            url: status.url ?? settings.url,
+            name: status.name ?? settings.name,
+            agentId: status.agentId,
+            channels: status.channels,
+            connected: status.connected,
+          );
+        } on Object {
+          // The plugin never started (opted out, or the connect failed):
+          // report the resolved config without a live connection.
+          return DapHubSnapshot(
+            supported: true,
+            url: settings.url,
+            name: settings.name,
+            channels: const [],
+            connected: false,
+          );
+        }
+      },
+      onDapHubConfigChanged: ({url, name}) =>
+          persistDapConfig(url: url, name: name, file: defaultDapConfigFile()),
       onModelChanged: (_) async {
         await persistConfig();
         await persistFolderModelState();
@@ -1108,6 +1281,9 @@ Future<void> _runApp(List<String> args) async {
       },
       onModeChanged: (_) async => persistConfig(),
       onApprovalChanged: () async => persistConfig(),
+      // Global `tools:` toggles (`/tools <id> global`): the CLI owns the
+      // live scope; persistConfig writes it back (see below).
+      onToolsConfigChanged: () async => persistConfig(),
       // Third-party skills consent (`skills:` config section): the startup
       // dialog and `/skills access` set it; shell `!`cmd`` injections in
       // skill bodies follow `disableShellExecution`.
@@ -1170,6 +1346,11 @@ Future<void> _runApp(List<String> args) async {
         // The saved cube default (the live value the Cube sandbox flow
         // rewrites; `saved.cube` keeps the section when nothing changed).
         cube: cli.config.cubeSettings ?? saved.cube,
+        // The live global `tools:` scope (read at boot, updated by
+        // `/tools <id> global`); null until the first availability
+        // rebuild, in which case the loaded section is kept as-is
+        // (project/runtime scopes stay live and are never persisted).
+        tools: cli.globalTools ?? saved.tools,
       ),
     );
   };

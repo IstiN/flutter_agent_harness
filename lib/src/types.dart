@@ -310,6 +310,7 @@ final class ToolCall extends ContentBlock {
     required this.id,
     required this.name,
     required this.arguments,
+    this.parentCallId,
     this.thoughtSignature,
     this.partialArguments,
   });
@@ -327,6 +328,10 @@ final class ToolCall extends ContentBlock {
   /// Google-specific opaque signature for reusing thought context.
   final String? thoughtSignature;
 
+  /// Id of the enclosing tool call for nested (subtool) executions, or
+  /// null for a top-level call.
+  final String? parentCallId;
+
   /// Raw, not-yet-complete JSON argument text accumulated from
   /// [ToolCallDeltaEvent]s. Providers keep the live partial message's tool
   /// call block up to date with this; on [ToolCallEndEvent] the completed
@@ -337,6 +342,7 @@ final class ToolCall extends ContentBlock {
     String? id,
     String? name,
     Map<String, dynamic>? arguments,
+    String? parentCallId,
     String? thoughtSignature,
     String? partialArguments,
   }) {
@@ -344,6 +350,7 @@ final class ToolCall extends ContentBlock {
       id: id ?? this.id,
       name: name ?? this.name,
       arguments: arguments ?? this.arguments,
+      parentCallId: parentCallId ?? this.parentCallId,
       thoughtSignature: thoughtSignature ?? this.thoughtSignature,
       partialArguments: partialArguments ?? this.partialArguments,
     );
@@ -355,6 +362,7 @@ final class ToolCall extends ContentBlock {
     'id': id,
     'name': name,
     'arguments': _sanitizeJsonValue(arguments),
+    if (parentCallId != null) 'parentCallId': parentCallId,
     if (thoughtSignature != null) 'thoughtSignature': thoughtSignature,
   };
 
@@ -368,6 +376,7 @@ final class ToolCall extends ContentBlock {
     arguments:
         (json['arguments'] as Map<String, dynamic>?) ??
         const <String, dynamic>{},
+    parentCallId: json['parentCallId'] as String?,
     thoughtSignature: json['thoughtSignature'] as String?,
   );
 }

@@ -1086,6 +1086,72 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsDefaultChatModelTitle => 'Модель чата по умолчанию';
 
   @override
+  String get settingsDapAddConnection => 'Добавить подключение';
+
+  @override
+  String get settingsDapAgentIdLabel => 'ID агента';
+
+  @override
+  String get settingsDapAgentNameLabel => 'Имя агента';
+
+  @override
+  String get settingsDapChannelsEmpty =>
+      'Каналов пока нет — они появятся здесь, когда агент присоединится к каналу (dap_invite / dap_connect).';
+
+  @override
+  String get settingsDapChannelsTitle => 'Каналы';
+
+  @override
+  String get settingsDapEditConnection => 'Изменить подключение';
+
+  @override
+  String get settingsDapEnvNote =>
+      'Переменные DAP_HUB_URL или DAP_AGENT_NAME заданы в окружении — env имеет приоритет над сохранённым подключением.';
+
+  @override
+  String get settingsDapHubHint => 'URL хаба, идентификация агента, каналы';
+
+  @override
+  String get settingsDapHubTitle => 'DAP-хаб';
+
+  @override
+  String get settingsDapNameHint => 'alice';
+
+  @override
+  String get settingsDapProbeButton => 'Проверить подключение';
+
+  @override
+  String get settingsDapStatusConnected => 'Подключено';
+
+  @override
+  String get settingsDapStatusOffline => 'Недоступен';
+
+  @override
+  String get settingsDapStatusUnknown => 'Не проверено';
+
+  @override
+  String get settingsDapUnsupported =>
+      'DAP-хаб не поддерживается на этой платформе.';
+
+  @override
+  String get settingsDapUrlHint =>
+      'hub.example.com или ws://hub.example.com/ws';
+
+  @override
+  String get settingsDapUrlLabel => 'URL хаба';
+
+  @override
+  String get settingsDapUrlRequired => 'Требуется URL хаба';
+
+  @override
+  String get settingsDapLoadFailed =>
+      'Не удалось прочитать DAP-конфигурацию на этой машине.';
+
+  @override
+  String get settingsDapSaveFailed =>
+      'Не удалось сохранить подключение — проверьте URL хаба.';
+
+  @override
   String get settingsDeleteButton => 'Удалить';
 
   @override
@@ -1502,4 +1568,16 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get workspaceDialogRestrictToolsHint =>
       'Отключает всё, что читало или писало бы за пределами смонтированной папки. Попытки выйти за рамки будут блокироваться (и в будущем — просить вашего подтверждения через диалог).';
+
+  @override
+  String get toolsAvailabilityTitle => 'Инструменты';
+
+  @override
+  String get toolsAvailabilityHint =>
+      'Включайте и отключайте инструменты Fa — применяется сразу, без перезапуска.';
+
+  @override
+  String toolsAvailabilityUnavailable(Object reason) {
+    return 'Недоступно: $reason';
+  }
 }

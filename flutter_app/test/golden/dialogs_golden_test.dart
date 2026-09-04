@@ -10,6 +10,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
 import 'package:fa/ui/widgets/ask_ui.dart';
+import 'package:fa/ui/screens/settings_key_dialogs.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:flutter/material.dart';
@@ -361,6 +362,29 @@ void main() {
         locale: const Locale('ru'),
       );
       await expectGolden(tester, 'dialogs_secret_request_ru');
+    });
+
+    testWidgets('settings key editor dialog', (tester) async {
+      await _pumpOpened(
+        tester,
+        (context) => showDialog<void>(
+          context: context,
+          builder: (_) =>
+              const KeyEditorDialog(title: 'Set OPENROUTER_API_KEY'),
+        ),
+      );
+      await expectGolden(tester, 'dialogs_key_editor');
+    });
+
+    testWidgets('settings add key dialog', (tester) async {
+      await _pumpOpened(
+        tester,
+        (context) => showDialog<void>(
+          context: context,
+          builder: (_) => AddKeyDialog(isDuplicate: (_) => false),
+        ),
+      );
+      await expectGolden(tester, 'dialogs_add_key');
     });
 
     testWidgets('rename session dialog: prefilled custom title', (

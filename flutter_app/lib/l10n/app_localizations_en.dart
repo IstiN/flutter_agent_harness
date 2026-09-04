@@ -1076,6 +1076,71 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDefaultChatModelTitle => 'Default chat model';
 
   @override
+  String get settingsDapAddConnection => 'Add connection';
+
+  @override
+  String get settingsDapAgentIdLabel => 'Agent id';
+
+  @override
+  String get settingsDapAgentNameLabel => 'Agent name';
+
+  @override
+  String get settingsDapChannelsEmpty =>
+      'No channels yet — channels appear here once the agent joins one (dap_invite / dap_connect).';
+
+  @override
+  String get settingsDapChannelsTitle => 'Channels';
+
+  @override
+  String get settingsDapEditConnection => 'Edit connection';
+
+  @override
+  String get settingsDapEnvNote =>
+      'DAP_HUB_URL or DAP_AGENT_NAME is set in the environment — env overrides the saved connection.';
+
+  @override
+  String get settingsDapHubHint => 'Hub URL, agent identity, channels';
+
+  @override
+  String get settingsDapHubTitle => 'DAP hub';
+
+  @override
+  String get settingsDapNameHint => 'alice';
+
+  @override
+  String get settingsDapProbeButton => 'Check connection';
+
+  @override
+  String get settingsDapStatusConnected => 'Connected';
+
+  @override
+  String get settingsDapStatusOffline => 'Unreachable';
+
+  @override
+  String get settingsDapStatusUnknown => 'Not checked';
+
+  @override
+  String get settingsDapUnsupported =>
+      'DAP hub is not supported on this platform.';
+
+  @override
+  String get settingsDapUrlHint => 'hub.example.com or ws://hub.example.com/ws';
+
+  @override
+  String get settingsDapUrlLabel => 'Hub URL';
+
+  @override
+  String get settingsDapUrlRequired => 'Hub URL is required';
+
+  @override
+  String get settingsDapLoadFailed =>
+      'Could not read the DAP config on this machine.';
+
+  @override
+  String get settingsDapSaveFailed =>
+      'Could not save the DAP connection — check the hub URL.';
+
+  @override
   String get settingsDeleteButton => 'Delete';
 
   @override
@@ -1490,4 +1555,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get workspaceDialogRestrictToolsHint =>
       'Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up).';
+
+  @override
+  String get toolsAvailabilityTitle => 'Tools';
+
+  @override
+  String get toolsAvailabilityHint =>
+      'Turn tools off or on for Fa — applies immediately, no restart.';
+
+  @override
+  String toolsAvailabilityUnavailable(Object reason) {
+    return 'Unavailable: $reason';
+  }
 }

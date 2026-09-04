@@ -15,6 +15,7 @@ library;
 
 import 'dart:io';
 
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/media_models_store.dart';
@@ -26,8 +27,11 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
+import 'package:fa/ui/screens/dap_settings_page.dart';
+import 'package:fa/services/dap_service.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -300,6 +304,60 @@ void main() {
       await expectGolden(tester, 'settings_media_models');
     });
 
+    testWidgets('tools availability section', (tester) async {
+      // A REAL service so the rows mirror the app's actual wiring. The
+      // service's periodic watchers keep scheduling frames, so pump with
+      // bounded pumps instead of pumpGolden's pumpAndSettle.
+      late final AgentService service;
+      await tester.runAsync(() async {
+        service = await AgentService.create(
+          config: AgentConfig(
+            providerKind: 'openai-completions',
+            modelId: 'z-ai/glm-5.2',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            apiKey: 'sk-or-test-key',
+          ),
+          env: MemoryExecutionEnv(),
+        );
+      });
+      addTearDown(service.dispose);
+
+      tester.view.physicalSize = goldenSizeDesktop;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: buildFahTheme(),
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Scaffold(
+              appBar: AppBar(title: Text(context.l10n.settingsTitle)),
+              body: SafeArea(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(24),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 560),
+                      child: ToolsAvailabilitySection(service: service),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // Wired tools toggle live; absent capabilities show their reason.
+      await expectGolden(tester, 'settings_tools_availability');
+    });
+
     testWidgets('providers-first settings list', (tester) async {
       final registry = ProviderRegistry.inMemory();
       await registry.add(
@@ -508,4 +566,94 @@ void main() {
       await expectGolden(tester, 'settings_skills_access');
     });
   });
+
+  group('dap hub goldens', () {
+    final connected = DapHubSnapshot(
+      supported: true,
+      url: 'ws://hub.example.com/ws',
+      name: 'fa-desktop',
+      agentId: 'a1b2c3d4e5f60718',
+      channels: const ['general', 'project-x'],
+    );
+
+    testWidgets('dap hub page (desktop)', (tester) async {
+      await pumpGolden(
+        tester,
+        size: goldenSizeDesktop,
+        wrap: _wrapPage,
+        DapHubPage(service: _FakeDapHubService(connected)),
+      );
+      await tester.pumpAndSettle();
+
+      // Hub URL + status chip, the probe button, agent name/agentId and
+      // the channel chips.
+      await expectGolden(tester, 'settings_dap_hub_page');
+    });
+
+    testWidgets('dap hub page (phone)', (tester) async {
+      await pumpGolden(
+        tester,
+        size: goldenSizePhone,
+        wrap: _wrapPage,
+        DapHubPage(service: _FakeDapHubService(connected)),
+      );
+      await tester.pumpAndSettle();
+
+      await expectGolden(tester, 'settings_dap_hub_page_phone');
+    });
+
+    testWidgets('dap connection editor', (tester) async {
+      await pumpGolden(
+        tester,
+        size: goldenSizeDesktop,
+        wrap: _wrapPage,
+        const DapConnectionEditorPage(
+          initialUrl: 'ws://hub.example.com/ws',
+          initialName: 'fa-desktop',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // URL + name fields prefilled from the saved connection.
+      await expectGolden(tester, 'settings_dap_hub_editor');
+    });
+
+    testWidgets('dap hub unsupported (web stub)', (tester) async {
+      const unsupported = DapHubSnapshot(
+        supported: false,
+        url: 'ws://127.0.0.1:8787/ws',
+        channels: [],
+      );
+      await pumpGolden(
+        tester,
+        size: goldenSizeDesktop,
+        wrap: _wrapPage,
+        DapHubPage(service: _FakeDapHubService(unsupported)),
+      );
+      await tester.pumpAndSettle();
+
+      // The platform-honest note instead of the connection surface.
+      await expectGolden(tester, 'settings_dap_hub_unsupported');
+    });
+  });
+}
+
+/// Deterministic [DapHubService] for the DAP goldens: returns the same
+/// snapshot on every load/probe, never touches the network or `~/.dap`.
+class _FakeDapHubService implements DapHubService {
+  _FakeDapHubService(this.snapshot);
+
+  final DapHubSnapshot snapshot;
+
+  @override
+  Future<DapHubSnapshot> load() async => snapshot;
+
+  @override
+  Future<DapHubSnapshot> probe() async => snapshot.withProbe(true);
+
+  @override
+  Future<void> saveConnection({
+    required String url,
+    required String name,
+  }) async {}
 }

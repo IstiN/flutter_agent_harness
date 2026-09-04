@@ -101,6 +101,7 @@ resolveEffectiveCliArgs(
     plugins: parsed.plugins,
     promptTemplateDirs: parsed.promptTemplateDirs,
     mode: parsed.mode ?? saved.mode,
+    tools: parsed.tools,
     cwd: parsed.cwd,
     sessionRoot: parsed.sessionRoot,
     session: parsed.session,

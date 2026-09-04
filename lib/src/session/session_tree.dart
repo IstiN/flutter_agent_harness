@@ -83,6 +83,15 @@ final class Session {
     return storage is JsonlSessionStorage ? storage.cachedMetadata.id : null;
   }
 
+  /// The session metadata when the storage caches the header synchronously
+  /// ([JsonlSessionStorage] always does) — used for the session-scoped
+  /// `.tools/<sessionId>.yaml` path, which is derived from the session
+  /// file's location; `null` otherwise.
+  SessionMetadata? get cachedMetadata {
+    final storage = _storage;
+    return storage is JsonlSessionStorage ? storage.cachedMetadata : null;
+  }
+
   /// The underlying storage.
   SessionStorage getStorage() => _storage;
 

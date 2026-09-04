@@ -44,12 +44,20 @@ extension SlashCommandDispatch on AgentCli {
       await _skillsSlash(rest);
       return true;
     }
+    if (command == '/tools') {
+      await _toolsSlash(rest);
+      return true;
+    }
     if (command == '/cube') {
       await _handleCubeCommand(rest);
       return true;
     }
     if (command == '/memory') {
       await _handleMemoryCommand(rest);
+      return true;
+    }
+    if (command == '/trajectory') {
+      await _handleTrajectoryCommand(rest);
       return true;
     }
     if (command == '/agents') {

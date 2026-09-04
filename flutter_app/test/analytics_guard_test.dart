@@ -25,6 +25,14 @@ const _documentedExemptions = <String, String>{
       'ASWebAuthenticationSession in codemie_sso_flow.dart, which carries '
       'the analytics); shown only when the system session cannot start — '
       'no meaningful user path to track.',
+  'lib/ui/screens/settings_key_dialogs.dart':
+      'Two modal key-management dialogs (edit one key, add a key) opened '
+      'from the Keys section — the section carries the analytics events; '
+      'the dialogs are pure text-entry forms with no actions of their own.',
+  'lib/ui/screens/trajectory_panel_route.dart':
+      'Not a screen — a 20-line helper that opens the shared fa_ui '
+      'trajectory panel (dialog on wide canvases, bottom sheet on narrow '
+      'ones); it renders nothing itself and has no user path of its own.',
   'lib/ui/widgets/chat_composer.dart':
       'Adapter shim — the composer lives in packages/fa_ui; messageSent/'
       'uploadAdded/voiceInputUsed fire via FaChatHost.track, routed into '
@@ -43,6 +51,9 @@ const _documentedExemptions = <String, String>{
   'lib/ui/screens/providers_section.dart':
       'Not a screen — the settings sub-section adapter; its host '
       'SettingsScreen logs screenOpened.',
+  'lib/ui/screens/tools_availability_section.dart':
+      'Not a screen — the settings sub-section for per-tool availability; '
+      'its host SettingsScreen logs screenOpened.',
 };
 
 /// Every `lib/ui/screens/*.dart` file plus the shared non-screen surfaces.

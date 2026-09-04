@@ -10,6 +10,21 @@
 #   cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 # To skip (emergency only): git commit --no-verify
 
+detect_test_concurrency() {
+  local cores load1
+  if command -v sysctl >/dev/null 2>&1; then
+    cores=$(sysctl -n hw.ncpu 2>/dev/null)
+    load1=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print int($2)}')
+  elif [ -r /proc/loadavg ]; then
+    cores=$(nproc 2>/dev/null)
+    load1=$(awk '{print int($1)}' /proc/loadavg)
+  fi
+  if [ -n "$cores" ] && [ -n "$load1" ] && [ "$load1" -ge $((cores / 2)) ]; then
+    echo 2
+  fi
+  # Empty output on an idle box = no --concurrency flag (package defaults).
+}
+
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -36,7 +51,8 @@ while IFS= read -r file; do
   case "$file" in
     *.dart)
       case "$file" in
-        *.g.dart|*.freezed.dart|*.mocks.dart|*bridge_generated*.dart) continue ;;
+        *.g.dart|*.freezed.dart|*.mocks.dart|*bridge_generated*.dart|\
+*app_localizations*.dart|*localizations_*.dart) continue ;;
       esac
       lines=$(wc -l < "$file")
       if (( lines > MAX_LINES )); then
@@ -88,7 +104,8 @@ fi
 # for a pre-commit gate; they run in CI / manually instead.
 echo "🧪 Running dart test --coverage (excluding integration tests)..."
 rm -rf coverage
-dart test --coverage=coverage --exclude-tags integration
+DART_CONCURRENCY="${FA_DART_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
+dart test ${DART_CONCURRENCY:+--concurrency=$DART_CONCURRENCY} --coverage=coverage --exclude-tags integration
 
 echo "📊 Formatting coverage to lcov..."
 dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
@@ -174,6 +191,12 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Load-aware test concurrency: a busy box (other agents, IDE builds) makes
+# widget tests' runAsync() flake ("Reentrant call to runAsync() denied") and
+# real-timer hub tests miss windows at full parallelism. Override with
+# FA_FLUTTER_TEST_CONCURRENCY / FA_DART_TEST_CONCURRENCY; auto-throttle when
+# the 1-minute load reaches half the core count.
+
 # 6. EXAMPLE APP: flutter test (incl. golden suite) + golden gate
 # ═══════════════════════════════════════════════════════════════════════════
 if command -v flutter >/dev/null 2>&1; then
@@ -188,7 +211,9 @@ if command -v flutter >/dev/null 2>&1; then
   echo "🧪 Running flutter_app tests (incl. golden tests)..."
   # integration-tagged tests (test/cli_visual — real CLI in a PTY) are
   # excluded; run them manually: flutter test test/cli_visual --tags integration
-  if ! (cd flutter_app && flutter test --exclude-tags integration); then
+  FLUTTER_CONCURRENCY="${FA_FLUTTER_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
+  echo "   concurrency: ${FLUTTER_CONCURRENCY:-default}"
+  if ! (cd flutter_app && flutter test ${FLUTTER_CONCURRENCY:+--concurrency=$FLUTTER_CONCURRENCY} --exclude-tags integration); then
     echo ""
     echo "╔═══════════════════════════════════════════════════════════════════════════╗"
     echo "║  ❌ QUALITY GATE FAILED — FLUTTER APP TESTS                               ║"

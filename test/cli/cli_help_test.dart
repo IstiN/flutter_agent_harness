@@ -32,6 +32,7 @@ void main() {
       '--session',
       '--cube',
       '--cube-config',
+      '--tools',
       '--prompt',
       '-p',
     ];
@@ -50,6 +51,11 @@ void main() {
       'update',
       'uninstall',
       'Exit codes: 0 ok',
+      // Trajectory reader (fa trajectory + REPL /trajectory).
+      'fa trajectory',
+      'trajectory <view|tail|cost|inspect>',
+      '[--json] [--at N]',
+      '/trajectory',
       // Providers and keys.
       'openai-completions',
       'kimi',
@@ -142,6 +148,8 @@ void main() {
       'ask',
       'inspect_image',
       'transcribe_audio',
+      'FA_TOOLS',
+      'tools:',
       '.fah/lsp.json',
       // Plugins and templates.
       '.fah/packages.yaml',
@@ -164,8 +172,8 @@ void main() {
       '/session-new',
       '/sessions',
       '/resume',
-      '/rename-session',
       '/help',
+      '/tools',
       // Config file.
       '~/.fah/config.yaml',
     ];

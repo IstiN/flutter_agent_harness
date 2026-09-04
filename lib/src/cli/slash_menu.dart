@@ -120,10 +120,14 @@ const builtinSlashCommands = <String, String>{
   '/sessions': 'list all sessions across workspaces',
   '/resume': 'switch to the most recent session',
   '/rename-session': '<name> — rename the current session',
+  '/trajectory': '[view|cost|tail|inspect <n>] — session trajectory ledger',
   '/approval': '[mode] — show or set tool approval',
   '/settings': '— settings hub: provider, model, approval, keys, MCP',
   '/allow': '[tool] — always-allow a tool (or list them)',
   '/mcp': '[list|reload] — show MCP servers or reload config',
+  '/tools':
+      '[enable|disable <id> [global|project|session]|reload] — tool '
+      'availability',
   '/code': 'switch to coding mode',
   '/architect': 'switch to architect mode',
   '/review': 'switch to review mode',

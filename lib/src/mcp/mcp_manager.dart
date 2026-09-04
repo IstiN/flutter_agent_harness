@@ -139,6 +139,18 @@ final class McpManager {
     ];
   }
 
+  /// The per-server tool lists (connected servers only), server name →
+  /// tools in registration order. Unmodifiable deep view: the availability
+  /// wiring re-registers or unregisters a whole server from here without
+  /// touching the manager's own state.
+  Map<String, List<AgentTool>> get toolsByServer {
+    final copy = <String, List<AgentTool>>{
+      for (final entry in _tools.entries)
+        entry.key: List<AgentTool>.unmodifiable(entry.value),
+    };
+    return Map.unmodifiable(copy);
+  }
+
   /// Starts background connect loops for every configured server. Returns
   /// immediately; progress surfaces through [states] and [onChanged].
   void start() {
@@ -259,12 +271,14 @@ final class McpManager {
   }
 
   /// The system-prompt section listing every configured server and its
-  /// status (empty when no servers are configured). Kept tiny: one line
-  /// per server.
-  String promptSection() {
+  /// status (empty when no servers are configured, and servers rejected by
+  /// [includeServer] are omitted — the availability gate's per-server
+  /// decision). Kept tiny: one line per server.
+  String promptSection({bool Function(String server)? includeServer}) {
     if (config.servers.isEmpty) return '';
     final lines = <String>['## MCP servers', ''];
     for (final name in config.servers.keys) {
+      if (includeServer != null && !includeServer(name)) continue;
       final state = _states[name];
       lines.add(switch (state?.status) {
         McpServerStatus.connected =>
@@ -276,7 +290,7 @@ final class McpManager {
         McpServerStatus.connecting || null => '- `$name` (connecting…)',
       });
     }
-    return lines.join('\n');
+    return lines.length <= 2 ? '' : lines.join('\n');
   }
 
   /// Closes every client and stops reconnecting. Idempotent.

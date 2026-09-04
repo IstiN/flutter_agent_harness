@@ -1,19 +1,18 @@
 import 'dart:io';
 
-import 'package:fa/sandbox/env_factory_io.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    hide SandboxedExecutionEnv;
+import 'package:fa/sandbox/env_factory_io.dart' as app_env;
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('SandboxedExecutionEnv', () {
     late Directory hostRoot;
-    late SandboxedExecutionEnv env;
+    late app_env.SandboxedExecutionEnv env;
 
     setUp(() {
       hostRoot = Directory.systemTemp.createTempSync('fah_sandbox_test_');
-      env = SandboxedExecutionEnv(
+      env = app_env.SandboxedExecutionEnv(
         LocalExecutionEnv(cwd: hostRoot.path),
         hostRoot.path,
       );

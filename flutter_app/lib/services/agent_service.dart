@@ -10,11 +10,14 @@ import 'package:fa_ui/fa_ui.dart'
         FaApprovalModeController,
         FaChatConnection,
         FaChatMessage,
-        FaChatService;
+        FaChatService,
+        TrajectoryServiceFeed;
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'memory_config_loader.dart';
+import 'agent_tool_availability.dart';
+
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/open_app_tool.dart';
@@ -43,6 +46,7 @@ import 'package:fa/services/notify_tool.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/video_service.dart';
 import 'package:fa/services/video_tool.dart';
+import 'package:fa/services/tools_availability_store.dart';
 import 'package:fa/gemma/gemma_service.dart';
 import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
@@ -62,100 +66,12 @@ import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_stream_function.dart';
 import 'package:fa/webllm/webllm_types.dart';
 
-/// A UI-facing chat message.
-/// A UI-facing chat message: one of `user`, `assistant`, `thinking`,
-/// `tool`, `system`. Alias of the shared fa_ui type — new code should use
-/// [FaChatMessage] directly.
-typedef FahChatMessage = FaChatMessage;
+part 'agent_service_compaction.dart';
 
-/// Whether [baseUrl] points at a CodeMie organization (SSO/cookie-based
-/// auth). CodeMie providers authenticate via the full cookie string sent as
-/// a `Cookie:` header (riding in [Model.headers]) instead of a Bearer key —
+/// A UI-facing chat message.
 /// the adapter skips `Authorization: Bearer` when the key is empty.
 bool isCodeMieProvider(String baseUrl) =>
     baseUrl.contains('/code-assistant-api/');
-
-/// Configuration needed to talk to a provider.
-final class AgentConfig {
-  AgentConfig({
-    required this.providerKind,
-    required this.modelId,
-    required this.baseUrl,
-    required this.apiKey,
-    this.systemPrompt,
-    this.contextWindow = fallbackContextWindow,
-    this.maxTokens = fallbackMaxTokens,
-    this.supportsImages,
-  });
-
-  /// Provider adapter kind: `openai-completions`, `anthropic`, `google`,
-  /// `webllm` (on-device, web — see `lib/webllm/`), `gemma` (on-device,
-  /// iOS/Android — see `lib/gemma/`), or `transformers_js` (on-device, web —
-  /// see `lib/transformers_js/`).
-  final String providerKind;
-
-  /// Model id passed to the provider.
-  final String modelId;
-
-  /// Provider base URL (e.g. OpenRouter `https://openrouter.ai/api/v1`).
-  /// Empty for on-device providers.
-  final String baseUrl;
-
-  /// API key for the provider. Empty for on-device providers.
-  final String apiKey;
-
-  /// Optional system prompt override.
-  final String? systemPrompt;
-
-  /// Context window reported to the agent loop (drives overflow/compaction
-  /// heuristics). Small for on-device models.
-  final int contextWindow;
-
-  /// Output-token cap reported to the agent loop.
-  final int maxTokens;
-
-  /// Whether the model accepts image input. When null (session restores,
-  /// tests, programmatic configs) the vision heuristic
-  /// [modelIdSuggestsVision] decides from [modelId]; the settings form
-  /// passes the user's explicit checkbox value.
-  final bool? supportsImages;
-
-  /// A copy with a different model id — used when a persisted session
-  /// records the model it was run with (CLI sessions carry it in their
-  /// metadata): reopening the session must run THAT model, not the
-  /// default chat model.
-  AgentConfig withModelId(String id) => AgentConfig(
-    providerKind: providerKind,
-    modelId: id,
-    baseUrl: baseUrl,
-    apiKey: apiKey,
-    systemPrompt: systemPrompt,
-    contextWindow: contextWindow,
-    maxTokens: maxTokens,
-    supportsImages: supportsImages,
-  );
-
-  Model toModel() => Model(
-    id: modelId,
-    name: modelId,
-    api: providerKind,
-    provider: providerKind,
-    baseUrl: baseUrl,
-    contextWindow: contextWindow,
-    maxTokens: maxTokens,
-    // CodeMie authenticates via cookies: the stored apiKey is the full
-    // cookie string, which rides in model.headers as a `cookie` entry. The
-    // openai-completions adapter skips `Authorization: Bearer` when the key
-    // is empty, so the cookie is the sole auth credential.
-    headers: isCodeMieProvider(baseUrl) && apiKey.isNotEmpty
-        ? {'cookie': apiKey}
-        : null,
-    input: [
-      'text',
-      if (supportsImages ?? modelIdSuggestsVision(modelId)) 'image',
-    ],
-  );
-}
 
 /// Shown in place of an assistant bubble when a completed turn produced
 /// neither text nor tool calls — a small on-device model occasionally
@@ -198,6 +114,7 @@ class AgentService extends ChangeNotifier
        _skillsAccessStore = null,
        _skillsHomeDir = null,
        _skillsAccess = SkillsAccess.granted,
+       _toolsAvailabilityStore = null,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
@@ -212,6 +129,16 @@ class AgentService extends ChangeNotifier
     _attachRedactor(redactor);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
+    // Pre-constructed-Agent path (tests): the caller owns the registry, so
+    // availability still resolves (capabilities from the agent's own tools)
+    // but the registry is not re-synced on toggle.
+    _toolsAvailability = AgentToolAvailability(
+      agent: _agent,
+      tools: _agent.state.tools,
+      onDevice: _isOnDeviceKind(_agent.state.model.provider),
+      registry: null,
+      rebuildPrompt: () {},
+    );
   }
 
   /// Convenience factory that creates the right [ExecutionEnv] for the
@@ -243,6 +170,8 @@ class AgentService extends ChangeNotifier
     final savedApprovalMode = await approvalModeStore.load();
     final skillsAccessStore = SkillsAccessStore(resolvedEnv);
     final savedSkillsAccess = await skillsAccessStore.load();
+    final toolsAvailabilityStore = ToolsAvailabilityStore(resolvedEnv);
+    final savedToolsConfig = await toolsAvailabilityStore.load();
     final redactor = SecretRedactor.fromSecrets(secrets);
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
@@ -282,6 +211,8 @@ class AgentService extends ChangeNotifier
       approvalModeStore: approvalModeStore,
       initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.granted,
       skillsAccessStore: skillsAccessStore,
+      initialToolsConfig: savedToolsConfig,
+      toolsAvailabilityStore: toolsAvailabilityStore,
       skillsHomeDir: desktopHomeDir(),
       // Live stores FIRST: a key edited in Settings must win over the
       // boot-time snapshot (the keychain write updates the registry, not
@@ -393,6 +324,8 @@ class AgentService extends ChangeNotifier
     this._approvalModeStore,
     SkillsAccess? initialSkillsAccess,
     this._skillsAccessStore,
+    ToolsConfig? initialToolsConfig,
+    this._toolsAvailabilityStore,
     String? skillsHomeDir,
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
@@ -667,6 +600,19 @@ class AgentService extends ChangeNotifier
     _attachRedactor(redactor);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
+    // Capability-gated tool availability (issue #19): capabilities follow
+    // the actual wiring above, the gate hides/restores per config, and the
+    // seeded store choices apply before the first run.
+    _toolsAvailability = AgentToolAvailability(
+      agent: _agent,
+      tools: registry.tools,
+      onDevice: isOnDevice,
+      registry: registry,
+      initialConfig: initialToolsConfig ?? const ToolsConfig(),
+      rebuildPrompt: () {
+        _agent.state.systemPrompt = _composeSystemPrompt(config);
+      },
+    );
     // Durable facts from past sessions join the prompt asynchronously
     // (memory stores initialize lazily; recompose on arrival).
     unawaited(_refreshMemorySection());
@@ -799,6 +745,15 @@ class AgentService extends ChangeNotifier
   /// The persisted skills-access store ([AgentService.create] path only);
   /// [setSkillsAccess] writes through fire-and-forget.
   final SkillsAccessStore? _skillsAccessStore;
+
+  /// The tool-availability wiring (issue #19): capability floor + gate +
+  /// live config, extracted to [AgentToolAvailability]. Built in both
+  /// constructors, right after the agent exists.
+  late final AgentToolAvailability _toolsAvailability;
+
+  /// The persisted tools store ([AgentService.create] path only);
+  /// [setToolEnabled] writes through fire-and-forget.
+  final ToolsAvailabilityStore? _toolsAvailabilityStore;
 
   /// Home directory for user-level skill roots (desktop only; null on
   /// mobile/web). Null in tests keeps discovery deterministic.
@@ -1019,6 +974,25 @@ class AgentService extends ChangeNotifier
     if (access != _skillsAccess) return;
     _promptSuffix = suffix;
     _agent.state.systemPrompt = _composeSystemPrompt(config);
+  }
+
+  /// The user's per-tool availability choices (the app twin of the CLI
+  /// `tools:` section; persisted via [ToolsAvailabilityStore]).
+  ToolsConfig get toolsConfig => _toolsAvailability.config;
+
+  /// The availability decision per known tool id (capabilities + config).
+  Map<String, ResolvedToolAvailability> get toolAvailability =>
+      _toolsAvailability.availability;
+
+  /// Switches one tool's availability (the settings Tools section): the
+  /// helper re-applies the resolution to the live registry (tool list and
+  /// prompt update without a restart; an absent capability stays off),
+  /// then this persists the choice when a store is wired (fire-and-forget).
+  Future<void> setToolEnabled(String id, bool enabled) async {
+    if (!_toolsAvailability.setEnabled(id, enabled)) return;
+    notifyListeners();
+    final store = _toolsAvailabilityStore;
+    if (store != null) unawaited(store.save(_toolsAvailability.config));
   }
 
   late final Agent _agent;
@@ -1452,6 +1426,7 @@ class AgentService extends ChangeNotifier
       messages
         ..clear()
         ..addAll(context.messages.map(_toChatMessage));
+      await _rebuildTrajectory();
       notifyListeners();
     } on Object {
       // A torn read (the CLI mid-append): the next poll retries.
@@ -1467,6 +1442,11 @@ class AgentService extends ChangeNotifier
   String? _sessionId;
   String? _sessionFile;
   int _persistedCount = 0;
+
+  /// The producer behind [trajectory]: rebuilt from the active branch on
+  /// session open/switch, mirrored live from agent events, and fed the
+  /// finalized records on every persist.
+  final TrajectoryServiceFeed _trajectory = TrajectoryServiceFeed();
   FahChatMessage? _currentAssistantMessage;
   FahChatMessage? _currentThinkingMessage;
 
@@ -1591,6 +1571,7 @@ class AgentService extends ChangeNotifier
   static const _maxInboxWakeStreak = 10;
 
   var _fabricHeartbeatTick = 0;
+
   /// Whether the over-window guard's one-shot auto-continuation was used
   /// for the current user text (reset on every real [sendText] entry).
   var _overWindowAutoResumed = false;
@@ -2019,6 +2000,7 @@ class AgentService extends ChangeNotifier
     _sessionWatchTimer?.cancel();
     fsRevision.dispose();
     externalSessionRevision.dispose();
+    _trajectory.dispose();
     super.dispose();
   }
 
@@ -2037,6 +2019,7 @@ class AgentService extends ChangeNotifier
     messages.clear();
     error = null;
     _persistedCount = 0;
+    _trajectory.reset();
     _currentAssistantMessage = null;
     await initialize();
     notifyListeners();
@@ -2137,6 +2120,9 @@ class AgentService extends ChangeNotifier
       // Same for the skills-access consent: the live choice + shared store.
       initialSkillsAccess: _skillsAccess,
       skillsAccessStore: _skillsAccessStore,
+      // Same for the per-tool availability: the live config + shared store.
+      initialToolsConfig: _toolsAvailability.config,
+      toolsAvailabilityStore: _toolsAvailabilityStore,
     );
   }
 
@@ -2199,6 +2185,9 @@ class AgentService extends ChangeNotifier
     _subagentManager?.mailboxPrefix = metadata.id;
     // Follow external appends (a running fa CLI on the same session).
     _startSessionWatch();
+    // The ledger re-projects the active branch (records carry richer
+    // structure than the rebuilt message list).
+    await _rebuildTrajectory();
     // Restore the session's own model: same wire kind → modelId override;
     // the provider itself stays the configured connection (its key lives
     // in the Keychain, not in the session). An unresolvable or
@@ -2330,6 +2319,7 @@ class AgentService extends ChangeNotifier
   Future<void> _onAgentEvent(AgentEvent event, CancelToken cancelToken) async {
     // Any event proves the run is alive — rearm the idle watchdog.
     if (event is! AgentEndEvent) _armIdleWatchdog();
+    _trajectory.applyEvent(event);
     switch (event) {
       case AgentStartEvent():
         isStreaming = true;
@@ -2409,6 +2399,15 @@ class AgentService extends ChangeNotifier
         isStreaming = false;
         _currentAssistantMessage = null;
         notifyListeners();
+        // Session persistence is best effort: a failed append must not
+        // propagate back into the agent's event plumbing (a throwing
+        // listener re-enters the loop's failure path, duplicates the
+        // failure events, and escapes the run as an unhandled error).
+        //
+        // Through the SAME `_persistChain` as `_persistSoon` — a direct
+        // call races the queued passes: both read `_persistedCount == 0`
+        // before either finishes, and every message is appended twice
+        // (duplicate JSONL records, duplicated transcripts on reload).
         // Session persistence is best effort: a failed append must not
         // propagate back into the agent's event plumbing (a throwing
         // listener re-enters the loop's failure path, duplicates the
@@ -2595,7 +2594,27 @@ class AgentService extends ChangeNotifier
     return '${encoded.substring(0, 80)}...';
   }
 
+  /// Whether a [_persist] pass is currently draining the transcript.
+  /// Concurrent triggers (a `_persistSoon` pass racing the run
+  /// finalizer's direct call) must not both iterate
+  /// `_agent.state.messages`: both would read the same
+  /// `_persistedCount == 0` before either finishes and append every
+  /// message twice (duplicate JSONL rows, duplicated chat on reload).
+  /// The skip is safe — the live pass iterates the live list and
+  /// advances `_persistedCount` for everything it saw.
+  bool _persistRunning = false;
+
   Future<void> _persist() async {
+    if (_persistRunning) return;
+    _persistRunning = true;
+    try {
+      await _persistUnchecked();
+    } finally {
+      _persistRunning = false;
+    }
+  }
+
+  Future<void> _persistUnchecked() async {
     // The session is created lazily on the first persisted message — no
     // JSONL file appears until the user actually writes something.
     await _materialiseSessionIfNeeded();
@@ -2603,10 +2622,28 @@ class AgentService extends ChangeNotifier
     if (session == null) return;
     final all = _agent.state.messages;
     for (final message in all.skip(_persistedCount)) {
-      await session.appendMessage(message);
+      final id = await session.appendMessage(message);
+      // The finalized record replaces the streamed synthetic rows in the
+      // trajectory ledger (builder keys them by turn/step).
+      final record = await session.getEntry(id);
+      if (record != null) _trajectory.append(record);
     }
     _persistedCount = all.length;
   }
+
+  /// Rebuilds the trajectory ledger from the active session branch
+  /// (session open/switch/external reload).
+  Future<void> _rebuildTrajectory() async {
+    final session = _session;
+    if (session == null) return;
+    _trajectory.reset();
+    for (final record in await session.getBranch()) {
+      _trajectory.append(record);
+    }
+  }
+
+  @override
+  Stream<TrajectorySnapshot> get trajectory => _trajectory.stream;
 
   /// Compaction thresholds for the active model, scaled by
   /// [CompactionSettings.forWindow] to the conversation window (the model's
@@ -2716,73 +2753,4 @@ class AgentService extends ChangeNotifier
     final afterTokens = estimateContextTokens(_agent.state.messages).tokens;
     return afterTokens < transcriptTokens;
   }
-}
-
-/// [AutoCompactorHooks] impl for the Flutter chat sheet. The chat list is
-/// rebuilt from `state.messages` at the end of [AutoCompactor.run], so
-/// hooks only need to drive per-pass UX (silent here — chat doesn't
-/// surface each pass).
-class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
-  const _AutoCompactorFlutterHooks();
-
-  @override
-  void onDelta(String delta) {}
-
-  @override
-  void onAttemptStart(String label, int attempt, Duration budget) {}
-
-  @override
-  void onPass(AutoCompactorPass pass) {}
-
-  @override
-  void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
-
-  @override
-  void onDone(int passes, int tokens) {}
-
-  @override
-  void onBothRolesFailed(Object lastError) {
-    // Surfaced via the next run's run-error stream; chat list keeps its
-    // current view.
-  }
-}
-
-/// A live [Map] view of the [TaskModelsStore]'s role overrides in
-/// `roles:` config shape. Reads through on every access, so settings edits
-/// resolve on the next `task` spawn without rebuilding the agent (used by
-/// [_taskRolesResolver]).
-final class _StoreBackedRolesMap
-    with MapMixin<String, List<ModelRef>>
-    implements Map<String, List<ModelRef>> {
-  _StoreBackedRolesMap(this._store);
-
-  final TaskModelsStore _store;
-
-  @override
-  List<ModelRef>? operator [](Object? key) {
-    if (key is! String) return null;
-    final config = _store.overrideFor(key);
-    if (config == null) return null;
-    return [
-      ModelRef(
-        provider: config.providerKind,
-        modelId: config.modelId,
-        apiKeyName: config.apiKeyName,
-        baseUrl: config.baseUrl,
-      ),
-    ];
-  }
-
-  @override
-  Iterable<String> get keys => _store.configuredRoles.toList(growable: false);
-
-  @override
-  void operator []=(String key, List<ModelRef> value) =>
-      throw UnsupportedError('read-only');
-
-  @override
-  void clear() => throw UnsupportedError('read-only');
-
-  @override
-  List<ModelRef>? remove(Object? key) => throw UnsupportedError('read-only');
 }

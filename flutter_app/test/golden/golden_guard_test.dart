@@ -22,13 +22,19 @@ import 'package:flutter_test/flutter_test.dart';
 const _coverage = <String, String>{
   'lib/main.dart': 'test/golden/setup_golden_test.dart',
   'lib/ui/screens/settings.dart': 'test/golden/settings_golden_test.dart',
+  'lib/ui/screens/settings_key_dialogs.dart':
+      'test/golden/dialogs_golden_test.dart',
   'lib/ui/screens/provider_editor_page.dart':
       'test/golden/settings_golden_test.dart',
   'lib/ui/screens/providers_section.dart':
       'test/golden/settings_golden_test.dart',
   'lib/ui/screens/media_slot_picker_page.dart':
       'test/golden/settings_golden_test.dart',
+  'lib/ui/screens/tools_availability_section.dart':
+      'test/golden/settings_golden_test.dart',
   'lib/ui/screens/models_settings_page.dart':
+      'test/golden/settings_golden_test.dart',
+  'lib/ui/screens/dap_settings_page.dart':
       'test/golden/settings_golden_test.dart',
   'lib/ui/screens/model_presets.dart':
       'test/golden/model_presets_golden_test.dart',

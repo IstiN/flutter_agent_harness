@@ -21,6 +21,7 @@ import '../providers/provider_common.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
 import '../ttsr/ttsr.dart';
+import '../tools/availability.dart';
 import 'custom_providers.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
@@ -74,6 +75,7 @@ final class CliConfig {
     this.skillsDisableShellExecution = false,
     this.memory,
     this.cube,
+    this.tools,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -104,8 +106,9 @@ final class CliConfig {
       memory: map['memory'] == null
           ? null
           : MemoryConfig.fromYaml(map['memory']),
-      // The cube section (default fa_cube sandbox profile); strict too.
       cube: map['cube'] == null ? null : CubeSettings.fromYaml(map['cube']),
+      // The tools section (capability-gated tool availability); strict too.
+      tools: map['tools'] == null ? null : ToolsConfig.fromYaml(map['tools']),
       // Saved custom providers; entry-level errors throw [ConfigException].
       customProviders: switch (map['customProviders']) {
         null => const [],
@@ -255,6 +258,13 @@ final class CliConfig {
   /// strictly; `null` means the section is absent.
   final CubeSettings? cube;
 
+  /// Optional `tools:` section — capability-gated tool availability for
+  /// the GLOBAL scope. Parsed strictly; `null` means the section is
+  /// absent. The project scope reads live via [loadProjectToolsConfig] and
+  /// the runtime scope arrives as `--tools`/`FA_TOOLS`; scopes stay
+  /// separate for the deepest-wins resolution.
+  final ToolsConfig? tools;
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -279,6 +289,10 @@ final class CliConfig {
     buffer.write(_skillsYaml());
     final cubeConfig = cube;
     if (cubeConfig != null) buffer.write(cubeConfig.toYamlFragment());
+    final toolsConfig = tools;
+    if (toolsConfig != null && !toolsConfig.isEmpty) {
+      buffer.write(toolsConfig.toYaml());
+    }
     return buffer.toString();
   }
 
@@ -426,6 +440,38 @@ CubeSettings? loadProjectCubeSettings(String projectDir) {
   } on Object {
     return null;
   }
+}
+
+/// Loads the PROJECT-level `tools:` section from
+/// `<projectDir>/.fah/config.yaml` — the git-backed availability policy
+/// travels with the repo. The PROJECT scope is consumed live (separate
+/// from the saved global [CliConfig.tools]) so the deepest-wins resolution
+/// can stack both. Null when the file or the section is absent/unreadable;
+/// a present-but-invalid section throws [ConfigException] (strict, like
+/// the user config).
+ToolsConfig? loadProjectToolsConfig(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['tools'];
+    return node == null ? null : ToolsConfig.fromYaml(node);
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// Parses the `FA_TOOLS` env twin of the `--tools` flag: the same csv
+/// spec, for Docker/headless hosts that cannot pass flags. Absent or empty
+/// yields null (no runtime intent); a malformed value throws
+/// [ConfigException] naming the bad token.
+ToolsConfig? toolsSpecFromEnv(Map<String, String> env) {
+  final spec = env['FA_TOOLS'];
+  if (spec == null || spec.trim().isEmpty) return null;
+  return parseToolsSpec(spec);
 }
 
 /// The startup cube source (fa_cube): explicit flags win, then the project
