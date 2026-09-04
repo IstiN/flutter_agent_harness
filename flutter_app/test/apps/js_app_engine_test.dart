@@ -1697,6 +1697,203 @@ void main() {
       }
     });
   });
+
+  group('state.sync (live storage broadcast between engines of one app)', () {
+    // Records reserved 'state.sync' payloads into the exported state and
+    // performs storage writes on demand — the seam the two-engine sync
+    // tests drive.
+    const syncWidgetJs = '''
+(function() {
+  var snap = {};
+  function exportSnap() { jsr.exportState(snap); }
+  jsr.onEvent(function(actionId, payload) {
+    if (actionId === 'state.sync') {
+      snap.received = snap.received || [];
+      snap.received.push(payload);
+    } else if (actionId === 'write') {
+      jsr.storage.set(payload.key, payload.value);
+      snap.wrote = payload.key;
+    }
+    exportSnap();
+  });
+  jsr.storage.get('seed').then(function(v) {
+    snap.seed = (v === undefined || v === null) ? null : v;
+    exportSnap();
+  });
+  jsr.render({type: 'text', data: 'sync'});
+})();
+''';
+
+    JsAppInfo appOf(String id) => JsAppInfo.fromManifest(
+      {'id': id, 'name': id},
+      bundled: false,
+      fallbackId: id,
+    );
+
+    Future<void> waitForExport(JsAppEngine engine, String key) async {
+      for (var i = 0; i < 40 && engine.exportedState?[key] == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+    }
+
+    testWidgets('a storage write reaches sibling engines, not the writer', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', syncWidgetJs);
+        final tile = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        final full = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        try {
+          await tile.start();
+          await full.start();
+          await Future<void>.delayed(settle);
+
+          await tile.callEvent('write', {
+            'key': '__state',
+            'value': {'rev': 1, 'running': true},
+          });
+          await waitForExport(full, 'received');
+          final received = full.exportedState?['received'] as List;
+          final payload = received.last as Map;
+          expect(payload['appId'], 'demo');
+          expect(payload['key'], '__state');
+          expect((payload['value'] as Map)['running'], true);
+          expect(payload['writer'], startsWith('e'));
+
+          // The writer never sees its own write echoed back.
+          expect(tile.exportedState?['received'], isNull);
+
+          // Rewriting the SAME value produces no new broadcast.
+          await tile.callEvent('write', {
+            'key': '__state',
+            'value': {'rev': 1, 'running': true},
+          });
+          await Future<void>.delayed(settle);
+          expect(
+            (full.exportedState?['received'] as List).length,
+            received.length,
+          );
+        } finally {
+          await tile.dispose();
+          await full.dispose();
+        }
+      });
+    });
+
+    testWidgets('engines of other apps never receive the broadcast', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', syncWidgetJs);
+        await env.writeFile('apps/other/widget.js', syncWidgetJs);
+        final demo = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        final other = JsAppEngine(
+          app: appOf('other'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        try {
+          await demo.start();
+          await other.start();
+          await Future<void>.delayed(settle);
+
+          await demo.callEvent('write', {'key': '__state', 'value': 1});
+          await Future<void>.delayed(settle);
+          expect(demo.exportedState?['received'], isNull);
+          expect(other.exportedState?['received'], isNull);
+        } finally {
+          await demo.dispose();
+          await other.dispose();
+        }
+      });
+    });
+
+    testWidgets('a write landing during a sibling boot is not lost', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', syncWidgetJs);
+        final first = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        final second = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        try {
+          await first.start();
+          await Future<void>.delayed(settle);
+          // Boot the second engine WITHOUT awaiting, write mid-boot. The
+          // write lands either before the boot storage read (hydration
+          // path) or after it (the post-start drift replay) — the widget
+          // must observe the value either way.
+          final booting = second.start();
+          await first.callEvent('write', {'key': 'seed', 'value': 'mid-boot'});
+          await booting;
+          await waitForExport(second, 'received');
+          await Future<void>.delayed(settle);
+          final viaHydration = second.exportedState?['seed'] == 'mid-boot';
+          final viaReplay = (second.exportedState?['received'] as List?)?.any(
+            (event) =>
+                (event as Map)['key'] == 'seed' && event['value'] == 'mid-boot',
+          );
+          expect(viaHydration || (viaReplay ?? false), isTrue);
+        } finally {
+          await first.dispose();
+          await second.dispose();
+        }
+      });
+    });
+
+    testWidgets('a booting engine hydrates from storage.json', (tester) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', syncWidgetJs);
+        final first = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        await first.start();
+        await Future<void>.delayed(settle);
+        await first.callEvent('write', {'key': 'seed', 'value': 'from-tile'});
+        // The persist is fire-and-forget — let it land before disposing.
+        await Future<void>.delayed(settle);
+        await first.dispose();
+
+        final second = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        try {
+          await second.start();
+          await waitForExport(second, 'seed');
+          expect(second.exportedState?['seed'], 'from-tile');
+        } finally {
+          await second.dispose();
+        }
+      });
+    });
+  });
 }
 
 /// Fake [AsrApi] for the `fa.asr` bridge tests — the host-side tests never

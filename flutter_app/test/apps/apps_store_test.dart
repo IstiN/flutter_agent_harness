@@ -460,14 +460,14 @@ void main() {
       ).tileWidget!;
 
       expect(tile('2x2').size, '2x2'); // small
+      expect(tile('1x1').size, '1x1'); // icon-only
       expect(tile('4x2').size, '4x2'); // medium
       expect(tile('4x4').size, '4x4'); // large
-      // W clamps to 2..4, H to 1..4.
-      expect(tile('1x1').size, '2x1');
+      // W clamps to 1..4, H to 1..4.
       expect(tile('5x2').size, '4x2');
       expect(tile('2x9').size, '2x4');
       expect(tile('9x9').size, '4x4');
-      expect(tile('0x0').size, '2x1');
+      expect(tile('0x0').size, '1x1');
     });
 
     test('weird widget values fall back to the defaults', () {

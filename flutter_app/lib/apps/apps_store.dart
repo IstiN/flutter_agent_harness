@@ -241,7 +241,9 @@ class JsTileWidgetInfo {
   static const int defaultHeightCells = 2;
 
   /// Minimum/maximum horizontal span of a tile, in icon-slot cells.
-  static const int minWidthCells = 2;
+  /// Width 1 declares an icon-only tile: the launcher shows the plain
+  /// icon block and never boots a tile engine for it.
+  static const int minWidthCells = 1;
   static const int maxWidthCells = 4;
 
   /// Minimum/maximum vertical span of a tile, in icon-slot cells.

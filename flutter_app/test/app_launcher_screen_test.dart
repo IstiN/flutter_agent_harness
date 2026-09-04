@@ -168,6 +168,7 @@ Future<_Harness> _pumpLauncher(
   List<String>? order,
   List<LauncherFolder>? folders,
   Map<String, String> tileApps = const {},
+  Map<String, ({int w, int h})> tileSizes = const {},
   TileEngineFactory? tileEngineFactory,
   int? gridColumns,
   bool useEnvLayout = false,
@@ -193,6 +194,7 @@ Future<_Harness> _pumpLauncher(
         ],
     folders: folders,
     gridColumns: gridColumns,
+    tileSizes: tileSizes.isEmpty ? null : tileSizes,
   );
   await tester.pumpWidget(
     MaterialApp(
@@ -485,6 +487,59 @@ void main() {
       expect(find.text('Gamma'), findsOneWidget);
     });
 
+    testWidgets('a 1x1 tile override renders the icon tile, no engine', (
+      tester,
+    ) async {
+      var engineBoots = 0;
+      await _pumpLauncher(
+        tester,
+        tileApps: {'alpha': '2x2'},
+        tileSizes: {'alpha': (w: 1, h: 1)},
+        tileEngineFactory: ({
+          required app,
+          required env,
+          required permissions,
+          required initialTheme,
+        }) {
+          engineBoots++;
+          return _FakeTileEngine(
+            app: app,
+            env: env,
+            permissions: permissions,
+            initialTheme: initialTheme,
+          );
+        },
+      );
+      // Icon-only: the live tile is gone and the classic icon + label
+      // block is back; no tile engine ever booted for the 1x1 cell.
+      expect(engineBoots, 0);
+      expect(find.byType(AppTileHost), findsNothing);
+      expect(find.text('LIVE TILE'), findsNothing);
+      expect(find.text('Alpha'), findsOneWidget);
+    });
+
+    testWidgets('picking Icon in the tile menu collapses a live tile', (
+      tester,
+    ) async {
+      final harness = await _pumpLauncher(
+        tester,
+        tileApps: {'alpha': '2x2'},
+        tileEngineFactory: _fakeTileEngineFactory(),
+      );
+      expect(find.byType(AppTileHost), findsOneWidget);
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:alpha')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Icon (1×1)'));
+      await tester.pumpAndSettle();
+      expect(harness.layout.tileSizeFor('alpha'), (w: 1, h: 1));
+      expect(find.byType(AppTileHost), findsNothing);
+      expect(find.text('Alpha'), findsOneWidget);
+    });
+
     testWidgets('a 4x2 live tile aligns with the icon-slot block', (
       tester,
     ) async {
@@ -645,6 +700,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 700));
       await gesture.up();
       await tester.pumpAndSettle();
+      expect(find.text('Icon (1×1)'), findsOneWidget);
       expect(find.text('Small (2×2)'), findsOneWidget);
       expect(find.text('Medium (4×2)'), findsOneWidget);
       expect(find.text('Large (4×4)'), findsOneWidget);

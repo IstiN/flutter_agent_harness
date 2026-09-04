@@ -742,6 +742,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherSeedErrorTitle => 'App failed to install';
 
   @override
+  String get launcherTileSizeIcon => 'Icon (1×1)';
+
+  @override
   String get launcherTileSizeLarge => 'Large (4×4)';
 
   @override

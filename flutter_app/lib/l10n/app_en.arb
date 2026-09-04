@@ -245,6 +245,7 @@
   "launcherSeedErrorCopy": "Copy error",
   "launcherSeedErrorHint": "Send this error to Fa — it can fix the app.",
   "launcherSeedErrorTitle": "App failed to install",
+  "launcherTileSizeIcon": "Icon (1×1)",
   "launcherTileSizeLarge": "Large (4×4)",
   "launcherTileSizeMedium": "Medium (4×2)",
   "launcherTileSizeReset": "Reset to default",

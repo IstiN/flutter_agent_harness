@@ -83,8 +83,10 @@ class LauncherLayoutStore extends ChangeNotifier {
   static const minGridColumns = 3;
   static const maxGridColumns = 8;
 
-  /// Tile-size override bounds (icon-slot cells).
-  static const minTileWidth = 2;
+  /// Tile-size override bounds (icon-slot cells). Width 1 = icon-only
+  /// tile: the launcher renders the plain icon block and boots no tile
+  /// engine (see `_tileContent` in the launcher screen).
+  static const minTileWidth = 1;
   static const maxTileWidth = 4;
   static const minTileHeight = 1;
   static const maxTileHeight = 4;

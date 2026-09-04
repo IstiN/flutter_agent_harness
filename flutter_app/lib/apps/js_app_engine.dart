@@ -88,6 +88,17 @@ typedef FaHostKeysSource = Map<String, String> Function();
 ///   [RequestSecretCallback])
 /// - other health actions → the matching flag (stubbed until the platform
 ///   implementations land — a granted call answers "not available").
+///
+/// Live instances of one app (a launcher board tile AND the fullscreen
+/// view, or several tiles) run SEPARATE engines by design — the native JS
+/// context is single-viewport — but they share one logical state through
+/// storage: every `jsr.storage.set` persists to `storage.json` (survives
+/// restarts) AND is broadcast to the app's other live engines as a
+/// reserved `state.sync` event (see [_broadcastStorageChanges]). Widgets
+/// that want live sync keep their state under a reserved `__`-prefixed
+/// storage key (protocol: docs in `fa_widgets/docs/state-sync.md`) —
+/// durable fields plus a `rev`/`writer` guard so sibling engines adopt
+/// external changes instead of fighting over them.
 class JsAppEngine {
   JsAppEngine({
     required this.app,
@@ -202,6 +213,24 @@ class JsAppEngine {
   JsWidgetEngine? _engine;
   JsResolveCallback? _resolve;
 
+  /// Per-process group of LIVE engines keyed by app id — the sibling set
+  /// `state.sync` storage broadcasts fan out to (see
+  /// [_broadcastStorageChanges]). An engine joins on a successful [start]
+  /// and leaves on [dispose]; the map only ever holds live engines.
+  static final Map<String, Set<JsAppEngine>> _liveByApp = {};
+
+  /// Distinguishes this instance's own storage echoes from sibling writes
+  /// in the `state.sync` payload (widgets use it as the `writer` guard).
+  static int _nextInstanceId = 0;
+
+  /// Unique per engine instance (see [_nextInstanceId]).
+  final String instanceId = 'e${++_nextInstanceId}';
+
+  /// The storage snapshot the diff in [_persistStorage] is computed
+  /// against — seeded from disk at boot so the app's FIRST write diffs
+  /// against what previous instances left behind, not against empty.
+  Map<String, dynamic>? _lastPersistedStorage;
+
   /// Process-wide lifecycle lock serializing [start] and [dispose] across
   /// ALL engines. Root cause of the TestFlight SIGSEGV: native JS contexts
   /// are address-keyed (`JavascriptCoreRuntime._instanceMap`) — an engine
@@ -278,6 +307,15 @@ class JsAppEngine {
     final engine = JsWidgetEngine(config: config);
     _engine = engine;
     await engine.run(js);
+    // Live now: join the app's sibling group so later storage writes from
+    // OTHER engines of the same app reach this one (and vice versa).
+    _liveByApp.putIfAbsent(app.id, () => <JsAppEngine>{}).add(this);
+    // Boot-race healing: a sibling write landing between the storage read
+    // above and this point was persisted but never delivered (we were not
+    // in the group yet / the JS engine was not ready). Re-read the file and
+    // replay the drift into THIS engine as `state.sync` events — the widget
+    // adopts them through the same path as live broadcasts.
+    await _replayStorageDrift();
   }
 
   Future<void> callEvent(String actionId, [Map<String, dynamic>? payload]) {
@@ -306,16 +344,32 @@ class JsAppEngine {
   Future<void> dispose() => _guardLifecycle(() async {
     final engine = _engine;
     _engine = null;
+    final siblings = _liveByApp[app.id];
+    if (siblings != null) {
+      siblings.remove(this);
+      if (siblings.isEmpty) _liveByApp.remove(app.id);
+    }
     if (engine != null) await engine.dispose();
     tree.dispose();
     backHandlerRegistered.dispose();
   });
 
-  // --- storage persistence -------------------------------------------------
+  // --- storage persistence + live sync ---------------------------------------
 
   String get _storagePath => '${app.dir}/storage.json';
 
   Future<Map<String, dynamic>> _readStorage() async {
+    final decoded = await _readStorageFile();
+    // Seed the diff baseline: the first write of THIS instance must
+    // broadcast only what it actually changed relative to what a sibling
+    // (or a previous run) already persisted.
+    _lastPersistedStorage = decoded;
+    return decoded;
+  }
+
+  /// Reads `storage.json` without touching the diff baseline; empty on a
+  /// missing or corrupt file (same fresh-start rule as boot).
+  Future<Map<String, dynamic>> _readStorageFile() async {
     final raw = await env.readTextFile(_storagePath);
     final text = raw.valueOrNull;
     if (text != null) {
@@ -326,11 +380,92 @@ class JsAppEngine {
         // Corrupt storage — start fresh.
       }
     }
-    return {};
+    return const {};
   }
 
   void _persistStorage(Map<String, dynamic> storage) {
     unawaited(env.writeFile(_storagePath, jsonEncode(storage)));
+    _broadcastStorageChanges(_lastPersistedStorage ?? const {}, storage);
+    _lastPersistedStorage = Map<String, dynamic>.of(storage);
+  }
+
+  /// Reserved event name carrying storage diffs between live engines of
+  /// one app (see the class doc). Widgets treat it as protocol, never as a
+  /// UI action.
+  static const String stateSyncEvent = 'state.sync';
+
+  /// Fans the changed `jsr.storage` keys out to the app's OTHER live
+  /// engines as `state.sync` events (`{appId, key, value, writer}`), so a
+  /// board tile and the fullscreen view (or two tiles) stay one logical
+  /// instance. Fire-and-forget: siblings that never started or just
+  /// disposed no-op inside [callEvent]. Adoption on the receiving side
+  /// must NOT write back — the `rev`/`writer` guard in the state protocol
+  /// keeps equal-rev echoes inert, so no broadcast loop is possible.
+  void _broadcastStorageChanges(
+    Map<String, dynamic> before,
+    Map<String, dynamic> after,
+  ) {
+    final siblings = _liveByApp[app.id];
+    if (siblings == null || siblings.length < 2) return;
+    final changed = <String, dynamic>{};
+    for (final key in after.keys) {
+      if (!identical(before[key], after[key]) &&
+          jsonEncode(before[key]) != jsonEncode(after[key])) {
+        changed[key] = after[key];
+      }
+    }
+    for (final key in before.keys) {
+      if (!after.containsKey(key)) changed[key] = null;
+    }
+    if (changed.isEmpty) return;
+    for (final sibling in siblings) {
+      if (identical(sibling, this)) continue;
+      for (final entry in changed.entries) {
+        unawaited(
+          sibling.callEvent(stateSyncEvent, {
+            'appId': app.id,
+            'key': entry.key,
+            'value': entry.value,
+            'writer': instanceId,
+          }),
+        );
+      }
+    }
+  }
+
+  /// Delivers this engine the storage changes OTHERS persisted while this
+  /// instance was still booting (see [_start]). `writer: 'boot'` marks the
+  /// replay so widgets can tell it from a live sibling write; delivery
+  /// goes through the same reserved `state.sync` event. Fire-and-forget —
+  /// a failure here must never fail the start.
+  Future<void> _replayStorageDrift() async {
+    try {
+      final baseline = _lastPersistedStorage ?? const {};
+      final latest = await _readStorageFile();
+      final changed = <String, dynamic>{};
+      for (final key in latest.keys) {
+        if (jsonEncode(baseline[key]) != jsonEncode(latest[key])) {
+          changed[key] = latest[key];
+        }
+      }
+      for (final key in baseline.keys) {
+        if (!latest.containsKey(key)) changed[key] = null;
+      }
+      if (changed.isEmpty) return;
+      _lastPersistedStorage = Map<String, dynamic>.of(latest);
+      for (final entry in changed.entries) {
+        unawaited(
+          callEvent(stateSyncEvent, {
+            'appId': app.id,
+            'key': entry.key,
+            'value': entry.value,
+            'writer': 'boot',
+          }),
+        );
+      }
+    } on Object {
+      // Best-effort: the next live broadcast (or a restart) re-syncs.
+    }
   }
 
   // --- permission gates ----------------------------------------------------

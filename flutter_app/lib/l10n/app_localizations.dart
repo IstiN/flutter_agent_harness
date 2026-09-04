@@ -1334,6 +1334,12 @@ abstract class AppLocalizations {
   /// **'App failed to install'**
   String get launcherSeedErrorTitle;
 
+  /// No description provided for @launcherTileSizeIcon.
+  ///
+  /// In en, this message translates to:
+  /// **'Icon (1×1)'**
+  String get launcherTileSizeIcon;
+
   /// No description provided for @launcherTileSizeLarge.
   ///
   /// In en, this message translates to:

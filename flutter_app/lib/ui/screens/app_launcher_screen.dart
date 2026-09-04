@@ -606,6 +606,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         ? null
         : override ?? (w: tile.widthCells, h: tile.heightCells);
     final choices = <({String label, TileSize size})>[
+      (label: context.l10n.launcherTileSizeIcon, size: (w: 1, h: 1)),
       (label: context.l10n.launcherTileSizeSmall, size: (w: 2, h: 2)),
       (label: context.l10n.launcherTileSizeMedium, size: (w: 4, h: 2)),
       (label: context.l10n.launcherTileSizeLarge, size: (w: 4, h: 4)),
@@ -1274,6 +1275,17 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     return (w: 1, h: 1);
   }
 
+  /// The effective live-tile span of [appId] (override wins over the
+  /// manifest), or null for plain icon apps. A 1x1 result means
+  /// icon-only: the launcher shows the static icon block and boots no
+  /// tile engine (the "Icon" size choice in the tile menu).
+  TileSpan? _effectiveTileSpan(String appId) {
+    final tile = _appsById[appId]?.tileWidget;
+    if (tile == null) return null;
+    final override = _layout?.tileSizeFor(appId);
+    return (w: override?.w ?? tile.widthCells, h: override?.h ?? tile.heightCells);
+  }
+
   /// The drag feedback: classic tiles drag their 64px icon; apps with a
   /// live tile drag a FULL-SIZE static replica of the card (rounded panel
   /// with the app icon and name) so it is obvious WHAT is being dragged —
@@ -1398,7 +1410,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     if (key.startsWith('app:')) {
       final app = _appsById[key.substring(4)];
       final tile = app?.tileWidget;
-      if (app != null && tile != null) {
+      // 1x1 override = icon-only: the plain icon block below renders and
+      // no tile engine boots (the live tile would overflow a 1x1 cell).
+      final span = app == null ? null : _effectiveTileSpan(app.id);
+      if (app != null && tile != null && !(span?.w == 1 && span?.h == 1)) {
         // Live tile: the app draws its own mini UI (icon+label replaced).
         // A body tap opens the full app; interactive tiles (the manifest's
         // widget.interactive) route button taps to the tile engine instead —
@@ -1433,6 +1448,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               unawaited(_showTileMenu(key, details.globalPosition)),
           child: _maybeSeedErrorBadge(colors, key, _tileIcon(colors, key)),
         ),
+        const SizedBox(height: 4),
         SizedBox(
           height: LauncherGridSpec.labelHeight,
           // iOS-style: the label may bleed into the (empty) inter-icon

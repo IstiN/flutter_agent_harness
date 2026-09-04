@@ -242,6 +242,7 @@
   "launcherSeedErrorCopy": "Скопировать ошибку",
   "launcherSeedErrorHint": "Отправьте эту ошибку Fa — он сможет починить приложение.",
   "launcherSeedErrorTitle": "Приложение не установилось",
+  "launcherTileSizeIcon": "Иконка (1×1)",
   "launcherTileSizeLarge": "Большой (4×4)",
   "launcherTileSizeMedium": "Средний (4×2)",
   "launcherTileSizeReset": "По умолчанию",

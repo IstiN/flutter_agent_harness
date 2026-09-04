@@ -167,17 +167,28 @@ An app can render **live mini-content inside its launcher home-grid tile** (like
 | Field | Required | Description |
 |-------|----------|-------------|
 | `entry` | ❌ | Tile JS file inside the app folder (default: `widget_tile.js`) |
-| `size` | ❌ | Tile span as `"WxH"` in **icon-slot cells** (default: `"2x2"`). W clamps to 2–4, H to 1–4; anything unparsable falls back to 2x2. The three iOS-style presets: `"2x2"` (small, 4 cells), `"4x2"` (medium, 8 cells — full width on a phone), `"4x4"` (large, 16 cells) |
+| `size` | ❌ | Tile span as `"WxH"` in **icon-slot cells** (default: `"2x2"`). W clamps to 1–4, H to 1–4; anything unparsable falls back to 2x2. The iOS-style presets: `"1x1"` (icon-only — the launcher renders the plain icon and boots NO tile engine), `"2x2"` (small, 4 cells), `"4x2"` (medium, 8 cells — full width on a phone), `"4x4"` (large, 16 cells) |
 | `refreshSeconds` | ❌ | Host-side refresh cadence — the tile host fires a `tile.refresh` event every N seconds (omit it and use your own `setInterval` if you prefer) |
+| `interactive` | ❌ | `true` routes taps on your tile's buttons/controls to the tile engine's `jsr.onEvent` (interactive tile right on the board) instead of opening the full app |
 
 Tile-JS rules (see the `weather` (4x2) / `reminders` (2x2) demo `widget_tile.js`):
 
 1. **Canvas size = the declared cells** — the grid unit is the app-icon slot: 56 px icon square + 20 px label strip, 16 px gaps. A WxH tile canvas is `W*72 − 16` px wide × `H*76 + (H−1)*16` px tall — e.g. `"2x2"` ≈ 128×168, `"4x2"` ≈ 272×168, `"4x4"` ≈ 272×368. The tile gives your root node tight bounds (fill it; don't center a fixed-size box). Render a compact layout for the span you declared: a 2x2 fits a few rows or one big value + label; a 4x2 fits a horizontal split (glyph + label | value + sublabel). No forms, no scrolling.
-2. **Display-only** — any tap on the tile opens the full app; tile JS must not rely on its own buttons/inputs (there is no in-tile interaction in v1).
+2. **Interactive vs display-only** — by default any tap on the tile opens the full app. With `"widget": {"interactive": true}` taps on interactive nodes route to the tile engine's `jsr.onEvent` — put Start/Pause-style controls right on the tile (the `pomodoro` and `focus-timer` catalog widgets do this). Keep tile controls big enough to hit at ~128×168 px.
 3. **`tile.refresh` event** — when the manifest sets `refreshSeconds`, the host calls your `jsr.onEvent` handler with `actionId === 'tile.refresh'`; refetch/re-read data there.
 4. **`jsr.theme` colors** — same theming rules as full apps: read `jsr.theme` fresh on every render and re-render from `jsr._onThemeChange`.
 5. **Storage is shared** — the tile engine uses the same `apps/<id>/storage.json` as the full app: read what the app writes (e.g. the reminders tile shows the app's `reminders` list), and cache your last fetched payload for an instant first paint.
 6. **Foreground only** — the tile engine lives only while the launcher is visible; there is no background execution.
+
+#### Live state sync between tile and fullscreen instances
+
+The tile and the fullscreen app are SEPARATE JS engine instances — but the host keeps them consistent through storage: every `jsr.storage.set` is broadcast to the app's other live engines as a reserved `state.sync` event. Widgets with a shared "one logical state" (timers, counters, players) must follow the protocol — full spec in the `fa_widgets` repo at `docs/state-sync.md`:
+
+1. Keep the syncable state under a reserved `__`-prefixed key (convention: `__state`) as ONE object: `{v: 1, rev, writer, ...app fields}` — plus a monotonically bumped `rev` and a random per-instance `writer` id.
+2. A running countdown stores wall-clock `endsAt` (epoch ms), never a locally-tickled persisted number: `remaining = Math.max(0, Math.round((endsAt - Date.now()) / 1000))` — every instance derives the same time without per-second broadcasts.
+3. Persist on every TRANSITION (start/pause/reset/finish), not per tick: `rev = Math.max(rev, lastSeenRev) + 1; jsr.storage.set('__state', snapshot)`.
+4. In `jsr.onEvent`, handle reserved names FIRST and never treat them as UI actions: `state.sync` (adopt `payload.value` when `payload.value.writer !== myId` and `rev > lastSeenRev`; adoption NEVER writes back), `back`, `llm.delta`, `tile.refresh`.
+5. On boot, hydrate from `jsr.storage.get('__state')`; if `running && endsAt <= Date.now()`, settle the expired phase yourself and persist the result.
 
 #### Reconfiguring the home grid (`launcher_layout.json`)
 

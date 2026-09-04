@@ -250,7 +250,7 @@ void main() {
       final store = await LauncherLayoutStore.load(env);
       expect(store.gridColumns, LauncherLayoutStore.maxGridColumns);
       expect(store.tileSizeFor('a'), (w: 4, h: 4));
-      expect(store.tileSizeFor('b'), (w: 2, h: 1)); // clamped to the range
+      expect(store.tileSizeFor('b'), (w: 1, h: 1)); // clamped to the range
       expect(store.tileSizeFor('c'), isNull);
       expect(store.tileSizeFor('d'), isNull);
     });
@@ -262,12 +262,19 @@ void main() {
       store.setGridColumns(99);
       expect(store.gridColumns, LauncherLayoutStore.maxGridColumns);
       store.setTileSize('a', (w: 1, h: 9));
-      expect(store.tileSizeFor('a'), (w: 2, h: 4));
+      expect(store.tileSizeFor('a'), (w: 1, h: 4));
       expect(notified, 2);
       // No-op writes don't notify.
       store.setGridColumns(LauncherLayoutStore.maxGridColumns);
-      store.setTileSize('a', (w: 2, h: 4));
+      store.setTileSize('a', (w: 1, h: 4));
       expect(notified, 2);
+    });
+
+    test('1x1 tile override (icon-only) is preserved', () {
+      final store = LauncherLayoutStore.inMemory();
+      store.setTileSize('a', const (w: 1, h: 1));
+      expect(store.tileSizeFor('a'), (w: 1, h: 1));
+      expect(LauncherLayoutStore.parseTileSize('1x1'), (w: 1, h: 1));
     });
 
     test('reload applies external file edits and notifies', () async {
