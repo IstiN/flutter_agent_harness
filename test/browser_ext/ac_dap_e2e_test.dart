@@ -49,21 +49,35 @@ void main() {
     await harness.connect();
     _chrome = await HeadlessChrome.launch();
 
-    // Subscribe BEFORE the reload so the hello cannot slip past us.
+    // Subscribe BEFORE the extension dials so the hello cannot slip past.
     final hello = hub.hellos.first.timeout(const Duration(seconds: 30));
-    // faDap config + unattended approvals, then the panel-equivalent reload:
-    // the SW reboots, the agent auto-boots from storage, DapIntegration
-    // generates (and persists) its identity, and dials the hub.
+    // Configure the same way the panel's hub settings do: persist to storage
+    // AND boot inline (the SW's auto-boot raced us once already; the inline
+    // boot is the deterministic panel path — chrome.runtime.reload() does
+    // not reliably restart the SW in headless Chrome).
     await evaluateInServiceWorker(
       chrome,
       'chrome.storage.local.set({faDap: {url: ${jsonEncode(hub.url.toString())}, '
-      'name: "browser-fa"}, faApproval: "unattended"})',
+      'name: "browser-fa"}, faProvider: {model: "fake:test"}, '
+      'faApproval: "unattended"})',
       awaitPromise: true,
     );
-    // Fire the reload without awaiting: the target is destroyed mid-command,
-    // so the evaluate response may never come back.
-    final sw = await chrome.attachServiceWorker();
-    unawaited(sw.evaluate('chrome.runtime.reload()').catchError((Object _) {}));
+    await pollUntil(
+      () async => (await evaluateInServiceWorker(
+        chrome,
+        'globalThis.faAgent.getState().booted === true',
+        awaitPromise: true,
+      )).toString().contains('true'),
+      (v) => v,
+      description: 'agent auto-boot',
+    );
+    await evaluateInServiceWorker(
+      chrome,
+      'globalThis.faAgent.boot({provider: {model: "fake:test"}, '
+      'approvalMode: "unattended", dap: {url: '
+      '${jsonEncode(hub.url.toString())}, name: "browser-fa"}})',
+      awaitPromise: true,
+    );
     browserAgentId = await hello;
   });
 

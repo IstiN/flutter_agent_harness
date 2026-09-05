@@ -5,6 +5,10 @@
 // Load order matters: tabs.js before ops.js (namespace destructure), agent.js
 // is optional (scaffold checkouts without a dart build stay fully functional).
 importScripts('./tabs.js', './bridge.js', './ops.js', './cdp.js');
+// Service workers have no `window`, but package:cryptography's web backend
+// probes window.crypto (WebCrypto itself IS available here via self.crypto).
+// Alias it before the dart2js bundle initializes any crypto lazily.
+self.window = self;
 try {
   importScripts('./agent.js'); // dart2js output; absent → scaffold mode
 } catch {

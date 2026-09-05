@@ -42,9 +42,12 @@ HeadlessChrome get chrome => _chrome!;
 void main() {
   setUpAll(() async {
     _root = await Directory.systemTemp.createTemp('fa-bridge-e2e-');
+    // Real fabric layout: <sessionRoot>/<slug>/messages — a bare
+    // <tmp>/messages would make the repo's session root the WHOLE /tmp and
+    // any leftover <tmp>/x/messages/main/.id would hijack recipient routing.
     repo = FileMessagingRepository(
       env: LocalExecutionEnv(cwd: root.path),
-      root: '${root.path}/messages',
+      root: '${root.path}/proj/messages',
     );
     final token = await BridgeTokenFile(root.path).ensure();
     _server = BridgeServer(
@@ -120,7 +123,7 @@ void main() {
     expect(inbox.single.fromId, startsWith('browser-ext/'));
 
     // The FILE layout is the contract — assert on the real filesystem too.
-    final files = Directory('${root.path}/messages/main/inbox').listSync();
+    final files = Directory('${root.path}/proj/messages/main/inbox').listSync();
     expect(files, isNotEmpty);
     expect(
       files.map((f) => File(f.path).readAsStringSync()),

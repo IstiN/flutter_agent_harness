@@ -62,8 +62,28 @@ Future<void> main() async {
 
 // -- faAgent surface ---------------------------------------------------------------
 
-JSAny? _bootImpl(JSAny? config) {
-  _ensureHost(_readConfig(config));
+/// boot(config): explicit keys win, ABSENT keys inherit the stored panel
+/// config (chrome.storage) — any interleaving of the SW's auto-boot and
+/// panel/test boots converges on the same effective config instead of
+/// last-writer-stomping partials.
+JSPromise<JSAny?> _bootImpl(JSAny? config) => _bootMerged(config).toJS;
+
+Future<JSAny?> _bootMerged(JSAny? config) async {
+  final stored = await _loadStoredRaw();
+  final map = config == null
+      ? const <Object?, Object?>{}
+      : (config as JSObject).dartify() as Map<Object?, Object?>;
+  _ensureHost(
+    _configFrom(
+      provider: map.containsKey('provider')
+          ? map['provider']
+          : stored['faProvider'],
+      approval: map.containsKey('approvalMode')
+          ? map['approvalMode']
+          : stored['faApproval'],
+      dap: map.containsKey('dap') ? map['dap'] : stored['faDap'],
+    ),
+  );
   return {'ok': true}.jsify();
 }
 
@@ -107,11 +127,21 @@ JSAny? _getStateImpl() =>
 void _ensureHost(HostConfig config) {
   final existing = _host;
   if (existing == null) {
-    _hostBoot = AgentHost.boot(
-      sink: _emit,
-      ops: _callOp,
-      config: config,
-    ).then((host) => _host = host);
+    // A boot may already be in flight (main()'s auto-boot reading storage);
+    // starting a second one makes _host last-writer-wins and the loser's
+    // config silently evaporates. Queue instead: when the pending boot
+    // finishes, apply the new config via reconfigure — or boot with it when
+    // nothing actually came up.
+    _hostBoot = _hostBoot
+        .then((host) async {
+          final live = host ?? _host;
+          if (live != null) {
+            live.reconfigure(config);
+            return live;
+          }
+          return AgentHost.boot(sink: _emit, ops: _callOp, config: config);
+        })
+        .then((host) => _host = host);
   } else {
     existing.reconfigure(config);
   }
@@ -148,35 +178,26 @@ void _dispatch(Map<String, dynamic> event) {
   }
 }
 
-// -- Config ---------------------------------------------------------------------------
-
-Future<HostConfig> _loadStoredConfig() async {
-  Map<Object?, Object?> stored = const {};
+Future<Map<Object?, Object?>> _loadStoredRaw() async {
   try {
     final result = await _storageGet(
       ['faProvider', 'faApproval', 'faDap'].jsify(),
     ).toDart;
     if (result != null) {
-      stored = (result as JSObject).dartify() as Map<Object?, Object?>;
+      return (result as JSObject).dartify() as Map<Object?, Object?>;
     }
   } on Object {
     // Storage blocked → defaults.
   }
+  return const {};
+}
+
+Future<HostConfig> _loadStoredConfig() async {
+  final stored = await _loadStoredRaw();
   return _configFrom(
     provider: stored['faProvider'],
     approval: stored['faApproval'],
     dap: stored['faDap'],
-  );
-}
-
-HostConfig _readConfig(JSAny? config) {
-  final map = config == null
-      ? const <Object?, Object?>{}
-      : (config as JSObject).dartify() as Map<Object?, Object?>;
-  return _configFrom(
-    provider: map['provider'],
-    approval: map['approvalMode'],
-    dap: map['dap'],
   );
 }
 

@@ -175,6 +175,7 @@ final class AgentHost {
     );
     _dap = integration;
     _registry.registerAll(integration.tools);
+    _syncAgentTools();
     unawaited(integration.start());
   }
 
@@ -185,7 +186,16 @@ final class AgentHost {
     _dapConfig = null;
     _registry.unregister('dap_dm');
     _registry.unregister('dap_peers');
+    _syncAgentTools();
     unawaited(integration.stop());
+  }
+
+  /// `Agent(toolRegistry:)` SEEDS its tool list at construction — late
+  /// registrations (DAP attach/detach after boot) must be pushed to the
+  /// live agent or the model sees "tool not found".
+  void _syncAgentTools() {
+    if (!_booted) return; // _agent is late — nothing to sync pre-init
+    _agent.state.tools = _registry.tools;
   }
 
   Model _currentModel() {
