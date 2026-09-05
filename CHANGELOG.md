@@ -2631,4 +2631,10 @@
 - fix(redact): entropy layer stops shredding paths, hashes and lockfile integrity
 - test(app): regenerate goldens after AIIN-hosted form changes
 
+## 0.1.301
+
+- feat(aiin): paste-key fallback — the service now blocks our redirects
+- memory: session notes
+- feat(skills): bundled create-goal skill — goal-writing discipline as /create-goal
+
 ## Unreleased
