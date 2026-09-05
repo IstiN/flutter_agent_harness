@@ -529,6 +529,7 @@ extension on AgentCli {
   /// oauth, chatgpt oauth, copilot connect, codemie sso, dial setup).
   /// Returns true when one handled it.
   bool _dispatchProviderSubcommand(List<String> args) {
+    if (_startAiinArg(args)) return true;
     if (_startCustomProviderArg(args)) return true;
     if (_startOpenRouterArg(args)) return true;
     if (_startChatGptOAuthArg(args)) return true;

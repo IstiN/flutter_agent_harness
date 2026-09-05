@@ -19,6 +19,11 @@ extension _AgentCliProviderPresets on AgentCli {
   /// this list is hand-maintained (the test asserts the pairing).
   List<MenuItem> _addProviderItems() => [
     const MenuItem(
+      key: 'preset:aiin',
+      label: 'AIIN',
+      description: 'aiin.by — sign in, API key auto-registered',
+    ),
+    const MenuItem(
       key: 'preset:openrouter',
       label: 'OpenRouter',
       description: 'OAuth or API key — 300+ models',
@@ -258,6 +263,7 @@ extension _AgentCliProviderPresets on AgentCli {
 
   /// Preset name → the setup flow it launches.
   Map<String, Future<void> Function()> get _addProviderHandlers => {
+    'aiin': () => _handleAiinConnectCommand(),
     'openrouter': () => _handleOpenRouterAuthMethodChoice(),
     'chatgpt': () => _handleChatGptOAuthCommand(headless: false),
     'copilot': () => _handleCopilotConnectCommand(),

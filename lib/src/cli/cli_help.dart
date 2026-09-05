@@ -406,13 +406,17 @@ SKILLS AND CONTEXT FILES
                      this session (an endpoint-reported window from /models
                      wins over the 200k catalog default; persist per chain
                      via roles yaml contextWindow:/maxTokens:)
-  /provider [name] [baseUrl] [token] | custom | openrouter oauth [headless]
+  /provider [name] [baseUrl] [token] | custom | aiin [key [apiKey]]
+                     | openrouter oauth [headless]
                      | chatgpt oauth [headless] | /provider copilot
                      | codemie sso [orgUrl] | dial setup | kimi
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is
                      a guided setup that saves the provider (api type, url,
-                     key, model); openrouter oauth authenticates via OpenRouter
+                     key, model); aiin signs in to aiin.by — the browser
+                     flow registers a sk-aiin API key automatically
+                     (a pasted key works too: /provider aiin key);
+                     openrouter oauth authenticates via OpenRouter
                      PKCE and stores the resulting key in the secure store;
                      kimi switches to the Kimi Code OpenAI-compatible
                      endpoint (api.kimi.com/coding/v1, key: KIMI_API_KEY);

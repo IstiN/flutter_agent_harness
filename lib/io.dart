@@ -6,6 +6,7 @@
 library;
 
 export 'src/cli/cli_config.dart';
+export 'src/cli/aiin_connect_server.dart';
 export 'src/cli/chatgpt_oauth_server.dart';
 export 'src/cli/codemie_sso_server.dart';
 export 'src/cli/headless_prompt.dart';

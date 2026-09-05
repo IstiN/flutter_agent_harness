@@ -159,7 +159,7 @@ void main() {
       await waitForIt(
         () => io.out.toString().contains('chat model — provider'),
       );
-      io.sendLine('1'); // openrouter — first catalog entry
+      io.sendLine('2'); // openrouter — AIIN now takes the first slot
       await waitForIt(() => io.out.toString().contains('chat model — model'));
       // The active model is in the list, so it carries the (current) marker.
       await waitForIt(
@@ -197,7 +197,7 @@ void main() {
       await waitForIt(
         () => io.out.toString().contains('chat model — provider'),
       );
-      io.sendLine('1'); // openrouter
+      io.sendLine('2'); // openrouter (AIIN takes the first slot)
       await waitForIt(() => io.out.toString().contains('2) + enter manually'));
       io.sendLine('2'); // the manual-entry escape
       await waitForIt(
