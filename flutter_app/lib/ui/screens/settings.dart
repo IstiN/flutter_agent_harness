@@ -15,6 +15,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/copilot_connect_flow.dart';
@@ -1979,6 +1980,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   final registry = widget.registry;
                   if (registry == null) return;
                   await runChatGptOAuthFlow(
+                    context: context,
+                    registry: registry,
+                    service: service,
+                    lastConnectionStore:
+                        widget.lastConnectionStore ??
+                        LastConnectionStore.inMemory(),
+                  );
+                },
+                onAiinConnect: () async {
+                  final registry = widget.registry;
+                  if (registry == null) return;
+                  await runAiinConnectFlow(
                     context: context,
                     registry: registry,
                     service: service,

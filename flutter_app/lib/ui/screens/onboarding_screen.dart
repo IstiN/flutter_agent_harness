@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart' as url_launcher;
 import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:fa/services/agent_service.dart' show AgentConfig;
 import 'package:fa/services/analytics.dart';
+import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/last_connection.dart';
@@ -1454,6 +1455,14 @@ class _P2State extends State<_P2> {
           );
         case 'chatgpt':
           ok = await runChatGptOAuthFlow(
+            context: context,
+            registry: registry,
+            service: null,
+            lastConnectionStore:
+                widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
+          );
+        case 'aiin':
+          ok = await runAiinConnectFlow(
             context: context,
             registry: registry,
             service: null,
