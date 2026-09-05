@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.295
+
+- docs: fa1.dev is now referenced from the README (website + live web
+  demo + iOS beta + installer) and from `homepage` in pubspec.yaml, so
+  the link renders on pub.dev next to the package name.
+
 ## 0.1.294
 
 - feat(redact): layered secret redaction pipeline (issue #24) — ten pure

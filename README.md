@@ -15,6 +15,13 @@ desktop/mobile, and web.
 > **Status: early development (Phase 0).** See [GOAL.md](GOAL.md) for the
 > roadmap, quality gates, and design contract. The API is not yet stable.
 
+**[fa1.dev](https://fa1.dev)** — the project website: a live in-browser
+demo of the full agent (sandboxed shell, git, interpreters — your key
+stays in page memory), the [iOS public
+beta](https://testflight.apple.com/join/En1eC9UK) on TestFlight, the
+[macOS app](https://github.com/IstiN/flutter_agent_harness/releases/latest),
+and the CLI installer below.
+
 ## Highlights (target design)
 
 - **Streaming-first**: `Stream<AgentEvent>` from every provider, partial-first
@@ -48,6 +55,20 @@ void main() async {
 
 Provider adapters and the agent loop land in the next phases — see the
 roadmap in [GOAL.md](GOAL.md).
+
+## Install
+
+```bash
+curl -fsSL "https://fa1.dev/install.sh" | sh    # macOS / Linux / WSL
+dart pub global activate flutter_agent_harness  # fa + fah on your PATH
+```
+
+The installer detects the OS/architecture, downloads a prebuilt binary
+from the [latest GitHub
+Release](https://github.com/IstiN/flutter_agent_harness/releases/latest),
+puts it on your PATH, and (on macOS) strips Gatekeeper quarantine and
+re-signs it. More install paths — the web demo, the Flutter app — live on
+[fa1.dev](https://fa1.dev).
 
 ## CLI (`fah`)
 
