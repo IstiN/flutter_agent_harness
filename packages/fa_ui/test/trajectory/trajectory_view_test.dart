@@ -116,7 +116,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // The second controller's content renders through the same state.
-    expect(find.text('Run the deployment'), findsOneWidget);
+    expect(find.textContaining('Run the deployment'), findsOneWidget);
     first.dispose();
     second.dispose();
   });
@@ -127,7 +127,7 @@ void main() {
     final controller = fixtureController();
 
     await _pump(tester, TrajectoryView(controller: controller));
-    await tester.tap(find.text('Deploying now'));
+    await tester.tap(find.textContaining('Deploying now'));
     await tester.pumpAndSettle();
 
     expect(controller.selectedRecordId, 'a1');

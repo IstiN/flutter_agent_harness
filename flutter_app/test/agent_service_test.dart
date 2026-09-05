@@ -274,6 +274,54 @@ void main() {
       expect(service.messages[1].content, 'hello back');
     });
 
+    test(
+      'the model request summary persists before its assistant message',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_singleTextResponse('hello back')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        // The loop emits ModelRequestEvent before the provider call; the
+        // service persists it as a context-omitted CustomRecord whose data
+        // round-trips the request summary.
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final metadata = (await repo.list()).single;
+        final session = await repo.open(metadata);
+        final entries = await session.getEntries();
+        final summaries = entries.whereType<CustomRecord>().toList();
+        expect(summaries, hasLength(1));
+        expect(summaries.single.customType, 'model_request_summary');
+
+        // Ordering: the summary sits on the chain before the assistant
+        // message record it produced (the replay walk expects that).
+        final summaryIndex = entries.indexOf(summaries.single);
+        final assistantIndex = entries.indexWhere(
+          (e) => e is MessageRecord && e.message is AssistantMessage,
+        );
+        expect(summaryIndex, lessThan(assistantIndex));
+
+        // Replaying the persisted branch rebuilds the Request tab data.
+        final builder = TrajectorySnapshotBuilder();
+        for (final record in entries) {
+          builder.append(record);
+        }
+        final assistant = builder
+            .build()
+            .records
+            .whereType<TrajectoryAssistantRecord>()
+            .single;
+        expect(assistant.requestDetail, isNotNull);
+        expect(assistant.requestDetail!.systemPromptChars, greaterThan(0));
+      },
+    );
+
     test('sendImage appends a user message with image bytes', () async {
       final env = MemoryExecutionEnv();
       final service = AgentService(
@@ -1722,14 +1770,12 @@ void main() {
         isNot(contains('y' * 500)),
       );
       // Exactly one continuation: no trim→continue loop.
-      expect(
-        service.messages.where((m) => m.content == 'continued').length,
-        1,
-      );
+      expect(service.messages.where((m) => m.content == 'continued').length, 1);
     });
 
     test('compacts the transcript once it crosses the scaled threshold, and '
-        'the chat keeps working', () async {      // Window 512 (no on-device overhead here): reserve 128, keep 256,
+        'the chat keeps working', () async {
+      // Window 512 (no on-device overhead here): reserve 128, keep 256,
       // trigger at 384 transcript tokens.
       final env = MemoryExecutionEnv();
       final service = AgentService(

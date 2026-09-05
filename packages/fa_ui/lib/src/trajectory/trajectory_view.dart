@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import '../chat/fa_chat_screen.dart' show kWideLayoutBreakpoint;
@@ -217,6 +218,35 @@ class TrajectoryHeader extends StatelessWidget {
                         ],
                       ),
                     ),
+                    // Export lives in the header overflow: compact on any
+                    // canvas, hidden until the snapshot has records.
+                    if (controller.snapshot.records.isNotEmpty)
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.ios_share),
+                        tooltip: strings.headerExport,
+                        onSelected: (format) => Clipboard.setData(
+                          ClipboardData(
+                            text: switch (format) {
+                              'json' => exportTrajectoryJson(
+                                controller.snapshot,
+                              ),
+                              _ => exportTrajectoryMarkdown(
+                                controller.snapshot,
+                              ),
+                            },
+                          ),
+                        ),
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'json',
+                            child: Text(strings.exportCopyJson),
+                          ),
+                          PopupMenuItem(
+                            value: 'markdown',
+                            child: Text(strings.exportCopyMarkdown),
+                          ),
+                        ],
+                      ),
                     if (onClose != null)
                       IconButton(
                         icon: const Icon(Icons.close),

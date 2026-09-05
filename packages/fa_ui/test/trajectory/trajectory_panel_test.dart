@@ -105,7 +105,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump();
 
-    expect(find.text('from the second feed'), findsOneWidget);
+    expect(find.textContaining('from the second feed'), findsOneWidget);
     // Flush the search-index throttle timer before teardown.
     await tester.pump(const Duration(seconds: 4));
   });

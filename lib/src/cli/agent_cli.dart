@@ -32,6 +32,7 @@ import 'key_event.dart';
 import 'key_status.dart';
 import 'provider_error_text.dart';
 import '../agent/agent_loop.dart';
+import '../trajectory/trajectory_record.dart' show TrajectoryRequestDetail;
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
 import '../providers/models_for_endpoint.dart';
@@ -2390,6 +2391,19 @@ class AgentCli {
     if (_persistedCount >= messages.length) return;
     await session.appendMessage(message);
     _persistedCount++;
+  }
+
+  /// Persists the outbound-request summary so replayed sessions rebuild the
+  /// Request tab. A CustomRecord is context-omitted; the ordering matters —
+  /// it must land before its assistant message (the replay walk expects it
+  /// as the step's predecessor), which the event order guarantees.
+  Future<void> _onModelRequest(TrajectoryRequestDetail detail) async {
+    final session = _session;
+    if (session == null) return;
+    await session.appendCustomEntry(
+      customType: 'model_request_summary',
+      data: detail.toJson(),
+    );
   }
 
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns

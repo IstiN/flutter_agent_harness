@@ -2,6 +2,13 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/agent_event_handler.dart';
 import 'package:test/test.dart';
 
+TrajectoryRequestDetail _requestDetail() => const TrajectoryRequestDetail(
+  messageCount: 2,
+  systemPromptChars: 120,
+  toolCount: 1,
+  toolNames: ['read'],
+  messages: [],
+);
 AssistantMessage _assistantMessage({StopReason stopReason = StopReason.stop}) {
   return AssistantMessage(
     content: const [TextContent(text: 'hi')],
@@ -146,5 +153,62 @@ void main() {
       );
       expect(seen, message);
     });
+  });
+
+  test('routes ModelRequestEvent to the model request callback', () async {
+    final details = <TrajectoryRequestDetail>[];
+    await handleAgentEvent(
+      ModelRequestEvent(detail: _requestDetail()),
+      onMessageLifecycle: (_, {required start}) => fail('unexpected lifecycle'),
+      onMessageUpdate: (_) => fail('unexpected update'),
+      onToolExecutionStart: (_, _) => fail('unexpected tool start'),
+      onToolExecutionEnd: (_, _, {required isError}) =>
+          fail('unexpected tool end'),
+      onTurnEnd: (_) => fail('unexpected turn end'),
+      onModelRequest: (detail) async => details.add(detail),
+    );
+    expect(details, hasLength(1));
+    expect(details.single.toolNames, ['read']);
+  });
+
+  test('the persisted summary replays onto the assistant step', () async {
+    final repo = JsonlSessionRepo(
+      fs: MemoryFileSystem(),
+      sessionsRoot: '/sessions',
+    );
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+    await session.appendMessage(UserMessage.text('deploy the service'));
+    // Production wiring: the CLI appends the context-omitted CustomRecord
+    // BEFORE the assistant message record, so the replay walk sees it as
+    // the step's predecessor.
+    await handleAgentEvent(
+      ModelRequestEvent(detail: _requestDetail()),
+      onMessageLifecycle: (_, {required start}) => fail('unexpected lifecycle'),
+      onMessageUpdate: (_) => fail('unexpected update'),
+      onToolExecutionStart: (_, _) => fail('unexpected tool start'),
+      onToolExecutionEnd: (_, _, {required isError}) =>
+          fail('unexpected tool end'),
+      onTurnEnd: (_) => fail('unexpected turn end'),
+      onModelRequest: (detail) => session.appendCustomEntry(
+        customType: 'model_request_summary',
+        data: detail.toJson(),
+      ),
+    );
+    await session.appendMessage(_assistantMessage());
+
+    // Re-open from the JSONL file: a fresh replay walk.
+    final reopened = await repo.open(await session.getMetadata());
+    final builder = TrajectorySnapshotBuilder();
+    for (final record in await reopened.getEntries()) {
+      builder.append(record);
+    }
+    final assistant = builder
+        .build()
+        .records
+        .whereType<TrajectoryAssistantRecord>()
+        .single;
+    expect(assistant.requestDetail?.messageCount, 2);
+    expect(assistant.requestDetail?.toolCount, 1);
+    expect(assistant.requestDetail?.toolNames, ['read']);
   });
 }

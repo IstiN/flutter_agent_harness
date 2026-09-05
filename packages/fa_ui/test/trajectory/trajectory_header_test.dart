@@ -4,6 +4,7 @@
 
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -124,6 +125,54 @@ void main() {
     await tester.tap(find.text('Messages'));
     await tester.pump();
     expect(visibleCells(), hasLength(4));
+    controller.dispose();
+  });
+
+  testWidgets('export menu copies the snapshot as JSON and Markdown', (
+    tester,
+  ) async {
+    // Clipboard.getData never resolves under the test binding; capture
+    // the setData payloads instead (same as trajectory_table_test).
+    final clipboard = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (message) async {
+        if (message.method == 'Clipboard.setData') {
+          clipboard.add((message.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    final controller = fixtureController();
+    await _pump(tester, controller);
+
+    await tester.tap(find.byTooltip('Export trajectory'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Copy as JSON'));
+    await tester.pumpAndSettle();
+    expect(clipboard.single, exportTrajectoryJson(controller.snapshot));
+    clipboard.clear();
+
+    await tester.tap(find.byTooltip('Export trajectory'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Copy as Markdown'));
+    await tester.pumpAndSettle();
+    expect(clipboard.single, exportTrajectoryMarkdown(controller.snapshot));
+    controller.dispose();
+  });
+
+  testWidgets('export menu is hidden without records', (tester) async {
+    final controller = TrajectoryController();
+    await _pump(tester, controller);
+
+    expect(find.byTooltip('Export trajectory'), findsNothing);
     controller.dispose();
   });
 

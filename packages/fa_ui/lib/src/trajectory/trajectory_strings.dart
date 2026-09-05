@@ -167,6 +167,9 @@ abstract class TrajectoryStrings {
   String get headerAria;
   String headerSession(String when);
   String get headerClose;
+  String get headerExport;
+  String get exportCopyJson;
+  String get exportCopyMarkdown;
   String statsTurns(int count);
   String statsDuration(String value);
   String statsTokensIn(String value);
@@ -529,6 +532,12 @@ class TrajectoryStringsEn extends TrajectoryStrings {
   String detailsShowContent(String size) => 'Show content ($size)';
   @override
   String get detailsPanePlaceholder => 'Select a record to inspect';
+  @override
+  String get headerExport => 'Export trajectory';
+  @override
+  String get exportCopyJson => 'Copy as JSON';
+  @override
+  String get exportCopyMarkdown => 'Copy as Markdown';
 }
 
 /// Built-in Russian trajectory strings.
@@ -868,6 +877,12 @@ class TrajectoryStringsRu extends TrajectoryStrings {
   String get rowExpand => 'Развернуть строку';
   @override
   String get rowCollapse => 'Свернуть строку';
+  @override
+  String get headerExport => 'Экспорт траектории';
+  @override
+  String get exportCopyJson => 'Копировать как JSON';
+  @override
+  String get exportCopyMarkdown => 'Копировать как Markdown';
 }
 
 /// Russian plural forms: one / few / many.

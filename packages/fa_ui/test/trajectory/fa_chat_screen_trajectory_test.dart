@@ -219,7 +219,7 @@ void main() {
     await tester.pump();
     final decorated = tester.widgetList<Container>(
       find.ancestor(
-        of: find.text('deploy the service now'),
+        of: find.textContaining('deploy the service now'),
         matching: find.byType(Container),
       ),
     );

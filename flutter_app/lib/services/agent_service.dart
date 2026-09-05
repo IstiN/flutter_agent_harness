@@ -67,6 +67,7 @@ import 'package:fa/webllm/webllm_stream_function.dart';
 import 'package:fa/webllm/webllm_types.dart';
 
 part 'agent_service_compaction.dart';
+part 'agent_service_assistant.dart';
 
 /// A UI-facing chat message.
 /// the adapter skips `Authorization: Bearer` when the key is empty.
@@ -1470,6 +1471,10 @@ class AgentService extends ChangeNotifier
   String? _sessionFile;
   int _persistedCount = 0;
 
+  /// Request summaries captured live (ModelRequestEvent) but not yet
+  /// written; flushed at the head of every [_persistUnchecked] pass.
+  final List<TrajectoryRequestDetail> _pendingRequestSummaries = [];
+
   /// The producer behind [trajectory]: rebuilt from the active branch on
   /// session open/switch, mirrored live from agent events, and fed the
   /// finalized records on every persist.
@@ -2421,6 +2426,8 @@ class AgentService extends ChangeNotifier
         );
         _pushLiveActivityStatus();
         notifyListeners();
+      case ModelRequestEvent(:final detail):
+        _persistModelRequest(detail);
       case AgentEndEvent():
         _idleWatchdog?.cancel();
         isStreaming = false;
@@ -2487,6 +2494,14 @@ class AgentService extends ChangeNotifier
     return text.isEmpty ? null : text;
   }
 
+  /// Buffers the outbound-request summary for the next persist pass. The
+  /// pass serializes through the same writer as message appends and flushes
+  /// summaries right before their assistant message, so the CustomRecord
+  /// stays ahead of it on the record chain (the replay walk expects that).
+  void _persistModelRequest(TrajectoryRequestDetail detail) {
+    _pendingRequestSummaries.add(detail);
+  }
+
   void _appendAssistantDelta(String delta) {
     var target = _currentAssistantMessage;
     if (target == null) {
@@ -2513,86 +2528,9 @@ class AgentService extends ChangeNotifier
     notifyListeners();
   }
 
-  void _finalizeAssistant(AssistantMessage message) {
-    debugPrint(
-      '[Fa] finalizeAssistant: stopReason=${message.stopReason}, '
-      'contentBlocks=${message.content.length}, '
-      'errorMessage=${message.errorMessage}',
-    );
-    var text = message.content
-        .whereType<TextContent>()
-        .map((b) => b.text)
-        .join();
-    final thinking = message.content
-        .whereType<ThinkingContent>()
-        .map((b) => b.thinking)
-        .join();
-    final hasToolCalls = message.content.any((block) => block is ToolCall);
-    if (text.trim().isEmpty &&
-        !hasToolCalls &&
-        message.stopReason != StopReason.error &&
-        message.stopReason != StopReason.aborted) {
-      // A completed turn with neither text nor tool calls (small on-device
-      // models do this) must not render as a blank bubble.
-      text = emptyResponsePlaceholder;
-      // An empty completion right after an image-bearing prompt usually
-      // means the model silently ignored/rejected image input - say so
-      // instead of a bare retry suggestion.
-      // UserMessage.content is Object: a plain String or a block list.
-      final lastUserContent = _agent.state.messages.reversed
-          .whereType<UserMessage>()
-          .firstOrNull
-          ?.content;
-      final lastUserBlocks = switch (lastUserContent) {
-        final List blocks => blocks,
-        _ => const <Object>[],
-      };
-      final hadImage = lastUserBlocks.any((b) => b is ImageContent);
-      if (hadImage) {
-        text =
-            '$text\n\nThe model returned nothing for a message with '
-            'an image attachment - it likely does not support image input. '
-            'Try a vision-capable model or resend without the attachment.';
-      }
-    }
-    final target = _currentAssistantMessage;
-    if (target == null) {
-      messages.add(FahChatMessage(role: 'assistant', content: text));
-    } else {
-      target.content = text;
-    }
-    _currentAssistantMessage = null;
-    final thinkingTarget = _currentThinkingMessage;
-    if (thinkingTarget == null) {
-      if (thinking.isNotEmpty) {
-        messages.add(FahChatMessage(role: 'thinking', content: thinking));
-      }
-    } else {
-      thinkingTarget.content = thinking.isNotEmpty
-          ? thinking
-          : thinkingTarget.content;
-    }
-    _currentThinkingMessage = null;
-    if (message.stopReason == StopReason.error) {
-      // A failed run must be VISIBLE: an error tile in the transcript
-      // (the shared renderer styles it), not just the banner field —
-      // otherwise a dead key silently looks like "no answer".
-      final text =
-          message.errorMessage ?? 'Run failed (${StopReason.error.name})';
-      error = text;
-      messages.add(
-        FahChatMessage(
-          role: 'tool',
-          content: text,
-          toolName: 'error',
-          isError: true,
-        ),
-      );
-    } else if (message.stopReason == StopReason.aborted) {
-      error = message.errorMessage ?? 'Run aborted';
-    }
-    notifyListeners();
-  }
+  /// Bridge for the part-file extension members ([AgentServiceAssistant]):
+  /// `notifyListeners` is `@protected`, callable only inside the class.
+  void _notify() => notifyListeners();
 
   /// The visible transcript as Markdown (`## You` / `## Fa` / `## tool`
   /// sections) — shared by the chat screen's and the sheet's "Copy session"
@@ -2649,13 +2587,40 @@ class AgentService extends ChangeNotifier
     if (session == null) return;
     final all = _agent.state.messages;
     for (final message in all.skip(_persistedCount)) {
+      // A captured summary must sit on the chain AFTER the turn's user
+      // message (else it roots itself off the turn) and BEFORE the assistant
+      // message its request produced — the replay walk derives the step
+      // from exactly that neighborhood.
+      if (message is AssistantMessage) {
+        await _flushRequestSummaries(session);
+      }
       final id = await session.appendMessage(message);
       // The finalized record replaces the streamed synthetic rows in the
       // trajectory ledger (builder keys them by turn/step).
       final record = await session.getEntry(id);
       if (record != null) _trajectory.append(record);
     }
+    // Leftovers (a run aborted before its assistant reply) flush at the
+    // tail; the next assistant step re-attaches them or they stay an
+    // inert orphan.
+    await _flushRequestSummaries(session);
     _persistedCount = all.length;
+  }
+
+  /// Writes every buffered request summary as a context-omitted
+  /// CustomRecord. // ponytail: N buffered summaries flush as one batch —
+  /// the replay walk keys by chain position, so a throttled multi-request
+  /// burst can coalesce onto one step; per-request keys if that matters.
+  Future<void> _flushRequestSummaries(Session session) async {
+    if (_pendingRequestSummaries.isEmpty) return;
+    final pending = List.of(_pendingRequestSummaries);
+    _pendingRequestSummaries.clear();
+    for (final detail in pending) {
+      await session.appendCustomEntry(
+        customType: 'model_request_summary',
+        data: detail.toJson(),
+      );
+    }
   }
 
   /// Rebuilds the trajectory ledger from the active session branch
