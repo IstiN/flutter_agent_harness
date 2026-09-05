@@ -16,6 +16,7 @@ import 'package:fa/services/copilot_connect_flow.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/last_connection.dart';
@@ -162,6 +163,16 @@ class DefaultChatModelSection extends StatelessWidget {
         onChatGptOAuth: () async {
           Navigator.of(context).pop();
           await runChatGptOAuthFlow(
+            context: context,
+            registry: reg,
+            service: service,
+            lastConnectionStore:
+                lastConnectionStore ?? LastConnectionStore.inMemory(),
+          );
+        },
+        onAiinConnect: () async {
+          Navigator.of(context).pop();
+          await runAiinConnectFlow(
             context: context,
             registry: reg,
             service: service,

@@ -79,6 +79,8 @@ import '../providers/provider_common.dart'
     show authExpiredProvider, stripAuthExpiredMarker;
 import '../providers/transient_retry_stream.dart';
 import '../prompts/prompt_overrides.dart';
+import '../providers/aiin_auth.dart';
+import 'aiin_connect_server.dart';
 import 'chatgpt_oauth_server.dart';
 import 'codemie_sso_server.dart';
 import 'openrouter_oauth_server.dart';
@@ -143,6 +145,7 @@ part 'provider_commands.dart';
 part 'agent_cli_compaction.dart';
 part 'provider_models.dart';
 part 'codemie_provider_commands.dart';
+part 'aiin_provider_commands.dart';
 part 'provider_keys.dart';
 part 'agent_cli_mcp.dart';
 part 'agent_cli_config.dart';

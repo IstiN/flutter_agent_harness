@@ -65,6 +65,7 @@ void main() {
         if (item.key.startsWith('preset:')) item.key.substring(7),
     ];
     const expectedFlows = {
+      'aiin',
       'openrouter',
       'chatgpt',
       'copilot',

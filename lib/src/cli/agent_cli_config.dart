@@ -67,6 +67,7 @@ final class AgentCliConfig {
     this.tuiProgramHooks,
     this.openRouterOAuthExchangeFn,
     this.chatGptOAuthExchangeFn,
+    this.aiinConnectFn,
     this.copilotDeviceFlowFn,
     this.copilotUserFn,
     this.codeMieSsoAuthenticateFn,
@@ -165,6 +166,14 @@ final class AgentCliConfig {
     required String verifier,
   })?
   chatGptOAuthExchangeFn;
+
+  /// Test seam: overrides [runAiinConnectCliFlow] for `/provider aiin` —
+  /// CLI-level tests inject a canned connect result instead of a real
+  /// browser + loopback server.
+  final Future<AiinConnectResult?> Function({
+    required String provider,
+    void Function(String)? onStatus,
+  })? aiinConnectFn;
 
   /// Optional override for the whole Copilot device flow (grant + poll),
   /// returning the GitHub token. Tests inject a fake so `/provider copilot`

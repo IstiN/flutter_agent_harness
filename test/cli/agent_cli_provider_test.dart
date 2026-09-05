@@ -245,7 +245,7 @@ void main() {
     expect(
       output,
       contains(
-        'supported providers: openrouter, kimi, openai, chatgpt, copilot, codemie, dial, minimax, anthropic, google',
+        'supported providers: aiin, openrouter, kimi, openai, chatgpt, copilot, codemie, dial, minimax, anthropic, google',
       ),
     );
     expect(cli.agent.state.model.provider, 'test-provider');

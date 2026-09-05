@@ -14,6 +14,7 @@ import '../event_stream.dart';
 import '../exceptions.dart';
 import '../model.dart';
 import '../providers/anthropic.dart';
+import '../providers/aiin_auth.dart';
 import '../providers/chatgpt_codex.dart';
 import '../providers/chatgpt_oauth.dart';
 import '../providers/codemie_sso.dart';
@@ -87,6 +88,18 @@ final class ProviderSpec {
 /// ([catalogProvider]), the CLI pickers, `/provider` status, the model
 /// pickers, and key-name collection.
 const providerCatalog = <String, ProviderSpec>{
+  'aiin': ProviderSpec(
+    name: 'aiin',
+    // Own kind (the minimax/zai pattern) so `--provider aiin` and the parity
+    // guards treat AIIN as a first-class provider; chat is OpenAI-compatible,
+    // so providerStreamFunction routes it to the OpenAI completions adapter.
+    kind: 'aiin',
+    api: 'openai-completions',
+    defaultBaseUrl: '$aiinApiBaseUrl/v1',
+    apiKeyEnvNames: ['AIIN_API_KEY'],
+    contextWindow: 200000,
+    maxTokens: 16384,
+  ),
   'openrouter': ProviderSpec(
     name: 'openrouter',
     kind: 'openai-completions',
@@ -314,6 +327,7 @@ Model buildCliDefaultModel(
   String? baseUrl,
 }) {
   final spec = switch (providerKind) {
+    'aiin' => providerCatalog['aiin']!,
     'anthropic' => providerCatalog['anthropic']!,
     'google' => providerCatalog['google']!,
     'dial' => providerCatalog['dial']!,
@@ -372,6 +386,7 @@ StreamFunction providerStreamFunction(
       kind != 'dial' &&
       kind != 'minimax' &&
       kind != 'zai' &&
+      kind != 'aiin' &&
       kind != 'chatgpt-codex' &&
       kind != 'copilot') {
     throw ConfigException('Unknown provider kind: $kind');
@@ -424,7 +439,7 @@ final class _CatalogStreamFunction {
     final effectiveSessionId = routing?.sessionId ?? _sessionId?.call();
     final effectiveRetention = routing?.cacheRetention ?? _cacheRetention;
     return switch (_kind) {
-      'openai-completions' || 'minimax' || 'zai' => streamOpenAICompletions(
+      'openai-completions' || 'minimax' || 'zai' || 'aiin' => streamOpenAICompletions(
         model,
         context,
         OpenAICompletionsOptions(

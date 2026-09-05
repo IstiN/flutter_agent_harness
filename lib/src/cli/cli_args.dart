@@ -28,6 +28,7 @@ const cliProviderKinds = {
   'dial',
   'minimax',
   'zai',
+  'aiin',
   'copilot',
 };
 

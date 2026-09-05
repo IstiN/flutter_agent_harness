@@ -42,6 +42,7 @@ class ProvidersSection extends StatelessWidget {
     this.openRouterOAuthCapture,
     this.onCodeMieSso,
     this.onChatGptOAuth,
+    this.onAiinConnect,
     this.onCopilotConnect,
     this.onProviderReauthenticate,
     this.modelsFetcher,
@@ -82,6 +83,12 @@ class ProvidersSection extends StatelessWidget {
   /// picker. When null, ChatGPT is not offered. The host should open the
   /// ChatGPT OAuth flow.
   final VoidCallback? onChatGptOAuth;
+
+  /// Called when the user picks AIIN (aiin.by) from the add-provider
+  /// preset picker. When null, AIIN is not offered. The host should run
+  /// the aiin.by auth-page flow (sign-in in the browser, automatic API-key
+  /// registration).
+  final VoidCallback? onAiinConnect;
 
   /// Called when the user picks Copilot from the add-provider preset
   /// picker. When null, Copilot is not offered. The host should run the
@@ -353,6 +360,7 @@ class ProvidersSection extends StatelessWidget {
         onCopilotConnect: onCopilotConnect,
         onCodeMieSso: onCodeMieSso,
         onChatGptOAuth: onChatGptOAuth,
+        onAiinConnect: onAiinConnect,
         openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
         openRouterOAuthCapture: openRouterOAuthCapture,
         onDeviceRoutes: onDeviceProviders,

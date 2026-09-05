@@ -44,3 +44,13 @@ Never runChatGptOAuthCliFlow({
 }) => throw UnsupportedError(
   'ChatGPT sign-in is not supported on the web platform.',
 );
+
+/// Always throws on the web — the AIIN connect flow needs a local server.
+Never runAiinConnectCliFlow({
+  required String provider,
+  required void Function(String) onStatus,
+  Future<bool> Function(String)? openBrowserFn,
+  Duration? timeout,
+}) => throw UnsupportedError(
+  'AIIN sign-in is not supported on the web platform.',
+);

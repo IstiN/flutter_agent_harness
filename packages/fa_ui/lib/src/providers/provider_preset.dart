@@ -26,6 +26,7 @@ import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 /// endpoint UI of their own here — host apps route them through injected
 /// builders (`FaOnDeviceRoute`).
 enum ProviderPreset {
+  aiin(baseUrl: 'https://api.aiin.by/v1', defaultModel: 'openai/gpt-4o-mini'),
   openrouter(
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'z-ai/glm-5.2',
@@ -72,6 +73,7 @@ enum ProviderPreset {
 
   /// Short label resolved from [strings] directly.
   String label(FaUiStrings strings) => switch (this) {
+    ProviderPreset.aiin => strings.settingsPresetAiin,
     ProviderPreset.openrouter => strings.settingsPresetOpenrouter,
     ProviderPreset.ollamaCloud => strings.settingsPresetOllama,
     ProviderPreset.gemini => strings.settingsPresetGemini,
@@ -90,7 +92,9 @@ enum ProviderPreset {
 
   /// The CORS note resolved from [strings] directly.
   String? cors(FaUiStrings strings) => switch (this) {
-    ProviderPreset.openrouter || ProviderPreset.gemini => null,
+    ProviderPreset.aiin ||
+    ProviderPreset.openrouter ||
+    ProviderPreset.gemini => null,
     ProviderPreset.ollamaCloud => strings.settingsCorsNoteOllama,
     ProviderPreset.dial => strings.settingsCorsNoteCustom,
     ProviderPreset.minimax => strings.settingsCorsNoteCustom,
@@ -102,6 +106,7 @@ enum ProviderPreset {
 
   /// Infers a preset from a configured base URL (for env-prefilled setups).
   static ProviderPreset fromBaseUrl(String url) {
+    if (url.contains('api.aiin.by')) return ProviderPreset.aiin;
     if (url.contains('openrouter.ai')) return ProviderPreset.openrouter;
     if (url.contains('ollama.com')) return ProviderPreset.ollamaCloud;
     if (url.contains('generativelanguage.googleapis.com')) {
@@ -144,6 +149,7 @@ bool hostedProviderConnected(ProviderPreset preset) {
 }
 
 String? hostedProviderKeyName(ProviderPreset preset) => switch (preset) {
+  ProviderPreset.aiin => 'AIIN_API_KEY',
   ProviderPreset.openrouter => 'OPENROUTER_API_KEY',
   ProviderPreset.ollamaCloud => 'OLLAMA_API_KEY',
   ProviderPreset.gemini => 'GEMINI_API_KEY',
@@ -171,6 +177,7 @@ String? modelsDispatchHintFor(String baseUrl) {
 /// `custom` preset is covered by "Add provider"; on-device presets have no
 /// endpoint to manage).
 const hostedProviderPresets = [
+  ProviderPreset.aiin,
   ProviderPreset.openrouter,
   ProviderPreset.ollamaCloud,
   ProviderPreset.gemini,

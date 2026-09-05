@@ -5,7 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show isCodeMieBaseUrl;
+    show isAiinBaseUrl, isCodeMieBaseUrl;
 
 import 'package:fa_ui/src/providers/provider_preset.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
@@ -16,6 +16,7 @@ import 'package:fa_ui/src/stores/provider_registry.dart';
 /// endpoints fall back to the generic server-stack mark.
 String providerMarkKey(Object provider) => switch (provider) {
   ProviderPreset preset => switch (preset) {
+    ProviderPreset.aiin => 'aiin',
     ProviderPreset.openrouter => 'openrouter',
     ProviderPreset.ollamaCloud => 'ollama',
     ProviderPreset.gemini => 'google',
@@ -30,6 +31,7 @@ String providerMarkKey(Object provider) => switch (provider) {
 /// The [ProviderMark] key inferred from an endpoint URL (see
 /// [providerMarkKey]).
 String providerMarkKeyForBaseUrl(String baseUrl) {
+  if (isAiinBaseUrl(baseUrl)) return 'aiin';
   if (isCodeMieBaseUrl(baseUrl)) return 'codemie';
   if (baseUrl.contains('openrouter.ai')) return 'openrouter';
   if (baseUrl.contains('ollama.com')) return 'ollama';
@@ -88,6 +90,7 @@ class ProviderMark extends StatelessWidget {
       const Color(0xFF5B61F6),
       const Color(0xFFEEF1FE),
     ),
+    'aiin' => (_aiin, const Color(0xFF3B5BFF), const Color(0xFFEAEFFF)),
     'chatgpt' || 'openai' => (_openai, Colors.white, const Color(0xFF172033)),
     'codemie' => (_codemie, null, const Color(0xFF230230)),
     'anthropic' => (
@@ -165,6 +168,13 @@ final String _dial =
     '<stop stop-color="#00DBDE"/><stop offset="1" stop-color="#FC00FF"/>'
     '</linearGradient>'
     '</defs></svg>';
+
+/// Hand-drawn AIIN mark: a bolt (instant access) on the aiin.by indigo.
+final String _aiin = _svg24(
+  '<path fill-rule="evenodd" d="M13.4 2.2a.6.6 0 0 1 .53.98L8.9 10.3h4.3a.6.6 0 0 1 .47.97l-7.2 9.6a.6.6 0 0 1-1.05-.5l1.3-6.07H3.2a.6.6 0 0 1-.5-.95l5.9-9.1a.6.6 0 0 1 .5-.27h4.3Zm-1.75 1.2H8.4l-4.6 7.1h3.9a.6.6 0 0 1 .58.74L7.36 16.9l4.94-6.6H8.1a.6.6 0 0 1-.5-.93l4.05-5.97Z"/>'
+  '<path d="M17.9 3.3c2.6 1.5 4.3 4.2 4.3 7.4a8.4 8.4 0 0 1-4.3 7.3l-.6-1a7.2 7.2 0 0 0 3.7-6.3 7.2 7.2 0 0 0-3.7-6.3l.6-1.1Z"/>'
+  '<path d="M16.2 6.1c1.6.9 2.6 2.6 2.6 4.6s-1 3.7-2.6 4.6l-.6-1.1a4.1 4.1 0 0 0 2-3.5 4.1 4.1 0 0 0-2-3.5l.6-1.1Z"/>',
+);
 
 /// simple-icons Z.AI mark (CC0).
 final String _zai = _svg24(

@@ -129,6 +129,9 @@ abstract class FaUiStrings {
   /// CORS note of a custom endpoint.
   String get settingsCorsNoteCustom;
 
+  /// Label of the AIIN (aiin.by) preset.
+  String get settingsPresetAiin;
+
   /// Label of the OpenRouter preset.
   String get settingsPresetOpenrouter;
 
@@ -390,6 +393,8 @@ class FaUiStringsEn extends FaUiStrings {
       '(CORS) requests — api.anthropic.com does not, so reach Anthropic '
       'models via OpenRouter instead.';
   @override
+  String get settingsPresetAiin => 'AIIN (aiin.by)';
+  @override
   String get settingsPresetOpenrouter => 'OpenRouter';
   @override
   String get settingsOpenRouterOAuthButton => 'Authorize with OpenRouter';
@@ -613,6 +618,8 @@ class FaUiStringsRu extends FaUiStrings {
       'Любая OpenAI-совместимая конечная точка. Провайдер должен разрешать '
       'браузерные (CORS) запросы — api.anthropic.com их не разрешает, '
       'поэтому к моделям Anthropic обращайтесь через OpenRouter.';
+  @override
+  String get settingsPresetAiin => 'AIIN (aiin.by)';
   @override
   String get settingsPresetOpenrouter => 'OpenRouter';
   @override

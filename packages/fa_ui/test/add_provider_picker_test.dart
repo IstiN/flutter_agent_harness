@@ -37,6 +37,36 @@ void main() {
     expect(addProviderPresetEnabled(copilot), isTrue);
   });
 
+  test('the AIIN preset is listed first and follows the catalog', () {
+    // aiin.by is the flagship hosted provider — first in the picker.
+    expect(defaultAddProviderPresets.first.key, 'aiin');
+    final aiin = defaultAddProviderPresets.first;
+    expect(addProviderPresetEnabled(aiin), isTrue);
+  });
+
+  testWidgets('the AIIN tile hides without the host callback and routes '
+      'with one', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: AddProviderPresetPickerPage()),
+    );
+    expect(find.text('AIIN'), findsNothing);
+
+    var called = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AddProviderPresetPickerPage(
+          onAiinConnect: () {
+            called++;
+          },
+        ),
+      ),
+    );
+    expect(find.text('AIIN'), findsOneWidget);
+    await tester.tap(find.text('AIIN'));
+    await tester.pumpAndSettle();
+    expect(called, 1);
+  });
+
   testWidgets('the Copilot tile hides without the host callback and routes '
       'with one', (tester) async {
     await tester.pumpWidget(
