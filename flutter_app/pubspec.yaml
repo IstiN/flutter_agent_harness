@@ -185,6 +185,7 @@ flutter:
   assets:
     - .env
     - assets/skills/js-apps/SKILL.md
+    - assets/skills/create-goal/SKILL.md
     - assets/wasm/add.wasm
     - assets/wasm/coreutils.wasm
     - assets/wasm/rg.wasm
