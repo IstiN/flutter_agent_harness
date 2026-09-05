@@ -21,6 +21,7 @@ YyjiWA4R4/M2bS1GB4t7NXp98C3SC6dVMvDuictGeurT8jNbvJZHtCSuYEvuNMoSj76
 -----END PRIVATE KEY-----
 ''';
 
+/// A credential file path blockMode must deny.
 const _blockedPath = 'home/u/.ssh/id_rsa';
 
 AssistantMessage _assistant({
@@ -101,6 +102,8 @@ AgentTool _tool(
   );
 }
 
+/// Concatenates every stored session JSONL file (sessions live in
+/// per-cwd subdirectories).
 Future<String> _dumpSessionJsonl(MemoryExecutionEnv env) async {
   final buffer = StringBuffer();
   Future<void> walk(String dir) async {
@@ -138,10 +141,7 @@ void main() {
             (_) async => ToolExecutionResult.text('apiKey=$_ghp\n$_pem'),
           ),
         );
-      final agent = Agent(
-        streamFunction: fake.call,
-        toolRegistry: registry,
-      );
+      final agent = Agent(streamFunction: fake.call, toolRegistry: registry);
       final pipeline = RedactionPipeline(registeredSecrets: const []);
       attachRedactionPipeline(agent, pipeline);
 
@@ -175,91 +175,94 @@ void main() {
       expect(jsonl, contains('[REDACTED:GitHub Token]'));
     });
 
-    test('AC6: blockMode denies a credential-file read before execution',
-        () async {
-      var executed = false;
-      final fake = _FakeStream([
-        _toolTurn([
-          ToolCall(
-            id: 'call-1',
-            name: 'read',
-            arguments: {'path': _blockedPath},
-          ),
-        ]),
-        _textTurn('done'),
-      ]);
-      final registry = ToolRegistry()
-        ..register(
-          _tool('read', (_) async {
-            executed = true;
-            return ToolExecutionResult.text('id_rsa contents');
-          }),
-        );
-      final agent = Agent(
-        streamFunction: fake.call,
-        toolRegistry: registry,
-      );
-      final pipeline = RedactionPipeline(
-        registeredSecrets: const [],
-        config: const RedactionConfig(blockMode: true),
-      );
-      attachRedactionPipeline(agent, pipeline);
-
-      await agent.promptMessage(UserMessage.text('read my ssh key'));
-      await agent.waitForIdle();
-
-      // Blocked before the executor ran; the provider context holds the
-      // denial, not the file contents.
-      expect(executed, isFalse);
-      final toolResult = fake.contexts[1].messages
-          .whereType<ToolResultMessage>()
-          .single;
-      expect(toolResult.isError, isTrue);
-      final text = (toolResult.content.single as TextContent).text;
-      expect(text, contains('redact.blockMode'));
-      expect(text, contains('[REDACTED:' + 'Credential File]'),
-          reason: 'the denial masks the credential path');
-    });
-
-    test('AC7: a write-side tool result passes through byte-identical',
-        () async {
-      final fake = _FakeStream([
-        _toolTurn([
-          ToolCall(
-            id: 'call-1',
-            name: 'write',
-            arguments: {'path': 'out.dart', 'content': _ghp},
-          ),
-        ]),
-        _textTurn('done'),
-      ]);
-      final registry = ToolRegistry()
-        ..register(
-          _tool(
-            'write',
-            (_) async => ToolExecutionResult.text(
-              'wrote out.dart ($_ghp bytes)',
+    test(
+      'AC6: blockMode denies a credential-file read before execution',
+      () async {
+        var executed = false;
+        final fake = _FakeStream([
+          _toolTurn([
+            ToolCall(
+              id: 'call-1',
+              name: 'read',
+              arguments: {'path': _blockedPath},
             ),
-          ),
+          ]),
+          _textTurn('done'),
+        ]);
+        final registry = ToolRegistry()
+          ..register(
+            _tool('read', (_) async {
+              executed = true;
+              return ToolExecutionResult.text('id_rsa contents');
+            }),
+          );
+        final agent = Agent(streamFunction: fake.call, toolRegistry: registry);
+        final pipeline = RedactionPipeline(
+          registeredSecrets: const [],
+          config: const RedactionConfig(blockMode: true),
         );
-      final agent = Agent(
-        streamFunction: fake.call,
-        toolRegistry: registry,
-      );
-      final pipeline = RedactionPipeline(registeredSecrets: const []);
-      attachRedactionPipeline(agent, pipeline);
+        attachRedactionPipeline(agent, pipeline);
 
-      await agent.promptMessage(UserMessage.text('write it'));
-      await agent.waitForIdle();
+        await agent.promptMessage(UserMessage.text('read my ssh key'));
+        await agent.waitForIdle();
 
-      final toolResult = fake.contexts[1].messages
-          .whereType<ToolResultMessage>()
-          .single;
-      final text = (toolResult.content.single as TextContent).text;
-      // Model-generated code-shape strings survive untouched (AC7).
-      expect(text, contains(_ghp));
-      expect(pipeline.stats.byTool.values.fold<int>(0, (a, b) => a + b), 0);
-    });
+        // Blocked before the executor ran; the denial (not the file contents)
+        // reaches the provider context, and the credential path itself never
+        // survives into the result text.
+        expect(executed, isFalse);
+        final toolResult = fake.contexts[1].messages
+            .whereType<ToolResultMessage>()
+            .single;
+        expect(toolResult.isError, isTrue);
+        final text = (toolResult.content.single as TextContent).text;
+        expect(text, contains('redact.blockMode'));
+        expect(
+          text,
+          contains('[REDACTED:Credential File]'),
+          reason: 'the denial masks the credential basename',
+        );
+        expect(text.contains('id_rsa contents'), isFalse);
+        expect(text.contains(_blockedPath), isFalse);
+      },
+    );
+
+    test(
+      'AC7: a write-side tool result passes through byte-identical',
+      () async {
+        final fake = _FakeStream([
+          _toolTurn([
+            ToolCall(
+              id: 'call-1',
+              name: 'write',
+              arguments: {'path': 'out.dart', 'content': _ghp},
+            ),
+          ]),
+          _textTurn('done'),
+        ]);
+        final registry = ToolRegistry()
+          ..register(
+            _tool(
+              'write',
+              (_) async =>
+                  ToolExecutionResult.text('wrote out.dart ($_ghp bytes)'),
+            ),
+          );
+        final agent = Agent(streamFunction: fake.call, toolRegistry: registry);
+        final pipeline = RedactionPipeline(registeredSecrets: const []);
+        attachRedactionPipeline(agent, pipeline);
+
+        await agent.promptMessage(UserMessage.text('write it'));
+        await agent.waitForIdle();
+
+        final toolResult = fake.contexts[1].messages
+            .whereType<ToolResultMessage>()
+            .single;
+        final text = (toolResult.content.single as TextContent).text;
+        // Model-generated code-shape strings survive untouched (AC7).
+        expect(text, contains(_ghp));
+        expect(pipeline.stats.byTool.values.fold<int>(0, (a, b) => a + b), 0);
+      },
+    );
 
     test('AC8: the pasted secret in the prompt is masked before the '
         'provider and the session see it', () async {
