@@ -359,7 +359,8 @@ Future<http.Response> _postOrGet({
   request.headers.addAll(headers);
   try {
     final response = await (client ?? http.Client()).send(request);
-    return http.Response.fromStream(response);
+    // Await the stream so socket errors land in the catch below.
+    return await http.Response.fromStream(response);
   } on Object catch (error) {
     throw AiinAuthException(
       'AIIN request to ${url.host} failed: $error',
