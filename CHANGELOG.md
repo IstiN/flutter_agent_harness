@@ -2585,7 +2585,8 @@
 
 - test(ollama): diagnose live forced-tool-call null args instead of a bare cast
 
-## Unreleased
+## 0.1.299
+
 
 - feat(browser): the browser extension (issue #23) — `browser_ext/` (Chrome
   MV3) pairs a local fa with the browser over a loopback WebSocket bridge
@@ -2618,3 +2619,5 @@
   browser-ext.yml`; unit layers `dart test test/browser/`,
   `browser_ext/dart` dart test, `node --test browser_ext/test/`. Docs:
   docs/browser-extension.md.
+
+## Unreleased
