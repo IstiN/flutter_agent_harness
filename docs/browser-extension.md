@@ -81,7 +81,7 @@ The script:
    produces a scaffold-only zip (bridge mode still works; never a build
    failure — but CI always builds the agent).
 3. Zips the runtime files into `build/fa-extension.zip`
-   (`manifest.json`, `sw/`, `content/`, `panel/` — README, `dart/`
+  (`manifest.json`, `sw/`, `content/`, `panel/`, `icons/` — README, `dart/`
    sources, `test/`, and `.map`/`.deps` stay out). Uses `zip`, falls back
    to a python3 `zipfile` script. Runs green on ubuntu-latest and macOS.
 
@@ -92,7 +92,7 @@ Load it:
    `sw/agent.js` is gitignored — run the build script first if you want
    self-contained mode). For a store zip, load/unpack
    `build/fa-extension.zip`.
-3. Open the side panel: the extension puzzle-piece icon →
+3. Open the side panel: the fa icon (the shared app mark) →
    *fa — browser agent*.
 
 Minimum Chrome 116 (MV3 `sidePanel`). Permissions: `storage`, `tabs`,
@@ -363,47 +363,102 @@ Three layers, cheapest first:
    suite in `.github/workflows/browser-ext.yml` (path-filtered +
    `workflow_dispatch`, jobs serialized with `-j 1`).
 
+## Chrome Web Store publishing
+
+Not yet published — checklist in the order CWS will ask for it:
+
+- [ ] **Listing.** Description, category, and screenshots are TODO.
+      Screenshots must be 1280×800 or 640×400; take them against a
+      scratch profile (see [Security](#security-model)) so no real
+      pairing token, API key, or hub traffic is visible.
+- [ ] **Permission justifications** (CWS reviews each; one line per
+      permission):
+      - `<all_urls>` + `scripting` — site control: the content script
+        must inject into whichever page the agent is pointed at.
+      - `debugger` — the trusted-input CDP plane: `trusted: true` ops
+        dispatch real, browser-synthesized input events through
+        `chrome.debugger` and capture any-tab screenshots.
+      - `tabs` — task tab groups: the extension opens, groups
+        (`fa — <task uuid>`), tracks, and closes exactly the tabs a
+        task creates.
+- [ ] **Privacy-policy URL** — required for broad host permissions.
+      Candidate, already published: https://fa1.dev/privacy.html
+      (source `site/privacy.html`). TODO: confirm it covers the
+      extension's data handling (storage keys, loopback bridge, no
+      telemetry) before submitting.
+- [ ] **Manifest `key` custody.** The `key` in
+      `browser_ext/manifest.json` pins the dev extension id. CWS strips
+      it on upload and mints its own id; deleting or regenerating the
+      key changes the dev id. It already lives in git — keep it there
+      and never regenerate casually.
+
 ## Safari (AC12)
 
-Chrome-first today. The documented conversion path (a `chrome.*`-API MV3
-extension converts mechanically; the `chrome.debugger` and `sidePanel`
-surfaces used here are the risk areas to verify):
+Chrome-first. Safari is a **verified conversion path, not a shipping
+port**: this pipeline was executed on real macOS — the converter runs,
+the generated wrapper builds — and the gaps at the end are what a
+shipping port still owes.
 
-- [ ] **Convert:**
-      `xcrun safari-web-extension-converter browser_ext --project-location build --app-name fa-browser-agent --bundle-identifier dev.fa1.browser-ext`
-      (add `--no-open` to skip Xcode auto-open). Keep the Swift/no
-      background-app defaults the tool proposes; the extension resources
-      are copied verbatim.
-- [ ] **Project settings.** In the generated Xcode project: enable
-      **Allow Running Extensions Asynchronously**; in the app target's
-      Signing & Capabilities confirm App Safari Extensions
-      (`com.apple.SafariWebExtension`), and Safari ≥ 16.4 as deployment
-      target (side panel parity).
-- [ ] **Entitlements.** The bridge is `ws://127.0.0.1` — App Sandbox
-      builds need the network entitlements
-      (`com.apple.security.network.client` at minimum, plus
-      `com.apple.security.network.server` if the embedded-agent mode
-      should ever accept inbound loopback links). Without the client
+Executed command (from the repo root):
+
+```bash
+xcrun safari-web-extension-converter browser_ext \
+  --app-name "fa Browser Agent" \
+  --bundle-identifier dev.fa1.browser-agent \
+  --swift --macos-only --copy-resources --no-open --no-prompt --force
+```
+
+Findings from that run:
+
+- **Icons are required.** The converter ERRORS on missing icons before
+  converting anything; the icons commit (`browser_ext/icons/` + the
+  manifest icon keys) fixed this. Keep the icons for the Apple
+  toolchain.
+- **Bundle-id quirk.** The parent app bundle id derives from
+  `--app-name` (`dev.fa1.fa-Browser-Agent`), not from
+  `--bundle-identifier` (`dev.fa1.browser-agent`). One sed on the
+  generated pbxproj (`dev.fa1.fa-Browser-Agent` →
+  `dev.fa1.browser-agent`) fixes it. After that, `xcodebuild ...
+  CODE_SIGNING_ALLOWED=NO build` SUCCEEDED (signing waived for the
+  local build; a shippable app still needs signing, below).
+- **Unsupported in current Safari** (the three risk areas, now
+  verified):
+  - **`sidePanel`** — unsupported, and it is the ONLY UI surface:
+    pairing, chat, approvals, provider + hub forms all live in the
+    panel. A shipping port needs a toolbar-action popup or a tab page
+    fallback reusing `panel/panel.html`.
+  - **`tabGroups`** — unsupported; task tab-group cleanup degrades
+    (tabs still open and close, grouping is lost). Needs a guard in
+    `sw/tabs.js`.
+  - **`debugger`** — unsupported; the whole CDP trusted-input plane is
+    Chrome-only. The `sw/ops.js` DOM fallback covers every op, so all
+    tools still work — and the `path: "cdp" | "dom"` annotation on DOM
+    op results is permanently `"dom"` on Safari.
+
+Still open for a shipping port:
+
+- [ ] UI fallback for the side panel (above).
+- [ ] `sw/tabs.js` guard for the missing `chrome.tabGroups`.
+- [ ] Project settings: enable **Allow Running Extensions
+      Asynchronously**; confirm the App Safari Extensions capability
+      (`com.apple.SafariWebExtension`) and a Safari ≥ 16.4 deployment
+      target.
+- [ ] Entitlements: the bridge is `ws://127.0.0.1` — App Sandbox builds
+      need `com.apple.security.network.client` (plus
+      `com.apple.security.network.server` if embedded-agent mode should
+      ever accept inbound loopback links). Without the client
       entitlement the WebSocket fails with a sandbox denial, not a
       protocol error.
-- [ ] **`chrome.*` surface audit.** `chrome.debugger` has no Safari
-      equivalent — the trusted path must degrade honestly (expect the
-      `denied`/unsupported mapping, keep the quiet content path as the
-      only control plane). Verify `chrome.tabGroups`, `chrome.alarms`
-      keepalives, and `chrome.storage.session` availability.
-- [ ] **Build & sign.** Build the generated project with `xcodebuild`
-      (the converter names the scheme after `--app-name`), then sign the
-      containing app with a Developer ID Application certificate
-      (`codesign --deep --force`); Safari requires the containing app to
-      be signed even for local use, and the extension must be enabled in
-      Safari Settings → Extensions.
-- [ ] **Re-run layer 2/3 suites** against the converted build where
+- [ ] Sign: Safari requires the containing app to be signed (Developer
+      ID Application, `codesign --deep --force`) and the extension
+      enabled in Safari Settings → Extensions.
+- [ ] Re-run layer 2/3 suites against the converted build where
       applicable (the node `vm` tests are browser-independent; the
       headless Chrome suite stays Chrome-only).
 
-**Status: documented, execution pending macOS.** The converter requires
-Xcode on macOS; every step above is unexecuted on this Linux checkout —
-do not treat the checklist as verified.
+**Verdict:** conversion pipeline works and the wrapper builds; a
+SHIPPING Safari port needs the three gaps above (UI fallback,
+`tabGroups` guard, Chrome-only debugger plane).
 
 ## Roadmap / non-goals (issue #23)
 

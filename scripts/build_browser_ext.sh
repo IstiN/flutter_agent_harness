@@ -38,12 +38,12 @@ mkdir -p build
 rm -f build/fa-extension.zip
 if command -v zip >/dev/null 2>&1; then
   ( cd browser_ext && zip -qr ../build/fa-extension.zip \
-      manifest.json sw content panel \
+      manifest.json sw content panel icons \
       -x 'sw/agent.js.map' 'sw/agent.js.deps' )
 else
   python3 - <<'PY'
 import os, zipfile
-RUNTIME_DIRS = ("sw", "content", "panel")
+RUNTIME_DIRS = ("sw", "content", "panel", "icons")
 SKIP_NAMES = {"README.md", "agent.js.map", "agent.js.deps"}
 with zipfile.ZipFile("build/fa-extension.zip", "w", zipfile.ZIP_DEFLATED) as z:
     z.write("browser_ext/manifest.json", "manifest.json")

@@ -32,7 +32,7 @@ browser_ext/
 
 1. Open `chrome://extensions`, enable **Developer mode**.
 2. **Load unpacked** → select this `browser_ext/` directory.
-3. Open the side panel (extension puzzle-piece icon → *fa — browser agent*).
+3. Open the side panel (the fa icon — the shared app mark → *fa — browser agent*).
 
 ## Pairing walkthrough
 

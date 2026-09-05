@@ -127,6 +127,9 @@ const coreToolFamilies = <String, Set<String>>{
     'browser_press_key',
     'browser_select',
     'browser_read_dom',
+    // Membership informational only — the reverse index resolves
+    // browser_eval to its own id (below), so `tools: {browser: false}`
+    // never hides eval; disable it separately.
     'browser_eval',
     'browser_screenshot',
     'browser_wait_for',
