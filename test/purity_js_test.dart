@@ -26,10 +26,7 @@ final _jsWebImport = RegExp(
   multiLine: true,
 );
 
-final _ioImport = RegExp(
-  r"""^import\s+['"]dart:io""",
-  multiLine: true,
-);
+final _ioImport = RegExp(r"""^import\s+['"]dart:io""", multiLine: true);
 
 void main() {
   test('no js/web imports anywhere under lib/ (REG-C1)', () {
@@ -43,20 +40,22 @@ void main() {
     expect(
       offenders,
       isEmpty,
-      reason: 'js/web imports belong in bin/, browser_ext/dart/, and '
+      reason:
+          'js/web imports belong in bin/, browser_ext/dart/, and '
           'flutter_app/ — never in core lib/',
     );
   });
 
-  test('dart:io imports stay out of top-level lib/ barrels except io.dart',
-      () {
+  test('dart:io imports stay out of top-level lib/ barrels except io.dart', () {
     final offenders = Directory('lib')
         .listSync()
         .whereType<File>()
-        .where((file) =>
-            file.path.endsWith('.dart') &&
-            file.path != 'lib/io.dart' &&
-            _ioImport.hasMatch(file.readAsStringSync()))
+        .where(
+          (file) =>
+              file.path.endsWith('.dart') &&
+              file.path != 'lib/io.dart' &&
+              _ioImport.hasMatch(file.readAsStringSync()),
+        )
         .map((file) => file.path)
         .toList();
     expect(

@@ -9,20 +9,23 @@ String one(String src, List<RedactionMatch> matches) {
 }
 
 /// (a) login form: user stays, password goes.
-const _loginForm = '<form>\n'
+const _loginForm =
+    '<form>\n'
     '<input type="text" name="user" value="bob">\n'
     '<input type="password" name="password" value="hunter2" '
     'autocomplete="current-password">\n'
     '</form>';
 
 /// (b) credit-card form: every cc-* value is a credential.
-const _ccForm = '<input type="text" name="cardnum" autocomplete="cc-number" '
+const _ccForm =
+    '<input type="text" name="cardnum" autocomplete="cc-number" '
     'value="4111 1111 1111 1111">\n'
     '<input name="csc" autocomplete="cc-csc" value="123">\n'
     '<input name="exp" autocomplete="cc-exp" value="12/28">';
 
 /// (c) SSO form: token/secret names, value attr before type, single quotes.
-const _ssoForm = '<input id="sso_token" value="tok_9f8e7d6c" type="text">\n'
+const _ssoForm =
+    '<input id="sso_token" value="tok_9f8e7d6c" type="text">\n'
     "<input name='client_secret' value='s3cr3tv4l' type='text'>\n"
     '<input type="text" name="account" value="alice">';
 
@@ -31,7 +34,8 @@ const _jsonCapture =
     '{"password": "hunter2", "user": "bob", "api_key": "sk-abc"}';
 
 /// (e) no over-redaction golden: nothing here leaks.
-const _harmless = '<input type="search" name="q" value="flutter test">\n'
+const _harmless =
+    '<input type="search" name="q" value="flutter test">\n'
     '<input type="text" name="email" value="bob@example.com">\n'
     '<input type="password" name="password" placeholder="Enter password">\n'
     '<input type="password" name="password" value="">\n'
@@ -79,7 +83,8 @@ void main() {
     });
 
     test('marker-only value never re-matches', () {
-      const src = '<input type="password" name="password" '
+      const src =
+          '<input type="password" name="password" '
           'value="[REDACTED:credential]">';
       expect(layerCredential(src, _cfg), isEmpty);
     });
@@ -93,23 +98,20 @@ void main() {
       expect(layerCredential('', _cfg), isEmpty);
     });
 
-    test('UT-S7 pipeline integration: masked, line-preserving, idempotent',
-        () {
+    test('UT-S7 pipeline integration: masked, line-preserving, idempotent', () {
       final pipeline = RedactionPipeline(registeredSecrets: const []);
       final out = pipeline.redact(_loginForm);
       expect(out, contains('[REDACTED:credential]'));
       expect(out, contains('value="bob"'));
       expect(out, isNot(contains('hunter2')));
-      expect(
-        '\n'.allMatches(out).length,
-        '\n'.allMatches(_loginForm).length,
-      );
+      expect('\n'.allMatches(out).length, '\n'.allMatches(_loginForm).length);
       expect(pipeline.redact(out), out);
     });
 
     test('UT-S7 extension: page captures get full-pipeline scanning', () {
       const openaiKey = 'sk-a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9T0';
-      const page = 'debug log:\n'
+      const page =
+          'debug log:\n'
           'key $openaiKey end\n'
           'API_KEY=supersecretvalue123\n'
           '-----BEGIN PRIVATE KEY-----\n'
