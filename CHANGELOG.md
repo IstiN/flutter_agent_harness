@@ -2581,4 +2581,8 @@
 - fix(app): launcher tile labels no longer glued to the icon square
 - fix(app): onboarding page 3/4 mockups readable in dark mode + light goldens
 
+## 0.1.298
+
+- test(ollama): diagnose live forced-tool-call null args instead of a bare cast
+
 ## Unreleased
