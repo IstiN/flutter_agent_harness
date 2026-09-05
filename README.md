@@ -7,13 +7,10 @@
 
 Cross-platform AI agent harness for Dart and Flutter — streaming provider
 adapters, an agent loop with native tool calling, JSONL session persistence,
-and context compaction. Architecture ported from
-[pi-mono](https://github.com/badlogicgames/pi-mono) (`packages/ai` +
-`packages/agent`), with a pure-Dart core that runs on the VM, Flutter
-desktop/mobile, and web.
-
-> **Status: early development (Phase 0).** See [GOAL.md](GOAL.md) for the
-> roadmap, quality gates, and design contract. The API is not yet stable.
+context compaction, and a pi-like terminal coding agent (`fa`). Architecture
+ported from [pi-mono](https://github.com/badlogicgames/pi-mono)
+(`packages/ai` + `packages/agent`), with a pure-Dart core that runs on the
+VM, Flutter desktop/mobile, and web.
 
 **[fa1.dev](https://fa1.dev)** — the project website: a live in-browser
 demo of the full agent (sandboxed shell, git, interpreters — your key
@@ -22,39 +19,64 @@ beta](https://testflight.apple.com/join/En1eC9UK) on TestFlight, the
 [macOS app](https://github.com/IstiN/flutter_agent_harness/releases/latest),
 and the CLI installer below.
 
-## Highlights (target design)
+## Design contract
 
-- **Streaming-first**: `Stream<AgentEvent>` from every provider, partial-first
-  deltas — each event carries the current partial message.
-- **Errors-as-events**: providers never throw; failures arrive as `error`
-  events with a `stopReason`, so the agent loop never dies on a 429 or a
-  dropped connection.
-- **Native tool calling** (OpenAI tools, Anthropic tool_use, Google
-  functionCalling) — no prompt-based JSON scraping.
-- **Token-based context management**: inline usage accounting, overflow
-  detection, LLM-powered compaction.
-- **Sessions as append-only JSONL trees** behind a storage abstraction —
-  portable to web and mobile.
-- **Cancellation everywhere** via `CancelToken`.
+- **Pure Dart core.** No `dart:io`, no Flutter imports in `lib/` — platform
+  capabilities live behind abstractions (`ExecutionEnv`); the IO
+  implementation is a separate entry point (`lib/io.dart`), so the core
+  compiles for web.
+- **Errors-as-events.** Providers never throw: network failures, 429s,
+  malformed SSE — everything arrives as an `error` event with a stop
+  reason. The agent loop never dies on a dropped connection.
+- **Streaming-first, partial-first.** `Stream<AgentEvent>` everywhere;
+  every delta event carries the live partial message.
+- **Native tool calling** per provider (OpenAI `tools`, Anthropic
+  `tool_use`, Google `functionCalling`). Prompt-based calling exists only
+  as an opt-in adapter for chat-only runtimes.
+- **Token accounting inline**, overflow detection per provider, and
+  token-based (never message-count-based) context management.
+- **Cancellation everywhere** via `CancelToken` — providers, loop, tools.
 
-## Usage (current seed)
+## What's inside
 
-```dart
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-
-void main() async {
-  final source = CancelTokenSource();
-
-  // Pass source.token into any long-running operation.
-  final cancelled = source.token.onCancel.then((_) => print('aborted'));
-
-  source.cancel('user pressed stop');
-  await cancelled;
-}
-```
-
-Provider adapters and the agent loop land in the next phases — see the
-roadmap in [GOAL.md](GOAL.md).
+- **Agent core** (`lib/src/`): the async agent loop, steering + follow-up
+  message queues (inject input mid-run), hooks (`beforeToolCall`,
+  `afterToolCall`, `transformContext`, `prepareNextTurn`), model roles
+  (`default`/`smol`/`slow`/`plan`) with fallback chains, API-key rotation,
+  429 mid-turn take-over, and stream watchdogs (connect + idle timeouts
+  with config overrides).
+- **Providers**: openai-completions (covers OpenRouter/DeepSeek/Kimi/Grok/…),
+  Anthropic, Google, ChatGPT (Codex OAuth), Copilot (device flow), DIAL,
+  MiniMax, z.ai, CodeMie (SSO), Ollama, plus custom providers saved from
+  the REPL. One OpenAI-compatible adapter is reused via `baseUrl` swap.
+- **Sessions**: append-only JSONL trees (branching, labels, tree
+  navigation with branch summaries), token-based auto-compaction with a
+  structured summary prompt, and attached-session support (watch a live
+  CLI session and hand it input from the Flutter app).
+- **Tools**: `read` (trailing selectors, archives, SQLite), `write`, `ls`,
+  `bash` (background jobs, timeout-retry for transient stalls, per-turn
+  approval grants), `task` (parallel subagents with typed roles and
+  output schemas), `lsp` (diagnostics/definition/references/rename),
+  MCP servers (stdio + remote), A2A interop, `checkpoint`/`rewind`,
+  `memory_*` (git-backed long-term memory), `ask`, `request_secret`.
+- **Agent skills**: `<root>/<name>/SKILL.md` plus Claude/Copilot/Codex
+  layouts (`.claude/skills`, `.github/skills`, `.codex/skills`, user-level
+  equivalents) discovered by default with an access prompt; typed
+  frontmatter (allowed-tools, paths, context: fork), `$ARGUMENTS`
+  rendering, and per-turn approval grants. See
+  [docs/migrating-from-claude-copilot-codex.md](docs/migrating-from-claude-copilot-codex.md).
+- **Approval gate** (`lib/src/approval/`): read/write/exec tiers, session
+  modes (always-ask/write/yolo/unattended), per-tool overrides, and a
+  critical-pattern interceptor for dangerous `bash` — even in yolo.
+- **Trajectory ledger** (`lib/src/trajectory/`): every session projects
+  into an immutable snapshot (turns, timeline modes, full-text search)
+  rendered by the `/trajectory` REPL family and the `fa trajectory`
+  headless command.
+- **Agent messaging**: every agent owns a file inbox in a shared fabric —
+  two `fa` instances chat live; subagents are first-class addressable
+  mailboxes. A2A (`fa serve --a2a`) mounts the agent as a remote endpoint.
+- **Model-agnostic prompts** (`prompts/`): all LLM prompts are versioned
+  Markdown with override support — no prompt strings buried in code.
 
 ## Install
 
@@ -70,12 +92,12 @@ puts it on your PATH, and (on macOS) strips Gatekeeper quarantine and
 re-signs it. More install paths — the web demo, the Flutter app — live on
 [fa1.dev](https://fa1.dev).
 
-## CLI (`fah`)
+## CLI (`fa` / `fah`)
 
-A pi-like terminal coding agent ships in `bin/fah.dart`: a REPL with the
-built-in `read` / `write` / `ls` / `bash` tools, JSONL session persistence
-under `~/.fah/sessions` (cwd-encoded layout), automatic context compaction,
-and slash commands.
+A pi-like terminal coding agent: a full-screen TUI (streaming markdown,
+mouse wheel scrolling, slash-command completion, live steering) with the
+same core as the library. Sessions persist under
+`~/.fah/sessions/<cwd-slug>/`.
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...   # or ANTHROPIC_API_KEY / GOOGLE_API_KEY
@@ -95,11 +117,11 @@ both cases trailing text appends as the instruction. A path that does not
 exist is treated as plain prompt text.
 
 ```bash
-dart run bin/fah.dart "summarize the changelog"      # positional prompt
-dart run bin/fah.dart -p "fix the typos in README.md"  # -p/--prompt alias
-dart run bin/fah.dart CHANGELOG.md "summarize this"  # text file as prompt
-dart run bin/fah.dart screenshot.png "describe it"   # binary → path reference
-dart run bin/fah.dart "summarize the changelog" | pbcopy  # pipes cleanly
+fa "summarize the changelog"      # positional prompt
+fa -p "fix the typos in README.md"  # -p/--prompt alias
+fa CHANGELOG.md "summarize this"  # text file as prompt
+fa screenshot.png "describe it"   # binary → path reference
+fa "summarize the changelog" | pbcopy  # pipes cleanly
 ```
 
 Flags: `--model <id>`,
@@ -160,26 +182,23 @@ capabilities and limits). The device-flow client id is overridable via
 `FA_COPILOT_CLIENT_ID` — that GitHub endpoint is undocumented, so a
 custom client id carries an account-ban risk; override only with cause.
 
-Slash commands inside the REPL: `/exit`, `/reset` (new session), `/compact`
-(summarize history now), `/stats` (token/cost totals), `/model <id>` (show or
-switch model), `/approval [always-ask|write|yolo]` (tool approval mode),
-`/allow [tool]` (always-allow a tool), `/help`. While a run is streaming,
-typed input is steered into the agent; Ctrl-C aborts the run (Ctrl-C at the
-idle prompt exits).
+### Slash commands (selection)
 
-Tool calls pass an approval gate (`lib/src/approval/`): every tool has a
-capability tier (read/write/exec; exec for undeclared custom tools), the
-session mode decides what runs unattended, and per-tool overrides plus a
-critical-pattern interceptor for `bash` (e.g. `rm -rf /`, fork bombs,
-`curl … | sh`) can force a prompt — even in `yolo`. The prompt UI is an
-injectable callback; piped (non-interactive) input denies prompt-policy
-calls with a reason. Mode and always-allowed tools persist in
-`~/.fah/config.yaml`.
+`/provider`, `/models`, `/model`, `/approval`, `/allow`, `/tools`,
+`/skills`, `/agents`, `/tasks`, `/trajectory [view|cost|tail|inspect]`,
+`/memory [maintain]`, `/compact`, `/reset`, `/checkpoint`/`/rewind`,
+`/mcp`, `/a2a`, `/dap`, `/stats`, `/mouse`, `/settings`, `/help` — plus
+every discovered skill as `/skill:<name>` (a bare `/<name>` alias works
+too). While a run streams, typed input steers the agent; Ctrl-C aborts
+the current run (Ctrl-C at the idle prompt exits).
+
+Tool calls pass the approval gate (see above); mode and always-allowed
+tools persist in `~/.fah/config.yaml`. Tool availability can be scoped
+per project/session via `.fah/config.yaml` and `.tools/<id>.yaml`
+(see [docs/tool-availability.md](docs/tool-availability.md)).
 
 The CLI core (`AgentCli` + `CliIO`) is pure Dart and lives in
-`lib/src/cli/agent_cli.dart`; only `bin/fah.dart` and `lib/io.dart` touch
-`dart:io`.
-
+`lib/src/cli/`; only `bin/fah.dart` and `lib/io.dart` touch `dart:io`.
 
 ## Agent-to-agent messaging (DAP)
 

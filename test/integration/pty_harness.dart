@@ -54,6 +54,7 @@ final class FaCliHarness {
     List<String> args = const [],
     int columns = 80,
     int rows = 24,
+    int? vmServicePort,
   }) async {
     final env = <String, String>{
       'TERM': 'xterm-256color',
@@ -70,7 +71,15 @@ final class FaCliHarness {
       // Absolute script path so a non-default [workingDirectory] still
       // resolves the repo's binary (folder-scoping tests launch fa in
       // temp dirs while package resolution stays on the repo).
-      ['${Directory.current.path}/bin/fah.dart', ...args],
+      [
+        // VM flags go BEFORE the script path.
+        if (vmServicePort != null) ...[
+          '--disable-service-auth-codes',
+          '--observe=$vmServicePort',
+        ],
+        '${Directory.current.path}/bin/fah.dart',
+        ...args,
+      ],
       workingDirectory: workingDirectory ?? Directory.current.path,
       environment: env,
       raw: true,

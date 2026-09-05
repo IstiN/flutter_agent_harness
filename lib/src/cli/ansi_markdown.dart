@@ -174,6 +174,10 @@ final class AnsiMarkdown {
   /// Current cross-line state snapshot (see [restoreState]).
   (bool, List<String>) snapshotState() => (_inFence, List.of(_tableBuffer));
 
+  /// Lines longer than this render verbatim (no inline span substitution).
+  /// See [_formatInline] for the quadratic-input rationale.
+  static const inlineFormatMaxChars = 4096;
+
   /// Formats the whole output buffer, preserving the line count 1:1.
   /// Table rows are buffered until the table ends so column widths can be
   /// computed across every row before rendering.
@@ -336,6 +340,14 @@ final class AnsiMarkdown {
         !text.contains('_')) {
       return text;
     }
+    // Hard cost bound for huge lines. The inline scans are quadratic on
+    // degenerate input — a long line dense with `[` candidates makes
+    // _linkRe backtrack per candidate (a 16 KB ANSI-dense thinking burst
+    // measured ~10 s PER LINE, freezing the whole TUI: the streaming
+    // event loop never reached its next timer). A markdown span crossing
+    // more than a few KB of one line is degenerate anyway; render such
+    // lines verbatim (fences/rules/table state still apply upstream).
+    if (text.length > inlineFormatMaxChars) return text;
     var out = text;
     out = out.replaceAllMapped(
       _linkRe,

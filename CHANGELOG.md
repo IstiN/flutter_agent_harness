@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.297
+
+- fix(tui): a long thinking burst froze the whole TUI (typing dead, spinner
+  stuck — user report: "пиздец как тормозит" on a glm-5.3 session). Root
+  cause: the CLI wrapped every thinking delta in inline markdown, and the
+  escape-dense result drove AnsiMarkdown's inline link regex into
+  quadratic backtracking — measured 10.9 s of synchronous work per
+  coalesced 185 KB flush. Two fixes: thinking deltas now dim verbatim
+  (spans cannot pair across deltas anyway), and inline span substitution
+  is skipped for lines over 4 KB (`AnsiMarkdown.inlineFormatMaxChars`) —
+  degenerate spans render verbatim, fences/rules/tables unchanged.
+  Regression-tested by the new `tool/thinking_lag_probe.dart` PTY probe
+  (burst streams: keypress echo p95 stays under budget) and a markdown
+  unit test.
+- docs(readme): reflect the shipped surface — status, design contract,
+  what's inside (agent core, providers, sessions, tools, skills,
+  approval gate, trajectory, messaging), CLI slash commands.
+
 ## 0.1.296
 
 - feat(bash): automatic transient-failure retry — timeout-class failures

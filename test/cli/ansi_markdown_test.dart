@@ -283,5 +283,57 @@ void main() {
         expect(out[0], contains('| a | b |'));
       });
     });
+
+    group('inline format budget', () {
+      test('huge lines render verbatim (no span substitution)', () {
+        // A degenerate 100 KB line: spans crossing more than
+        // inlineFormatMaxChars are meaningless; the budget exists to cap
+        // the quadratic regex scans (see _formatInline).
+        final huge =
+            'prefix [link](x) ${'a' * AnsiMarkdown.inlineFormatMaxChars} '
+            '[tail](y) *b* `c`';
+        final out = AnsiMarkdown().formatLine(huge);
+        expect(out, huge); // byte-identical pass-through
+      });
+
+      test('lines at the budget still format spans', () {
+        final line = '[link](http://x) ${'a' * 100}';
+        final out = AnsiMarkdown().formatLine(line);
+        expect(out, isNot(same(line)));
+        expect(out, contains('http://x'));
+      });
+
+      test('a dense burst formats fast (regression: 10 s TUI freeze)', () {
+        // 2000 dim pairs over 185 KB — the thinking-burst shape that used
+        // to stall the event loop for seconds per format pass.
+        final buf = StringBuffer();
+        for (var i = 0; i < 2000; i++) {
+          buf.write(
+            '\x1b[2mstep $i: weigh the ${i}th angle carefully; '
+            '\x1b[0m',
+          );
+        }
+        final lines = <String>['', 'user: think hard', ''];
+        // One coalesced flush appends the whole burst as one tail line;
+        // the 32 KB tail cap splits it into 16 KB chunks.
+        lines[lines.length - 1] += buf.toString();
+        const maxTail = 32 * 1024;
+        const chunk = 16 * 1024;
+        if (lines.last.length > maxTail) {
+          final tail = lines.last;
+          lines
+            ..removeLast()
+            ..addAll([
+              for (var i = 0; i < tail.length; i += chunk)
+                tail.substring(i, (i + chunk).clamp(0, tail.length)),
+            ]);
+        }
+        final sw = Stopwatch()..start();
+        final tx = TranscriptMarkdown(width: 80);
+        tx.sync(lines);
+        expect(sw.elapsedMilliseconds, lessThan(2000));
+        expect(tx.wrappedRows, isNotEmpty);
+      });
+    });
   });
 }

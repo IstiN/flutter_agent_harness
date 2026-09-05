@@ -895,12 +895,13 @@ extension ApprovalCommands on AgentCli {
     } else if (assistantMessageEvent is ThinkingDeltaEvent && _useTui) {
       // Reasoning models stream long thinking before any text; showing
       // it dimmed under the user message is the TUI's progress signal.
-      // Even reasoning snippets benefit from inline markdown (bold spans
-      // for emphasis, inline code for self-references) — we apply the
-      // same inline renderer the answer text gets, then dim the whole
-      // result so the thinking still reads as background context.
-      final inline = renderInlineMarkdown(assistantMessageEvent.delta);
-      io.write(_style.dim(inline));
+      // The delta is dimmed VERBATIM — no per-delta inline markdown: a
+      // markdown span split across deltas can never pair anyway (each
+      // fragment opens+closes its own SGR pair), and the per-delta escape
+      // density used to be the TUI's worst quadratic input (a long
+      // thinking burst froze the whole UI — see
+      // AnsiMarkdown.inlineFormatMaxChars).
+      io.write(_style.dim(assistantMessageEvent.delta));
       _streamedThinking = true;
     }
   }
