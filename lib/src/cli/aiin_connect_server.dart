@@ -132,7 +132,6 @@ String _callbackPage(AiinCallback callback) {
 /// failures surface through [onStatus] so callers can treat null as "not
 /// connected".
 Future<AiinConnectResult?> runAiinConnectCliFlow({
-  required String provider,
   required void Function(String) onStatus,
   Future<bool> Function(String) openBrowserFn = openBrowser,
   http.Client? client,
@@ -142,18 +141,22 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   final server = AiinCallbackServer();
   final redirectUri = await server.start(timeout: timeout);
   try {
-    final initiate = await initiateAiinOAuth(
-      provider: provider,
+    // The hosted sign-in page: AIIN lists every provider, runs the whole
+    // round-trip (silent for an existing session) and redirects back with
+    // the code + our state.
+    final state = aiinGenerateState();
+    final loginUrl = buildAiinLoginUrl(
       redirectUri: redirectUri,
-      client: client,
+      state: state,
+      clientType: 'desktop',
       authBaseUrl: authBaseUrl,
     );
     onStatus('listening for the AIIN callback on $redirectUri');
-    await _openAiinBrowser(initiate.authUrl, provider, openBrowserFn, onStatus);
+    await _openAiinBrowser(loginUrl.toString(), openBrowserFn, onStatus);
     final callback = await server.waitForCallback();
     return await _settleAiinCallback(
       callback,
-      initiate,
+      state,
       client: client,
       authBaseUrl: authBaseUrl,
       onStatus: onStatus,
@@ -170,12 +173,11 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
 /// browser is available (headless hosts).
 Future<void> _openAiinBrowser(
   String authUrl,
-  String provider,
   Future<bool> Function(String) openBrowserFn,
   void Function(String) onStatus,
 ) async {
   if (await openBrowserFn(authUrl)) {
-    onStatus('browser opened; sign in with your $provider account');
+    onStatus('browser opened; sign in on the AIIN page');
   } else {
     onStatus('could not open browser automatically');
     onStatus('open this URL manually: $authUrl');
@@ -187,7 +189,7 @@ Future<void> _openAiinBrowser(
 /// state check.
 Future<AiinConnectResult?> _settleAiinCallback(
   AiinCallback? callback,
-  AiinOAuthInitiate initiate, {
+  String expectedState, {
   required http.Client? client,
   required String authBaseUrl,
   required void Function(String) onStatus,
@@ -202,13 +204,13 @@ Future<AiinConnectResult?> _settleAiinCallback(
     );
     return null;
   }
-  if (callback.state != initiate.state) {
+  if (callback.state != expectedState) {
     onStatus('AIIN sign-in callback was invalid (state mismatch)');
     return null;
   }
   return _finishAiinConnect(
     callback.code!,
-    initiate,
+    expectedState,
     client: client,
     authBaseUrl: authBaseUrl,
     onStatus: onStatus,
@@ -219,7 +221,7 @@ Future<AiinConnectResult?> _settleAiinCallback(
 /// key. Null = a reported exchange/registration failure.
 Future<AiinConnectResult?> _finishAiinConnect(
   String code,
-  AiinOAuthInitiate initiate, {
+  String state, {
   required http.Client? client,
   required String authBaseUrl,
   required void Function(String) onStatus,
@@ -227,7 +229,7 @@ Future<AiinConnectResult?> _finishAiinConnect(
   try {
     final tokens = await exchangeAiinOAuthCode(
       code: code,
-      state: initiate.state,
+      state: state,
       client: client,
       authBaseUrl: authBaseUrl,
     );

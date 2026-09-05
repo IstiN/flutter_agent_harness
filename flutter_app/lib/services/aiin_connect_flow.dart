@@ -54,6 +54,10 @@ Future<bool> runAiinConnectFlow({
   /// Injectable `/v1/models` fetcher (tests) — defaults to the live fetch.
   Future<List<String>> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
+
+  /// Injectable web-callback timeout (tests) — defaults to the
+  /// coordinator's 5 minutes.
+  Duration? aiinWebTimeout,
 }) async {
   if (kIsWeb) {
     // One-click web connect: a popup OAuth, no loopback server needed
@@ -68,26 +72,20 @@ Future<bool> runAiinConnectFlow({
     }
 
     if (!context.mounted) return false;
-    final idp = await _pickAiinIdp(context, client: aiinHttpClient);
-    if (idp == null) return false;
-    if (!context.mounted) return false;
+    // The HOSTED AIIN sign-in page runs the whole round-trip (all
+    // providers, silent for an existing session) — the popup goes straight
+    // to it. A timeout/cancel falls back to the paste-key path.
     final coordinator = AiinWebAuthCoordinator.instance;
     final result = await coordinator.connect(
-      // Resolved in place — the provider choice is known at the picker tap,
-      // and connect() opens the popup before anything else.
-      providerFn: () async => idp,
       onStatus: webStatus,
       client: aiinHttpClient,
       openFn: aiinOpenPopupFn,
       navigateFn: aiinNavigatePopupFn,
+      timeout: aiinWebTimeout,
     );
     if (result == null) {
-      // AIIN's OAuth proxy currently allowlists only its own redirect URIs
-      // ("client_redirect_uri is not allowed") — the automatic flow cannot
-      // complete until the service allowlists our callback. Fall back to
-      // the cabinet + paste-key path so the connect still works today.
       final failure = coordinator.lastFailure ?? '';
-      if (failure.contains('client_redirect_uri is not allowed') &&
+      if ((failure == 'timeout' || failure == 'cancelled') &&
           context.mounted) {
         final pasted = await _pasteAiinKeyFallback(context);
         if (pasted == null) return false;
@@ -143,38 +141,6 @@ Future<bool> runAiinConnectFlow({
   }
 
   if (!context.mounted) return false;
-  final idp = await _pickAiinIdp(context, client: aiinHttpClient);
-  if (idp == null) return false;
-  if (!context.mounted) return false;
-
-  // Preflight: the AIIN proxy rejects un-allowlisted redirect URIs; detect
-  // that BEFORE bouncing the user through the browser.
-  try {
-    await initiateAiinOAuth(
-      provider: idp,
-      redirectUri: 'http://127.0.0.1:9/callback',
-      client: aiinHttpClient,
-    );
-  } on AiinAuthException catch (error) {
-    if (error.message.contains('client_redirect_uri is not allowed')) {
-      if (!context.mounted) return false;
-      final pasted = await _pasteAiinKeyFallback(context);
-      if (pasted == null) return false;
-      if (!context.mounted) return false;
-      return _finishAiinConnect(
-        context,
-        registry: registry,
-        service: service,
-        lastConnectionStore: lastConnectionStore,
-        sessionKeysStore: sessionKeysStore ?? fallbackKeys,
-        keychainStore: keychainStore,
-        apiKey: pasted,
-      );
-    }
-    // A different (transient?) service error — let the flow surface it.
-  } on Object {
-    // Network hiccup — the flow below will retry and report.
-  }
 
   if (!context.mounted) return false;
   ScaffoldMessenger.of(context).showSnackBar(
@@ -187,13 +153,29 @@ Future<bool> runAiinConnectFlow({
   final result = aiinConnectFn != null
       ? await aiinConnectFn()
       : await runAiinConnectCliFlow(
-          provider: idp,
           onStatus: (message) => debugPrint('[AIIN] $message'),
           openBrowserFn: (url) => url_launcher.launchUrl(
             Uri.parse(url),
             mode: url_launcher.LaunchMode.externalApplication,
           ),
         );
+  if (result == null && context.mounted) {
+    // Automatic sign-in failed (cancelled, timeout, service error) — the
+    // cabinet + paste-key path still completes the connect.
+    final pasted = await _pasteAiinKeyFallback(context);
+    if (pasted == null) return false;
+    if (!context.mounted) return false;
+    return _finishAiinConnect(
+      context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore ?? fallbackKeys,
+      keychainStore: keychainStore,
+      apiKey: pasted,
+      aiinModelsFetcher: aiinModelsFetcher,
+    );
+  }
   if (result == null) return false;
   if (!context.mounted) return false;
   return _finishAiinConnect(
@@ -384,73 +366,10 @@ class _AiinKeyPasteDialogState extends State<_AiinKeyPasteDialog> {
   }
 }
 
-/// Human labels for the identity providers the AIIN service offers.
-const _aiinIdpLabels = {
-  'google': 'Google',
-  'github': 'GitHub',
-  'microsoft': 'Microsoft',
-  'yandex': 'Yandex',
-  'mailru': 'Mail.ru',
-  'telegram': 'Telegram',
-};
+/// The fallback when the automatic sign-in cannot complete: open the AIIN
 
-String _aiinIdpLabel(String id) =>
-    _aiinIdpLabels[id] ??
-    id.substring(0, 1).toUpperCase() + id.substring(1);
-
-/// Lets the user choose the identity provider to sign in with (the AIIN
-/// service offers several: google, github, microsoft, yandex, mailru,
-/// telegram). Auto-picks google when the service offers it alone or the
-/// list cannot be fetched. Returns null on cancel.
-Future<String?> _pickAiinIdp(
-  BuildContext context, {
-  http.Client? client,
-}) async {
-  List<String> providers = const ['google'];
-  try {
-    providers = await fetchAiinOAuthProviders(client: client);
-  } on Object {
-    // Offline — google is the documented default.
-  }
-  if (providers.isEmpty) providers = const ['google'];
-  if (!context.mounted) return null;
-  if (providers.length == 1) return providers.single;
-  return pushFaPage<String>(
-    context,
-    _AiinIdpPickerPage(providers: providers),
-  );
-}
-
-/// The AIIN identity-provider picker.
-class _AiinIdpPickerPage extends StatelessWidget {
-  const _AiinIdpPickerPage({required this.providers});
-
-  final List<String> providers;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Sign in with')),
-      body: SafeArea(
-        child: ListView(
-          children: [
-            for (final id in providers)
-              ListTile(
-                title: Text(_aiinIdpLabel(id)),
-                subtitle: id == 'google'
-                    ? const Text('recommended')
-                    : null,
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(context).pop(id),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The AIIN model picker: the fetched id list with a manual-entry row.
+/// The app-side default chat endpoint of the AIIN provider (the catalog
+/// spec's default base URL).
 class _AiinModelPickerPage extends StatefulWidget {
   const _AiinModelPickerPage({required this.models});
 

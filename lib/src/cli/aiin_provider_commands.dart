@@ -122,7 +122,7 @@ extension _AiinProviderCommands on AgentCli {
     if (connectFn != null) {
       return connectFn(provider: provider, onStatus: io.writeln);
     }
-    return runAiinConnectCliFlow(provider: provider, onStatus: io.writeln);
+    return runAiinConnectCliFlow(onStatus: io.writeln);
   }
 
   /// Fetches the live identity-provider list (google first, matching the

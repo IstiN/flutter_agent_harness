@@ -14,16 +14,20 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// (postMessage / BroadcastChannel / localStorage — see the page source).
 const aiinWebCallbackUrl = 'https://fa1.dev/oauth/aiin.html';
 
-/// One-click AIIN sign-in for the web build, mirroring the OpenRouter flow:
-/// the app opens the authorization page in a named popup, the hosted
-/// callback page posts the code back, and the coordinator finishes the
-/// OAuth-proxy exchange and registers the `sk-aiin-…` API key — all from
-/// the browser (auth.aiin.by and api.aiin.by send `access-control-allow-origin: *`).
+/// One-click AIIN sign-in for the web build, mirroring the OpenRouter flow.
+/// The app opens the HOSTED AIIN sign-in page
+/// (`auth.aiin.by/login?client_redirect_uri=…&state=…`) in a named popup —
+/// the page lists every enabled provider (Apple once AIIN enables it),
+/// runs the whole OAuth round-trip on their side (silent pass-through for
+/// an existing AIIN session) and redirects back to our callback page with
+/// `code` + our state. The coordinator validates the state (generated
+/// CLIENT-side — the CSRF boundary now lives with us), then finishes the
+/// exchange and registers the `sk-aiin-…` API key — all from the browser.
 ///
 /// The popup is opened SYNCHRONOUSLY (before any await) — after an `await`
 /// the browser loses the user-gesture context and silently blocks
-/// `window.open`. The blank popup is navigated to the authorization URL
-/// once the server-side initiate resolves.
+/// `window.open`. The blank popup is navigated to the sign-in page
+/// immediately.
 ///
 /// The connect never leaves the page (no reload), so the caller keeps its
 /// context and continues with model pick + provider save right after.
@@ -36,7 +40,8 @@ final class AiinWebAuthCoordinator {
   /// The shared coordinator with the Fa defaults.
   static final instance = AiinWebAuthCoordinator();
 
-  /// The redirect URI registered with [initiateAiinOAuth].
+  /// The redirect URI the hosted page redirects back to (allowlisted on
+  /// the AIIN service).
   final String callbackUrl;
 
   /// How long to wait for the callback before giving up.
@@ -63,22 +68,22 @@ final class AiinWebAuthCoordinator {
   }
 
   /// Runs the full web connect. Returns null on cancel, popup block,
-  /// timeout, or a reported service error (status goes through [onStatus]).
+  /// timeout, or a reported exchange failure (status goes through
+  /// [onStatus]).
   ///
-  /// [openFn] / [navigateFn] / [client] are injectable for tests.
+  /// [openFn] / [navigateFn] / [client] / [timeout] are injectable for
+  /// tests.
   Future<AiinConnectResult?> connect({
-    /// Resolved INSIDE the connect, after the popup opens: Safari breaks
-    /// the window.open user-gesture after any await, so nothing network-
-    /// bound may run before [openFn].
-    required Future<String> Function() providerFn,
     void Function(String)? onStatus,
     http.Client? client,
     bool Function()? openFn,
     void Function(String url)? navigateFn,
+    Duration? timeout,
   }) async {
     lastFailure = null;
     onStatus?.call('Opening the AIIN sign-in…');
-    // Inside the gesture: open the blank popup NOW, navigate it later.
+    // Inside the gesture: open the blank popup NOW, navigate it right
+    // away (Safari breaks the gesture after any await).
     final opened = openFn != null ? openFn() : openAiinOAuthPopup();
     if (!opened) {
       lastFailure = 'popup_blocked';
@@ -86,31 +91,24 @@ final class AiinWebAuthCoordinator {
           'and try again.');
       return null;
     }
+    // The state is OURS (one-time random) — the hosted page echoes it
+    // through the whole round-trip and we verify it on the callback.
+    final state = aiinGenerateState();
+    final loginUrl = buildAiinLoginUrl(
+      redirectUri: callbackUrl,
+      state: state,
+      clientType: 'web',
+    ).toString();
     _completer = Completer<AiinWebCallback>();
     attachAiinOAuthLinks();
-    final provider = await providerFn();
-    final AiinOAuthInitiate initiate;
-    try {
-      initiate = await initiateAiinOAuth(
-        provider: provider,
-        redirectUri: callbackUrl,
-        client: client,
-      );
-    } on AiinAuthException catch (error) {
-      lastFailure = error.message;
-      onStatus?.call('AIIN sign-in failed: ${error.message}');
-      closeAiinOAuthPopup();
-      _reset();
-      return null;
-    }
     if (navigateFn != null) {
-      navigateFn(initiate.authUrl);
+      navigateFn(loginUrl);
     } else {
-      navigateAiinOAuthPopup(initiate.authUrl);
+      navigateAiinOAuthPopup(loginUrl);
     }
     final AiinWebCallback callback;
     try {
-      callback = await _completer!.future.timeout(timeout);
+      callback = await _completer!.future.timeout(timeout ?? this.timeout);
     } on TimeoutException {
       lastFailure = 'timeout';
       onStatus?.call('No AIIN callback received (timeout or cancelled)');
@@ -123,16 +121,14 @@ final class AiinWebAuthCoordinator {
       onStatus?.call('AIIN sign-in cancelled');
       return null;
     }
-    // The proxy echoes the SERVER-issued state (initiate) into the
-    // redirect — that is the value to validate against.
-    if (callback.state != initiate.state) {
+    if (callback.state != state) {
       lastFailure = 'state_mismatch';
       onStatus?.call('AIIN sign-in callback was invalid (state mismatch)');
       return null;
     }
     return _finish(
       code: callback.code!,
-      initiate: initiate,
+      state: state,
       onStatus: onStatus,
       client: client,
     );
@@ -140,14 +136,14 @@ final class AiinWebAuthCoordinator {
 
   Future<AiinConnectResult?> _finish({
     required String code,
-    required AiinOAuthInitiate initiate,
+    required String state,
     required void Function(String)? onStatus,
     required http.Client? client,
   }) async {
     try {
       final tokens = await exchangeAiinOAuthCode(
         code: code,
-        state: initiate.state,
+        state: state,
         client: client,
       );
       onStatus?.call('AIIN authorized — registering an API key…');

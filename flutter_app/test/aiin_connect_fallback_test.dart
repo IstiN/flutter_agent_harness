@@ -1,38 +1,12 @@
 // The AIIN connect flow's paste-key fallback: when the AIIN OAuth proxy
 // rejects our redirect ("client_redirect_uri is not allowed"), the flow
 // must still complete — cabinet key paste → model pick → provider saved.
-import 'dart:convert';
-
 import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 
-http.Response _json(Object body, [int status = 200]) => http.Response(
-      jsonEncode(body),
-      status,
-      headers: {'content-type': 'application/json'},
-    );
-
-MockClient _redirectBlockedClient() => MockClient((request) async {
-      final url = request.url.toString();
-      if (url.contains('/api/oauth-proxy/providers')) {
-        return _json({'providers': ['google']});
-      }
-      if (url.contains('/api/oauth-proxy/initiate')) {
-        return _json(
-          const {
-            'error': 'invalid_provider',
-            'message': 'client_redirect_uri is not allowed',
-          },
-          400,
-        );
-      }
-      return _json(const {'error': 'unexpected'}, 404);
-    });
 
 void main() {
   testWidgets('the AIIN model picker filters the fetched model list',
@@ -61,9 +35,9 @@ void main() {
       registry: registry,
       service: null,
       lastConnectionStore: LastConnectionStore.inMemory(),
-      aiinHttpClient: _redirectBlockedClient(),
       aiinOpenPopupFn: () => true,
       aiinNavigatePopupFn: (_) {},
+      aiinWebTimeout: const Duration(milliseconds: 200),
       aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
         'moonshotai/kimi-k2',
         'deepseek-ai/deepseek-v3',
@@ -126,10 +100,11 @@ void main() {
       registry: registry,
       service: null,
       lastConnectionStore: LastConnectionStore.inMemory(),
-      aiinHttpClient: _redirectBlockedClient(),
-      // The test VM has no dart:html — simulate a real popup.
+      // The test VM has no dart:html — simulate a real popup; the callback
+      // never arrives, so the short timeout lands in the paste-key path.
       aiinOpenPopupFn: () => true,
       aiinNavigatePopupFn: (_) {},
+      aiinWebTimeout: const Duration(milliseconds: 200),
     );
 
     // The paste-key dialog appears (initiate was rejected).
