@@ -5,6 +5,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
     if (dart.library.html) 'package:fa/services/oauth_cli_flow_stubs.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/aiin_web_auth.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -41,18 +42,23 @@ Future<bool> runAiinConnectFlow({
   Future<AiinConnectResult?> Function()? aiinConnectFn,
 }) async {
   if (kIsWeb) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'AIIN sign-in needs the desktop app (a localhost callback '
-            'server). Add api.aiin.by/v1 as a custom provider with a key '
-            'in the web build.',
-          ),
-        ),
-      );
-    }
-    return false;
+    // One-click web connect: a popup OAuth, no loopback server needed
+    // (the hosted callback page posts the code back; both AIIN hosts send
+    // `access-control-allow-origin: *`).
+    final result = await AiinWebAuthCoordinator.instance.connect(
+      provider: await _preferredAiinProvider(),
+    );
+    if (result == null) return false;
+    if (!context.mounted) return false;
+    return _finishAiinConnect(
+      context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore,
+      keychainStore: keychainStore,
+      result: result,
+    );
   }
   final desktop = !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.macOS ||
@@ -92,7 +98,30 @@ Future<bool> runAiinConnectFlow({
         );
   if (result == null) return false;
   if (!context.mounted) return false;
+  return _finishAiinConnect(
+    context,
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    sessionKeysStore: sessionKeysStore ?? fallbackKeys,
+    keychainStore: keychainStore,
+    result: result,
+  );
+}
 
+/// The shared post-connect continuation: model pick from the public
+/// `/v1/models`, a named registry entry (the account email), entry-scoped
+/// key persistence, and the service reconnect. Returns whether the flow
+/// completed and the service was reconfigured.
+Future<bool> _finishAiinConnect(
+  BuildContext context, {
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required SessionKeysStore? sessionKeysStore,
+  required KeychainStore? keychainStore,
+  required AiinConnectResult result,
+}) async {
   // ── Pick a model (public /v1/models on api.aiin.by) ─────────────────
   const baseUrl = aiinDefaultChatBaseUrl;
   final key = result.apiKey.raw;
@@ -139,7 +168,7 @@ Future<bool> runAiinConnectFlow({
     persisted = await keychain.set(keyName, key);
   }
   if (!persisted) {
-    await (sessionKeysStore ?? fallbackKeys)?.set(keyName, key);
+    await sessionKeysStore?.set(keyName, key);
   }
 
   // ── Connect ─────────────────────────────────────────────────────────
