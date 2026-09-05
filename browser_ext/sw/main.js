@@ -44,6 +44,14 @@ function snapshot() {
 // Browser op table for the embedded agent (same ops as the wire protocol).
 globalThis.__faOps = (op, args) => dispatch(op, args || {});
 
+// The toolbar icon opens the side panel (docs/browser-extension.md "Load
+// it" step 3). Without this the action click is a silent no-op: no
+// default_popup, no onClicked handler — the headless suite never noticed
+// because it opens panel.html by URL.
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((e) => console.error('fa: setPanelBehavior failed', e));
+
 // Bridge disconnect ends the task (contract AC17: cleanup on task_end OR disconnect).
 let wasConnected = false;
 bridge.onStatus((s) => {
