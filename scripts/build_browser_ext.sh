@@ -27,7 +27,7 @@ if command -v dart >/dev/null 2>&1; then
   ( cd browser_ext/dart \
     && dart pub get >/dev/null \
     && dart compile js -O2 -o ../sw/agent.js agent_main.dart )
-  rm -f "${agent_js}.deps"
+  rm -f "${agent_js}.deps" "${agent_js}.map"
 elif [ -f "$agent_js" ]; then
   echo "dart SDK not found — shipping prebuilt $agent_js"
 else
