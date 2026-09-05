@@ -2637,4 +2637,11 @@
 - memory: session notes
 - feat(skills): bundled create-goal skill — goal-writing discipline as /create-goal
 
+## 0.1.302
+
+- feat(aiin): official aiin.by mark, identity-provider picker, model search
+- test(redact): integration e2e for issue #24 AC5-AC8
+- fix(aiin): Safari popup — no awaits before window.open, paint the popup
+- test(redact): integration e2e for issue #24 AC5-AC8
+
 ## Unreleased
