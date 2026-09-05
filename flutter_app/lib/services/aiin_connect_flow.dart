@@ -44,9 +44,18 @@ Future<bool> runAiinConnectFlow({
   if (kIsWeb) {
     // One-click web connect: a popup OAuth, no loopback server needed
     // (the hosted callback page posts the code back; both AIIN hosts send
-    // `access-control-allow-origin: *`).
+    // `access-control-allow-origin: *`). Progress lands in SnackBars —
+    // the popup opens before any await, inside the tap gesture.
+    void webStatus(String message) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      debugPrint('[AIIN web] $message');
+    }
+
     final result = await AiinWebAuthCoordinator.instance.connect(
       provider: await _preferredAiinProvider(),
+      onStatus: webStatus,
     );
     if (result == null) return false;
     if (!context.mounted) return false;

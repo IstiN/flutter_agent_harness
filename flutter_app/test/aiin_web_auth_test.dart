@@ -52,12 +52,13 @@ void main() {
       provider: 'google',
       onStatus: statuses.add,
       client: mockAiinBackend(),
-      launchFn: (url) {
-        // The popup opens; the hosted callback page delivers the code back.
+      openFn: () => true,
+      navigateFn: (url) {
+        // The popup navigates to the auth page; the hosted callback page
+        // delivers the code back.
         scheduleMicrotask(
           () => coordinator.complete(code: 'c-1', state: 'st-1'),
         );
-        return true;
       },
     );
     expect(result, isNotNull);
@@ -73,7 +74,7 @@ void main() {
       provider: 'google',
       onStatus: statuses.add,
       client: mockAiinBackend(),
-      launchFn: (_) => false,
+      openFn: () => false,
     );
     expect(result, isNull);
     expect(statuses.join('\n'), contains('blocked the sign-in popup'));
@@ -86,11 +87,11 @@ void main() {
       provider: 'google',
       onStatus: statuses.add,
       client: mockAiinBackend(),
-      launchFn: (url) {
+      openFn: () => true,
+      navigateFn: (url) {
         scheduleMicrotask(
           () => coordinator.complete(code: 'c-1', state: 'forged'),
         );
-        return true;
       },
     );
     expect(result, isNull);
@@ -104,9 +105,9 @@ void main() {
       provider: 'google',
       onStatus: statuses.add,
       client: mockAiinBackend(),
-      launchFn: (url) {
+      openFn: () => true,
+      navigateFn: (url) {
         scheduleMicrotask(() => coordinator.complete());
-        return true;
       },
     );
     expect(result, isNull);

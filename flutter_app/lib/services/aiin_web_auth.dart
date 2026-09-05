@@ -20,6 +20,11 @@ const aiinWebCallbackUrl = 'https://fa1.dev/oauth/aiin.html';
 /// OAuth-proxy exchange and registers the `sk-aiin-…` API key — all from
 /// the browser (auth.aiin.by and api.aiin.by send `access-control-allow-origin: *`).
 ///
+/// The popup is opened SYNCHRONOUSLY (before any await) — after an `await`
+/// the browser loses the user-gesture context and silently blocks
+/// `window.open`. The blank popup is navigated to the authorization URL
+/// once the server-side initiate resolves.
+///
 /// The connect never leaves the page (no reload), so the caller keeps its
 /// context and continues with model pick + provider save right after.
 final class AiinWebAuthCoordinator {
@@ -55,14 +60,22 @@ final class AiinWebAuthCoordinator {
   /// Runs the full web connect. Returns null on cancel, popup block,
   /// timeout, or a reported service error (status goes through [onStatus]).
   ///
-  /// [launchFn] / [client] are injectable for tests.
+  /// [openFn] / [navigateFn] / [client] are injectable for tests.
   Future<AiinConnectResult?> connect({
     required String provider,
     void Function(String)? onStatus,
     http.Client? client,
-    bool Function(String url)? launchFn,
+    bool Function()? openFn,
+    void Function(String url)? navigateFn,
   }) async {
     onStatus?.call('Opening the AIIN sign-in…');
+    // Inside the gesture: open the blank popup NOW, navigate it later.
+    final opened = openFn != null ? openFn() : openAiinOAuthPopup();
+    if (!opened) {
+      onStatus?.call('The browser blocked the sign-in popup — allow popups '
+          'and try again.');
+      return null;
+    }
     _completer = Completer<AiinWebCallback>();
     attachAiinOAuthLinks();
     final AiinOAuthInitiate initiate;
@@ -74,17 +87,14 @@ final class AiinWebAuthCoordinator {
       );
     } on AiinAuthException catch (error) {
       onStatus?.call('AIIN sign-in failed: ${error.message}');
+      closeAiinOAuthPopup();
       _reset();
       return null;
     }
-    final launched = launchFn != null
-        ? launchFn(initiate.authUrl)
-        : launchAiinOAuthPopup(initiate.authUrl);
-    if (!launched) {
-      onStatus?.call('The browser blocked the sign-in popup — allow popups '
-          'and try again.');
-      _reset();
-      return null;
+    if (navigateFn != null) {
+      navigateFn(initiate.authUrl);
+    } else {
+      navigateAiinOAuthPopup(initiate.authUrl);
     }
     final AiinWebCallback callback;
     try {
@@ -105,7 +115,12 @@ final class AiinWebAuthCoordinator {
       onStatus?.call('AIIN sign-in callback was invalid (state mismatch)');
       return null;
     }
-    return _finish(code: callback.code!, initiate: initiate, onStatus: onStatus, client: client);
+    return _finish(
+      code: callback.code!,
+      initiate: initiate,
+      onStatus: onStatus,
+      client: client,
+    );
   }
 
   Future<AiinConnectResult?> _finish({
@@ -144,4 +159,3 @@ final class AiinWebCallback {
   final String? code;
   final String? state;
 }
-

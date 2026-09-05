@@ -81,6 +81,9 @@ const _exempt = <String, String>{
   'lib/services/aiin_oauth_web_impl.dart':
       'web-only conditional implementation (dart:html OAuth plumbing); '
       'no visual surface — the coordinator logic is unit-tested instead',
+  'lib/services/aiin_connect_flow.dart':
+      'connect-flow service (pickers/persistence/reconnect); the visual '
+      'steps reuse the shared fa_ui picker pages covered by their goldens',
   'lib/apps/viewport_reporter.dart':
       'headless plumbing: wraps js_app_view/app_tile_host subtrees and '
       'reports sizes to the JS bridge — no standalone visual to snapshot',

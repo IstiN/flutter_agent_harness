@@ -8,7 +8,9 @@
 /// flow gates on `kIsWeb` before reaching these.
 library;
 
-bool launchAiinOAuthPopup(String url) => false;
+bool openAiinOAuthPopup() => false;
+
+void navigateAiinOAuthPopup(String url) {}
 
 void closeAiinOAuthPopup() {}
 

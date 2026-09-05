@@ -10,17 +10,29 @@ import 'package:fa/services/aiin_web_auth.dart';
 
 html.WindowBase? _aiinOAuthPopup;
 
-/// Opens the AIIN authorization page in a named popup window so
-/// `window.opener` survives on the callback page (`site/oauth/aiin.html`
-/// posts the code back through it). `url_launcher`'s externalApplication
-/// mode opens `_blank`, which browsers treat as `noopener`.
-bool launchAiinOAuthPopup(String url) {
+/// Opens a blank NAMED popup synchronously — this MUST run inside the tap
+/// handler: after any `await` the browser loses the user-gesture context
+/// and silently blocks `window.open`. The coordinator navigates the blank
+/// popup to the authorization URL once the server-side initiate resolves.
+///
+/// Returns false when the browser blocked the popup (`window.open` null).
+bool openAiinOAuthPopup() {
+  _aiinOAuthPopup?.close();
   _aiinOAuthPopup = html.window.open(
-    url,
+    'about:blank',
     'aiin_oauth',
     'width=520,height=720,scrollbars=yes,resizable=yes',
   );
-  return true;
+  return _aiinOAuthPopup != null;
+}
+
+/// Navigates the blank popup to [url] (same-origin about:blank → auth page).
+void navigateAiinOAuthPopup(String url) {
+  try {
+    _aiinOAuthPopup?.location.href = url;
+  } on Object {
+    // The popup was closed by the user before the initiate resolved.
+  }
 }
 
 /// Closes the AIIN OAuth popup, if any.
