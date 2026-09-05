@@ -210,6 +210,12 @@ hub mail is drained into the agent loop as steering messages; `/dap` and
 the `dap_*` tools drive the connection. See [docs/dap.md](docs/dap.md)
 for the protocol, the hub server, and an end-to-end setup walkthrough.
 
+## Browser extension
+
+`browser_ext/` pairs a local `fa` with Chrome over a loopback WebSocket
+bridge — or runs the agent fully self-contained in the extension's
+service worker: [docs/browser-extension.md](docs/browser-extension.md).
+
 ## Development
 
 ```bash
