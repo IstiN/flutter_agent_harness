@@ -50,6 +50,10 @@ Future<bool> runAiinConnectFlow({
   /// navigator (defaults come from the conditional dart:html impl).
   bool Function()? aiinOpenPopupFn,
   void Function(String url)? aiinNavigatePopupFn,
+
+  /// Injectable `/v1/models` fetcher (tests) — defaults to the live fetch.
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
 }) async {
   if (kIsWeb) {
     // One-click web connect: a popup OAuth, no loopback server needed
@@ -63,9 +67,15 @@ Future<bool> runAiinConnectFlow({
       debugPrint('[AIIN web] $message');
     }
 
+    if (!context.mounted) return false;
+    final idp = await _pickAiinIdp(context, client: aiinHttpClient);
+    if (idp == null) return false;
+    if (!context.mounted) return false;
     final coordinator = AiinWebAuthCoordinator.instance;
     final result = await coordinator.connect(
-      providerFn: () => _preferredAiinProvider(aiinHttpClient),
+      // Resolved in place — the provider choice is known at the picker tap,
+      // and connect() opens the popup before anything else.
+      providerFn: () async => idp,
       onStatus: webStatus,
       client: aiinHttpClient,
       openFn: aiinOpenPopupFn,
@@ -90,6 +100,7 @@ Future<bool> runAiinConnectFlow({
           sessionKeysStore: sessionKeysStore,
           keychainStore: keychainStore,
           apiKey: pasted,
+          aiinModelsFetcher: aiinModelsFetcher,
         );
       }
       return false;
@@ -104,6 +115,7 @@ Future<bool> runAiinConnectFlow({
       keychainStore: keychainStore,
       apiKey: result.apiKey.raw,
       accountLabel: result.email,
+      aiinModelsFetcher: aiinModelsFetcher,
     );
   }
   final desktop = !kIsWeb &&
@@ -126,14 +138,20 @@ Future<bool> runAiinConnectFlow({
       sessionKeysStore: sessionKeysStore,
       keychainStore: keychainStore,
       apiKey: pasted,
+      aiinModelsFetcher: aiinModelsFetcher,
     );
   }
+
+  if (!context.mounted) return false;
+  final idp = await _pickAiinIdp(context, client: aiinHttpClient);
+  if (idp == null) return false;
+  if (!context.mounted) return false;
 
   // Preflight: the AIIN proxy rejects un-allowlisted redirect URIs; detect
   // that BEFORE bouncing the user through the browser.
   try {
     await initiateAiinOAuth(
-      provider: await _preferredAiinProvider(aiinHttpClient),
+      provider: idp,
       redirectUri: 'http://127.0.0.1:9/callback',
       client: aiinHttpClient,
     );
@@ -169,7 +187,7 @@ Future<bool> runAiinConnectFlow({
   final result = aiinConnectFn != null
       ? await aiinConnectFn()
       : await runAiinConnectCliFlow(
-          provider: await _preferredAiinProvider(aiinHttpClient),
+          provider: idp,
           onStatus: (message) => debugPrint('[AIIN] $message'),
           openBrowserFn: (url) => url_launcher.launchUrl(
             Uri.parse(url),
@@ -187,6 +205,7 @@ Future<bool> runAiinConnectFlow({
     keychainStore: keychainStore,
     apiKey: result.apiKey.raw,
     accountLabel: result.email,
+    aiinModelsFetcher: aiinModelsFetcher,
   );
 }
 
@@ -203,13 +222,17 @@ Future<bool> _finishAiinConnect(
   required KeychainStore? keychainStore,
   required String apiKey,
   String? accountLabel,
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
 }) async {
   // ── Pick a model (public /v1/models on api.aiin.by) ─────────────────
   const baseUrl = aiinDefaultChatBaseUrl;
   final key = apiKey;
   List<String> models = const [];
   try {
-    models = (await fetchModelsForEndpoint(baseUrl, apiKey: key)).$1;
+    models = aiinModelsFetcher != null
+        ? await aiinModelsFetcher(baseUrl, apiKey: key)
+        : (await fetchModelsForEndpoint(baseUrl, apiKey: key)).$1;
   } on Object {
     // Network error — the picker opens empty and takes a manual id.
   }
@@ -361,36 +384,133 @@ class _AiinKeyPasteDialogState extends State<_AiinKeyPasteDialog> {
   }
 }
 
-/// The identity provider to sign in with: google when the AIIN service
-/// offers it (its default), else the first offered provider.
-Future<String> _preferredAiinProvider([http.Client? client]) async {
+/// Human labels for the identity providers the AIIN service offers.
+const _aiinIdpLabels = {
+  'google': 'Google',
+  'github': 'GitHub',
+  'microsoft': 'Microsoft',
+  'yandex': 'Yandex',
+  'mailru': 'Mail.ru',
+  'telegram': 'Telegram',
+};
+
+String _aiinIdpLabel(String id) =>
+    _aiinIdpLabels[id] ??
+    id.substring(0, 1).toUpperCase() + id.substring(1);
+
+/// Lets the user choose the identity provider to sign in with (the AIIN
+/// service offers several: google, github, microsoft, yandex, mailru,
+/// telegram). Auto-picks google when the service offers it alone or the
+/// list cannot be fetched. Returns null on cancel.
+Future<String?> _pickAiinIdp(
+  BuildContext context, {
+  http.Client? client,
+}) async {
+  List<String> providers = const ['google'];
   try {
-    final providers = await fetchAiinOAuthProviders(client: client);
-    if (providers.contains('google')) return 'google';
-    if (providers.isNotEmpty) return providers.first;
+    providers = await fetchAiinOAuthProviders(client: client);
   } on Object {
-    // Offline / standalone — google is the documented default.
+    // Offline — google is the documented default.
   }
-  return aiinDefaultOAuthProvider;
+  if (providers.isEmpty) providers = const ['google'];
+  if (!context.mounted) return null;
+  if (providers.length == 1) return providers.single;
+  return pushFaPage<String>(
+    context,
+    _AiinIdpPickerPage(providers: providers),
+  );
+}
+
+/// The AIIN identity-provider picker.
+class _AiinIdpPickerPage extends StatelessWidget {
+  const _AiinIdpPickerPage({required this.providers});
+
+  final List<String> providers;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Sign in with')),
+      body: SafeArea(
+        child: ListView(
+          children: [
+            for (final id in providers)
+              ListTile(
+                title: Text(_aiinIdpLabel(id)),
+                subtitle: id == 'google'
+                    ? const Text('recommended')
+                    : null,
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).pop(id),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// The AIIN model picker: the fetched id list with a manual-entry row.
-class _AiinModelPickerPage extends StatelessWidget {
+class _AiinModelPickerPage extends StatefulWidget {
   const _AiinModelPickerPage({required this.models});
 
   final List<String> models;
 
   @override
+  State<_AiinModelPickerPage> createState() => _AiinModelPickerPageState();
+}
+
+class _AiinModelPickerPageState extends State<_AiinModelPickerPage> {
+  String _query = '';
+
+  @override
   Widget build(BuildContext context) {
+    final models = widget.models;
     return Scaffold(
       appBar: AppBar(title: const Text('AIIN model')),
       body: SafeArea(
         child: models.isEmpty
             ? const _AiinManualModelEntry()
-            : _AiinModelList(models: models),
+            : Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: TextField(
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        hintText: 'Filter models…',
+                      ),
+                      onChanged: (value) =>
+                          setState(() => _query = value.trim().toLowerCase()),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _query.isEmpty
+                            ? '${models.length} models'
+                            : '${_filtered(models).length} of ${models.length}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: _AiinModelList(models: _filtered(models)),
+                  ),
+                ],
+              ),
       ),
     );
   }
+
+  List<String> _filtered(List<String> models) => _query.isEmpty
+      ? models
+      : models
+            .where((id) => id.toLowerCase().contains(_query))
+            .toList(growable: false);
 }
 
 class _AiinModelList extends StatelessWidget {

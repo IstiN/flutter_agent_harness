@@ -18,13 +18,15 @@ html.WindowBase? _aiinOAuthPopup;
 /// Returns false when the browser blocked the popup (`window.open` null).
 bool openAiinOAuthPopup() {
   _aiinOAuthPopup?.close();
-  final popup = html.window.open(
+  // dart:html types open() non-nullable, but a popup blocker still yields
+  // null at runtime — go through dynamic to keep the runtime check.
+  final dynamic popup = html.window.open(
     'about:blank',
     'aiin_oauth',
     'width=520,height=720,scrollbars=yes,resizable=yes',
   );
-  _aiinOAuthPopup = popup;
   if (popup == null) return false;
+  _aiinOAuthPopup = popup as html.WindowBase;
   // Paint the blank document right away — an unpainted about:blank popup
   // is a white window for the whole initiate round-trip.
   try {
