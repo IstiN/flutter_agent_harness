@@ -163,6 +163,24 @@ abstract class TrajectoryStrings {
   String get layoutToolsUpdated;
   String get layoutSystemPromptAndToolsUpdated;
   String get layoutCompactionInterrupted;
+
+  String get headerAria;
+  String headerSession(String when);
+  String get headerClose;
+  String statsTurns(int count);
+  String statsDuration(String value);
+  String statsTokensIn(String value);
+  String statsTokensOut(String value);
+  String searchMatchPosition(int current, int total);
+  String get searchPreviousMatch;
+  String get searchNextMatch;
+  String get filterMessages;
+  String get filterTools;
+  String get filterErrors;
+  String get filterSystem;
+  String get switcherChat;
+  String get switcherTrajectory;
+  String get detailsPanePlaceholder;
 }
 
 /// Built-in English trajectory strings.
@@ -430,6 +448,40 @@ class TrajectoryStringsEn extends TrajectoryStrings {
   @override
   String get layoutCompactionInterrupted =>
       'Compaction was interrupted before completion.';
+  @override
+  String get headerAria => 'Trajectory header';
+  @override
+  String headerSession(String when) => 'Session $when';
+  @override
+  String get headerClose => 'Close trajectory';
+  @override
+  String statsTurns(int count) => count == 1 ? '1 turn' : '$count turns';
+  @override
+  String statsDuration(String value) => 'Total $value';
+  @override
+  String statsTokensIn(String value) => 'In $value';
+  @override
+  String statsTokensOut(String value) => 'Out $value';
+  @override
+  String searchMatchPosition(int current, int total) => '$current of $total';
+  @override
+  String get searchPreviousMatch => 'Previous match';
+  @override
+  String get searchNextMatch => 'Next match';
+  @override
+  String get filterMessages => 'Messages';
+  @override
+  String get filterTools => 'Tools';
+  @override
+  String get filterErrors => 'Errors';
+  @override
+  String get filterSystem => 'System';
+  @override
+  String get switcherChat => 'Chat';
+  @override
+  String get switcherTrajectory => 'Trajectory';
+  @override
+  String get detailsPanePlaceholder => 'Select a record to inspect';
 }
 
 /// Built-in Russian trajectory strings.
@@ -702,6 +754,41 @@ class TrajectoryStringsRu extends TrajectoryStrings {
   @override
   String get layoutCompactionInterrupted =>
       'Сжатие было прервано до завершения.';
+
+  @override
+  String get headerAria => 'Заголовок траектории';
+  @override
+  String headerSession(String when) => 'Сессия $when';
+  @override
+  String get headerClose => 'Закрыть траекторию';
+  @override
+  String statsTurns(int count) => _ruPlural(count, 'ход', 'хода', 'ходов');
+  @override
+  String statsDuration(String value) => 'Всего $value';
+  @override
+  String statsTokensIn(String value) => 'Ввод $value';
+  @override
+  String statsTokensOut(String value) => 'Вывод $value';
+  @override
+  String searchMatchPosition(int current, int total) => '$current из $total';
+  @override
+  String get searchPreviousMatch => 'Предыдущее совпадение';
+  @override
+  String get searchNextMatch => 'Следующее совпадение';
+  @override
+  String get filterMessages => 'Сообщения';
+  @override
+  String get filterTools => 'Инструменты';
+  @override
+  String get filterErrors => 'Ошибки';
+  @override
+  String get filterSystem => 'Система';
+  @override
+  String get switcherChat => 'Чат';
+  @override
+  String get switcherTrajectory => 'Траектория';
+  @override
+  String get detailsPanePlaceholder => 'Выберите запись для просмотра';
 }
 
 /// Russian plural forms: one / few / many.

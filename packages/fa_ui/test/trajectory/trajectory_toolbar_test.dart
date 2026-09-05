@@ -25,8 +25,8 @@ void main() {
     expect(find.byTooltip('Use actual duration'), findsOneWidget);
     expect(find.byTooltip('Collapse turns'), findsOneWidget);
     expect(find.byTooltip('Collapse calls'), findsOneWidget);
-    expect(find.byType(TextField), findsOneWidget);
-    expect(find.byIcon(Icons.search), findsOneWidget);
+    // The search field lives in the full-screen header, not this strip.
+    expect(find.byType(TextField), findsNothing);
     controller.dispose();
   });
 
@@ -39,7 +39,6 @@ void main() {
     )) {
       expect(button.onPressed, isNull);
     }
-    expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
     controller.dispose();
   });
 
@@ -84,15 +83,4 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('search field feeds the controller query immediately', (
-    tester,
-  ) async {
-    final controller = fixtureController();
-    await _pump(tester, controller);
-
-    await tester.enterText(find.byType(TextField), 'deploy');
-    expect(controller.searchQuery, 'deploy');
-    expect(controller.searchMatchRecordIds, isNotNull);
-    controller.dispose();
-  });
 }

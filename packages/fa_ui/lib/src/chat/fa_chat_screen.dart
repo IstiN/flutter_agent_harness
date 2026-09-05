@@ -17,14 +17,17 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         AskAnswer,
         AskQuestion,
         MemoryExecutionEnv,
-        RequestSecretResult;
+        RequestSecretResult,
+        TrajectorySnapshot;
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:flutter_chat_ui/flutter_chat_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../theme/app_theme.dart';
 import '../theme/fa_ui_theme.dart';
+import '../trajectory/trajectory_controller.dart';
 import '../trajectory/trajectory_panel.dart';
+import '../trajectory/trajectory_strings.dart';
 import 'approval_ui.dart';
 import 'ask_ui.dart';
 import 'chat_composer.dart';
@@ -201,6 +204,58 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
 
+  /// Screen-level trajectory state (AC2/E6): one controller per service,
+  /// alive for the screen's lifetime so switching Chat<->Trajectory and
+  /// resizing wide<->narrow never lose scroll, selection, or filters.
+  TrajectoryController? _trajectoryController;
+  StreamSubscription<TrajectorySnapshot>? _trajectorySubscription;
+  bool _trajectoryLoaded = false;
+
+  /// Whether the narrow layout currently shows the trajectory page.
+  bool _showTrajectory = false;
+
+  /// The screen-level trajectory controller, created (and subscribed to the
+  /// service's snapshot stream) on first use.
+  TrajectoryController get _trajectory {
+    if (_trajectoryController == null) {
+      _trajectoryController = TrajectoryController();
+      _trajectorySubscription = widget.service.trajectory.listen(
+        _onTrajectorySnapshot,
+      );
+    }
+    return _trajectoryController!;
+  }
+
+  void _onTrajectorySnapshot(TrajectorySnapshot snapshot) {
+    _trajectoryController?.updateSnapshot(snapshot);
+    if (_trajectoryLoaded) return;
+    _trajectoryLoaded = true;
+    if (mounted) setState(() {});
+  }
+
+  void _unbindTrajectory() {
+    _trajectorySubscription?.cancel();
+    _trajectorySubscription = null;
+    _trajectoryController?.dispose();
+    _trajectoryController = null;
+    _trajectoryLoaded = false;
+    _showTrajectory = false;
+  }
+
+  /// Wide entry: pushes the full-screen master-detail route (AC1).
+  void _openTrajectoryRoute() {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => TrajectoryScreen(
+          controller: _trajectory,
+          loaded: _trajectoryLoaded,
+          onClose: () => Navigator.pop(context),
+        ),
+      ),
+    );
+  }
+
   /// The files panel content builder: the constructor override, else the
   /// host hook.
   WidgetBuilder? get _fileBrowserBuilder =>
@@ -228,6 +283,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     _chatController = InMemoryChatController();
     _chatScrollController.addListener(_trackNearBottom);
     _subscribeToService(widget.service);
+    if (widget.features.trajectory) _trajectory;
     _isStreaming = widget.service.isStreaming;
     _error = widget.service.error;
     _syncMessages();
@@ -240,6 +296,8 @@ class _FaChatScreenState extends State<FaChatScreen>
       // The host swapped sessions (close/switch): re-subscribe and re-sync.
       _unsubscribeFromService(oldWidget.service);
       _subscribeToService(widget.service);
+      _unbindTrajectory();
+      if (widget.features.trajectory) _trajectory;
       _isStreaming = widget.service.isStreaming;
       _error = widget.service.error;
       _syncMessages();
@@ -329,6 +387,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   void dispose() {
     _syncDebounce?.cancel();
     _chatScrollController.dispose();
+    _unbindTrajectory();
     _unsubscribeFromService(widget.service);
     _chatController.dispose();
     super.dispose();
@@ -745,17 +804,30 @@ class _FaChatScreenState extends State<FaChatScreen>
                     tooltip: strings.chatCopySessionTooltip,
                     onPressed: _copySession,
                   ),
-                if (widget.features.trajectory)
+                // Wide: the app-bar entry pushes the full-screen
+                // master-detail route (AC1). Narrow uses the switcher
+                // below the app bar instead.
+                if (widget.features.trajectory && isWide)
                   IconButton(
                     icon: const Icon(Icons.timeline),
                     tooltip: strings.chatTrajectoryTooltip,
-                    onPressed: () =>
-                        openTrajectoryPanel(context, service: widget.service),
+                    onPressed: _openTrajectoryRoute,
                   ),
                 // Settings icon removed — settings are accessible from the
                 // sidebar nav and the apps panel (prototype has no settings
                 // in the chat tab).
               ],
+              // Narrow: the Chat | Trajectory switcher sits in the app
+              // bar's bottom slot and swaps the screen body.
+              bottom: widget.features.trajectory && !isWide
+                  ? PreferredSize(
+                      preferredSize: const Size.fromHeight(52),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                        child: Center(child: _trajectorySwitcher(context)),
+                      ),
+                    )
+                  : null,
             )
           : null,
       endDrawer: isWide || fileBrowserBuilder == null
@@ -764,18 +836,78 @@ class _FaChatScreenState extends State<FaChatScreen>
               width: kFaChatFilesPanelWidth,
               child: SafeArea(child: fileBrowserBuilder(context)),
             ),
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(child: _buildChatBody(context)),
-          if (isWide && _filesPanelOpen && fileBrowserBuilder != null) ...[
-            const VerticalDivider(width: 1),
-            SizedBox(
-              width: kFaChatFilesPanelWidth,
-              child: fileBrowserBuilder(context),
+      body: !isWide && widget.features.trajectory
+          ? PopScope(
+              canPop: !_showTrajectory,
+              onPopInvokedWithResult: (didPop, _) {
+                if (!didPop) setState(() => _showTrajectory = false);
+              },
+              child: IndexedStack(
+                index: _showTrajectory ? 1 : 0,
+                children: [
+                  _buildChatBody(context),
+                  TrajectoryScreen(
+                    controller: _trajectory,
+                    loaded: _trajectoryLoaded,
+                    onClose: () => setState(() => _showTrajectory = false),
+                  ),
+                ],
+              ),
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _buildChatBody(context)),
+                if (isWide &&
+                    _filesPanelOpen &&
+                    fileBrowserBuilder != null) ...[
+                  const VerticalDivider(width: 1),
+                  SizedBox(
+                    width: kFaChatFilesPanelWidth,
+                    child: fileBrowserBuilder(context),
+                  ),
+                ],
+              ],
             ),
-          ],
-        ],
+    );
+  }
+
+  /// The narrow Chat | Trajectory segmented switcher (app-bar bottom
+  /// slot); swaps the screen body between the transcript and the
+  /// trajectory page. Controller state lives at screen level, so the swap
+  /// never loses scroll, selection, or filters (AC2/E6).
+  Widget _trajectorySwitcher(BuildContext context) {
+    final trajectoryStrings = TrajectoryStrings.of(context);
+    final colors = FahColors.of(context);
+    return SegmentedButton<bool>(
+      segments: [
+        ButtonSegment(
+          value: false,
+          label: Text(trajectoryStrings.switcherChat),
+        ),
+        ButtonSegment(
+          value: true,
+          label: Text(trajectoryStrings.switcherTrajectory),
+        ),
+      ],
+      selected: {_showTrajectory},
+      showSelectedIcon: false,
+      onSelectionChanged: (selection) =>
+          setState(() => _showTrajectory = selection.first),
+      style: ButtonStyle(
+        visualDensity: VisualDensity.compact,
+        side: WidgetStatePropertyAll(BorderSide(color: colors.border)),
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected) ? colors.panelAlt : null,
+        ),
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected) ? colors.text : colors.dim,
+        ),
+        textStyle: const WidgetStatePropertyAll(
+          TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
       ),
     );
   }

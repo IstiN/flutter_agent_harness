@@ -220,4 +220,204 @@ void main() {
       expect(controller.takeRecordFocus(), isNull);
     });
   });
+
+  group('ledger filters', () {
+    test('every chip on returns the layout unchanged', () {
+      final controller = fixtureController();
+      addTearDown(controller.dispose);
+      expect(controller.filters.length, TrajectoryLedgerFilter.values.length);
+      final layout = [
+        for (final turn in deriveTrajectoryLayout(buildFixtureSnapshot()))
+          for (final group in turn.groups) ...group.cells,
+      ];
+      final display = [
+        for (final turn in controller.turns)
+          for (final group in turn.groups) ...group.cells,
+      ];
+      expect(
+        [for (final cell in display) cell.recordId],
+        [for (final cell in layout) cell.recordId],
+      );
+    });
+
+    test('toggling a chip filters the display turns, not the records', () {
+      final controller = fixtureController();
+      addTearDown(controller.dispose);
+
+      controller.toggleFilter(TrajectoryLedgerFilter.messages);
+      final cells = [
+        for (final turn in controller.turns)
+          for (final group in turn.groups) ...group.cells,
+      ];
+      expect(cells, hasLength(1));
+      expect(cells.single.kind, TrajectoryCellKind.tool);
+      // The underlying layout and record list stay complete.
+      expect(controller.records, hasLength(4));
+      expect(deriveTrajectoryLayout(buildFixtureSnapshot()).length,
+          controller.turns.length);
+
+      controller.toggleFilter(TrajectoryLedgerFilter.messages);
+      expect(controller.filters.length, TrajectoryLedgerFilter.values.length);
+    });
+
+    test('the errors chip keeps failed rows visible across categories', () {
+      final at = DateTime.utc(2026, 1, 1, 12);
+      final builder = TrajectorySnapshotBuilder();
+      builder
+        ..append(
+          MessageRecord(
+            id: 'u1',
+            parentId: null,
+            timestamp: at,
+            message: UserMessage.text('go'),
+          ),
+        )
+        ..append(
+          MessageRecord(
+            id: 'a1',
+            parentId: 'u1',
+            timestamp: at,
+            message: AssistantMessage(
+              content: [
+                const ToolCall(id: 'c1', name: 'bash', arguments: {}),
+              ],
+              api: 'anthropic-messages',
+              provider: 'anthropic',
+              model: 'claude-test',
+              usage: const Usage(
+                input: 10,
+                output: 5,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 15,
+                cost: UsageCost(),
+              ),
+              stopReason: StopReason.toolUse,
+              timestamp: at,
+            ),
+          ),
+        )
+        ..append(
+          MessageRecord(
+            id: 'r1',
+            parentId: 'a1',
+            timestamp: at,
+            message: ToolResultMessage(
+              toolCallId: 'c1',
+              toolName: 'bash',
+              content: const [TextContent(text: 'boom')],
+              isError: true,
+              timestamp: at,
+            ),
+          ),
+        );
+      final controller = TrajectoryController(initial: builder.build());
+      addTearDown(controller.dispose);
+      expect(controller.records, hasLength(3));
+
+      controller.toggleFilter(TrajectoryLedgerFilter.messages);
+      controller.toggleFilter(TrajectoryLedgerFilter.tools);
+      final cells = [
+        for (final turn in controller.turns)
+          for (final group in turn.groups) ...group.cells,
+      ];
+      // The failed tool result survives even with its category off.
+      expect(cells, hasLength(1));
+      expect(cells.single.kind, TrajectoryCellKind.tool);
+    });
+  });
+
+  group('search match navigation', () {
+    test('order, current index, and wrap-around stepping', () {
+      final controller = fixtureController();
+      addTearDown(controller.dispose);
+
+      expect(controller.currentMatchIndex, isNull);
+      controller.searchQuery = 'deploy';
+      final order = controller.searchMatchOrder;
+      expect(order.length, greaterThanOrEqualTo(2));
+      expect(controller.currentMatchIndex, 0);
+
+      controller.nextSearchMatch();
+      expect(controller.currentMatchIndex, 1);
+      expect(controller.selectedRecordId, order[1]);
+
+      controller.previousSearchMatch();
+      expect(controller.currentMatchIndex, 0);
+      expect(controller.selectedRecordId, order[0]);
+
+      // Wraps both ways.
+      controller.previousSearchMatch();
+      expect(controller.currentMatchIndex, order.length - 1);
+      controller.nextSearchMatch();
+      expect(controller.currentMatchIndex, 0);
+    });
+
+    testWidgets('a snapshot change clamps the position into the new matches', (
+      tester,
+    ) async {
+      final controller = fixtureController();
+      addTearDown(controller.dispose);
+
+      controller.searchQuery = 'deploy';
+      final count = controller.searchMatchOrder.length;
+      for (var i = 0; i < count - 1; i++) {
+        controller.nextSearchMatch();
+      }
+      expect(controller.currentMatchIndex, count - 1);
+
+      // Re-applying the same snapshot keeps the index in range.
+      controller.updateSnapshot(buildFixtureSnapshot());
+      await tester.pump(const Duration(milliseconds: 100)); // debounce
+      expect(controller.currentMatchIndex, isNotNull);
+      expect(
+        controller.currentMatchIndex,
+        lessThan(controller.searchMatchOrder.length),
+      );
+      // Two throttled-index cycles re-arm the 3s window timer; pump past it.
+      await tester.pump(const Duration(seconds: 7));
+    });
+  });
+
+  group('session stats', () {
+    test('rolls up turns, tokens, and start time from the snapshot', () {
+      final controller = fixtureController();
+      addTearDown(controller.dispose);
+
+      final stats = controller.stats;
+      expect(stats.turnCount, 1);
+      // Two assistant steps at 100 in / 20 out.
+      expect(stats.inputTokens, 200);
+      expect(stats.outputTokens, 40);
+      // History-replayed records carry no request timing; the label only
+      // appears for live event-captured requests.
+      expect(stats.startedAt, isNull);
+      // The fixture's spaced timestamps project real step durations.
+      expect(stats.totalDuration, greaterThan(Duration.zero));
+    });
+
+    test('empty snapshots produce the zero stats', () {
+      final controller = TrajectoryController();
+      addTearDown(controller.dispose);
+      expect(controller.stats.turnCount, 0);
+      expect(controller.stats.totalDuration, Duration.zero);
+      expect(controller.stats.inputTokens, 0);
+      expect(controller.stats.outputTokens, 0);
+      expect(controller.stats.startedAt, isNull);
+    });
+  });
+
+  group('expanded rows', () {
+    test('toggling flips exactly one id', () {
+      final controller = fixtureController();
+      addTearDown(controller.dispose);
+      final id = controller.records.first.recordId;
+
+      expect(controller.expandedRecordIds, isEmpty);
+      controller.toggleExpandedRow(id);
+      expect(controller.expandedRecordIds, {id});
+      controller.toggleExpandedRow(id);
+      expect(controller.expandedRecordIds, isEmpty);
+    });
+  });
 }
