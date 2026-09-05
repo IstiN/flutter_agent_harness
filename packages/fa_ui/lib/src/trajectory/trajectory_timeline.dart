@@ -23,6 +23,23 @@ const double trajectoryTimelineLaneStride = 14;
 const double trajectoryTimelineSpanHeight = 8;
 const double trajectoryTimelineMinimumSpanPx = 2;
 
+/// Vertical bands under the lanes: the tick ruler, then the lane legend.
+const double trajectoryTimelineRulerHeight = 14;
+const double trajectoryTimelineLegendHeight = 14;
+
+/// Default strip height: lanes, ruler, and legend.
+const double trajectoryTimelineDefaultHeight =
+    trajectoryTimelineLanesHeight +
+    trajectoryTimelineRulerHeight +
+    trajectoryTimelineLegendHeight;
+
+/// Bars narrower than this skip the on-bar duration label.
+const double trajectoryTimelineBarLabelMinPx = 36;
+
+/// Width of the pulsing "in progress" bar drawn over running calls and
+/// the streaming assistant.
+const double trajectoryTimelineRunningSpanPx = 12;
+
 /// Zero-width spans render at this fixed width in `time` mode.
 const double trajectoryTimelineTimeSpanPx = 8;
 const double trajectoryTimelineMinimumDragPx = 3;
@@ -143,8 +160,10 @@ TrajectoryTimelineViewport trajectoryTimelinePanned({
 );
 
 /// The rendered [Rect] of [span]: lane row from the span's lane, horizontal
-/// position from the viewport fraction, clamped to the minimum span width
-/// (fixed width for zero-width spans in `time` mode).
+/// position from the viewport fraction. The rect is always contained in
+/// the track ([Rect.zero] when the span lies entirely outside the
+/// viewport) with a minimum width so sub-pixel spans stay visible (fixed
+/// width for zero-width spans in `time` mode).
 Rect trajectoryTimelineSpanRect(
   TrajectoryTimelineSpan span, {
   required TrajectoryTimelineViewport viewport,
@@ -153,17 +172,103 @@ Rect trajectoryTimelineSpanRect(
 }) {
   final left = viewport.toPx(span.start, trackWidth);
   final right = viewport.toPx(span.end, trackWidth);
-  final width = right > left
-      ? math.max(right - left, trajectoryTimelineMinimumSpanPx)
-      : (mode == TrajectoryTimelineMode.time
-            ? trajectoryTimelineTimeSpanPx
-            : trajectoryTimelineMinimumSpanPx);
+  if (right < 0 || left > trackWidth) return Rect.zero;
+  final minWidth = right > left || mode != TrajectoryTimelineMode.time
+      ? trajectoryTimelineMinimumSpanPx
+      : trajectoryTimelineTimeSpanPx;
+  var x0 = left.clamp(0.0, trackWidth);
+  var x1 = right.clamp(0.0, trackWidth);
+  if (x1 - x0 < minWidth) {
+    // Anchor the minimum window at the span's pixel midpoint so the bar
+    // stays visually centered, then keep it inside the track.
+    final mid = (left + right) / 2;
+    x0 = (mid - minWidth / 2).clamp(0.0, math.max(0.0, trackWidth - minWidth));
+    x1 = x0 + minWidth;
+  }
   return Rect.fromLTWH(
-    trajectoryTimelineLabelGutter + left,
+    trajectoryTimelineLabelGutter + x0,
     span.lane * trajectoryTimelineLaneStride,
-    width,
+    x1 - x0,
     trajectoryTimelineSpanHeight,
   );
+}
+
+/// One ruler tick: a domain position and its elapsed-since-start label.
+final class TrajectoryTimelineTick {
+  /// Creates a tick.
+  const TrajectoryTimelineTick({required this.domain, required this.label});
+
+  /// Domain value of the tick, a multiple of the adaptive step.
+  final double domain;
+
+  /// Elapsed offset from the model's start, formatted per the step unit.
+  final String label;
+}
+
+/// Candidate ruler steps — the 1-2-5 ladder through seconds, minutes,
+/// and hours. Milliseconds in the timed modes, record slots in sequence.
+const List<double> trajectoryTimelineRulerSteps = [
+  1, 2, 5, 10, 20, 50, 100, 200, 500, //
+  1000, 2000, 5000, 10000, 15000, 30000, //
+  60000, 120000, 300000, 600000, 900000, 1800000, //
+  3600000, 7200000, 10800000, 43200000, 86400000,
+];
+
+/// Formats a ruler offset (milliseconds) in [step]'s unit: ms / s / m / h.
+String _rulerLabel(double offset, double step) {
+  if (step < 1000) return '${offset.round()}ms';
+  if (step < 60000) return '${(offset / 1000).round()}s';
+  if (step < 3600000) return '${(offset / 60000).round()}m';
+  return '${(offset / 3600000).round()}h';
+}
+
+/// Adaptive ruler ticks over [viewport]: the coarsest 1-2-5 step that
+/// keeps at most seven marks (`span / step <= 6`), aligned to elapsed
+/// multiples of the model's start so labels stay stable while panning.
+List<TrajectoryTimelineTick> trajectoryTimelineRulerTicks({
+  required TrajectoryTimelineModel model,
+  required TrajectoryTimelineViewport viewport,
+  required TrajectoryTimelineMode mode,
+}) {
+  var step = trajectoryTimelineRulerSteps.last;
+  for (final candidate in trajectoryTimelineRulerSteps) {
+    if (viewport.duration / candidate <= 6) {
+      step = candidate;
+      break;
+    }
+  }
+  final first = ((viewport.start - model.start) / step).ceil();
+  final last = ((viewport.start + viewport.duration - model.start) / step)
+      .floor();
+  return [
+    for (var k = first; k <= last; k++)
+      TrajectoryTimelineTick(
+        domain: model.start + k * step,
+        label: mode == TrajectoryTimelineMode.sequence
+            ? '${(k * step).round()}'
+            : _rulerLabel(k * step, step),
+      ),
+  ];
+}
+
+/// An "in progress" marker painted as a pulsing bar: a running tool call
+/// (its span's domain range) or the streaming assistant (lane 1).
+final class TrajectoryTimelinePulse {
+  /// Creates a pulse.
+  const TrajectoryTimelinePulse({
+    required this.start,
+    required this.end,
+    required this.lane,
+  });
+
+  /// Domain start of the pulse.
+  final double start;
+
+  /// Domain end of the pulse (equal to [start] for zero-width markers).
+  final double end;
+
+  /// Lane row to paint on (2 tools, 1 model).
+  final int lane;
 }
 
 /// The TTFT share of an assistant's recorded generation time (used for the
@@ -216,9 +321,10 @@ Color _spanColor(TrajectoryCellKind kind, FahColors colors) => switch (kind) {
   TrajectoryCellKind.subtool => colors.pending.withValues(alpha: 0.6),
 };
 
-/// Paints the timeline: lane labels, turn boundaries, spans (with the
-/// assistant TTFT/decode split, selection/search dimming, hover and
-/// selected rings), and the selection overlay.
+/// Paints the timeline: lane labels, ruler ticks with grid lines, turn
+/// boundaries, spans (with the assistant TTFT/decode split, selection/
+/// search dimming, hover and selected rings), on-bar duration labels,
+/// in-progress pulses, the selection overlay, and the lane legend.
 class TrajectoryTimelinePainter extends CustomPainter {
   /// Creates a painter for one frame of timeline state.
   TrajectoryTimelinePainter({
@@ -236,6 +342,8 @@ class TrajectoryTimelinePainter extends CustomPainter {
     this.guideX,
     this.searchMatches,
     this.selectedRecordIndex,
+    this.pulses = const [],
+    this.pulsePhase = 0,
   });
 
   /// The full-domain timeline model.
@@ -281,6 +389,13 @@ class TrajectoryTimelinePainter extends CustomPainter {
   /// Ledger index of the selected record.
   final int? selectedRecordIndex;
 
+  /// In-progress markers (running calls, streaming assistant).
+  final List<TrajectoryTimelinePulse> pulses;
+
+  /// The pulse animation phase, `0..1`; frozen by the widget's
+  /// deterministic flag in goldens.
+  final double pulsePhase;
+
   TrajectoryTimelineViewport get _viewport =>
       viewport ?? TrajectoryTimelineViewport.full(model);
 
@@ -312,6 +427,7 @@ class TrajectoryTimelinePainter extends CustomPainter {
       size.width - trajectoryTimelineLabelGutter,
     );
     _paintLaneLabels(canvas);
+    _paintRuler(canvas, trackWidth);
     _paintTurnBoundaries(canvas, trackWidth);
     final guide = guideX;
     if (hoverIndex == null && guide != null) {
@@ -335,22 +451,164 @@ class TrajectoryTimelinePainter extends CustomPainter {
     if (dragging && draft != null) {
       _paintSelection(canvas, draft!, trackWidth, 0.18);
     }
+    _paintBarLabels(canvas, trackWidth);
+    _paintPulses(canvas, trackWidth);
+    _paintLegend(canvas, trackWidth);
+  }
+
+  TextPainter _text(String text, Color color, {double fontSize = 8}) =>
+      TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            color: color,
+            fontSize: fontSize,
+            fontFamily: fontFamily,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+
+  /// Ruler band under the lanes: baseline, tick marks with elapsed
+  /// labels, and grid lines through the lanes at each tick. Labels skip
+  /// when they would crowd or cross the track's right edge.
+  void _paintRuler(Canvas canvas, double trackWidth) {
+    final rightEdge = trajectoryTimelineLabelGutter + trackWidth;
+    final line = Paint()
+      ..color = colors.border
+      ..strokeWidth = 0.5;
+    canvas.drawLine(
+      Offset(trajectoryTimelineLabelGutter, trajectoryTimelineLanesHeight),
+      Offset(rightEdge, trajectoryTimelineLanesHeight),
+      line,
+    );
+    final grid = Paint()
+      ..color = colors.border.withValues(alpha: 0.35)
+      ..strokeWidth = 0.5;
+    var prevLabelRight = double.negativeInfinity;
+    for (final tick in trajectoryTimelineRulerTicks(
+      model: model,
+      viewport: _viewport,
+      mode: mode,
+    )) {
+      final x =
+          trajectoryTimelineLabelGutter +
+          _viewport.toPx(tick.domain, trackWidth);
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x, trajectoryTimelineLanesHeight),
+        grid,
+      );
+      canvas.drawLine(
+        Offset(x, trajectoryTimelineLanesHeight),
+        Offset(x, trajectoryTimelineLanesHeight + 3),
+        line,
+      );
+      final painter = _text(tick.label, colors.dim)..layout();
+      if (x + painter.width > rightEdge || x < prevLabelRight + 4) continue;
+      painter.paint(canvas, Offset(x + 2, trajectoryTimelineLanesHeight + 3));
+      prevLabelRight = x + painter.width;
+    }
+  }
+
+  /// Lane legend under the ruler: one color swatch + label per lane,
+  /// matching the dominant span tints (input/model indigo, tools pending).
+  void _paintLegend(Canvas canvas, double trackWidth) {
+    const swatch = 6.0;
+    final top =
+        trajectoryTimelineLanesHeight + trajectoryTimelineRulerHeight + 4;
+    final rightEdge = trajectoryTimelineLabelGutter + trackWidth;
+    var x = trajectoryTimelineLabelGutter;
+    for (var lane = 0; lane < laneLabels.length; lane++) {
+      final painter = _text(laneLabels[lane], colors.dim)..layout();
+      if (x + swatch + 4 + painter.width > rightEdge) break;
+      canvas.drawRect(
+        Rect.fromLTWH(x, top, swatch, swatch),
+        Paint()..color = lane == 2 ? colors.pending : colors.indigo,
+      );
+      painter.paint(
+        canvas,
+        Offset(x + swatch + 4, top + swatch / 2 - painter.height / 2),
+      );
+      x += swatch + 4 + painter.width + 12;
+    }
+  }
+
+  /// Duration labels centered on wide-enough bars (timed modes); crowded
+  /// lanes skip, and everything clips inside the track.
+  void _paintBarLabels(Canvas canvas, double trackWidth) {
+    if (mode == TrajectoryTimelineMode.sequence) return;
+    canvas.save();
+    canvas.clipRect(
+      Rect.fromLTWH(
+        trajectoryTimelineLabelGutter,
+        0,
+        trackWidth,
+        trajectoryTimelineLanesHeight,
+      ),
+    );
+    final laneLabelRight = List<double>.filled(3, double.negativeInfinity);
+    for (final span in model.spans) {
+      final rect = _rect(span, trackWidth);
+      if (rect.isEmpty || rect.width < trajectoryTimelineBarLabelMinPx) {
+        continue;
+      }
+      final painter = _text(
+        formatTimelineOffset(span.end - span.start),
+        colors.bg,
+      )..layout();
+      final left = rect.center.dx - painter.width / 2;
+      if (span.lane >= laneLabelRight.length ||
+          left < laneLabelRight[span.lane] + 4) {
+        continue;
+      }
+      painter.paint(canvas, Offset(left, rect.center.dy - painter.height / 2));
+      laneLabelRight[span.lane] = left + painter.width;
+    }
+    canvas.restore();
+  }
+
+  /// Pulsing "in progress" bars over running calls and the partial
+  /// assistant; never smaller than [trajectoryTimelineRunningSpanPx] and
+  /// always contained in the track.
+  void _paintPulses(Canvas canvas, double trackWidth) {
+    for (final pulse in pulses) {
+      final left = _viewport.toPx(pulse.start, trackWidth);
+      final right = _viewport.toPx(pulse.end, trackWidth);
+      if (right < 0 || left > trackWidth) continue;
+      final mid = (left + right) / 2;
+      final x0 = (mid - trajectoryTimelineRunningSpanPx / 2).clamp(
+        0.0,
+        math.max(0.0, trackWidth - trajectoryTimelineRunningSpanPx),
+      );
+      final rect = Rect.fromLTWH(
+        trajectoryTimelineLabelGutter + x0,
+        pulse.lane * trajectoryTimelineLaneStride - 2,
+        trajectoryTimelineRunningSpanPx,
+        trajectoryTimelineSpanHeight + 4,
+      );
+      final base = pulse.lane == 2 ? colors.pending : colors.indigo;
+      final glow = 0.5 + 0.5 * math.sin(2 * math.pi * pulsePhase);
+      final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(3));
+      canvas.drawRRect(
+        rrect,
+        Paint()..color = base.withValues(alpha: 0.25 + 0.55 * glow),
+      );
+      canvas.drawRRect(
+        rrect,
+        Paint()
+          ..color = base.withValues(alpha: 0.4 + 0.6 * glow)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+    }
   }
 
   void _paintLaneLabels(Canvas canvas) {
     final maxWidth = trajectoryTimelineLabelGutter - 8;
     for (var lane = 0; lane < laneLabels.length; lane++) {
-      final painter = TextPainter(
-        text: TextSpan(
-          text: laneLabels[lane],
-          style: TextStyle(
-            color: colors.dim,
-            fontSize: 9,
-            fontFamily: fontFamily,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout(maxWidth: maxWidth);
+      final painter = _text(laneLabels[lane], colors.dim, fontSize: 9)
+        ..layout(maxWidth: maxWidth);
       painter.paint(
         canvas,
         Offset(
@@ -386,6 +644,7 @@ class TrajectoryTimelinePainter extends CustomPainter {
     double trackWidth,
   ) {
     final rect = _rect(span, trackWidth);
+    if (rect.isEmpty) return;
     final base = span.isError ? colors.error : _spanColor(span.kind, colors);
     final opacity = _opacity(span);
     final record = span.index >= 1 && span.index <= records.length
@@ -440,9 +699,11 @@ class TrajectoryTimelinePainter extends CustomPainter {
     double fillAlpha,
   ) {
     final left =
-        trajectoryTimelineLabelGutter + _viewport.toPx(range.start, trackWidth);
+        trajectoryTimelineLabelGutter +
+        _viewport.toPx(range.start, trackWidth).clamp(0.0, trackWidth);
     final right =
-        trajectoryTimelineLabelGutter + _viewport.toPx(range.end, trackWidth);
+        trajectoryTimelineLabelGutter +
+        _viewport.toPx(range.end, trackWidth).clamp(0.0, trackWidth);
     canvas.drawRect(
       Rect.fromLTRB(left, 0, right, trajectoryTimelineLanesHeight),
       Paint()..color = colors.indigo.withValues(alpha: fillAlpha),
@@ -473,7 +734,9 @@ class TrajectoryTimelinePainter extends CustomPainter {
       oldDelegate.hoverIndex != hoverIndex ||
       oldDelegate.guideX != guideX ||
       oldDelegate.searchMatches != searchMatches ||
-      oldDelegate.selectedRecordIndex != selectedRecordIndex;
+      oldDelegate.selectedRecordIndex != selectedRecordIndex ||
+      oldDelegate.pulses != pulses ||
+      oldDelegate.pulsePhase != pulsePhase;
 
   @override
   bool operator ==(Object other) => identical(this, other);
@@ -487,28 +750,37 @@ class TrajectoryTimelinePainter extends CustomPainter {
 /// selection, hover tooltips, and search/selection dimming.
 ///
 /// Geometry: a 44px label gutter (Input / Model / Tools), a 36px lanes
-/// area, spans at `lane * 14px` with an 8px height. A null
-/// [TrajectoryController.timelineModel] renders a "No timing data"
-/// placeholder.
+/// area with spans at `lane * 14px` and an 8px height, a 14px tick ruler
+/// with grid lines and elapsed labels, and a 14px lane legend. Timed
+/// projections without anchored spans render nothing
+/// ([SizedBox.shrink]); a sequence projection without records renders a
+/// "No timing data" placeholder.
 class TrajectoryTimeline extends StatefulWidget {
   /// Creates a timeline bound to [controller].
   const TrajectoryTimeline({
     super.key,
     required this.controller,
-    this.height = 50,
+    this.height = trajectoryTimelineDefaultHeight,
   });
 
   /// The controller holding the timeline model and interaction state.
   final TrajectoryController controller;
 
-  /// Total strip height (lanes occupy the top 36px).
+  /// Total strip height (lanes, ruler, and legend bands).
   final double height;
+
+  /// Freezes the in-progress pulse at a fixed bright phase. Goldens and
+  /// deterministic tests set this before pumping: an endlessly repeating
+  /// animation would hang `pumpAndSettle` and drift between runs. Reset
+  /// to false afterwards (tear down in tests).
+  static bool deterministicPulse = false;
 
   @override
   State<TrajectoryTimeline> createState() => _TrajectoryTimelineState();
 }
 
-class _TrajectoryTimelineState extends State<TrajectoryTimeline> {
+class _TrajectoryTimelineState extends State<TrajectoryTimeline>
+    with SingleTickerProviderStateMixin {
   TrajectoryTimelineViewport? _viewport;
   TrajectoryTimelineModel? _viewportModel;
   int? _hoverIndex;
@@ -526,6 +798,13 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline> {
   Timer? _tooltipTimer;
   Timer? _edgePanTimer;
   final FocusNode focusNode = FocusNode();
+
+  /// Drives the in-progress pulse; repeats only while pulses are visible
+  /// and determinism is off.
+  late final AnimationController _pulseClock = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..addListener(() => setState(() {}));
 
   TrajectoryController get _controller => widget.controller;
 
@@ -551,6 +830,7 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline> {
     _controller.removeListener(_onControllerChanged);
     _tooltipTimer?.cancel();
     _edgePanTimer?.cancel();
+    _pulseClock.dispose();
     focusNode.dispose();
     super.dispose();
   }
@@ -589,6 +869,34 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline> {
     return TrajectoryTimeRange(start: start, end: start + width);
   }
 
+  /// In-progress markers: spans of tool calls still in the snapshot's
+  /// running set (synthetic running rows included), plus the streaming
+  /// assistant on the model lane in the timed modes.
+  List<TrajectoryTimelinePulse> _pulses(TrajectoryTimelineModel model) {
+    final running = {
+      for (final call in _controller.snapshot.runningCalls) call.callId,
+    };
+    final records = _controller.records;
+    final pulses = [
+      for (final span in model.spans)
+        if (span.index >= 1 && span.index <= records.length)
+          if (records[span.index - 1] case TrajectoryToolRecord(
+            callId: final id,
+          ) when running.contains(id))
+            TrajectoryTimelinePulse(
+              start: span.start,
+              end: span.end,
+              lane: span.lane,
+            ),
+    ];
+    final startedAt = _controller.snapshot.partial?.startedAt;
+    if (startedAt != null && _mode != TrajectoryTimelineMode.sequence) {
+      final ms = startedAt.millisecondsSinceEpoch.toDouble();
+      pulses.add(TrajectoryTimelinePulse(start: ms, end: ms, lane: 1));
+    }
+    return pulses;
+  }
+
   TrajectoryTimelineSpan? _spanAt(double x, double y) {
     final model = _viewportModel;
     if (model == null || y >= trajectoryTimelineLanesHeight) return null;
@@ -599,6 +907,7 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline> {
         mode: _mode,
         trackWidth: _trackWidth,
       );
+      if (rect.isEmpty) continue;
       if (x >= rect.left - 1 && x <= rect.right + 1) return span;
     }
     return null;
@@ -956,6 +1265,11 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline> {
         _viewport = trajectoryTimelineClampViewport(_viewport!, model, _mode);
       }
     }
+    // E8: a timed projection without anchored spans hides the strip
+    // entirely; only the sequence projection keeps the placeholder.
+    if (model == null && _mode != TrajectoryTimelineMode.sequence) {
+      return const SizedBox.shrink();
+    }
     final placeholder = Center(
       child: Text(
         strings.timelineNoTimingData,
@@ -992,6 +1306,15 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline> {
                             end: math.max(_draftStart!, _draftEnd!),
                           )
                         : null;
+                    final pulses = _pulses(model);
+                    final pulsing =
+                        pulses.isNotEmpty &&
+                        !TrajectoryTimeline.deterministicPulse;
+                    if (pulsing && !_pulseClock.isAnimating) {
+                      _pulseClock.repeat();
+                    } else if (!pulsing && _pulseClock.isAnimating) {
+                      _pulseClock.stop();
+                    }
                     final painter = TrajectoryTimelinePainter(
                       model: model,
                       records: controller.records,
@@ -1013,6 +1336,10 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline> {
                           ? null
                           : controller.searchMatchIndexes,
                       selectedRecordIndex: selectedIndex,
+                      pulses: pulses,
+                      pulsePhase: TrajectoryTimeline.deterministicPulse
+                          ? 0.25
+                          : _pulseClock.value,
                     );
                     return Stack(
                       children: [

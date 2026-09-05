@@ -66,7 +66,7 @@ Future<void> _openTab(WidgetTester tester, String label) async {
 void main() {
   setUp(resetTrajectoryTabHistory);
 
-  testWidgets('context record shows Summary, Preview, and empty Raw', (
+  testWidgets('context record shows Summary, Preview, and raw JSON', (
     tester,
   ) async {
     const record = TrajectoryContextRecord(
@@ -82,7 +82,7 @@ void main() {
     await _openTab(tester, 'Preview');
     expect(find.text('Working directory: ~/work/api'), findsOneWidget);
     await _openTab(tester, 'Raw');
-    expect(find.text('No content'), findsOneWidget);
+    expect(find.textContaining('"kind": "context"'), findsOneWidget);
   });
 
   testWidgets('failed assistant shows the error row and pending timings', (
@@ -221,5 +221,53 @@ void main() {
 
     await _openTab(tester, 'Timing');
     expect(find.text('Session timestamps (running)'), findsOneWidget);
+  });
+
+  testWidgets('huge payload collapses behind a size expander', (tester) async {
+    final blob = 'a' * (300 * 1024);
+    final record = TrajectoryToolRecord(
+      index: 6,
+      recordId: 'edge/tool-huge',
+      callId: 'c9',
+      parentCallId: null,
+      name: 'bash',
+      argsRaw: '{"blob":"$blob"}',
+      result: 'ok',
+      timeSeconds: const Duration(seconds: 1),
+      startedAt: _base,
+    );
+    await _open(tester, record);
+    await _openTab(tester, 'Payload');
+
+    // Collapsed: a size label instead of a 300 KiB widget tree.
+    expect(find.textContaining('Show content'), findsOneWidget);
+    expect(find.textContaining('aaaa'), findsNothing);
+
+    await tester.tap(find.textContaining('Show content'));
+    await tester.pumpAndSettle();
+
+    // Expanded: the full payload builds lazily.
+    expect(find.textContaining('aaaa'), findsOneWidget);
+    expect(find.textContaining('Show content'), findsNothing);
+  });
+
+  testWidgets('compacted without a summary hides Raw Output', (tester) async {
+    const record = TrajectoryCompactedRecord(
+      index: 7,
+      recordId: 'edge/compacted-empty',
+      text: 'preview',
+      summary: '',
+    );
+    await _open(tester, record);
+
+    expect(find.text('Raw Output'), findsNothing);
+  });
+
+  testWidgets('running assistant hides Timing when no timestamps exist', (
+    tester,
+  ) async {
+    await _open(tester, _assistant());
+
+    expect(find.text('Timing'), findsNothing);
   });
 }

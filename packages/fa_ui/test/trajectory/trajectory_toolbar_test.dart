@@ -82,5 +82,4 @@ void main() {
     expect(controller.collapsedAssistants, isEmpty);
     controller.dispose();
   });
-
 }

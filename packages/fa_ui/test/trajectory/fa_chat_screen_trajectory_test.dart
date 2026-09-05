@@ -65,7 +65,9 @@ Future<void> _pumpScreen(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
-    MaterialApp(home: FaChatScreen(service: service, features: features)),
+    MaterialApp(
+      home: FaChatScreen(service: service, features: features),
+    ),
   );
 }
 
@@ -137,7 +139,9 @@ void main() {
     service.feed.dispose();
   });
 
-  testWidgets('wide tap opens a full-screen route, not a dialog', (tester) async {
+  testWidgets('wide tap opens a full-screen route, not a dialog', (
+    tester,
+  ) async {
     final service = FakeChatService();
     await _pumpScreen(tester, service, size: const Size(1400, 1000));
 
@@ -163,7 +167,10 @@ void main() {
 
     await openTrajectory(tester);
 
-    final pageFind = find.descendant(of: find.byType(TrajectoryScreen), matching: find.byType(TextField));
+    final pageFind = find.descendant(
+      of: find.byType(TrajectoryScreen),
+      matching: find.byType(TextField),
+    );
     // Select a record via the search match navigation.
     await tester.enterText(pageFind, 'deploy');
     await tester.pump();

@@ -253,8 +253,10 @@ void main() {
       expect(cells.single.kind, TrajectoryCellKind.tool);
       // The underlying layout and record list stay complete.
       expect(controller.records, hasLength(4));
-      expect(deriveTrajectoryLayout(buildFixtureSnapshot()).length,
-          controller.turns.length);
+      expect(
+        deriveTrajectoryLayout(buildFixtureSnapshot()).length,
+        controller.turns.length,
+      );
 
       controller.toggleFilter(TrajectoryLedgerFilter.messages);
       expect(controller.filters.length, TrajectoryLedgerFilter.values.length);
@@ -278,9 +280,7 @@ void main() {
             parentId: 'u1',
             timestamp: at,
             message: AssistantMessage(
-              content: [
-                const ToolCall(id: 'c1', name: 'bash', arguments: {}),
-              ],
+              content: [const ToolCall(id: 'c1', name: 'bash', arguments: {})],
               api: 'anthropic-messages',
               provider: 'anthropic',
               model: 'claude-test',

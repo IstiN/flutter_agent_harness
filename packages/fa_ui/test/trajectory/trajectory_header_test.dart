@@ -42,7 +42,9 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('close affordance appears and fires with onClose', (tester) async {
+  testWidgets('close affordance appears and fires with onClose', (
+    tester,
+  ) async {
     final controller = fixtureController();
     var closed = false;
     await _pump(tester, controller, onClose: () => closed = true);
@@ -100,10 +102,7 @@ void main() {
     // System off: no fixture rows are system rows, nothing hides.
     await tester.tap(find.text('System'));
     await tester.pump();
-    expect(
-      controller.filters,
-      isNot(contains(TrajectoryLedgerFilter.system)),
-    );
+    expect(controller.filters, isNot(contains(TrajectoryLedgerFilter.system)));
     List<TrajectoryRecord> visibleCells() => [
       for (final turn in controller.turns)
         for (final group in turn.groups) ...group.cells,

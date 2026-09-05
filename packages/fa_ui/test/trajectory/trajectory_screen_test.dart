@@ -21,10 +21,7 @@ Future<void> _pump(
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     MaterialApp(
-      home: TrajectoryScreen(
-        controller: controller,
-        onClose: onClose ?? () {},
-      ),
+      home: TrajectoryScreen(controller: controller, onClose: onClose ?? () {}),
     ),
   );
   await tester.pump(); // let the autofocus/focus pass settle
@@ -41,7 +38,9 @@ void main() {
     expect(find.text('Select a record to inspect'), findsOneWidget);
 
     // Selecting a record binds the pane to its real tab content.
-    controller.selectRecord(recordIds(controller, TrajectoryCellKind.tool).first);
+    controller.selectRecord(
+      recordIds(controller, TrajectoryCellKind.tool).first,
+    );
     await tester.pump();
     expect(find.text('Select a record to inspect'), findsNothing);
     expect(find.byType(TabBar), findsOneWidget);
@@ -93,10 +92,12 @@ void main() {
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute<void>(
-                    builder: (_) =>
-                        TrajectoryScreen(controller: controller, onClose: () {
-                          Navigator.pop(context);
-                        }),
+                    builder: (_) => TrajectoryScreen(
+                      controller: controller,
+                      onClose: () {
+                        Navigator.pop(context);
+                      },
+                    ),
                   ),
                 ),
                 child: const Text('OPEN'),

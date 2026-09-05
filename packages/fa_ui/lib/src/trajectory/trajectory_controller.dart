@@ -288,8 +288,7 @@ class TrajectoryController extends ChangeNotifier {
     _searchMatches = _throttledIndex.search(_searchQuery);
     _searchMatchOrder = [
       for (final record in _records)
-        if (_searchMatches?.contains(record.recordId) ?? false)
-          record.recordId,
+        if (_searchMatches?.contains(record.recordId) ?? false) record.recordId,
     ];
     final count = _searchMatchOrder.length;
     if (count == 0) {
@@ -297,7 +296,9 @@ class TrajectoryController extends ChangeNotifier {
       return;
     }
     final index = _searchMatchIndex;
-    _searchMatchIndex = index == null ? 0 : (index >= count ? count - 1 : index);
+    _searchMatchIndex = index == null
+        ? 0
+        : (index >= count ? count - 1 : index);
   }
 
   /// Requests a one-shot scroll-to-record from the timeline; the table
@@ -397,15 +398,16 @@ List<TrajectoryTurnModel> applyTrajectoryFilters(
   return [
     for (final turn in turns)
       if ([
-        for (final group in turn.groups)
-          if (visible(group.cells) case final cells when cells.isNotEmpty)
-            TrajectoryGroupModel(
-              kind: group.kind,
-              stepNumber: group.stepNumber,
-              description: group.description,
-              cells: cells,
-            ),
-      ] case final groups when groups.isNotEmpty)
+            for (final group in turn.groups)
+              if (visible(group.cells) case final cells when cells.isNotEmpty)
+                TrajectoryGroupModel(
+                  kind: group.kind,
+                  stepNumber: group.stepNumber,
+                  description: group.description,
+                  cells: cells,
+                ),
+          ]
+          case final groups when groups.isNotEmpty)
         TrajectoryTurnModel(turn: turn.turn, groups: groups),
   ];
 }
@@ -424,12 +426,11 @@ bool _recordMatchesFilters(
     TrajectoryCellKind.message => filters.contains(
       TrajectoryLedgerFilter.messages,
     ),
-    TrajectoryCellKind.tool ||
-    TrajectoryCellKind.subtool => filters.contains(TrajectoryLedgerFilter.tools),
-    TrajectoryCellKind.system ||
-    TrajectoryCellKind.compacted => filters.contains(
-      TrajectoryLedgerFilter.system,
+    TrajectoryCellKind.tool || TrajectoryCellKind.subtool => filters.contains(
+      TrajectoryLedgerFilter.tools,
     ),
+    TrajectoryCellKind.system || TrajectoryCellKind.compacted =>
+      filters.contains(TrajectoryLedgerFilter.system),
   };
 }
 

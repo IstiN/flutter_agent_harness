@@ -181,6 +181,22 @@ abstract class TrajectoryStrings {
   String get switcherChat;
   String get switcherTrajectory;
   String get detailsPanePlaceholder;
+  String get tabRequest;
+  String get requestSystemPrompt;
+  String get requestMessages;
+  String unitChars(int count);
+
+  String get detailsCopy;
+  String get detailsEmptyResponse;
+  String get detailsStopReason;
+  String get stopReasonToolUse;
+  String get stopReasonNotRecorded;
+  String get recordResultPending;
+  String detailsShowContent(String size);
+  String metaStep(int step);
+  String metaTokens(String value);
+  String get rowExpand;
+  String get rowCollapse;
 }
 
 /// Built-in English trajectory strings.
@@ -481,6 +497,37 @@ class TrajectoryStringsEn extends TrajectoryStrings {
   @override
   String get switcherTrajectory => 'Trajectory';
   @override
+  String get tabRequest => 'Request';
+  @override
+  String get requestSystemPrompt => 'System prompt';
+  @override
+  String get requestMessages => 'Messages';
+  @override
+  String unitChars(int count) => '$count chars';
+
+  @override
+  String get detailsCopy => 'Copy to clipboard';
+  @override
+  String get detailsEmptyResponse => 'Empty response';
+  @override
+  String get detailsStopReason => 'Stop reason';
+  @override
+  String get stopReasonToolUse => 'Tool use';
+  @override
+  String get stopReasonNotRecorded => 'Not recorded';
+  @override
+  String get recordResultPending => 'Result pending';
+  @override
+  String metaStep(int step) => 'step $step';
+  @override
+  String metaTokens(String value) => '$value tok';
+  @override
+  String get rowExpand => 'Expand row';
+  @override
+  String get rowCollapse => 'Collapse row';
+  @override
+  String detailsShowContent(String size) => 'Show content ($size)';
+  @override
   String get detailsPanePlaceholder => 'Select a record to inspect';
 }
 
@@ -764,6 +811,30 @@ class TrajectoryStringsRu extends TrajectoryStrings {
   @override
   String statsTurns(int count) => _ruPlural(count, 'ход', 'хода', 'ходов');
   @override
+  String get tabRequest => 'Запрос';
+  @override
+  String get requestSystemPrompt => 'Системный промпт';
+  @override
+  String get requestMessages => 'Сообщения';
+  @override
+  String unitChars(int count) =>
+      _ruPlural(count, 'символ', 'символа', 'символов');
+
+  @override
+  String get detailsCopy => 'Копировать в буфер обмена';
+  @override
+  String get detailsEmptyResponse => 'Пустой ответ';
+  @override
+  String get detailsStopReason => 'Причина остановки';
+  @override
+  String get stopReasonToolUse => 'Вызов инструмента';
+  @override
+  String get stopReasonNotRecorded => 'Не записана';
+  @override
+  String get recordResultPending => 'Результат ожидается';
+  @override
+  String detailsShowContent(String size) => 'Показать содержимое ($size)';
+  @override
   String statsDuration(String value) => 'Всего $value';
   @override
   String statsTokensIn(String value) => 'Ввод $value';
@@ -789,6 +860,14 @@ class TrajectoryStringsRu extends TrajectoryStrings {
   String get switcherTrajectory => 'Траектория';
   @override
   String get detailsPanePlaceholder => 'Выберите запись для просмотра';
+  @override
+  String metaStep(int step) => 'шаг $step';
+  @override
+  String metaTokens(String value) => '$value ток.';
+  @override
+  String get rowExpand => 'Развернуть строку';
+  @override
+  String get rowCollapse => 'Свернуть строку';
 }
 
 /// Russian plural forms: one / few / many.

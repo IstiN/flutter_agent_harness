@@ -7,9 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'trajectory_cell.dart';
+import 'trajectory_strings.dart';
 
 /// The compaction (or branch-summary) ledger row: bounded summary
-/// preview, pending while the compaction is still running.
+/// preview, the `duration · N chars` meta line, and pending while the
+/// compaction is still running.
 class TrajectoryCellCompacted extends StatelessWidget {
   /// Creates the cell.
   const TrajectoryCellCompacted({super.key, required this.record});
@@ -19,17 +21,17 @@ class TrajectoryCellCompacted extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        TrajectoryKindPill.of(context, record),
-        const SizedBox(width: 8),
-        Expanded(child: TrajectoryRowText(text: record.text)),
-        trajectoryCellStatus(
-          context,
-          error: record.interrupted,
-          running: record.timeSeconds == null && !record.interrupted,
-        ),
+    return TrajectoryCellScaffold(
+      record: record,
+      title: TrajectoryRowText(text: record.text),
+      meta: [
+        if (record.timeSeconds case final duration?)
+          trajectoryMetaDuration(duration),
+        if (record.summary.isNotEmpty)
+          TrajectoryStrings.of(context).unitChars(record.summary.length),
       ],
+      error: record.interrupted,
+      running: record.timeSeconds == null && !record.interrupted,
     );
   }
 }

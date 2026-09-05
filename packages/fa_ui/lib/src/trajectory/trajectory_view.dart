@@ -153,7 +153,10 @@ class TrajectoryBody extends StatelessWidget {
                   children: [
                     Expanded(flex: 55, child: feed),
                     const VerticalDivider(width: 1),
-                    Expanded(flex: 45, child: TrajectoryDetailsPane(controller: controller)),
+                    Expanded(
+                      flex: 45,
+                      child: TrajectoryDetailsPane(controller: controller),
+                    ),
                   ],
                 )
               : feed,
@@ -200,11 +203,16 @@ class TrajectoryHeader extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(strings.viewTrajectory, style: theme.titleMedium),
+                          Text(
+                            strings.viewTrajectory,
+                            style: theme.titleMedium,
+                          ),
                           if (stats.startedAt case final startedAt?)
                             Text(
                               strings.headerSession(_formatStamp(startedAt)),
-                              style: theme.bodySmall?.copyWith(color: colors.dim),
+                              style: theme.bodySmall?.copyWith(
+                                color: colors.dim,
+                              ),
                             ),
                         ],
                       ),
@@ -267,13 +275,15 @@ class TrajectoryHeader extends StatelessWidget {
     );
   }
 
-  String _filterLabel(TrajectoryLedgerFilter filter, TrajectoryStrings strings) =>
-      switch (filter) {
-        TrajectoryLedgerFilter.messages => strings.filterMessages,
-        TrajectoryLedgerFilter.tools => strings.filterTools,
-        TrajectoryLedgerFilter.errors => strings.filterErrors,
-        TrajectoryLedgerFilter.system => strings.filterSystem,
-      };
+  String _filterLabel(
+    TrajectoryLedgerFilter filter,
+    TrajectoryStrings strings,
+  ) => switch (filter) {
+    TrajectoryLedgerFilter.messages => strings.filterMessages,
+    TrajectoryLedgerFilter.tools => strings.filterTools,
+    TrajectoryLedgerFilter.errors => strings.filterErrors,
+    TrajectoryLedgerFilter.system => strings.filterSystem,
+  };
 }
 
 class _StatPill extends StatelessWidget {
@@ -316,7 +326,10 @@ class _TrajectorySearchField extends StatelessWidget {
           children: [
             if (order.isNotEmpty) ...[
               Semantics(
-                label: strings.searchMatchPosition((index ?? 0) + 1, order.length),
+                label: strings.searchMatchPosition(
+                  (index ?? 0) + 1,
+                  order.length,
+                ),
                 child: Text(
                   strings.searchMatchPosition((index ?? 0) + 1, order.length),
                   style: Theme.of(context).textTheme.bodySmall,
@@ -368,10 +381,7 @@ class TrajectoryDetailsPane extends StatelessWidget {
           return Center(
             child: Text(
               strings.detailsPanePlaceholder,
-              style: TextStyle(
-                fontSize: 13,
-                color: FahColors.of(context).dim,
-              ),
+              style: TextStyle(fontSize: 13, color: FahColors.of(context).dim),
             ),
           );
         }

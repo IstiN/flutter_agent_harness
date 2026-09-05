@@ -84,4 +84,20 @@ void main() {
       });
     }
   }
+
+  testWidgets('table/row_expanded.png', (tester) async {
+    final controller = TrajectoryController(
+      initial: buildTableFixtureSnapshot(),
+    );
+    controller.toggleExpandedRow(
+      recordIds(controller, TrajectoryCellKind.tool).first,
+    );
+    await pumpGolden(
+      tester,
+      TrajectoryTable(controller: controller),
+      size: goldenSizeLedger,
+    );
+    await expectGolden(tester, 'table/row_expanded.png');
+    controller.dispose();
+  });
 }

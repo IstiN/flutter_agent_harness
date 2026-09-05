@@ -8,7 +8,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'trajectory_cell.dart';
 
-/// The session-state change ledger row: short change description.
+/// The session-state change ledger row: short change description plus
+/// the change type as the meta line.
 class TrajectoryCellSystem extends StatelessWidget {
   /// Creates the cell.
   const TrajectoryCellSystem({super.key, required this.record});
@@ -18,17 +19,11 @@ class TrajectoryCellSystem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        TrajectoryKindPill.of(context, record),
-        const SizedBox(width: 8),
-        Expanded(child: TrajectoryRowText(text: record.text)),
-        trajectoryCellStatus(
-          context,
-          error: record.errorMessage != null,
-          running: false,
-        ),
-      ],
+    return TrajectoryCellScaffold(
+      record: record,
+      title: TrajectoryRowText(text: record.text),
+      meta: [record.change.name],
+      error: record.errorCode != null || record.errorMessage != null,
     );
   }
 }

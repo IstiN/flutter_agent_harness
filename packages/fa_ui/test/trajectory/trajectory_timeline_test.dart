@@ -22,7 +22,7 @@ Future<void> _pump(WidgetTester tester, TrajectoryController controller) =>
             alignment: Alignment.topLeft,
             child: SizedBox(
               width: trajectoryTimelineLabelGutter + 600,
-              height: 50,
+              height: trajectoryTimelineDefaultHeight,
               child: TrajectoryTimeline(controller: controller),
             ),
           ),
@@ -586,10 +586,10 @@ void main() {
       ..actualDuration = true
       ..actualTime = true;
     await _pump(tester, controller);
-    // Core anchors only user rows from plain message records, so the
-    // timed model holds two zero-width spans at 0s and 10s; the gap
-    // between them is span-free. x=344 → 5s.
-    expect(_painterOf(tester).model.spans, hasLength(2));
+    // Wave 1 stamped tool.startedAt, so the timed model holds three
+    // spans: the user rows at 0s and 10s plus the tool bar [2s, 3s]. The
+    // 3s..10s stretch stays span-free. x=344 → 5s.
+    expect(_painterOf(tester).model.spans, hasLength(3));
 
     // Hovering the gap first paints the guide line.
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
@@ -605,13 +605,13 @@ void main() {
     await tester.pump(kDoubleTapTimeout);
 
     final selection = controller.timelineSelection!;
-    // Minimum selection = full domain / span count = 10s / 2.
-    const minimum = 5000.0;
+    // Minimum selection = full domain / span count = 10s / 3.
+    const minimum = 10000 / 3;
     final model = controller.timelineModel!;
     expect(selection.end - selection.start, closeTo(minimum, 0.01));
     expect(selection.start - model.start, closeTo(5000 - minimum / 2, 0.01));
-    // 5s is equidistant from both spans; the earlier span wins.
-    expect(controller.takeRecordFocus(), 1);
+    // 5s is nearest the tool span's center (2.5s).
+    expect(controller.takeRecordFocus(), 3);
     controller.dispose();
   });
 
@@ -771,6 +771,256 @@ void main() {
     expect(_painterOf(tester).viewport!.start, greaterThan(1.05));
     await gesture.up();
     await tester.pump(kDoubleTapTimeout);
+    controller.dispose();
+  });
+
+  // -- Ruler ticks ---------------------------------------------------------
+
+  group('ruler ticks', () {
+    TrajectoryTimelineModel modelOf(double start, double end) =>
+        TrajectoryTimelineModel(
+          start: start,
+          end: end,
+          spans: const [],
+          turnBoundaries: const [],
+        );
+
+    List<String> labels(
+      TrajectoryTimelineModel model,
+      TrajectoryTimelineMode mode,
+    ) => trajectoryTimelineRulerTicks(
+      model: model,
+      viewport: TrajectoryTimelineViewport.full(model),
+      mode: mode,
+    ).map((tick) => tick.label).toList();
+
+    test('millisecond spans step in milliseconds', () {
+      expect(labels(modelOf(0, 250), TrajectoryTimelineMode.duration), [
+        '0ms',
+        '50ms',
+        '100ms',
+        '150ms',
+        '200ms',
+        '250ms',
+      ]);
+    });
+
+    test('second spans step in seconds', () {
+      expect(labels(modelOf(0, 30000), TrajectoryTimelineMode.duration), [
+        '0s',
+        '5s',
+        '10s',
+        '15s',
+        '20s',
+        '25s',
+        '30s',
+      ]);
+    });
+
+    test('minute spans step in minutes', () {
+      expect(labels(modelOf(0, 600000), TrajectoryTimelineMode.duration), [
+        '0m',
+        '2m',
+        '4m',
+        '6m',
+        '8m',
+        '10m',
+      ]);
+    });
+
+    test('multi-day spans step in half-day ticks', () {
+      expect(labels(modelOf(0, 86400000 * 3), TrajectoryTimelineMode.actual), [
+        '0h',
+        '12h',
+        '24h',
+        '36h',
+        '48h',
+        '60h',
+        '72h',
+      ]);
+    });
+
+    test('sequence mode labels slot indexes', () {
+      expect(labels(modelOf(0, 6), TrajectoryTimelineMode.sequence), [
+        '0',
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+      ]);
+    });
+
+    test('ticks align to elapsed multiples and stay inside the window', () {
+      final model = modelOf(0, 60000);
+      const viewport = TrajectoryTimelineViewport(start: 10000, duration: 5000);
+      final ticks = trajectoryTimelineRulerTicks(
+        model: model,
+        viewport: viewport,
+        mode: TrajectoryTimelineMode.duration,
+      );
+      expect(ticks, hasLength(6));
+      for (final tick in ticks) {
+        expect(tick.domain, greaterThanOrEqualTo(10000));
+        expect(tick.domain, lessThanOrEqualTo(15000));
+        expect((tick.domain - 0) % 1000, 0);
+      }
+      expect(ticks.first.domain, 10000);
+    });
+  });
+
+  // -- Overflow clamping ---------------------------------------------------
+
+  test('span rects stay inside the track across random distributions', () {
+    final random = math.Random(42);
+    const trackWidth = 600.0;
+    const gutter = trajectoryTimelineLabelGutter;
+    for (var i = 0; i < 200; i++) {
+      final start = random.nextDouble() * 3600000000.0;
+      final domainSpan = 1.0 + random.nextDouble() * 3600000.0;
+      final end = start + domainSpan;
+      final spans = [
+        for (var s = 0; s < 8; s++)
+          () {
+            final spanStart = start + random.nextDouble() * domainSpan;
+            // Half the spans are zero-width markers.
+            final spanEnd = random.nextBool()
+                ? spanStart
+                : spanStart + random.nextDouble() * (end - spanStart);
+            return TrajectoryTimelineSpan(
+              start: spanStart,
+              end: spanEnd,
+              index: s + 1,
+              isError: false,
+              kind: TrajectoryCellKind.message,
+              label: 's$s',
+              lane: random.nextInt(3),
+            );
+          }(),
+      ];
+      final model = TrajectoryTimelineModel(
+        start: start,
+        end: end,
+        spans: spans,
+        turnBoundaries: const [],
+      );
+      final full = TrajectoryTimelineViewport.full(model);
+      final viewport = random.nextBool()
+          ? full
+          : () {
+              final duration = math.max(
+                20.0,
+                full.duration * random.nextDouble(),
+              );
+              return TrajectoryTimelineViewport(
+                start: start + random.nextDouble() * (full.duration - duration),
+                duration: duration,
+              );
+            }();
+      for (final mode in TrajectoryTimelineMode.values) {
+        for (final span in spans) {
+          final rect = trajectoryTimelineSpanRect(
+            span,
+            viewport: viewport,
+            mode: mode,
+            trackWidth: trackWidth,
+          );
+          if (rect.isEmpty) continue;
+          expect(
+            rect.left,
+            greaterThanOrEqualTo(gutter - 0.001),
+            reason: 'span $span overflows left in $mode',
+          );
+          expect(
+            rect.right,
+            lessThanOrEqualTo(gutter + trackWidth + 0.001),
+            reason: 'span $span overflows right in $mode',
+          );
+          final minWidth =
+              mode == TrajectoryTimelineMode.time && span.start == span.end
+              ? trajectoryTimelineTimeSpanPx
+              : trajectoryTimelineMinimumSpanPx;
+          expect(
+            rect.width,
+            greaterThanOrEqualTo(minWidth - 0.001),
+            reason: 'span $span collapses in $mode',
+          );
+        }
+      }
+    }
+  });
+
+  // -- Tools lane, pulses, and empty hiding --------------------------------
+
+  testWidgets('timed spans cover tool and subtool records in the tools '
+      'lane', (tester) async {
+    final controller = timelineGanttController()..actualDuration = true;
+    await _pump(tester, controller);
+    final model = _painterOf(tester).model;
+    final tools = controller.records
+        .where(
+          (record) =>
+              record.kind == TrajectoryCellKind.tool ||
+              record.kind == TrajectoryCellKind.subtool,
+        )
+        .toList();
+    expect(tools, hasLength(2));
+    for (final tool in tools) {
+      final span = model.spans.singleWhere((span) => span.index == tool.index);
+      expect(span.lane, 2);
+      expect(span.kind, tool.kind);
+      expect(span.end, greaterThan(span.start));
+    }
+    controller.dispose();
+  });
+
+  testWidgets('running calls and the partial assistant pulse', (tester) async {
+    addTearDown(() => TrajectoryTimeline.deterministicPulse = false);
+    final controller = timelineLiveController()..actualDuration = true;
+    await _pump(tester, controller);
+    var painter = _painterOf(tester);
+    // The running call's synthetic lane-2 span plus the partial on lane 1.
+    expect(painter.pulses, hasLength(2));
+    expect(painter.pulses.map((pulse) => pulse.lane), containsAll([1, 2]));
+    expect(painter.pulsePhase, 0);
+
+    // The pulse repeats: frames advance the phase.
+    await tester.pump(const Duration(milliseconds: 300));
+    painter = _painterOf(tester);
+    expect(painter.pulsePhase, greaterThan(0));
+    expect(painter.pulsePhase, lessThan(1));
+    await tester.pumpWidget(const SizedBox.shrink()); // unmount + dispose
+    controller.dispose();
+  });
+
+  testWidgets('the deterministic flag freezes the pulse phase', (tester) async {
+    TrajectoryTimeline.deterministicPulse = true;
+    addTearDown(() => TrajectoryTimeline.deterministicPulse = false);
+    final controller = timelineLiveController()..actualDuration = true;
+    await _pump(tester, controller);
+    expect(_painterOf(tester).pulses, hasLength(2));
+    expect(_painterOf(tester).pulsePhase, 0.25);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(_painterOf(tester).pulsePhase, 0.25);
+    controller.dispose();
+  });
+
+  testWidgets('timed projections without anchors hide the strip', (
+    tester,
+  ) async {
+    final controller = timelineContextOnlyController()..actualDuration = true;
+    await _pump(tester, controller);
+    final painters = tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .map((paint) => paint.painter)
+        .whereType<TrajectoryTimelinePainter>();
+    expect(painters, isEmpty);
+
+    // Sequence mode keeps rendering the record slots.
+    controller.actualDuration = false;
+    await tester.pump();
+    expect(_painterOf(tester).model.spans, hasLength(1));
     controller.dispose();
   });
 }

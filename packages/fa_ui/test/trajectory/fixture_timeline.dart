@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:collection';
+
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -122,3 +124,156 @@ TrajectorySnapshot buildTimelineFixtureSnapshot() {
 /// A controller seeded with the timeline fixture.
 TrajectoryController timelineFixtureController() =>
     TrajectoryController(initial: buildTimelineFixtureSnapshot());
+
+/// Gantt fixture: an hour-long turn against a millisecond turn, built as
+/// a raw [TrajectorySnapshot] for exact anchors. Exercises extreme
+/// duration ratios (overflow clamping, min bar width) and the tools lane:
+/// turn 1 = user + 60min assistant with a 29min tool and a 10min subtool;
+/// turn 2 (after 1min idle) = user + 5ms assistant. Six records.
+TrajectorySnapshot buildTimelineGanttSnapshot() {
+  DateTime at(int ms) => _base.add(Duration(milliseconds: ms));
+  return TrajectorySnapshot(
+    records: UnmodifiableListView([
+      TrajectoryUserRecord(
+        index: 1,
+        recordId: 'gantt-u1',
+        text: 'Hour task',
+        opensTurn: true,
+        startedAt: at(0),
+      ),
+      TrajectoryAssistantRecord(
+        index: 2,
+        recordId: 'gantt-a1',
+        messageId: 'gantt-m1',
+        turn: 1,
+        step: 1,
+        stepStartTime: at(0),
+        firstTokenTime: at(30000),
+        completedTime: at(3600000),
+        timeSeconds: const Duration(minutes: 60),
+        displayText: 'Working',
+      ),
+      TrajectoryToolRecord(
+        index: 3,
+        recordId: 'gantt-t1',
+        callId: 'gantt-call1',
+        parentCallId: null,
+        name: 'bash',
+        argsRaw: '{}',
+        result: 'ok',
+        startedAt: at(60000),
+        timeSeconds: const Duration(minutes: 29),
+      ),
+      TrajectoryToolRecord(
+        index: 4,
+        recordId: 'gantt-t2',
+        callId: 'gantt-call2',
+        parentCallId: 'gantt-call1',
+        name: 'grep',
+        argsRaw: '{}',
+        result: 'ok',
+        startedAt: at(600000),
+        timeSeconds: const Duration(minutes: 10),
+      ),
+      TrajectoryUserRecord(
+        index: 5,
+        recordId: 'gantt-u2',
+        text: 'Follow-up',
+        opensTurn: true,
+        startedAt: at(3660000),
+      ),
+      TrajectoryAssistantRecord(
+        index: 6,
+        recordId: 'gantt-a2',
+        messageId: 'gantt-m2',
+        turn: 2,
+        step: 1,
+        stepStartTime: at(3660000),
+        completedTime: at(3660005),
+        timeSeconds: const Duration(milliseconds: 5),
+        displayText: 'Done',
+      ),
+    ]),
+    requests: UnmodifiableListView(const []),
+    callSchemas: const {},
+    partial: null,
+    runningCalls: UnmodifiableListView(const []),
+    recordLocations: const {},
+    revision: 6,
+  );
+}
+
+/// A controller seeded with the gantt fixture.
+TrajectoryController timelineGanttController() =>
+    TrajectoryController(initial: buildTimelineGanttSnapshot());
+
+/// Live-tail fixture: a settled turn, one still-running tool call, and a
+/// streaming assistant partial. The running call projects a synthetic
+/// lane-2 row and the partial pulses on the model lane.
+TrajectorySnapshot buildTimelineLiveSnapshot() {
+  DateTime at(int ms) => _base.add(Duration(milliseconds: ms));
+  return TrajectorySnapshot(
+    records: UnmodifiableListView([
+      TrajectoryUserRecord(
+        index: 1,
+        recordId: 'live-u1',
+        text: 'go',
+        opensTurn: true,
+        startedAt: _base,
+      ),
+      TrajectoryAssistantRecord(
+        index: 2,
+        recordId: 'live-a1',
+        messageId: 'live-m1',
+        turn: 1,
+        step: 1,
+        stepStartTime: _base,
+        completedTime: at(1000),
+        timeSeconds: const Duration(seconds: 1),
+        displayText: 'Thinking',
+      ),
+    ]),
+    requests: UnmodifiableListView(const []),
+    callSchemas: const {},
+    partial: TrajectoryPartialAssistant(
+      messageId: 'live-partial',
+      turn: 1,
+      step: 2,
+      blocks: const [],
+      startedAt: at(1500),
+    ),
+    runningCalls: UnmodifiableListView([
+      TrajectoryRunningToolCall(
+        callId: 'live-call',
+        name: 'bash',
+        turn: 1,
+        step: 2,
+        startedAt: at(2000),
+      ),
+    ]),
+    recordLocations: const {},
+    revision: 3,
+  );
+}
+
+/// A controller seeded with the live fixture.
+TrajectoryController timelineLiveController() =>
+    TrajectoryController(initial: buildTimelineLiveSnapshot());
+
+/// Context-only fixture: one context injection with no wall-clock anchor
+/// anywhere, so timed projections derive an empty (null) model.
+TrajectorySnapshot buildTimelineContextOnlySnapshot() => TrajectorySnapshot(
+  records: UnmodifiableListView([
+    const TrajectoryContextRecord(index: 1, recordId: 'ctx-1', text: 'ctx'),
+  ]),
+  requests: UnmodifiableListView(const []),
+  callSchemas: const {},
+  partial: null,
+  runningCalls: UnmodifiableListView(const []),
+  recordLocations: const {},
+  revision: 1,
+);
+
+/// A controller seeded with the context-only fixture.
+TrajectoryController timelineContextOnlyController() =>
+    TrajectoryController(initial: buildTimelineContextOnlySnapshot());

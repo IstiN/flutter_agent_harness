@@ -152,9 +152,7 @@ class _TrajectoryScreenState extends State<TrajectoryScreen> {
     }
     return Scaffold(
       body: CallbackShortcuts(
-        bindings: {
-          LogicalKeySet(LogicalKeyboardKey.escape): widget.onClose,
-        },
+        bindings: {LogicalKeySet(LogicalKeyboardKey.escape): widget.onClose},
         child: Focus(
           focusNode: _focus,
           autofocus: true,
