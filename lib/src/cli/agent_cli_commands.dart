@@ -72,6 +72,10 @@ extension SlashCommandDispatch on AgentCli {
       await _handleTrajectoryCommand(rest);
       return true;
     }
+    if (command == '/agents') {
+      await handleAgentsCommand(rest);
+      return true;
+    }
     if (command == '/browser') {
       List<String> lines;
       try {
