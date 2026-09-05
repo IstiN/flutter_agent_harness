@@ -65,7 +65,7 @@ Future<bool> runAiinConnectFlow({
 
     final coordinator = AiinWebAuthCoordinator.instance;
     final result = await coordinator.connect(
-      provider: await _preferredAiinProvider(aiinHttpClient),
+      providerFn: () => _preferredAiinProvider(aiinHttpClient),
       onStatus: webStatus,
       client: aiinHttpClient,
       openFn: aiinOpenPopupFn,

@@ -18,12 +18,36 @@ html.WindowBase? _aiinOAuthPopup;
 /// Returns false when the browser blocked the popup (`window.open` null).
 bool openAiinOAuthPopup() {
   _aiinOAuthPopup?.close();
-  _aiinOAuthPopup = html.window.open(
+  final popup = html.window.open(
     'about:blank',
     'aiin_oauth',
     'width=520,height=720,scrollbars=yes,resizable=yes',
   );
-  return _aiinOAuthPopup != null;
+  _aiinOAuthPopup = popup;
+  if (popup == null) return false;
+  // Paint the blank document right away — an unpainted about:blank popup
+  // is a white window for the whole initiate round-trip.
+  try {
+    final doc = (popup as html.Window).document as html.HtmlDocument;
+    final body = doc.body;
+    if (body != null) {
+      body.style.background = '#101418';
+      final note = doc.createElement('div') as html.HtmlElement;
+      note.style
+        ..height = '100vh'
+        ..display = 'flex'
+        ..alignItems = 'center'
+        ..justifyContent = 'center'
+        ..color = '#e8eaed'
+        ..fontFamily = '-apple-system, system-ui, sans-serif'
+        ..fontSize = '15px';
+      note.text = 'Opening the AIIN sign-in…';
+      body.children.add(note);
+    }
+  } on Object {
+    // Cross-origin or closed already — navigation below still applies.
+  }
+  return true;
 }
 
 /// Navigates the blank popup to [url] (same-origin about:blank → auth page).

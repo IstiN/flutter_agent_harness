@@ -67,7 +67,10 @@ final class AiinWebAuthCoordinator {
   ///
   /// [openFn] / [navigateFn] / [client] are injectable for tests.
   Future<AiinConnectResult?> connect({
-    required String provider,
+    /// Resolved INSIDE the connect, after the popup opens: Safari breaks
+    /// the window.open user-gesture after any await, so nothing network-
+    /// bound may run before [openFn].
+    required Future<String> Function() providerFn,
     void Function(String)? onStatus,
     http.Client? client,
     bool Function()? openFn,
@@ -85,6 +88,7 @@ final class AiinWebAuthCoordinator {
     }
     _completer = Completer<AiinWebCallback>();
     attachAiinOAuthLinks();
+    final provider = await providerFn();
     final AiinOAuthInitiate initiate;
     try {
       initiate = await initiateAiinOAuth(

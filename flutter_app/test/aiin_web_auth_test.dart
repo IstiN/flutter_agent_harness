@@ -49,7 +49,7 @@ void main() {
     final coordinator = AiinWebAuthCoordinator();
     final statuses = <String>[];
     final result = await coordinator.connect(
-      provider: 'google',
+      providerFn: () async => 'google',
       onStatus: statuses.add,
       client: mockAiinBackend(),
       openFn: () => true,
@@ -71,7 +71,7 @@ void main() {
     final coordinator = AiinWebAuthCoordinator();
     final statuses = <String>[];
     final result = await coordinator.connect(
-      provider: 'google',
+      providerFn: () async => 'google',
       onStatus: statuses.add,
       client: mockAiinBackend(),
       openFn: () => false,
@@ -84,7 +84,7 @@ void main() {
     final coordinator = AiinWebAuthCoordinator();
     final statuses = <String>[];
     final result = await coordinator.connect(
-      provider: 'google',
+      providerFn: () async => 'google',
       onStatus: statuses.add,
       client: mockAiinBackend(),
       openFn: () => true,
@@ -102,7 +102,7 @@ void main() {
     final coordinator = AiinWebAuthCoordinator();
     final statuses = <String>[];
     final result = await coordinator.connect(
-      provider: 'google',
+      providerFn: () async => 'google',
       onStatus: statuses.add,
       client: mockAiinBackend(),
       openFn: () => true,
