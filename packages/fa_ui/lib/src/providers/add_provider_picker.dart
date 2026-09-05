@@ -60,6 +60,12 @@ final class AddProviderPreset {
 /// common presets first, `Custom` always last.
 const defaultAddProviderPresets = <AddProviderPreset>[
   AddProviderPreset(
+    key: 'aiin',
+    name: 'AIIN',
+    description: 'aiin.by — sign in, key auto-registered',
+    icon: Icons.bolt_outlined,
+  ),
+  AddProviderPreset(
     key: 'openrouter',
     name: 'OpenRouter',
     description: 'OAuth or API key — 300+ models',
@@ -187,6 +193,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     super.key,
     this.registry,
     this.presets = defaultAddProviderPresets,
+    this.onAiinConnect,
     this.onCodeMieSso,
     this.onChatGptOAuth,
     this.onCopilotConnect,
@@ -206,6 +213,12 @@ class AddProviderPresetPickerPage extends StatelessWidget {
 
   /// The preset tiles to show. Defaults to [defaultAddProviderPresets].
   final List<AddProviderPreset> presets;
+
+  /// Called when the user picks the AIIN preset. The host should run its
+  /// aiin.by connect flow (browser sign-in + automatic API-key
+  /// registration on desktop; WebView in mobile apps). When null, the
+  /// AIIN tile is hidden.
+  final VoidCallback? onAiinConnect;
 
   /// Called when the user picks the CodeMie preset. The host should launch
   /// its CodeMie SSO flow (WebView in the app). When null, the CodeMie tile
@@ -244,6 +257,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     final strings = FaUiStrings.of(context);
     final visiblePresets = presets.where((p) {
       if (!addProviderPresetEnabled(p)) return false;
+      if (p.key == 'aiin' && onAiinConnect == null) return false;
       if (p.key == 'codemie' && onCodeMieSso == null) return false;
       if (p.key == 'chatgpt' && onChatGptOAuth == null) return false;
       if (p.key == 'copilot' && onCopilotConnect == null) return false;
@@ -293,6 +307,10 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     AddProviderPreset preset,
   ) async {
     switch (preset.key) {
+      case 'aiin':
+        Navigator.of(context).pop();
+        onAiinConnect?.call();
+        return;
       case 'codemie':
         Navigator.of(context).pop();
         onCodeMieSso?.call();
@@ -388,6 +406,8 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   /// back to [custom] (plain editable prefill) for unknown keys.
   static ProviderPreset _matchProviderPreset(String key) {
     switch (key) {
+      case 'aiin':
+        return ProviderPreset.aiin;
       case 'openrouter':
         return ProviderPreset.openrouter;
       case 'ollama':

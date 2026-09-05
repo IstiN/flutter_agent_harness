@@ -42,7 +42,7 @@ void main() {
     // Auth-flow presets need a host callback; key-based presets must carry
     // a base URL (the editor's prefill).
     for (final preset in defaultAddProviderPresets) {
-      const authFlows = {'codemie', 'chatgpt', 'copilot', 'openrouter'};
+      const authFlows = {'aiin', 'codemie', 'chatgpt', 'copilot', 'openrouter'};
       if (authFlows.contains(preset.key) || preset.key == 'custom') {
         continue;
       }

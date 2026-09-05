@@ -29,4 +29,10 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  test('the AIIN mark resolves from the api and auth hosts', () {
+    expect(providerMarkKeyForBaseUrl('https://api.aiin.by/v1'), 'aiin');
+    expect(providerMarkKeyForBaseUrl('https://auth.aiin.by'), 'aiin');
+    expect(providerMarkKeyForBaseUrl('https://openrouter.ai/api/v1'), isNot('aiin'));
+  });
 }
