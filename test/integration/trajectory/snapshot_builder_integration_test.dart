@@ -307,6 +307,7 @@ void main() {
                       toolCallId: block.id,
                       toolName: block.name,
                       args: block.arguments,
+                      timestamp: DateTime.now(),
                     ),
                   );
                 }

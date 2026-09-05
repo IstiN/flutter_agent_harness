@@ -34,6 +34,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import '../cancel_token.dart';
 import '../compaction/token_estimation.dart' show estimateContextTokens;
@@ -42,6 +43,8 @@ import '../event_stream.dart';
 import '../exceptions.dart';
 import '../model.dart';
 import '../types.dart';
+import '../trajectory/event_projection.dart' show textPayloadOf;
+import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
 
 /// Marker embedded in the over-window guard's error message (see
@@ -546,6 +549,7 @@ final class ToolExecutionStartEvent extends AgentEvent {
     required this.toolCallId,
     required this.toolName,
     required this.args,
+    required this.timestamp,
   });
 
   /// The [ToolCall.id] being executed.
@@ -556,6 +560,23 @@ final class ToolExecutionStartEvent extends AgentEvent {
 
   /// The parsed tool call arguments.
   final Map<String, dynamic> args;
+
+  /// Wall-clock time the execution started.
+  final DateTime timestamp;
+}
+
+/// The outbound request summary captured before a provider call.
+///
+/// Emitted right before [StreamFunction] runs; [detail] describes the exact
+/// payload about to be sent (message count/sizes, tool names). The
+/// trajectory builder attaches it to the assistant step the request
+/// produces, and hosts persist it (a hidden `model_request_summary`
+/// record) so replayed sessions keep the same Request tab data.
+final class ModelRequestEvent extends AgentEvent {
+  const ModelRequestEvent({required this.detail});
+
+  /// Cheap summary of the outbound request payload.
+  final TrajectoryRequestDetail detail;
 }
 
 /// A tool reported a partial execution result.
@@ -1136,6 +1157,8 @@ Future<AssistantMessage> _streamAssistantResponse(
     }
   }
 
+  await emit(ModelRequestEvent(detail: _summarizeRequest(requestContext)));
+
   AssistantMessageEventStream response;
   try {
     response = streamFunction(
@@ -1197,6 +1220,43 @@ Future<Context> _buildRequestContext(
     );
   }
   return requestContext;
+}
+
+/// Builds the cheap outbound-request summary emitted with
+/// [ModelRequestEvent]: message count/sizes, tool names, and bounded text
+/// previews. Sizes are JSON-serialized lengths so tool-call arguments count
+/// like text does.
+TrajectoryRequestDetail _summarizeRequest(Context context) {
+  final messages = [
+    for (final message in context.messages)
+      TrajectoryRequestMessageSummary(
+        role: message.role,
+        chars: jsonEncode(message.toJson()).length,
+        preview: _requestPreview(message),
+      ),
+  ];
+  final tools = context.tools ?? const <Tool>[];
+  return TrajectoryRequestDetail(
+    messageCount: messages.length,
+    systemPromptChars: context.systemPrompt?.length ?? 0,
+    toolCount: tools.length,
+    toolNames: [for (final tool in tools) tool.name],
+    messages: messages,
+  );
+}
+
+/// Bounded plain-text preview of a request message
+/// (~[requestPreviewChars] characters).
+String _requestPreview(Message message) {
+  final text = switch (message) {
+    UserMessage(:final content) => textPayloadOf(content),
+    AssistantMessage(:final content) => textPayloadOf(content),
+    ToolResultMessage(:final content) => textPayloadOf(content),
+    _ => '',
+  };
+  return text.length <= requestPreviewChars
+      ? text
+      : '${text.substring(0, requestPreviewChars)}…';
 }
 
 /// Consumes the provider [response] stream, emitting message lifecycle
@@ -1360,6 +1420,7 @@ Future<_ExecutedToolCallBatch> _failToolCallsFromTruncatedMessage(
         toolCallId: toolCall.id,
         toolName: toolCall.name,
         args: toolCall.arguments,
+        timestamp: DateTime.now(),
       ),
     );
     final finalized = _FinalizedToolCall(
@@ -1436,6 +1497,7 @@ Future<_ExecutedToolCallBatch> _executeToolCallsSequential(
         toolCallId: toolCall.id,
         toolName: toolCall.name,
         args: toolCall.arguments,
+        timestamp: DateTime.now(),
       ),
     );
 
@@ -1497,6 +1559,7 @@ Future<_ExecutedToolCallBatch> _executeToolCallsParallel(
         toolCallId: toolCall.id,
         toolName: toolCall.name,
         args: toolCall.arguments,
+        timestamp: DateTime.now(),
       ),
     );
 

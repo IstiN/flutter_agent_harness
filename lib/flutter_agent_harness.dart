@@ -117,6 +117,7 @@ export 'src/trajectory/trajectory_layout.dart';
 export 'src/trajectory/trajectory_preview.dart';
 export 'src/trajectory/trajectory_snapshot.dart';
 export 'src/trajectory/trajectory_snapshot_builder.dart';
+export 'src/trajectory/trajectory_export.dart';
 export 'src/trajectory/search_index.dart';
 export 'src/skills/skills.dart';
 export 'src/sse_decoder.dart';

@@ -88,6 +88,7 @@ void main() {
           toolCallId: 'c1',
           toolName: 'read',
           args: const {'path': 'x'},
+          timestamp: DateTime.utc(2026),
         ),
         onMessageLifecycle: (_, {required start}) =>
             fail('unexpected lifecycle'),

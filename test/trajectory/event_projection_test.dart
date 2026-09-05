@@ -445,10 +445,11 @@ void main() {
       final builder = TrajectorySnapshotBuilder();
       builder.applyEvent(MessageStartEvent(_streamMessage(content: const [])));
       final snapshot = builder.applyEvent(
-        const ToolExecutionStartEvent(
+        ToolExecutionStartEvent(
           toolCallId: 'c9',
           toolName: 'grep',
           args: {},
+          timestamp: _at(3),
         ),
       );
       final call = snapshot.runningCalls.single;
@@ -456,6 +457,7 @@ void main() {
       expect(call.name, 'grep');
       expect(call.turn, 0);
       expect(call.step, 1);
+      expect(call.startedAt, _at(3));
       final settled = builder.append(
         MessageRecord(
           id: 'r1',
