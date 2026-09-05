@@ -363,3 +363,43 @@ TrajectoryController bigResultController() {
   ]);
   return TrajectoryController(initial: snapshot);
 }
+
+/// A controller whose rows carry an RTL string, a huge unbroken token,
+/// and emoji: row layout must soft-wrap and never overflow horizontally
+/// (E9), including the expanded body.
+TrajectoryController overflowProbeController() {
+  final unbroken = 'A' * 2000;
+  final snapshot = _appendAll(TrajectorySnapshotBuilder(), [
+    MessageRecord(
+      id: 'ou1',
+      parentId: null,
+      timestamp: _at(0),
+      message: UserMessage.text('🔍🚀🛠️ $unbroken مرحبا بالعالم'),
+    ),
+    MessageRecord(
+      id: 'oa1',
+      parentId: 'ou1',
+      timestamp: _at(1),
+      message: _assistant(
+        const [
+          ToolCall(id: 'ocall1', name: 'bash', arguments: {'cmd': 'probe'}),
+        ],
+        StopReason.toolUse,
+        1,
+      ),
+    ),
+    MessageRecord(
+      id: 'or1',
+      parentId: 'oa1',
+      timestamp: _at(2),
+      message: ToolResultMessage(
+        toolCallId: 'ocall1',
+        toolName: 'bash',
+        content: [TextContent(text: '💥🎉 $unbroken ok')],
+        isError: false,
+        timestamp: _at(2),
+      ),
+    ),
+  ]);
+  return TrajectoryController(initial: snapshot);
+}

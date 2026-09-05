@@ -104,26 +104,15 @@ final class TrajectorySnapshotBuilder {
 
   TrajectorySnapshot applyEvent(AgentEvent event) {
     switch (event) {
-      case MessageEndEvent(message: final AssistantMessage message):
+      case MessageEndEvent(message: final message):
         return _appendRecord(
-          _syntheticRecord('assistant', message),
-          synthetic: true,
-        );
-      case MessageEndEvent(message: final UserMessage message):
-        return _appendRecord(
-          _syntheticRecord('user', message),
-          synthetic: true,
-        );
-      case MessageEndEvent(message: final ToolResultMessage message):
-        return _appendRecord(
-          _syntheticRecord('result', message),
+          _syntheticRecord(_eventRole(message), message),
           synthetic: true,
         );
       case MessageStartEvent(message: final AssistantMessage message):
         _beginAssistantStream(message);
       case MessageStartEvent(message: UserMessage()):
-        _liveTurn = _lastAssistantTurn + 1;
-        _liveStep = 0;
+        _beginUserTurn();
       case MessageUpdateEvent(:final message):
         _updateAssistantStream(message);
       case ToolExecutionStartEvent(
@@ -131,16 +120,7 @@ final class TrajectorySnapshotBuilder {
         :final toolName,
         :final timestamp,
       ):
-        _runningCalls[toolCallId] = TrajectoryRunningToolCall(
-          callId: toolCallId,
-          name: toolName,
-          turn: _liveTurn ?? _lastAssistantTurn,
-          step: _liveStep != 0
-              ? _liveStep
-              : (_lastAssistantStep != 0 ? _lastAssistantStep : 1),
-          startedAt: timestamp,
-        );
-        _markToolStarted(toolCallId, timestamp);
+        _beginToolCall(toolCallId, toolName, timestamp);
       case ModelRequestEvent(:final detail):
         _attachRequestDetail(_nextAssistantStep(), detail);
       default:
@@ -148,6 +128,32 @@ final class TrajectorySnapshotBuilder {
     }
     _revision++;
     return _snapshot();
+  }
+
+  /// The ledger record kind a transcript message projects to.
+  String _eventRole(Message message) => switch (message) {
+    AssistantMessage() => 'assistant',
+    UserMessage() => 'user',
+    ToolResultMessage() => 'result',
+    _ => 'message',
+  };
+
+  void _beginUserTurn() {
+    _liveTurn = _lastAssistantTurn + 1;
+    _liveStep = 0;
+  }
+
+  void _beginToolCall(String toolCallId, String toolName, DateTime timestamp) {
+    _runningCalls[toolCallId] = TrajectoryRunningToolCall(
+      callId: toolCallId,
+      name: toolName,
+      turn: _liveTurn ?? _lastAssistantTurn,
+      step: _liveStep != 0
+          ? _liveStep
+          : (_lastAssistantStep != 0 ? _lastAssistantStep : 1),
+      startedAt: timestamp,
+    );
+    _markToolStarted(toolCallId, timestamp);
   }
 
   /// The current snapshot state without appending.

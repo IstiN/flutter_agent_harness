@@ -209,6 +209,11 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// resizing wide<->narrow never lose scroll, selection, or filters.
   TrajectoryController? _trajectoryController;
   StreamSubscription<TrajectorySnapshot>? _trajectorySubscription;
+
+  /// The pushed wide-trajectory route, tracked so the controller it
+  /// renders is only disposed after the route has fully popped.
+  Route<void>? _trajectoryRoute;
+
   bool _trajectoryLoaded = false;
 
   /// Whether the narrow layout currently shows the trajectory page.
@@ -236,24 +241,48 @@ class _FaChatScreenState extends State<FaChatScreen>
   void _unbindTrajectory() {
     _trajectorySubscription?.cancel();
     _trajectorySubscription = null;
-    _trajectoryController?.dispose();
+    final controller = _trajectoryController;
+    final route = _trajectoryRoute;
+    _trajectoryRoute = null;
     _trajectoryController = null;
     _trajectoryLoaded = false;
-    _showTrajectory = false;
+    if (controller == null) return;
+    if (!mounted) {
+      // Screen teardown: children have unmounted; dispose directly.
+      controller.dispose();
+      return;
+    }
+    if (route != null && route.isActive) {
+      // A pushed wide-trajectory route still renders the old session:
+      // close it outside the build phase, and dispose its controller
+      // only once the pop has fully completed so it never listens to a
+      // disposed ChangeNotifier.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (route.isActive && route.isCurrent) route.navigator?.pop();
+      });
+      route.popped.whenComplete(controller.dispose);
+    } else {
+      // Post-frame: the in-flight build may still unmount a narrow
+      // trajectory page bound to this controller.
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => controller.dispose(),
+      );
+    }
   }
 
   /// Wide entry: pushes the full-screen master-detail route (AC1).
   void _openTrajectoryRoute() {
-    Navigator.push(
-      context,
-      MaterialPageRoute<void>(
-        builder: (_) => TrajectoryScreen(
-          controller: _trajectory,
-          loaded: _trajectoryLoaded,
-          onClose: () => Navigator.pop(context),
-        ),
+    final route = MaterialPageRoute<void>(
+      builder: (_) => TrajectoryScreen(
+        controller: _trajectory,
+        loaded: _trajectoryLoaded,
+        onClose: () => Navigator.pop(context),
       ),
     );
+    _trajectoryRoute = route;
+    Navigator.push(context, route).whenComplete(() {
+      if (_trajectoryRoute == route) _trajectoryRoute = null;
+    });
   }
 
   /// The files panel content builder: the constructor override, else the

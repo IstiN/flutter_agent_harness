@@ -41,17 +41,24 @@ class TrajectoryController extends ChangeNotifier {
   TrajectoryController({
     TrajectorySnapshot? initial,
     this.snapshotDebounce = const Duration(milliseconds: 50),
-    Duration searchThrottle = const Duration(milliseconds: 3000),
-  }) : _throttledIndex = ThrottledTrajectorySearchIndex(
-         throttle: searchThrottle,
-       ) {
+    this.searchThrottle = const Duration(milliseconds: 3000),
+  }) {
     _apply(initial ?? TrajectorySnapshot.empty, notify: false);
   }
 
   /// Coalescing window applied to [updateSnapshot] bursts.
   final Duration snapshotDebounce;
 
-  final ThrottledTrajectorySearchIndex _throttledIndex;
+  /// Minimum gap between incremental search index rebuilds.
+  final Duration searchThrottle;
+
+  /// Late initializer so it can bind the instance flush hook.
+  late final ThrottledTrajectorySearchIndex _throttledIndex =
+      ThrottledTrajectorySearchIndex(
+        throttle: searchThrottle,
+        onFlushed: _onIndexFlushed,
+      );
+
   final Set<int> _collapsedTurns = {};
   final Set<String> _collapsedAssistants = {};
 
@@ -285,6 +292,10 @@ class TrajectoryController extends ChangeNotifier {
 
   void _refreshSearch() {
     _throttledIndex.update([_turns]);
+    _refreshSearchMatches();
+  }
+
+  void _refreshSearchMatches() {
     _searchMatches = _throttledIndex.search(_searchQuery);
     _searchMatchOrder = [
       for (final record in _records)
@@ -299,6 +310,15 @@ class TrajectoryController extends ChangeNotifier {
     _searchMatchIndex = index == null
         ? 0
         : (index >= count ? count - 1 : index);
+  }
+
+  /// The throttled index flushed a parked update: re-run the match pass
+  /// so a live tail with an active query sees records appended inside the
+  /// throttle window.
+  void _onIndexFlushed() {
+    if (_searchQuery.isEmpty) return;
+    _refreshSearchMatches();
+    notifyListeners();
   }
 
   /// Requests a one-shot scroll-to-record from the timeline; the table

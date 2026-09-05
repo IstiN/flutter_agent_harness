@@ -420,4 +420,50 @@ void main() {
       expect(controller.expandedRecordIds, isEmpty);
     });
   });
+
+  group('throttled index flush (P3-10)', () {
+    testWidgets('a trailing flush refreshes match order for a live tail', (
+      tester,
+    ) async {
+      final controller = TrajectoryController(
+        searchThrottle: const Duration(milliseconds: 100),
+        snapshotDebounce: const Duration(milliseconds: 10),
+      );
+      addTearDown(controller.dispose);
+
+      controller.searchQuery = 'needle';
+      // The setter's update flushes immediately and opens the throttle
+      // window.
+      expect(controller.searchMatchOrder, isEmpty);
+
+      // Append a matching record inside the window: the index update
+      // parks until the trailing flush.
+      final builder = TrajectorySnapshotBuilder();
+      final next = builder.append(
+        MessageRecord(
+          id: 'n1',
+          parentId: null,
+          timestamp: DateTime.utc(2026, 1, 1, 13),
+          message: UserMessage.text('the needle in the haystack'),
+        ),
+      );
+      controller.updateSnapshot(next);
+      await tester.pump(controller.snapshotDebounce);
+      expect(controller.snapshot, same(next));
+      // Still stale: the parked update has not flushed yet.
+      expect(controller.searchMatchOrder, isEmpty);
+
+      // The trailing flush lands; the controller must re-run its match
+      // pass and notify.
+      var notified = 0;
+      controller.addListener(() => notified++);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(controller.searchMatchOrder, isNotEmpty);
+      expect(controller.currentMatchIndex, 0);
+      expect(notified, 1);
+      // Let the re-armed throttle window elapse empty so no timer is left
+      // pending at teardown.
+      await tester.pump(const Duration(milliseconds: 150));
+    });
+  });
 }

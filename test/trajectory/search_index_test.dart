@@ -449,4 +449,38 @@ void main() {
       expect(throttled.search('flushed'), {'u1'});
     });
   });
+
+  group('ThrottledTrajectorySearchIndex.onFlushed (P3-10)', () {
+    test('fires only when a trailing flush lands a parked update', () async {
+      var flushes = 0;
+      final index = ThrottledTrajectorySearchIndex(
+        throttle: const Duration(milliseconds: 20),
+        onFlushed: () => flushes++,
+      );
+      addTearDown(index.dispose);
+
+      final first = _turn(1, [_group([_user('u1', 'hello')])]);
+      expect(index.update([[first]]), isTrue);
+      // The immediate flush inside update() never fires the hook.
+      expect(flushes, 0);
+      expect(index.search('hello'), {'u1'});
+
+      // A second update inside the throttle window parks; the parked
+      // version is invisible until the trailing flush lands.
+      final second = _turn(1, [
+        _group([_user('u1', 'hello'), _user('u2', 'world')]),
+      ]);
+      expect(index.update([[second]]), isFalse);
+      expect(index.search('world'), isEmpty);
+
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (flushes == 0 && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(flushes, 1);
+      expect(index.search('world'), {'u2'});
+    });
+
+
+  });
 }

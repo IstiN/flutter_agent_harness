@@ -58,6 +58,9 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
   bool _following = true;
   int _lastRevision = -1;
   int _lastRowCount = -1;
+  int? _pendingFocusRow;
+  int _pendingFocusCount = 1;
+  int _focusHops = 0;
 
   /// Cell rows as `(listViewIndex, recordId)` in display order — the
   /// arrow-key navigation path.
@@ -117,6 +120,7 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
       listenable: widget.controller,
       builder: (context, _) {
         final controller = widget.controller;
+        final focusIndex = controller.takeRecordFocus();
         if (controller.records.isEmpty) return const SizedBox.shrink();
         final rows = projectTrajectoryRows(controller);
         if (rows.isEmpty) {
@@ -127,7 +131,11 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
             ),
           );
         }
-        _scheduleTailFollow(controller, rows.length);
+        // A timeline focus outranks tail-follow: scroll that record into
+        // view instead of snapping to the newest row.
+        if (focusIndex == null || !_revealRecordFocus(rows, focusIndex)) {
+          _scheduleTailFollow(controller, rows.length);
+        }
         _cellEntries = [
           for (final (index, row) in rows.indexed)
             if (row is TrajectoryCellRow) (index, row.record.recordId),
@@ -172,6 +180,61 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
       _scroll.jumpTo(_scroll.position.maxScrollExtent);
       _following = true;
     });
+  }
+
+  /// Begins the scroll-to-record for a timeline focus: resolves the
+  /// projected row and converges on it post-frame. Returns false when the
+  /// record is not in the projected rows (nothing to scroll to).
+  bool _revealRecordFocus(List<TrajectoryLedgerRow> rows, int recordIndex) {
+    final rowIndex = rows.indexWhere(
+      (row) => row is TrajectoryCellRow && row.record.index == recordIndex,
+    );
+    if (rowIndex < 0) return false;
+    _pendingFocusRow = rowIndex;
+    _pendingFocusCount = rows.length;
+    _focusHops = 0;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _revealPendingRow();
+    });
+    return true;
+  }
+
+  /// Scrolls the focused row into view. Virtualised rows outside the
+  /// built window have no context yet, so hop proportionally towards the
+  /// target until it builds, then land exactly with ensureVisible.
+  // ponytail: proportional hops converge in a handful of frames at
+  // ledger scale; switch to itemExtent or cached row extents if ever
+  // needed for 100k+ rows.
+  void _revealPendingRow() {
+    final index = _pendingFocusRow;
+    if (index == null || !mounted || !_scroll.hasClients) {
+      _pendingFocusRow = null;
+      return;
+    }
+    _rowContexts.removeWhere((_, element) => !element.mounted);
+    final rowContext = _rowContexts[index];
+    if (rowContext != null) {
+      _pendingFocusRow = null;
+      Scrollable.ensureVisible(
+        rowContext,
+        duration: const Duration(milliseconds: 80),
+      );
+      return;
+    }
+    if (_focusHops++ < 32) {
+      final position = _scroll.position;
+      final extent = position.maxScrollExtent;
+      if (extent > 0) {
+        position.jumpTo(
+          (index / _pendingFocusCount * extent).clamp(0.0, extent),
+        );
+      }
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _revealPendingRow();
+      });
+    } else {
+      _pendingFocusRow = null;
+    }
   }
 
   Widget _buildRow(

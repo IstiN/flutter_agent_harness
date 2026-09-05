@@ -2,13 +2,14 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 
 import 'fixture.dart';
+import 'fixture_table.dart' as table_fixture;
 
 Future<void> _pump(
   WidgetTester tester,
@@ -82,7 +83,6 @@ void main() {
 
   testWidgets('pushed as a route it pops via onClose', (tester) async {
     final controller = fixtureController();
-    addTearDown(controller.dispose);
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
@@ -121,6 +121,7 @@ void main() {
     expect(find.byType(TrajectoryScreen), findsNothing);
     // Flush the fixture controller's throttled search-index timer.
     await tester.pump(const Duration(seconds: 7));
+    controller.dispose();
   });
 
   testWidgets('resizing wide <-> narrow keeps the controller state (E6)', (
@@ -137,6 +138,25 @@ void main() {
       ..toggleFilter(TrajectoryLedgerFilter.system);
     await tester.pump();
 
+    // Scroll the narrow ledger off the tail; the offset must survive the
+    // morph to the same live tree at wide size.
+    final ledgerScrollable = find
+        .descendant(
+          of: find.byType(TrajectoryTable),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Scrollable &&
+                widget.axisDirection == AxisDirection.down,
+          ),
+        )
+        .first;
+    await tester.drag(ledgerScrollable, const Offset(0, -200));
+    await tester.pump();
+    final offsetNarrow = tester
+        .state<ScrollableState>(ledgerScrollable)
+        .position
+        .pixels;
+
     tester.view.physicalSize = const Size(1280, 800);
     await tester.pump();
     expect(find.byType(TrajectoryDetailsPane), findsOneWidget);
@@ -144,7 +164,10 @@ void main() {
     // Selection survives the morph and still drives the pane.
     expect(find.text('Select a record to inspect'), findsNothing);
     expect(find.byType(TabBar), findsOneWidget);
-
+    expect(
+      tester.state<ScrollableState>(ledgerScrollable).position.pixels,
+      offsetNarrow,
+    );
     tester.view.physicalSize = const Size(600, 1000);
     await tester.pump();
     expect(find.byType(TrajectoryDetailsPane), findsNothing);
@@ -152,6 +175,114 @@ void main() {
     expect(controller.searchQuery, 'deploy');
     expect(controller.expandedRecordIds, isNotEmpty);
     expect(controller.filters, isNot(contains(TrajectoryLedgerFilter.system)));
+    controller.dispose();
+  });
+
+  testWidgets('tapping a timeline span scrolls its row into view (P2-1)', (
+    tester,
+  ) async {
+    final controller = TrajectoryController(
+      initial: table_fixture.buildLargeFixtureSnapshot(turns: 40),
+    );
+    await _pump(tester, controller);
+
+    // Tap the first record's span on the real timeline strip.
+    final timeline = find.byType(TrajectoryTimeline);
+    final model = controller.timelineModel!;
+    final trackWidth =
+        tester.getSize(timeline).width - trajectoryTimelineLabelGutter;
+    final rect = trajectoryTimelineSpanRect(
+      model.spans.first,
+      viewport: TrajectoryTimelineViewport.full(model),
+      mode: controller.timelineMode,
+      trackWidth: trackWidth,
+    );
+    final gesture = await tester.startGesture(
+      tester.getTopLeft(timeline) + rect.center,
+    );
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    // The Turn 1 row is built and inside the ledger viewport. (Row text
+    // carries a trailing newline for cross-row copy: match by prefix.)
+    expect(find.textContaining('Turn 1 prompt'), findsOneWidget);
+    final ledger = find.byType(TrajectoryTable);
+    final rowTop = tester.getTopLeft(find.textContaining('Turn 1 prompt')).dy;
+    expect(rowTop, greaterThanOrEqualTo(tester.getTopLeft(ledger).dy));
+    expect(rowTop, lessThan(tester.getBottomLeft(ledger).dy));
+    controller.dispose();
+  });
+
+  testWidgets('Tab reaches search field, header buttons, and rows (AC12)', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final controller = fixtureController();
+    await _pump(tester, controller);
+
+    expect(find.bySemanticsLabel(RegExp('^Trajectory header')), findsOneWidget);
+    expect(find.byTooltip('Close trajectory'), findsOneWidget);
+
+    bool focusHas<T extends Widget>() =>
+        FocusManager.instance.primaryFocus?.context
+            ?.findAncestorWidgetOfExactType<T>() !=
+        null;
+    bool focusIsCloseButton() {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return false;
+      return context.findAncestorWidgetOfExactType<IconButton>()?.tooltip ==
+          'Close trajectory';
+    }
+
+    var sawSearch = false;
+    var sawClose = false;
+    var sawRows = false;
+    for (var i = 0; i < 15 && !(sawSearch && sawClose && sawRows); i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      sawSearch = sawSearch || focusHas<TextField>();
+      sawClose = sawClose || focusIsCloseButton();
+      sawRows = sawRows || focusHas<TrajectoryTable>();
+    }
+    expect(sawSearch, isTrue, reason: 'Tab should reach the search field');
+    expect(sawClose, isTrue, reason: 'Tab should reach the header buttons');
+    expect(sawRows, isTrue, reason: 'Tab should reach the ledger rows');
+    controller.dispose();
+    semantics.dispose();
+  });
+
+  testWidgets('SafeArea keeps header and last row inside insets (E11)', (
+    tester,
+  ) async {
+    final controller = TrajectoryController(
+      initial: table_fixture.buildLargeFixtureSnapshot(turns: 40),
+    );
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(
+            padding: EdgeInsets.fromLTRB(0, 40, 0, 30),
+            viewInsets: EdgeInsets.only(bottom: 25),
+          ),
+          child: TrajectoryScreen(controller: controller, onClose: () {}),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    // The header clears the top inset; the tail row sits above the
+    // bottom inset plus the keyboard (Scaffold resize + SafeArea).
+    expect(tester.getTopLeft(find.text('Trajectory')).dy, greaterThanOrEqualTo(40));
+    expect(find.textContaining('Turn 40 prompt'), findsOneWidget);
+    expect(
+      tester.getBottomLeft(find.textContaining('Turn 40 prompt')).dy,
+      lessThanOrEqualTo(800 - 25 - 30),
+    );
+    expect(tester.takeException(), isNull);
     controller.dispose();
   });
 }

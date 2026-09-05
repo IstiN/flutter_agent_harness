@@ -159,6 +159,20 @@ void main() {
     service.feed.dispose();
   });
 
+  /// Plain texts inside the details sheet (its content identifies the
+  /// bound record).
+  Set<String> sheetTexts(WidgetTester tester) => tester.widgetList<Text>(
+    find.descendant(of: find.byType(BottomSheet), matching: find.byType(Text)),
+  ).map((text) => text.data ?? text.textSpan!.toPlainText()).toSet();
+
+  /// Dismisses the details sheet through its modal barrier (the strip of
+  /// screen above the sheet).
+  Future<void> dismissSheet(WidgetTester tester) async {
+    await tester.tapAt(const Offset(300, 40));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400)); // pop transition
+  }
+
   testWidgets('switching back and forth keeps scroll, query, selection (AC2)', (
     tester,
   ) async {
@@ -177,6 +191,32 @@ void main() {
     await tester.tap(find.byTooltip('Next match'));
     await tester.pump();
     expect(find.text('1 of 1'), findsOneWidget);
+
+    // Open the selected row's details sheet (P3-4): remember its content.
+    await tester.tap(find.textContaining('deploy the service now'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final textsBefore = sheetTexts(tester);
+    expect(textsBefore, isNotEmpty);
+    await dismissSheet(tester);
+
+    // Chat and back: the query survives too.
+    await tester.tap(find.text('Chat'));
+    await tester.pump();
+    await tester.tap(find.text('Trajectory'));
+    await tester.pump();
+    expect(find.text('1 of 1'), findsOneWidget);
+    expect(find.descendant(
+      of: find.byType(TrajectoryScreen),
+      matching: find.text('deploy'),
+    ), findsOneWidget);
+
+    // Reopening the details sheet shows the same record.
+    await tester.tap(find.textContaining('deploy the service now'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(sheetTexts(tester), textsBefore);
+    await dismissSheet(tester);
 
     // Clear the query so the full ledger (48+ rows) overflows again, then
     // scroll it away from the tail-follow position.
@@ -229,5 +269,82 @@ void main() {
     );
     await flushTimers(tester);
     service.feed.dispose();
+  });
+
+  testWidgets('swapping the service swaps the ledger content (E3)', (
+    tester,
+  ) async {
+    final serviceA = FakeChatService();
+    _populate(serviceA.feed);
+    await _pumpScreen(tester, serviceA);
+    await openTrajectory(tester);
+    final ledgerScrollable = find
+        .descendant(
+          of: find.byType(TrajectoryTable),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Scrollable &&
+                widget.axisDirection == AxisDirection.down,
+          ),
+        )
+        .first;
+    // Pin the ledger to the true bottom (the tail-follow jump lags the
+    // growing extent).
+    await tester.drag(ledgerScrollable, const Offset(0, -10000));
+    await tester.pump();
+    expect(find.textContaining('reply 23'), findsOneWidget);
+
+    final serviceB = FakeChatService();
+    serviceB.feed.append(
+      MessageRecord(
+        id: 'bu0',
+        parentId: null,
+        timestamp: DateTime.utc(2026, 1, 2, 9),
+        message: UserMessage.text('session B payload'),
+      ),
+    );
+    // Same runtime type, no key: this drives didUpdateWidget. The unbind
+    // swaps the ledger to service B's controller (the narrow page stays
+    // mounted in its IndexedStack, hidden off the active index).
+    await tester.pumpWidget(
+      MaterialApp(home: FaChatScreen(service: serviceB)),
+    );
+    await flushTimers(tester);
+    expect(find.textContaining('session B payload'), findsWidgets);
+    expect(find.textContaining('reply 23'), findsNothing);
+    await flushTimers(tester);
+    serviceA.feed.dispose();
+    serviceB.feed.dispose();
+  });
+
+  testWidgets('service swap under an open wide route disposes safely (P3-11)', (
+    tester,
+  ) async {
+    final serviceA = FakeChatService();
+    _populate(serviceA.feed);
+    await _pumpScreen(tester, serviceA, size: const Size(1400, 1000));
+
+    await tester.tap(find.byIcon(Icons.timeline));
+    await tester.pump(); // start the route animation
+    await tester.pump(const Duration(milliseconds: 400)); // finish it
+    expect(find.byType(TrajectoryScreen), findsOneWidget);
+
+    final serviceB = FakeChatService();
+    await tester.pumpWidget(
+      MaterialApp(home: FaChatScreen(service: serviceB)),
+    );
+    // The swap closes the stale session-A route outside the build phase;
+    // its controller disposes only after the pop fully completes (no
+    // use-after-dispose anywhere).
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    // One more frame: the popped route leaves the tree the frame after
+    // its exit transition completes.
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byType(TrajectoryScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+    await flushTimers(tester);
+    serviceA.feed.dispose();
+    serviceB.feed.dispose();
   });
 }

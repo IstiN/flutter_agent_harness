@@ -3,6 +3,7 @@
 // in the LICENSE file.
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -13,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fa_ui/src/theme/app_theme.dart';
 import 'package:fa_ui/src/trajectory/trajectory_controller.dart';
 import 'package:fa_ui/src/trajectory/trajectory_table.dart';
+import 'package:fa_ui/src/trajectory/trajectory_cell.dart';
 import 'package:fa_ui/src/trajectory/trajectory_turn.dart';
 
 import 'fixture_table.dart';
@@ -543,6 +545,177 @@ void main() {
       expect(copied, contains('\n'));
       expect(copied, contains('Run the deployment'));
       expect(copied, contains('Deploying now'));
+      controller.dispose();
+    });
+  });
+
+  group('keyboard copy (AC4)', () {
+    testWidgets('ctrl+C sends the selection to the clipboard', (tester) async {
+      final clipboard = <String>[];
+      _mockClipboard(tester, clipboard);
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      final regionFocus = tester
+          .widgetList<Focus>(
+            find.descendant(
+              of: find.byType(SelectableRegion),
+              matching: find.byWidgetPredicate(
+                (widget) => widget is Focus && widget.focusNode != null,
+              ),
+            ),
+          )
+          .first;
+      regionFocus.focusNode!.requestFocus();
+      tester
+          .state<SelectableRegionState>(find.byType(SelectableRegion))
+          .selectAll(SelectionChangedCause.toolbar);
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(clipboard, hasLength(1));
+      expect(clipboard.single, contains('Run the deployment'));
+      controller.dispose();
+    });
+
+
+    // Runs only on the macOS platform variant (meta-style shortcut).
+    testWidgets(
+      'cmd+C sends the selection to the clipboard on macOS',
+      (tester) async {
+        final clipboard = <String>[];
+        _mockClipboard(tester, clipboard);
+        final controller = tableFixtureController();
+        await tester.pumpWidget(_host(controller));
+        await tester.pumpAndSettle();
+
+        final regionFocus = tester
+            .widgetList<Focus>(
+              find.descendant(
+                of: find.byType(SelectableRegion),
+                matching: find.byWidgetPredicate(
+                  (widget) => widget is Focus && widget.focusNode != null,
+                ),
+              ),
+            )
+            .first;
+        regionFocus.focusNode!.requestFocus();
+        tester
+            .state<SelectableRegionState>(find.byType(SelectableRegion))
+            .selectAll(SelectionChangedCause.toolbar);
+        await tester.pump();
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+        await tester.pump();
+
+        expect(clipboard, hasLength(1));
+        expect(clipboard.single, contains('Run the deployment'));
+        controller.dispose();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
+  });
+
+  group('timeline focus reveal (P2-1)', () {
+    testWidgets('focusRecord scrolls the record row into view', (
+      tester,
+    ) async {
+      final controller = TrajectoryController(
+        initial: buildLargeFixtureSnapshot(turns: 40),
+      );
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      // Near the tail (the exact offset lags the growing extent).
+      expect(position.pixels, greaterThan(position.maxScrollExtent - 1000));
+      // The timeline tap handler marks record 1 the same way.
+      controller.selectRecord(recordIds(controller, TrajectoryCellKind.user).first);
+      controller.focusRecord(1);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Turn 1 prompt'), findsOneWidget);
+      final viewport = tester.getRect(find.byType(TrajectoryTable));
+      final row = tester.getRect(find.textContaining('Turn 1 prompt'));
+      expect(row.top, greaterThanOrEqualTo(viewport.top));
+      expect(row.bottom, lessThanOrEqualTo(viewport.bottom));
+      final revealed = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      expect(revealed.pixels, lessThan(revealed.maxScrollExtent));
+      controller.dispose();
+    });
+  });
+
+  group('layout robustness (E9)', () {
+    testWidgets('RTL rows with unbroken strings and emoji pump clean', (
+      tester,
+    ) async {
+      final controller = overflowProbeController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Scaffold(
+              body: SizedBox(
+                width: 600,
+                child: TrajectoryTable(controller: controller),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      // The expanded unbroken body stays soft-wrapped too.
+      controller.toggleExpandedRow(
+        recordIds(controller, TrajectoryCellKind.tool).single,
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      controller.dispose();
+    });
+  });
+
+  group('long-session virtualisation (E5)', () {
+    testWidgets('10k records stay virtualised while scrolling', (
+      tester,
+    ) async {
+      final controller = TrajectoryController(
+        initial: buildLargeFixtureSnapshot(turns: 3500),
+      );
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      int builtRowTexts() =>
+          tester.widgetList<TrajectoryRowText>(
+            find.byType(TrajectoryRowText),
+          ).length;
+      final table = find.byType(TrajectoryTable);
+
+      // At the tail: a bounded window, not 10500 rows.
+      expect(builtRowTexts(), lessThan(400));
+      expect(tester.takeException(), isNull);
+
+      // Scroll through the middle and back to the very top.
+      await tester.drag(table, const Offset(0, 100000));
+      await tester.pumpAndSettle();
+      expect(builtRowTexts(), lessThan(400));
+      expect(tester.takeException(), isNull);
+      expect(_texts(tester).join('\n'), isNot(contains('Turn 3500 prompt')));
+
+      await tester.drag(table, const Offset(0, 1000000));
+      await tester.pumpAndSettle();
+      expect(builtRowTexts(), lessThan(400));
+      expect(tester.takeException(), isNull);
+      expect(_texts(tester).join('\n'), contains('Turn 1 prompt'));
       controller.dispose();
     });
   });

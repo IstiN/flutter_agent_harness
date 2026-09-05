@@ -1257,9 +1257,21 @@ class AgentCli {
   /// that already has persisted records (e.g. a user message saved before a
   /// run that was interrupted) is also kept.
   Future<void> deleteSessionIfEmpty() async {
-    if (_agent.state.messages.isNotEmpty) return;
-    if (_persistedCount > 0) return;
-    if (_subagentManager.handles.isNotEmpty) return;
+    if (!_sessionIsEmpty()) return;
+    await _deleteEmptySessionFile();
+  }
+
+  /// Whether nothing was ever said in the session and nothing owns it.
+  bool _sessionIsEmpty() =>
+      _sessionHasNoContent &&
+      _subagentManager.handles.isEmpty &&
+      _session != null;
+
+  /// No live messages and no records persisted to disk.
+  bool get _sessionHasNoContent =>
+      _agent.state.messages.isEmpty && _persistedCount == 0;
+
+  Future<void> _deleteEmptySessionFile() async {
     final session = _session;
     if (session == null) return;
     try {
@@ -1388,11 +1400,7 @@ class AgentCli {
   /// from happening; dropping prints exactly what was discarded — a silent
   /// drop is indistinguishable from a lost message.
   void _settleLeftoverSteering() {
-    if (_exited || !_agent.hasSteering) return;
-    final outcome = resolveLeftoverSteering(
-      drain: _agent.drainSteeringQueue,
-      abortRequested: _abortRequested,
-    );
+    final outcome = _leftoverSteeringOutcome();
     if (outcome == null) return;
     if (outcome.run) {
       io.writeln(
@@ -1404,8 +1412,24 @@ class AgentCli {
       _startRun(outcome.texts.join('\n'));
       return;
     }
+    _printDroppedSteering(outcome.texts);
+  }
+
+  /// The steering still queued after a run settled, or null when there
+  /// is nothing left to settle (or the session already exited).
+  LeftoverSteering? _leftoverSteeringOutcome() {
+    if (_exited || !_agent.hasSteering) return null;
+    return resolveLeftoverSteering(
+      drain: _agent.drainSteeringQueue,
+      abortRequested: _abortRequested,
+    );
+  }
+
+  /// Prints exactly what was discarded — a silent drop is
+  /// indistinguishable from a lost message.
+  void _printDroppedSteering(List<String> texts) {
     io.writeln(_style.dim('dropped steering message(s) after interrupt:'));
-    for (final text in outcome.texts) {
+    for (final text in texts) {
       final elided = text.length <= 80 ? text : '${text.substring(0, 80)}…';
       io.writeln(_style.dim('  • ${elided.replaceAll('\n', ' ')}'));
     }
