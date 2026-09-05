@@ -18,9 +18,10 @@ Two systems run side by side:
 ## Layers
 
 Priority order (higher wins overlaps): `registered` (exact values) →
-`path` (credential files) → `vendor` (GitHub/AWS/OpenAI/JWT/…) → `prefix`
-(`indexOf` pre-screen feeding vendor) → `pem` → `asn1` → `connection` →
-`context` (password/secret key names) → `entropy` → `pii` (off by
+`path` (credential files) → `credential` (DOM form-field values) →
+`vendor` (GitHub/AWS/OpenAI/JWT/…) → `prefix` (`indexOf` pre-screen
+feeding vendor) → `pem` → `asn1` → `connection` → `context`
+(password/secret key names) → `entropy` → `pii` (off by
 default). Output markers are `[REDACTED:<kind>]`, idempotent, and
 line-count preserving. Allowlisted shapes (Git SHAs, UUIDs) and
 `data:` base64 URLs survive.

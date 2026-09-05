@@ -13,7 +13,11 @@
 //   structured page-error mapping (E2 — a failed page evaluation is DATA
 //   the model reads, never a raw throw), the retryable
 //   'execution_context_destroyed' surfacing (E3), and the targeted
-//   refusals ('active_tab', 'no_longer_available', 'no_app_page');
+//   refusals ('active_tab', 'no_longer_available', 'no_app_page'); plus
+//   the issue #30 v2.1 gates: prompt-injection refusals ('login_form',
+//   'keylogger_shaped'), exfil-gate approval holds ('approval_required')
+//   on outbound tabs/downloads, and redaction+quarantine of page-derived
+//   READ results;
 // - approval tiers are metadata here ([BrowserToolSpec]); enforcement
 //   lives in the host approval gate.
 //
@@ -28,8 +32,12 @@ import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/agent/agent_tool.dart';
 import 'package:flutter_agent_harness/src/agent/tool_registry.dart';
 import 'package:flutter_agent_harness/src/approval/approval.dart';
+import 'package:flutter_agent_harness/src/redact/redaction_pipeline.dart';
 
 import 'chrome_api.dart';
+import 'security/exfil_gate.dart';
+import 'security/injection_validator.dart';
+import 'security/quarantine.dart';
 
 /// Per-frame serialized-result budget for inject_js (E4). 64 KiB keeps a
 /// runaway page expression from flooding the model's context window; the
@@ -331,17 +339,39 @@ final class BrowserApiToolException implements Exception {
 
 /// The browser tool family over one [ChromeApi]. Build with [tools] and
 /// register through [registerBrowserApiTools]; [resultBudget] widens the
-/// per-frame inject_js result budget when a caller knows it needs more.
+/// per-frame inject_js result budget when a caller knows it needs more;
+/// [pageClassifier] swaps the prompt-injection page classifier consulted
+/// before every scripting execution (default: the URL heuristic);
+/// [visitedOrigins] wires the exfil gate for tabs_open/downloads_start —
+/// null keeps the gate off, and a set (even empty) enforces it, an empty
+/// set meaning every origin counts as unvisited and prompts.
 final class BrowserApiToolSurface {
   BrowserApiToolSurface(
     this._chrome, {
     this.resultBudget = defaultResultBudgetBytes,
+    this.pageClassifier = urlHeuristicClassifier,
+    this.visitedOrigins,
   });
 
   final ChromeApi _chrome;
 
   /// Serialized-bytes budget per injected frame result (E4).
   final int resultBudget;
+
+  /// Page classifier consulted before every inject_js / cdp_eval run.
+  final PageClassifier pageClassifier;
+
+  /// Origins the user actually visited; null = exfil gate off.
+  final Set<String>? visitedOrigins;
+
+  final InjectionValidator _injection = const InjectionValidator();
+  final ExfilGate _exfilGate = const ExfilGate();
+
+  /// Masks planted page secrets in page-derived READ results. Heuristic
+  /// layers only — no registered secrets at this layer.
+  final RedactionPipeline _redactor = RedactionPipeline(
+    registeredSecrets: const [],
+  );
 
   static final Map<String, BrowserToolSpec> _specsByName = {
     for (final s in browserApiToolSpecs()) s.name: s,
@@ -412,6 +442,7 @@ final class BrowserApiToolSurface {
         ['url'],
         (args) async {
           final url = _reqStr(args, 'url');
+          await _gateOutbound(OutboundKind.windowOpen, url);
           final active = _optBool(args, 'active');
           final index = _optInt(args, 'index');
           final pinned = _optBool(args, 'pinned');
@@ -804,7 +835,9 @@ final class BrowserApiToolSurface {
             text: text,
             maxResults: maxResults,
           );
-          return _json([for (final h in items) h.toJson()]);
+          return _hardenedListJson([
+            for (final h in items) h.toJson(),
+          ], source: 'history');
         },
       ),
       tool(
@@ -815,7 +848,9 @@ final class BrowserApiToolSurface {
         const [],
         (args) async {
           final tree = await _chrome.bookmarks.tree();
-          return _json([for (final n in tree) n.toJson()]);
+          return _hardenedListJson([
+            for (final n in tree) n.toJson(),
+          ], source: 'bookmarks');
         },
       ),
       tool(
@@ -890,6 +925,7 @@ final class BrowserApiToolSurface {
         ['url'],
         (args) async {
           final url = _reqStr(args, 'url');
+          await _gateOutbound(OutboundKind.download, url);
           final filename = _optStr(args, 'filename');
           final id = await _chrome.downloads.download(
             url: url,
@@ -1032,6 +1068,13 @@ final class BrowserApiToolSurface {
           final css = _reqStr(args, 'css');
           final allFrames = _optBool(args, 'allFrames');
           await _restrictScripting(tabId);
+          final cssDecision = _injection.validateCss(css);
+          if (!cssDecision.allowed) {
+            throw BrowserApiToolException(
+              cssDecision.code!,
+              cssDecision.message!,
+            );
+          }
           await _chrome.scripting.insertCSS(
             tabId: tabId,
             css: css,
@@ -1165,6 +1208,7 @@ final class BrowserApiToolSurface {
     final allFrames = _optBool(args, 'allFrames');
     final frameIds = _optIntList(args, 'frameIds');
     await _restrictScripting(tabId);
+    await _validateInjection(tabId, code);
 
     List<ScriptResult> frames;
     try {
@@ -1220,6 +1264,7 @@ final class BrowserApiToolSurface {
     final expression = _reqStr(args, 'expression');
     final awaitPromise = _optBool(args, 'awaitPromise') ?? false;
     await _restrictScripting(tabId);
+    final pageUrl = await _validateInjection(tabId, expression);
 
     final attached = await _attach(tabId);
     try {
@@ -1238,7 +1283,19 @@ final class BrowserApiToolSurface {
         );
       }
       final value = (map?['result'] as Map<Object?, Object?>?)?['value'];
-      return _json({'ok': true, 'tabId': tabId, 'value': value});
+      return _json({
+        'ok': true,
+        'tabId': tabId,
+        // Page-derived read: redact + quarantine STRING results (the
+        // instruction-injection vector); scalars keep their JSON shape.
+        'value': value is String
+            ? quarantinePageContent(
+                source: 'cdp_eval',
+                content: _redactor.redact(value),
+                url: pageUrl,
+              )
+            : value,
+      });
     } finally {
       if (attached) {
         try {
@@ -1296,6 +1353,58 @@ final class BrowserApiToolSurface {
             'page (tab management still works)',
       );
     }
+  }
+
+  /// Prompt-injection gate for scripting tools (issue #30 v2.1):
+  /// classify the page through the [pageClassifier] seam, then validate
+  /// the code. A refusal is a structured tool error carrying the
+  /// validator's code — counted as a refusal, never a crash. Returns the
+  /// page URL for downstream quarantine provenance.
+  Future<String> _validateInjection(int tabId, String code) async {
+    final tab = await _chrome.tabs.get(tabId);
+    final page = await pageClassifier(tabId, tab.url);
+    final decision = _injection.validateJs(code: code, page: page);
+    if (!decision.allowed) {
+      throw BrowserApiToolException(decision.code!, decision.message!);
+    }
+    return tab.url;
+  }
+
+  /// Exfil gate for tabs_open/downloads_start. Tool calls are
+  /// user-authorized at this layer (source realUser); the approval
+  /// tiering itself stays the host's approval gate — when the gate is
+  /// wired (non-null [visitedOrigins]) a requiresApproval verdict
+  /// surfaces as 'approval_required' carrying the gate's explanation.
+  Future<void> _gateOutbound(OutboundKind kind, String url) async {
+    final visited = visitedOrigins;
+    if (visited == null) return;
+    final action = OutboundAction(
+      kind: kind,
+      targetOrigin: outboundOrigin(url),
+      payloadSnippet: '',
+      source: ActionSource.realUser,
+    );
+    final decision = _exfilGate.evaluate(action, userVisitedOrigins: visited);
+    if (decision.requiresApproval) {
+      throw BrowserApiToolException(
+        'approval_required',
+        _exfilGate.explain(action, decision),
+      );
+    }
+  }
+
+  /// Page-derived READ results (history rows, bookmark titles):
+  /// redacted through the core pipeline, then quarantined, so planted
+  /// page secrets come back masked and page text can never ride back as
+  /// instructions.
+  ToolExecutionResult _hardenedListJson(
+    Object? payload, {
+    required String source,
+  }) {
+    final text = _redactor.redact(jsonEncode(payload));
+    return ToolExecutionResult.text(
+      quarantinePageContent(source: source, content: text),
+    );
   }
 
   /// Active tab of the focused window, for tabId-optional tools.

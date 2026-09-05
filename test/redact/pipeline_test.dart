@@ -42,7 +42,7 @@ void main() {
       expect(out, contains('sha512-mg4aOJjqPBvUnLo0BWafbbTVBThScgeBAmBAJqDk'));
       expect(out, contains('https://registry.npmjs.org/esbuild/-/esbuild'));
       expect(out, contains('[REDACTED:JWT]'));
-      expect(out, contains('[REDACTED:Sensitive Value]'));
+      expect(out, contains('[REDACTED:credential]'));
     });
 
     test('an ls/find listing keeps every path intact', () {
@@ -148,7 +148,7 @@ void main() {
       final decoded = jsonDecode(out) as Map<String, dynamic>;
       expect(decoded['user'], 'bob');
       expect(decoded['n'], 1);
-      expect(decoded['password'], '[REDACTED:Sensitive Value]');
+      expect(decoded['password'], '[REDACTED:credential]');
     });
 
     test('line count is preserved for a 30-line PEM block', () {
