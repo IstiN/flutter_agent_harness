@@ -119,6 +119,61 @@ replayed forever in context, not portable to web.
   feature flag; extract Flutter helpers into a sibling package if needed.
 - **Phase 5 — pub.dev release** (see below).
 
+## Card #27 — fa agents see each other: hub as the messaging core, files
+as fallback, A2A at the boundary
+
+The messaging fabric (`lib/src/messaging/`) is file-based today
+(`FileMessagingRepository`): fine for CLI peers sharing a filesystem, but
+sandboxed hosts (App-Store container rules) have no writable shared root,
+presence is approximated by inbox-dir mtime heuristics, and files cannot
+span machines. Fix the transport, keep the seams.
+
+**Seams that must not change:** `lib/src/messaging/`
+(`MessagingRepository` / `SwappableMessagingRepository`), the agent-loop
+inbox probe (`externalSteeringSource`, idle wake, `mailboxPrefix`),
+`lib/src/a2a/`, `docs/dap.md`. Hosts never carry transport code — the
+harness owns the wire.
+
+- **Phase 27.1 — hub-backed repository.** `HubMessagingRepository
+  implements MessagingRepository` over the DAP hub: loopback-only
+  (`ws://127.0.0.1:<port>`), hub as LaunchAgent / user service,
+  first-connect pairing with the token in Keychain (sandbox-friendly, no
+  per-message prompts). Composition, not replacement: the hub is the live
+  layer, the file inbox stays the offline fallback (queue while
+  disconnected, drain on reconnect, invisible reconnect with backoff and
+  session resumption by (agentId, token)). Opt-in is one call:
+  `fabric.enable(name, capabilities)` — embedded hosts only make outbound
+  connections, only the hub listens. Presence `live`/`busy`/`offline`
+  from hub registration (`busy` = run in progress, mail still accepted —
+  steering semantics). Mailbox semantics: at-least-once delivery, dedup
+  by message id, per-sender ordering; scheduled messages stay host-local;
+  inbound mail surfaces through the existing inbox mechanism and stays
+  visible in the host UI when no agent run is active. Pilot: yoclip
+  studio's embedded fa agent visible to `fa` CLI and the macOS app.
+- **Phase 27.2 — discovery surface.** `agent_directory` backed by hub
+  registration (authoritative live/busy/offline, not mtime) plus a
+  capabilities dictionary — namespaced strings + short description +
+  payload hints (e.g. `yoclip.render`, `yoclip.screenshot`,
+  `yoclip.pptx.export`, `yoclip.preview`, `yoclip.agent`); discovery
+  metadata only, invocation stays plain DM. Addressing: stable names
+  across restarts, project-scoped aliases, reserve `name@machine` now so
+  phase 27.3 never breaks addresses. Concrete bug to fix here: today
+  `agent_directory` shows raw UUID mailboxes only — an agent restarted as
+  `fa --session goal_builder` cannot be found or addressed by that name.
+- **Phase 27.3 — A2A as the boundary gateway.** Cross-machine and
+  external-agent interop stays in `lib/src/a2a/` (agent cards,
+  tasks/artifacts), bridged at the hub edge; the hub itself remains
+  loopback-only and is never the cross-machine transport.
+
+**Acceptance (repo conventions):** TDD — failing tests first; > 90% line
+coverage of new `lib/src/messaging/` code (hard ratchet stays 80%);
+pure-Dart core — socket transports behind injectable interfaces,
+`lib/io.dart` the only `dart:io` entry; tests use the fake hub
+(`test/hub/fake_hub.dart` pattern), never real network; hub-kill →
+file-fallback → recovery is covered (no lost or duplicated mail, order
+preserved); addressing/name-resolution tests for the phase 27.2 bug;
+docs (`docs/dap.md`, messaging section) + `CHANGELOG.md` updated.
+
 ## Quality gates (enforced by git pre-commit hook)
 
 Hook: `scripts/pre-commit` — canonical copy, also installed in
