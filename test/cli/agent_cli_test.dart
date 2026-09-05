@@ -78,6 +78,9 @@ void main() {
   }
 
   test('an untouched session leaves no file behind on exit', () async {
+    // Session-start memory maintenance is due on a fresh env (no stamp);
+    // its consolidate() would consume a scripted turn on a slow runner.
+    await env.writeFile('/work/.fah/memory/.last_maintenance', '');
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call);
@@ -600,6 +603,9 @@ void main() {
         '---\nname: hidden\ndescription: Model only\nuser-invocable: false\n'
             '---\nHidden body.\n',
       );
+      // Fresh env = memory maintenance due at boot; pin it off so its
+      // consolidate() cannot consume the scripted turn on slow runners.
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call);
       final run = cli.run();
@@ -617,6 +623,10 @@ void main() {
     // (project scope = <cwd>/.fah/memory).
     final seed = MemoryController(env: env);
     await seed.add(text: 'the user prefers ADHD-style short answers');
+    // A fresh env has no maintenance stamp, so the session-start
+    // maintenance would be due and its consolidate() would consume the
+    // single scripted turn on a slow runner before /exit lands.
+    await env.writeFile('/work/.fah/memory/.last_maintenance', '');
 
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call);
