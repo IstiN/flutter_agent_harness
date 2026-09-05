@@ -27,6 +27,8 @@ import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 
 import 'chrome_storage_env.dart';
+import 'dap/dap_frames.dart';
+import 'dap/dap_integration.dart';
 import 'providers.dart';
 
 /// Calls the browser op table bound by sw/main.js (`globalThis.__faOps` →
@@ -44,6 +46,7 @@ typedef HostConfig = ({
   ProviderConfig? provider,
   String approvalMode, // 'ask' | 'write' | 'yolo' | 'unattended'
   String mailbox,
+  DapConfig? dap, // null = no hub presence
 });
 
 const _sessionPath = '/session.jsonl';
@@ -71,6 +74,15 @@ final class AgentHost {
   String _mailbox = '';
   bool _running = false;
   bool _booted = false;
+
+  /// Hub presence (null when no faDap config).
+  DapIntegration? _dap;
+  DapConfig? _dapConfig;
+
+  /// AC18: one deduper across bridge + DAP mail, so a peer message that
+  /// arrives on both links is delivered once (bridge copy wins — it lands
+  /// first).
+  final _mailDedupe = MailDeduper();
 
   /// Bridge mail waiting for the next turn boundary (drained as steering).
   final _mail = <({String from, String text})>[];
@@ -108,6 +120,7 @@ final class AgentHost {
           approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk,
       prompt: _promptApproval,
     );
+    if (config.dap != null) _attachDap(config.dap!);
 
     final storage = await _openSession();
     _session = Session(storage);
@@ -139,9 +152,40 @@ final class AgentHost {
     _approvals.mode =
         approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk;
     _provider = config.provider;
+    _applyDapConfig(config.dap);
     _agent.streamFunction = _streamFn();
     _agent.state.model = _currentModel();
     _emitStatus();
+  }
+
+  /// Starts/stops/retargets the hub presence without touching the agent.
+  void _applyDapConfig(DapConfig? dap) {
+    final current = _dapConfig;
+    if (current != null && dap != null && current.sameTargetAs(dap)) return;
+    _detachDap();
+    if (dap != null) _attachDap(dap);
+  }
+
+  void _attachDap(DapConfig config) {
+    _dapConfig = config;
+    final integration = DapIntegration(
+      config: config,
+      pushMail: pushMail,
+      onStatusChanged: _emitStatus,
+    );
+    _dap = integration;
+    _registry.registerAll(integration.tools);
+    unawaited(integration.start());
+  }
+
+  void _detachDap() {
+    final integration = _dap;
+    if (integration == null) return;
+    _dap = null;
+    _dapConfig = null;
+    _registry.unregister('dap_dm');
+    _registry.unregister('dap_peers');
+    unawaited(integration.stop());
   }
 
   Model _currentModel() {
@@ -189,8 +233,10 @@ final class AgentHost {
     unawaited(_runTurn(attributed));
   }
 
-  /// Bridge mail: queues for steering mid-run, starts a turn when idle.
+  /// Peer mail intake (bridge + DAP): deduped (AC18), queued for steering
+  /// mid-run, starts a turn when idle.
   void pushMail(String from, String text) {
+    if (!_mailDedupe.first(from, text)) return; // AC18: bridge/DAP duplicate
     if (_running) {
       _mail.add((from: from, text: text));
       return;
@@ -225,6 +271,7 @@ final class AgentHost {
         'fake': provider == null || isFakeModel(provider.model),
       },
       'approval': _approvals.mode.label,
+      if (_dap case final dap?) 'hub': dap.snapshot(),
       'session': {
         'path': _sessionPath,
         'messages': _booted ? _agent.state.messages.length : 0,

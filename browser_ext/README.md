@@ -16,7 +16,8 @@ browser_ext/
 │   ├── bridge.js        WebSocket transport (wire protocol v1)
 │   ├── ops.js           browserReq dispatcher (navigate/click/type/…)
 │   ├── tabs.js          `fa — <task>` tab-group tracking + cleanup
-│   ├── cdp.js           chrome.debugger stub (later phase)
+│   ├── cdp.js           chrome.debugger transport: trusted input + any-tab
+│   │                    screenshots (per-call opt-in via args.trusted)
 │   └── agent.js         dart2js output of dart/agent_main.dart (build
 │                        artifact, never committed; absent → agent disabled)
 ├── dart/                Dart package (path dep on the repo) compiled into
@@ -52,11 +53,41 @@ browser_ext/
   dedupe (LRU 512), 20 s ping keepalive via `chrome.alarms`.
 - All `browserReq` ops: `navigate`, `tabs`, `switch_tab`, `click`, `type`,
   `press_key`, `select`, `read_dom`, `eval`, `screenshot`, `wait_for`,
-  `task_end`.
+  `task_end`. `click`/`type`/`press_key`/`screenshot` accept `trusted: true`
+  for the chrome.debugger path (see below); results always say which path ran
+  (`path: "cdp" | "dom"`).
 - Task tab groups: tabs the agent opens land in a group titled
   `fa — <session uuid>`; `task_end` (or bridge disconnect) closes exactly
   those tabs. Tabs you opened yourself are never touched.
 - Smoke path: the panel composer sends real fabric mail (`sendTest`) for CI.
+
+## Trusted input (chrome.debugger / CDP)
+
+Pages are driven over two control planes:
+
+- **Content script (default, quiet)** — isolated-world DOM ops; no UI change
+  in the target tab. A page can in principle tell synthetic DOM events from
+  real user input.
+- **CDP (per-call opt-in)** — pass `trusted: true` to `click`, `type`,
+  `press_key`, or `screenshot`. Events go through `chrome.debugger`
+  (`Input.dispatchMouseEvent` / `Input.dispatchKeyEvent`), so Chrome itself
+  synthesizes them: pages cannot distinguish them from real user input, and
+  screenshots work on background tabs without activating them (AC16).
+
+**Honesty signal:** while a debugger session is open, Chrome shows the
+*"… started debugging this browser"* infobar. That banner is by design — the
+user always can see when the trusted path is in use. The quiet default path
+shows nothing. Attach is lazy per tab and cached; sessions are dropped on
+`task_end`, when another client takes the target, or when Chrome suspends the
+service worker.
+
+**Conflict (E23):** if DevTools (or any other client) already owns the tab,
+the op answers `{ ok: false, code: "denied" }` and suggests retrying without
+`trusted` — the quiet content path still works there.
+
+The embedded agent opts in per tool call (`trusted` argument), so a session
+can mix both planes: quiet DOM ops by default, trusted input where fidelity
+matters (e.g. pages that ignore synthetic events).
 
 ## Self-contained mode (embedded agent)
 
@@ -96,6 +127,34 @@ snapshot of the agent's whole in-memory filesystem in `chrome.storage.local`
 (`faFs`, debounced ~800 ms, flushed after every run). When the service
 worker is reaped and later re-woken, the session resumes where it left off,
 and context compaction stays active.
+
+### Agent-to-agent messaging (DAP hub)
+
+The embedded agent can join a [DAP/1](../docs/dap.md) hub — the same
+WebSocket network local `fa` instances use — so other agents can see it
+(`dap_peers`), DM it (`dap_dm` steers it mid-run), and get replies back,
+with end-to-end encryption intact (ChaCha20-Poly1305 under X25519 ECDH;
+the hub only ever sees ciphertext).
+
+Configure it in the side panel → **Hub** section: paste the hub URL
+(e.g. `ws://127.0.0.1:8787/ws`) and a display name, then **Save hub**.
+
+- The Ed25519/X25519 identity is generated on first start and persisted in
+  `chrome.storage.local` (`faDapKey`, CLI-compatible key-file format), so
+  the agentId (`hex(sha256(pubkey))[:16]`) is stable across SW restarts.
+- Status is one quiet line under the form: `hub: connected as <agentId>` /
+  `hub: disconnected (retrying)`. Reconnects back off 1 s → 30 s.
+- The agent gets two tools: `dap_peers` (read) lists who is online;
+  `dap_dm {to, text}` (exec) sends an E2E DM to a 16-hex id or a unique
+  online name.
+- Inbound DMs arrive as `[from <agentId>]` mail — the same intake as
+  bridge mail, deduped against it, so a peer message arriving on both the
+  bridge and the hub is delivered once.
+- A payload that cannot be decrypted (unknown sender key, tampered box)
+  is surfaced as `[hub] undecryptable message from <from>` — never
+  dropped, and never shown as plaintext.
+- Channels v1 is not implemented (no channel key store in the extension);
+  the client speaks hello/send/whois/presence/flush only.
 
 ## Security notes
 

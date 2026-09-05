@@ -75,6 +75,18 @@
     <button id="saveProvider">Save provider</button>
   </section>
 
+  <section>
+    <h2>Hub (agent-to-agent messaging)</h2>
+    <label>Hub URL
+      <input id="hubUrl" type="text" placeholder="ws://127.0.0.1:8787/ws" spellcheck="false">
+    </label>
+    <label>Agent name
+      <input id="hubName" type="text" placeholder="my-agent (display only)" spellcheck="false">
+    </label>
+    <button id="saveHub">Save hub</button>
+    <div id="hubStatus" class="dim"></div>
+  </section>
+
   <h2>Events</h2>
   <ul id="log" aria-live="polite"></ul>
 

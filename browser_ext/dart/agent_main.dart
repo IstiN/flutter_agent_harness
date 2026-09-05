@@ -9,6 +9,7 @@ import 'package:flutter_agent_harness/src/providers/provider_common.dart'
     show providerHttpClientFactory;
 
 import 'src/agent_host.dart';
+import 'src/dap/dap_integration.dart';
 import 'src/fetch_client.dart';
 import 'src/providers.dart';
 
@@ -22,6 +23,9 @@ external JSPromise<JSAny?> _faOps(JSString op, JSObject args);
 
 @JS('chrome.storage.local.get')
 external JSPromise<JSAny?> _storageGet(JSAny? keys);
+
+@JS('chrome.storage.local.set')
+external JSPromise<JSAny?> _storageSet(JSObject keys);
 
 AgentHost? _host;
 Future<AgentHost?> _hostBoot = Future.value(null);
@@ -143,7 +147,7 @@ Future<HostConfig> _loadStoredConfig() async {
   Map<Object?, Object?> stored = const {};
   try {
     final result = await _storageGet(
-      ['faProvider', 'faApproval'].jsify(),
+      ['faProvider', 'faApproval', 'faDap'].jsify(),
     ).toDart;
     if (result != null) {
       stored = (result as JSObject).dartify() as Map<Object?, Object?>;
@@ -154,6 +158,7 @@ Future<HostConfig> _loadStoredConfig() async {
   return _configFrom(
     provider: stored['faProvider'],
     approval: stored['faApproval'],
+    dap: stored['faDap'],
   );
 }
 
@@ -161,10 +166,14 @@ HostConfig _readConfig(JSAny? config) {
   final map = config == null
       ? const <Object?, Object?>{}
       : (config as JSObject).dartify() as Map<Object?, Object?>;
-  return _configFrom(provider: map['provider'], approval: map['approvalMode']);
+  return _configFrom(
+    provider: map['provider'],
+    approval: map['approvalMode'],
+    dap: map['dap'],
+  );
 }
 
-HostConfig _configFrom({Object? provider, Object? approval}) {
+HostConfig _configFrom({Object? provider, Object? approval, Object? dap}) {
   ProviderConfig? resolved;
   if (provider is Map) {
     final baseUrl = '${provider['baseUrl'] ?? ''}'.trim();
@@ -179,7 +188,36 @@ HostConfig _configFrom({Object? provider, Object? approval}) {
     approvalMode: approval is String ? approval : 'ask',
     // main.js overlays the live bridge mailbox name onto pushed status.
     mailbox: '',
+    dap: _dapFrom(dap),
   );
+}
+
+/// faDap storage shape: `{url, name}`. Empty url = no hub presence.
+DapConfig? _dapFrom(Object? raw) {
+  if (raw is! Map) return null;
+  final url = '${raw['url'] ?? ''}'.trim();
+  if (url.isEmpty) return null;
+  return DapConfig(
+    url: url,
+    name: '${raw['name'] ?? ''}'.trim(),
+    loadKeyFile: () => _storageGetString('faDapKey'),
+    saveKeyFile: (text) => _storageSetString('faDapKey', text),
+  );
+}
+
+Future<String?> _storageGetString(String key) async {
+  try {
+    final result = await _storageGet([key].jsify()).toDart;
+    if (result == null) return null;
+    final stored = (result as JSObject).dartify() as Map<Object?, Object?>;
+    return stored[key] is String ? stored[key] as String : null;
+  } on Object {
+    return null; // storage blocked → identity regenerates next start
+  }
+}
+
+Future<void> _storageSetString(String key, String value) async {
+  await _storageSet(<String, Object?>{key: value}.jsify() as JSObject).toDart;
 }
 
 // -- Ops bridge --------------------------------------------------------------------------

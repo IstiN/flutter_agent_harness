@@ -117,7 +117,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           model: String(msg.model ?? '').trim(),
         };
         await store.set({ faProvider: provider, ...(msg.approvalMode ? { faApproval: msg.approvalMode } : {}) });
-        agent?.boot({ provider }); // hot-swap stream fn / approval mode
+        // boot() rebuilds the whole config — pass the stored hub + approval
+        // back so saving the provider never drops the hub connection.
+        const cur = await store.get(['faApproval', 'faDap']);
+        agent?.boot({ provider, approvalMode: cur.faApproval, dap: cur.faDap });
+        return { ok: true };
+      }
+      case 'hub.save': {
+        // faDap {url, name}; empty url = no hub presence. Identity keys are
+        // generated + stored inside the Dart agent (faDapKey) on first start.
+        const url = String(msg.url ?? '').trim();
+        const name = String(msg.name ?? '').trim();
+        if (url) await store.set({ faDap: { url, name } });
+        else await store.remove(['faDap']);
+        const cur = await store.get(['faProvider', 'faApproval']);
+        agent?.boot({ provider: cur.faProvider, approvalMode: cur.faApproval, dap: url ? { url, name } : null });
         return { ok: true };
       }
       default:

@@ -32,6 +32,16 @@ function render(s) {
   } else {
     $('agentStatus').textContent = 'embedded agent not built — run scripts/build_browser_ext.sh';
   }
+  const hub = agent?.hub;
+  $('hubStatus').textContent = hubText(hub);
+}
+
+// E9: one quiet status line, no dialogs.
+function hubText(hub) {
+  if (!hub) return '';
+  return hub.phase === 'connected'
+    ? `hub: connected as ${hub.agentId}`
+    : 'hub: disconnected (retrying)';
 }
 
 // -- Agent chat (plain text bubbles; markdown NOT rendered) -------------------
@@ -78,6 +88,7 @@ function onAgentEvent(ev) {
       break;
     case 'status':
       if (ev.running !== undefined && !ev.running && streamingBubble) streamingBubble = null;
+      if (ev.hub) $('hubStatus').textContent = hubText(ev.hub);
       break;
     case 'error':
       log(`agent error: ${ev.error}`);
@@ -143,6 +154,11 @@ $('saveProvider').addEventListener('click', async () => {
     approvalMode: $('pApproval').value,
   });
   if (res?.ok) log('provider saved (stored in the service worker only)');
+});
+
+$('saveHub').addEventListener('click', async () => {
+  const res = await call({ type: 'hub.save', url: $('hubUrl').value, name: $('hubName').value });
+  if (res?.ok) log('hub settings saved');
 });
 
 const port = chrome.runtime.connect({ name: 'fa-panel' });
