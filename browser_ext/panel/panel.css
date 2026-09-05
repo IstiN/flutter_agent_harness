@@ -58,6 +58,52 @@ input, textarea {
   color: var(--text);
   font: inherit;
 }
+select {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+}
+.dim { color: var(--dim); font-size: 11px; margin-top: 6px; }
+#transcript {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.bubble {
+  max-width: 88%;
+  padding: 6px 9px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.bubble.user { align-self: flex-end; background: #123A34; border: 1px solid var(--accent); }
+.bubble.assistant { align-self: flex-start; background: #131C29; border: 1px solid var(--line); }
+.bubble.tool {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--dim);
+  font-size: 11px;
+}
+.composer textarea { margin-top: 0; }
+.approval {
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.approval.hidden { display: none; }
+.approval-text { font-size: 12px; margin-bottom: 6px; overflow-wrap: anywhere; }
 input:focus, textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
 .row { display: flex; gap: 8px; }
 button {

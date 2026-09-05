@@ -36,6 +36,45 @@
     <button id="send">Send mail</button>
   </section>
 
+  <section>
+    <h2>Agent</h2>
+    <div id="approval" class="approval hidden">
+      <div id="approvalText" class="approval-text"></div>
+      <div class="row">
+        <button id="approve">Allow</button>
+        <button id="deny" class="ghost">Deny</button>
+      </div>
+    </div>
+    <div id="transcript" aria-live="polite"></div>
+    <div class="row composer">
+      <textarea id="prompt" rows="2" placeholder="Ask the agent… (fake: provider echoes + navigates)"></textarea>
+      <button id="sendPrompt">Send</button>
+    </div>
+    <div id="agentStatus" class="dim"></div>
+  </section>
+
+  <section>
+    <h2>Provider (stays in the service worker)</h2>
+    <label>Base URL
+      <input id="pBaseUrl" type="text" placeholder="https://openrouter.ai/api/v1" spellcheck="false">
+    </label>
+    <label>API key
+      <input id="pApiKey" type="password" placeholder="sk-… (chrome.storage.local only)" spellcheck="false">
+    </label>
+    <label>Model
+      <input id="pModel" type="text" placeholder="fake:echo or an openai-compatible id" spellcheck="false">
+    </label>
+    <label>Approval mode
+      <select id="pApproval">
+        <option value="ask">ask (prompt for write/exec)</option>
+        <option value="write">write</option>
+        <option value="yolo">yolo</option>
+        <option value="unattended">unattended (CI)</option>
+      </select>
+    </label>
+    <button id="saveProvider">Save provider</button>
+  </section>
+
   <h2>Events</h2>
   <ul id="log" aria-live="polite"></ul>
 

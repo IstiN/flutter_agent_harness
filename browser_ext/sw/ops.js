@@ -1,6 +1,6 @@
 // browserReq dispatcher: maps contract ops to chrome.* APIs / content script.
 // Every op resolves exactly once to {ok:true,result} or {ok:false,error,code?}.
-import { trackCreated, taskEnd } from './tabs.js';
+const { trackCreated, taskEnd } = globalThis.faSw; // importScripts loads tabs.js first
 
 const OP_CAP_MS = 30000;
 
@@ -18,7 +18,7 @@ function withCap(promise) {
 }
 
 /** Restricted targets (E4): chrome://, extension pages, Web Store, PDF viewer. */
-export function restrictedReason(url) {
+function restrictedReason(url) {
   let u;
   try { u = new URL(url); } catch { return null; } // let chrome report bad urls
   const scheme = u.protocol.replace(':', '');
@@ -160,7 +160,7 @@ const OPS = {
 };
 
 /** Entry point for bridge browserReq. Never throws; always one answer. */
-export async function dispatch(op, args = {}) {
+async function dispatch(op, args = {}) {
   const fn = OPS[op];
   if (!fn) return fail(`unknown op "${op}"`, 'bad_args');
   try {
@@ -169,3 +169,6 @@ export async function dispatch(op, args = {}) {
     return normalize(e);
   }
 }
+
+// Classic-SW module glue (see tabs.js).
+globalThis.faSw = Object.assign(globalThis.faSw ?? {}, { restrictedReason, dispatch });

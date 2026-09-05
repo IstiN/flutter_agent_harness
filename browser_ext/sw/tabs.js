@@ -20,14 +20,14 @@ function memSession() {
 const persist = () => session.set({ [QKEY]: { taskId, groupId, tabIds: [...tracked] } }).catch(() => {});
 
 /** New bridge session: label for this task's tab group. */
-export async function beginTask(id) {
+async function beginTask(id) {
   taskId = id ?? crypto.randomUUID();
   note = '';
   await persist();
 }
 
 /** Track a tab the SW itself created and pull it into the task group. */
-export async function trackCreated(tab) {
+async function trackCreated(tab) {
   if (!tab?.id || taskId === null) return;
   tracked.add(tab.id);
   await ensureGroup(tab.id);
@@ -54,18 +54,18 @@ async function ensureGroup(tabId) {
 }
 
 /** tabs.onCreated: adopt only descendants of tabs we opened. */
-export function onTabCreated(tab) {
+function onTabCreated(tab) {
   if (tab.openerTabId && tracked.has(tab.openerTabId)) trackCreated(tab);
 }
 
 /** tabs.onRemoved: prune tracking; a user-closed group is a note, not a crash. */
-export function onTabRemoved(tabId) {
+function onTabRemoved(tabId) {
   if (!tracked.delete(tabId)) return;
   if (tracked.size === 0 && taskId !== null) note = 'task tabs closed';
   persist();
 }
 /** Close ONLY tracked tabs; reset state. Returns how many were closed. */
-export async function taskEnd() {
+async function taskEnd() {
   const ids = [...tracked];
   tracked.clear();
   groupId = null;
@@ -80,7 +80,7 @@ export async function taskEnd() {
 }
 
 /** E24: on SW wake, adopt the labelled group by title, else clean close. */
-export async function init() {
+async function init() {
   const o = await session.get(QKEY);
   const saved = o?.[QKEY];
   if (!saved?.taskId) return;
@@ -105,6 +105,12 @@ export async function init() {
 }
 
 /** Status snapshot for the panel / browserReq results. */
-export function status() {
+function status() {
   return { taskId, tracked: tracked.size, groupId, ...(note ? { note } : {}) };
 }
+
+// Classic-SW module glue: exports live on the faSw namespace (MV3 classic
+// service workers have no ES modules; dart2js agent.js is classic too).
+globalThis.faSw = Object.assign(globalThis.faSw ?? {}, {
+  beginTask, trackCreated, onTabCreated, onTabRemoved, taskEnd, init, status,
+});

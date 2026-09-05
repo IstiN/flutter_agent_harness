@@ -228,7 +228,7 @@ function onKeepalive() {
   if (Date.now() >= state.nextAttemptAt) openSocket();
 }
 
-export const bridge = {
+const bridge = {
   KEEPALIVE_ALARM,
 
   /** Pair with a server: store cfg, open socket, start hello handshake. */
@@ -306,3 +306,6 @@ export const bridge = {
 
   onKeepalive,
 };
+
+// Classic-SW module glue (see tabs.js).
+globalThis.faSw = Object.assign(globalThis.faSw ?? {}, { bridge, KEEPALIVE_ALARM });

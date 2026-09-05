@@ -6,7 +6,7 @@
   "minimum_chrome_version": "116",
   "permissions": ["storage", "tabs", "scripting", "sidePanel", "alarms", "debugger", "tabGroups"],
   "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "sw/main.js", "type": "module" },
+  "background": { "service_worker": "sw/main.js" },
   "side_panel": { "default_path": "panel/panel.html" },
   "content_scripts": [
     {
