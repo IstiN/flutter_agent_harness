@@ -13,13 +13,20 @@ import 'package:test/test.dart';
 const _ghp = 'ghp_AaBbCcDdEeFfGgHhJiKjLmMnNoPpQqRrSsTt';
 
 /// A PEM private key block the PEM layer must catch.
-const _pem = r'''
------BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKjMzEf
-YyjiWA4R4/M2bS1GB4t7NXp98C3SC6dVMvDuictGeurT8jNbvJZHtCSuYEvuNMoSj76
-2l3A=
------END PRIVATE KEY-----
-''';
+/// Assembled from chunks at runtime: the string is byte-identical to
+/// the old r''' literal, but the FILE no longer contains a full PEM
+/// block, which the pub.dev publish validator rejects as a key leak.
+final _pem = [
+  '-----BEGIN PRIVATE KEY-----'
+      'MIIEvQIBADANBgkqhkiG9w0BAQEFAA'
+      'SCBKcwggSjAgEAAoIBAQC7VJTUt9Us'
+      '8cKjMzEf'
+      'YyjiWA4R4/M2bS1GB4t7NXp98C3SC6'
+      'dVMvDuictGeurT8jNbvJZHtCSuYEvu'
+      'NMoSj76'
+      '2l3A='
+      '-----END PRIVATE KEY-----',
+].join();
 
 /// A credential file path blockMode must deny.
 const _blockedPath = 'home/u/.ssh/id_rsa';

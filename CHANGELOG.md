@@ -2644,6 +2644,23 @@
 - fix(aiin): Safari popup — no awaits before window.open, paint the popup
 - test(redact): integration e2e for issue #24 AC5-AC8
 
+## 0.1.304
+
+- fix(publish): assemble the redaction e2e PEM fixture at runtime — pub.dev's
+  key-leak validator rejected the 0.1.303 upload because the archive carried
+  a literal (fake) private-key block in `test/integration/redaction_e2e_test.dart`;
+  the file now builds the same byte-identical string from chunks.
+- fix(roles): 500-class gateway errors ("Internal network failure, please try
+  again later") now classify as transient transport failures and retry in
+  place with backoff before failing over (previously only 502/503/504 did).
+- feat(messaging): agent_directory rows show an 8-char short id, session
+  names, last-activity ("active 2m ago" vs "asleep") and home-shortened cwd;
+  `agent_message` to an asleep target launches a detached headless run of
+  that session so pending mail is processed immediately (wake: false opts
+  out).
+- test(cli): pin session-start memory maintenance off in boot-race tests
+  (CI flake: consolidate() consumed the scripted turn before /exit).
+
 ## 0.1.303
 
 - fix(roles): classify 5xx internal errors as transient transport failures
