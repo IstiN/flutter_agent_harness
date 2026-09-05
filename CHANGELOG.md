@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+- feat(browser-ext): browser extension v2.1 (issue #30) — fa web moves
+  into the extension and grows browser superpowers. The panel is now an
+  app-hosting bootstrap: `scripts/build_browser_ext.sh --with-app`
+  bundles the Flutter web build as `browser_ext/app/` and the side
+  panel/full tab loads it (v1 minimal chat stays as fallback). The
+  service worker gains the UI protocol server — `FaUiProtocol` over a
+  `chrome.runtime` port (17 message kinds: hello/attach/prompt/steer/
+  cancel/stream/approval/sessions/settings, prompt-id dedup + attach
+  replay), `WorkerRelayTransport` vs `LocalStreamTransport` with
+  capability detection — and a 34-tool browser surface
+  (`browser_api_tools.dart`) over the typed `ChromeApi` facade (23
+  chrome.* groups): tabs/windows/groups/sessions/history/bookmarks/
+  downloads/cookies CRUD, first-class `inject_js` (ISOLATED/MAIN worlds,
+  MAIN always prompts) + `inject_css`, `cdp_eval`, `page_screenshot`,
+  `app_screenshot`, `nav_wait`; restricted pages refuse scripting.
+  Permission⇄tool matrix (`permission_matrix.dart`): 28 core rows /
+  9 second-tier optional / 11 excluded (incl. the impossible-by-
+  construction `passwords` row), unpacked vs store manifest profiles
+  (store strips `debugger`+`cookies`); manifest 0.2.0 with 26 core
+  permissions, second tier in optional_permissions, `ask-fa` command
+  (Ctrl+Shift+1) and omnibox keyword `fa`. Background residency: badge
+  state machine (idle/busy/mail, resync after SW kill, denied-
+  notification fallback), exactly-once scheduled tasks over
+  `chrome.alarms`, lifetime-capped offscreen documents, EntryPointHub
+  steering omnibox/commands/contextMenus into one agent. Security layer:
+  quarantine + instruction-hierarchy classifier (page bytes are always
+  data), injection validator (login-form/keylogger refusals), exfil
+  gate (page-derived/cross-origin/data-exit approval), and a new
+  `layer_credential.dart` redaction layer masking credential-shaped
+  form values pre-persist. Docs rewritten:
+  browser_ext/README.md, docs/browser-extension.md, new
+  docs/browser-extension-permissions.md. Pending: flutter_app
+  worker-relay chat integration, Playwright e2e, store publication.
+
 ## 0.1.297
 
 - fix(tui): a long thinking burst froze the whole TUI (typing dead, spinner
@@ -2702,5 +2738,3 @@
 - feat(trajectory): real-content feed rows, guaranteed details, Gantt timeline (#25 L3-L6)
 - feat(trajectory): full-screen adaptive shell + header (#25 L1-L2)
 - feat(trajectory): data completeness for the ledger view (#25 L7)
-
-## Unreleased
