@@ -6,6 +6,9 @@ analyzer:
     - .dart_tool/**
     - example/build/**
     - vendor/**
+    # Self-hosted CI runner checkout (untracked junk on dev machines) —
+    # its copies of lib/ duplicate types and break analyze.
+    - actions-runner/**
     # DAP hub client's own suite, vendored VERBATIM from the upstream
     # package (checksum-pinned against its MANIFEST.txt) — lint drift there
     # belongs upstream, not here.
