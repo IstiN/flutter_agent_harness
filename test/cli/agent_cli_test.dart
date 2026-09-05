@@ -27,7 +27,8 @@ void main() {
     String? Function(String name)? envVarValue,
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
-    Future<void> Function(String providerKind, String apiKey)? onProviderChanged,
+    Future<void> Function(String providerKind, String apiKey)?
+    onProviderChanged,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
@@ -867,11 +868,7 @@ void main() {
     ]);
     final shell = FakeShell(stdout: 'x' * 12000);
     final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
-    final cli = cliFor(
-      fake.call,
-      model: window8k,
-      envOverride: shellEnv,
-    );
+    final cli = cliFor(fake.call, model: window8k, envOverride: shellEnv);
     final run = cli.run();
 
     io.sendLine('go');
@@ -2497,6 +2494,37 @@ void main() {
         output,
         contains('/work/.fah/skills/deploy/SKILL.md (project, fah)'),
       );
+    });
+  });
+  group('mailboxWakeCommand', () {
+    test('falls back to fa on PATH and the session id as the address', () {
+      final c = mailboxWakeCommand(wakeExecutable: null, sessionId: 'abc-123');
+      expect(c, startsWith("nohup 'fa' --session 'abc-123'"));
+      expect(c, contains('& echo woken'));
+    });
+
+    test('prefers the configured executable and the session name', () {
+      final c = mailboxWakeCommand(
+        wakeExecutable: '/usr/local/bin/fa',
+        sessionId: '01a06102',
+        sessionName: 'jsr',
+      );
+      expect(c, contains("nohup '/usr/local/bin/fa' --session 'jsr'"));
+    });
+
+    test('single-quotes embedded apostrophes', () {
+      final c = mailboxWakeCommand(
+        wakeExecutable: "o'brien",
+        sessionId: 's',
+        sessionName: "jo'an",
+      );
+      expect(c, contains("nohup 'o'\\''brien'"));
+      expect(c, contains("--session 'jo'\\''an'"));
+    });
+
+    test('embeds the wake prompt text', () {
+      final c = mailboxWakeCommand(sessionId: 's');
+      expect(c, contains(wakePromptText));
     });
   });
 }

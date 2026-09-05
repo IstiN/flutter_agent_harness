@@ -178,7 +178,7 @@ void main() {
         final directory = tools.firstWhere((t) => t.name == 'agent_directory');
         final result = await directory.execute(const {}, null, null);
         final text = (result.content.first as dynamic).text as String;
-        expect(text, contains('stale-mailbox — 1 pending'));
+        expect(text, contains('stale-ma… — 1 pending'));
         expect(text, isNot(contains('old/main')));
         expect(text, contains('1 stale mailbox(es) hidden'));
 
@@ -230,7 +230,7 @@ void main() {
         final directory = tools.firstWhere((t) => t.name == 'agent_directory');
         final result = await directory.execute(const {}, null, null);
         final text = (result.content.first as dynamic).text as String;
-        expect(text, contains('a1'));
+        expect(text, contains('task-1 — subagent (completed)'));
         expect(text, contains('subagent'));
       },
     );
@@ -635,5 +635,180 @@ void main() {
       expect(text, contains('no_such_name'));
       expect(repo._inboxes, isEmpty);
     });
+  });
+
+  group('agent_directory: compact ids, activity, subagent clarity', () {
+    Future<String> render(SubagentManager manager, {bool all = false}) async {
+      final tools = subagentMonitoringTools(manager: manager);
+      final directory = tools.firstWhere((t) => t.name == 'agent_directory');
+      final result = await directory.execute(
+        all ? const {'all': true} : const {},
+        null,
+        null,
+      );
+      return (result.content.first as dynamic).text as String;
+    }
+
+    test(
+      'named mailboxes show a short id, activity and a shortened cwd',
+      () async {
+        final fabricMgr = SubagentManager(
+          parentSessionId: 'p',
+          homeDir: '/home/u',
+          messaging: _FakeMessagingRepository(
+            entries: [
+              const MailboxEntry(
+                id: '01a06102-15be-78be-9879-37615d698cf2/main',
+                name: 'jsr',
+                cwd: '/home/u/git/flutter_js_widget_runtime',
+                lastActivity: null,
+              ),
+            ],
+          ),
+        );
+        final text = await render(fabricMgr);
+        expect(text, contains('jsr (01a06102…'));
+        expect(text, isNot(contains('15be-78be')));
+        expect(text, contains('~/git/flutter_js_widget_runtime'));
+        expect(text, isNot(contains('/home/u/git/flutter_js_widget_runtime')));
+      },
+    );
+
+    test('a live mailbox says active; a stale one says asleep', () async {
+      final now = DateTime.now();
+      final fabricMgr = SubagentManager(
+        parentSessionId: 'p',
+        messaging: _FakeMessagingRepository(
+          entries: [
+            MailboxEntry(
+              id: 'sess-live/main',
+              lastActivity: now.subtract(const Duration(minutes: 2)),
+            ),
+            MailboxEntry(
+              id: 'sess-dead/main',
+              cwd: '/work',
+              lastActivity: now.subtract(const Duration(hours: 3)),
+            ),
+          ],
+        ),
+      );
+      final text = await render(fabricMgr, all: true);
+      expect(text, contains('sess-live/main — 0 pending — active 2m ago'));
+      expect(text, contains('sess-dead/main — 0 pending — last active 3h ago'));
+      expect(text, contains('(asleep)'));
+    });
+
+    test('all:true shows full mailbox ids', () async {
+      final fabricMgr = SubagentManager(
+        parentSessionId: 'p',
+        messaging: _FakeMessagingRepository(
+          entries: [
+            const MailboxEntry(
+              id: '01a06102-15be-78be-9879-37615d698cf2/main',
+              name: 'jsr',
+            ),
+          ],
+        ),
+      );
+      final text = await render(fabricMgr, all: true);
+      expect(text, contains('01a06102-15be-78be-9879-37615d698cf2/main'));
+    });
+
+    test('failed subagents say how to resume them', () async {
+      await mgr.register(
+        id: 'a2',
+        name: 'task-2',
+        agentType: 'explore',
+        task: 'x',
+      );
+      await mgr.update('a2', status: SubagentStatus.failed);
+      final text = await render(mgr);
+      expect(
+        text,
+        contains('task-2 — subagent (failed — resume with task_send)'),
+      );
+      expect(text, contains('task-1 — subagent (completed)'));
+    });
+  });
+
+  group('agent_message: waking an asleep cross-session target', () {
+    MailboxEntry sleepyEntry() => MailboxEntry(
+      id: '01a0bbbb-0000-0000-0000-000000000000/main',
+      name: 'sleepy',
+      cwd: '/home/u/git/x',
+      lastActivity: DateTime.now().subtract(const Duration(hours: 5)),
+    );
+
+    test('asleep target launches a headless run after delivery', () async {
+      var launchedCwd = '';
+      var launchedSessionId = '';
+      String? launchedName;
+      final fabricMgr = SubagentManager(
+        parentSessionId: 'p',
+        messaging: _FakeMessagingRepository(entries: [sleepyEntry()]),
+        wakeProcess: ({required cwd, required sessionId, sessionName}) async {
+          launchedCwd = cwd;
+          launchedSessionId = sessionId;
+          launchedName = sessionName;
+          return null;
+        },
+      );
+      final tools = subagentMonitoringTools(manager: fabricMgr);
+      final msg = tools.firstWhere((t) => t.name == 'agent_message');
+      final result = await msg.execute(
+        const {'to': 'sleepy', 'message': 'wake up'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(launchedCwd, '/home/u/git/x');
+      expect(launchedSessionId, '01a0bbbb-0000-0000-0000-000000000000');
+      expect(launchedName, 'sleepy');
+      expect(text, contains('asleep'));
+      expect(text, contains('headless run of session "sleepy"'));
+    });
+
+    test('a live target is not woken', () async {
+      var launches = 0;
+      final fabricMgr = SubagentManager(
+        parentSessionId: 'p',
+        messaging: _FakeMessagingRepository(
+          entries: [
+            MailboxEntry(
+              id: '01a0bbbb-0000-0000-0000-000000000000/main',
+              name: 'sleepy',
+              lastActivity: DateTime.now().subtract(const Duration(seconds: 5)),
+            ),
+          ],
+        ),
+        wakeProcess: ({required cwd, required sessionId, sessionName}) async {
+          launches++;
+          return null;
+        },
+      );
+      final tools = subagentMonitoringTools(manager: fabricMgr);
+      final msg = tools.firstWhere((t) => t.name == 'agent_message');
+      await msg.execute(const {'to': 'sleepy', 'message': 'hi'}, null, null);
+      expect(launches, 0);
+    });
+
+    test(
+      'without a wake launcher the result says how to start the agent',
+      () async {
+        final fabricMgr = SubagentManager(
+          parentSessionId: 'p',
+          messaging: _FakeMessagingRepository(entries: [sleepyEntry()]),
+        );
+        final tools = subagentMonitoringTools(manager: fabricMgr);
+        final msg = tools.firstWhere((t) => t.name == 'agent_message');
+        final result = await msg.execute(
+          const {'to': 'sleepy', 'message': 'hi'},
+          null,
+          null,
+        );
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('fa --session sleepy'));
+      },
+    );
   });
 }

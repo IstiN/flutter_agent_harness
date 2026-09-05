@@ -106,14 +106,15 @@ AgentTool _agentDirectoryTool(SubagentManager manager) {
         'List the agent mailboxes in the messaging fabric that are worth '
         'talking to: LIVE mailboxes (recent activity), any mailbox holding '
         'pending mail, your subagents, and your own address (marked). '
-        'Stale mailboxes from long-finished sessions are hidden — pass '
-        'all: true to list those too. Each entry shows its session display '
-        'name when known, the mailbox id, its pending message count and, '
-        'when known, the working directory it belongs to. Combine with '
-        'agent_message to talk to any of them: plain ids for subagents, '
-        '"<sessionId>/main" for another instance\'s orchestrator — or '
-        'just the session name ("goal_builder", "goal_builder/main") for '
-        'any mailbox that shows a name here.',
+        'Each entry shows its session display NAME when known, a short '
+        'mailbox id, the pending message count, the last-activity time '
+        '("active 2m ago" / "last active 3h ago (asleep)") and the working '
+        'directory (home shortened to ~). Stale mailboxes are hidden — '
+        'pass all: true to list those too (that also shows FULL mailbox '
+        'ids; the default view truncates them to save tokens). Address a '
+        'mailbox by its session name via agent_message ("goal_builder" or '
+        '"goal_builder/main"); asleep targets are woken with a headless '
+        'run automatically.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -149,7 +150,13 @@ Future<String> _renderAgentDirectory(
   final buffer = StringBuffer('agent mailboxes (you are "$self"):');
   var stale = 0;
   for (final entry in entries) {
-    final line = await _directoryLine(fabric!, entry, self, includeStale);
+    final line = await _directoryLine(
+      fabric!,
+      entry,
+      self,
+      includeStale,
+      homeDir: manager.homeDir,
+    );
     if (line == null) {
       stale++;
       continue;
@@ -164,9 +171,13 @@ Future<String> _renderAgentDirectory(
   for (final handle in manager.handles) {
     final mailbox = manager.mailboxOf(handle.id);
     if (knownIds.contains(mailbox)) continue;
+    final status = switch (handle.status) {
+      SubagentStatus.failed => 'failed — resume with task_send',
+      _ => handle.status.name,
+    };
     buffer
       ..writeln()
-      ..write('  $mailbox — subagent (${handle.status.name})');
+      ..write('  ${handle.name} — subagent ($status)');
   }
   if (stale > 0) {
     buffer
@@ -186,8 +197,9 @@ Future<String?> _directoryLine(
   MessagingRepository fabric,
   MailboxEntry entry,
   String self,
-  bool includeStale,
-) async {
+  bool includeStale, {
+  String? homeDir,
+}) async {
   final pending = await fabric.peek(entry.id);
   // A mailbox with unread mail is never hidden, whatever its age.
   final live =
@@ -195,13 +207,60 @@ Future<String?> _directoryLine(
       entry.id == self ||
       MailboxEntry.isLive(entry.lastActivity);
   if (!live && !includeStale) return null;
+  // Compact ids by default: 36-char uuids burn tokens on every listing.
+  // `all: true` shows full ids for copy-paste addressing.
+  final idForm = includeStale ? entry.id : _shortId(entry.id);
   final line = StringBuffer(
-    '  ${entry.name != null ? '${entry.name} (${entry.id})' : entry.id}',
+    '  ${entry.name != null ? '${entry.name} ($idForm)' : idForm}',
   );
   line.write(' — ${pending.length} pending');
-  if (entry.cwd case final cwd?) line.write('  [$cwd]');
+  line.write(_activitySuffix(entry.lastActivity));
+  if (entry.cwd case final cwd?) line.write('  [${_shortCwd(cwd, homeDir)}]');
   if (entry.id == self) line.write('  ← you');
   return line.toString();
+}
+
+/// Truncates a mailbox id to `xxxxxxxx…` (keeping any `/main` suffix) —
+/// enough to tell mailboxes apart at a glance without burning tokens on
+/// full uuids.
+String _shortId(String id) {
+  final slash = id.indexOf('/');
+  final head = slash < 0 ? id : id.substring(0, slash);
+  final tail = slash < 0 ? '' : id.substring(slash);
+  if (head.length <= 12) return id;
+  return '${head.substring(0, 8)}…$tail';
+}
+
+/// Human-readable recency for a mailbox: `— active 2m ago` when the
+/// watcher is live, `— last active 3h ago (asleep)` once it stopped
+/// ticking. Null timestamps render nothing (the source cannot date it).
+String _activitySuffix(DateTime? lastActivity, {DateTime? now}) {
+  if (lastActivity == null) return '';
+  final now0 = now ?? DateTime.now();
+  var delta = now0.difference(lastActivity);
+  if (delta.isNegative) delta = Duration.zero;
+  final asleep = delta >= MailboxEntry.defaultLiveWindow;
+  final rel = _relativeDelta(delta);
+  return asleep
+      ? ' — last active $rel ago (asleep)'
+      : ' — active ${delta.inSeconds < 90 ? 'just now' : '$rel ago'}';
+}
+
+/// Compacts a duration to `2m` / `3h` / `4d` form.
+String _relativeDelta(Duration d) {
+  if (d.inHours >= 24) return '${d.inDays}d';
+  if (d.inMinutes >= 60) return '${d.inHours}h';
+  if (d.inMinutes >= 1) return '${d.inMinutes}m';
+  return '${d.inSeconds}s';
+}
+
+/// Shortens a cwd tag below the home directory (`/home/u/git/x` →
+/// `~/git/x`); unchanged when [homeDir] is null or not a prefix.
+String _shortCwd(String cwd, String? homeDir) {
+  if (homeDir == null || homeDir.isEmpty) return cwd;
+  if (cwd == homeDir) return '~';
+  if (cwd.startsWith('$homeDir/')) return '~${cwd.substring(homeDir.length)}';
+  return cwd;
 }
 
 /// `reply` — the CHILD-only tool: delivers the child's explicit answer to
@@ -280,6 +339,15 @@ AgentTool _agentMessageTool(
           'type': 'string',
           'description': 'The message body for the sibling.',
         },
+        'wake': {
+          'type': 'boolean',
+          'description':
+              'When the cross-session target is asleep (no live watcher — '
+              'it would not read the message until started), launch a '
+              'detached headless run of its session to process the inbox '
+              'now. Default: true. The run appends to the same session '
+              'JSONL, so a later interactive start resumes it.',
+        },
       },
       'required': ['to', 'message'],
     },
@@ -314,9 +382,58 @@ AgentTool _agentMessageTool(
       } on StateError catch (error) {
         return ToolExecutionResult.text('error: $error');
       }
-      return ToolExecutionResult.text('message queued for "$to"');
+      var note = '';
+      if (target.contains('/')) {
+        note = await _asleepTargetNote(manager, target, args['wake'] != false);
+      }
+      return ToolExecutionResult.text('message queued for "$to".$note');
     },
   );
+}
+
+/// After a cross-session delivery, checks whether the target's watcher is
+/// asleep and — when [wake] — launches a detached headless run of its
+/// session so the mail is processed now instead of never. Returns the
+/// sentence appended to the tool result.
+Future<String> _asleepTargetNote(
+  SubagentManager manager,
+  String target,
+  bool wake,
+) async {
+  final fabric = manager.messaging;
+  if (fabric == null) return '';
+  final MailboxEntry entry;
+  try {
+    entry = (await fabric.directory()).firstWhere((e) => e.id == target);
+  } on StateError {
+    return '';
+  }
+  if (MailboxEntry.isLive(entry.lastActivity)) return '';
+  final sessionId = target.endsWith('/main')
+      ? target.substring(0, target.length - '/main'.length)
+      : target;
+  final address = entry.name ?? sessionId;
+  final activity = entry.lastActivity == null
+      ? ''
+      : ' (last active ${_relativeDelta(DateTime.now().difference(entry.lastActivity!))} ago)';
+  if (!wake) {
+    return ' Target is asleep$activity — it will not read this until '
+        'started: fa --session $address';
+  }
+  final launcher = manager.wakeProcess;
+  if (launcher == null) {
+    return ' Target is asleep$activity and this host cannot launch runs — '
+        'start it manually: fa --session $address';
+  }
+  final error = await launcher(
+    cwd: entry.cwd ?? '.',
+    sessionId: sessionId,
+    sessionName: entry.name,
+  );
+  if (error != null) return ' Target is asleep$activity — wake failed: $error';
+  return ' Target is asleep$activity — launched a headless run of session '
+      '"$address" to process the inbox now (a later interactive '
+      'fa --session $address resumes the same session).';
 }
 
 /// Resolves [to] against the fabric directory by session display NAME when
