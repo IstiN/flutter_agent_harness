@@ -2644,4 +2644,9 @@
 - fix(aiin): Safari popup — no awaits before window.open, paint the popup
 - test(redact): integration e2e for issue #24 AC5-AC8
 
+## 0.1.303
+
+- fix(roles): classify 5xx internal errors as transient transport failures
+- feat(messaging): readable agent_directory + auto-wake for asleep mailboxes
+
 ## Unreleased
