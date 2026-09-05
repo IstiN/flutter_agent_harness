@@ -5,6 +5,10 @@
 /// Split out of `provider_commands.dart` to keep that file under the repo's
 /// 2800-line size gate. Same library (a `part of`), so the extension sees
 /// the class's private members and the helpers in `provider_commands.dart`.
+///
+/// Deliberately decomposed into small helpers (CC ≤ 3) — the repo's CRAP
+/// ratchet rejects methods whose untested cyclomatic complexity exceeds the
+/// pinned threshold.
 part of 'agent_cli.dart';
 
 extension _AiinProviderCommands on AgentCli {
@@ -21,15 +25,20 @@ extension _AiinProviderCommands on AgentCli {
       unawaited(_handleAiinConnectCommand());
       return true;
     }
-    if (args[1] == 'key') {
-      final token = args.length > 2 ? args[2] : null;
-      if (args.length > 3) {
-        io.writeln('usage: /provider aiin [key [apiKey]]');
-        return true;
-      }
-      unawaited(_handleAiinConnectCommand(pasteKey: token));
-      return true;
-    }
+    return args[1] == 'key' ? _startAiinKeyArg(args) : _aiinUsage();
+  }
+
+  /// `/provider aiin key [apiKey]` — true when the argument shape is valid.
+  bool _startAiinKeyArg(List<String> args) {
+    if (args.length > 3) return _aiinUsage();
+    unawaited(
+      _handleAiinConnectCommand(pasteKey: args.length > 2 ? args[2] : null),
+    );
+    return true;
+  }
+
+  /// Prints the command usage. Always "handled" (true).
+  bool _aiinUsage() {
     io.writeln('usage: /provider aiin [key [apiKey]]');
     return true;
   }
@@ -40,66 +49,80 @@ extension _AiinProviderCommands on AgentCli {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
     try {
-      String? key = pasteKey;
-      String? email;
-      if (key == null) {
-        final choice = await _pickOption('AIIN (aiin.by) sign-in', [
-          (
-            'browser',
-            'Sign in with the browser',
-            'register a new sk-aiin API key automatically',
-          ),
-          (
-            'key',
-            'Paste an existing API key',
-            'for keys created in the AIIN cabinet',
-          ),
-        ], initialKey: 'browser');
-        if (choice == null) {
-          io.writeln('AIIN setup cancelled');
-          return;
-        }
-        if (choice == 'key') {
-          final answer = await _askLine(
-            'AIIN API key (sk-aiin-…): ',
-            secret: true,
-          );
-          if (answer == null) {
-            io.writeln('AIIN setup cancelled');
-            return;
-          }
-          final trimmed = answer.trim();
-          if (trimmed.isEmpty) {
-            io.writeln('AIIN setup cancelled');
-            return;
-          }
-          key = trimmed;
-        }
+      final credential = await _aiinAcquireCredential(pasteKey: pasteKey);
+      if (credential != null) {
+        await _applyAiinCredentials(credential.$1, email: credential.$2);
       }
-      if (key == null) {
-        // Browser sign-in: pick the identity provider, then run the flow.
-        final provider = await _pickAiinIdentityProvider();
-        if (provider == null) {
-          io.writeln('AIIN setup cancelled');
-          return;
-        }
-        final result = await runAiinConnectCliFlow(
-          provider: provider,
-          onStatus: io.writeln,
-        );
-        if (result == null) return;
-        key = result.apiKey.raw;
-        email = result.email;
-        io.writeln(
-          'AIIN API key registered (${result.apiKey.prefix}…) — stored in '
-          'the secure store; manage keys in the AIIN cabinet',
-        );
-      }
-      await _applyAiinCredentials(key, email: email);
     } finally {
       _providerFlowActive = false;
       _promptLineBuffer.clear();
     }
+  }
+
+  /// Resolves the `sk-aiin-…` credential: the pasted [pasteKey], a key the
+  /// user typed in, or the browser connect flow. Null = cancelled.
+  Future<(String, String?)?> _aiinAcquireCredential({String? pasteKey}) async {
+    if (pasteKey != null) return (pasteKey, null);
+    final choice = await _pickOption('AIIN (aiin.by) sign-in', [
+      (
+        'browser',
+        'Sign in with the browser',
+        'register a new sk-aiin API key automatically',
+      ),
+      (
+        'key',
+        'Paste an existing API key',
+        'for keys created in the AIIN cabinet',
+      ),
+    ], initialKey: 'browser');
+    if (choice == null) {
+      io.writeln('AIIN setup cancelled');
+      return null;
+    }
+    return choice == 'key' ? _aiinAcquirePastedKey() : _aiinConnectViaBrowser();
+  }
+
+  /// Asks for an existing key. Null = cancelled / empty answer.
+  Future<(String, String?)?> _aiinAcquirePastedKey() async {
+    final answer = await _askLine(
+      'AIIN API key (sk-aiin-…): ',
+      secret: true,
+    );
+    final trimmed = answer?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      io.writeln('AIIN setup cancelled');
+      return null;
+    }
+    return (trimmed, null);
+  }
+
+  /// The browser connect: identity-provider pick, then the loopback OAuth
+  /// proxy flow. Null = cancelled at either step.
+  Future<(String, String?)?> _aiinConnectViaBrowser() async {
+    final provider = await _pickAiinIdentityProvider();
+    if (provider == null) {
+      io.writeln('AIIN setup cancelled');
+      return null;
+    }
+    final result = await _runAiinConnect(provider);
+    if (result == null) {
+      io.writeln('AIIN setup cancelled');
+      return null;
+    }
+    io.writeln(
+      'AIIN API key registered (${result.apiKey.prefix}…) — stored in '
+      'the secure store; manage keys in the AIIN cabinet',
+    );
+    return (result.apiKey.raw, result.email);
+  }
+
+  /// Runs the connect flow, honoring the test seam.
+  Future<AiinConnectResult?> _runAiinConnect(String provider) {
+    final connectFn = config.aiinConnectFn;
+    if (connectFn != null) {
+      return connectFn(provider: provider, onStatus: io.writeln);
+    }
+    return runAiinConnectCliFlow(provider: provider, onStatus: io.writeln);
   }
 
   /// Fetches the live identity-provider list (google first, matching the
@@ -127,17 +150,7 @@ extension _AiinProviderCommands on AgentCli {
     final spec = providerCatalog['aiin']!;
     final url = spec.defaultBaseUrl;
     final registry = config.customProviders;
-    final existing = registry != null
-        ? _entryForBaseUrl(registry, url)
-        : null;
-    final defaultName = existing?.name ?? registry?.deriveName(url) ?? 'aiin';
-    final name = registry == null
-        ? defaultName
-        : (await _askConnectProviderName(
-            defaultName == 'aiin' && email != null ? email : defaultName,
-            sameBaseUrl: url,
-          )) ??
-          defaultName;
+    final name = await _aiinEntryName(registry, url, email);
     final picked = await _aiinPickModel(url, key);
     if (picked == null) {
       io.writeln('AIIN setup cancelled');
@@ -152,6 +165,26 @@ extension _AiinProviderCommands on AgentCli {
         token: key,
       ),
     );
+  }
+
+  /// Resolves the registry entry name: an existing entry on the same
+  /// endpoint keeps its name; otherwise the account email (or the derived
+  /// default), confirmed through the shared name prompt.
+  Future<String> _aiinEntryName(
+    CustomProviderRegistry? registry,
+    String url,
+    String? email,
+  ) async {
+    final existing = registry != null ? _entryForBaseUrl(registry, url) : null;
+    final defaultName = existing?.name ?? registry?.deriveName(url) ?? 'aiin';
+    if (registry == null) return defaultName;
+    // The signed-in account's email IS the natural entry name — several
+    // AIIN accounts coexist. Re-logins to the same account keep the name.
+    return await _askConnectProviderName(
+          email ?? defaultName,
+          sameBaseUrl: url,
+        ) ??
+        defaultName;
   }
 
   /// The AIIN model step: live `/v1/models` (public on api.aiin.by) with a

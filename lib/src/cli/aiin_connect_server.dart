@@ -160,27 +160,57 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
 }) async {
   final server = AiinCallbackServer();
   final redirectUri = await server.start(timeout: timeout);
-  final AiinOAuthInitiate initiate;
   try {
-    initiate = await initiateAiinOAuth(
+    final initiate = await initiateAiinOAuth(
       provider: provider,
       redirectUri: redirectUri,
       client: client,
       authBaseUrl: authBaseUrl,
     );
+    onStatus('listening for the AIIN callback on $redirectUri');
+    await _openAiinBrowser(initiate.authUrl, provider, openBrowserFn, onStatus);
+    final callback = await server.waitForCallback();
+    return await _settleAiinCallback(
+      callback,
+      initiate,
+      client: client,
+      authBaseUrl: authBaseUrl,
+      onStatus: onStatus,
+    );
   } on AiinAuthException catch (error) {
     onStatus('AIIN sign-in failed: ${error.message}');
-    await server.close();
     return null;
+  } finally {
+    await server.close();
   }
-  onStatus('listening for the AIIN callback on $redirectUri');
-  if (await openBrowserFn(initiate.authUrl)) {
+}
+
+/// Opens the system browser, falling back to printing the URL when no
+/// browser is available (headless hosts).
+Future<void> _openAiinBrowser(
+  String authUrl,
+  String provider,
+  Future<bool> Function(String) openBrowserFn,
+  void Function(String) onStatus,
+) async {
+  if (await openBrowserFn(authUrl)) {
     onStatus('browser opened; sign in with your $provider account');
   } else {
     onStatus('could not open browser automatically');
-    onStatus('open this URL manually: ${initiate.authUrl}');
+    onStatus('open this URL manually: $authUrl');
   }
-  final callback = await server.waitForCallback();
+}
+
+/// Validates the caught redirect and finishes the connect. Null = the
+/// callback never arrived, reported a provider error, or failed the
+/// state check.
+Future<AiinConnectResult?> _settleAiinCallback(
+  AiinCallback? callback,
+  AiinOAuthInitiate initiate, {
+  required http.Client? client,
+  required String authBaseUrl,
+  required void Function(String) onStatus,
+}) async {
   if (callback == null) {
     onStatus('no AIIN callback received (timeout or cancelled)');
     return null;
@@ -195,14 +225,32 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
     onStatus('AIIN sign-in callback was invalid (state mismatch)');
     return null;
   }
+  return _finishAiinConnect(
+    callback.code!,
+    initiate,
+    client: client,
+    authBaseUrl: authBaseUrl,
+    onStatus: onStatus,
+  );
+}
+
+/// Exchanges the code for JWTs and registers the durable `sk-aiin-...`
+/// key. Null = a reported exchange/registration failure.
+Future<AiinConnectResult?> _finishAiinConnect(
+  String code,
+  AiinOAuthInitiate initiate, {
+  required http.Client? client,
+  required String authBaseUrl,
+  required void Function(String) onStatus,
+}) async {
   try {
     final tokens = await exchangeAiinOAuthCode(
-      code: callback.code!,
+      code: code,
       state: initiate.state,
       client: client,
       authBaseUrl: authBaseUrl,
     );
-    onStatus('AIIN authorized — registering an API key…');
+    onStatus('AIIN authorized - registering an API key...');
     final apiKey = await createAiinApiKey(
       accessToken: tokens.accessToken,
       client: client,
