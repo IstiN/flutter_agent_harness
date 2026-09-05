@@ -6,6 +6,10 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  # Manual escape hatch: GitHub never runs pull_request workflows on a
+  # CONFLICTING PR (no merge commit to run against) — dispatch gates on the
+  # PR branch directly: gh workflow run ci.yml --ref <branch>.
+  workflow_dispatch:
   schedule:
     # Coalesced auto-release catch-up: when pushes outpace the 2h coalesce
     # window, this releases the pending commits (pub.dev caps ~12 publishes/day).
