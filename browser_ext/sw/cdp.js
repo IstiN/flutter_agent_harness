@@ -1,3 +1,4 @@
+(() => { // Classic-SW module scope: nothing leaks into the shared importScripts global (a top-level const here once collided with main.js and killed SW boot).
 // CDP (chrome.debugger) transport: trusted input events + screenshots of any
 // tab. Debugger input is synthesized by Chrome itself, so pages cannot tell it
 // from real user input; the documented cost is the "started debugging this
@@ -141,3 +142,4 @@ function status() {
 globalThis.faSw = Object.assign(globalThis.faSw ?? {}, {
   cdp: { ensure, rect, trustedClick, trustedType, trustedPressKey, captureTab, detachAll, status },
 });
+})();

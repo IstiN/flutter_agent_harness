@@ -54,7 +54,9 @@ final class DapIntegration {
   Map<String, dynamic> _status = const {'phase': 'disconnected'};
 
   /// Latest hub status for the host's state snapshot (null = no hub).
-  Map<String, dynamic>? snapshot() => _client == null ? null : _status;
+  /// Reports even when the client never came up — a silent failure is
+  /// undebuggable from outside the service worker.
+  Map<String, dynamic>? snapshot() => _status;
 
   late final AgentTool dapDm = AgentTool(
     name: 'dap_dm',
@@ -125,10 +127,14 @@ final class DapIntegration {
       );
       _client = client;
       client.start();
-    } on Object {
-      _status = const {
+    } on Object catch (e) {
+      // A silent hub-presence failure is undebuggable — the console is the
+      // only window into a service worker. Surface what actually broke.
+      print('[fa] dap identity/start failed: $e');
+      _status = {
         'phase': 'disconnected',
         'reason': 'identity unavailable',
+        'error': '$e',
       };
       onStatusChanged();
     }

@@ -1,3 +1,4 @@
+(() => { // Classic-SW module scope: nothing leaks into the shared importScripts global (a top-level const here once collided with main.js and killed SW boot).
 // WebSocket transport for the fa bridge — client side of wire protocol v1
 // (see local://bridge_contract.md). Owns: hello handshake, reconnect backoff,
 // offline mail queue, msgId dedupe, ping keepalive, status events.
@@ -309,3 +310,4 @@ const bridge = {
 
 // Classic-SW module glue (see tabs.js).
 globalThis.faSw = Object.assign(globalThis.faSw ?? {}, { bridge, KEEPALIVE_ALARM });
+})();

@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "fa — browser agent",
   "version": "0.1.0",
+  "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEKyWbUCtoIY5CLA1J8Msmfo+b+3FsPttbTWDA1Pe/XvnNv1D2u7uXXeJwIF3QH8AyhmE26ZRj8JcxFDlf1X0ibw==",
   "description": "Pairs the fa agent with this browser over a loopback WebSocket bridge.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "tabs", "scripting", "sidePanel", "alarms", "debugger", "tabGroups"],

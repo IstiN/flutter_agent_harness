@@ -1,3 +1,4 @@
+(() => { // Classic-SW module scope: nothing leaks into the shared importScripts global (a top-level const here once collided with main.js and killed SW boot).
 // browserReq dispatcher: maps contract ops to chrome.* APIs / content script.
 // Every op resolves exactly once to {ok:true,result} or {ok:false,error,code?}.
 const { trackCreated, taskEnd } = globalThis.faSw; // importScripts loads tabs.js first
@@ -196,3 +197,4 @@ async function dispatch(op, args = {}) {
 
 // Classic-SW module glue (see tabs.js).
 globalThis.faSw = Object.assign(globalThis.faSw ?? {}, { restrictedReason, dispatch });
+})();

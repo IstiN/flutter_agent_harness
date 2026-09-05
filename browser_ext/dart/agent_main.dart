@@ -5,6 +5,8 @@
 import 'dart:async';
 import 'dart:js_interop';
 
+import 'package:cryptography/cryptography.dart';
+import 'package:cryptography/dart.dart';
 import 'package:flutter_agent_harness/src/providers/provider_common.dart'
     show providerHttpClientFactory;
 
@@ -36,6 +38,11 @@ Timer? _deltaTimer;
 Future<void> main() async {
   // MV3 service workers have fetch but no XHR: package:http's default
   // client cannot work here — install the fetch-backed one up front.
+  // package:cryptography resolves to BrowserCryptography under dart2js and
+  // its X25519 binding crashes in a service worker (null-check on missing
+  // WebCrypto guts) — which silently killed the DAP identity. The pure-Dart
+  // implementations work everywhere; set them before anything touches keys.
+  Cryptography.instance = DartCryptography.defaultInstance;
   providerHttpClientFactory = () => FetchClient();
 
   final faAgent = JSObject();

@@ -19,6 +19,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+
 /// Chrome is missing, never printed a DevTools endpoint, or died during
 /// startup. [stderr] carries everything Chrome printed before dying.
 final class ChromeLaunchException implements Exception {
@@ -52,6 +54,11 @@ final class CdpSession {
   final HeadlessChrome _chrome;
   final String sessionId;
   final _events = StreamController<Map<String, dynamic>>.broadcast();
+
+  /// Set for extension-SW sessions: re-wakes the worker and returns a
+  /// fresh session when this one's target vanished (MV3 workers idle out
+  /// whenever Chrome feels like it, killing every attached session).
+  Future<CdpSession> Function()? revive;
 
   /// Captured `Runtime.consoleAPICalled` (type error) messages and
   /// `Runtime.exceptionThrown` details, filled after [enableErrorCapture].
@@ -104,9 +111,31 @@ final class CdpSession {
 
   /// Runtime.evaluate with returnByValue → the unwrapped Dart value.
   /// Throws [CdpException] on a JS exception or a non-zero `wasThrown`.
+  /// One automatic retry through [revive] when the worker died between calls
+  /// ("Session with given id not found" — the MV3 idle shutdown).
   Future<dynamic> evaluate(
     String expression, {
     bool awaitPromise = false,
+  }) async {
+    try {
+      return await _evaluateRaw(expression, awaitPromise: awaitPromise);
+    } on CdpException catch (e) {
+      final fresh = revive;
+      if (fresh == null || !_deadSessionMessage(e.message)) rethrow;
+      return (await fresh())._evaluateRaw(
+        expression,
+        awaitPromise: awaitPromise,
+      );
+    }
+  }
+
+  static bool _deadSessionMessage(String message) =>
+      message.contains('Session with given id not found') ||
+      message.contains('No session with given id');
+
+  Future<dynamic> _evaluateRaw(
+    String expression, {
+    required bool awaitPromise,
   }) async {
     final res = await send('Runtime.evaluate', {
       'expression': expression,
@@ -152,6 +181,32 @@ final class HeadlessChrome {
   /// TCP port of the DevTools endpoint (parsed from the listening line).
   int get debugPort =>
       int.parse(RegExp(r'ws://[^/:]+:(\d+)/').firstMatch(_wsUrl)!.group(1)!);
+
+  /// The unpacked extension's pinned id — computed from the manifest "key"
+  /// (sha256 over the key's DER SPKI, first 16 bytes hex, digits mapped
+  /// 0-9a-f -> a-p: Chrome's id_util::GenerateId) so the key and the id
+  /// cannot drift. Current pinned value: abneclhjikpjmpknjkbcgfojmeoaddkk.
+  static String get extensionId => _extensionId ??= _computeExtensionId();
+  static String? _extensionId;
+
+  static String _computeExtensionId() {
+    final source = File(
+      '${_repoRoot()}/browser_ext/manifest.json',
+    ).readAsStringSync();
+    // The manifest carries // comments (Chrome's parser is lenient);
+    // strip them — jsonDecode is not.
+    final json = source.replaceAll(RegExp(r'^\s*//.*$', multiLine: true), '');
+    final key = (jsonDecode(json) as Map<String, dynamic>)['key'] as String;
+    final hex = sha256.convert(base64.decode(key)).toString();
+    return hex
+        .substring(0, 32)
+        .split('')
+        .map(
+          (c) =>
+              String.fromCharCode('a'.codeUnitAt(0) + int.parse(c, radix: 16)),
+        )
+        .join();
+  }
 
   /// Locates a Chrome binary: `$CHROME_PATH`, then the usual PATH names.
   /// Throws [ChromeLaunchException] listing everything tried.
@@ -327,20 +382,80 @@ final class HeadlessChrome {
     return session;
   }
 
-  /// Attaches to the extension SW and returns a ready session.
+  /// Session on the extension's panel page opened as a regular tab — a
+  /// stable, always-listed page target whose `chrome.runtime` calls wake
+  /// the MV3 service worker (the SW's own CDP target only exists while it
+  /// runs; Chrome idles it out aggressively).
+  CdpSession? _panel;
+
+  Future<CdpSession> _panelSession() async {
+    final cached = _panel;
+    if (cached != null) return cached;
+    final target = await openTab(
+      'chrome-extension://$extensionId/panel/panel.html',
+    );
+    return _panel = await attachToTarget(target['targetId'] as String);
+  }
+
+  /// Fires `chrome.runtime.sendMessage({type:'status'})` from the panel page
+  /// and polls /json/list until the sw/main.js service-worker target exists.
+  /// Fire-and-forget on purpose: awaiting the sendMessage promise can hang
+  /// while the worker boots. Returns the FRESH target — its id changes
+  /// across wake cycles. A dead panel (chrome.runtime.reload() destroys
+  /// every extension page) is re-opened once.
+  Future<Map<String, dynamic>> wakeServiceWorker({
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    try {
+      return await _wakeVia(await _panelSession(), timeout);
+    } on CdpException {
+      _panel = null;
+      return _wakeVia(await _panelSession(), timeout);
+    }
+  }
+
+  Future<Map<String, dynamic>> _wakeVia(
+    CdpSession panel,
+    Duration timeout,
+  ) async {
+    await panel.send('Runtime.evaluate', {
+      'expression':
+          "chrome.runtime.sendMessage({type:'status'}).catch(() => {})",
+      'returnByValue': true,
+    });
+    try {
+      return await serviceWorkerTarget(timeout: timeout);
+    } on TimeoutException {
+      throw TimeoutException(
+        'extension service worker never appeared within '
+        '${timeout.inSeconds}s of waking it. Extension load/start errors '
+        'would be on Chrome stderr:\n${capturedStderr.trim()}',
+      );
+    }
+  }
+
+  /// Attaches to the extension SW: wake it first (its CDP target exists
+  /// only while it runs), then attach to the freshly discovered target.
   Future<CdpSession> attachServiceWorker({
     Duration timeout = const Duration(seconds: 30),
-  }) async => attachToTarget(
-    (await serviceWorkerTarget(timeout: timeout))['id'] as String,
-  );
+  }) async {
+    final target = await wakeServiceWorker(timeout: timeout);
+    final session = await attachToTarget(target['id'] as String);
+    // A worker idled out mid-test kills this session; revive re-wakes and
+    // reattaches once (see CdpSession.evaluate).
+    session.revive = attachServiceWorker;
+    return session;
+  }
 
-  /// Opens a new tab ([Target.createTarget]) and returns its target info.
+  /// Opens a new tab ([Target.createTarget]) and returns its target info
+  /// (targetId, type, url, …) — getTargetInfo nests it under `targetInfo`.
   Future<Map<String, dynamic>> openTab(String url) async {
     await _ensureSocket();
     final res = await _command(null, 'Target.createTarget', {'url': url});
-    return _command(null, 'Target.getTargetInfo', {
+    final info = await _command(null, 'Target.getTargetInfo', {
       'targetId': res['targetId'],
     });
+    return info['targetInfo'] as Map<String, dynamic>;
   }
 
   Future<void> closeTab(String targetId) async {

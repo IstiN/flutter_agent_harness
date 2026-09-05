@@ -90,38 +90,52 @@ Future<List<String>> runBrowserCommand(
   switch (sub) {
     case 'connect':
     case 'start':
-      if (handle == null) return _unavailableNote();
-      final portArg = args.length > 1 ? args[1] : null;
-      if (portArg != null && int.tryParse(portArg) == null) {
-        return ['bridge: not a port: $portArg', ..._usage];
-      }
-      final BrowserBridgeSession session;
-      try {
-        session = await handle.connect(
-          port: int.parse(portArg ?? '$bridgeDefaultPort'),
-        );
-      } on Object catch (error) {
-        return ['bridge: $error'];
-      }
-      return [
-        'bridge: ${session.alreadyRunning ? 'already running' : 'started'} on ${session.url}',
-        'token (one-time — old tokens are invalid): ${session.token}',
-        'pair as: browser-ext/<agentId> (the extension picks its agentId)',
-      ];
+      return _browserConnect(handle, args);
     case 'status':
-      if (handle == null) return _unavailableNote();
-      final status = await handle.status();
-      return [
-        if (status.running)
-          'bridge: running on ${status.url}'
-        else
-          'bridge: not running — /browser connect starts it',
-        'extensions: ${status.extensions.isEmpty ? 'none connected' : status.extensions.join(', ')}',
-        'mailboxes:',
-        for (final mailbox in status.mailboxes)
-          '  ${mailbox.id}${mailbox.cwd == null ? '' : ' — ${mailbox.cwd}'}',
-      ];
+      return _browserStatus(handle);
     default:
       return ['bridge: unknown subcommand: $sub', ..._usage];
   }
+}
+
+/// The `connect` (alias `start`) subcommand: start the bridge if needed and
+/// report the ws URL plus the fresh one-time token.
+Future<List<String>> _browserConnect(
+  BrowserBridgeHandle? handle,
+  List<String> args,
+) async {
+  if (handle == null) return _unavailableNote();
+  final portArg = args.length > 1 ? args[1] : null;
+  if (portArg != null && int.tryParse(portArg) == null) {
+    return ['bridge: not a port: $portArg', ..._usage];
+  }
+  final BrowserBridgeSession session;
+  try {
+    session = await handle.connect(
+      port: int.parse(portArg ?? '$bridgeDefaultPort'),
+    );
+  } on Object catch (error) {
+    return ['bridge: $error'];
+  }
+  return [
+    'bridge: ${session.alreadyRunning ? 'already running' : 'started'} on ${session.url}',
+    'token (one-time — old tokens are invalid): ${session.token}',
+    'pair as: browser-ext/<agentId> (the extension picks its agentId)',
+  ];
+}
+
+/// The `status` subcommand: connected extensions and the fabric mailboxes.
+Future<List<String>> _browserStatus(BrowserBridgeHandle? handle) async {
+  if (handle == null) return _unavailableNote();
+  final status = await handle.status();
+  return [
+    if (status.running)
+      'bridge: running on ${status.url}'
+    else
+      'bridge: not running — /browser connect starts it',
+    'extensions: ${status.extensions.isEmpty ? 'none connected' : status.extensions.join(', ')}',
+    'mailboxes:',
+    for (final mailbox in status.mailboxes)
+      '  ${mailbox.id}${mailbox.cwd == null ? '' : ' — ${mailbox.cwd}'}',
+  ];
 }

@@ -1,3 +1,4 @@
+(() => { // Classic-SW module scope: nothing leaks into the shared importScripts global (a top-level const here once collided with main.js and killed SW boot).
 // Task tab groups: track only tabs the SW opened, label them `fa — <task>`,
 // close them on task_end / bridge disconnect. Never touches untracked tabs (AC17).
 const TITLE_PREFIX = 'fa — ';
@@ -114,3 +115,4 @@ function status() {
 globalThis.faSw = Object.assign(globalThis.faSw ?? {}, {
   beginTask, trackCreated, onTabCreated, onTabRemoved, taskEnd, init, status,
 });
+})();
