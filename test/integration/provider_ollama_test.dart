@@ -142,6 +142,21 @@ void main() {
         expect(end.toolCall.name, 'add');
         expect(end.toolCall.id, isNotEmpty);
         final args = end.toolCall.arguments;
+        // A null here is the live model sending literal nulls (or wrong
+        // keys) for the forced call — provider-quality flake, not an
+        // adapter bug (the parser is unit-tested; the round-trip test in
+        // this file passes through the same path). Name the payload so
+        // the CI log is diagnostic.
+        expect(
+          args['a'],
+          isA<num>(),
+          reason: 'forced tool call arguments: $args',
+        );
+        expect(
+          args['b'],
+          isA<num>(),
+          reason: 'forced tool call arguments: $args',
+        );
         expect((args['a'] as num) + (args['b'] as num), 42);
 
         final done = events.last;
