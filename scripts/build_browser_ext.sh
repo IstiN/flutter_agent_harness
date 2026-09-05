@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Package browser_ext/ into build/fa-extension.zip (README excluded).
+# Package browser_ext/ into build/fa-extension.zip (runtime files only:
+# manifest, sw/, content/, panel/ — README, dart/ sources, test/, and
+# compiled artifacts' side files stay out).
 # Compiles the embedded Dart agent first when a Dart SDK is available
 # (scripts must FAIL LOUDLY on compile errors — CI always builds it).
 # Without dart: a previously built sw/agent.js ships if present, else the
@@ -35,17 +37,23 @@ fi
 mkdir -p build
 rm -f build/fa-extension.zip
 if command -v zip >/dev/null 2>&1; then
-  ( cd browser_ext && zip -qr ../build/fa-extension.zip . -x 'README.md' )
+  ( cd browser_ext && zip -qr ../build/fa-extension.zip \
+      manifest.json sw content panel \
+      -x 'sw/agent.js.map' 'sw/agent.js.deps' )
 else
   python3 - <<'PY'
 import os, zipfile
+RUNTIME_DIRS = ("sw", "content", "panel")
+SKIP_NAMES = {"README.md", "agent.js.map", "agent.js.deps"}
 with zipfile.ZipFile("build/fa-extension.zip", "w", zipfile.ZIP_DEFLATED) as z:
-    for root, _, files in os.walk("browser_ext"):
-        for f in files:
-            if root == "browser_ext" and f == "README.md":
-                continue
-            p = os.path.join(root, f)
-            z.write(p, os.path.relpath(p, "browser_ext"))
+    z.write("browser_ext/manifest.json", "manifest.json")
+    for d in RUNTIME_DIRS:
+        for root, _, files in os.walk(os.path.join("browser_ext", d)):
+            for f in files:
+                if f in SKIP_NAMES:
+                    continue
+                p = os.path.join(root, f)
+                z.write(p, os.path.relpath(p, "browser_ext"))
 PY
 fi
 

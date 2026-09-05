@@ -76,6 +76,25 @@ async function contentOp(args, op) {
   return res.result;
 }
 
+/** Tag a result with the control plane that produced it (AC16 pin). */
+const at = (path, result) => ({ ...result, path });
+
+/** Trusted op → CDP call; cdp.js loads after this file, so reach it lazily. */
+const TRUSTED = {
+  click: (a, tab) => globalThis.faSw.cdp.trustedClick(tab.id, a.selector),
+  type: (a, tab) => globalThis.faSw.cdp.trustedType(tab.id, a.selector, a.text, a.submit),
+  press_key: (a, tab) => globalThis.faSw.cdp.trustedPressKey(tab.id, a.key),
+};
+
+/** DOM-op router: args.trusted → chrome.debugger (E23), else the quiet content path. */
+async function domOp(args, op) {
+  if (!args.trusted) return at('dom', await contentOp(args, op));
+  const tab = await resolveTab(args.tabId);
+  guardTab(tab);
+  await globalThis.faSw.cdp.ensure(tab.id);
+  return at('cdp', await TRUSTED[op](args, tab));
+}
+
 function waitComplete(tabId, ms = 28000) {
   return new Promise(async (resolve, reject) => {
     try {
@@ -137,23 +156,28 @@ const OPS = {
     return { tabId: tab.id };
   },
 
-  click: (a) => contentOp(a, 'click'),
-  type: (a) => contentOp(a, 'type'),
-  press_key: (a) => contentOp(a, 'press_key'),
+  click: (a) => domOp(a, 'click'),
+  type: (a) => domOp(a, 'type'),
+  press_key: (a) => domOp(a, 'press_key'),
   select: (a) => contentOp(a, 'select'),
   read_dom: (a) => contentOp(a, 'read_dom'),
   wait_for: (a) => contentOp(a, 'wait_for'),
   eval: (a) => contentOp(a, 'eval'),
 
-  async screenshot({ tabId }) {
-    const tab = await resolveTab(tabId);
+  async screenshot(a) {
+    const tab = await resolveTab(a.tabId);
     guardTab(tab);
+    if (a.trusted) {
+      await globalThis.faSw.cdp.ensure(tab.id);
+      return at('cdp', await globalThis.faSw.cdp.captureTab(tab.id)); // any tab, never activates (AC16)
+    }
     if (!tab.active) await chrome.tabs.update(tab.id, { active: true });
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-    return { pngBase64: dataUrl.replace(/^data:image\/png;base64,/, ''), mimeType: 'image/png' };
+    return at('dom', { pngBase64: dataUrl.replace(/^data:image\/png;base64,/, ''), mimeType: 'image/png' });
   },
 
   async task_end() {
+    await globalThis.faSw.cdp.detachAll().catch(() => {}); // drop debugger sessions too
     await taskEnd();
     return { cleaned: true };
   },
