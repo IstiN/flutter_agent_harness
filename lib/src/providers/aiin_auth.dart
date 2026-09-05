@@ -261,6 +261,25 @@ final class AiinApiKey {
   final String createdAt;
 }
 
+/// The outcome of a completed AIIN connect flow.
+final class AiinConnectResult {
+  const AiinConnectResult({
+    required this.apiKey,
+    required this.tokens,
+    required this.email,
+  });
+
+  /// The freshly registered `sk-aiin-…` API key (the durable credential).
+  final AiinApiKey apiKey;
+
+  /// The AIIN JWTs from the sign-in (kept for future silent re-auth).
+  final AiinOAuthTokens tokens;
+
+  /// The account email (from the access JWT), or null when absent — used
+  /// to name the provider entry so several AIIN accounts coexist.
+  final String? email;
+}
+
 /// Registers a new AIIN API key for the authenticated user.
 ///
 /// Requires the user's `llm` product; a 403 arrives as

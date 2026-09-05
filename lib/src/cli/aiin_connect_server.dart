@@ -119,25 +119,6 @@ String _callbackPage(AiinCallback callback) {
       '<h1>$title</h1><p>$message</p>';
 }
 
-/// The outcome of a completed AIIN connect flow.
-final class AiinConnectResult {
-  const AiinConnectResult({
-    required this.apiKey,
-    required this.tokens,
-    required this.email,
-  });
-
-  /// The freshly registered `sk-aiin-…` API key (the durable credential).
-  final AiinApiKey apiKey;
-
-  /// The AIIN JWTs from the sign-in (kept for future silent re-auth).
-  final AiinOAuthTokens tokens;
-
-  /// The account email (from the access JWT), or null when absent — used
-  /// to name the provider entry so several AIIN accounts coexist.
-  final String? email;
-}
-
 /// Runs the full AIIN connect flow for CLI/desktop hosts:
 ///
 /// 1. binds the loopback callback server (ephemeral port),
