@@ -1549,7 +1549,16 @@ Map<String, Object?> _intListProp(String d) => {
 
 /// Registers the whole browser-API family on [registry]. Names are the
 /// [browserApiToolSpecs] entries — one registration path for every host
-/// (SW agent host today, panel tooling later).
-void registerBrowserApiTools(ToolRegistry registry, ChromeApi chrome) {
-  registry.registerAll(BrowserApiToolSurface(chrome).tools());
+/// (SW agent host today, panel tooling later). [visitedOrigins] passes
+/// through to the surface constructor: the exfil gate reads the LIVE set
+/// at every outbound call, so hosts keep mutating their own set after
+/// registration (SW wiring seeds it from tabs + webNavigation).
+void registerBrowserApiTools(
+  ToolRegistry registry,
+  ChromeApi chrome, {
+  Set<String>? visitedOrigins,
+}) {
+  registry.registerAll(
+    BrowserApiToolSurface(chrome, visitedOrigins: visitedOrigins).tools(),
+  );
 }

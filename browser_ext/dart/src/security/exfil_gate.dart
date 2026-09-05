@@ -71,6 +71,19 @@ String outboundOrigin(String url) {
   }
 }
 
+/// Origin for seeding the user-visited set (issue #30 v2.1 SW wiring):
+/// the same normalizer the gate compares against ([outboundOrigin]) —
+/// chrome:// pages keep their `scheme://host` form so ordinary browsing
+/// of settings pages never trips a cross-origin prompt — but `null` for
+/// urls that carry no origin at all (bad/relative/`data:`/`about:blank`),
+/// which must not enter the visited set.
+String? originOf(String? url) {
+  if (url == null || url.isEmpty) return null;
+  final uri = Uri.tryParse(url);
+  if (uri == null || uri.scheme.isEmpty || uri.host.isEmpty) return null;
+  return outboundOrigin(url);
+}
+
 /// Decides which outbound actions need user approval before they run.
 /// Pure and stateless — one check per call site.
 final class ExfilGate {
