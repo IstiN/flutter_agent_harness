@@ -170,3 +170,26 @@ port.onMessage.addListener((m) => {
 
 // Initial snapshot (poll once; port covers the rest).
 chrome.runtime.sendMessage({ type: 'status' }).then((res) => res?.ok && render(res.status));
+
+// -- v2.1 app-hosting loader (AC1) --------------------------------------------
+// The panel hosts the built fa web app when present; the chat UI above is the
+// fallback only. DOM is resolved lazily inside decide() so tests can drive it
+// without a real document.
+
+globalThis.faPanel = {
+  decide(appPresent) {
+    if (appPresent) {
+      (globalThis.__faRedirect ?? ((url) => location.replace(url)))('app/index.html');
+      return { mode: 'app' };
+    }
+    const notice = $('notice');
+    notice.textContent = 'fa app bundle not built — run scripts/build_browser_ext.sh --with-app — showing basic panel.';
+    notice.classList.remove('hidden');
+    $('legacy').classList.remove('hidden');
+    return { mode: 'fallback' };
+  },
+};
+
+fetch('app/index.html', { method: 'HEAD' })
+  .then((res) => faPanel.decide(res?.ok))
+  .catch(() => faPanel.decide(false));

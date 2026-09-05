@@ -2,6 +2,9 @@
 # Package browser_ext/ into build/fa-extension.zip (runtime files only:
 # manifest, sw/, content/, panel/ — README, dart/ sources, test/, and
 # compiled artifacts' side files stay out).
+# `--with-app` first builds the Flutter web app (flutter_app/ → build/web) and
+# bundles it as browser_ext/app/ so the side panel hosts the full fa app.
+# browser_ext/app/ is a build artifact (gitignored, never committed).
 # Compiles the embedded Dart agent first when a Dart SDK is available
 # (scripts must FAIL LOUDLY on compile errors — CI always builds it).
 # Without dart: a previously built sw/agent.js ships if present, else the
@@ -9,6 +12,13 @@
 # Runs green on ubuntu-latest and macOS: needs zip + python3|node|grep.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+with_app=0
+case "${1:-}" in
+  --with-app) with_app=1 ;;
+  "") ;;
+  *) echo "unknown option: $1 (usage: $0 [--with-app])" >&2; exit 1 ;;
+esac
 
 manifest=browser_ext/manifest.json
 
@@ -34,16 +44,35 @@ else
   echo "WARNING: no dart SDK and no prebuilt sw/agent.js — scaffold-only zip (embedded agent disabled)"
 fi
 
+# --- Optional fa web app (flutter_app → browser_ext/app). Build artifact. ---
+if [ "$with_app" -eq 1 ]; then
+  if ! command -v flutter >/dev/null 2>&1; then
+    echo "ERROR: --with-app passed but flutter is not installed — cannot build browser_ext/app/" >&2
+    exit 1
+  fi
+  echo "building fa web app (flutter build web --release)…"
+  ( cd flutter_app && flutter pub get >/dev/null && flutter build web --release )
+  rm -rf browser_ext/app
+  mkdir -p browser_ext/app
+  cp -R flutter_app/build/web/. browser_ext/app/
+  echo "bundled fa web app (browser_ext/app/)"
+fi
+
 mkdir -p build
 rm -f build/fa-extension.zip
 if command -v zip >/dev/null 2>&1; then
-  ( cd browser_ext && zip -qr ../build/fa-extension.zip \
-      manifest.json sw content panel icons \
+  runtime="manifest.json sw content panel icons"
+  if [ "$with_app" -eq 1 ] && [ -f "browser_ext/app/index.html" ]; then
+    runtime="$runtime app"
+  fi
+  ( cd browser_ext && zip -qr ../build/fa-extension.zip $runtime \
       -x 'sw/agent.js.map' 'sw/agent.js.deps' )
 else
-  python3 - <<'PY'
+python3 - "$([ "$with_app" -eq 1 ] && [ -f browser_ext/app/index.html ] && echo 1 || echo 0)" <<'PY'
 import os, zipfile
-RUNTIME_DIRS = ("sw", "content", "panel", "icons")
+import sys
+include_app = sys.argv[1] == "1"
+RUNTIME_DIRS = ("sw", "content", "panel", "icons") + (("app",) if include_app else ())
 SKIP_NAMES = {"README.md", "agent.js.map", "agent.js.deps"}
 with zipfile.ZipFile("build/fa-extension.zip", "w", zipfile.ZIP_DEFLATED) as z:
     z.write("browser_ext/manifest.json", "manifest.json")
