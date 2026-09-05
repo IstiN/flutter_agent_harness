@@ -36,6 +36,7 @@
 ///   auto-remap are skipped (see `lib/src/hashline/`).
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -73,6 +74,15 @@ const defaultLsEntryLimit = 500;
 
 /// Maximum shell timeout: pi clamps at the int32 max milliseconds.
 const _maxTimeoutMs = 2147483647;
+
+/// Transient-failure retries for foreground bash runs: timeout-class
+/// failures (a hung transport, or the model's own per-call cap) are
+/// retried up to this many times — 3 attempts total — before the error
+/// surfaces. Aborts and real command failures never retry.
+const bashToolMaxRetries = 2;
+
+/// Backoff between bash retry attempts.
+const _bashRetryBackoff = Duration(seconds: 1);
 
 /// Creates the four built-in tools ([readFileTool], [writeFileTool],
 /// [listDirTool], [shellTool]) bound to [env].
@@ -2125,7 +2135,11 @@ String _appendStatus(String text, String status) {
 ///   into a background job WITHOUT killing it: the tool call answers with the
 ///   job id and a partial-output tail, and the user message is delivered at
 ///   the next step boundary.
-AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
+AgentTool shellTool(
+  ExecutionEnv env, {
+  ShellJobRegistry? jobs,
+  Duration retryBackoff = _bashRetryBackoff,
+}) {
   return AgentTool(
     name: bashToolName,
     label: 'bash',
@@ -2135,6 +2149,10 @@ AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
         'stdout and stderr. Output is truncated to the last '
         '$defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
         '(whichever is hit first). Optionally provide a timeout in seconds. '
+        'Timeout-class failures are retried automatically '
+        '(${bashToolMaxRetries + 1} attempts total) — a hung network call '
+        'does not fail the call; retries are visible as [bash attempt N] '
+        'notices in the output. '
         'For long-running commands (builds, servers, watchers) pass '
         'background: true — the command keeps running as a job, you get its '
         'id immediately and are notified when it finishes; check progress '
@@ -2219,7 +2237,42 @@ AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
         );
       }
 
-      final result = await env.exec(
+      return _runForegroundBash(
+        env,
+        command,
+        timeout: timeout,
+        timeoutArg: timeoutArg,
+        cancelToken: cancelToken,
+        stdinData: stdinData,
+        retryBackoff: retryBackoff,
+      );
+    },
+  );
+}
+
+/// The inline foreground bash run with transient-failure retry: a
+/// timeout-class failure (the model's own cap, or an outer future cap on a
+/// hung transport) is retried up to [bashToolMaxRetries] times — a hung
+/// network call should be retried, not fail the turn (user report: a
+/// stalled `gh` API call killed the whole run). Aborts and real command
+/// failures (non-zero exit, exec errors) are never retried. Every retry
+/// lands in the result as a `[bash attempt N]` notice so the model knows
+/// earlier attempts hung or timed out.
+Future<ToolExecutionResult> _runForegroundBash(
+  ExecutionEnv env,
+  String command, {
+  required Duration? timeout,
+  required num? timeoutArg,
+  required CancelToken? cancelToken,
+  required String? stdinData,
+  required Duration retryBackoff,
+}) async {
+  final notices = <String>[];
+  for (var attempt = 1; ; attempt++) {
+    final canRetry = attempt <= bashToolMaxRetries;
+    final Result<ShellExecResult, ExecutionError> result;
+    try {
+      result = await env.exec(
         command,
         options: ShellExecOptions(
           cwd: env.cwd,
@@ -2228,59 +2281,95 @@ AgentTool shellTool(ExecutionEnv env, {ShellJobRegistry? jobs}) {
           stdinData: stdinData,
         ),
       );
+    } on TimeoutException {
+      // An outer layer's future cap fired (transport hang); the exec
+      // itself never answered.
+      if (!canRetry) rethrow;
+      notices.add(
+        '[bash attempt $attempt/${bashToolMaxRetries + 1} hung — '
+        'retrying]',
+      );
+      await Future<void>.delayed(retryBackoff);
+      continue;
+    }
 
-      String outputOf(ShellExecResult execResult) {
-        final parts = <String>[
-          if (execResult.stdout.isNotEmpty) execResult.stdout,
-          if (execResult.stderr.isNotEmpty) execResult.stderr,
-        ];
-        return parts.join('\n');
-      }
-
-      String truncate(String output) {
-        final truncation = _truncateTail(output);
-        if (!truncation.truncated) return output;
-        final startLine = truncation.totalLines - truncation.outputLines + 1;
-        final endLine = truncation.totalLines;
-        var notice =
-            '\n\n[Showing lines $startLine-$endLine of ${truncation.totalLines}';
-        if (truncation.truncatedBy == _TruncatedBy.bytes) {
-          notice += ' (${formatToolSize(defaultToolMaxBytes)} limit)';
-        }
-        return '${truncation.content}$notice.]';
-      }
-
-      if (result.isErr) {
-        final error = result.errorOrNull!;
-        throw switch (error.code) {
-          ExecutionErrorCode.aborted => StateError(
-            _appendStatus('', 'Command aborted'),
-          ),
-          ExecutionErrorCode.timeout => StateError(
-            _appendStatus(
-              '',
-              'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
-            ),
-          ),
-          _ => StateError('$error'),
-        };
-      }
-
-      final execResult = result.valueOrNull!;
-      final rawOutput = outputOf(execResult);
-      if (execResult.exitCode != 0) {
-        throw StateError(
-          _appendStatus(
-            truncate(rawOutput),
-            'Command exited with code ${execResult.exitCode}',
-          ),
+    if (result.isErr) {
+      final error = result.errorOrNull!;
+      if (error.code == ExecutionErrorCode.timeout && canRetry) {
+        notices.add(
+          '[bash attempt $attempt/${bashToolMaxRetries + 1} timed out'
+          '${timeoutArg != null ? ' after ${timeoutArg}s' : ''} — '
+          'retrying]',
         );
+        await Future<void>.delayed(retryBackoff);
+        continue;
       }
-      final output = truncate(rawOutput);
-      return ToolExecutionResult.text(output.isEmpty ? '(no output)' : output);
-    },
-  );
+      throw _bashFailureError(error, notices, timeoutArg);
+    }
+
+    final execResult = result.valueOrNull!;
+    final rawOutput = _bashOutput(execResult);
+    if (execResult.exitCode != 0) {
+      throw StateError(
+        _appendStatus(
+          '${_retryNoticePrefix(notices)}${_truncateBashOutput(rawOutput)}',
+          'Command exited with code ${execResult.exitCode}',
+        ),
+      );
+    }
+    final output = _truncateBashOutput(rawOutput);
+    final text = output.isEmpty ? '(no output)' : output;
+    return ToolExecutionResult.text('${_retryNoticePrefix(notices)}$text');
+  }
 }
+
+/// The user-visible error for a non-retryable bash exec failure.
+StateError _bashFailureError(
+  ExecutionError error,
+  List<String> notices,
+  num? timeoutArg,
+) {
+  return switch (error.code) {
+    ExecutionErrorCode.aborted => StateError(
+      _appendStatus('', 'Command aborted'),
+    ),
+    ExecutionErrorCode.timeout => StateError(
+      _appendStatus(
+        _retryNoticePrefix(notices),
+        'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+      ),
+    ),
+    _ => StateError('${_retryNoticePrefix(notices)}$error'),
+  };
+}
+
+/// Joins exec stdout and stderr (stderr after stdout).
+String _bashOutput(ShellExecResult execResult) {
+  final parts = <String>[
+    if (execResult.stdout.isNotEmpty) execResult.stdout,
+    if (execResult.stderr.isNotEmpty) execResult.stderr,
+  ];
+  return parts.join('\n');
+}
+
+/// Truncates command output to the tail, annotating what was cut.
+String _truncateBashOutput(String output) {
+  final truncation = _truncateTail(output);
+  if (!truncation.truncated) return output;
+  final startLine = truncation.totalLines - truncation.outputLines + 1;
+  final endLine = truncation.totalLines;
+  var notice =
+      '\n\n[Showing lines $startLine-$endLine of ${truncation.totalLines}';
+  if (truncation.truncatedBy == _TruncatedBy.bytes) {
+    notice += ' (${formatToolSize(defaultToolMaxBytes)} limit)';
+  }
+  return '${truncation.content}$notice.]';
+}
+
+/// Prepends the retry notices (if any) to a tool result so the model sees
+/// that earlier attempts hung or timed out before this one succeeded.
+String _retryNoticePrefix(List<String> notices) =>
+    notices.isEmpty ? '' : '${notices.join('\n')}\n';
 
 /// The yield-aware foreground bash path: the command runs as a registry job
 /// from the start; settling before the yield token fires produces the

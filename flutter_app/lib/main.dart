@@ -83,7 +83,19 @@ Future<void> main() async {
   };
   final options = DefaultFirebaseOptions.currentPlatform;
   if (!options.apiKey.startsWith('YOUR_')) {
-    await Firebase.initializeApp(options: options);
+    // The native Firebase SDK auto-configures the [DEFAULT] app from
+    // GoogleService-Info.plist when the plugins register — a second
+    // initializeApp throws [core/duplicate-app] and, unhandled here in
+    // main(), kills boot before the first frame (black screen on
+    // macOS/iOS). Reuse the natively configured app in that case.
+    try {
+      await Firebase.initializeApp(options: options);
+    } on FirebaseException catch (error) {
+      if (error.code != 'duplicate-app') rethrow;
+      debugPrint(
+        '[fa] Firebase [DEFAULT] already configured natively — reusing it',
+      );
+    }
   }
   try {
     await setUpWasmRuntime();

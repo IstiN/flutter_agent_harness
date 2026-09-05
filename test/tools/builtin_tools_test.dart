@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -15,6 +16,12 @@ class _FakeShell implements Shell {
   _FakeShell(this.result);
 
   Result<ShellExecResult, ExecutionError> result;
+
+  /// Queue of outcomes consumed per exec call: entries replace [result]
+  /// one at a time (used by the bash retry tests). An [Object] entry is
+  /// thrown instead of returned.
+  final queue = <Object>[];
+  int calls = 0;
   String? lastCommand;
   ShellExecOptions? lastOptions;
 
@@ -23,8 +30,14 @@ class _FakeShell implements Shell {
     String command, {
     ShellExecOptions? options,
   }) async {
+    calls++;
     lastCommand = command;
     lastOptions = options;
+    if (queue.isNotEmpty) {
+      final entry = queue.removeAt(0);
+      if (entry is Result<ShellExecResult, ExecutionError>) return entry;
+      throw entry;
+    }
     return result;
   }
 }
@@ -807,7 +820,7 @@ void main() {
         const Ok(ShellExecResult(stdout: 'out', stderr: '', exitCode: 0)),
       );
       env = MemoryExecutionEnv(cwd: '/work', shell: shell);
-      tool = shellTool(env);
+      tool = shellTool(env, retryBackoff: Duration.zero);
     });
 
     test('returns stdout of a successful command', () async {
@@ -885,6 +898,105 @@ void main() {
           ),
         ),
       );
+    });
+
+    test('retries a timed-out command and succeeds on attempt 2', () async {
+      // Queue semantics: attempt 1 consumes the timeout error, attempt 2
+      // consumes the recovery.
+      shell.queue.add(
+        const Err<ShellExecResult, ExecutionError>(
+          ExecutionError(ExecutionErrorCode.timeout, 'killed'),
+        ),
+      );
+      shell.queue.add(
+        const Ok<ShellExecResult, ExecutionError>(
+          ShellExecResult(stdout: 'recovered', stderr: '', exitCode: 0),
+        ),
+      );
+      shell.result = const Err(
+        ExecutionError(ExecutionErrorCode.timeout, 'killed'),
+      );
+      final result = await tool.execute(
+        {'command': 'x', 'timeout': 5},
+        null,
+        null,
+      );
+      expect(shell.calls, 2);
+      expect(
+        _text(result),
+        startsWith('[bash attempt 1/3 timed out after 5s — retrying]'),
+      );
+      expect(_text(result), contains('recovered'));
+    });
+
+    test('retries on a thrown TimeoutException (outer future cap)', () async {
+      shell.queue.add(TimeoutException('Future not completed'));
+      shell.queue.add(TimeoutException('Future not completed'));
+      shell.result = const Ok(
+        ShellExecResult(stdout: 'finally', stderr: '', exitCode: 0),
+      );
+      final result = await tool.execute({'command': 'x'}, null, null);
+      expect(shell.calls, 3);
+      expect(_text(result), contains('[bash attempt 1/3 hung — retrying]'));
+      expect(_text(result), contains('[bash attempt 2/3 hung — retrying]'));
+      expect(_text(result), endsWith('finally'));
+    });
+
+    test('exhausted retries surface the timeout error with notices', () async {
+      shell.result = const Err(
+        ExecutionError(ExecutionErrorCode.timeout, 'killed'),
+      );
+      await expectLater(
+        tool.execute({'command': 'x', 'timeout': 5}, null, null),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('[bash attempt 1/3 timed out after 5s — retrying]'),
+              contains('[bash attempt 2/3 timed out after 5s — retrying]'),
+              contains('Command timed out after 5 seconds'),
+            ),
+          ),
+        ),
+      );
+      expect(shell.calls, 3);
+    });
+
+    test('never retries aborted commands', () async {
+      shell.result = const Err(
+        ExecutionError(ExecutionErrorCode.aborted, 'killed'),
+      );
+      await expectLater(
+        tool.execute({'command': 'x'}, null, null),
+        throwsA(isA<StateError>()),
+      );
+      expect(shell.calls, 1);
+    });
+
+    test('never retries real command failures (non-zero exit)', () async {
+      shell.result = const Ok(
+        ShellExecResult(stdout: 'partial', stderr: '', exitCode: 3),
+      );
+      await expectLater(
+        tool.execute({'command': 'x'}, null, null),
+        throwsA(isA<StateError>()),
+      );
+      expect(shell.calls, 1);
+    });
+
+    test('never retries shell-unavailable errors', () async {
+      shell.result = const Err(
+        ExecutionError(
+          ExecutionErrorCode.shellUnavailable,
+          'No shell is available in this environment',
+        ),
+      );
+      await expectLater(
+        tool.execute({'command': 'x'}, null, null),
+        throwsA(isA<StateError>()),
+      );
+      expect(shell.calls, 1);
     });
 
     test('throws an aborted message when the shell is cancelled', () {

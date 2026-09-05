@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.296
+
+- feat(bash): automatic transient-failure retry — timeout-class failures
+  (the model's per-call cap, or an outer future cap on a hung transport,
+  e.g. a stalled `gh` API call) are retried up to 2 times (3 attempts
+  total) with a 1s backoff before the error surfaces. Retries are visible
+  as `[bash attempt N/3 ... — retrying]` notices in the tool output, and
+  the final error carries them too. Aborts and real command failures
+  (non-zero exit, exec errors, shell unavailable) are never retried.
+- fix(app): the macOS/iOS app could boot to a black screen — the native
+  Firebase SDK auto-configures the [DEFAULT] app from
+  GoogleService-Info.plist at plugin registration, so the Dart
+  `Firebase.initializeApp` threw an unhandled [core/duplicate-app] that
+  killed main() before the first frame. The duplicate-app case now reuses
+  the natively configured app.
+
+## 0.1.296
+
+- feat(bash): automatic transient-failure retry — timeout-class failures
+  (the model's per-call cap, or an outer future cap on a hung transport,
+  e.g. a stalled `gh` API call) are retried up to 2 times (3 attempts
+  total) with a 1s backoff before the error surfaces. Retries are visible
+  as `[bash attempt N/3 ... — retrying]` notices in the tool output, and
+  the final error carries them too. Aborts and real command failures
+  (non-zero exit, exec errors, shell unavailable) are never retried.
+
 ## 0.1.295
 
 - docs: fa1.dev is now referenced from the README (website + live web
