@@ -55,6 +55,11 @@ bridge.onStatus((s) => {
 
 bridge.onMail((m) => {
   pushPanels({ type: 'mail', from: m.from, text: m.text, msgId: m.msgId });
+  // Test-only inbound-mail log for the headless CI suite: polls it to prove
+  // fabric→browser delivery (no panel needed). Routing fields only; capped.
+  const mailLog = (globalThis.__faMailLog ??= []);
+  mailLog.push({ from: m.from, text: m.text, ts: m.ts ?? Date.now() });
+  if (mailLog.length > 50) mailLog.shift();
   agent?.pushMail(m.from, m.text); // bridge mail reaches the embedded agent
 });
 
