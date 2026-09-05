@@ -44,6 +44,11 @@ final class AiinWebAuthCoordinator {
 
   Completer<AiinWebCallback>? _completer;
 
+  /// Why the last [connect] returned null (null when it succeeded or has
+  /// not run). Carries the service message verbatim for redirect-block
+  /// detection ("client_redirect_uri is not allowed").
+  String? lastFailure;
+
   /// Completes the in-flight flow with the delivered callback. Called by
   /// the web link listeners; safe to call with `null` (cancel).
   void complete({String? code, String? state}) {
@@ -68,10 +73,12 @@ final class AiinWebAuthCoordinator {
     bool Function()? openFn,
     void Function(String url)? navigateFn,
   }) async {
+    lastFailure = null;
     onStatus?.call('Opening the AIIN sign-in…');
     // Inside the gesture: open the blank popup NOW, navigate it later.
     final opened = openFn != null ? openFn() : openAiinOAuthPopup();
     if (!opened) {
+      lastFailure = 'popup_blocked';
       onStatus?.call('The browser blocked the sign-in popup — allow popups '
           'and try again.');
       return null;
@@ -86,6 +93,7 @@ final class AiinWebAuthCoordinator {
         client: client,
       );
     } on AiinAuthException catch (error) {
+      lastFailure = error.message;
       onStatus?.call('AIIN sign-in failed: ${error.message}');
       closeAiinOAuthPopup();
       _reset();
@@ -100,18 +108,21 @@ final class AiinWebAuthCoordinator {
     try {
       callback = await _completer!.future.timeout(timeout);
     } on TimeoutException {
+      lastFailure = 'timeout';
       onStatus?.call('No AIIN callback received (timeout or cancelled)');
       _reset();
       return null;
     }
     _reset();
     if (callback.code == null || callback.code!.isEmpty) {
+      lastFailure = 'cancelled';
       onStatus?.call('AIIN sign-in cancelled');
       return null;
     }
     // The proxy echoes the SERVER-issued state (initiate) into the
     // redirect — that is the value to validate against.
     if (callback.state != initiate.state) {
+      lastFailure = 'state_mismatch';
       onStatus?.call('AIIN sign-in callback was invalid (state mismatch)');
       return null;
     }
@@ -146,6 +157,7 @@ final class AiinWebAuthCoordinator {
         email: aiinJwtEmail(tokens.accessToken),
       );
     } on AiinAuthException catch (error) {
+      lastFailure = error.message;
       onStatus?.call('AIIN setup failed: ${error.message}');
       return null;
     }

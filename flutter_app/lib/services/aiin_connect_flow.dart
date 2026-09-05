@@ -1,4 +1,6 @@
 // l10n:ignore-file — connect flow screens — en-only by design
+import 'package:http/http.dart' as http;
+
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -40,6 +42,14 @@ Future<bool> runAiinConnectFlow({
   SessionKeysStore? sessionKeysStore,
   KeychainStore? keychainStore,
   Future<AiinConnectResult?> Function()? aiinConnectFn,
+
+  /// Injectable HTTP (tests): used for the AIIN service calls.
+  http.Client? aiinHttpClient,
+
+  /// Injectable popup plumbing (tests): the web flow's popup opener and
+  /// navigator (defaults come from the conditional dart:html impl).
+  bool Function()? aiinOpenPopupFn,
+  void Function(String url)? aiinNavigatePopupFn,
 }) async {
   if (kIsWeb) {
     // One-click web connect: a popup OAuth, no loopback server needed
@@ -53,11 +63,37 @@ Future<bool> runAiinConnectFlow({
       debugPrint('[AIIN web] $message');
     }
 
-    final result = await AiinWebAuthCoordinator.instance.connect(
-      provider: await _preferredAiinProvider(),
+    final coordinator = AiinWebAuthCoordinator.instance;
+    final result = await coordinator.connect(
+      provider: await _preferredAiinProvider(aiinHttpClient),
       onStatus: webStatus,
+      client: aiinHttpClient,
+      openFn: aiinOpenPopupFn,
+      navigateFn: aiinNavigatePopupFn,
     );
-    if (result == null) return false;
+    if (result == null) {
+      // AIIN's OAuth proxy currently allowlists only its own redirect URIs
+      // ("client_redirect_uri is not allowed") — the automatic flow cannot
+      // complete until the service allowlists our callback. Fall back to
+      // the cabinet + paste-key path so the connect still works today.
+      final failure = coordinator.lastFailure ?? '';
+      if (failure.contains('client_redirect_uri is not allowed') &&
+          context.mounted) {
+        final pasted = await _pasteAiinKeyFallback(context);
+        if (pasted == null) return false;
+        if (!context.mounted) return false;
+        return _finishAiinConnect(
+          context,
+          registry: registry,
+          service: service,
+          lastConnectionStore: lastConnectionStore,
+          sessionKeysStore: sessionKeysStore,
+          keychainStore: keychainStore,
+          apiKey: pasted,
+        );
+      }
+      return false;
+    }
     if (!context.mounted) return false;
     return _finishAiinConnect(
       context,
@@ -66,27 +102,63 @@ Future<bool> runAiinConnectFlow({
       lastConnectionStore: lastConnectionStore,
       sessionKeysStore: sessionKeysStore,
       keychainStore: keychainStore,
-      result: result,
+      apiKey: result.apiKey.raw,
+      accountLabel: result.email,
     );
   }
   final desktop = !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.macOS ||
           defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.linux);
+  final fallbackKeys = SessionKeysScope.maybeOf(context);
   if (!desktop) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'AIIN sign-in is not yet available on this platform. '
-            'Add api.aiin.by/v1 as a custom provider with a key instead.',
-          ),
-        ),
-      );
-    }
-    return false;
+    // Loopback callbacks are impossible here and the AIIN proxy currently
+    // blocks cross-device redirects — paste the cabinet key instead.
+    if (!context.mounted) return false;
+    final pasted = await _pasteAiinKeyFallback(context);
+    if (pasted == null) return false;
+    if (!context.mounted) return false;
+    return _finishAiinConnect(
+      context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore,
+      keychainStore: keychainStore,
+      apiKey: pasted,
+    );
   }
 
+  // Preflight: the AIIN proxy rejects un-allowlisted redirect URIs; detect
+  // that BEFORE bouncing the user through the browser.
+  try {
+    await initiateAiinOAuth(
+      provider: await _preferredAiinProvider(aiinHttpClient),
+      redirectUri: 'http://127.0.0.1:9/callback',
+      client: aiinHttpClient,
+    );
+  } on AiinAuthException catch (error) {
+    if (error.message.contains('client_redirect_uri is not allowed')) {
+      if (!context.mounted) return false;
+      final pasted = await _pasteAiinKeyFallback(context);
+      if (pasted == null) return false;
+      if (!context.mounted) return false;
+      return _finishAiinConnect(
+        context,
+        registry: registry,
+        service: service,
+        lastConnectionStore: lastConnectionStore,
+        sessionKeysStore: sessionKeysStore ?? fallbackKeys,
+        keychainStore: keychainStore,
+        apiKey: pasted,
+      );
+    }
+    // A different (transient?) service error — let the flow surface it.
+  } on Object {
+    // Network hiccup — the flow below will retry and report.
+  }
+
+  if (!context.mounted) return false;
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(
       content: Text('Opening browser for AIIN sign-in…'),
@@ -94,11 +166,10 @@ Future<bool> runAiinConnectFlow({
     ),
   );
 
-  final fallbackKeys = SessionKeysScope.maybeOf(context);
   final result = aiinConnectFn != null
       ? await aiinConnectFn()
       : await runAiinConnectCliFlow(
-          provider: await _preferredAiinProvider(),
+          provider: await _preferredAiinProvider(aiinHttpClient),
           onStatus: (message) => debugPrint('[AIIN] $message'),
           openBrowserFn: (url) => url_launcher.launchUrl(
             Uri.parse(url),
@@ -114,7 +185,8 @@ Future<bool> runAiinConnectFlow({
     lastConnectionStore: lastConnectionStore,
     sessionKeysStore: sessionKeysStore ?? fallbackKeys,
     keychainStore: keychainStore,
-    result: result,
+    apiKey: result.apiKey.raw,
+    accountLabel: result.email,
   );
 }
 
@@ -129,11 +201,12 @@ Future<bool> _finishAiinConnect(
   required LastConnectionStore lastConnectionStore,
   required SessionKeysStore? sessionKeysStore,
   required KeychainStore? keychainStore,
-  required AiinConnectResult result,
+  required String apiKey,
+  String? accountLabel,
 }) async {
   // ── Pick a model (public /v1/models on api.aiin.by) ─────────────────
   const baseUrl = aiinDefaultChatBaseUrl;
-  final key = result.apiKey.raw;
+  final key = apiKey;
   List<String> models = const [];
   try {
     models = (await fetchModelsForEndpoint(baseUrl, apiKey: key)).$1;
@@ -151,7 +224,7 @@ Future<bool> _finishAiinConnect(
   // ── Save provider + key ─────────────────────────────────────────────
   // The entry name IS the signed-in account's email (fall back to 'AIIN');
   // de-duplicated so a second AIIN account gets its own entry.
-  final identity = result.email ?? 'AIIN';
+  final identity = accountLabel ?? 'AIIN';
   var name = identity;
   var suffix = 2;
   while (registry.providers.any(
@@ -197,11 +270,102 @@ Future<bool> _finishAiinConnect(
 /// spec's default base URL).
 const aiinDefaultChatBaseUrl = 'https://api.aiin.by/v1';
 
+/// Whether [key] looks like an AIIN API key (`sk-aiin-…`).
+bool isValidAiinApiKey(String key) {
+  final trimmed = key.trim();
+  return trimmed.startsWith('sk-aiin-') && trimmed.length > 15;
+}
+
+/// The AIIN cabinet entry point (the user creates/pastes keys there while
+/// the automatic OAuth redirect is not allowlisted).
+const aiinCabinetUrl = 'https://aiin.by/app';
+
+/// The fallback when the automatic sign-in cannot complete: open the AIIN
+/// cabinet, let the user create a key, and paste it here. Returns the key
+/// or null on cancel.
+Future<String?> _pasteAiinKeyFallback(BuildContext context) {
+  return showDialog<String>(
+    context: context,
+    builder: (_) => const _AiinKeyPasteDialog(),
+  );
+}
+
+class _AiinKeyPasteDialog extends StatefulWidget {
+  const _AiinKeyPasteDialog();
+
+  @override
+  State<_AiinKeyPasteDialog> createState() => _AiinKeyPasteDialogState();
+}
+
+class _AiinKeyPasteDialogState extends State<_AiinKeyPasteDialog> {
+  final _controller = TextEditingController();
+  bool _valid = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('AIIN API key'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'AIIN currently blocks automatic sign-in redirects. '
+            'Create an API key in the AIIN cabinet and paste it here.',
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => url_launcher.launchUrl(
+                Uri.parse(aiinCabinetUrl),
+                mode: url_launcher.LaunchMode.externalApplication,
+              ),
+              icon: const Icon(Icons.open_in_new, size: 16),
+              label: const Text('Open the AIIN cabinet'),
+            ),
+          ),
+          TextField(
+            controller: _controller,
+            obscureText: true,
+            autofocus: true,
+            decoration: const InputDecoration(
+              hintText: 'sk-aiin-…',
+              labelText: 'API key',
+            ),
+            onChanged: (value) => setState(
+              () => _valid = isValidAiinApiKey(value),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _valid
+              ? () => Navigator.of(context).pop(_controller.text.trim())
+              : null,
+          child: const Text('Connect'),
+        ),
+      ],
+    );
+  }
+}
+
 /// The identity provider to sign in with: google when the AIIN service
 /// offers it (its default), else the first offered provider.
-Future<String> _preferredAiinProvider() async {
+Future<String> _preferredAiinProvider([http.Client? client]) async {
   try {
-    final providers = await fetchAiinOAuthProviders();
+    final providers = await fetchAiinOAuthProviders(client: client);
     if (providers.contains('google')) return 'google';
     if (providers.isNotEmpty) return providers.first;
   } on Object {
