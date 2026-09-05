@@ -1057,6 +1057,36 @@ factual: paths, commands, invariants — no essays.
   source text — keep both in sync; the onboarding privacy page links to
   `https://fa1.dev/privacy.html`).
 - `scripts/` — codegen and quality-gate scripts.
+- `browser_ext/` — Chrome MV3 extension pairing fa with the browser
+  (issue #23): `sw/main.js` (entry, pairing storage, panel API,
+  optional embedded-agent boot), `sw/bridge.js` (wire protocol v1
+  client), `sw/ops.js` (browserReq op table), `sw/tabs.js` (task tab
+  groups), `sw/cdp.js` (chrome.debugger trusted path), `sw/agent.js`
+  (dart2js build artifact, gitignored, absent → bridge-only scaffold),
+  `content/content.js` (isolated-world DOM ops), `panel/` (side panel).
+  `dart/` is the `fa_browser_agent` package (path dep) compiled into
+  `sw/agent.js` by `scripts/build_browser_ext.sh` — agent host,
+  chrome.storage ExecutionEnv, provider streams (incl. deterministic
+  `fake:` provider), DAP hub client. Tests: `browser_ext/dart/test`,
+  `browser_ext/test` (node --test), `test/browser_ext/` (headless
+  Chrome, integration tag). Docs: docs/browser-extension.md.
+- `lib/src/browser/` — pure-Dart browser half: `bridge_protocol.dart`
+  (wire protocol v1 — frame codec, ops/error codes, one-time
+  `pairingToken()`, `browser-ext/` mailbox ids, reconnect backoff, mail
+  dedupe) and `browser_tools.dart` (the eleven exec-tier `browser_*`
+  tools over the injectable `BrowserController`; failures throw
+  `BrowserToolException` carrying the wire code). Availability family
+  `browser` + `browser_eval` in `agent_cli_tools.dart`
+  (docs/tool-availability.md); CLI surface in
+  `lib/src/cli/browser_bridge_commands.dart` (`/browser connect|status`).
+- `bin/serve_bridge.dart` — `fa serve --bridge [--port N] [--token T]`
+  loopback WebSocket bridge (binds 127.0.0.1 only, AC15; non-
+  `chrome-extension://` origins refused): one-time token pairing
+  (`.fah/bridge/token`, 0600, minted fresh per `/browser connect`),
+  two-way mail relay over the messaging fabric, ping/pong keepalive,
+  `browserReq`/`browserRes` correlation for the `browser_*` tools. The
+  CLI mounts the same server in-process via `bin/fah.dart`'s
+  `_FaBrowserBridgeHandle` (also the `BrowserController` seam).
 
 ## Hard architecture rules
 

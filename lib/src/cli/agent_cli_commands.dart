@@ -13,6 +13,23 @@ final _commandWhitespace = RegExp(r'\s+');
 /// the prompt (hoisted: evaluated per submitted line).
 final _leadingPathLike = RegExp(r'^/[^/\s]*\/');
 
+/// The async info-command table: command name → handler. Each entry owns
+/// one `/command` arm. `/mcp` lives here too (the basic handler is
+/// synchronous and cannot host its async `reload` branch), as does
+/// `/browser` (run via the bridge handle, then print).
+final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
+  '/mcp': (cli, rest) async => cli._mcpSlash(rest),
+  '/skills': (cli, rest) async => cli._skillsSlash(rest),
+  '/tools': (cli, rest) async => cli._toolsSlash(rest),
+  '/cube': (cli, rest) async => cli._handleCubeCommand(rest),
+  '/memory': (cli, rest) async => cli._handleMemoryCommand(rest),
+  '/redact': (cli, rest) async => cli._handleRedactCommand(rest),
+  '/trajectory': (cli, rest) async => cli._handleTrajectoryCommand(rest),
+  '/agents': (cli, rest) async => cli.handleAgentsCommand(rest),
+  '/browser': (cli, rest) async => cli._browserSlash(rest),
+  '/a2a': (cli, rest) async => cli._printA2aStatus(),
+};
+
 /// Slash-command dispatch on [AgentCli].
 extension SlashCommandDispatch on AgentCli {
   Future<void> _handleCommand(String trimmed) async {
@@ -28,59 +45,36 @@ extension SlashCommandDispatch on AgentCli {
   /// Info commands without a TUI picker variant. Returns whether [command]
   /// was handled.
   Future<bool> _handleInfoCommand(String command, String rest) async {
-    // `/mcp` needs the async [rest == 'reload'] branch, so it is owned here
-    // (the basic handler is synchronous); a plain `/mcp` still just prints
-    // the status.
-    if (command == '/mcp') {
-      if (rest == 'reload') {
-        await _reloadMcpConfig(this);
-      } else {
-        _printMcpStatus();
-      }
-      return true;
-    }
     if (_handleInfoCommandBasic(command, rest)) return true;
-    if (command == '/skills') {
-      await _skillsSlash(rest);
+    final handler = _infoCommandHandlers[command];
+    if (handler != null) {
+      await handler(this, rest);
       return true;
     }
-    if (command == '/tools') {
-      await _toolsSlash(rest);
-      return true;
-    }
-    if (await _handleInfoCommandLifecycle(command, rest)) return true;
     return _handleInfoCommandSession(command, rest);
   }
 
-  /// The tool/lifecycle info commands (/cube /memory /redact /trajectory
-  /// /agents /a2a) — split out of [_handleInfoCommand] to keep each
-  /// dispatcher's complexity inside the CRAP ratchet.
-  Future<bool> _handleInfoCommandLifecycle(String command, String rest) async {
-    if (command == '/cube') {
-      await _handleCubeCommand(rest);
-      return true;
+  /// The `/mcp` arm: `reload` re-reads the config; a plain `/mcp` just
+  /// prints the status.
+  Future<void> _mcpSlash(String rest) async {
+    if (rest == 'reload') {
+      await _reloadMcpConfig(this);
+    } else {
+      _printMcpStatus();
     }
-    if (command == '/memory') {
-      await _handleMemoryCommand(rest);
-      return true;
+  }
+
+  /// The `/browser` arm: run the command and print its lines.
+  Future<void> _browserSlash(String rest) async {
+    List<String> lines;
+    try {
+      lines = await runBrowserCommand(config.browserBridgeHandle, rest);
+    } on Object catch (error) {
+      lines = ['bridge: $error'];
     }
-    if (command == '/redact') {
-      await _handleRedactCommand(rest);
-      return true;
+    for (final line in lines) {
+      io.writeln(line);
     }
-    if (command == '/trajectory') {
-      await _handleTrajectoryCommand(rest);
-      return true;
-    }
-    if (command == '/agents') {
-      await handleAgentsCommand(rest);
-      return true;
-    }
-    if (command == '/a2a') {
-      _printA2aStatus();
-      return true;
-    }
-    return false;
   }
 
   /// `/exit`, `/help`, `/stats`, `/tasks`.

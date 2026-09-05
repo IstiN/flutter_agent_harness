@@ -59,6 +59,8 @@ scope (keeping the last good one), it never crashes startup.
 | `mcp` | The MCP kill-switch: `false` forces every declared server off (and undeclared servers follow it). Present only when an `mcp:` config section exists. |
 | `mcp:<server>` | One MCP server (e.g. `mcp:fs`). Deepest mention wins per server; servers no scope mentions stay enabled. |
 | `dap` | The `dap_*` hub tools (docs/dap.md). Present only when a hub is configured. |
+| `browser` | The browser family: all eleven `browser_*` tools (`browser_navigate`, `browser_tabs`, `browser_switch_tab`, `browser_click`, `browser_type`, `browser_press_key`, `browser_select`, `browser_read_dom`, `browser_eval`, `browser_screenshot`, `browser_wait_for`). Present only while a browser extension is paired on the bridge; a disconnect hides the family live and the prompt is rebuilt with the reason. |
+| `browser_eval` | `browser_eval` alone — its own id so in-page JS evaluation can be disabled without hiding the rest of the browser family (issue #23). |
 | anything else | Unknown id: one warning line, then ignored — never fatal. |
 
 ## Scopes

@@ -1,0 +1,78 @@
+# Headless-Chrome acceptance suite for the browser extension (issue #23):
+# builds the extension zip, runs the Node vm-sandbox unit tests, then the
+# Dart integration suite (test/browser_ext/, `integration` tag) against a
+# real headless Chrome. Path-filtered so unrelated pushes skip it.
+name: Browser extension
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'browser_ext/**'
+      - 'lib/src/browser/**'
+      - 'bin/serve_bridge.dart'
+      - 'test/browser_ext/**'
+      - 'scripts/build_browser_ext.sh'
+      - '.github/workflows/browser-ext.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'browser_ext/**'
+      - 'lib/src/browser/**'
+      - 'bin/serve_bridge.dart'
+      - 'test/browser_ext/**'
+      - 'scripts/build_browser_ext.sh'
+      - '.github/workflows/browser-ext.yml'
+  workflow_dispatch:
+
+jobs:
+  headless-suite:
+    name: Headless Chrome suite
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Chrome for Testing, NOT branded google-chrome-stable: branded builds
+      # silently ignore --load-extension (removed mid-2025), and the whole
+      # suite drives the extension through that flag.
+      - name: Install Chrome for Testing
+        id: chrome
+        run: |
+          npx -y @puppeteer/browsers install chrome@stable --path "$RUNNER_TEMP/cft"
+          echo "chrome-path=$(find "$RUNNER_TEMP/cft" -name chrome -type f | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: dart pub get (root)
+        run: dart pub get
+
+      # Compiles the embedded agent (dart2js, fails loudly on errors) and
+      # zips the runtime files — the artifact under test AND the AC11 upload.
+      - name: Build extension
+        run: bash scripts/build_browser_ext.sh
+
+      # Node 22's `node --test` does not glob arguments itself; bash expands
+      # the pattern (or pass the directory: node --test browser_ext/test/).
+      - name: Node unit tests (vm sandbox)
+        run: node --test browser_ext/test/*.test.mjs
+
+      # -j 1: every test spawns its own Chrome; parallel workers on one
+      # runner fight over CPU and the DevTools handshakes get flaky.
+      - name: Dart integration suite (headless Chrome)
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: dart test test/browser_ext/ -j 1 --tags integration
+
+      - name: Upload extension zip (AC11)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fa-extension
+          path: build/fa-extension.zip

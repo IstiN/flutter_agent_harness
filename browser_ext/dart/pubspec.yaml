@@ -1,0 +1,24 @@
+# ponytail: browser twin package — path dep + http + the pure slice of
+# fa_hub_client (canonical/payload_crypto only; its hub_client/identity
+# pull dart:io and must never be imported here).
+name: fa_browser_agent
+description: >-
+  fa agent core compiled into the browser extension service worker
+  (self-contained mode, issue #23). Built by scripts/build_browser_ext.sh
+  with `dart compile js` into browser_ext/sw/agent.js.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+dependencies:
+  flutter_agent_harness:
+    path: ../../
+  http: ^1.6.0
+  fa_hub_client: ^0.2.8
+  cryptography: ^2.7.0
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.31.2

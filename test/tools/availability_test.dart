@@ -418,12 +418,20 @@ void main() {
       final owner = <String, String>{};
       coreToolFamilies.forEach((id, names) {
         for (final name in names) {
+          // A name that is itself an availability id (browser_eval)
+          // resolves to its OWN id in the reverse index, so its listing
+          // inside another family is fine — only a name claimed by two
+          // families, neither of them its own id, is a config-key clash.
+          final previous = owner[name];
           expect(
-            owner.containsKey(name),
+            previous != null &&
+                previous != id &&
+                previous != name &&
+                name != id,
             isFalse,
-            reason: '$name assigned to both $id and ${owner[name]}',
+            reason: '$name assigned to both $id and $previous',
           );
-          owner[name] = id;
+          owner[name] ??= id;
         }
       });
     });

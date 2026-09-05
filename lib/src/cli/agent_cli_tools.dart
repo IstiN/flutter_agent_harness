@@ -123,6 +123,13 @@ extension AgentCliTools on AgentCli {
   /// The host wiring as capabilities: the hard floor below config.
   Map<String, ToolCapability> toolCapabilities() {
     const on = ToolCapability.available();
+    // One decision for both browser ids: attached is the hard floor, so a
+    // disconnected bridge disables the whole family with the same reason.
+    final browserCapability = config.browserController?.attached ?? false
+        ? on
+        : const ToolCapability.absent(
+            'no browser extension connected — run /browser connect and pair',
+          );
     return {
       'read': on,
       'write': on,
@@ -157,6 +164,11 @@ extension AgentCliTools on AgentCli {
       'transcribe_audio': config.transcribeConfig != null
           ? on
           : const ToolCapability.absent('no transcription endpoint configured'),
+      // Browser floor (issue #23): the family exists only while a browser
+      // controller is attached (CLI: an extension is paired on the bridge).
+      // Disconnect hides both ids live with an actionable reason (AC5).
+      'browser': browserCapability,
+      'browser_eval': browserCapability,
       'dap': (_toolGroupsById['dap']?.isNotEmpty ?? false)
           ? on
           : const ToolCapability.absent('no hub configured'),

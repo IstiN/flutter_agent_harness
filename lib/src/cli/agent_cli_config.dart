@@ -82,6 +82,8 @@ final class AgentCliConfig {
     this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
     this.osName,
+    this.browserBridgeHandle,
+    this.browserController,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -478,4 +480,16 @@ final class AgentCliConfig {
 
   /// Per-plugin configuration from `.fah/packages.yaml` (keyed by plugin name).
   final Map<String, dynamic> pluginConfig;
+
+  /// The loopback browser-bridge handle (`/browser connect`), implemented
+  /// by the host over the WebSocket bridge server (the io lives in the
+  /// executable; lib/ stays dart:io-free). Null (web hosts, plain tests)
+  /// makes `/browser` answer with a clean unavailable note.
+  final BrowserBridgeHandle? browserBridgeHandle;
+
+  /// The live browser controller (issue #23) backing the `browser_*`
+  /// tools. Null = no browser backend: the family stays capability-off.
+  /// The controller's `attached` flag is the capability floor and its
+  /// `onAvailabilityChanged` hook triggers the live availability rebuild.
+  final BrowserController? browserController;
 }

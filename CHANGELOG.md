@@ -2586,3 +2586,35 @@
 - test(ollama): diagnose live forced-tool-call null args instead of a bare cast
 
 ## Unreleased
+
+- feat(browser): the browser extension (issue #23) — `browser_ext/` (Chrome
+  MV3) pairs a local fa with the browser over a loopback WebSocket bridge
+  (`fa serve --bridge [--port N] [--token T]`, `/browser connect|status`):
+  wire protocol v1 client (hello/welcome, 1s→30s reconnect backoff,
+  offline outbox, msgId dedupe, ping keepalive), one-time 32-byte pairing
+  tokens (`.fah/bridge/token`, mode 0600, rotated by every connect,
+  constant-time compare, non-`chrome-extension://` origins refused, AC15),
+  two-way mail relay over the file messaging fabric
+  (`browser-ext/<agentId>` mailboxes). Eleven `browser_*` tools over the
+  bridge (navigate/tabs/switch_tab/click/type/press_key/select/read_dom/
+  eval/screenshot/wait_for, exec tier, availability-gated under the
+  `browser` + `browser_eval` ids — hidden until an extension pairs,
+  docs/tool-availability.md). Two control planes: quiet content-script DOM
+  ops by default, per-call `trusted: true` chrome.debugger path (E23
+  denied when DevTools owns the tab, any-tab screenshots via
+  Page.captureScreenshot, AC16) with the debugging infobar as the honesty
+  signal; task tab groups (`fa — <task>`) close agent-opened tabs on
+  task_end or bridge disconnect (AC17). Self-contained mode: dart2js build
+  of `browser_ext/dart/` (`scripts/build_browser_ext.sh` → sw/agent.js +
+  build/fa-extension.zip) runs the agent core inside the service worker —
+  panel provider form (OpenAI-compatible endpoints; deterministic `fake:`
+  provider for tests), approval banner (30s timeout = deny), JSONL session
+  + compaction in chrome.storage, no shell (`shellUnavailable`), keys read
+  only inside the SW (AC8). The embedded agent joins the DAP hub with an
+  E2E-encrypted CLI-compatible identity (`faDapKey`): `dap_peers`/`dap_dm`
+  tools, one mail deduper across bridge + hub links (AC18). Headless CI:
+  `test/browser_ext/` (real Chrome via `--load-extension`,
+  `--headless=new`; integration-tagged) in `.github/workflows/
+  browser-ext.yml`; unit layers `dart test test/browser/`,
+  `browser_ext/dart` dart test, `node --test browser_ext/test/`. Docs:
+  docs/browser-extension.md.

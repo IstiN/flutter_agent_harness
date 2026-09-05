@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fa — browser agent</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header>
+    <span id="dot" class="dot off"></span>
+    <span id="status">checking…</span>
+  </header>
+
+  <section>
+    <label>Bridge URL
+      <input id="url" type="text" placeholder="ws://127.0.0.1:8765" spellcheck="false">
+    </label>
+    <label>One-time token
+      <input id="token" type="password" placeholder="paste from /browser connect" spellcheck="false">
+    </label>
+    <div class="row">
+      <button id="connect">Connect</button>
+      <button id="disconnect" class="ghost">Disconnect</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Compose</h2>
+    <label>To
+      <input id="to" type="text" value="main" spellcheck="false">
+    </label>
+    <label>Text
+      <textarea id="text" rows="2" placeholder="smoke-test mail"></textarea>
+    </label>
+    <button id="send">Send mail</button>
+  </section>
+
+  <section>
+    <h2>Agent</h2>
+    <div id="approval" class="approval hidden">
+      <div id="approvalText" class="approval-text"></div>
+      <div class="row">
+        <button id="approve">Allow</button>
+        <button id="deny" class="ghost">Deny</button>
+      </div>
+    </div>
+    <div id="transcript" aria-live="polite"></div>
+    <div class="row composer">
+      <textarea id="prompt" rows="2" placeholder="Ask the agent… (fake: provider echoes + navigates)"></textarea>
+      <button id="sendPrompt">Send</button>
+    </div>
+    <div id="agentStatus" class="dim"></div>
+  </section>
+
+  <section>
+    <h2>Provider (stays in the service worker)</h2>
+    <label>Base URL
+      <input id="pBaseUrl" type="text" placeholder="https://openrouter.ai/api/v1" spellcheck="false">
+    </label>
+    <label>API key
+      <input id="pApiKey" type="password" placeholder="sk-… (chrome.storage.local only)" spellcheck="false">
+    </label>
+    <label>Model
+      <input id="pModel" type="text" placeholder="fake:echo or an openai-compatible id" spellcheck="false">
+    </label>
+    <label>Approval mode
+      <select id="pApproval">
+        <option value="ask">ask (prompt for write/exec)</option>
+        <option value="write">write</option>
+        <option value="yolo">yolo</option>
+        <option value="unattended">unattended (CI)</option>
+      </select>
+    </label>
+    <button id="saveProvider">Save provider</button>
+  </section>
+
+  <section>
+    <h2>Hub (agent-to-agent messaging)</h2>
+    <label>Hub URL
+      <input id="hubUrl" type="text" placeholder="ws://127.0.0.1:8787/ws" spellcheck="false">
+    </label>
+    <label>Agent name
+      <input id="hubName" type="text" placeholder="my-agent (display only)" spellcheck="false">
+    </label>
+    <button id="saveHub">Save hub</button>
+    <div id="hubStatus" class="dim"></div>
+  </section>
+
+  <h2>Events</h2>
+  <ul id="log" aria-live="polite"></ul>
+
+  <script src="panel.js"></script>
+</body>
+</html>

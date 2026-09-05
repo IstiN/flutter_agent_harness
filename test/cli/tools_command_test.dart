@@ -220,7 +220,7 @@ void main() {
       expect(project, contains('read: false'));
 
       // The loop comes back around; flip it back and exit via `done`
-      // (option 23 = 22 known ids + done).
+      // (option 25 = 24 known ids + done — the browser family added two).
       await waitForOutput('tools — pick a tool');
       io.sendLine('1'); // read
       await waitForOutput('tools — read');
@@ -231,7 +231,7 @@ void main() {
       expect(offeredTools(cli), contains('read'));
 
       await waitForOutput('tools — pick a tool');
-      io.sendLine('23'); // done
+      io.sendLine('25'); // done
       await flow;
 
       project = (await env.readTextFile('/work/.fah/config.yaml')).valueOrNull;

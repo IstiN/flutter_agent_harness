@@ -27,7 +27,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:io';
-
+import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
@@ -46,6 +46,7 @@ import 'package:fa_hub_client/fa_hub_client.dart'
 import 'fah_hub_plugin.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
+import 'serve_bridge.dart';
 
 const _fallbackVersion = '0.1.0';
 
@@ -700,17 +701,290 @@ String? _serveFlagStr(List<String> args, String flag) {
   return args[idx + 1];
 }
 
+/// The messaging fabric of the launch cwd — the same
+/// `<sessionRoot>/<cwd slug>/messages` root the CLI boots its agent with,
+/// so extension mail lands in the inboxes `/agents` and the attach flows
+/// already see.
+FileMessagingRepository _projectMessagingRepository({
+  required LocalExecutionEnv env,
+  required String sessionRoot,
+  required String? homeDir,
+}) => FileMessagingRepository(
+  env: env,
+  root: '$sessionRoot/${encodeSessionCwd(env.cwd)}/messages',
+  decodeSessionCwd: decodeSessionCwd,
+  homeDir: homeDir,
+);
+
+/// `/browser connect` handle: runs the bridge server inside this process
+/// over the launch-cwd messaging fabric (the DIP adapter — lib/ stays
+/// dart:io-free).
+final class _FaBrowserBridgeHandle implements BrowserBridgeHandle {
+  _FaBrowserBridgeHandle({
+    required LocalExecutionEnv env,
+    required String sessionRoot,
+    required String homeDir,
+    required String faVersion,
+  }) : _messaging = _projectMessagingRepository(
+         env: env,
+         sessionRoot: sessionRoot,
+         homeDir: homeDir,
+       ),
+       _projectRoot = env.cwd,
+       _version = faVersion;
+
+  final MessagingRepository _messaging;
+  final String _projectRoot;
+  final String _version;
+  BridgeServer? _server;
+  _FaBrowserController? _controller;
+  var _attached = false;
+
+  /// The browser-tools controller seam over this handle's bridge server.
+  BrowserController get browserController =>
+      _controller ??= _FaBrowserController(this);
+
+  /// Whether a PAIRED extension is connected (mailbox registered —
+  /// mid-handshake sockets don't count).
+  bool get hasPairedClient => (_server?.clients ?? const <BridgeConnection>[])
+      .any((client) => client.mailboxId != null);
+
+  /// The MOST RECENT paired connection (insertion order; with several
+  /// paired extensions the newest handshake wins — a deliberate silent
+  /// choice, see [_FaBrowserController] docs).
+  BridgeConnection? get _activeClient {
+    final clients = _server?.clients ?? const <BridgeConnection>[];
+    if (clients.isEmpty) return null;
+    return clients.lastWhere(
+      (client) => client.mailboxId != null,
+      orElse: () => clients.last,
+    );
+  }
+
+  /// Connect/disconnect seam: forwards the paired-client truth value to
+  /// the controller's availability hook on flips only.
+  void _onClientsChanged() {
+    final attached = hasPairedClient;
+    if (attached == _attached) return;
+    _attached = attached;
+    _controller?.onAvailabilityChanged?.call(attached);
+  }
+
+  @override
+  Future<BrowserBridgeSession> connect({int port = bridgeDefaultPort}) async {
+    final existing = _server;
+    if (existing != null && existing.running) {
+      return BrowserBridgeSession(
+        url: existing.url,
+        token: existing.mintToken(),
+        alreadyRunning: true,
+      );
+    }
+    final token = await BridgeTokenFile(_projectRoot).ensure();
+    final server = BridgeServer(
+      messaging: _messaging,
+      root: _projectRoot,
+      port: port,
+      token: token,
+      version: _version,
+      onClientsChanged: _onClientsChanged,
+    );
+    await server.start();
+    _server = server;
+    return BrowserBridgeSession(
+      url: server.url,
+      token: server.mintToken(),
+      alreadyRunning: false,
+    );
+  }
+
+  @override
+  Future<BrowserBridgeStatus> status() async {
+    final server = _server;
+    final mailboxes = await _messaging.directory();
+    return BrowserBridgeStatus(
+      running: server?.running ?? false,
+      url: (server?.running ?? false) ? server!.url : null,
+      extensions: [
+        for (final client in server?.clients ?? const <BridgeConnection>[])
+          ?client.mailboxId,
+      ],
+      mailboxes: [
+        for (final mailbox in mailboxes) (id: mailbox.id, cwd: mailbox.cwd),
+      ],
+    );
+  }
+}
+
+/// The [BrowserController] over this process' bridge server: every op
+/// dispatches to the most recent PAIRED extension (deterministic: newest
+/// handshake wins; a deliberate silent choice — several paired extensions
+/// are not a supported steering surface, restart the bridge to reset).
+/// No paired extension: every op fails fast with `no_target`. Dispatch
+/// errors and timeouts surface as [BrowserToolException] with the wire
+/// code intact.
+final class _FaBrowserController implements BrowserController {
+  _FaBrowserController(this._handle);
+
+  final _FaBrowserBridgeHandle _handle;
+
+  @override
+  void Function(bool attached)? onAvailabilityChanged;
+
+  @override
+  bool get attached => _handle.hasPairedClient;
+
+  Future<Map<String, dynamic>> _dispatch(
+    String op,
+    Map<String, dynamic> args,
+  ) async {
+    final connection = _handle._activeClient;
+    if (connection == null) {
+      throw BrowserToolException(
+        'no_target',
+        'no browser extension connected — run /browser connect and pair',
+      );
+    }
+    final result = await connection.dispatch(op, args);
+    if (result['ok'] == true) {
+      return result['result'] as Map<String, dynamic>? ?? const {};
+    }
+    throw BrowserToolException(
+      result['code'] as String? ?? 'no_target',
+      result['error'] as String? ?? 'browser op failed',
+    );
+  }
+
+  @override
+  Future<BrowserNavigation> navigate(String url, {int? tabId}) async {
+    final r = await _dispatch('navigate', {'url': url, 'tabId': ?tabId});
+    return (
+      tabId: r['tabId'] as int,
+      url: r['url'] as String,
+      title: r['title'] as String? ?? '',
+    );
+  }
+
+  @override
+  Future<List<BrowserTab>> listTabs() async {
+    final r = await _dispatch('tabs', const {});
+    return [
+      for (final tab in (r['tabs'] as List? ?? const []).cast<Map>())
+        (
+          id: tab['id'] as int,
+          url: tab['url'] as String? ?? '',
+          title: tab['title'] as String? ?? '',
+          active: tab['active'] as bool? ?? false,
+          groupId: tab['groupId'] as int?,
+        ),
+    ];
+  }
+
+  @override
+  Future<void> switchTab(int tabId) =>
+      _dispatch('switch_tab', {'tabId': tabId});
+
+  @override
+  Future<void> click(String selector, {int? tabId}) =>
+      _dispatch('click', {'selector': selector, 'tabId': ?tabId});
+
+  @override
+  Future<void> type(
+    String selector,
+    String text, {
+    bool submit = false,
+    int? tabId,
+  }) => _dispatch('type', {
+    'selector': selector,
+    'text': text,
+    if (submit) 'submit': true,
+    'tabId': ?tabId,
+  });
+
+  @override
+  Future<void> pressKey(String key, {String? selector, int? tabId}) =>
+      _dispatch('press_key', {
+        'key': key,
+        'selector': ?selector,
+        'tabId': ?tabId,
+      });
+
+  @override
+  Future<void> select(String selector, String value, {int? tabId}) => _dispatch(
+    'select',
+    {'selector': selector, 'value': value, 'tabId': ?tabId},
+  );
+
+  @override
+  Future<BrowserDom> readDom({
+    String? selector,
+    int? maxNodes,
+    bool includeShadow = false,
+    int? tabId,
+  }) async {
+    final r = await _dispatch('read_dom', {
+      'selector': ?selector,
+      'maxNodes': ?maxNodes,
+      if (includeShadow) 'includeShadow': true,
+      'tabId': ?tabId,
+    });
+    return (
+      dom: r['dom'] as String? ?? '',
+      nodeCount: r['nodeCount'] as int? ?? 0,
+      truncated: r['truncated'] as bool? ?? false,
+    );
+  }
+
+  @override
+  Future<Object?> evalCode(String code, {int? tabId}) async {
+    final r = await _dispatch('eval', {'code': code, 'tabId': ?tabId});
+    return r['result'];
+  }
+
+  @override
+  Future<Uint8List> screenshot({int? tabId}) async {
+    final r = await _dispatch('screenshot', {'tabId': ?tabId});
+    return base64Decode(r['pngBase64'] as String);
+  }
+
+  @override
+  Future<BrowserWaitResult> waitFor({
+    String? selector,
+    String? text,
+    required int timeoutMs,
+    int? tabId,
+  }) async {
+    final r = await _dispatch('wait_for', {
+      'selector': ?selector,
+      'text': ?text,
+      'timeoutMs': timeoutMs,
+      'tabId': ?tabId,
+    });
+    return (
+      found: r['found'] as bool? ?? true,
+      waitedMs: r['waitedMs'] as int? ?? 0,
+    );
+  }
+
+  @override
+  Future<void> taskEnd() => _dispatch('task_end', const {});
+}
+
 Future<void> _runApp(List<String> args) async {
   final packageVersion = _packageVersion();
   _applyProviderFilterEnv();
-
-  // `fa serve --a2a [--port N] [--token T]` — the parser does not know the
-  // `--a2a` flag, so the serve form is intercepted before CliArgs parsing:
-  // serve-specific flags are stripped from the parsed args and kept for the
-  // late interception below (after model/key resolution).
+  // `fa serve [--a2a|--bridge] [--port N] [--token T]` — the parser does
+  // not know the serve forms, so they are intercepted before CliArgs
+  // parsing: serve-specific flags are stripped from the parsed args and
+  // kept for the late interception below (after model/key resolution).
   final serve = splitServeA2aArgs(args);
-  if (serve.serveA2a && !args.contains('--a2a')) {
-    _fail('usage: fa serve --a2a [--port N] [--token T]');
+  final serveMarkerCount =
+      (serve.serveA2a ? 1 : 0) + (serve.serveBridge ? 1 : 0);
+  if (serveMarkerCount != 1 && args.contains('serve')) {
+    _fail(
+      'usage: fa serve --a2a [--port N] [--token T] | '
+      'fa serve --bridge [--port N] [--token T]',
+    );
   }
 
   late final CliArgs parsed;
@@ -1067,6 +1341,25 @@ Future<void> _runApp(List<String> args) async {
     );
     exit(0);
   }
+  // `fa serve --bridge [--port N] [--token T]` — mount the loopback
+  // browser bridge over this project's messaging fabric. The token comes
+  // from --token or `.fah/bridge/token` (mint-if-absent, mode 0600).
+  if (serve.serveBridge) {
+    final port = _serveFlagInt(args, '--port', bridgeDefaultPort);
+    final tokenFlag = _serveFlagStr(args, '--token');
+    await runBridgeServer(
+      messaging: _projectMessagingRepository(
+        env: cliEnv,
+        sessionRoot: sessionRoot,
+        homeDir: home,
+      ),
+      root: cwd,
+      port: port,
+      token: tokenFlag,
+      version: packageVersion,
+    );
+    exit(0);
+  }
   // `late` so the onProviderChanged closure can reach the agent (to attach
   // the secret redactor on a runtime token) before the variable is assigned.
   late final AgentCli cli;
@@ -1104,6 +1397,15 @@ Future<void> _runApp(List<String> args) async {
       baseUrl: cli.agent.state.model.baseUrl,
     );
   }
+
+  // The loopback browser-bridge handle: shared by `/browser connect` and
+  // the browser tools' controller (the controller resolves lazily).
+  final bridgeHandle = _FaBrowserBridgeHandle(
+    env: cliEnv,
+    sessionRoot: sessionRoot,
+    homeDir: home,
+    faVersion: packageVersion,
+  );
 
   // The execution env shared by the CLI config (tools, session storage)
   // and the presence store (live-session heartbeats) — see `cliEnv` above.
@@ -1182,6 +1484,11 @@ Future<void> _runApp(List<String> args) async {
       // A2A remote agents (`a2a:` config section, Phase 5a): pure-Dart HTTP
       // client, connects lazily per server.
       a2aConfig: saved.a2a,
+      // `/browser connect` + the browser tools' controller: one handle
+      // owning the loopback bridge over the launch-cwd fabric (both
+      // implemented above).
+      browserBridgeHandle: bridgeHandle,
+      browserController: bridgeHandle.browserController,
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
       promptTemplateDirs: promptTemplateDirs,

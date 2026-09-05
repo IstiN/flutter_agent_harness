@@ -25,6 +25,8 @@ import '../hashline/hashline.dart';
 import '../agent/agent.dart';
 import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
+import 'browser_bridge_commands.dart';
+import '../browser/browser_tools.dart';
 import 'headless_prompt.dart';
 import 'key_event.dart';
 import 'key_status.dart';
@@ -294,6 +296,14 @@ class AgentCli {
         mainApiKey: () => _apiKey,
         resolveKey: _resolveMediaKey,
       ),
+      // Browser control (issue #23): registered only when the host
+      // attaches a controller; the family then flips with the bridge via
+      // the controller's onAvailabilityChanged hook below.
+      if (config.browserController != null)
+        ...browserTools(
+          controller: config.browserController!,
+          saveScreenshot: (png) => saveBrowserScreenshot(_env, png),
+        ),
       ...pluginTools,
     ];
     // The `task` tool (omp's background subagents): children draw from the
@@ -488,6 +498,12 @@ class AgentCli {
       mcpManager.onChanged = _onMcpChanged;
       mcpManager.start();
     }
+    // Browser bridge liveness: an extension pairing or dropping flips the
+    // browser capability floor, so rebuild availability (same path as
+    // /tools reload — re-resolves scopes, re-applies, rebuilds the prompt).
+    config.browserController?.onAvailabilityChanged = (_) {
+      unawaited(AgentCliTools(this).rebuildToolAvailability());
+    };
     final ttsrConfig = config.ttsr;
     if (ttsrConfig != null && ttsrConfig.settings.enabled) {
       final manager = TtsrManager(settings: ttsrConfig.settings);
