@@ -76,8 +76,11 @@ bool isRateLimitOrQuota(AssistantMessage message, {Duration? retryAfter}) {
 
 /// Patterns classifying a provider error as a transient transport failure:
 /// dropped/refused/reset connections, DNS and TLS handshake failures, and
-/// the gateway 5xx family (502/503/504). Rate-limit wordings are
-/// deliberately excluded — they follow the rotation policy instead.
+/// the 5xx server family (500 internal errors, 502/503/504 gateways —
+/// production gateways fail with one-off "500: Internal network failure,
+/// please try again later", which must retry, not kill the turn).
+/// Rate-limit wordings are deliberately excluded — they follow the rotation
+/// policy instead.
 final _transportPatterns = [
   RegExp(r'connection closed', caseSensitive: false),
   RegExp(r'connection reset', caseSensitive: false),
@@ -92,10 +95,13 @@ final _transportPatterns = [
   RegExp(r'no route to host', caseSensitive: false),
   RegExp(r'handshake (failed|error|terminated)', caseSensitive: false),
   RegExp(r'broken pipe', caseSensitive: false),
-  RegExp(r'\b50[234]\b'),
+  RegExp(r'\b50[0234]\b'),
   RegExp(r'bad gateway', caseSensitive: false),
   RegExp(r'service unavailable', caseSensitive: false),
   RegExp(r'gateway time-?out', caseSensitive: false),
+  RegExp(r'internal (server|network) error', caseSensitive: false),
+  RegExp(r'internal network failure', caseSensitive: false),
+  RegExp(r'please try again later', caseSensitive: false),
 ];
 
 /// Whether [message] is a transient transport failure the chain may retry

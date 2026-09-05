@@ -717,6 +717,8 @@ void main() {
         '502 Bad Gateway',
         '503 Service Unavailable',
         '504 Gateway Timeout',
+        '500: Internal network failure, error id: 2026090604313429886c81faba4889, please try again later.',
+        '500: internal server error',
       ]) {
         expect(
           isTransientTransportError(errorMessage(text)),
@@ -732,7 +734,7 @@ void main() {
         'insufficient_quota: You exceeded your current quota',
         'prompt is too long: 5 > 3 maximum',
         '400: invalid request',
-        '500: internal error',
+        '400: bad request',
       ]) {
         expect(
           isTransientTransportError(errorMessage(text)),
