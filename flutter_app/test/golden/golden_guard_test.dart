@@ -112,8 +112,6 @@ const _exempt = <String, String>{
       'list-based provider picker; rendered inside AgentSettingsForm (covered by settings goldens)',
   'lib/ui/screens/codemie_sso_webview.dart':
       'WebView SSO page; needs a real webview plugin (not available in tests)',
-  'lib/services/aiin_connect_flow.dart':
-      'connect flow logic (no widget surface); covered by service tests,',
   'lib/services/codemie_sso_flow.dart':
       'service flow orchestrator; coordinates SSO + model picker dialogs (no widget of its own)',
   'lib/services/chatgpt_oauth_flow.dart':
