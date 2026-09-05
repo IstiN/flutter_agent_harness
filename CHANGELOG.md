@@ -2620,4 +2620,15 @@
   `browser_ext/dart` dart test, `node --test browser_ext/test/`. Docs:
   docs/browser-extension.md.
 
+## 0.1.300
+
+- fix(aiin): open the web sign-in popup inside the tap gesture
+- fix(app): drop the duplicate aiin_connect_flow golden-guard exemption
+- fix(app): drop a duplicate golden-guard exemption key; memory: session notes
+- feat(aiin): one-click web sign-in — the OpenRouter-style popup flow
+- test(redact): pin the agent file-reading scenarios end to end
+- docs(AGENTS.md): name-based addressing in the messaging fabric bullet
+- fix(redact): entropy layer stops shredding paths, hashes and lockfile integrity
+- test(app): regenerate goldens after AIIN-hosted form changes
+
 ## Unreleased
