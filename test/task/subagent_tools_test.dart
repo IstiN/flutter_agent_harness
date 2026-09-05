@@ -25,7 +25,7 @@ final class _FakeMessagingRepository implements MessagingRepository {
   }
 
   @override
-  Future<void> register(String agentId) async {}
+  Future<void> register(String agentId, {String? sessionName}) async {}
 
   @override
   Future<void> touch(String agentId) async {}
@@ -128,68 +128,70 @@ void main() {
       expect(text, contains('sess1/a1 — 1 pending'));
     });
 
-    test('agent_directory hides stale zero-mail mailboxes unless all',
-        () async {
-      final env = MemoryExecutionEnv(cwd: '/work');
-      final repo = FileMessagingRepository(
-        env: env,
-        root: '/sessions/--work--/messages',
-        decodeSessionCwd: decodeSessionCwd,
-      );
-      final fabricMgr = SubagentManager(parentSessionId: 'p', messaging: repo)
-        ..mailboxPrefix = 'sess1';
-      final hourAgo = DateTime.now()
-          .toUtc()
-          .subtract(const Duration(hours: 1))
-          .millisecondsSinceEpoch;
-      // Stale and empty — hidden by default. The mail is drained (read/),
-      // then everything is backdated past the live window.
-      await repo.send(
-        AgentMessage(
-          id: 'old1',
-          fromId: 'gone',
-          toId: 'old/main',
-          text: 'old',
-          sentAt: '2026-01-01T00:00:00Z',
-        ),
-      );
-      await repo.drain('old/main');
-      env.setMtime(
-        '/sessions/--work--/messages/old_main/read/old1.json',
-        hourAgo,
-      );
-      // Stale but holding unread mail — never hidden, whatever its age.
-      await repo.send(
-        AgentMessage(
-          id: 'old2',
-          fromId: 'gone',
-          toId: 'stale-mailbox',
-          text: 'pending',
-          sentAt: '2026-01-01T00:00:00Z',
-        ),
-      );
-      env.setMtime(
-        '/sessions/--work--/messages/stale-mailbox/inbox/old2.json',
-        hourAgo,
-      );
+    test(
+      'agent_directory hides stale zero-mail mailboxes unless all',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final repo = FileMessagingRepository(
+          env: env,
+          root: '/sessions/--work--/messages',
+          decodeSessionCwd: decodeSessionCwd,
+        );
+        final fabricMgr = SubagentManager(parentSessionId: 'p', messaging: repo)
+          ..mailboxPrefix = 'sess1';
+        final hourAgo = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 1))
+            .millisecondsSinceEpoch;
+        // Stale and empty — hidden by default. The mail is drained (read/),
+        // then everything is backdated past the live window.
+        await repo.send(
+          AgentMessage(
+            id: 'old1',
+            fromId: 'gone',
+            toId: 'old/main',
+            text: 'old',
+            sentAt: '2026-01-01T00:00:00Z',
+          ),
+        );
+        await repo.drain('old/main');
+        env.setMtime(
+          '/sessions/--work--/messages/old_main/read/old1.json',
+          hourAgo,
+        );
+        // Stale but holding unread mail — never hidden, whatever its age.
+        await repo.send(
+          AgentMessage(
+            id: 'old2',
+            fromId: 'gone',
+            toId: 'stale-mailbox',
+            text: 'pending',
+            sentAt: '2026-01-01T00:00:00Z',
+          ),
+        );
+        env.setMtime(
+          '/sessions/--work--/messages/stale-mailbox/inbox/old2.json',
+          hourAgo,
+        );
 
-      final tools = subagentMonitoringTools(manager: fabricMgr);
-      final directory = tools.firstWhere((t) => t.name == 'agent_directory');
-      final result = await directory.execute(const {}, null, null);
-      final text = (result.content.first as dynamic).text as String;
-      expect(text, contains('stale-mailbox — 1 pending'));
-      expect(text, isNot(contains('old/main')));
-      expect(text, contains('1 stale mailbox(es) hidden'));
+        final tools = subagentMonitoringTools(manager: fabricMgr);
+        final directory = tools.firstWhere((t) => t.name == 'agent_directory');
+        final result = await directory.execute(const {}, null, null);
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('stale-mailbox — 1 pending'));
+        expect(text, isNot(contains('old/main')));
+        expect(text, contains('1 stale mailbox(es) hidden'));
 
-      final everything = await directory.execute(
-        const {'all': true},
-        null,
-        null,
-      );
-      final allText = (everything.content.first as dynamic).text as String;
-      expect(allText, contains('old/main'));
-      expect(allText, contains('stale-mailbox — 1 pending'));
-    });
+        final everything = await directory.execute(
+          const {'all': true},
+          null,
+          null,
+        );
+        final allText = (everything.content.first as dynamic).text as String;
+        expect(allText, contains('old/main'));
+        expect(allText, contains('stale-mailbox — 1 pending'));
+      },
+    );
 
     test('agent_directory renders cwd tag for a remote mailbox', () async {
       final fabricMgr = SubagentManager(
@@ -483,6 +485,155 @@ void main() {
       expect(restored.pendingMessages, hasLength(1));
       expect(restored.pendingMessages.single.fromId, 'b2');
       expect(restored.pendingMessages.single.hops, 2);
+    });
+  });
+
+  group('name-based addressing', () {
+    _FakeMessagingRepository fakeFabric(List<MailboxEntry> entries) =>
+        _FakeMessagingRepository(entries: entries);
+
+    MailboxEntry box(String id, {String? name, String? cwd}) =>
+        MailboxEntry(id: id, name: name, cwd: cwd, lastActivity: null);
+
+    Future<SubagentManager> fabricManager(_FakeMessagingRepository repo) async {
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1';
+      await m.register(id: 'a1', name: 'a1', agentType: 'task', task: 'work');
+      return m;
+    }
+
+    test(
+      'agent_directory renders the session name with the mailbox id',
+      () async {
+        final repo = fakeFabric([
+          box('sess9/main', name: 'goal_builder', cwd: '/work/x'),
+        ]);
+        final m = await fabricManager(repo);
+        final directory = subagentMonitoringTools(
+          manager: m,
+        ).firstWhere((t) => t.name == 'agent_directory');
+        final result = await directory.execute({}, null, null);
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('goal_builder (sess9/main)'));
+        expect(text, contains('/work/x'));
+      },
+    );
+
+    test(
+      'agent_message resolves a plain session name to its mailbox',
+      () async {
+        final repo = fakeFabric([box('sess9/main', name: 'goal_builder')]);
+        final m = await fabricManager(repo);
+        final tool = subagentMonitoringTools(
+          manager: m,
+          currentSubagentId: () => 'a1',
+        ).firstWhere((t) => t.name == 'agent_message');
+        final result = await tool.execute(
+          {'to': 'goal_builder', 'message': 'hi by name'},
+          null,
+          null,
+        );
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('queued for "goal_builder"'));
+        expect(repo._inboxes['sess9/main'], hasLength(1));
+      },
+    );
+
+    test('agent_message resolves "<name>/main" to the named session', () async {
+      final repo = fakeFabric([box('sess9/main', name: 'goal_builder')]);
+      final m = await fabricManager(repo);
+      final tool = subagentMonitoringTools(
+        manager: m,
+        currentSubagentId: () => 'a1',
+      ).firstWhere((t) => t.name == 'agent_message');
+      final result = await tool.execute(
+        {'to': 'goal_builder/main', 'message': 'hi by name/main'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('queued for "goal_builder/main"'));
+      expect(repo._inboxes['sess9/main'], hasLength(1));
+    });
+
+    test(
+      'agent_message ambiguity by name is an error listing candidates',
+      () async {
+        final repo = fakeFabric([
+          box('sessA/main', name: 'goal_builder', cwd: '/work/a'),
+          box('sessB/main', name: 'goal_builder', cwd: '/work/b'),
+        ]);
+        final m = await fabricManager(repo);
+        final tool = subagentMonitoringTools(
+          manager: m,
+          currentSubagentId: () => 'a1',
+        ).firstWhere((t) => t.name == 'agent_message');
+        final result = await tool.execute(
+          {'to': 'goal_builder', 'message': 'which one?'},
+          null,
+          null,
+        );
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('error'));
+        expect(text, contains('sessA/main'));
+        expect(text, contains('sessB/main'));
+        expect(repo._inboxes, isEmpty);
+      },
+    );
+
+    test(
+      'agent_message keeps exact absolute ids working (no name needed)',
+      () async {
+        final repo = fakeFabric([box('sess9/main')]);
+        final m = await fabricManager(repo);
+        final tool = subagentMonitoringTools(
+          manager: m,
+          currentSubagentId: () => 'a1',
+        ).firstWhere((t) => t.name == 'agent_message');
+        final result = await tool.execute(
+          {'to': 'sess9/main', 'message': 'by raw id'},
+          null,
+          null,
+        );
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('queued for "sess9/main"'));
+        expect(repo._inboxes['sess9/main'], hasLength(1));
+      },
+    );
+
+    test('messaging your own session name is refused', () async {
+      final repo = fakeFabric([box('sess1/a1', name: 'me_myself')]);
+      final m = await fabricManager(repo);
+      final tool = subagentMonitoringTools(
+        manager: m,
+        currentSubagentId: () => 'a1',
+      ).firstWhere((t) => t.name == 'agent_message');
+      final result = await tool.execute(
+        {'to': 'me_myself', 'message': 'note to self'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('cannot message yourself'));
+      expect(repo._inboxes, isEmpty);
+    });
+
+    test('unknown name falls through to the unknown-recipient error', () async {
+      final repo = fakeFabric([box('sess9/main', name: 'goal_builder')]);
+      final m = await fabricManager(repo);
+      final tool = subagentMonitoringTools(
+        manager: m,
+        currentSubagentId: () => 'a1',
+      ).firstWhere((t) => t.name == 'agent_message');
+      final result = await tool.execute(
+        {'to': 'no_such_name', 'message': 'anyone?'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('error'));
+      expect(text, contains('no_such_name'));
+      expect(repo._inboxes, isEmpty);
     });
   });
 }

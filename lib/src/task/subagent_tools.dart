@@ -107,11 +107,13 @@ AgentTool _agentDirectoryTool(SubagentManager manager) {
         'talking to: LIVE mailboxes (recent activity), any mailbox holding '
         'pending mail, your subagents, and your own address (marked). '
         'Stale mailboxes from long-finished sessions are hidden — pass '
-        'all: true to list those too. Each entry shows its pending message '
-        'count and, when known, the working directory it belongs to. '
-        'Combine with agent_message to talk to any of them: plain ids for '
-        'subagents, "<sessionId>/main" for another instance\'s '
-        'orchestrator.',
+        'all: true to list those too. Each entry shows its session display '
+        'name when known, the mailbox id, its pending message count and, '
+        'when known, the working directory it belongs to. Combine with '
+        'agent_message to talk to any of them: plain ids for subagents, '
+        '"<sessionId>/main" for another instance\'s orchestrator — or '
+        'just the session name ("goal_builder", "goal_builder/main") for '
+        'any mailbox that shows a name here.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -193,7 +195,10 @@ Future<String?> _directoryLine(
       entry.id == self ||
       MailboxEntry.isLive(entry.lastActivity);
   if (!live && !includeStale) return null;
-  final line = StringBuffer('  ${entry.id} — ${pending.length} pending');
+  final line = StringBuffer(
+    '  ${entry.name != null ? '${entry.name} (${entry.id})' : entry.id}',
+  );
+  line.write(' — ${pending.length} pending');
   if (entry.cwd case final cwd?) line.write('  [$cwd]');
   if (entry.id == self) line.write('  ← you');
   return line.toString();
@@ -257,13 +262,20 @@ AgentTool _agentMessageTool(
         'Send a message to another agent: a SIBLING subagent id, "main" '
         'for the parent orchestrator (for a final answer prefer reply), or '
         'an absolute mailbox "<sessionId>/main" to reach another Fa '
-        'instance sharing this session repo. The recipient sees the message '
-        'in its inbox on its next turn; completed siblings are resumed. '
-        'Unknown ids and full queues are rejected.',
+        'instance sharing this session repo. A session display NAME from '
+        'agent_directory works too: "goal_builder" or "goal_builder/main" '
+        'resolve to that session\'s live mailbox. The recipient sees the '
+        'message in its inbox on its next turn; completed siblings are '
+        'resumed. Unknown ids and full queues are rejected.',
     parameters: {
       'type': 'object',
       'properties': {
-        'to': {'type': 'string', 'description': 'The sibling subagent id.'},
+        'to': {
+          'type': 'string',
+          'description':
+              'The sibling subagent id, "main", an absolute mailbox '
+              '"<sessionId>/main", or a session name from agent_directory.',
+        },
         'message': {
           'type': 'string',
           'description': 'The message body for the sibling.',
@@ -282,9 +294,16 @@ AgentTool _agentMessageTool(
       if (to == fromId) {
         return ToolExecutionResult.text('error: cannot message yourself');
       }
+      final (target, resolveError) = await _resolveFabricAddress(manager, to);
+      if (resolveError != null) {
+        return ToolExecutionResult.text('error: $resolveError');
+      }
+      if (target == fromId || target == manager.mailboxOf(fromId)) {
+        return ToolExecutionResult.text('error: cannot message yourself');
+      }
       try {
         await manager.enqueueMessage(
-          to,
+          target,
           SubagentMessage(
             fromId: fromId,
             text: message,
@@ -298,6 +317,47 @@ AgentTool _agentMessageTool(
       return ToolExecutionResult.text('message queued for "$to"');
     },
   );
+}
+
+/// Resolves [to] against the fabric directory by session display NAME when
+/// the raw form does not already hit a deliverable address: a local
+/// sibling handle, `main`, or an exact absolute mailbox id. Returns the
+/// (possibly rewritten) target plus an error text when the name is
+/// ambiguous — an unknown name returns [to] unchanged so the manager's own
+/// unknown-recipient error applies.
+Future<(String, String?)> _resolveFabricAddress(
+  SubagentManager manager,
+  String to,
+) async {
+  final fabric = manager.messaging;
+  if (fabric == null) return (to, null);
+  if (to == manager.selfId || manager[to] != null) return (to, null);
+  final entries = await fabric.directory();
+  if (entries.any((entry) => entry.id == to)) return (to, null);
+  final slash = to.indexOf('/');
+  final matches =
+      (slash < 0
+              ? entries.where((entry) => entry.name != null && entry.name == to)
+              : entries.where(
+                  (entry) =>
+                      entry.id.endsWith('/${to.substring(slash + 1)}') &&
+                      entry.name == to.substring(0, slash),
+                ))
+          .toList();
+  if (matches.isEmpty) return (to, null);
+  if (matches.length > 1) {
+    final listing = matches
+        .map(
+          (entry) =>
+              '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
+        )
+        .join('\n');
+    return (
+      to,
+      'session name "$to" is ambiguous — pick an exact mailbox:\n$listing',
+    );
+  }
+  return (matches.single.id, null);
 }
 
 /// `task_status` — query one or all retained subagents.

@@ -114,6 +114,7 @@ import '../memory/memory_controller.dart';
 import '../memory_config.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
+import '../messaging/messaging_repository.dart';
 import '../messaging/schedule_message_tool.dart';
 import '../messaging/scheduled_messages.dart';
 import '../memory/memory_tools.dart';

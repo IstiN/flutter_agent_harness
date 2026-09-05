@@ -194,6 +194,51 @@ void main() {
       },
     );
 
+    test('register with a session name persists it in the registry', () async {
+      await repo.register('sess1/main', sessionName: 'goal_builder');
+      final registryText = (await env.readTextFile(
+        '/home/user/.fah/messages-registry.json',
+      )).getOrThrow();
+      final registry = jsonDecode(registryText) as Map<String, dynamic>;
+      expect(registry['sess1/main'], {
+        'slug': '--work--',
+        'cwd': '/work',
+        'name': 'goal_builder',
+      });
+    });
+
+    test('register without a name keeps the legacy registry shape', () async {
+      await repo.register('sess1/main');
+      final registryText = (await env.readTextFile(
+        '/home/user/.fah/messages-registry.json',
+      )).getOrThrow();
+      final registry = jsonDecode(registryText) as Map<String, dynamic>;
+      expect(registry['sess1/main'], {'slug': '--work--', 'cwd': '/work'});
+    });
+
+    test('directory reports the session name from the .name marker', () async {
+      await repo.register('sess1/main', sessionName: 'goal_builder');
+      final entry = (await repo.directory()).firstWhere(
+        (e) => e.id == 'sess1/main',
+      );
+      expect(entry.name, 'goal_builder');
+    });
+
+    test('a mailbox registered without a name reports a null name', () async {
+      await repo.register('main');
+      final entry = (await repo.directory()).firstWhere((e) => e.id == 'main');
+      expect(entry.name, isNull);
+    });
+
+    test('re-registering with a new name updates the marker', () async {
+      await repo.register('sess1/main', sessionName: 'old_name');
+      await repo.register('sess1/main', sessionName: 'goal_builder');
+      final entry = (await repo.directory()).firstWhere(
+        (e) => e.id == 'sess1/main',
+      );
+      expect(entry.name, 'goal_builder');
+    });
+
     test('registry upserts multiple agent ids', () async {
       await repo.register('main');
       await repo.register('explore:a1');
@@ -214,21 +259,27 @@ void main() {
       expect(await isolated.directory(), isEmpty);
     });
 
-    test('touch writes a heartbeat that directory reports as lastActivity',
-        () async {
-      await repo.send(msg(to: 'a1'));
-      // Backdate the mail: without a heartbeat the mailbox would look stale.
-      final twoHoursAgo =
-          DateTime.now().toUtc().subtract(const Duration(hours: 2));
-      env.setMtime('$messagesRoot/a1/inbox/m1.json', twoHoursAgo.millisecondsSinceEpoch);
-      await repo.touch('a1');
-      final entry = (await repo.directory()).single;
-      expect(entry.lastActivity, isNotNull);
-      // The heartbeat is the activity source — fresher than the mail and
-      // inside the live window.
-      expect(entry.lastActivity!.isAfter(twoHoursAgo), isTrue);
-      expect(MailboxEntry.isLive(entry.lastActivity), isTrue);
-    });
+    test(
+      'touch writes a heartbeat that directory reports as lastActivity',
+      () async {
+        await repo.send(msg(to: 'a1'));
+        // Backdate the mail: without a heartbeat the mailbox would look stale.
+        final twoHoursAgo = DateTime.now().toUtc().subtract(
+          const Duration(hours: 2),
+        );
+        env.setMtime(
+          '$messagesRoot/a1/inbox/m1.json',
+          twoHoursAgo.millisecondsSinceEpoch,
+        );
+        await repo.touch('a1');
+        final entry = (await repo.directory()).single;
+        expect(entry.lastActivity, isNotNull);
+        // The heartbeat is the activity source — fresher than the mail and
+        // inside the live window.
+        expect(entry.lastActivity!.isAfter(twoHoursAgo), isTrue);
+        expect(MailboxEntry.isLive(entry.lastActivity), isTrue);
+      },
+    );
 
     test('touch announces an unknown mailbox in the directory', () async {
       expect(await repo.directory(), isEmpty);
@@ -238,66 +289,73 @@ void main() {
       expect(dir.single.lastActivity, isNotNull);
     });
 
-    test('directory lastActivity is the newest file across inbox and read',
-        () async {
-      await repo.send(msg(id: 'm1', to: 'a1'));
-      await repo.send(msg(id: 'm2', to: 'a1'));
-      await repo.drain('a1'); // Both land in read/, inbox is empty.
-      final threeDaysAgo =
-          DateTime.now().toUtc().subtract(const Duration(days: 3));
-      env.setMtime(
-        '$messagesRoot/a1/read/m1.json',
-        threeDaysAgo.millisecondsSinceEpoch,
-      );
-      env.setMtime(
-        '$messagesRoot/a1/read/m2.json',
-        threeDaysAgo.millisecondsSinceEpoch,
-      );
-      final entry = (await repo.directory()).single;
-      expect(entry.lastActivity, isNotNull);
-      // The .id marker is identity, not activity — excluded from the scan.
-      final age = DateTime.now().toUtc().difference(entry.lastActivity!);
-      expect(age.inDays, greaterThanOrEqualTo(2));
-      expect(MailboxEntry.isLive(entry.lastActivity), isFalse);
-    });
+    test(
+      'directory lastActivity is the newest file across inbox and read',
+      () async {
+        await repo.send(msg(id: 'm1', to: 'a1'));
+        await repo.send(msg(id: 'm2', to: 'a1'));
+        await repo.drain('a1'); // Both land in read/, inbox is empty.
+        final threeDaysAgo = DateTime.now().toUtc().subtract(
+          const Duration(days: 3),
+        );
+        env.setMtime(
+          '$messagesRoot/a1/read/m1.json',
+          threeDaysAgo.millisecondsSinceEpoch,
+        );
+        env.setMtime(
+          '$messagesRoot/a1/read/m2.json',
+          threeDaysAgo.millisecondsSinceEpoch,
+        );
+        final entry = (await repo.directory()).single;
+        expect(entry.lastActivity, isNotNull);
+        // The .id marker is identity, not activity — excluded from the scan.
+        final age = DateTime.now().toUtc().difference(entry.lastActivity!);
+        expect(age.inDays, greaterThanOrEqualTo(2));
+        expect(MailboxEntry.isLive(entry.lastActivity), isFalse);
+      },
+    );
 
-    test('directory skips reserved directories (_scheduled, dot-dirs)',
-        () async {
-      await repo.send(msg(to: 'a1'));
-      await env.createDir('$messagesRoot/_scheduled', recursive: true);
-      env.writeFile('$messagesRoot/_scheduled/20260101_x.json', '{}');
-      await env.createDir('$messagesRoot/.hidden/inbox', recursive: true);
-      final ids = (await repo.directory()).map((e) => e.id).toList();
-      expect(ids, ['a1']);
-    });
+    test(
+      'directory skips reserved directories (_scheduled, dot-dirs)',
+      () async {
+        await repo.send(msg(to: 'a1'));
+        await env.createDir('$messagesRoot/_scheduled', recursive: true);
+        env.writeFile('$messagesRoot/_scheduled/20260101_x.json', '{}');
+        await env.createDir('$messagesRoot/.hidden/inbox', recursive: true);
+        final ids = (await repo.directory()).map((e) => e.id).toList();
+        expect(ids, ['a1']);
+      },
+    );
 
-    test('MailboxEntry.isLive: null is live, staleness respects the window',
-        () {
-      final now = DateTime.utc(2026, 1, 1, 12);
-      expect(MailboxEntry.isLive(null, now: now), isTrue);
-      expect(
-        MailboxEntry.isLive(
-          now.subtract(const Duration(minutes: 14)),
-          now: now,
-        ),
-        isTrue,
-      );
-      expect(
-        MailboxEntry.isLive(
-          now.subtract(const Duration(minutes: 16)),
-          now: now,
-        ),
-        isFalse,
-      );
-      expect(
-        MailboxEntry.isLive(
-          now.subtract(const Duration(hours: 2)),
-          now: now,
-          window: const Duration(hours: 3),
-        ),
-        isTrue,
-      );
-    });
+    test(
+      'MailboxEntry.isLive: null is live, staleness respects the window',
+      () {
+        final now = DateTime.utc(2026, 1, 1, 12);
+        expect(MailboxEntry.isLive(null, now: now), isTrue);
+        expect(
+          MailboxEntry.isLive(
+            now.subtract(const Duration(minutes: 14)),
+            now: now,
+          ),
+          isTrue,
+        );
+        expect(
+          MailboxEntry.isLive(
+            now.subtract(const Duration(minutes: 16)),
+            now: now,
+          ),
+          isFalse,
+        );
+        expect(
+          MailboxEntry.isLive(
+            now.subtract(const Duration(hours: 2)),
+            now: now,
+            window: const Duration(hours: 3),
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 
   // Cross-project delivery: a mailbox registered under a DIFFERENT cwd slug

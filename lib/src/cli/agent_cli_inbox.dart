@@ -116,12 +116,27 @@ extension AgentCliMessagingFlow on AgentCli {
     // The prompt's messaging section carries the live mailbox address.
     _applyPromptComposition();
     // Presence: a zero-mail instance is discoverable in agent_directory.
+    // The session display name rides along so peers can address this
+    // mailbox by name (`--session goal_builder` → `goal_builder/main`).
     final fabric = _subagentManager.messaging;
-    if (fabric != null && _subagentManager.mailboxPrefix.isNotEmpty) {
-      unawaited(
-        fabric.register(_subagentManager.mailboxOf(_subagentManager.selfId)),
-      );
+    final prefix = _subagentManager.mailboxPrefix;
+    if (fabric != null && prefix.isNotEmpty) {
+      unawaited(_registerFabricMailbox(fabric, prefix));
     }
+  }
+
+  /// Registers the main mailbox with its session display name (best-effort:
+  /// a failure never blocks the session switch).
+  Future<void> _registerFabricMailbox(
+    MessagingRepository fabric,
+    String prefix,
+  ) async {
+    final name = await _session?.getSessionName();
+    final trimmed = name?.trim();
+    await fabric.register(
+      _subagentManager.mailboxOf(_subagentManager.selfId),
+      sessionName: (trimmed == null || trimmed.isEmpty) ? null : trimmed,
+    );
   }
 
   /// Best-effort fabric heartbeat: refreshes this instance's mailbox

@@ -13,10 +13,11 @@ import 'agent_message.dart';
 
 /// One entry in the messaging-fabric directory.
 class MailboxEntry {
-  /// Creates a directory entry with optional cwd, slug and activity
-  /// metadata.
+  /// Creates a directory entry with optional session name, cwd, slug and
+  /// activity metadata.
   const MailboxEntry({
     required this.id,
+    this.name,
     this.cwd,
     this.slug,
     this.lastActivity,
@@ -24,6 +25,13 @@ class MailboxEntry {
 
   /// The mailbox id (e.g. `a1`, `sess1/main`).
   final String id;
+
+  /// The session display name this mailbox belongs to, when known — the
+  /// human-addressable form (`--session goal_builder`). Senders may use it
+  /// wherever a mailbox id is expected: `goal_builder` or
+  /// `goal_builder/main` resolve through the directory. Null for legacy
+  /// mailboxes registered before names existed.
+  final String? name;
 
   /// The working directory this mailbox belongs to, when known.
   final String? cwd;
@@ -58,18 +66,20 @@ class MailboxEntry {
 
   @override
   String toString() =>
-      'MailboxEntry($id, cwd: $cwd, slug: $slug, lastActivity: $lastActivity)';
+      'MailboxEntry($id, name: $name, cwd: $cwd, slug: $slug, '
+      'lastActivity: $lastActivity)';
 
   @override
   bool operator ==(Object other) =>
       other is MailboxEntry &&
       other.id == id &&
+      other.name == name &&
       other.cwd == cwd &&
       other.slug == slug &&
       other.lastActivity == lastActivity;
 
   @override
-  int get hashCode => Object.hash(id, cwd, slug, lastActivity);
+  int get hashCode => Object.hash(id, name, cwd, slug, lastActivity);
 }
 
 /// Isolated messaging backend for agent inboxes.
@@ -80,9 +90,11 @@ abstract interface class MessagingRepository {
   Future<void> send(AgentMessage message);
 
   /// Announces [agentId]'s mailbox in the directory (presence): an agent
-  /// with no mail yet is still discoverable. Called by hosts on session
-  /// start/switch.
-  Future<void> register(String agentId);
+  /// with no mail yet is still discoverable. [sessionName], when non-empty,
+  /// publishes the session's display name so peers can address this
+  /// mailbox by name (`goal_builder` instead of `sess1/main`). Called by
+  /// hosts on session start/switch.
+  Future<void> register(String agentId, {String? sessionName});
 
   /// Refreshes [agentId]'s liveness marker (a heartbeat): hosts call this
   /// periodically while the agent runs so directory consumers can tell live

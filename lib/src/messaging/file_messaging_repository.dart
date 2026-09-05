@@ -51,7 +51,7 @@ final class FileMessagingRepository implements MessagingRepository {
   String _readDir(String agentId) => '$_root/${sanitizeAgentId(agentId)}/read';
 
   @override
-  Future<void> register(String agentId) async {
+  Future<void> register(String agentId, {String? sessionName}) async {
     try {
       final agentDir = '$_root/${sanitizeAgentId(agentId)}';
       (await _env.createDir('$agentDir/inbox')).getOrThrow();
@@ -60,7 +60,19 @@ final class FileMessagingRepository implements MessagingRepository {
       if ((await _env.exists(marker)).valueOrNull != true) {
         (await _env.writeFile(marker, agentId)).getOrThrow();
       }
-      await _recordRegistry(agentId);
+      final name = sessionName?.trim();
+      if (name != null && name.isNotEmpty) {
+        // Written unconditionally (not once like .id): sessions can be
+        // renamed. The no-op guard below keeps concurrent boots safe.
+        final nameMarker = '$agentDir/.name';
+        final existingName = (await _env.readTextFile(
+          nameMarker,
+        )).valueOrNull?.trim();
+        if (existingName != name) {
+          (await _env.writeFile(nameMarker, name)).getOrThrow();
+        }
+      }
+      await _recordRegistry(agentId, name: name);
     } on Object {
       // Best-effort registration; a failure must not break process startup.
     }
@@ -215,10 +227,16 @@ final class FileMessagingRepository implements MessagingRepository {
         final id = (idMarker != null && idMarker.isNotEmpty)
             ? idMarker
             : mbDir.name;
+        final nameMarker = (await _env.readTextFile(
+          '${mbDir.path}/.name',
+        )).valueOrNull?.trim();
         final cwd = _decodeSessionCwd?.call(slugDir.name);
         entries.add(
           MailboxEntry(
             id: id,
+            name: (nameMarker != null && nameMarker.isNotEmpty)
+                ? nameMarker
+                : null,
             slug: _peerSlug(slugDir),
             cwd: cwd,
             lastActivity: await _lastActivity(mbDir.path),
@@ -274,8 +292,10 @@ final class FileMessagingRepository implements MessagingRepository {
   String _peerSlug(FileInfo slugDir) => slugDir.name;
 
   /// Best-effort registry write so tooling can look up cwd metadata for this
-  /// instance's mailboxes without scanning every slug directory.
-  Future<void> _recordRegistry(String agentId) async {
+  /// instance's mailboxes without scanning every slug directory. [name]
+  /// (session display name) rides along when known so name-based addressing
+  /// has a fast path.
+  Future<void> _recordRegistry(String agentId, {String? name}) async {
     final home = _homeDir;
     if (home == null || home.isEmpty) return;
     final slug = encodeSessionCwd(_env.cwd);
@@ -296,7 +316,10 @@ final class FileMessagingRepository implements MessagingRepository {
         registry = {};
       }
     }
-    registry[agentId] = {'slug': slug, 'cwd': cwd};
+    final entry = <String, dynamic>{'slug': slug, 'cwd': cwd};
+    final trimmed = name?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) entry['name'] = trimmed;
+    registry[agentId] = entry;
     final encoded = jsonEncode(registry);
     // No-op when the content is unchanged: two instances booting at once
     // would otherwise read-modify-write the same file concurrently and one
@@ -350,7 +373,8 @@ final class SwappableMessagingRepository implements MessagingRepository {
   void swap(MessagingRepository repo) => _inner = repo;
 
   @override
-  Future<void> register(String agentId) => _inner.register(agentId);
+  Future<void> register(String agentId, {String? sessionName}) =>
+      _inner.register(agentId, sessionName: sessionName);
 
   @override
   Future<void> touch(String agentId) => _inner.touch(agentId);

@@ -17,9 +17,16 @@ void main() {
     test('toString includes all fields', () {
       expect(
         entry.toString(),
-        'MailboxEntry(sess1/main, cwd: /work, slug: sess1, '
+        'MailboxEntry(sess1/main, name: null, cwd: /work, slug: sess1, '
         'lastActivity: null)',
       );
+      final named = MailboxEntry(
+        id: 'sess1/main',
+        name: 'goal_builder',
+        cwd: '/work',
+        slug: 'sess1',
+      );
+      expect(named.toString(), contains('name: goal_builder'));
       final stamped = MailboxEntry(
         id: 'sess1/main',
         lastActivity: DateTime.utc(2026, 1, 1),
