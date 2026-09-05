@@ -42,12 +42,14 @@ jobs:
         with:
           node-version: 22
 
-      # Reliable Chrome install on ubuntu-latest; CHROME_PATH tells
-      # chrome_driver.dart which binary to spawn (no sandbox in CI).
-      - id: chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
+      # Chrome for Testing, NOT branded google-chrome-stable: branded builds
+      # silently ignore --load-extension (removed mid-2025), and the whole
+      # suite drives the extension through that flag.
+      - name: Install Chrome for Testing
+        id: chrome
+        run: |
+          npx -y @puppeteer/browsers install chrome@stable --path "$RUNNER_TEMP/cft"
+          echo "chrome-path=$(find "$RUNNER_TEMP/cft" -name chrome -type f | head -1)" >> "$GITHUB_OUTPUT"
 
       - name: dart pub get (root)
         run: dart pub get
