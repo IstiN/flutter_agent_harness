@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.313
+
 
 - feat(browser-ext): browser extension v2.1 (issue #30) — fa web moves
   into the extension and grows browser superpowers. The panel is now an
@@ -2757,3 +2758,5 @@
 - feat(trajectory): real-content feed rows, guaranteed details, Gantt timeline (#25 L3-L6)
 - feat(trajectory): full-screen adaptive shell + header (#25 L1-L2)
 - feat(trajectory): data completeness for the ledger view (#25 L7)
+
+## Unreleased
