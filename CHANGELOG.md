@@ -2674,6 +2674,13 @@
 
 - ci: workflow_dispatch for ci.yml — manual gates when pull_request can't fire
 
+## 0.1.309
+
+- fix(cli): skill autocomplete for partial skill names — typing /goal or
+  /skill:goal in the TUI composer now offers /create-goal (the raw-prefix
+  match broke on the embedded slash), the accepted item still inserts the
+  canonical `/skill:<name> ` form.
+
 ## 0.1.308
 
 - fix(roles): provider watchdog timeouts ("TimeoutException after 0:03:00:
