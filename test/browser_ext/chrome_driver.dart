@@ -160,6 +160,23 @@ final class CdpSession {
   }
 }
 
+/// Best-effort recursive delete of a Chrome-owned temp dir. Lingering
+/// subprocesses (crashpad, GPU helpers) can repopulate the tree between
+/// listing and unlink — Directory.delete then throws errno 39 ENOTEMPTY,
+/// which failed whole suites in tearDownAll. Retry briefly, then give up:
+/// profile cleanup must never fail a test run.
+Future<void> deleteDirBestEffort(Directory dir) async {
+  for (var attempt = 0; attempt < 5; attempt++) {
+    try {
+      if (!await dir.exists()) return;
+      await dir.delete(recursive: true);
+      return;
+    } on FileSystemException {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+  }
+}
+
 /// A launched headless Chrome with the unpacked browser_ext/ extension.
 /// One browser-level WebSocket carries every flattened target session.
 final class HeadlessChrome {
@@ -306,7 +323,7 @@ final class HeadlessChrome {
         stderrBuf.toString(),
       );
     } on ChromeLaunchException {
-      unawaited(userDataDir.delete(recursive: true));
+      unawaited(deleteDirBestEffort(userDataDir));
       rethrow;
     }
     return HeadlessChrome._(process, wsUrl, userDataDir, stderrBuf);
@@ -532,9 +549,7 @@ final class HeadlessChrome {
     } on Object {
       // Best effort — the profile cleanup below is what matters.
     }
-    if (await _userDataDir.exists()) {
-      await _userDataDir.delete(recursive: true);
-    }
+    await deleteDirBestEffort(_userDataDir);
   }
 }
 

@@ -68,7 +68,7 @@ void main() {
     await _chrome?.dispose();
     await _server?.stop();
     final temp = _root;
-    if (temp != null && temp.existsSync()) await temp.delete(recursive: true);
+    if (temp != null) await deleteDirBestEffort(temp);
   });
 
   /// Pairs the extension exactly like the panel's "pair" handler (storage
