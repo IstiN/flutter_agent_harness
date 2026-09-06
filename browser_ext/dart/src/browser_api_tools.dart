@@ -255,6 +255,17 @@ List<BrowserToolSpec> browserApiToolSpecs() => List.unmodifiable(const [
   ),
 ]);
 
+/// Per-tool approval overrides for the always-prompting specs (today:
+/// inject_js). The host seeds these into its [ApprovalManager] when it
+/// wires the surface, so the gate asks on every call in EVERY session
+/// mode — a per-tool prompt outranks the session mode, turn grants and
+/// the always-allow set, and with no approval UI the call is denied
+/// instead of silently running.
+Map<String, ApprovalPolicy> alwaysPromptOverrides() => {
+  for (final spec in browserApiToolSpecs())
+    if (spec.alwaysPrompts) spec.name: ApprovalPolicy.prompt,
+};
+
 /// Restricted-target rule (E1/E17), the Dart twin of sw/ops.js
 /// restrictedReason: chrome://, extension pages, edge://, about:, the
 /// Chrome Web Store (both the legacy and the chromewebstore host) and the
@@ -1023,7 +1034,8 @@ final class BrowserApiToolSurface {
         'inject_js',
         "Injects JavaScript into a tab and returns one {frameId, result} "
             "entry per frame. world 'ISOLATED' (extension world) or 'MAIN' "
-            '(page world — always asks for approval). Page failures come '
+            '(page world). The gate asks for approval on every call; page '
+            'failures come '
             'back as {"ok":false,"error":{code,message}} (E2); oversized '
             'results are truncated with truncated:true (E4); a destroyed '
             "execution context fails with retryable "

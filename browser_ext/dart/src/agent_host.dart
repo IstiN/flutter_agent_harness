@@ -143,6 +143,9 @@ final class AgentHost implements UiHostBackend {
     _approvals = ApprovalManager(
       mode:
           approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk,
+      // alwaysPrompts (inject_js) rides the per-tool prompt override, which
+      // outranks the session mode, turn grants and the always-allow set.
+      overrides: alwaysPromptOverrides(),
       prompt: _promptApproval,
     );
 
