@@ -203,9 +203,9 @@
   "launcherDissolveFolder": "Remove folder",
   "launcherFolderDefaultName": "Folder",
   "launcherFolderNameHint": "Folder name",
-    "launcherOpenApp": "Open",
+  "launcherOpenApp": "Open",
   "@launcherOpenApp": {},
-"launcherOpenAppError": "Could not open the app: {error}",
+  "launcherOpenAppError": "Could not open the app: {error}",
   "launcherRenameFolderTooltip": "Rename folder",
   "launcherRestoreDemoApp": "Restore reference version",
   "launcherRestoreDemoAppDone": "App code restored (your data was kept)",
@@ -234,7 +234,13 @@
   "settingsResetAppsConfirmBody": "This deletes EVERY widget you downloaded from the catalog or created here, together with ALL its data (saved state, settings, storage). The apps grid returns to a clean slate — re-download anything from Get widgets. This cannot be undone.",
   "@settingsResetAppsConfirmBody": {},
   "settingsResetAppsDone": "Apps reset — {count} widget(s) removed",
-  "@settingsResetAppsDone": {"placeholders": {"count": {"type": "int"}}},
+  "@settingsResetAppsDone": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "appsCatalogCreatedByMe": "Created by me",
   "@appsCatalogCreatedByMe": {},
   "commonError": "Something went wrong",
@@ -494,5 +500,46 @@
   "workspaceDialogRestrictToolsHint": "Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up).",
   "toolsAvailabilityTitle": "Tools",
   "toolsAvailabilityHint": "Turn tools off or on for Fa — applies immediately, no restart.",
-  "toolsAvailabilityUnavailable": "Unavailable: {reason}"
+  "toolsAvailabilityUnavailable": "Unavailable: {reason}",
+  "githubAccountSection": "GitHub account",
+  "githubAccountHint": "Connect GitHub to publish your widgets to the fa_widgets catalog.",
+  "githubConnect": "Connect GitHub",
+  "githubDisconnect": "Disconnect",
+  "githubDisconnectConfirm": "PRs already opened stay on GitHub — only status polling stops.",
+  "githubTokenHint": "GitHub token with public_repo scope",
+  "githubConnectTokenTab": "Token",
+  "githubConnectDeviceTab": "Device code",
+  "githubConnectDeviceInstructions": "Enter this code at github.com/login/device — it lets Fa create public widget repos under your account.",
+  "githubCopyCode": "Copy code",
+  "githubOpenDevicePage": "Open github.com/login/device",
+  "githubConnectValidating": "Validating…",
+  "myPublications": "My publications",
+  "publicationsEmpty": "Nothing published yet.",
+  "publicationsRefresh": "Refresh",
+  "publicationStateOpen": "Open",
+  "publicationStatePublished": "Published",
+  "publicationStateRejected": "Rejected",
+  "publicationStateUnknown": "Unknown",
+  "publicationSubmittedAt": "Submitted {date}",
+  "@publicationSubmittedAt": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "publishWidgetTitle": "Publish “{name}”",
+  "@publishWidgetTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "publishPreflightFailed": "Fix these issues before publishing:",
+  "publishRepoNameLabel": "Repository name",
+  "publishButton": "Publish",
+  "publishInProgress": "Publishing…",
+  "publishSuccess": "Pull request opened:",
+  "publishDone": "Done",
+  "launcherPublishWidget": "Publish…",
+  "@launcherPublishWidget": {
+    "description": "Tile-menu action that opens the widget publish sheet (issue #35)"
+  }
 }

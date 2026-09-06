@@ -25,6 +25,11 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_names_store.dart';
+import 'package:fa/services/session_keys_store.dart';
+import 'package:fa/services/widget_publication_store.dart';
+import 'package:fa/services/widget_publish_service.dart';
+import 'package:fa/ui/widgets/github_account_section.dart';
+import 'package:fa/ui/widgets/widget_publish_sheet.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -268,11 +273,22 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   Future<void> _reloadApps() async {
     try {
+      // The publish ledger persists in the app sandbox (issue #35); the
+      // launcher owns the env, so it initializes the shared instance the
+      // settings section and menus read.
+      unawaited(initSharedWidgetPublicationStore(widget.manager.env));
       await _appsStore.seedBundledApps();
       final apps = await _appsStore.listApps();
+      // Publish eligibility (issue #35): catalog downloads are already
+      // published BY the catalog — only user/agent-created widgets publish.
+      final installed = <String>{};
+      for (final app in apps) {
+        if (await _appsStore.isCatalogInstalled(app.id)) installed.add(app.id);
+      }
       if (!mounted) return;
       setState(() {
         _apps = apps;
+        _catalogInstalled = installed;
         _error = null;
       });
       _syncApps();
@@ -280,6 +296,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       if (mounted) setState(() => _error = error);
     }
   }
+
+  /// App ids installed from the widget catalog (see [_reloadApps]) — the
+  /// tile menu hides "Publish…" for them.
+  Set<String> _catalogInstalled = const {};
 
   /// Reconciles the persisted layout with the discovered apps (new apps
   /// append, deleted apps vanish, empty folders dissolve).
@@ -628,6 +648,17 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             ],
           ),
         ),
+        if (!isDemo && !_catalogInstalled.contains(appId))
+          PopupMenuItem<Object?>(
+            value: 'publish',
+            child: Row(
+              children: [
+                const Icon(Icons.cloud_upload_outlined, size: 18),
+                const SizedBox(width: 12),
+                Text(context.l10n.launcherPublishWidget),
+              ],
+            ),
+          ),
         if (tile != null) ...[
           for (final choice in choices)
             PopupMenuItem<Object?>(
@@ -677,6 +708,8 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     );
     if (selected == 'open') {
       _onTileTap(key);
+    } else if (selected == 'publish') {
+      unawaited(_publishApp(app));
     } else if (selected == 'reset') {
       AppAnalytics.instance.launcherTileResized('reset');
       layout.setTileSize(appId, null);
@@ -688,6 +721,30 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     } else if (selected == 'remove') {
       unawaited(_removeApp(app));
     }
+  }
+
+  /// Opens the publish sheet for a user widget (issue #35): the app env
+  /// backs the ledger, the shared GitHub account store carries the
+  /// connection, eligibility was checked when the menu was built.
+  Future<void> _publishApp(JsAppInfo app) async {
+    final keys = SessionKeysScope.maybeOf(context);
+    final account = sharedGithubAccountStore(
+      keys ?? await SessionKeysStore.load(widget.manager.env),
+    );
+    final ledger = await initSharedWidgetPublicationStore(widget.manager.env);
+    final service = WidgetPublishService(
+      env: widget.manager.env,
+      account: account,
+      ledger: ledger,
+    );
+    if (!mounted) return;
+    await showWidgetPublishSheet(
+      context,
+      app: app,
+      account: account,
+      service: service,
+      ledger: ledger,
+    );
   }
 
   /// Confirms and removes a non-demo app (catalog download or agent-created)
@@ -1283,7 +1340,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     final tile = _appsById[appId]?.tileWidget;
     if (tile == null) return null;
     final override = _layout?.tileSizeFor(appId);
-    return (w: override?.w ?? tile.widthCells, h: override?.h ?? tile.heightCells);
+    return (
+      w: override?.w ?? tile.widthCells,
+      h: override?.h ?? tile.heightCells,
+    );
   }
 
   /// The drag feedback: classic tiles drag their 64px icon; apps with a

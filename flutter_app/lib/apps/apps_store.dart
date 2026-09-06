@@ -831,6 +831,13 @@ class AppsStore {
     }
   }
 
+  /// Whether [appId] was installed from the widget catalog (recorded in
+  /// `apps/.installed.json`). Publish flows exclude catalog downloads and
+  /// bundled demos — only user/agent-created widgets may be published
+  /// (catalog widgets are already published BY the catalog).
+  Future<bool> isCatalogInstalled(String appId) async =>
+      (await _readInstalled()).containsKey(appId);
+
   /// Ids of every directory under `apps/` — including broken
   /// half-installed ones that [listApps] skips (no manifest). The
   /// auto-update healer scans these.

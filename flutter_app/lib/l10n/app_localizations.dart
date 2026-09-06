@@ -2833,6 +2833,174 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Unavailable: {reason}'**
   String toolsAvailabilityUnavailable(Object reason);
+
+  /// No description provided for @githubAccountSection.
+  ///
+  /// In en, this message translates to:
+  /// **'GitHub account'**
+  String get githubAccountSection;
+
+  /// No description provided for @githubAccountHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect GitHub to publish your widgets to the fa_widgets catalog.'**
+  String get githubAccountHint;
+
+  /// No description provided for @githubConnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect GitHub'**
+  String get githubConnect;
+
+  /// No description provided for @githubDisconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect'**
+  String get githubDisconnect;
+
+  /// No description provided for @githubDisconnectConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'PRs already opened stay on GitHub — only status polling stops.'**
+  String get githubDisconnectConfirm;
+
+  /// No description provided for @githubTokenHint.
+  ///
+  /// In en, this message translates to:
+  /// **'GitHub token with public_repo scope'**
+  String get githubTokenHint;
+
+  /// No description provided for @githubConnectTokenTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Token'**
+  String get githubConnectTokenTab;
+
+  /// No description provided for @githubConnectDeviceTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Device code'**
+  String get githubConnectDeviceTab;
+
+  /// No description provided for @githubConnectDeviceInstructions.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter this code at github.com/login/device — it lets Fa create public widget repos under your account.'**
+  String get githubConnectDeviceInstructions;
+
+  /// No description provided for @githubCopyCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy code'**
+  String get githubCopyCode;
+
+  /// No description provided for @githubOpenDevicePage.
+  ///
+  /// In en, this message translates to:
+  /// **'Open github.com/login/device'**
+  String get githubOpenDevicePage;
+
+  /// No description provided for @githubConnectValidating.
+  ///
+  /// In en, this message translates to:
+  /// **'Validating…'**
+  String get githubConnectValidating;
+
+  /// No description provided for @myPublications.
+  ///
+  /// In en, this message translates to:
+  /// **'My publications'**
+  String get myPublications;
+
+  /// No description provided for @publicationsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing published yet.'**
+  String get publicationsEmpty;
+
+  /// No description provided for @publicationsRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get publicationsRefresh;
+
+  /// No description provided for @publicationStateOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get publicationStateOpen;
+
+  /// No description provided for @publicationStatePublished.
+  ///
+  /// In en, this message translates to:
+  /// **'Published'**
+  String get publicationStatePublished;
+
+  /// No description provided for @publicationStateRejected.
+  ///
+  /// In en, this message translates to:
+  /// **'Rejected'**
+  String get publicationStateRejected;
+
+  /// No description provided for @publicationStateUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown'**
+  String get publicationStateUnknown;
+
+  /// No description provided for @publicationSubmittedAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Submitted {date}'**
+  String publicationSubmittedAt(Object date);
+
+  /// No description provided for @publishWidgetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Publish “{name}”'**
+  String publishWidgetTitle(Object name);
+
+  /// No description provided for @publishPreflightFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Fix these issues before publishing:'**
+  String get publishPreflightFailed;
+
+  /// No description provided for @publishRepoNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Repository name'**
+  String get publishRepoNameLabel;
+
+  /// No description provided for @publishButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Publish'**
+  String get publishButton;
+
+  /// No description provided for @publishInProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Publishing…'**
+  String get publishInProgress;
+
+  /// No description provided for @publishSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Pull request opened:'**
+  String get publishSuccess;
+
+  /// No description provided for @publishDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get publishDone;
+
+  /// Tile-menu action that opens the widget publish sheet (issue #35)
+  ///
+  /// In en, this message translates to:
+  /// **'Publish…'**
+  String get launcherPublishWidget;
 }
 
 class _AppLocalizationsDelegate

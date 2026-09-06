@@ -20,6 +20,8 @@ import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/copilot_connect_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
+import 'package:fa/services/github_account_store.dart';
+import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/approval_ui.dart';
@@ -1630,7 +1632,14 @@ class KeysSection extends StatelessWidget {
   /// [knownKeyNames] first, then any extra saved names, sorted.
   static List<String> _listedNames(SessionKeysStore store) => [
     ...knownKeyNames,
-    ...store.names.where((name) => !knownKeyNames.contains(name)),
+    ...store.names.where(
+      (name) =>
+          !knownKeyNames.contains(name) &&
+          // The GitHub publishing account (card: widget publishing) is
+          // managed by its own settings section — it must not appear as a
+          // deletable agent key here.
+          !GithubAccountStore.isGithubKey(name),
+    ),
   ];
 
   static String _sourceFor(
@@ -2141,6 +2150,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // docs/dap.md §9) — service-independent, so it shows without
               // an active agent service too.
               const DapHubSection(),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              // The GitHub account used for widget publishing (issue #35)
+              // — resolves its store from SessionKeysScope, so it renders
+              // without an active agent service, like DapHubSection.
+              const GithubAccountSection(),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),

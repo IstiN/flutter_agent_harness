@@ -1583,4 +1583,95 @@ class AppLocalizationsRu extends AppLocalizations {
   String toolsAvailabilityUnavailable(Object reason) {
     return 'Недоступно: $reason';
   }
+
+  @override
+  String get githubAccountSection => 'GitHub-аккаунт';
+
+  @override
+  String get githubAccountHint =>
+      'Подключите GitHub, чтобы публиковать виджеты в каталог fa_widgets.';
+
+  @override
+  String get githubConnect => 'Подключить GitHub';
+
+  @override
+  String get githubDisconnect => 'Отключить';
+
+  @override
+  String get githubDisconnectConfirm =>
+      'Уже открытые PR останутся на GitHub — остановится только отслеживание статуса.';
+
+  @override
+  String get githubTokenHint => 'GitHub-токен со scope public_repo';
+
+  @override
+  String get githubConnectTokenTab => 'Токен';
+
+  @override
+  String get githubConnectDeviceTab => 'Код устройства';
+
+  @override
+  String get githubConnectDeviceInstructions =>
+      'Введите этот код на github.com/login/device — он разрешит Fa создавать публичные репозитории виджетов от вашего имени.';
+
+  @override
+  String get githubCopyCode => 'Скопировать код';
+
+  @override
+  String get githubOpenDevicePage => 'Открыть github.com/login/device';
+
+  @override
+  String get githubConnectValidating => 'Проверка…';
+
+  @override
+  String get myPublications => 'Мои публикации';
+
+  @override
+  String get publicationsEmpty => 'Пока ничего не опубликовано.';
+
+  @override
+  String get publicationsRefresh => 'Обновить';
+
+  @override
+  String get publicationStateOpen => 'Открыт';
+
+  @override
+  String get publicationStatePublished => 'Опубликован';
+
+  @override
+  String get publicationStateRejected => 'Отклонён';
+
+  @override
+  String get publicationStateUnknown => 'Неизвестно';
+
+  @override
+  String publicationSubmittedAt(Object date) {
+    return 'Отправлено $date';
+  }
+
+  @override
+  String publishWidgetTitle(Object name) {
+    return 'Публикация «$name»';
+  }
+
+  @override
+  String get publishPreflightFailed => 'Исправьте перед публикацией:';
+
+  @override
+  String get publishRepoNameLabel => 'Имя репозитория';
+
+  @override
+  String get publishButton => 'Опубликовать';
+
+  @override
+  String get publishInProgress => 'Публикация…';
+
+  @override
+  String get publishSuccess => 'Pull request открыт:';
+
+  @override
+  String get publishDone => 'Готово';
+
+  @override
+  String get launcherPublishWidget => 'Опубликовать…';
 }

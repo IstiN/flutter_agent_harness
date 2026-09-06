@@ -8,6 +8,10 @@ import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/widget_publication_store.dart';
+import 'package:fa/services/widget_publish_service.dart';
+import 'package:fa/ui/widgets/github_account_section.dart';
+import 'package:fa/ui/widgets/widget_publish_sheet.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -167,6 +171,29 @@ class _AppsPanelState extends State<AppsPanel> {
     );
   }
 
+  /// Opens the publish sheet for a user widget (issue #35), backed by the
+  /// app sandbox env and the shared GitHub account store.
+  Future<void> _publishApp(JsAppInfo app) async {
+    final keys = SessionKeysScope.maybeOf(context);
+    final account = sharedGithubAccountStore(
+      keys ?? await SessionKeysStore.load(widget.manager.env),
+    );
+    final ledger = await initSharedWidgetPublicationStore(widget.manager.env);
+    final service = WidgetPublishService(
+      env: widget.manager.env,
+      account: account,
+      ledger: ledger,
+    );
+    if (!mounted) return;
+    await showWidgetPublishSheet(
+      context,
+      app: app,
+      account: account,
+      service: service,
+      ledger: ledger,
+    );
+  }
+
   /// Long-press on a grid tile: Open always; Remove for non-bundled apps
   /// (catalog downloads AND agent-created apps — `force` covers apps that
   /// are not recorded in `.installed.json`). `storage.json` always stays.
@@ -183,6 +210,11 @@ class _AppsPanelState extends State<AppsPanel> {
         const PopupMenuItem<String>(value: 'open', child: Text('Open')),
         if (!app.bundled)
           const PopupMenuItem<String>(
+            value: 'publish',
+            child: Text('Publish…'),
+          ),
+        if (!app.bundled)
+          const PopupMenuItem<String>(
             value: 'remove',
             child: Text('Remove widget'),
           ),
@@ -190,6 +222,10 @@ class _AppsPanelState extends State<AppsPanel> {
     );
     if (selected == 'open') {
       _openApp(app);
+      return;
+    }
+    if (selected == 'publish') {
+      await _publishApp(app);
       return;
     }
     if (selected != 'remove' || !mounted) return;

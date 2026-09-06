@@ -111,6 +111,20 @@ void main() {
       },
     );
 
+    test('isCatalogInstalled marks catalog downloads, not user apps', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      expect(await store.isCatalogInstalled('focus-timer'), isFalse);
+      await store.installWidget(
+        id: 'focus-timer',
+        version: '1.0.0',
+        files: {'manifest.json': utf8.encode('{"id":"focus-timer"}')},
+      );
+      await env.writeFile('apps/my-own/manifest.json', '{"id":"my-own"}');
+      expect(await store.isCatalogInstalled('focus-timer'), isTrue);
+      expect(await store.isCatalogInstalled('my-own'), isFalse);
+    });
+
     test('seeds bundled apps once and lists them', () async {
       final env = MemoryExecutionEnv();
       final store = AppsStore(env, readAsset: _fakeAssets);

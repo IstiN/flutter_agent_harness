@@ -1570,4 +1570,95 @@ class AppLocalizationsEn extends AppLocalizations {
   String toolsAvailabilityUnavailable(Object reason) {
     return 'Unavailable: $reason';
   }
+
+  @override
+  String get githubAccountSection => 'GitHub account';
+
+  @override
+  String get githubAccountHint =>
+      'Connect GitHub to publish your widgets to the fa_widgets catalog.';
+
+  @override
+  String get githubConnect => 'Connect GitHub';
+
+  @override
+  String get githubDisconnect => 'Disconnect';
+
+  @override
+  String get githubDisconnectConfirm =>
+      'PRs already opened stay on GitHub — only status polling stops.';
+
+  @override
+  String get githubTokenHint => 'GitHub token with public_repo scope';
+
+  @override
+  String get githubConnectTokenTab => 'Token';
+
+  @override
+  String get githubConnectDeviceTab => 'Device code';
+
+  @override
+  String get githubConnectDeviceInstructions =>
+      'Enter this code at github.com/login/device — it lets Fa create public widget repos under your account.';
+
+  @override
+  String get githubCopyCode => 'Copy code';
+
+  @override
+  String get githubOpenDevicePage => 'Open github.com/login/device';
+
+  @override
+  String get githubConnectValidating => 'Validating…';
+
+  @override
+  String get myPublications => 'My publications';
+
+  @override
+  String get publicationsEmpty => 'Nothing published yet.';
+
+  @override
+  String get publicationsRefresh => 'Refresh';
+
+  @override
+  String get publicationStateOpen => 'Open';
+
+  @override
+  String get publicationStatePublished => 'Published';
+
+  @override
+  String get publicationStateRejected => 'Rejected';
+
+  @override
+  String get publicationStateUnknown => 'Unknown';
+
+  @override
+  String publicationSubmittedAt(Object date) {
+    return 'Submitted $date';
+  }
+
+  @override
+  String publishWidgetTitle(Object name) {
+    return 'Publish “$name”';
+  }
+
+  @override
+  String get publishPreflightFailed => 'Fix these issues before publishing:';
+
+  @override
+  String get publishRepoNameLabel => 'Repository name';
+
+  @override
+  String get publishButton => 'Publish';
+
+  @override
+  String get publishInProgress => 'Publishing…';
+
+  @override
+  String get publishSuccess => 'Pull request opened:';
+
+  @override
+  String get publishDone => 'Done';
+
+  @override
+  String get launcherPublishWidget => 'Publish…';
 }

@@ -200,9 +200,9 @@
   "launcherDissolveFolder": "Убрать папку",
   "launcherFolderDefaultName": "Папка",
   "launcherFolderNameHint": "Название папки",
-    "launcherOpenApp": "Открыть",
+  "launcherOpenApp": "Открыть",
   "@launcherOpenApp": {},
-"launcherOpenAppError": "Не удалось открыть приложение: {error}",
+  "launcherOpenAppError": "Не удалось открыть приложение: {error}",
   "launcherRenameFolderTooltip": "Переименовать папку",
   "launcherRestoreDemoApp": "Восстановить эталонную версию",
   "launcherRestoreDemoAppDone": "Код приложения восстановлен (данные сохранены)",
@@ -231,7 +231,13 @@
   "settingsResetAppsConfirmBody": "Будут удалены ВСЕ виджеты, которые вы скачали из каталога или создали, вместе со ВСЕМИ их данными (сохранённое состояние, настройки, хранилище). Сетка приложений станет пустой — скачать заново можно во вкладке Get widgets. Действие необратимо.",
   "@settingsResetAppsConfirmBody": {},
   "settingsResetAppsDone": "Приложения сброшены — удалено виджетов: {count}",
-  "@settingsResetAppsDone": {"placeholders": {"count": {"type": "int"}}},
+  "@settingsResetAppsDone": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "appsCatalogCreatedByMe": "Создано мной",
   "@appsCatalogCreatedByMe": {},
   "commonError": "Что-то пошло не так",
@@ -491,5 +497,46 @@
   "workspaceDialogRestrictToolsHint": "Отключает всё, что читало или писало бы за пределами смонтированной папки. Попытки выйти за рамки будут блокироваться (и в будущем — просить вашего подтверждения через диалог).",
   "toolsAvailabilityTitle": "Инструменты",
   "toolsAvailabilityHint": "Включайте и отключайте инструменты Fa — применяется сразу, без перезапуска.",
-  "toolsAvailabilityUnavailable": "Недоступно: {reason}"
+  "toolsAvailabilityUnavailable": "Недоступно: {reason}",
+  "githubAccountSection": "GitHub-аккаунт",
+  "githubAccountHint": "Подключите GitHub, чтобы публиковать виджеты в каталог fa_widgets.",
+  "githubConnect": "Подключить GitHub",
+  "githubDisconnect": "Отключить",
+  "githubDisconnectConfirm": "Уже открытые PR останутся на GitHub — остановится только отслеживание статуса.",
+  "githubTokenHint": "GitHub-токен со scope public_repo",
+  "githubConnectTokenTab": "Токен",
+  "githubConnectDeviceTab": "Код устройства",
+  "githubConnectDeviceInstructions": "Введите этот код на github.com/login/device — он разрешит Fa создавать публичные репозитории виджетов от вашего имени.",
+  "githubCopyCode": "Скопировать код",
+  "githubOpenDevicePage": "Открыть github.com/login/device",
+  "githubConnectValidating": "Проверка…",
+  "myPublications": "Мои публикации",
+  "publicationsEmpty": "Пока ничего не опубликовано.",
+  "publicationsRefresh": "Обновить",
+  "publicationStateOpen": "Открыт",
+  "publicationStatePublished": "Опубликован",
+  "publicationStateRejected": "Отклонён",
+  "publicationStateUnknown": "Неизвестно",
+  "publicationSubmittedAt": "Отправлено {date}",
+  "@publicationSubmittedAt": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "publishWidgetTitle": "Публикация «{name}»",
+  "@publishWidgetTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "publishPreflightFailed": "Исправьте перед публикацией:",
+  "publishRepoNameLabel": "Имя репозитория",
+  "publishButton": "Опубликовать",
+  "publishInProgress": "Публикация…",
+  "publishSuccess": "Pull request открыт:",
+  "publishDone": "Готово",
+  "launcherPublishWidget": "Опубликовать…",
+  "@launcherPublishWidget": {
+    "description": "Tile-menu action that opens the widget publish sheet (issue #35)"
+  }
 }
