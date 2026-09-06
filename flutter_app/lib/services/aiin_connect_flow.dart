@@ -58,6 +58,12 @@ Future<bool> runAiinConnectFlow({
   /// Injectable web-callback timeout (tests) — defaults to the
   /// coordinator's 5 minutes.
   Duration? aiinWebTimeout,
+
+  /// Re-authenticate an EXISTING AIIN entry instead of adding a new one:
+  /// the fresh key replaces the stored one, the entry keeps its name and
+  /// model, and the service reconnects on it (the editor's
+  /// "Re-authenticate" path).
+  CustomProvider? reauthenticateFor,
 }) async {
   if (kIsWeb) {
     // One-click web connect: a popup OAuth, no loopback server needed
@@ -99,6 +105,7 @@ Future<bool> runAiinConnectFlow({
           keychainStore: keychainStore,
           apiKey: pasted,
           aiinModelsFetcher: aiinModelsFetcher,
+          reauthenticateFor: reauthenticateFor,
         );
       }
       return false;
@@ -114,6 +121,7 @@ Future<bool> runAiinConnectFlow({
       apiKey: result.apiKey.raw,
       accountLabel: result.email,
       aiinModelsFetcher: aiinModelsFetcher,
+      reauthenticateFor: reauthenticateFor,
     );
   }
   final desktop = !kIsWeb &&
@@ -137,6 +145,7 @@ Future<bool> runAiinConnectFlow({
       keychainStore: keychainStore,
       apiKey: pasted,
       aiinModelsFetcher: aiinModelsFetcher,
+      reauthenticateFor: reauthenticateFor,
     );
   }
 
@@ -174,6 +183,7 @@ Future<bool> runAiinConnectFlow({
       keychainStore: keychainStore,
       apiKey: pasted,
       aiinModelsFetcher: aiinModelsFetcher,
+      reauthenticateFor: reauthenticateFor,
     );
   }
   if (result == null) return false;
@@ -188,6 +198,7 @@ Future<bool> runAiinConnectFlow({
     apiKey: result.apiKey.raw,
     accountLabel: result.email,
     aiinModelsFetcher: aiinModelsFetcher,
+    reauthenticateFor: reauthenticateFor,
   );
 }
 
@@ -206,10 +217,41 @@ Future<bool> _finishAiinConnect(
   String? accountLabel,
   Future<List<String>> Function(String baseUrl, {required String apiKey})?
   aiinModelsFetcher,
+
+  /// Re-auth mode (see [runAiinConnectFlow]): refresh the existing entry's
+  /// key and reconnect on its saved model — no model pick, no new entry.
+  CustomProvider? reauthenticateFor,
 }) async {
+  final key = apiKey;
+  // Re-auth mode: refresh the stored key on the existing entry (keeps its
+  // name/model), persist like the connect flow does, and reconnect on the
+  // saved model — no model pick, no new entry.
+  if (reauthenticateFor case final existing?) {
+    registry.rememberKey(existing.id, key);
+    final keyName = CustomProviderRegistry.keyNameFor(
+      existing.baseUrl,
+      providerName: existing.name,
+    );
+    var persisted = false;
+    final keychain = keychainStore ?? const KeychainStore();
+    if (await keychain.isAvailable()) {
+      persisted = await keychain.set(keyName, key);
+    }
+    if (!persisted) {
+      await sessionKeysStore?.set(keyName, key);
+    }
+    final config = AgentConfig(
+      providerKind: 'aiin',
+      modelId: existing.modelId,
+      baseUrl: existing.baseUrl,
+      apiKey: key,
+    );
+    if (service != null) await service.reconfigure(config);
+    await lastConnectionStore.saveFromConfig(config);
+    return true;
+  }
   // ── Pick a model (public /v1/models on api.aiin.by) ─────────────────
   const baseUrl = aiinDefaultChatBaseUrl;
-  final key = apiKey;
   List<String> models = const [];
   try {
     models = aiinModelsFetcher != null

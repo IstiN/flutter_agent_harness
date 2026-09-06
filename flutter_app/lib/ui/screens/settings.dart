@@ -2028,6 +2028,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onProviderReauthenticate: (ctx, provider) async {
                   final registry = widget.registry;
                   if (registry == null) return false;
+                  // AIIN entries re-run the AIIN sign-in flow in re-auth
+                  // mode: the hosted browser sign-in (or paste-key) mint a
+                  // fresh key; the entry keeps its name and model.
+                  if (isAiinBaseUrl(provider.baseUrl)) {
+                    return runAiinConnectFlow(
+                      context: ctx,
+                      registry: registry,
+                      service: service,
+                      lastConnectionStore:
+                          widget.lastConnectionStore ??
+                          LastConnectionStore.inMemory(),
+                      reauthenticateFor: provider,
+                    );
+                  }
                   // Copilot entries re-auth through the GitHub device-code
                   // flow (the same sheet the connect uses; signing into the
                   // same account refreshes the entry's key and keeps its
