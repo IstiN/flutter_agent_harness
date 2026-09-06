@@ -2674,4 +2674,8 @@
 
 - ci: workflow_dispatch for ci.yml — manual gates when pull_request can't fire
 
+## 0.1.307
+
+- fix(widgets): unique router instanceId per engine — frozen tiles and dead buttons
+
 ## Unreleased
