@@ -69,15 +69,22 @@ List<MenuItem> _templateMenuItems(
 }
 
 List<MenuItem> _skillMenuItems(List<Skill> skills, String lower) {
+  // Normalize the typed prefix to the bare skill-name fragment: '/goal',
+  // 'goal', and '/skill:goal' all must offer '/create-goal' — matching the
+  // raw prefix against '/<name>' breaks on the embedded slash (user report:
+  // typing /goal showed no suggestion).
+  var needle = lower.startsWith('/') ? lower.substring(1) : lower;
+  if (needle.startsWith('skill:')) {
+    needle = needle.substring('skill:'.length);
+  }
   final items = <MenuItem>[];
   for (final skill in userInvocableSkills(skills)) {
     final hint = skill.manifest.argumentHint;
     final description = hint == null || hint.isEmpty
         ? skill.description
         : '${skill.description} $hint';
-    // The prefix carries the leading slash — match it like templates do.
-    if ('/${skill.name}'.toLowerCase().contains(lower) ||
-        skill.description.toLowerCase().contains(lower)) {
+    if (skill.name.toLowerCase().contains(needle) ||
+        skill.description.toLowerCase().contains(needle)) {
       items.add(
         MenuItem(
           key: '/skill:${skill.name} ',

@@ -126,6 +126,33 @@ void main() {
       expect(byDescription.single.label, '/deploy');
     });
 
+    test('skills match on a mid-name fragment without the leading slash', () {
+      // /goal must offer /create-goal: the leading slash of the skill's
+      // label must not break the substring match (user report: typing
+      // /goal showed no skill suggestion).
+      final items = buildSlashMenuItems(
+        '/goal',
+        slashCommands: const {},
+        pluginSlashCommands: const {},
+        templates: const [],
+        skills: [skill('create-goal')],
+      );
+      expect(items.single.key, '/skill:create-goal ');
+      expect(items.single.label, '/create-goal');
+    });
+
+    test('skills match after a /skill: prefix', () {
+      // Typing /skill:goal filters skills by the part after the colon.
+      final items = buildSlashMenuItems(
+        '/skill:goal',
+        slashCommands: const {},
+        pluginSlashCommands: const {},
+        templates: const [],
+        skills: [skill('create-goal'), skill('deploy')],
+      );
+      expect(items.single.key, '/skill:create-goal ');
+    });
+
     test('model-only skills (user-invocable: false) are not offered', () {
       final items = buildSlashMenuItems(
         '/hid',
