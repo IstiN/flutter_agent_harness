@@ -2674,6 +2674,13 @@
 
 - ci: workflow_dispatch for ci.yml — manual gates when pull_request can't fire
 
+## 0.1.308
+
+- fix(roles): provider watchdog timeouts ("TimeoutException after 0:03:00:
+  Future not completed", "request timed out") classify as transient
+  transport failures — retried in place with backoff, then failover to the
+  next chain entry, instead of killing the turn (YoClip agent report).
+
 ## 0.1.307
 
 - fix(widgets): unique router instanceId per engine — frozen tiles and dead buttons
