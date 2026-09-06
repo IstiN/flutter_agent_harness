@@ -2670,4 +2670,8 @@
 
 - feat(aiin): use the hosted AIIN sign-in page as the connect entry
 
+## 0.1.306
+
+- ci: workflow_dispatch for ci.yml — manual gates when pull_request can't fire
+
 ## Unreleased
