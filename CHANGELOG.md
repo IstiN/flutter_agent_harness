@@ -2692,6 +2692,14 @@
 
 - fix(widgets): unique router instanceId per engine — frozen tiles and dead buttons
 
+## 0.1.312
+
+- fix(compaction): the summarizer-down local-trim valve no longer wedges the
+  session — a token-boundary cut could land between an assistant tool call
+  and its result, leaving an orphaned ToolResultMessage that made strict
+  providers reject every following request ("400: tool_call_id is not
+  found", Kimi). The trim now advances past leading tool results.
+
 ## 0.1.311
 
 - fix(messaging): scheduled self-reminders actually arrive — 'self' was never
