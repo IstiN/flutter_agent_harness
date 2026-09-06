@@ -11,11 +11,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const manifest = JSON.parse(readFileSync(join(here, '..', 'manifest.json'), 'utf8'));
 
 const CORE = [
-  'alarms', 'bookmarks', 'commands', 'contextMenus', 'cookies', 'debugger',
+  'alarms', 'bookmarks', 'contextMenus', 'cookies', 'debugger',
   'downloads', 'history', 'identity', 'idle', 'notifications', 'offscreen',
-  'omnibox', 'power', 'scripting', 'sessions', 'sidePanel', 'storage',
+  'power', 'scripting', 'sessions', 'sidePanel', 'storage',
   'system.cpu', 'system.display', 'system.memory', 'system.storage',
-  'tabGroups', 'tabs', 'webNavigation', 'windows',
+  'tabGroups', 'tabs', 'webNavigation',
 ];
 const OPTIONAL = [
   'declarativeNetRequest', 'desktopCapture', 'pageCapture', 'readingList',
@@ -48,7 +48,10 @@ test('host_permissions stay <all_urls>, optional_host_permissions added', () => 
 });
 
 test('commands registers ask-fa with a suggested_key', () => {
-  const cmd = manifest.commands.find((c) => c.name === 'ask-fa');
+  // commands is a name→spec OBJECT in the manifest (an array is a manifest
+  // parse error: "Invalid value for 'commands'" — the extension then never
+  // loads and no service worker registers).
+  const cmd = manifest.commands['ask-fa'];
   assert.ok(cmd, 'ask-fa command missing');
   assert.equal(cmd.description, 'Ask fa about the current page');
   assert.match(cmd.suggested_key.default, /^(Ctrl|Command|Alt|MacCtrl)\+/);

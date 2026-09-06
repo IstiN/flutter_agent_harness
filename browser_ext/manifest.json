@@ -12,11 +12,11 @@
     "128": "icons/icon-128.png"
   },
   "action": { "default_icon": "icons/icon-32.png" },
-  "permissions": ["alarms", "bookmarks", "commands", "contextMenus", "cookies", "debugger", "downloads", "history", "identity", "idle", "notifications", "offscreen", "omnibox", "power", "scripting", "sessions", "sidePanel", "storage", "system.cpu", "system.display", "system.memory", "system.storage", "tabGroups", "tabs", "webNavigation", "windows"],
+  "permissions": ["alarms", "bookmarks", "contextMenus", "cookies", "debugger", "downloads", "history", "identity", "idle", "notifications", "offscreen", "power", "scripting", "sessions", "sidePanel", "storage", "system.cpu", "system.display", "system.memory", "system.storage", "tabGroups", "tabs", "webNavigation"],
   "optional_permissions": ["declarativeNetRequest", "desktopCapture", "pageCapture", "readingList", "search", "tabCapture", "topSites", "tts", "userScripts"],
   "host_permissions": ["<all_urls>"],
   "optional_host_permissions": ["<all_urls>"],
-  "commands": [{ "name": "ask-fa", "description": "Ask fa about the current page", "suggested_key": { "default": "Ctrl+Shift+1" } }],
+  "commands": { "ask-fa": { "suggested_key": { "default": "Ctrl+Shift+1" }, "description": "Ask fa about the current page" } },
   "omnibox": { "keyword": "fa" },
   "background": { "service_worker": "sw/main.js" },
   "side_panel": { "default_path": "panel/panel.html" },

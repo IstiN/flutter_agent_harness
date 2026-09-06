@@ -14,13 +14,12 @@ prompts), and pages the agent reads pass a redaction + quarantine
 layer before anything is persisted. See
 [docs/browser-extension.md](browser-extension.md) → Security model.
 
-## Core permissions (26, in `permissions`)
+## Core permissions (23, in `permissions`)
 
 | Permission | Used by | Justification (for a reviewer) |
 |---|---|---|
 | `alarms` | Scheduled tasks (`AlarmScheduler`) | The agent runs user-scheduled prompts (e.g. "check this page hourly") while the browser is open; alarms let due work fire and survive service-worker restarts. |
 | `bookmarks` | `bookmarks_list` / `bookmarks_add` / `bookmarks_update` / `bookmarks_remove` | The agent lists, organizes, and edits the user's bookmarks on request. |
-| `commands` | `ask-fa` hotkey (Ctrl+Shift+1) | Registers the keyboard shortcut that asks fa about the current page. |
 | `contextMenus` | Right-click menu entries | Adds "ask fa" entries for the selected text, link, image, or page the user right-clicked. |
 | `cookies` | `cookies_get` / `cookies_set` / `cookies_remove` | The agent reads/edits cookies for a site when the user asks (e.g. debugging a login issue); every cookie tool result is approval-gated. Stripped from the store profile. |
 | `debugger` | `cdp_eval`, `page_screenshot`, trusted input | The trusted-input plane: `chrome.debugger` lets the agent dispatch real browser-synthesized input and capture screenshots of background tabs. Chrome shows its "started debugging" infobar whenever it is in use. Stripped from the store profile. |
@@ -34,7 +33,6 @@ layer before anything is persisted. See
 | `system.display` | Read-only display info | Read-only display unit info so the agent can reason about screenshots and window placement. |
 | `notifications` | Run completion / attention / mail | Tells the user when a background run finishes, needs attention, or mail arrives; a denied permission degrades to badge-only signaling. |
 | `offscreen` | `OffscreenManager` | Opens one lifetime-capped offscreen document so the agent can parse/extract from pages with no visible tab. |
-| `omnibox` | `fa ` keyword | Lets the user type `fa <query>` in the address bar to prompt the agent. |
 | `power` | Keep-awake | Keeps the machine awake during a long agent run; the lock is released when the run ends. |
 | `scripting` | `inject_js` / `inject_css` | The agent injects JavaScript/CSS into a page at the user's request — the core page-editing capability; MAIN-world injections always prompt first. |
 | `sessions` | `sessions_recent` / `sessions_restore` | The agent lists and reopens recently closed tabs/windows on request. |
@@ -43,8 +41,11 @@ layer before anything is persisted. See
 | `tabGroups` | `tabs_group` / `tabs_ungroup` / `groups_update` / `groups_close` | The agent organizes the tabs it opens into named groups and cleans them up when the task ends. |
 | `tabs` | `tabs_open` / `tabs_close` / `tabs_update` / `tabs_query` / `tabs_move` / `tabs_reload` / `tabs_discard`, `app_screenshot` | The agent opens, organizes, reloads, and closes tabs on request — the agent's primary workspace. |
 | `webNavigation` | `nav_wait` | The agent waits for a page to finish loading before acting on it. |
-| `windows` | `windows_open` / `windows_update` / `windows_close` / `windows_list` | The agent arranges, focuses, resizes, and closes browser windows on request. |
 
+Not every capability is a permission: `commands` (the `ask-fa`
+Ctrl+Shift+1 hotkey) and `omnibox` (the `fa ` keyword) are manifest
+keys, not Chrome permissions, and `chrome.windows` rides the `tabs`
+permission — the windows_* tools request nothing extra.
 ## Host permissions
 
 | Permission | Profile | Justification |
