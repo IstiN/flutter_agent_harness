@@ -160,6 +160,7 @@ part 'trajectory_commands.dart';
 part 'agent_cli_cube.dart';
 part 'agent_cli_provider_presets.dart';
 part 'agent_cli_inbox.dart';
+part 'agent_cli_steering.dart';
 part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
 part 'agent_cli_banner.dart';
@@ -1289,29 +1290,6 @@ class AgentCli {
     await _deleteEmptySessionFile();
   }
 
-  /// Whether nothing was ever said in the session and nothing owns it.
-  bool _sessionIsEmpty() =>
-      _sessionHasNoContent &&
-      _subagentManager.handles.isEmpty &&
-      _session != null;
-
-  /// No live messages and no records persisted to disk.
-  bool get _sessionHasNoContent =>
-      _agent.state.messages.isEmpty && _persistedCount == 0;
-
-  Future<void> _deleteEmptySessionFile() async {
-    final session = _session;
-    if (session == null) return;
-    try {
-      await _repo.delete(await session.getMetadata());
-      _session = null;
-      // The session scope is gone — drop it from the resolution.
-      unawaited(AgentCliTools(this).rebuildToolAvailability());
-    } on Object {
-      // Best-effort cleanup.
-    }
-  }
-
   Future<void> _runTuiRepl() async {
     // Busy-row forensics: every arm/release/drop/watchdog-fire lands in
     // fa.log with its source — a wedged "Working…" names its owner.
@@ -1441,26 +1419,6 @@ class AgentCli {
       return;
     }
     _printDroppedSteering(outcome.texts);
-  }
-
-  /// The steering still queued after a run settled, or null when there
-  /// is nothing left to settle (or the session already exited).
-  LeftoverSteering? _leftoverSteeringOutcome() {
-    if (_exited || !_agent.hasSteering) return null;
-    return resolveLeftoverSteering(
-      drain: _agent.drainSteeringQueue,
-      abortRequested: _abortRequested,
-    );
-  }
-
-  /// Prints exactly what was discarded — a silent drop is
-  /// indistinguishable from a lost message.
-  void _printDroppedSteering(List<String> texts) {
-    io.writeln(_style.dim('dropped steering message(s) after interrupt:'));
-    for (final text in texts) {
-      final elided = text.length <= 80 ? text : '${text.substring(0, 80)}…';
-      io.writeln(_style.dim('  • ${elided.replaceAll('\n', ' ')}'));
-    }
   }
 
   /// Replays the transcript when the TUI opens on a restored session.
@@ -2443,19 +2401,6 @@ class AgentCli {
     if (_persistedCount >= messages.length) return;
     await session.appendMessage(message);
     _persistedCount++;
-  }
-
-  /// Persists the outbound-request summary so replayed sessions rebuild the
-  /// Request tab. A CustomRecord is context-omitted; the ordering matters —
-  /// it must land before its assistant message (the replay walk expects it
-  /// as the step's predecessor), which the event order guarantees.
-  Future<void> _onModelRequest(TrajectoryRequestDetail detail) async {
-    final session = _session;
-    if (session == null) return;
-    await session.appendCustomEntry(
-      customType: 'model_request_summary',
-      data: detail.toJson(),
-    );
   }
 
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
