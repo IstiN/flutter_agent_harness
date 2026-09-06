@@ -60,6 +60,18 @@ if [ "$with_app" -eq 1 ]; then
   rm -rf browser_ext/panel/app
   mkdir -p browser_ext/panel/app
   cp -R flutter_app/build/web/. browser_ext/panel/app/
+  # The extension CSP forbids remote hosts: point the bootstrap at the
+  # bundled canvaskit copy (FLUTTER_WEB_CANVASKIT_URL does not reach the
+  # generated bootstrap in this flutter).
+  python3 - <<'PYS'
+import glob
+for f in glob.glob('flutter_app/build/web/flutter_bootstrap.js') + glob.glob('browser_ext/panel/app/flutter_bootstrap.js'):
+    t = open(f).read()
+    t = t.replace('https://www.gstatic.com/flutter-canvaskit/', './canvaskit/')
+    t = t.replace('https:\\/\\/www.gstatic.com\\/flutter-canvaskit\\/', '.\\/canvaskit\\/')
+    t = t.replace('"https://www.gstatic.com/flutter-canvaskit"', '"./canvaskit"')
+    open(f, 'w').write(t)
+PYS
   echo "bundled fa web app (browser_ext/panel/app/)"
 fi
 

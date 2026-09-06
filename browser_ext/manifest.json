@@ -86,6 +86,6 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' 'sha256-9Gr9Rgs0/APnFCP6uCAIw8NbHSckpf7/3knUDa3Gc/c=' 'sha256-uz++N0SUQR+YdD3dJ5ctkUqS0GCeeKRkRsqqiXeJCvM=' 'sha256-NJ/Hyes+j2WX6kdsVms79CBn4wlZELQB/57Fq3PTEno=' 'sha256-Xf3OdQarOaGclUxQYJyiJOorAgp9/grq6gAN73MGwUA='; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   }
 }
