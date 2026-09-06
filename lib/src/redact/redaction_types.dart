@@ -17,6 +17,10 @@ enum RedactionLayer {
   /// `id_rsa`, `.aws/credentials`, ...).
   path,
 
+  /// DOM credential firewall (issue #30): values of password- or
+  /// credential-shaped form fields in serialized HTML/JSON captures.
+  credential,
+
   /// Known vendor token shapes (GitHub, AWS, OpenAI, JWT, ...).
   vendor,
 

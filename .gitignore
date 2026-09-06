@@ -108,4 +108,5 @@ fa-local/
 browser_ext/sw/agent.js
 browser_ext/sw/agent.js.map
 browser_ext/sw/agent.js.deps
+browser_ext/app/
 browser_ext/dart/build/

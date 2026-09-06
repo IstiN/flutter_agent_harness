@@ -26,10 +26,13 @@ import 'package:flutter_agent_harness/src/session/session_tree.dart';
 import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 
+import 'browser_api_tools.dart';
+import 'chrome_api.dart';
 import 'chrome_storage_env.dart';
 import 'dap/dap_frames.dart';
 import 'dap/dap_integration.dart';
 import 'providers.dart';
+import 'ui_host_adapter.dart';
 
 /// Calls the browser op table bound by sw/main.js (`globalThis.__faOps` →
 /// ops.dispatch). Same op names as the wire protocol (`navigate`, `click`,
@@ -54,12 +57,17 @@ const _approvalTimeout = Duration(seconds: 30);
 
 const _systemPrompt =
     'You are fa, an agent running inside a Chrome extension service worker. '
-    'You can act on the web through the browser_* tools (navigate, read_dom, '
-    'click, type, screenshot, …) and keep small notes under / through the '
-    'read/write/edit/ls file tools. There is no shell. Be terse.';
+    'You can act on the web through two tool families: the browser_* page '
+    'ops (navigate, read_dom, click, type, screenshot, …) and the v2 power '
+    'surface (tabs_open/tabs_close, windows_*, groups_*, history_search, '
+    'bookmarks_*, downloads_*, cookies_*, inject_js, cdp_eval, …). Scripting '
+    'and debugging tools refuse restricted pages (chrome://, extension '
+    'pages, the Web Store) — tab management still works there. Keep small '
+    'notes under / through the read/write/edit/ls file tools. There is no '
+    'shell. Be terse.';
 
 /// Owns the agent, its tools, approvals, session, and the event bridge.
-final class AgentHost {
+final class AgentHost implements UiHostBackend {
   AgentHost._(this._env, this._ops, this._sink);
 
   final ChromeStorageEnv _env;
@@ -97,30 +105,49 @@ final class AgentHost {
 
   /// Constructs the host: restores the storage env, opens (or creates) the
   /// JSONL session, and builds the agent over the restored transcript.
+  /// [chrome] non-null joins the v2 browser-API family (34 power tools)
+  /// to the v1 browser_* ops — [visitedOrigins] wires their exfil gate to
+  /// the caller's LIVE set (the SW wiring keeps updating it as the user
+  /// navigates; the gate reads it at call time).
   static Future<AgentHost> boot({
     required HostEventSink sink,
     required OpCaller ops,
     required HostConfig config,
+    ChromeApi? chrome,
+    Set<String>? visitedOrigins,
   }) async {
     final env = await ChromeStorageEnv.restore();
     final host = AgentHost._(env, ops, sink);
-    await host._init(config);
+    await host._init(config, chrome: chrome, visitedOrigins: visitedOrigins);
     return host;
   }
 
-  Future<void> _init(HostConfig config) async {
+  Future<void> _init(
+    HostConfig config, {
+    ChromeApi? chrome,
+    Set<String>? visitedOrigins,
+  }) async {
     _mailbox = config.mailbox;
     _registry = ToolRegistry([
       ...builtinTools(_env).where((tool) => tool.name != 'bash'),
       for (final MapEntry(:key, :value) in _browserOps.entries)
         _browserTool(key, value),
     ]);
+    if (chrome != null) {
+      registerBrowserApiTools(
+        _registry,
+        chrome,
+        visitedOrigins: visitedOrigins,
+      );
+    }
     _approvals = ApprovalManager(
       mode:
           approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk,
+      // alwaysPrompts (inject_js) rides the per-tool prompt override, which
+      // outranks the session mode, turn grants and the always-allow set.
+      overrides: alwaysPromptOverrides(),
       prompt: _promptApproval,
     );
-    if (config.dap != null) _attachDap(config.dap!);
 
     final storage = await _openSession();
     _session = Session(storage);
@@ -234,6 +261,7 @@ final class AgentHost {
 
   /// User turn from the panel composer (or CI). While a run is active the
   /// text is steered into the current run, sender-attributed.
+  @override
   void sendUser(String text, {String from = 'user'}) {
     final attributed = from == 'user' ? text : '[from $from] $text';
     if (_running) {
@@ -242,6 +270,29 @@ final class AgentHost {
     }
     unawaited(_runTurn(attributed));
   }
+
+  /// Panel/protocol cancel (v2): aborts the active run. `_runTurn`'s
+  /// finally block resets `running` and emits the status event through
+  /// the normal sink, so callers get the settled state for free.
+  @override
+  void cancelTurn() {
+    if (_running) _agent.abort();
+  }
+
+  /// The live JSONL session id from the header (parsed at open — no disk
+  /// read), or '' before the session exists.
+  @override
+  String get sessionId => _session?.cachedId ?? '';
+
+  /// Known sessions for the v2 UI: this SW owns exactly one.
+  @override
+  List<Map<String, dynamic>> sessionsList() => [
+    {
+      'id': sessionId,
+      'messages': _booted ? _agent.state.messages.length : 0,
+      'running': _running,
+    },
+  ];
 
   /// Peer mail intake (bridge + DAP): deduped (AC18), queued for steering
   /// mid-run, starts a turn when idle.
@@ -264,10 +315,12 @@ final class AgentHost {
   }
 
   /// Panel answered an approval banner.
+  @override
   void decide(String id, bool allow) {
     _pendingApprovals.remove(id)?.complete(allow);
   }
 
+  @override
   Map<String, dynamic> getState() {
     final provider = _provider;
     return {

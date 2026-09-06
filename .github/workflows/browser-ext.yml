@@ -54,6 +54,11 @@ jobs:
       - name: dart pub get (root)
         run: dart pub get
 
+      # browser_ext/dart is a separate package (path dep on this root), so
+      # its pub get must follow the root's.
+      - name: Dart unit tests (browser_ext/dart)
+        run: cd browser_ext/dart && dart pub get && dart test
+
       # Compiles the embedded agent (dart2js, fails loudly on errors) and
       # zips the runtime files — the artifact under test AND the AC11 upload.
       - name: Build extension

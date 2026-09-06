@@ -1,6 +1,6 @@
 /// Layered redaction pipeline (issue #24, stage 1).
 ///
-/// Ten pure layers ([RedactionLayer]) scan text for sensitive spans; the
+/// Eleven pure layers ([RedactionLayer]) scan text for sensitive spans; the
 /// pipeline merges their findings by layer priority, suppresses
 /// allowlisted spans, and rewrites the text by slice/concat so the output
 /// is idempotent and line-count preserving. Everything here is pure
@@ -11,6 +11,7 @@ library;
 
 import 'layer_asn1.dart';
 import 'layer_connection.dart';
+import 'layer_credential.dart';
 import 'layer_context.dart';
 import 'layer_entropy.dart';
 import 'layer_path.dart';
@@ -22,6 +23,7 @@ import 'redaction_types.dart';
 
 export 'layer_asn1.dart' show asn1BlobLabel, layerAsn1;
 export 'layer_connection.dart' show connectionPasswordLabel, layerConnection;
+export 'layer_credential.dart' show credentialLabel, layerCredential;
 export 'layer_context.dart'
     show certificateDnLabel, layerContext, sensitiveValueLabel;
 export 'layer_entropy.dart' show highEntropyLabel, layerEntropy, shannonEntropy;
@@ -74,7 +76,7 @@ final class RedactionStats {
 
 /// The layered redaction pipeline.
 ///
-/// Wraps the ten pure layer functions with priority-ordered merging,
+/// Wraps the eleven pure layer functions with priority-ordered merging,
 /// allowlist suppression, data-URL pass-through, idempotent marker output
 /// and statistics. See [scan] (detection) and [redact] (rewriting).
 final class RedactionPipeline {
@@ -228,7 +230,7 @@ List<RedactionMatch> _scanLayer(
       : _scanLateLayer(layer, text, cfg, prior: prior);
 }
 
-/// The five highest-priority layers.
+/// The six highest-priority layers.
 List<RedactionMatch> _scanEarlyLayer(
   RedactionLayer layer,
   String text,
@@ -241,6 +243,8 @@ List<RedactionMatch> _scanEarlyLayer(
       return layerRegistered(text, secrets);
     case RedactionLayer.path:
       return layerPath(text, cfg, pathHint: pathHint);
+    case RedactionLayer.credential:
+      return layerCredential(text, cfg);
     case RedactionLayer.vendor:
       return layerVendor(text, cfg);
     case RedactionLayer.prefix:

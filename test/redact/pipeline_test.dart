@@ -19,52 +19,55 @@ String pemBlockOfLines(int lines) {
 
 void main() {
   group('RedactionPipeline.scan', () {
-  
-  group('agent file-reading scenarios (entropy once shredded paths)', () {
-    test('a package-lock read keeps integrity hashes and URLs, masks keys',
-        () {
-      const lockfile = '{\n'
-          '  "packages": {\n'
-          '    "esbuild": {\n'
-          '      "version": "0.21.5",\n'
-          '      "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.21.5.tgz",\n'
-          '      "integrity": "sha512-mg4aOJjqPBvUnLo0BWafbbTVBThScgeBAmBAJqDkxRYj0zOa1b2c3d4e5f6g7h8i9j0",\n'
-          '      "dev": true\n'
-          '    }\n'
-          '  },\n'
-          '  "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.'
-          'eyJzdWIiOiIxMjM0NTY3ODkwIn0.'
-          'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",\n'
-          '  "apiKey": "sk-proj-9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8'
-          'c7b6a5f4e3d2c1b0a9f8e7d6c"\n'
-          '}\n';
-      final out = pipe().redact(lockfile);
-      expect(out, contains('sha512-mg4aOJjqPBvUnLo0BWafbbTVBThScgeBAmBAJqDk'));
-      expect(out, contains('https://registry.npmjs.org/esbuild/-/esbuild'));
-      expect(out, contains('[REDACTED:JWT]'));
-      expect(out, contains('[REDACTED:Sensitive Value]'));
+    group('agent file-reading scenarios (entropy once shredded paths)', () {
+      test('a package-lock read keeps integrity hashes and URLs, masks keys', () {
+        const lockfile =
+            '{\n'
+            '  "packages": {\n'
+            '    "esbuild": {\n'
+            '      "version": "0.21.5",\n'
+            '      "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.21.5.tgz",\n'
+            '      "integrity": "sha512-mg4aOJjqPBvUnLo0BWafbbTVBThScgeBAmBAJqDkxRYj0zOa1b2c3d4e5f6g7h8i9j0",\n'
+            '      "dev": true\n'
+            '    }\n'
+            '  },\n'
+            '  "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.'
+            'eyJzdWIiOiIxMjM0NTY3ODkwIn0.'
+            'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",\n'
+            '  "apiKey": "sk-proj-9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8'
+            'c7b6a5f4e3d2c1b0a9f8e7d6c"\n'
+            '}\n';
+        final out = pipe().redact(lockfile);
+        expect(
+          out,
+          contains('sha512-mg4aOJjqPBvUnLo0BWafbbTVBThScgeBAmBAJqDk'),
+        );
+        expect(out, contains('https://registry.npmjs.org/esbuild/-/esbuild'));
+        expect(out, contains('[REDACTED:JWT]'));
+        expect(out, contains('[REDACTED:credential]'));
+      });
+
+      test('an ls/find listing keeps every path intact', () {
+        const listing =
+            '/Users/x/Library/Group Containers/group.dev.fa1.shared'
+            '/fa/sessions/--Users-x-Library-App-dev.fa1.app--/messages'
+            '/2026-09-01T23-24-12-542725_01a05ea4-c7fe-7cbe-9e93-1575eed34d59.json\n'
+            '/Users/x/git/pkg/lib/src/redact/layer_entropy.dart\n'
+            '/Users/x/git/pkg/flutter_app/test/golden/goldens/settings_hosted.png\n';
+        final out = pipe().redact(listing);
+        expect(out, contains('layer_entropy.dart'));
+        expect(out, contains('settings_hosted.png'));
+        expect(
+          out,
+          contains(
+            '2026-09-01T23-24-12-542725_01a05ea4-c7fe-7cbe-9e93-1575eed34d59.json',
+          ),
+        );
+        expect(out, isNot(contains('[REDACTED')));
+      });
     });
 
-    test('an ls/find listing keeps every path intact', () {
-      const listing = '/Users/x/Library/Group Containers/group.dev.fa1.shared'
-          '/fa/sessions/--Users-x-Library-App-dev.fa1.app--/messages'
-          '/2026-09-01T23-24-12-542725_01a05ea4-c7fe-7cbe-9e93-1575eed34d59.json\n'
-          '/Users/x/git/pkg/lib/src/redact/layer_entropy.dart\n'
-          '/Users/x/git/pkg/flutter_app/test/golden/goldens/settings_hosted.png\n';
-      final out = pipe().redact(listing);
-      expect(out, contains('layer_entropy.dart'));
-      expect(out, contains('settings_hosted.png'));
-      expect(
-        out,
-        contains(
-          '2026-09-01T23-24-12-542725_01a05ea4-c7fe-7cbe-9e93-1575eed34d59.json',
-        ),
-      );
-      expect(out, isNot(contains('[REDACTED')));
-    });
-  });
-
-  test('returns priority-ordered, non-overlapping matches', () {
+    test('returns priority-ordered, non-overlapping matches', () {
       const token = 'ghp_Aa1Bb2Cc3Dd4Ee5Ff6Gg7Hh8Ii9Jj0Kk1Ll2';
       final p = pipe();
       final matches = p.scan('pass: hunter2 then $token end');
@@ -148,7 +151,7 @@ void main() {
       final decoded = jsonDecode(out) as Map<String, dynamic>;
       expect(decoded['user'], 'bob');
       expect(decoded['n'], 1);
-      expect(decoded['password'], '[REDACTED:Sensitive Value]');
+      expect(decoded['password'], '[REDACTED:credential]');
     });
 
     test('line count is preserved for a 30-line PEM block', () {
