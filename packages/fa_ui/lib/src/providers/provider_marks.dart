@@ -90,7 +90,9 @@ class ProviderMark extends StatelessWidget {
       const Color(0xFF5B61F6),
       const Color(0xFFEEF1FE),
     ),
-    'aiin' => (_aiin, const Color(0xFF3B5BFF), const Color(0xFFEAEFFF)),
+    // Full-color official aiin.by mark (their favicon) — carries its own
+    // dark background and bleeds to the tile edge.
+    'aiin' => (_aiin, null, const Color(0xFF07080D)),
     'chatgpt' || 'openai' => (_openai, Colors.white, const Color(0xFF172033)),
     'codemie' => (_codemie, null, const Color(0xFF230230)),
     'anthropic' => (
@@ -169,12 +171,40 @@ final String _dial =
     '</linearGradient>'
     '</defs></svg>';
 
-/// Hand-drawn AIIN mark: a bolt (instant access) on the aiin.by indigo.
-final String _aiin = _svg24(
-  '<path fill-rule="evenodd" d="M13.4 2.2a.6.6 0 0 1 .53.98L8.9 10.3h4.3a.6.6 0 0 1 .47.97l-7.2 9.6a.6.6 0 0 1-1.05-.5l1.3-6.07H3.2a.6.6 0 0 1-.5-.95l5.9-9.1a.6.6 0 0 1 .5-.27h4.3Zm-1.75 1.2H8.4l-4.6 7.1h3.9a.6.6 0 0 1 .58.74L7.36 16.9l4.94-6.6H8.1a.6.6 0 0 1-.5-.93l4.05-5.97Z"/>'
-  '<path d="M17.9 3.3c2.6 1.5 4.3 4.2 4.3 7.4a8.4 8.4 0 0 1-4.3 7.3l-.6-1a7.2 7.2 0 0 0 3.7-6.3 7.2 7.2 0 0 0-3.7-6.3l.6-1.1Z"/>'
-  '<path d="M16.2 6.1c1.6.9 2.6 2.6 2.6 4.6s-1 3.7-2.6 4.6l-.6-1.1a4.1 4.1 0 0 0 2-3.5 4.1 4.1 0 0 0-2-3.5l.6-1.1Z"/>',
-);
+/// The official aiin.by mark — their favicon (https://aiin.by/favicon.svg),
+/// verbatim except the "AI" wordmark: flutter_svg does not render
+/// `text` elements, so the letters are redrawn as ultra-bold paths
+/// at the same metrics.
+final String _aiin = '''
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8B5CF6"/>
+      <stop offset="0.45" stop-color="#6D6AF0"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+    <radialGradient id="aura" cx="0.5" cy="0.46" r="0.55">
+      <stop offset="0" stop-color="#8B5CF6" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#07080D"/>
+  <rect width="512" height="512" rx="112" fill="url(#aura)"/>
+  <circle cx="256" cy="256" r="196" fill="none" stroke="#8B5CF6" stroke-opacity="0.3" stroke-width="2" stroke-dasharray="4 5"/>
+  <circle cx="256" cy="60" r="7" fill="#A78BFA"/>
+  <circle cx="120" cy="436" r="5.5" fill="#67E8F9"/>
+  <rect x="106" y="106" width="300" height="300" rx="68" fill="url(#g)"/>
+  <rect x="106" y="106" width="300" height="150" rx="68" fill="url(#hl)"/>
+  <g fill="#FFFFFF">
+    <path fill-rule="evenodd" d="M163 318 L201 182 L247 182 L285 318 L251 318 L243 288 L205 288 L197 318 Z M224 215 L238 261 L210 261 Z"/>
+    <path d="M310 182 L348 182 L348 318 L310 318 Z"/>
+  </g>
+</svg>
+''';
 
 /// simple-icons Z.AI mark (CC0).
 final String _zai = _svg24(

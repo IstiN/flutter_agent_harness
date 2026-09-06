@@ -2620,4 +2620,58 @@
   `browser_ext/dart` dart test, `node --test browser_ext/test/`. Docs:
   docs/browser-extension.md.
 
+## 0.1.300
+
+- fix(aiin): open the web sign-in popup inside the tap gesture
+- fix(app): drop the duplicate aiin_connect_flow golden-guard exemption
+- fix(app): drop a duplicate golden-guard exemption key; memory: session notes
+- feat(aiin): one-click web sign-in — the OpenRouter-style popup flow
+- test(redact): pin the agent file-reading scenarios end to end
+- docs(AGENTS.md): name-based addressing in the messaging fabric bullet
+- fix(redact): entropy layer stops shredding paths, hashes and lockfile integrity
+- test(app): regenerate goldens after AIIN-hosted form changes
+
+## 0.1.301
+
+- feat(aiin): paste-key fallback — the service now blocks our redirects
+- memory: session notes
+- feat(skills): bundled create-goal skill — goal-writing discipline as /create-goal
+
+## 0.1.302
+
+- feat(aiin): official aiin.by mark, identity-provider picker, model search
+- test(redact): integration e2e for issue #24 AC5-AC8
+- fix(aiin): Safari popup — no awaits before window.open, paint the popup
+- test(redact): integration e2e for issue #24 AC5-AC8
+
+## 0.1.304
+
+- fix(publish): assemble the redaction e2e PEM fixture at runtime — pub.dev's
+  key-leak validator rejected the 0.1.303 upload because the archive carried
+  a literal (fake) private-key block in `test/integration/redaction_e2e_test.dart`;
+  the file now builds the same byte-identical string from chunks.
+- fix(roles): 500-class gateway errors ("Internal network failure, please try
+  again later") now classify as transient transport failures and retry in
+  place with backoff before failing over (previously only 502/503/504 did).
+- feat(messaging): agent_directory rows show an 8-char short id, session
+  names, last-activity ("active 2m ago" vs "asleep") and home-shortened cwd;
+  `agent_message` to an asleep target launches a detached headless run of
+  that session so pending mail is processed immediately (wake: false opts
+  out).
+- test(cli): pin session-start memory maintenance off in boot-race tests
+  (CI flake: consolidate() consumed the scripted turn before /exit).
+
+## 0.1.303
+
+- fix(roles): classify 5xx internal errors as transient transport failures
+- feat(messaging): readable agent_directory + auto-wake for asleep mailboxes
+
+## 0.1.305
+
+- feat(aiin): use the hosted AIIN sign-in page as the connect entry
+
+## 0.1.306
+
+- ci: workflow_dispatch for ci.yml — manual gates when pull_request can't fire
+
 ## Unreleased

@@ -1417,6 +1417,7 @@ Future<void> _runApp(List<String> args) async {
         io.isInteractive,
     version: packageVersion,
     config: AgentCliConfig(
+      wakeExecutable: wakeExecutable(),
       model: model,
       apiKey: apiKey,
       providerKind: provider,
@@ -1745,4 +1746,15 @@ Future<void> _runApp(List<String> args) async {
   // (?1002l ?1006l) arrives too late or is lost. Write them again here with
   await resetTerminalForShell();
   exit(0);
+}
+
+/// The executable used to wake asleep cross-session mailboxes: this
+/// process's own path when it is a compiled snapshot, or null to fall back
+/// to `fa` on PATH (a `dart run` VM cannot be re-spawned with session
+/// args).
+String? wakeExecutable() {
+  final exe = Platform.script.toFilePath();
+  final base = exe.split(Platform.pathSeparator).last.toLowerCase();
+  if (base == 'dart' || base == 'dart.exe') return null;
+  return exe;
 }

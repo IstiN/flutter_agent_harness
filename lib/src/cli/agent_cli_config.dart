@@ -20,6 +20,7 @@ final class AgentCliConfig {
     required this.apiKey,
     required this.env,
     required this.sessionRoot,
+    this.wakeExecutable,
     this.folderModelStateApplies = true,
     this.presenceStore,
     this.sessionName,
@@ -173,7 +174,8 @@ final class AgentCliConfig {
   final Future<AiinConnectResult?> Function({
     required String provider,
     void Function(String)? onStatus,
-  })? aiinConnectFn;
+  })?
+  aiinConnectFn;
 
   /// Optional override for the whole Copilot device flow (grant + poll),
   /// returning the GitHub token. Tests inject a fake so `/provider copilot`
@@ -371,6 +373,13 @@ final class AgentCliConfig {
 
   /// Execution environment backing the built-in tools and session storage.
   final ExecutionEnv env;
+
+  /// Executable used to WAKE an asleep cross-session mailbox: agent_message
+  /// spawns `nohup <wakeExecutable> --session <name> "<prompt>"` detached in
+  /// the target's cwd so a sleeping agent processes its inbox now (a later
+  /// interactive start resumes the same session). Null falls back to `fa`
+  /// on PATH.
+  final String? wakeExecutable;
 
   /// Root directory for JSONL sessions (cwd-encoded layout, like pi).
   final String sessionRoot;

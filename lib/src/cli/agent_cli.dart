@@ -339,6 +339,8 @@ class AgentCli {
         ),
       ),
       selfId: 'main',
+      homeDir: config.homeDir,
+      wakeProcess: _launchMailboxWake,
       sink: (registry) async {
         final session = _session;
         if (session == null) return;
@@ -715,6 +717,32 @@ class AgentCli {
 
   /// Retained-subagent registry (Phase 3a): tracks every spawned child so
   /// `task_status`/`task_observe`/`task_send` work after completion.
+
+  /// [MailboxWakeLauncher] wiring: spawns a detached headless run of the
+  /// target session (`nohup <exe> --session <name> "<prompt>" &`) in the
+  /// target's cwd. The headless turn drains the inbox fabric as user
+  /// messages; the session JSONL is shared, so a later interactive
+  /// `fa --session <name>` resumes that transcript. Returns an error text
+  /// or null on success.
+  Future<String?> _launchMailboxWake({
+    required String cwd,
+    required String sessionId,
+    String? sessionName,
+  }) async {
+    final command = mailboxWakeCommand(
+      wakeExecutable: config.wakeExecutable,
+      sessionId: sessionId,
+      sessionName: sessionName,
+    );
+    final result = await _env.exec(
+      command,
+      options: ShellExecOptions(cwd: cwd),
+    );
+    return result.isOk
+        ? null
+        : 'shell exec failed: ${result.errorOrNull?.message ?? 'unknown error'}';
+  }
+
   late final SubagentManager _subagentManager;
 
   /// The messaging fabric wrapper — re-pointed when session storage falls
@@ -2779,3 +2807,28 @@ class AgentCli {
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;
 }
+
+/// Builds the detached wake command for an asleep mailbox:
+/// `nohup <exe> --session <name> "<prompt>" >/dev/null 2>&1 &`. Single
+/// quotes every shell word; falls back to `fa` on PATH when [wakeExecutable]
+/// is null/empty and to [sessionId] when [sessionName] is.
+String mailboxWakeCommand({
+  String? wakeExecutable,
+  required String sessionId,
+  String? sessionName,
+}) {
+  final exe = (wakeExecutable == null || wakeExecutable.isEmpty)
+      ? 'fa'
+      : wakeExecutable;
+  final address = (sessionName == null || sessionName.isEmpty)
+      ? sessionId
+      : sessionName;
+  String q(String s) => "'${s.replaceAll("'", r"'\''")}'";
+  return 'nohup ${q(exe)} --session ${q(address)} '
+      '${q(wakePromptText)} >/dev/null 2>&1 & echo woken';
+}
+
+/// The prompt the headless wake run starts with — the inbox drain delivers
+/// the pending mail into the turn; the session file is shared.
+const wakePromptText =
+    'You have pending inbox messages; read your inbox and handle them now.';

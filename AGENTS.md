@@ -260,7 +260,13 @@ factual: paths, commands, invariants — no essays.
   the no-fabric fallback); `mailboxPrefix` (the session id, set by the host
   on every session init/switch) namespaces mailboxes so two instances never
   drain each other — ids with `/` are absolute cross-instance addresses
-  (`<sessionId>/main`). `agent_message` targets siblings, `main`, or an
+  (`<sessionId>/main`). Sessions also carry their display NAME
+  (`--session goal_builder`): `register(agentId, {sessionName})` persists
+  it in a `.name` marker + messages-registry.json, `agent_directory`
+  renders `name (id)`, and `agent_message` resolves `goal_builder` /
+  `goal_builder/main` through the directory (exact ids/siblings/`main`
+  pass through untouched; ambiguous names error with candidates).
+  `agent_message` targets siblings, `main`, a session name, or an
   absolute mailbox; `agent_directory` lists LIVE fabric mailboxes (recent
   activity via the heartbeat hosts touch on their inbox-watch timers) plus
   anything with pending mail — stale mailboxes from finished sessions are

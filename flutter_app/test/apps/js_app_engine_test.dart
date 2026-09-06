@@ -1822,6 +1822,87 @@ void main() {
       });
     });
 
+    testWidgets('sibling engines of one app render independently', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', widgetJs);
+        final tile = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        final full = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        try {
+          await tile.start();
+          await full.start();
+          await Future<void>.delayed(settle);
+
+          // An event routed to the FULLSCREEN engine must not leak into the
+          // tile's tree (the native router used to key both on widgetId).
+          await full.callEvent('tap');
+          await Future<void>.delayed(settle);
+          expect(jsonEncode(full.tree.value), contains('tapped'));
+          expect(jsonEncode(tile.tree.value), contains('hello'));
+          expect(jsonEncode(tile.tree.value), isNot(contains('tapped')));
+        } finally {
+          await tile.dispose();
+          await full.dispose();
+        }
+      });
+    });
+
+    testWidgets('a disposed sibling does not take the live engine down', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', widgetJs);
+        await env.writeFile('apps/other/widget.js', widgetJs);
+        final tile = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        final full = JsAppEngine(
+          app: appOf('demo'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        // A third engine with a DIFFERENT app id, started last: its router
+        // closures then dominate the shared native channel maps, so the
+        // tile's messages resolve via the iid route lookup — exactly the
+        // path that drops when the shared widgetId entry is gone.
+        final distractor = JsAppEngine(
+          app: appOf('other'),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        try {
+          await tile.start();
+          await full.start();
+          await distractor.start();
+          await Future<void>.delayed(settle);
+          // Closing the fullscreen engine used to drop the route entry
+          // keyed by the SHARED widgetId — the still-alive board tile then
+          // rendered into the void and its buttons looked dead.
+          await full.dispose();
+          await Future<void>.delayed(settle);
+          await tile.callEvent('tap');
+          await Future<void>.delayed(settle);
+          expect(jsonEncode(tile.tree.value), contains('tapped'));
+        } finally {
+          await tile.dispose();
+          await distractor.dispose();
+        }
+      });
+    });
+
     testWidgets('a write landing during a sibling boot is not lost', (
       tester,
     ) async {

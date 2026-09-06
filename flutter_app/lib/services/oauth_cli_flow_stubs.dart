@@ -47,7 +47,6 @@ Never runChatGptOAuthCliFlow({
 
 /// Always throws on the web — the AIIN connect flow needs a local server.
 Never runAiinConnectCliFlow({
-  required String provider,
   required void Function(String) onStatus,
   Future<bool> Function(String)? openBrowserFn,
   Duration? timeout,

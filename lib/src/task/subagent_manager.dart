@@ -33,6 +33,20 @@ typedef SubagentRegistrySink =
 typedef SubagentRegistrySource = Future<List<Map<String, dynamic>>> Function();
 
 /// Session-scoped subagent manager.
+/// Launches a detached, non-interactive run of a session so a SLEEPING
+/// agent processes its pending inbox mail right away (issue: "if the
+/// target is asleep it will never read the message"). Hosts wire the
+/// launcher (the CLI spawns its own binary with `--session <name>`); the
+/// run appends to the same session JSONL, so a later interactive
+/// `fa --session <name>` resumes that exact transcript. Null disables the
+/// wake path — callers then get a "how to start it" hint instead.
+typedef MailboxWakeLauncher =
+    Future<String?> Function({
+      required String cwd,
+      required String sessionId,
+      String? sessionName,
+    });
+
 final class SubagentManager {
   SubagentManager({
     required this.parentSessionId,
@@ -40,6 +54,8 @@ final class SubagentManager {
     this.sink,
     this.source,
     this.messaging,
+    this.wakeProcess,
+    this.homeDir,
     this.selfId = 'main',
     this.maxPendingMessages = 16,
     this.maxReplyChars = 8000,
@@ -47,6 +63,14 @@ final class SubagentManager {
 
   /// The parent session id (used to derive child session paths).
   final String parentSessionId;
+
+  /// Detached headless launcher for waking asleep mailboxes (see
+  /// [MailboxWakeLauncher]). Null when the host cannot spawn processes.
+  final MailboxWakeLauncher? wakeProcess;
+
+  /// The user's home directory, used to shorten cwd tags in directory
+  /// views (`/home/u/git/x` → `~/git/x`). Null leaves cwd tags as-is.
+  final String? homeDir;
 
   /// Injected: creates a new child session, returns its id.
   final ChildSessionFactory? createChildSession;

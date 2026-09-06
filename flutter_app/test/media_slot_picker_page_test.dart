@@ -82,6 +82,13 @@ void main() {
       expect(find.text('OpenRouter'), findsOneWidget);
       expect(find.text('Ollama'), findsOneWidget);
       expect(find.text('Acme'), findsOneWidget);
+      // The AIIN row added one more entry — the trailing add row can sit
+      // below the fold, so scroll it into view before asserting.
+      await tester.scrollUntilVisible(
+        find.text('Add provider'),
+        120,
+        scrollable: find.byType(Scrollable).last,
+      );
       expect(find.text('Add provider'), findsOneWidget);
       expect(find.text('acme.example'), findsOneWidget);
       // Exactly one row is checked — the override's provider.

@@ -256,7 +256,10 @@ class AgentService extends ChangeNotifier
   /// user data). Best-effort: a missing asset or unwritable env must not
   /// block session creation.
   static Future<void> _seedBundledSkills(ExecutionEnv env) async {
-    const bundled = {'js-apps': 'assets/skills/js-apps/SKILL.md'};
+    const bundled = {
+      'js-apps': 'assets/skills/js-apps/SKILL.md',
+      'create-goal': 'assets/skills/create-goal/SKILL.md',
+    };
     for (final entry in bundled.entries) {
       try {
         final target = '.fah/skills/${entry.key}/SKILL.md';

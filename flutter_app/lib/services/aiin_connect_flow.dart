@@ -1,10 +1,13 @@
 // l10n:ignore-file — connect flow screens — en-only by design
+import 'package:http/http.dart' as http;
+
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
     if (dart.library.html) 'package:fa/services/oauth_cli_flow_stubs.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/aiin_web_auth.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
@@ -39,39 +42,107 @@ Future<bool> runAiinConnectFlow({
   SessionKeysStore? sessionKeysStore,
   KeychainStore? keychainStore,
   Future<AiinConnectResult?> Function()? aiinConnectFn,
+
+  /// Injectable HTTP (tests): used for the AIIN service calls.
+  http.Client? aiinHttpClient,
+
+  /// Injectable popup plumbing (tests): the web flow's popup opener and
+  /// navigator (defaults come from the conditional dart:html impl).
+  bool Function()? aiinOpenPopupFn,
+  void Function(String url)? aiinNavigatePopupFn,
+
+  /// Injectable `/v1/models` fetcher (tests) — defaults to the live fetch.
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+
+  /// Injectable web-callback timeout (tests) — defaults to the
+  /// coordinator's 5 minutes.
+  Duration? aiinWebTimeout,
 }) async {
   if (kIsWeb) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'AIIN sign-in needs the desktop app (a localhost callback '
-            'server). Add api.aiin.by/v1 as a custom provider with a key '
-            'in the web build.',
-          ),
-        ),
-      );
+    // One-click web connect: a popup OAuth, no loopback server needed
+    // (the hosted callback page posts the code back; both AIIN hosts send
+    // `access-control-allow-origin: *`). Progress lands in SnackBars —
+    // the popup opens before any await, inside the tap gesture.
+    void webStatus(String message) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      debugPrint('[AIIN web] $message');
     }
-    return false;
+
+    if (!context.mounted) return false;
+    // The HOSTED AIIN sign-in page runs the whole round-trip (all
+    // providers, silent for an existing session) — the popup goes straight
+    // to it. A timeout/cancel falls back to the paste-key path.
+    final coordinator = AiinWebAuthCoordinator.instance;
+    final result = await coordinator.connect(
+      onStatus: webStatus,
+      client: aiinHttpClient,
+      openFn: aiinOpenPopupFn,
+      navigateFn: aiinNavigatePopupFn,
+      timeout: aiinWebTimeout,
+    );
+    if (result == null) {
+      final failure = coordinator.lastFailure ?? '';
+      if ((failure == 'timeout' || failure == 'cancelled') &&
+          context.mounted) {
+        final pasted = await _pasteAiinKeyFallback(context);
+        if (pasted == null) return false;
+        if (!context.mounted) return false;
+        return _finishAiinConnect(
+          context,
+          registry: registry,
+          service: service,
+          lastConnectionStore: lastConnectionStore,
+          sessionKeysStore: sessionKeysStore,
+          keychainStore: keychainStore,
+          apiKey: pasted,
+          aiinModelsFetcher: aiinModelsFetcher,
+        );
+      }
+      return false;
+    }
+    if (!context.mounted) return false;
+    return _finishAiinConnect(
+      context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore,
+      keychainStore: keychainStore,
+      apiKey: result.apiKey.raw,
+      accountLabel: result.email,
+      aiinModelsFetcher: aiinModelsFetcher,
+    );
   }
   final desktop = !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.macOS ||
           defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.linux);
+  final fallbackKeys = SessionKeysScope.maybeOf(context);
   if (!desktop) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'AIIN sign-in is not yet available on this platform. '
-            'Add api.aiin.by/v1 as a custom provider with a key instead.',
-          ),
-        ),
-      );
-    }
-    return false;
+    // Loopback callbacks are impossible here and the AIIN proxy currently
+    // blocks cross-device redirects — paste the cabinet key instead.
+    if (!context.mounted) return false;
+    final pasted = await _pasteAiinKeyFallback(context);
+    if (pasted == null) return false;
+    if (!context.mounted) return false;
+    return _finishAiinConnect(
+      context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore,
+      keychainStore: keychainStore,
+      apiKey: pasted,
+      aiinModelsFetcher: aiinModelsFetcher,
+    );
   }
 
+  if (!context.mounted) return false;
+
+  if (!context.mounted) return false;
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(
       content: Text('Opening browser for AIIN sign-in…'),
@@ -79,26 +150,71 @@ Future<bool> runAiinConnectFlow({
     ),
   );
 
-  final fallbackKeys = SessionKeysScope.maybeOf(context);
   final result = aiinConnectFn != null
       ? await aiinConnectFn()
       : await runAiinConnectCliFlow(
-          provider: await _preferredAiinProvider(),
           onStatus: (message) => debugPrint('[AIIN] $message'),
           openBrowserFn: (url) => url_launcher.launchUrl(
             Uri.parse(url),
             mode: url_launcher.LaunchMode.externalApplication,
           ),
         );
+  if (result == null && context.mounted) {
+    // Automatic sign-in failed (cancelled, timeout, service error) — the
+    // cabinet + paste-key path still completes the connect.
+    final pasted = await _pasteAiinKeyFallback(context);
+    if (pasted == null) return false;
+    if (!context.mounted) return false;
+    return _finishAiinConnect(
+      context,
+      registry: registry,
+      service: service,
+      lastConnectionStore: lastConnectionStore,
+      sessionKeysStore: sessionKeysStore ?? fallbackKeys,
+      keychainStore: keychainStore,
+      apiKey: pasted,
+      aiinModelsFetcher: aiinModelsFetcher,
+    );
+  }
   if (result == null) return false;
   if (!context.mounted) return false;
+  return _finishAiinConnect(
+    context,
+    registry: registry,
+    service: service,
+    lastConnectionStore: lastConnectionStore,
+    sessionKeysStore: sessionKeysStore ?? fallbackKeys,
+    keychainStore: keychainStore,
+    apiKey: result.apiKey.raw,
+    accountLabel: result.email,
+    aiinModelsFetcher: aiinModelsFetcher,
+  );
+}
 
+/// The shared post-connect continuation: model pick from the public
+/// `/v1/models`, a named registry entry (the account email), entry-scoped
+/// key persistence, and the service reconnect. Returns whether the flow
+/// completed and the service was reconfigured.
+Future<bool> _finishAiinConnect(
+  BuildContext context, {
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required SessionKeysStore? sessionKeysStore,
+  required KeychainStore? keychainStore,
+  required String apiKey,
+  String? accountLabel,
+  Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  aiinModelsFetcher,
+}) async {
   // ── Pick a model (public /v1/models on api.aiin.by) ─────────────────
   const baseUrl = aiinDefaultChatBaseUrl;
-  final key = result.apiKey.raw;
+  final key = apiKey;
   List<String> models = const [];
   try {
-    models = (await fetchModelsForEndpoint(baseUrl, apiKey: key)).$1;
+    models = aiinModelsFetcher != null
+        ? await aiinModelsFetcher(baseUrl, apiKey: key)
+        : (await fetchModelsForEndpoint(baseUrl, apiKey: key)).$1;
   } on Object {
     // Network error — the picker opens empty and takes a manual id.
   }
@@ -113,7 +229,7 @@ Future<bool> runAiinConnectFlow({
   // ── Save provider + key ─────────────────────────────────────────────
   // The entry name IS the signed-in account's email (fall back to 'AIIN');
   // de-duplicated so a second AIIN account gets its own entry.
-  final identity = result.email ?? 'AIIN';
+  final identity = accountLabel ?? 'AIIN';
   var name = identity;
   var suffix = 2;
   while (registry.providers.any(
@@ -139,7 +255,7 @@ Future<bool> runAiinConnectFlow({
     persisted = await keychain.set(keyName, key);
   }
   if (!persisted) {
-    await (sessionKeysStore ?? fallbackKeys)?.set(keyName, key);
+    await sessionKeysStore?.set(keyName, key);
   }
 
   // ── Connect ─────────────────────────────────────────────────────────
@@ -159,36 +275,161 @@ Future<bool> runAiinConnectFlow({
 /// spec's default base URL).
 const aiinDefaultChatBaseUrl = 'https://api.aiin.by/v1';
 
-/// The identity provider to sign in with: google when the AIIN service
-/// offers it (its default), else the first offered provider.
-Future<String> _preferredAiinProvider() async {
-  try {
-    final providers = await fetchAiinOAuthProviders();
-    if (providers.contains('google')) return 'google';
-    if (providers.isNotEmpty) return providers.first;
-  } on Object {
-    // Offline / standalone — google is the documented default.
-  }
-  return aiinDefaultOAuthProvider;
+/// Whether [key] looks like an AIIN API key (`sk-aiin-…`).
+bool isValidAiinApiKey(String key) {
+  final trimmed = key.trim();
+  return trimmed.startsWith('sk-aiin-') && trimmed.length > 15;
 }
 
-/// The AIIN model picker: the fetched id list with a manual-entry row.
-class _AiinModelPickerPage extends StatelessWidget {
+/// The AIIN cabinet entry point (the user creates/pastes keys there while
+/// the automatic OAuth redirect is not allowlisted).
+const aiinCabinetUrl = 'https://aiin.by/app';
+
+/// The fallback when the automatic sign-in cannot complete: open the AIIN
+/// cabinet, let the user create a key, and paste it here. Returns the key
+/// or null on cancel.
+Future<String?> _pasteAiinKeyFallback(BuildContext context) {
+  return showDialog<String>(
+    context: context,
+    builder: (_) => const _AiinKeyPasteDialog(),
+  );
+}
+
+class _AiinKeyPasteDialog extends StatefulWidget {
+  const _AiinKeyPasteDialog();
+
+  @override
+  State<_AiinKeyPasteDialog> createState() => _AiinKeyPasteDialogState();
+}
+
+class _AiinKeyPasteDialogState extends State<_AiinKeyPasteDialog> {
+  final _controller = TextEditingController();
+  bool _valid = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('AIIN API key'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'AIIN currently blocks automatic sign-in redirects. '
+            'Create an API key in the AIIN cabinet and paste it here.',
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => url_launcher.launchUrl(
+                Uri.parse(aiinCabinetUrl),
+                mode: url_launcher.LaunchMode.externalApplication,
+              ),
+              icon: const Icon(Icons.open_in_new, size: 16),
+              label: const Text('Open the AIIN cabinet'),
+            ),
+          ),
+          TextField(
+            controller: _controller,
+            obscureText: true,
+            autofocus: true,
+            decoration: const InputDecoration(
+              hintText: 'sk-aiin-…',
+              labelText: 'API key',
+            ),
+            onChanged: (value) => setState(
+              () => _valid = isValidAiinApiKey(value),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _valid
+              ? () => Navigator.of(context).pop(_controller.text.trim())
+              : null,
+          child: const Text('Connect'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The fallback when the automatic sign-in cannot complete: open the AIIN
+
+/// The app-side default chat endpoint of the AIIN provider (the catalog
+/// spec's default base URL).
+class _AiinModelPickerPage extends StatefulWidget {
   const _AiinModelPickerPage({required this.models});
 
   final List<String> models;
 
   @override
+  State<_AiinModelPickerPage> createState() => _AiinModelPickerPageState();
+}
+
+class _AiinModelPickerPageState extends State<_AiinModelPickerPage> {
+  String _query = '';
+
+  @override
   Widget build(BuildContext context) {
+    final models = widget.models;
     return Scaffold(
       appBar: AppBar(title: const Text('AIIN model')),
       body: SafeArea(
         child: models.isEmpty
             ? const _AiinManualModelEntry()
-            : _AiinModelList(models: models),
+            : Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: TextField(
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        hintText: 'Filter models…',
+                      ),
+                      onChanged: (value) =>
+                          setState(() => _query = value.trim().toLowerCase()),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _query.isEmpty
+                            ? '${models.length} models'
+                            : '${_filtered(models).length} of ${models.length}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: _AiinModelList(models: _filtered(models)),
+                  ),
+                ],
+              ),
       ),
     );
   }
+
+  List<String> _filtered(List<String> models) => _query.isEmpty
+      ? models
+      : models
+            .where((id) => id.toLowerCase().contains(_query))
+            .toList(growable: false);
 }
 
 class _AiinModelList extends StatelessWidget {

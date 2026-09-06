@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show HttpStatus;
 
@@ -11,40 +10,25 @@ import 'package:test/test.dart';
 /// [AiinCallbackServer] binds an ephemeral port, the fake browser issues
 /// the redirect over real HTTP, and a mock [http.Client] serves the AIIN
 /// auth/api endpoints.
+///
+/// The flow opens the HOSTED AIIN sign-in page
+/// (`/login?client_redirect_uri=...&state=...`) — the page runs the whole
+/// OAuth round-trip on AIIN's side and redirects back to our loopback
+/// with `code` + our state. The fake browser echoes both back.
 void main() {
   final jwt = aiinTestJwt(email: 'user@aiin.by');
 
-  /// Builds the mock AIIN backend; records the registered redirect URI.
-  (http.Client, Future<String> Function()) mockAiinBackend({
-    int initiateStatus = 200,
-    int exchangeStatus = 200,
-  }) {
-    var redirectUri = '';
-    final redirectCaptured = Completer<String>();
+  /// Builds the mock AIIN backend serving the exchange + key endpoints.
+  http.Client mockAiinBackend({int exchangeStatus = 200}) {
     final client = http_testing.MockClient((request) async {
       final host = request.url.host;
       final path = request.url.path;
-      if (host == 'auth.aiin.by' && path == '/api/oauth-proxy/initiate') {
-        redirectUri =
-            (jsonDecode(request.body)
-                as Map<String, dynamic>)['client_redirect_uri'] as String;
-        redirectCaptured.complete(redirectUri);
-        if (initiateStatus != 200) return http.Response('boom', initiateStatus);
-        return http.Response(
-          jsonEncode({
-            'auth_url': 'https://auth.aiin.by/oauth2/authorization/google',
-            'state': 'st-1',
-            'expires_in': 900,
-          }),
-          200,
-        );
-      }
       if (host == 'auth.aiin.by' && path == '/api/oauth-proxy/exchange') {
         if (exchangeStatus != 200) return http.Response('boom', exchangeStatus);
         return http.Response(
           jsonEncode({
             'access_token': jwt,
-            'refresh_token': '[REDACTED:Sensitive Value]',
+            'refresh_token': 'refresh-${jwt.length}',
             'token_type': 'Bearer',
             'expires_in': 3600,
             'refresh_expires_in': 2592000,
@@ -66,45 +50,42 @@ void main() {
       }
       return http.Response('not found', 404);
     });
-    return (client, () => redirectCaptured.future);
+    return client;
   }
 
-  /// The fake browser: opens nothing, but fires the OAuth redirect at the
-  /// real loopback server.
-  Future<bool> Function(String) fakeBrowser(
-    Future<String> Function() redirectUri, {
+  /// The fake browser: opens nothing. Parses the state + redirect URI out
+  /// of the hosted login page URL and fires the OAuth redirect at the
+  /// real loopback server. [stateOverride] forges the state (mismatch
+  /// tests); null error means a success redirect.
+  Future<bool> Function(String) fakeBrowser({
+    String? stateOverride,
     String? code,
     String? state,
     String? error,
     String? errorDescription,
-    String? pathOverride,
   }) {
     return (url) async {
-      final callback = await redirectUri();
-      final target = pathOverride != null
-          ? 'http://127.0.0.1:${Uri.parse(callback).port}$pathOverride'
-          : Uri.parse(callback).replace(queryParameters: {
-              'code': ?code,
-              'state': ?state,
-              'error': ?error,
-              'error_description': ?errorDescription,
-            }).toString();
+      final login = Uri.parse(url);
+      final redirect =
+          login.queryParameters['client_redirect_uri'] ?? '';
+      final expectedState = stateOverride ?? login.queryParameters['state'];
+      final target = Uri.parse(redirect).replace(queryParameters: {
+        'code': ?code,
+        'state': expectedState,
+        'error': ?error,
+        'error_description': ?errorDescription,
+      }).toString();
       final response = await http.get(Uri.parse(target));
       return response.statusCode == HttpStatus.ok;
     };
   }
 
   test('happy path: browser redirect -> exchange -> registered key', () async {
-    final (client, redirectUri) = mockAiinBackend();
+    final client = mockAiinBackend();
     final statuses = <String>[];
     final result = await runAiinConnectCliFlow(
-      provider: 'google',
       onStatus: statuses.add,
-      openBrowserFn: fakeBrowser(
-        redirectUri,
-        code: 'c-1',
-        state: 'st-1',
-      ),
+      openBrowserFn: fakeBrowser(code: 'c-1'),
       client: client,
     );
     expect(result, isNotNull);
@@ -112,18 +93,41 @@ void main() {
     expect(result.apiKey.prefix, 'sk-aiin-abc12345');
     expect(result.email, 'user@aiin.by');
     expect(result.tokens.refreshToken, isNotEmpty);
-    expect(statuses, contains('browser opened; sign in with your google '
-        'account'));
+    expect(statuses, contains('browser opened; sign in on the AIIN page'));
     expect(statussJoined(statuses), isNot(contains('sk-aiin-')));
+  });
+
+  test('the browser receives the hosted /login URL with our redirect and '
+      'state embedded', () async {
+    final client = mockAiinBackend();
+    var loginUrl = '';
+    await runAiinConnectCliFlow(
+      onStatus: (_) {},
+      openBrowserFn: (url) async {
+        loginUrl = url;
+        return fakeBrowser(code: 'c-1')(url);
+      },
+      client: client,
+    );
+    final uri = Uri.parse(loginUrl);
+    expect(uri.host, 'auth.aiin.by');
+    expect(uri.path, '/login');
+    expect(uri.queryParameters['client_type'], 'desktop');
+    expect(uri.queryParameters['environment'], 'prod');
+    expect(
+      uri.queryParameters['client_redirect_uri']!,
+      startsWith('http://127.0.0.1:'),
+    );
+    // A fresh one-time CSRF state rides along.
+    expect(uri.queryParameters['state']!.length, greaterThanOrEqualTo(32));
   });
 
   test('no browser: the URL is printed and the flow still completes',
       () async {
-    final (client, redirectUri) = mockAiinBackend();
+    final client = mockAiinBackend();
     final statuses = <String>[];
-    final browser = fakeBrowser(redirectUri, code: 'c-1', state: 'st-1');
+    final browser = fakeBrowser(code: 'c-1');
     final result = await runAiinConnectCliFlow(
-      provider: 'google',
       onStatus: statuses.add,
       openBrowserFn: (url) async {
         // No browser available — the user opens the printed URL by hand,
@@ -139,16 +143,11 @@ void main() {
   });
 
   test('state mismatch rejects the callback', () async {
-    final (client, redirectUri) = mockAiinBackend();
+    final client = mockAiinBackend();
     final statuses = <String>[];
     final result = await runAiinConnectCliFlow(
-      provider: 'google',
       onStatus: statuses.add,
-      openBrowserFn: fakeBrowser(
-        redirectUri,
-        code: 'c-1',
-        state: 'forged',
-      ),
+      openBrowserFn: fakeBrowser(code: 'c-1', stateOverride: 'forged'),
       client: client,
     );
     expect(result, isNull);
@@ -156,13 +155,11 @@ void main() {
   });
 
   test('provider error callback surfaces the description', () async {
-    final (client, redirectUri) = mockAiinBackend();
+    final client = mockAiinBackend();
     final statuses = <String>[];
     final result = await runAiinConnectCliFlow(
-      provider: 'google',
       onStatus: statuses.add,
       openBrowserFn: fakeBrowser(
-        redirectUri,
         error: 'access_denied',
         errorDescription: 'user said no',
       ),
@@ -173,29 +170,15 @@ void main() {
   });
 
   test('exchange failure reports the setup error', () async {
-    final (client, redirectUri) = mockAiinBackend(exchangeStatus: 500);
+    final client = mockAiinBackend(exchangeStatus: 500);
     final statuses = <String>[];
     final result = await runAiinConnectCliFlow(
-      provider: 'google',
       onStatus: statuses.add,
-      openBrowserFn: fakeBrowser(redirectUri, code: 'c-1', state: 'st-1'),
+      openBrowserFn: fakeBrowser(code: 'c-1'),
       client: client,
     );
     expect(result, isNull);
     expect(statussJoined(statuses), contains('AIIN setup failed'));
-  });
-
-  test('initiate failure reports the sign-in error', () async {
-    final (client, redirectUri) = mockAiinBackend(initiateStatus: 500);
-    final statuses = <String>[];
-    final result = await runAiinConnectCliFlow(
-      provider: 'google',
-      onStatus: statuses.add,
-      openBrowserFn: fakeBrowser(redirectUri, code: 'c-1', state: 'st-1'),
-      client: client,
-    );
-    expect(result, isNull);
-    expect(statussJoined(statuses), contains('AIIN sign-in failed'));
   });
 
   test('the callback server answers non-callback paths with 404', () async {
@@ -207,9 +190,11 @@ void main() {
     );
     expect(miss.statusCode, HttpStatus.notFound);
     // The server stays alive for the real callback afterwards.
-    final browser = fakeBrowser(() async => redirectUri,
-        code: 'c-1', state: 'st-1');
-    expect(await browser('unused'), isTrue);
+    final target = Uri.parse(redirectUri).replace(
+      queryParameters: {'code': 'c-1', 'state': 'st-1'},
+    );
+    final response = await http.get(target);
+    expect(response.statusCode, HttpStatus.ok);
     final callback = await server.waitForCallback();
     expect(callback, isNotNull);
     expect(callback!.succeeded, isTrue);
