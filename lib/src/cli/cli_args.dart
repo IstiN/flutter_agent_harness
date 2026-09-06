@@ -88,6 +88,7 @@ final class CliArgs extends CliArgsResult {
     this.tools,
     this.redact,
     this.trajectory,
+    this.ext,
     this.positionals = const [],
   }) : super._();
 
@@ -180,6 +181,10 @@ final class CliArgs extends CliArgsResult {
   /// the trajectory reader instead of a prompt run.
   final TrajectoryCliCommand? trajectory;
 
+  /// The `fa ext <verb>` subcommand, when the invocation routed to the JS
+  /// extension manager instead of a prompt run.
+  final ExtCliCommand? ext;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless => prompt != null || positionals.isNotEmpty;
@@ -195,6 +200,11 @@ CliArgsResult parseCliArgs(List<String> args) {
   // intercepted before prompt parsing (the verb words are not prompts).
   if (args.isNotEmpty && args.first == 'trajectory') {
     return _parseTrajectoryArgs(args.sublist(1));
+  }
+  // `fa ext <verb> [args]` — the JS extension subcommand, intercepted the
+  // same way (verb words are not prompts).
+  if (args.isNotEmpty && args.first == 'ext') {
+    return _parseExtArgs(args.sublist(1));
   }
   final values = _CliArgValues();
   for (var i = 0; i < args.length; i++) {
@@ -376,6 +386,223 @@ void _validateTrajectoryVerb(String verb, List<String> positionals, int? at) {
   }
   if (at != null && verb != 'view') {
     throw const CliArgsException('--at only applies to fa trajectory view');
+  }
+}
+
+/// The `fa ext` subcommand: headless management of JS extensions.
+///
+/// [sources] carry the `install` operands (`./path`, `/abs`, `path.zip`,
+/// `gh:owner/repo`, `https://github.com/owner/repo`, `catalog:<id>`, or a
+/// bare catalog id); [name] is the operand of `remove`/`update`/`audit`/
+/// `enable`/`disable`.
+final class ExtCliCommand {
+  /// Creates an [ExtCliCommand].
+  const ExtCliCommand({
+    required this.verb,
+    this.json = false,
+    this.sources = const [],
+    this.pin,
+    this.trust = false,
+    this.bundled = false,
+    this.bundledName,
+    this.strict = false,
+    this.name,
+  });
+
+  /// One of [extVerbs].
+  final String verb;
+
+  /// `--json`: machine-readable rows (one JSON object per line).
+  final bool json;
+
+  /// `install` source operands.
+  final List<String> sources;
+
+  /// `--pin <sha256>`: only install content hashing to this value.
+  final String? pin;
+
+  /// `--trust`: grant first-install trust without a prompt.
+  final bool trust;
+
+  /// `--bundled` was passed (with or without a name).
+  final bool bundled;
+
+  /// `--bundled <name>`: install one bundled extension; bare `--bundled`
+  /// means all of them.
+  final String? bundledName;
+
+  /// `--strict`: a denied trust decision exits 1 instead of 0.
+  final bool strict;
+
+  /// The verb's name operand (`remove`/`update`/`audit`/`enable`/`disable`).
+  final String? name;
+}
+
+/// The verbs accepted by `fa ext`.
+const extVerbs = {
+  'list',
+  'install',
+  'remove',
+  'update',
+  'audit',
+  'enable',
+  'disable',
+};
+
+const _extUsage =
+    'usage: fa ext <list|install|remove|update|audit|enable|disable> '
+    '[--json]\n'
+    '       fa ext install <source...> | --bundled [name] '
+    '[--pin <sha256>] [--trust] [--strict]';
+
+/// Parses the `ext` subcommand operands (everything after the `ext` word).
+/// Unknown verbs and flags are usage errors so a typo never becomes a
+/// prompt sent to a model.
+CliArgsResult _parseExtArgs(List<String> args) {
+  if (args.contains('--help') || args.contains('-h')) {
+    return const CliArgsHelp();
+  }
+  if (args.isEmpty) {
+    throw const CliArgsException(_extUsage);
+  }
+  final verb = args.first;
+  if (!extVerbs.contains(verb)) {
+    throw CliArgsException(
+      'unknown ext verb: $verb '
+      '(expected one of ${extVerbs.join('|')})\n$_extUsage',
+    );
+  }
+  final operands = _parseExtOperands(verb, args);
+  _validateExtVerb(verb, operands);
+  return CliArgs(
+    ext: ExtCliCommand(
+      verb: verb,
+      json: operands.json,
+      sources: operands.positionals,
+      pin: operands.pin,
+      trust: operands.trust,
+      bundled: operands.bundled,
+      bundledName: operands.bundledName,
+      strict: operands.strict,
+      name: verb == 'install' || operands.positionals.isEmpty
+          ? null
+          : operands.positionals.single,
+    ),
+  );
+}
+
+/// The operands collected while walking an ext subcommand's arguments.
+typedef _ExtOperands = ({
+  List<String> positionals,
+  bool json,
+  String? pin,
+  bool trust,
+  bool bundled,
+  String? bundledName,
+  bool strict,
+});
+
+/// Walks the arguments after the verb, collecting positionals and the
+/// ext flags. `--bundled` takes an OPTIONAL value: a following word that
+/// is not flag-like names the bundled extension.
+_ExtOperands _parseExtOperands(String verb, List<String> args) {
+  final operands = _ExtOperandSink();
+  for (var i = 1; i < args.length; i++) {
+    final arg = args[i];
+    if (_isExtFlag(arg)) {
+      i = operands.applyFlag(verb, arg, args, i);
+    } else if (arg.startsWith('-')) {
+      throw CliArgsException('unknown argument: $arg');
+    } else {
+      operands.positionals.add(arg);
+    }
+  }
+  return operands.freeze();
+}
+
+bool _isExtFlag(String arg) =>
+    const ['--json', '--pin', '--trust', '--bundled', '--strict'].contains(arg);
+
+/// Mutable accumulator for [ _parseExtOperands]; `applyFlag` consumes one
+/// flag (plus its optional value) and returns the index to resume from.
+final class _ExtOperandSink {
+  final positionals = <String>[];
+  var json = false;
+  String? pin;
+  var trust = false;
+  var bundled = false;
+  String? bundledName;
+  var strict = false;
+
+  int applyFlag(String verb, String arg, List<String> args, int i) {
+    if (arg == '--json') {
+      json = true;
+      return i;
+    }
+    return _applyInstallFlag(verb, arg, args, i);
+  }
+
+  /// The install-only flags; on any other verb they are rejected.
+  int _applyInstallFlag(String verb, String arg, List<String> args, int i) {
+    if (verb != 'install') {
+      throw CliArgsException('$arg only applies to fa ext install');
+    }
+    switch (arg) {
+      case '--pin':
+        if (i + 1 >= args.length) {
+          throw const CliArgsException('--pin requires a sha256 value');
+        }
+        pin = args[++i];
+      case '--trust':
+        trust = true;
+      case '--bundled':
+        bundled = true;
+        if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
+          bundledName = args[++i];
+        }
+      case '--strict':
+        strict = true;
+      default:
+        break;
+    }
+    return i;
+  }
+
+  _ExtOperands freeze() => (
+    positionals: positionals,
+    json: json,
+    pin: pin,
+    trust: trust,
+    bundled: bundled,
+    bundledName: bundledName,
+    strict: strict,
+  );
+}
+
+/// Rejects verb/operand mismatches: `install` needs a source or `--bundled`,
+/// `remove`/`enable`/`disable` need exactly one name, and `list` takes no
+/// operands.
+void _validateExtVerb(String verb, _ExtOperands operands) {
+  final names = operands.positionals;
+  switch (verb) {
+    case 'install':
+      if (names.isEmpty && !operands.bundled) {
+        throw const CliArgsException(
+          'usage: fa ext install <source...> | --bundled [name]',
+        );
+      }
+    case 'remove' || 'enable' || 'disable':
+      if (names.length != 1) {
+        throw CliArgsException('usage: fa ext $verb <name>');
+      }
+    case 'update' || 'audit':
+      if (names.length > 1) {
+        throw CliArgsException('usage: fa ext $verb [name]');
+      }
+    case 'list':
+      if (names.isNotEmpty) {
+        throw const CliArgsException('usage: fa ext list [--json]');
+      }
   }
 }
 

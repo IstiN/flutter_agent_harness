@@ -60,6 +60,7 @@ final class AgentCliMcpWiring {
     required String skillsSection,
     String memorySection = '',
     String messagingSection = '',
+    String extSection = '',
   }) {
     final mcpSection = promptSection();
     return [
@@ -69,6 +70,7 @@ final class AgentCliMcpWiring {
       if (memorySection.isNotEmpty) memorySection,
       if (messagingSection.isNotEmpty) messagingSection,
       if (mcpSection.isNotEmpty) mcpSection,
+      if (extSection.isNotEmpty) extSection,
     ].join('\n\n');
   }
 }

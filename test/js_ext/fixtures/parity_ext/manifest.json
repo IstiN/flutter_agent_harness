@@ -1,0 +1,22 @@
+{
+  "name": "parity-fixture",
+  "kind": "cli-extension",
+  "version": "1.0.0",
+  "platforms": null,
+  "capabilities": {
+    "tools": true,
+    "fs": { "read": true },
+    "exec": { "allowedCommands": ["echo"] },
+    "hooks": [
+      "onSessionStart",
+      "onSessionEnd",
+      "beforeToolCall",
+      "afterToolCall",
+      "prepareNextTurn",
+      "onSteering"
+    ],
+    "menus": true,
+    "keys": false,
+    "network": false
+  }
+}
