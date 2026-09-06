@@ -2692,4 +2692,15 @@
 
 - fix(widgets): unique router instanceId per engine — frozen tiles and dead buttons
 
+## 0.1.310
+
+- refactor(cli): move trajectory view additions out of agent_cli (file size guard)
+- fix(windows): restore generated plugin files stripped in #31 (review)
+- fix(trajectory): close audit findings — focus consumption, keyboard copy, a11y, safe-area, CRAP (#25)
+- test(trajectory): regenerate toolbar+layout goldens, refresh AGENTS.md (#25)
+- feat(trajectory): integration — export menu, request persistence, guard closed (#25)
+- feat(trajectory): real-content feed rows, guaranteed details, Gantt timeline (#25 L3-L6)
+- feat(trajectory): full-screen adaptive shell + header (#25 L1-L2)
+- feat(trajectory): data completeness for the ledger view (#25 L7)
+
 ## Unreleased
