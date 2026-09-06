@@ -141,14 +141,9 @@ Future<int> _extInstall(
   Duration? networkTimeout,
 ) async {
   // AC8b: a headless install that grants trust must say so explicitly.
-  if (!io.isInteractive &&
-      cmd.sources.isNotEmpty &&
-      (!cmd.trust || cmd.pin == null)) {
-    io.writeln(
-      'ext install: refusing to grant trust non-interactively; '
-      'pass --trust --pin <sha256> (hash from a trusted channel), or run '
-      'interactively to review the trust prompt',
-    );
+  final refusal = _installTrustRefusal(cmd, io);
+  if (refusal != null) {
+    io.writeln(refusal);
     return 1;
   }
   final prompt = io.isInteractive
@@ -156,34 +151,66 @@ Future<int> _extInstall(
       : null;
   var exitCode = 0;
   for (final item in _installItems(cmd, env, client, networkTimeout)) {
-    try {
-      final plan = await item.plan();
-      // Bundled extensions ship inside this binary — the explicit
-      // `fa ext install --bundled` invocation IS the trust decision.
-      final outcome = await applyInstall(
-        plan,
-        store,
-        prompt: prompt,
-        pinSha256: cmd.pin,
-        trustFlag: cmd.trust || item.bundled,
-      );
-      if (outcome.installed) {
-        io.write('installed ${plan.name}\n');
-      } else if (outcome.reason == 'up-to-date') {
-        io.write('up-to-date ${plan.name}\n');
-      } else {
-        io.writeln('not installed ${plan.name}: ${outcome.reason}');
-        // A headless denial (e.g. a capability change on re-install) is a
-        // loud failure; an interactive "no" is a normal outcome unless
-        // --strict asks for strictness.
-        if (!io.isInteractive || cmd.strict) exitCode = 1;
-      }
-    } on Object catch (error) {
-      io.writeln('install ${item.label} failed: $error');
+    if (await _runInstallItem(item, cmd, io, store, prompt) != 0) {
       exitCode = 1;
     }
   }
   return exitCode;
+}
+
+String? _installTrustRefusal(ExtCliCommand cmd, CliIO io) {
+  if (io.isInteractive || cmd.sources.isEmpty) return null;
+  if (cmd.trust && cmd.pin != null) return null;
+  return 'ext install: refusing to grant trust non-interactively; '
+      'pass --trust --pin <sha256> (hash from a trusted channel), or run '
+      'interactively to review the trust prompt';
+}
+
+/// Plans, applies, and reports one queued install; non-zero on failure.
+Future<int> _runInstallItem(
+  _ExtInstallItem item,
+  ExtCliCommand cmd,
+  CliIO io,
+  ExtensionStore store,
+  ExtTrustPrompt? prompt,
+) async {
+  try {
+    final plan = await item.plan();
+    // Bundled extensions ship inside this binary — the explicit
+    // `fa ext install --bundled` invocation IS the trust decision.
+    final outcome = await applyInstall(
+      plan,
+      store,
+      prompt: prompt,
+      pinSha256: cmd.pin,
+      trustFlag: cmd.trust || item.bundled,
+    );
+    return _reportInstall(outcome, plan.name, io, cmd);
+  } on Object catch (error) {
+    io.writeln('install ${item.label} failed: $error');
+    return 1;
+  }
+}
+
+/// The exit code one install outcome deserves: a headless denial (e.g. a
+/// capability change on re-install) is a loud failure; an interactive "no"
+/// is a normal outcome unless --strict asks for strictness.
+int _reportInstall(
+  ExtInstallOutcome outcome,
+  String name,
+  CliIO io,
+  ExtCliCommand cmd,
+) {
+  if (outcome.installed) {
+    io.write('installed $name\n');
+    return 0;
+  }
+  if (outcome.reason == 'up-to-date') {
+    io.write('up-to-date $name\n');
+    return 0;
+  }
+  io.writeln('not installed $name: ${outcome.reason}');
+  return !io.isInteractive || cmd.strict ? 1 : 0;
 }
 
 List<_ExtInstallItem> _installItems(
@@ -219,38 +246,56 @@ Future<ExtInstallPlan> _planFromSource(
   ExecutionEnv env,
   http.Client client,
   Duration? networkTimeout,
-) async {
-  Future<ExtInstallPlan> plan;
-  var network = false;
-  if (src.startsWith('gh:')) {
-    network = true;
-    plan = planGithubInstall(src.substring(3), client);
-  } else if (src.startsWith('https://github.com/')) {
-    network = true;
-    final ref = src.substring('https://github.com/'.length);
-    plan = planGithubInstall(
-      ref.endsWith('/') ? ref.substring(0, ref.length - 1) : ref,
-      client,
-    );
-  } else if (src.startsWith('catalog:')) {
-    network = true;
-    plan = planCatalogInstall(
-      src.substring(8),
-      baseUrl: kExtCatalogBaseUrl,
-      client: client,
-    );
-  } else if (src.startsWith('./') ||
-      src.startsWith('/') ||
-      (src.endsWith('.zip') && !src.contains('://'))) {
-    plan = planLocalInstall(src, env);
-  } else {
-    network = true;
-    plan = planCatalogInstall(src, baseUrl: kExtCatalogBaseUrl, client: client);
-  }
+) {
+  final (plan, network) = _planSourceKind(src, env, client);
   return network && networkTimeout != null
       ? plan.timeout(networkTimeout)
       : plan;
 }
+
+/// The plan for [src] and whether it touches the network (and so deserves
+/// the network timeout).
+(Future<ExtInstallPlan>, bool) _planSourceKind(
+  String src,
+  ExecutionEnv env,
+  http.Client client,
+) {
+  if (src.startsWith('gh:')) {
+    return (planGithubInstall(src.substring(3), client), true);
+  }
+  if (src.startsWith('https://github.com/')) {
+    return (
+      planGithubInstall(
+        _stripTrailingSlash(src.substring('https://github.com/'.length)),
+        client,
+      ),
+      true,
+    );
+  }
+  if (src.startsWith('catalog:')) {
+    return (
+      planCatalogInstall(
+        src.substring(8),
+        baseUrl: kExtCatalogBaseUrl,
+        client: client,
+      ),
+      true,
+    );
+  }
+  if (_isLocalSource(src)) return (planLocalInstall(src, env), false);
+  return (
+    planCatalogInstall(src, baseUrl: kExtCatalogBaseUrl, client: client),
+    true,
+  );
+}
+
+bool _isLocalSource(String src) =>
+    src.startsWith('./') ||
+    src.startsWith('/') ||
+    (src.endsWith('.zip') && !src.contains('://'));
+
+String _stripTrailingSlash(String ref) =>
+    ref.endsWith('/') ? ref.substring(0, ref.length - 1) : ref;
 
 Future<bool> _promptTrust(CliIO io, ExtTrustRequest request) async {
   io.writeln(
@@ -295,19 +340,8 @@ Future<int> _extUpdate(
   http.Client client,
   Duration? networkTimeout,
 ) async {
-  late final List<StoredExtension> targets;
-  if (cmd.name != null) {
-    final one = await store.find(cmd.name!);
-    if (one == null) {
-      io.writeln('ext not found: ${cmd.name}');
-      return 1;
-    }
-    targets = [one];
-  } else {
-    targets = (await store.list()).extensions
-        .where((ext) => ext.trust != null)
-        .toList();
-  }
+  final targets = await _updateTargets(cmd, io, store);
+  if (targets == null) return 1;
   if (targets.isEmpty) {
     io.writeln('no trusted extensions');
     return 0;
@@ -317,42 +351,96 @@ Future<int> _extUpdate(
       : null;
   var exitCode = 0;
   for (final ext in targets) {
-    final trust = ext.trust;
-    if (trust == null) {
-      io.writeln('update ${ext.name} failed: untrusted; install it first');
-      exitCode = 1;
-      continue;
-    }
-    try {
-      final plan = await _replan(ext, trust, env, client, networkTimeout);
-      // Capability diff needs a human decision; headless fails loud instead
-      // of silently keeping a stale grant (the install is kept on disk).
-      final capsChanged = !extCapabilitiesEqual(
-        trust.capabilities,
-        plan.manifest.capabilities.toJson(),
-      );
-      if (capsChanged && !io.isInteractive) {
-        io.writeln(
-          'update ${ext.name} failed: capabilities changed; '
-          're-approve interactively: fa ext update ${ext.name}',
-        );
-        exitCode = 1;
-        continue;
-      }
-      final outcome = await applyInstall(plan, store, prompt: prompt);
-      if (outcome.installed) {
-        io.write('updated ${ext.name}\n');
-      } else if (outcome.reason == 'up-to-date') {
-        io.write('up-to-date ${ext.name}\n');
-      } else {
-        io.writeln('not updated ${ext.name}: ${outcome.reason}');
-      }
-    } on Object catch (error) {
-      io.writeln('update ${ext.name} failed: $error');
+    if (await _updateOne(ext, io, env, store, client, networkTimeout, prompt) !=
+        0) {
       exitCode = 1;
     }
   }
   return exitCode;
+}
+
+/// The update set: the named extension, or every trusted one for update-all.
+/// Null when the named extension does not exist.
+Future<List<StoredExtension>?> _updateTargets(
+  ExtCliCommand cmd,
+  CliIO io,
+  ExtensionStore store,
+) async {
+  if (cmd.name != null) {
+    final one = await store.find(cmd.name!);
+    if (one == null) {
+      io.writeln('ext not found: ${cmd.name}');
+      return null;
+    }
+    return [one];
+  }
+  return (await store.list()).extensions
+      .where((ext) => ext.trust != null)
+      .toList();
+}
+
+/// Re-plans, applies, and reports one update; non-zero on failure.
+Future<int> _updateOne(
+  StoredExtension ext,
+  CliIO io,
+  ExecutionEnv env,
+  ExtensionStore store,
+  http.Client client,
+  Duration? networkTimeout,
+  ExtTrustPrompt? prompt,
+) async {
+  final trust = ext.trust;
+  if (trust == null) {
+    io.writeln('update ${ext.name} failed: untrusted; install it first');
+    return 1;
+  }
+  try {
+    final plan = await _replan(ext, trust, env, client, networkTimeout);
+    if (_headlessCapsRefusal(ext, trust, plan, io)) return 1;
+    return _reportUpdate(
+      ext.name,
+      await applyInstall(plan, store, prompt: prompt),
+      io,
+    );
+  } on Object catch (error) {
+    io.writeln('update ${ext.name} failed: $error');
+    return 1;
+  }
+}
+
+/// A capability diff needs a human decision; headless fails loud instead of
+/// silently keeping a stale grant (the install is kept on disk).
+bool _headlessCapsRefusal(
+  StoredExtension ext,
+  TrustRecord trust,
+  ExtInstallPlan plan,
+  CliIO io,
+) {
+  if (extCapabilitiesEqual(
+    trust.capabilities,
+    plan.manifest.capabilities.toJson(),
+  )) {
+    return false;
+  }
+  if (!io.isInteractive) {
+    io.writeln(
+      'update ${ext.name} failed: capabilities changed; '
+      're-approve interactively: fa ext update ${ext.name}',
+    );
+    return true;
+  }
+  return false;
+}
+
+int _reportUpdate(String name, ExtInstallOutcome outcome, CliIO io) {
+  if (outcome.installed) {
+    io.write('updated $name\n');
+  } else if (outcome.reason == 'up-to-date') {
+    io.write('up-to-date $name\n');
+  } else {
+    io.writeln('not updated $name: ${outcome.reason}');
+  }
+  return 0;
 }
 
 /// Re-plans an update from the recorded trust provenance: local path re-read,
@@ -363,24 +451,29 @@ Future<ExtInstallPlan> _replan(
   ExecutionEnv env,
   http.Client client,
   Duration? networkTimeout,
-) {
-  switch (trust.source) {
-    case ExtTrustSource.local:
-      return planLocalInstall(trust.sourceRef, env);
-    case ExtTrustSource.github:
-      final plan = planGithubInstall(trust.sourceRef.split('@').first, client);
-      return networkTimeout == null ? plan : plan.timeout(networkTimeout);
-    case ExtTrustSource.catalog:
-      final plan = planCatalogInstall(
-        trust.sourceRef,
-        baseUrl: kExtCatalogBaseUrl,
-        client: client,
-      );
-      return networkTimeout == null ? plan : plan.timeout(networkTimeout);
-    case ExtTrustSource.bundled:
-      return Future<ExtInstallPlan>.value(planBundledInstall(ext.name));
-  }
-}
+) => switch (trust.source) {
+  ExtTrustSource.local => planLocalInstall(trust.sourceRef, env),
+  ExtTrustSource.github => _boundedNetwork(
+    planGithubInstall(trust.sourceRef.split('@').first, client),
+    networkTimeout,
+  ),
+  ExtTrustSource.catalog => _boundedNetwork(
+    planCatalogInstall(
+      trust.sourceRef,
+      baseUrl: kExtCatalogBaseUrl,
+      client: client,
+    ),
+    networkTimeout,
+  ),
+  ExtTrustSource.bundled => Future<ExtInstallPlan>.value(
+    planBundledInstall(ext.name),
+  ),
+};
+
+Future<ExtInstallPlan> _boundedNetwork(
+  Future<ExtInstallPlan> plan,
+  Duration? networkTimeout,
+) => networkTimeout == null ? plan : plan.timeout(networkTimeout);
 
 Future<int> _extAudit(ExtCliCommand cmd, CliIO io, ExtensionStore store) async {
   late final List<StoredExtension> targets;

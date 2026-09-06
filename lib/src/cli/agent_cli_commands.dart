@@ -275,14 +275,10 @@ extension SlashCommandDispatch on AgentCli {
     String command,
     String rest,
   ) async {
-    final pluginHandler = _pluginSlashCommands[command];
-    if (pluginHandler != null) {
-      await pluginHandler(rest.split(RegExp(r'\s+')));
-      return;
-    }
-    final extHandler = _ext.slashCommands[command];
-    if (extHandler != null) {
-      await extHandler(rest.split(RegExp(r'\s+')));
+    final handler =
+        _pluginSlashCommands[command] ?? _ext.slashCommands[command];
+    if (handler != null) {
+      await handler(rest.split(RegExp(r'\s+')));
       return;
     }
     final expanded = expandPromptTemplate(trimmed, _templates);
@@ -303,31 +299,32 @@ extension SlashCommandDispatch on AgentCli {
       await _runSkillCommand('${alias.name}${rest.isEmpty ? '' : ' $rest'}');
       return;
     }
-    // Unknown slash command: treat it as a filter for the command menu.
-    // A string starting with `/` followed by no spaces and containing at
-    // least one more `/` is a filesystem path (absolute or `~/...`),
-    // never a slash command. When the referenced file EXISTS, the message
-    // is sent with the file attached (resolveInteractiveFileReference);
-    // a nonexistent path keeps the load hint — it cannot be attached.
     if (trimmed.startsWith('/') && trimmed.length > 1) {
-      final looksAbsolutePath =
-          _leadingPathLike.hasMatch(trimmed) || trimmed.startsWith('~/');
-      if (looksAbsolutePath) {
-        if (resolveInteractiveFileReference(trimmed) != trimmed) {
-          _startRun(trimmed);
-          return;
-        }
-        io.writeln(
-          'looks like a filesystem path, not a command — '
-          'paste the contents (e.g. `cat ${trimmed.split(' ').first}`), '
-          'or use `@${trimmed.split(' ').first}` to load it as context.',
-        );
-        return;
-      }
-      _printHelp(filter: trimmed.substring(1));
+      _handlePathLikeInput(trimmed);
       return;
     }
     io.writeln('unknown command: $command (try /help)');
+  }
+
+  /// A string starting with `/` followed by no spaces and containing at
+  /// least one more `/` is a filesystem path (absolute or `~/...`), never a
+  /// slash command. When the referenced file EXISTS, the message is sent
+  /// with the file attached (resolveInteractiveFileReference); a
+  /// nonexistent path keeps the load hint — it cannot be attached.
+  void _handlePathLikeInput(String trimmed) {
+    if (!_leadingPathLike.hasMatch(trimmed) && !trimmed.startsWith('~/')) {
+      _printHelp(filter: trimmed.substring(1));
+      return;
+    }
+    if (resolveInteractiveFileReference(trimmed) != trimmed) {
+      _startRun(trimmed);
+      return;
+    }
+    io.writeln(
+      'looks like a filesystem path, not a command — '
+      'paste the contents (e.g. `cat ${trimmed.split(' ').first}`), '
+      'or use `@${trimmed.split(' ').first}` to load it as context.',
+    );
   }
 
   Future<void> _handleMode(String rest) async {

@@ -178,96 +178,134 @@ ExtCapabilities parseExtCapabilities(
 ) {
   var network = false;
   var keys = false;
-  var fs = false;
   var tools = false;
   var menus = false;
-  final allowed = <String>{};
-  final hooks = <ExtHookEvent>{};
-
-  void readBool(String key, void Function(bool value) apply) {
-    final value = json[key];
-    if (value == null) return;
-    if (value is! bool) {
-      problems.add('capabilities.$key must be a boolean');
-      return;
-    }
-    apply(value);
-  }
-
-  void readCommands(String label, Object? value) {
-    if (value == null) return;
-    if (value is! List) {
-      problems.add('$label must be a list of strings');
-      return;
-    }
-    for (final entry in value) {
-      if (entry is! String) {
-        problems.add('$label entries must be strings');
-        continue;
-      }
-      allowed.add(entry);
-    }
-  }
+  void readBool(String key, void Function(bool value) apply) =>
+      _readBoolCap(json, key, problems, apply);
 
   readBool('network', (v) => network = v);
   readBool('keys', (v) => keys = v);
   readBool('tools', (v) => tools = v);
   readBool('menus', (v) => menus = v);
-
-  final fsValue = json['fs'];
-  if (fsValue is bool) {
-    fs = fsValue;
-  } else if (fsValue is Map<String, dynamic>) {
-    final read = fsValue['read'];
-    if (read != null && read is! bool) {
-      problems.add('capabilities.fs.read must be a boolean');
-    } else if (read == true) {
-      fs = true;
-    }
-  } else if (fsValue != null) {
-    problems.add('capabilities.fs must be a boolean or an object');
-  }
-
-  final execValue = json['exec'];
-  if (execValue is Map<String, dynamic>) {
-    readCommands(
-      'capabilities.exec.allowedCommands',
-      execValue['allowedCommands'],
-    );
-  } else if (execValue != null) {
-    problems.add('capabilities.exec must be an object');
-  }
-  readCommands('capabilities.allowedCommands', json['allowedCommands']);
-
-  final hooksValue = json['hooks'];
-  if (hooksValue != null) {
-    if (hooksValue is! List) {
-      problems.add('capabilities.hooks must be a list');
-    } else {
-      for (final entry in hooksValue) {
-        if (entry is! String) {
-          problems.add('capabilities.hooks entries must be strings');
-          continue;
-        }
-        final event = extHookEventFromJsonName(entry);
-        if (event == null) {
-          problems.add('unknown hook event: $entry');
-          continue;
-        }
-        hooks.add(event);
-      }
-    }
-  }
+  final fs = _readFsCapability(json, problems);
+  final allowed = _readAllowedCommands(json, problems);
+  final hooks = _readHookEvents(json['hooks'], problems);
 
   return ExtCapabilities(
     network: network,
-    allowedCommands: Set.of(allowed),
+    allowedCommands: allowed,
     keys: keys,
     fs: fs,
     tools: tools,
     menus: menus,
-    hooks: Set.of(hooks),
+    hooks: hooks,
   );
+}
+
+/// Reads one boolean capability; absent keys keep the default, wrong types
+/// add a problem.
+void _readBoolCap(
+  Map<String, dynamic> json,
+  String key,
+  List<String> problems,
+  void Function(bool value) apply,
+) {
+  final value = json[key];
+  if (value == null) return;
+  if (value is! bool) {
+    problems.add('capabilities.$key must be a boolean');
+    return;
+  }
+  apply(value);
+}
+
+/// `fs: bool | {read: bool}`.
+bool _readFsCapability(Map<String, dynamic> json, List<String> problems) {
+  final fsValue = json['fs'];
+  if (fsValue is bool) return fsValue;
+  if (fsValue is Map<String, dynamic>) return _readFsRead(fsValue, problems);
+  if (fsValue != null) {
+    problems.add('capabilities.fs must be a boolean or an object');
+  }
+  return false;
+}
+
+bool _readFsRead(Map<String, dynamic> fsValue, List<String> problems) {
+  final read = fsValue['read'];
+  if (read != null && read is! bool) {
+    problems.add('capabilities.fs.read must be a boolean');
+    return false;
+  }
+  return read == true;
+}
+
+/// The exec allowlist: `exec.allowedCommands` plus the flat
+/// `allowedCommands` alias.
+Set<String> _readAllowedCommands(
+  Map<String, dynamic> json,
+  List<String> problems,
+) {
+  final allowed = <String>{};
+  final execValue = json['exec'];
+  if (execValue is Map<String, dynamic>) {
+    _readCommands(
+      'capabilities.exec.allowedCommands',
+      execValue['allowedCommands'],
+      problems,
+      allowed,
+    );
+  } else if (execValue != null) {
+    problems.add('capabilities.exec must be an object');
+  }
+  _readCommands(
+    'capabilities.allowedCommands',
+    json['allowedCommands'],
+    problems,
+    allowed,
+  );
+  return allowed;
+}
+
+void _readCommands(
+  String label,
+  Object? value,
+  List<String> problems,
+  Set<String> allowed,
+) {
+  if (value == null) return;
+  if (value is! List) {
+    problems.add('$label must be a list of strings');
+    return;
+  }
+  for (final entry in value) {
+    if (entry is! String) {
+      problems.add('$label entries must be strings');
+      continue;
+    }
+    allowed.add(entry);
+  }
+}
+
+Set<ExtHookEvent> _readHookEvents(Object? hooksValue, List<String> problems) {
+  final hooks = <ExtHookEvent>{};
+  if (hooksValue == null) return hooks;
+  if (hooksValue is! List) {
+    problems.add('capabilities.hooks must be a list');
+    return hooks;
+  }
+  for (final entry in hooksValue) {
+    if (entry is! String) {
+      problems.add('capabilities.hooks entries must be strings');
+      continue;
+    }
+    final event = extHookEventFromJsonName(entry);
+    if (event == null) {
+      problems.add('unknown hook event: $entry');
+      continue;
+    }
+    hooks.add(event);
+  }
+  return hooks;
 }
 
 /// Parsed `manifest.json` of a JS extension.

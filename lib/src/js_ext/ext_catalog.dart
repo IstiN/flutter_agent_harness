@@ -95,13 +95,25 @@ final class ExtCatalog {
 /// fatal — when its `kind` is unknown or `id`/`version`/`zipFile` are
 /// missing/empty. Unknown platform names are dropped from the entry's set.
 ExtCatalog parseExtCatalog(Map<String, dynamic> json) {
+  final entries = [
+    for (final raw in _rawCatalogEntries(json))
+      if (raw is Map) ?_catalogEntry(_stringMap(raw)),
+  ].whereType<ExtCatalogEntry>().toList()..sort((a, b) => a.id.compareTo(b.id));
+  return ExtCatalog(schemaVersion: _schemaVersion(json), entries: entries);
+}
+
+int _schemaVersion(Map<String, dynamic> json) {
   final versionValue = json['schemaVersion'];
-  final schemaVersion = switch (versionValue) {
+  return switch (versionValue) {
     null => 1,
     int value => value,
     _ => int.tryParse('$versionValue') ?? 1,
   };
+}
 
+/// The union of the v1 `widgets` and v2 `extensions` lists. A non-list
+/// value is fatal (schema violation).
+List<Object?> _rawCatalogEntries(Map<String, dynamic> json) {
   final rawEntries = <Object?>[];
   for (final key in const ['widgets', 'extensions']) {
     final list = json[key];
@@ -111,52 +123,47 @@ ExtCatalog parseExtCatalog(Map<String, dynamic> json) {
     }
     rawEntries.addAll(list);
   }
+  return rawEntries;
+}
 
-  final entries = <ExtCatalogEntry>[];
-  for (final raw in rawEntries) {
-    if (raw is! Map) continue;
-    final map = {for (final entry in raw.entries) '${entry.key}': entry.value};
-    final kindName = map['kind'];
-    final kind = kindName == null
-        ? ExtKind.widget
-        : extKindFromJsonName('$kindName');
-    if (kind == null) continue; // unknown kind => CLI cannot serve it
-    final id = map['id'];
-    final version = map['version'];
-    final zipFile = map['zipFile'];
-    if (id is! String ||
-        id.isEmpty ||
-        version is! String ||
-        version.isEmpty ||
-        zipFile is! String ||
-        zipFile.isEmpty) {
-      continue;
-    }
-    final platformsValue = map['platforms'];
-    Set<ExtPlatformTag>? platforms;
-    if (platformsValue is List) {
-      platforms = {
-        for (final name in platformsValue)
-          if (name is String) ?extPlatformTagFromJsonName(name),
-      };
-    }
-    entries.add(
-      ExtCatalogEntry(
-        id: id,
-        version: version,
-        description: map['description'] is String
-            ? map['description'] as String
-            : null,
-        kind: kind,
-        platforms: platforms,
-        zipFile: zipFile,
-        zipSha256: map['zipSha256'] is String ? map['zipSha256'] as String : '',
-        raw: map,
-      ),
-    );
+Map<String, dynamic> _stringMap(Map raw) => {
+  for (final entry in raw.entries) '${entry.key}': entry.value,
+};
+
+/// One entry, or null when it is skippable: unknown `kind` (the CLI cannot
+/// serve it) or missing/empty `id`/`version`/`zipFile`.
+ExtCatalogEntry? _catalogEntry(Map<String, dynamic> map) {
+  final kindName = map['kind'];
+  final kind = kindName == null
+      ? ExtKind.widget
+      : extKindFromJsonName('$kindName');
+  if (kind == null) return null;
+  if (_blank(map['id']) || _blank(map['version']) || _blank(map['zipFile'])) {
+    return null;
   }
-  entries.sort((a, b) => a.id.compareTo(b.id));
-  return ExtCatalog(schemaVersion: schemaVersion, entries: entries);
+  return ExtCatalogEntry(
+    id: map['id'] as String,
+    version: map['version'] as String,
+    description: map['description'] is String
+        ? map['description'] as String
+        : null,
+    kind: kind,
+    platforms: _entryPlatforms(map['platforms']),
+    zipFile: map['zipFile'] as String,
+    zipSha256: map['zipSha256'] is String ? map['zipSha256'] as String : '',
+    raw: map,
+  );
+}
+
+bool _blank(Object? value) => value is! String || value.isEmpty;
+
+/// The declared platforms; unknown names are dropped, non-lists yield null.
+Set<ExtPlatformTag>? _entryPlatforms(Object? platformsValue) {
+  if (platformsValue is! List) return null;
+  return {
+    for (final name in platformsValue)
+      if (name is String) ?extPlatformTagFromJsonName(name),
+  };
 }
 
 /// Fetches the catalog from `<baseUrl>/catalog.json`.
@@ -175,55 +182,91 @@ Future<ExtCatalog> fetchExtCatalog(
 }) async {
   final useCache = cachePath != null && env != null;
   if (useCache && !force) {
-    final cached = await readExtCatalogCache(cachePath, env);
-    if (cached != null &&
-        DateTime.now().toUtc().difference(cached.$1) < kExtCatalogCacheTtl) {
-      return parseExtCatalog(cached.$2);
-    }
+    final fresh = await _freshCatalog(cachePath, env);
+    if (fresh != null) return fresh;
   }
 
-  final url = '${_joinBase(baseUrl)}catalog.json';
-  Map<String, dynamic>? json;
-  Object? failure;
+  final (json, failure) = await _fetchCatalogJson(
+    '${_joinBase(baseUrl)}catalog.json',
+    client,
+  );
+  if (json != null) {
+    if (useCache) await _writeCache(cachePath, env, json);
+    return parseExtCatalog(json);
+  }
+  final stale = await _cachedCatalog(cachePath, env);
+  if (stale != null) return stale;
+  throw failure!;
+}
+
+/// The parsed cached document when it exists and is inside the TTL.
+Future<ExtCatalog?> _freshCatalog(String cachePath, ExecutionEnv env) async {
+  final cached = await readExtCatalogCache(cachePath, env);
+  if (cached == null ||
+      DateTime.now().toUtc().difference(cached.$1) >= kExtCatalogCacheTtl) {
+    return null;
+  }
+  return parseExtCatalog(cached.$2);
+}
+
+/// The parsed cached document regardless of age (stale-on-error fallback).
+Future<ExtCatalog?> _cachedCatalog(String? cachePath, ExecutionEnv? env) async {
+  if (cachePath == null || env == null) return null;
+  final cached = await readExtCatalogCache(cachePath, env);
+  if (cached == null) return null;
+  return parseExtCatalog(cached.$2);
+}
+
+/// The raw catalog document over the network; failures are returned, not
+/// thrown, so the caller can fall back to the cache.
+Future<(Map<String, dynamic>?, Object?)> _fetchCatalogJson(
+  String url,
+  http.Client client,
+) async {
   try {
     final response = await client.get(Uri.parse(url));
     if (response.statusCode != 200) {
-      failure = ExtCatalogException('catalog HTTP ${response.statusCode}');
-    } else {
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      if (decoded is! Map) {
-        failure = const ExtCatalogException('catalog is not a JSON object');
-      } else {
-        json = {for (final e in decoded.entries) '${e.key}': e.value};
-      }
+      return (null, ExtCatalogException('catalog HTTP ${response.statusCode}'));
     }
+    return _decodeCatalog(response.bodyBytes);
   } on ExtCatalogException catch (error) {
-    failure = error;
+    return (null, error);
   } on Object catch (error) {
-    failure = ExtCatalogException('catalog fetch failed: $error');
+    return (null, ExtCatalogException('catalog fetch failed: $error'));
   }
+}
 
-  if (json != null) {
-    if (useCache) {
-      try {
-        await env.writeFile(
-          cachePath,
-          jsonEncode({
-            'fetchedAt': DateTime.now().toUtc().toIso8601String(),
-            'catalog': json,
-          }),
-        );
-      } on Object {
-        // A failing cache write must not kill the fetch; refetch next time.
-      }
-    }
-    return parseExtCatalog(json);
+(Map<String, dynamic>?, Object?) _decodeCatalog(Uint8List body) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(utf8.decode(body));
+  } on Object catch (error) {
+    return (null, ExtCatalogException('catalog fetch failed: $error'));
   }
-  if (useCache) {
-    final cached = await readExtCatalogCache(cachePath, env);
-    if (cached != null) return parseExtCatalog(cached.$2);
+  if (decoded is! Map) {
+    return (null, const ExtCatalogException('catalog is not a JSON object'));
   }
-  throw failure!;
+  return ({for (final e in decoded.entries) '${e.key}': e.value}, null);
+}
+
+/// Persists the `{fetchedAt, catalog}` snapshot; a failing cache write must
+/// not kill the fetch — the next run simply refetches.
+Future<void> _writeCache(
+  String cachePath,
+  ExecutionEnv env,
+  Map<String, dynamic> json,
+) async {
+  try {
+    await env.writeFile(
+      cachePath,
+      jsonEncode({
+        'fetchedAt': DateTime.now().toUtc().toIso8601String(),
+        'catalog': json,
+      }),
+    );
+  } on Object {
+    // Refetch next time.
+  }
 }
 
 /// Reads the `{fetchedAt, catalog}` cache file; corrupt/torn caches behave
@@ -309,14 +352,7 @@ Map<String, String> extractExtensionZip(
     for (final file in archive.files)
       if (file.isFile) file,
   ];
-  for (final file in fileEntries) {
-    final name = file.name;
-    if (name.startsWith('/') ||
-        name.contains('\\') ||
-        name.split('/').any((segment) => segment == '..')) {
-      throw ExtCatalogException('$label: unsafe zip entry "$name"');
-    }
-  }
+  _validateEntryNames(fileEntries, label);
   final root = requiredRoot ?? _discoverRoot(fileEntries, label);
   final files = <String, String>{};
   for (final file in fileEntries) {
@@ -336,6 +372,18 @@ Map<String, String> extractExtensionZip(
     throw ExtCatalogException('$label: archive misses manifest.json/main.js');
   }
   return files;
+}
+
+/// Rejects absolute paths, Windows separators, and `..` escapes.
+void _validateEntryNames(List<ArchiveFile> fileEntries, String label) {
+  for (final file in fileEntries) {
+    final name = file.name;
+    if (name.startsWith('/') ||
+        name.contains('\\') ||
+        name.split('/').any((segment) => segment == '..')) {
+      throw ExtCatalogException('$label: unsafe zip entry "$name"');
+    }
+  }
 }
 
 /// Finds the root prefix of the single `manifest.json` entry (`''` when it

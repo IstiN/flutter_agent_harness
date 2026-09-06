@@ -506,6 +506,26 @@ typedef _ExtOperands = ({
 /// ext flags. `--bundled` takes an OPTIONAL value: a following word that
 /// is not flag-like names the bundled extension.
 _ExtOperands _parseExtOperands(String verb, List<String> args) {
+  final operands = _ExtOperandSink();
+  for (var i = 1; i < args.length; i++) {
+    final arg = args[i];
+    if (_isExtFlag(arg)) {
+      i = operands.applyFlag(verb, arg, args, i);
+    } else if (arg.startsWith('-')) {
+      throw CliArgsException('unknown argument: $arg');
+    } else {
+      operands.positionals.add(arg);
+    }
+  }
+  return operands.freeze();
+}
+
+bool _isExtFlag(String arg) =>
+    const ['--json', '--pin', '--trust', '--bundled', '--strict'].contains(arg);
+
+/// Mutable accumulator for [ _parseExtOperands]; `applyFlag` consumes one
+/// flag (plus its optional value) and returns the index to resume from.
+final class _ExtOperandSink {
   final positionals = <String>[];
   var json = false;
   String? pin;
@@ -513,37 +533,42 @@ _ExtOperands _parseExtOperands(String verb, List<String> args) {
   var bundled = false;
   String? bundledName;
   var strict = false;
-  for (var i = 1; i < args.length; i++) {
-    final arg = args[i];
+
+  int applyFlag(String verb, String arg, List<String> args, int i) {
+    if (arg == '--json') {
+      json = true;
+      return i;
+    }
+    return _applyInstallFlag(verb, arg, args, i);
+  }
+
+  /// The install-only flags; on any other verb they are rejected.
+  int _applyInstallFlag(String verb, String arg, List<String> args, int i) {
+    if (verb != 'install') {
+      throw CliArgsException('$arg only applies to fa ext install');
+    }
     switch (arg) {
-      case '--json':
-        json = true;
-      case '--pin' when verb == 'install':
+      case '--pin':
         if (i + 1 >= args.length) {
           throw const CliArgsException('--pin requires a sha256 value');
         }
         pin = args[++i];
-      case '--trust' when verb == 'install':
+      case '--trust':
         trust = true;
-      case '--bundled' when verb == 'install':
+      case '--bundled':
         bundled = true;
         if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
           bundledName = args[++i];
         }
-      case '--strict' when verb == 'install':
+      case '--strict':
         strict = true;
-      case '--pin' || '--trust' || '--bundled' || '--strict':
-        throw CliArgsException(
-          '${arg.substring(0, arg.length)} only applies to fa ext install',
-        );
       default:
-        if (arg.startsWith('-')) {
-          throw CliArgsException('unknown argument: $arg');
-        }
-        positionals.add(arg);
+        break;
     }
+    return i;
   }
-  return (
+
+  _ExtOperands freeze() => (
     positionals: positionals,
     json: json,
     pin: pin,

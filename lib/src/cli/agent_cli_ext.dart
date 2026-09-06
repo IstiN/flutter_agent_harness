@@ -213,30 +213,50 @@ extension AgentCliExt on AgentCli {
 
   /// `/ext [list|enable|disable|audit|remove|update|reload]`.
   Future<void> _extSlash(String rest) async {
-    final parts = rest.split(_commandWhitespace)
-      ..removeWhere((part) => part.isEmpty);
+    final parts = _extSlashParts(rest);
     final sub = parts.isEmpty ? 'list' : parts.first;
-    switch (sub) {
-      case 'list':
-        await _extPrintList();
-      case 'enable' when parts.length > 1:
-        await _extSetEnabled(parts[1], true);
-      case 'disable' when parts.length > 1:
-        await _extSetEnabled(parts[1], false);
-      case 'audit' when parts.length > 1:
-        await _extPrintAudit(parts[1]);
-      case 'remove' when parts.length > 1:
-        await _extRemove(parts[1]);
-      case 'update' when parts.length > 1:
-        await _extUpdate(parts[1], parts.length > 2 ? parts[2] : null);
-      case 'reload':
-        await _extReload();
-      default:
-        io.writeln(
-          'usage: /ext [list|enable <name>|disable <name>|audit <name>|'
-          'remove <name>|update <name> [source]|reload]',
-        );
+    if (await _dispatchExtSub(sub, parts)) return;
+    io.writeln(
+      'usage: /ext [list|enable <name>|disable <name>|audit <name>|'
+      'remove <name>|update <name> [source]|reload]',
+    );
+  }
+
+  List<String> _extSlashParts(String rest) =>
+      rest.split(_commandWhitespace).where((part) => part.isNotEmpty).toList();
+
+  Future<bool> _dispatchExtSub(String sub, List<String> parts) async {
+    if (sub == 'list') {
+      await _extPrintList();
+      return true;
     }
+    if (sub == 'reload') {
+      await _extReload();
+      return true;
+    }
+    return _dispatchExtArgSub(sub, parts);
+  }
+
+  /// The subcommands that take an extension name argument. False when
+  /// [sub] is unknown here (or the argument is missing).
+  Future<bool> _dispatchExtArgSub(String sub, List<String> parts) async {
+    if (parts.length < 2) return false;
+    final name = parts[1];
+    switch (sub) {
+      case 'enable':
+        await _extSetEnabled(name, true);
+      case 'disable':
+        await _extSetEnabled(name, false);
+      case 'audit':
+        await _extPrintAudit(name);
+      case 'remove':
+        await _extRemove(name);
+      case 'update':
+        await _extUpdate(name, parts.length > 2 ? parts[2] : null);
+      default:
+        return false;
+    }
+    return true;
   }
 
   /// The installed-extensions table: name, state, kind, tools, engine,
@@ -341,44 +361,71 @@ extension AgentCliExt on AgentCli {
     final store = _extStore();
     final client = http.Client();
     try {
-      final ExtInstallPlan plan;
-      if (source == null || source.startsWith('/') || source.startsWith('~')) {
-        final installed = await store.find(name);
-        if (installed == null) {
-          io.writeln('ext: not installed: $name');
-          return;
-        }
-        plan = await planLocalInstall(source ?? installed.dir, _env);
-      } else if (source.startsWith('gh:')) {
-        plan = await planGithubInstall(source.substring(3), client);
-      } else if (source.startsWith('catalog:')) {
-        plan = await planCatalogInstall(
-          source.substring(8),
-          baseUrl: kExtCatalogBaseUrl,
-          client: client,
-        );
-      } else {
-        plan = await planLocalInstall(source, _env);
-      }
+      final plan = await _extUpdatePlan(name, source, store, client);
+      if (plan == null) return;
       if (plan.name != name) {
         io.writeln('ext: source points at "${plan.name}", not "$name"');
         return;
       }
-      final outcome = await applyInstall(
-        plan,
-        store,
-        prompt: io.isInteractive ? _extTrustPrompt : null,
-      );
-      io.writeln(
-        outcome.installed
-            ? 'ext: updated $name — /ext reload to load it'
-            : 'ext: update skipped: ${outcome.reason}',
-      );
+      await _applyExtUpdate(name, plan, store);
     } on Object catch (error) {
       io.writeln('ext: update failed: $error');
     } finally {
       client.close();
     }
+  }
+
+  /// The re-install plan for [name] from [source] — stored dir (default or
+  /// local path), `gh:owner/repo`, `catalog:<id>`, or a bare local path.
+  /// Null after reporting (not installed / source mismatch).
+  Future<ExtInstallPlan?> _extUpdatePlan(
+    String name,
+    String? source,
+    ExtensionStore store,
+    http.Client client,
+  ) async {
+    if (source == null || _looksLocal(source)) {
+      final installed = await store.find(name);
+      if (installed == null) {
+        io.writeln('ext: not installed: $name');
+        return null;
+      }
+      return planLocalInstall(source ?? installed.dir, _env);
+    }
+    return switch (source) {
+      _ when source.startsWith('gh:') => planGithubInstall(
+        source.substring(3),
+        client,
+      ),
+      _ when source.startsWith('catalog:') => planCatalogInstall(
+        source.substring(8),
+        baseUrl: kExtCatalogBaseUrl,
+        client: client,
+      ),
+      _ => planLocalInstall(source, _env),
+    };
+  }
+
+  bool _looksLocal(String source) =>
+      source.startsWith('/') || source.startsWith('~');
+
+  /// Applies the plan with the interactive trust prompt when one is
+  /// available, then reports the outcome.
+  Future<void> _applyExtUpdate(
+    String name,
+    ExtInstallPlan plan,
+    ExtensionStore store,
+  ) async {
+    final outcome = await applyInstall(
+      plan,
+      store,
+      prompt: io.isInteractive ? _extTrustPrompt : null,
+    );
+    io.writeln(
+      outcome.installed
+          ? 'ext: updated $name — /ext reload to load it'
+          : 'ext: update skipped: ${outcome.reason}',
+    );
   }
 
   /// `/ext reload` — dispose the live host (unregistering its tools first,

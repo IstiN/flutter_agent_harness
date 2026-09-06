@@ -121,22 +121,25 @@ bool extCapabilitiesEqual(Map<String, dynamic> a, Map<String, dynamic> b) {
 
 bool _deepValueEqual(Object? a, Object? b) {
   if (identical(a, b)) return true;
-  if (a is Map && b is Map) {
-    if (a.length != b.length) return false;
-    for (final key in a.keys) {
-      if (!b.containsKey(key)) return false;
-      if (!_deepValueEqual(a[key], b[key])) return false;
-    }
-    return true;
-  }
-  if (a is List && b is List) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (!_deepValueEqual(a[i], b[i])) return false;
-    }
-    return true;
-  }
+  if (a is Map && b is Map) return _deepMapEqual(a, b);
+  if (a is List && b is List) return _deepListEqual(a, b);
   return a == b;
+}
+
+bool _deepMapEqual(Map a, Map b) {
+  if (a.length != b.length) return false;
+  for (final key in a.keys) {
+    if (!b.containsKey(key) || !_deepValueEqual(a[key], b[key])) return false;
+  }
+  return true;
+}
+
+bool _deepListEqual(List a, List b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (!_deepValueEqual(a[i], b[i])) return false;
+  }
+  return true;
 }
 
 /// What a trust prompt renders: the extension identity, its content hash, the

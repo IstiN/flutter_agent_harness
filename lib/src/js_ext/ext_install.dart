@@ -111,61 +111,34 @@ Future<ExtInstallPlan> planGithubInstall(
   http.Client client, {
   String githubApiBase = 'https://api.github.com',
 }) async {
-  final parts = ownerSlashRepo.split('/');
-  if (parts.length != 2 || parts[0].isEmpty || parts[1].isEmpty) {
-    throw ExtInstallException(
-      'github source must be "owner/repo", got "$ownerSlashRepo"',
-    );
-  }
-  final owner = parts[0];
-  final repo = parts[1];
-  final base = githubApiBase.endsWith('/')
-      ? githubApiBase.substring(0, githubApiBase.length - 1)
-      : githubApiBase;
-
-  final repoJson = await _getJson(
+  final (owner, repo) = _validateGithubSource(ownerSlashRepo);
+  final base = _trimTrailingSlash(githubApiBase);
+  final (:branch, :sha) = await _resolveGithubBranch(
     client,
-    Uri.parse('$base/repos/$owner/$repo'),
+    base,
+    owner,
+    repo,
     ownerSlashRepo,
   );
-  var branch = repoJson['default_branch'];
-  if (branch is! String || branch.isEmpty) branch = 'HEAD';
 
-  String? sha;
-  try {
-    final ref = await _getJson(
-      client,
-      Uri.parse('$base/repos/$owner/$repo/git/refs/heads/$branch'),
-      ownerSlashRepo,
-    );
-    final value = (ref['object'] as Map?)?['sha'];
-    if (value is String && value.isNotEmpty) sha = value;
-  } on Object {
-    // Unresolvable ref (branch renamed, offline mirror…) — fall back to the
-    // branch name below.
-  }
-  final trustRef = '$ownerSlashRepo@${sha ?? branch}';
-
-  final manifestUrl = Uri.parse(
-    'https://raw.githubusercontent.com/$owner/$repo/$branch/manifest.json',
+  _expectOk(
+    await client.get(
+      Uri.parse(
+        'https://raw.githubusercontent.com/$owner/$repo/$branch/manifest.json',
+      ),
+    ),
+    (code) =>
+        'repo root must contain manifest.json+main.js '
+        '(HTTP $code for $owner/$repo/manifest.json)',
   );
-  final manifestResponse = await client.get(manifestUrl);
-  if (manifestResponse.statusCode != 200) {
-    throw ExtInstallException(
-      'repo root must contain manifest.json+main.js '
-      '(HTTP ${manifestResponse.statusCode} for $owner/$repo/manifest.json)',
-    );
-  }
-
   final archiveResponse = await client.get(
     Uri.parse('https://codeload.github.com/$owner/$repo/zip/$branch'),
   );
-  if (archiveResponse.statusCode != 200) {
-    throw ExtInstallException(
-      'failed to download $ownerSlashRepo archive '
-      '(HTTP ${archiveResponse.statusCode})',
-    );
-  }
+  _expectOk(
+    archiveResponse,
+    (code) => 'failed to download $ownerSlashRepo archive (HTTP $code)',
+  );
+
   final files = extractExtensionZip(
     archiveResponse.bodyBytes,
     label: ownerSlashRepo,
@@ -173,9 +146,74 @@ Future<ExtInstallPlan> planGithubInstall(
   return _planFromFiles(
     files,
     ExtTrustSource.github,
-    trustRef,
+    '$ownerSlashRepo@${sha ?? branch}',
     label: ownerSlashRepo,
   );
+}
+
+(String, String) _validateGithubSource(String ownerSlashRepo) {
+  final parts = ownerSlashRepo.split('/');
+  if (parts.length != 2 || parts[0].isEmpty || parts[1].isEmpty) {
+    throw ExtInstallException(
+      'github source must be "owner/repo", got "$ownerSlashRepo"',
+    );
+  }
+  return (parts[0], parts[1]);
+}
+
+String _trimTrailingSlash(String url) =>
+    url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+
+/// Resolves the default branch (falling back to `HEAD`) and its commit sha
+/// when the refs lookup succeeds.
+Future<({String branch, String? sha})> _resolveGithubBranch(
+  http.Client client,
+  String base,
+  String owner,
+  String repo,
+  String ownerSlashRepo,
+) async {
+  final repoJson = await _getJson(
+    client,
+    Uri.parse('$base/repos/$owner/$repo'),
+    ownerSlashRepo,
+  );
+  var branch = repoJson['default_branch'];
+  if (branch is! String || branch.isEmpty) branch = 'HEAD';
+  return (
+    branch: branch,
+    sha: await _refSha(client, base, owner, repo, branch, ownerSlashRepo),
+  );
+}
+
+Future<String?> _refSha(
+  http.Client client,
+  String base,
+  String owner,
+  String repo,
+  String branch,
+  String ownerSlashRepo,
+) async {
+  try {
+    final ref = await _getJson(
+      client,
+      Uri.parse('$base/repos/$owner/$repo/git/refs/heads/$branch'),
+      ownerSlashRepo,
+    );
+    final value = (ref['object'] as Map?)?['sha'];
+    if (value is String && value.isNotEmpty) return value;
+  } on Object {
+    // Unresolvable ref (branch renamed, offline mirror…) — fall back to
+    // the branch name.
+  }
+  return null;
+}
+
+/// Throws [ExtInstallException] with [message] unless the response is 200.
+void _expectOk(http.Response response, String Function(int code) message) {
+  if (response.statusCode != 200) {
+    throw ExtInstallException(message(response.statusCode));
+  }
 }
 
 /// Plans an install from the catalog: fetches it, finds [catalogId], and

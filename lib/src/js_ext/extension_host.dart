@@ -264,76 +264,105 @@ final class JsExtensionHost {
     final errors = <String, String>{};
 
     for (final ext in listed.extensions) {
-      if (_loaded.any((record) => record.ext.name == ext.name)) {
-        continue; // already loaded this session
-      }
-      if (!ext.manifest.supportsPlatform(platform)) {
-        skipped[ext.name] = 'unsupported here';
-        continue;
-      }
-      if (ext.trust == null) {
-        if (trustPrompt == null) {
-          skipped[ext.name] = 'untrusted';
-          continue;
-        }
-        final granted = await trustPrompt(_trustRequestFor(ext));
-        if (!granted) {
-          skipped[ext.name] = 'untrusted (prompt denied)';
-          continue;
-        }
-      }
-
-      final runtime = await _startRuntime(ext, skipped, errors);
-      if (runtime == null) continue;
-
-      final commit = await _fetchCommit(ext.name, runtime, errors);
-      if (commit == null) {
-        await _disposeQuietly(runtime);
-        continue;
-      }
-
-      final capabilityProblem = _capabilityViolations(ext, commit);
-      if (capabilityProblem != null) {
-        errors[ext.name] = capabilityProblem;
-        await _disposeQuietly(runtime);
-        continue;
-      }
-      final collision = _findCollision(commit, ext.name);
-      if (collision != null) {
-        errors[ext.name] = collision;
-        await _disposeQuietly(runtime);
-        continue;
-      }
-
-      final record = _LoadedExt(
-        ext: ext,
-        runtime: runtime,
-        commit: commit,
-        tools: [for (final tool in commit.tools) _buildTool(runtime, tool)],
-        slash: {
-          for (final slash in commit.slash)
-            slash.name: _buildSlash(runtime, slash),
-        },
-        flows: {
-          for (final flow in commit.flows)
-            'ext:${ext.name}:${flow.id}': _buildFlow(ext.name, runtime, flow),
-        },
-      );
-      for (final tool in commit.tools) {
-        _toolOwners[tool.name] = ext.name;
-      }
-      for (final slash in commit.slash) {
-        _slashOwners[slash.name] = ext.name;
-      }
-      _loaded.add(record);
-      loaded.add(ext.name);
+      await _loadExtension(ext, platform, trustPrompt, skipped, errors, loaded);
     }
-
     return ExtLoadReport(
       loaded: List.unmodifiable(loaded),
       skipped: Map.unmodifiable(skipped),
       errors: Map.unmodifiable(errors),
     );
+  }
+
+  /// Loads one stored extension: platform gate, trust gate (prompt or
+  /// tombstone skip), engine start, commit fetch, capability + name-collision
+  /// checks, then registration. Failures land in [skipped]/[errors].
+  Future<void> _loadExtension(
+    StoredExtension ext,
+    ExtPlatformTag platform,
+    ExtTrustPrompt? trustPrompt,
+    Map<String, String> skipped,
+    Map<String, String> errors,
+    List<String> loaded,
+  ) async {
+    if (_loaded.any((record) => record.ext.name == ext.name)) {
+      return; // already loaded this session
+    }
+    if (!ext.manifest.supportsPlatform(platform)) {
+      skipped[ext.name] = 'unsupported here';
+      return;
+    }
+    if (!await _ensureTrusted(ext, trustPrompt, skipped)) return;
+
+    final runtime = await _startRuntime(ext, skipped, errors);
+    if (runtime == null) return;
+
+    final commit = await _fetchCommit(ext.name, runtime, errors);
+    if (commit == null) {
+      await _disposeQuietly(runtime);
+      return;
+    }
+
+    final problem =
+        _capabilityViolations(ext, commit) ?? _findCollision(commit, ext.name);
+    if (problem != null) {
+      errors[ext.name] = problem;
+      await _disposeQuietly(runtime);
+      return;
+    }
+    _register(ext, runtime, commit, loaded);
+  }
+
+  /// The trust gate: already-granted passes; otherwise prompts when a
+  /// [trustPrompt] exists (denial recorded) and reports a tombstone skip
+  /// otherwise. Returns whether loading may proceed.
+  Future<bool> _ensureTrusted(
+    StoredExtension ext,
+    ExtTrustPrompt? trustPrompt,
+    Map<String, String> skipped,
+  ) async {
+    if (ext.trust != null) return true;
+    if (trustPrompt == null) {
+      skipped[ext.name] = 'untrusted';
+      return false;
+    }
+    final granted = await trustPrompt(_trustRequestFor(ext));
+    if (!granted) {
+      skipped[ext.name] = 'untrusted (prompt denied)';
+      return false;
+    }
+    return true;
+  }
+
+  /// Builds the loaded record from a validated commit and publishes its
+  /// tools, slash commands, flows, and ownership.
+  void _register(
+    StoredExtension ext,
+    JsrRuntime runtime,
+    ExtCommit commit,
+    List<String> loaded,
+  ) {
+    final record = _LoadedExt(
+      ext: ext,
+      runtime: runtime,
+      commit: commit,
+      tools: [for (final tool in commit.tools) _buildTool(runtime, tool)],
+      slash: {
+        for (final slash in commit.slash)
+          slash.name: _buildSlash(runtime, slash),
+      },
+      flows: {
+        for (final flow in commit.flows)
+          'ext:${ext.name}:${flow.id}': _buildFlow(ext.name, runtime, flow),
+      },
+    );
+    for (final tool in commit.tools) {
+      _toolOwners[tool.name] = ext.name;
+    }
+    for (final slash in commit.slash) {
+      _slashOwners[slash.name] = ext.name;
+    }
+    _loaded.add(record);
+    loaded.add(ext.name);
   }
 
   /// Whether at least one loaded extension is currently enabled.
@@ -406,82 +435,126 @@ final class JsExtensionHost {
   /// Attach once per agent; disable/enable changes take effect immediately
   /// because the wrappers consult live registration state.
   void attachHooks(Agent agent) {
+    _attachBeforeToolHook(agent);
+    _attachAfterToolHook(agent);
+    _attachPrepareTurnHook(agent);
+  }
+
+  /// Installs the beforeToolCall wrapper: the existing hook first (a block
+  /// wins), then every enabled extension's `beforeToolCall` hook in
+  /// registration order; the first verdict wins.
+  void _attachBeforeToolHook(Agent agent) {
     final existingBefore = agent.beforeToolCall;
     agent.beforeToolCall = (context, cancelToken) async {
       final existing = await existingBefore?.call(context, cancelToken);
       if (existing != null && existing.block) return existing;
-      for (final record in _enabledLoaded()) {
-        for (final hook in record.commit.hooks) {
-          if (hook.event != ExtHookEvent.beforeToolCall) continue;
-          final result = await _invokeHook(record, hook, {
-            'tool': context.toolCall.name,
-            'args': context.toolCall.arguments,
-          });
-          final verdict = _beforeVerdict(record.ext.name, result);
-          if (verdict != null) return verdict;
-        }
+      for (final (record, hook) in _hooksFor(ExtHookEvent.beforeToolCall)) {
+        final result = await _invokeHook(record, hook, {
+          'tool': context.toolCall.name,
+          'args': context.toolCall.arguments,
+        });
+        final verdict = _beforeVerdict(record.ext.name, result);
+        if (verdict != null) return verdict;
       }
       return existing;
     };
+  }
 
+  /// Installs the afterToolCall wrapper: the existing hook first — its
+  /// redaction masks the base the JS hooks see — then every enabled
+  /// extension's append-only `afterToolCall` hook.
+  void _attachAfterToolHook(Agent agent) {
     final existingAfter = agent.afterToolCall;
     agent.afterToolCall = (context, cancelToken) async {
-      // Existing hook first: its redaction masks the base the JS hooks see.
       final existing = await existingAfter?.call(context, cancelToken);
       final baseContent = List<ContentBlock>.of(
         existing?.content ?? context.result.content,
       );
-      final baseText = _firstText(baseContent);
-      final isError = existing?.isError ?? context.isError;
-      var content = baseContent;
-      var appended = false;
-      for (final record in _enabledLoaded()) {
-        for (final hook in record.commit.hooks) {
-          if (hook.event != ExtHookEvent.afterToolCall) continue;
-          final result = await _invokeHook(record, hook, {
-            'tool': context.toolCall.name,
-            'args': context.toolCall.arguments,
-            'result': baseText,
-            'isError': isError,
-          });
-          if (result is Map && result['append'] is String) {
-            final append = result['append'] as String;
-            content = [
-              ...content,
-              TextContent(text: config.redact?.call(append) ?? append),
-            ];
-            appended = true;
-          } else if (result != null) {
-            _log(
-              '[ext:${record.ext.name}] hook afterToolCall result ignored '
-              '(append-only): ${_describe(result)}',
-            );
-          }
-        }
-      }
-      if (!appended && existing == null) return null;
-      return AfterToolCallResult(
-        content: content,
-        isError: existing?.isError,
-        terminate: existing?.terminate,
+      final (content, appended) = await _runAfterHooks(
+        context,
+        _firstText(baseContent),
+        existing?.isError ?? context.isError,
+        baseContent,
       );
+      if (appended || existing != null) {
+        return AfterToolCallResult(
+          content: content,
+          isError: existing?.isError,
+          terminate: existing?.terminate,
+        );
+      }
+      return null;
     };
+  }
 
+  /// Installs the prepareNextTurn wrapper: existing hook first, then every
+  /// enabled extension's `prepareNextTurn` hook (results rejected — E3).
+  void _attachPrepareTurnHook(Agent agent) {
     final existingPrepare = agent.prepareNextTurn;
     agent.prepareNextTurn = (context) async {
       final existing = await existingPrepare?.call(context);
-      for (final record in _enabledLoaded()) {
-        for (final hook in record.commit.hooks) {
-          if (hook.event != ExtHookEvent.prepareNextTurn) continue;
-          final result = await _invokeHook(record, hook, const {});
-          if (result != null) {
-            _log('[ext:${record.ext.name}] prepareNextTurn result rejected');
-          }
+      for (final (record, hook) in _hooksFor(ExtHookEvent.prepareNextTurn)) {
+        final result = await _invokeHook(record, hook, const {});
+        if (result != null) {
+          _log('[ext:${record.ext.name}] prepareNextTurn result rejected');
         }
       }
       return existing;
     };
   }
+
+  /// Every (extension, hook) pair for [event] across enabled extensions,
+  /// in registration order.
+  Iterable<(_LoadedExt, ExtHookDef)> _hooksFor(ExtHookEvent event) sync* {
+    for (final record in _enabledLoaded()) {
+      for (final hook in record.commit.hooks) {
+        if (hook.event == event) yield (record, hook);
+      }
+    }
+  }
+
+  /// Fires every enabled extension's `afterToolCall` hook in order,
+  /// appending each returned `append` text (redacted) onto [content];
+  /// anything else a hook returns is ignored with a log line. Returns the
+  /// final content and whether anything was appended.
+  Future<(List<ContentBlock>, bool)> _runAfterHooks(
+    AfterToolCallContext context,
+    String baseText,
+    bool isError,
+    List<ContentBlock> content,
+  ) async {
+    var result = content;
+    var appended = false;
+    for (final (record, hook) in _hooksFor(ExtHookEvent.afterToolCall)) {
+      final hookResult = await _invokeHook(record, hook, {
+        'tool': context.toolCall.name,
+        'args': context.toolCall.arguments,
+        'result': baseText,
+        'isError': isError,
+      });
+      final append = _afterAppend(record.ext.name, hookResult);
+      if (append == null) continue;
+      result = [...result, TextContent(text: _redacted(append))];
+      appended = true;
+    }
+    return (result, appended);
+  }
+
+  /// The `append` string an afterToolCall hook returned, or null.
+  String? _afterAppend(String name, Object? result) {
+    if (result is Map && result['append'] is String) {
+      return result['append'] as String;
+    }
+    if (result != null) {
+      _log(
+        '[ext:$name] hook afterToolCall result ignored '
+        '(append-only): ${_describe(result)}',
+      );
+    }
+    return null;
+  }
+
+  String _redacted(String text) => config.redact?.call(text) ?? text;
 
   /// Fires every enabled extension's `onSessionStart` hook. Hook errors are
   /// logged, never thrown.
@@ -691,28 +764,37 @@ final class JsExtensionHost {
   /// result); anything else degrades to its JSON encoding.
   ToolExecutionResult _toolResult(Object? result) {
     if (result is String) return ToolExecutionResult.text(result);
-    if (result is Map) {
-      final error = result['error'];
-      if (error is String) throw StateError(error);
-      final text = result['text'];
-      if (text is String) return ToolExecutionResult.text(text);
-      final content = result['content'];
-      if (content is List) {
-        final buffer = StringBuffer();
-        for (final block in content) {
-          if (block is Map &&
-              block['type'] == 'text' &&
-              block['text'] is String) {
-            if (buffer.isNotEmpty) buffer.writeln();
-            buffer.write(block['text'] as String);
-          }
-        }
-        return ToolExecutionResult.text(buffer.toString());
+    if (result is Map) return _mapToolResult(result);
+    return _fallbackToolResult(result);
+  }
+
+  /// The Map shapes of a JS tool result: `{error}` throws, `{text}` and
+  /// `{content: [...]}` become text, anything else falls back.
+  ToolExecutionResult _mapToolResult(Map result) {
+    final error = result['error'];
+    if (error is String) throw StateError(error);
+    final text = result['text'];
+    if (text is String) return ToolExecutionResult.text(text);
+    final content = result['content'];
+    if (content is List) return ToolExecutionResult.text(_joinContent(content));
+    return _fallbackToolResult(result);
+  }
+
+  /// Joins `{type: 'text', text: ...}` content blocks with newlines;
+  /// non-text blocks are skipped.
+  String _joinContent(List content) {
+    final buffer = StringBuffer();
+    for (final block in content) {
+      if (block is Map && block['type'] == 'text' && block['text'] is String) {
+        if (buffer.isNotEmpty) buffer.writeln();
+        buffer.write(block['text'] as String);
       }
     }
-    if (result == null) return ToolExecutionResult.text('');
-    return ToolExecutionResult.text(jsonEncode(result));
+    return buffer.toString();
   }
+
+  ToolExecutionResult _fallbackToolResult(Object? result) =>
+      ToolExecutionResult.text(result == null ? '' : jsonEncode(result));
 
   SlashCommand _buildSlash(JsrRuntime runtime, ExtSlashDef def) {
     return (args) async {
@@ -822,46 +904,70 @@ final class JsExtensionHost {
   /// any other throw is an extension error reported to JS as an error result.
   ExtBridgeHandler _bridgeHandler(StoredExtension ext) {
     final caps = ext.manifest.capabilities;
-    return (method, args) async {
-      switch (method) {
-        case ExtBridgeMethods.registerTool:
-        case ExtBridgeMethods.registerHook:
-        case ExtBridgeMethods.registerSlash:
-        case ExtBridgeMethods.registerFlow:
-          return null;
-        case ExtBridgeMethods.sessionAppendNote:
-          onAppendNote?.call(_requireText(args));
-          return null;
-        case ExtBridgeMethods.sessionEnqueueFollowUp:
-          _require(
-            ext.name,
-          ).followUps.enqueue(_requireText(args), config.maxPendingFollowUps);
-          return null;
-        case ExtBridgeMethods.fsReadFile:
-          if (!caps.fs) {
-            throw ExtBridgeUnavailableException('fs capability not declared');
-          }
-          return _readConfined(_requireText(args, field: 'path'));
-        case ExtBridgeMethods.execRun:
-          return _execRun(caps, args);
-        case ExtBridgeMethods.ioWrite:
-          onIoWrite?.call(_requireText(args));
-          return null;
-        case ExtBridgeMethods.ioWriteln:
-          onIoWriteln?.call(_requireText(args));
-          return null;
-        case ExtBridgeMethods.keysRequest:
-          if (!caps.keys) {
-            throw ExtBridgeUnavailableException('keys capability not declared');
-          }
-          // v1 CLI never reveals key values (AC10).
-          return {'granted': false, 'name': '${args['name']}'};
-        case ExtBridgeMethods.has:
-          return _hasCapability(caps, '${args['capability']}');
-        default:
-          throw ExtBridgeUnavailableException('unknown bridge method: $method');
-      }
+    return (method, args) => switch (method) {
+      // Registration methods are buffered JS-side (validated at commit).
+      ExtBridgeMethods.registerTool ||
+      ExtBridgeMethods.registerHook ||
+      ExtBridgeMethods.registerSlash ||
+      ExtBridgeMethods.registerFlow => Future<Object?>.value(null),
+      ExtBridgeMethods.sessionAppendNote => _noteSink(args),
+      ExtBridgeMethods.sessionEnqueueFollowUp => _followUpSink(ext, args),
+      ExtBridgeMethods.fsReadFile => _fsReadFile(caps, args),
+      ExtBridgeMethods.execRun => _execRun(caps, args),
+      ExtBridgeMethods.ioWrite => _ioSink(onIoWrite, args),
+      ExtBridgeMethods.ioWriteln => _ioSink(onIoWriteln, args),
+      ExtBridgeMethods.keysRequest => _keysReply(caps, args),
+      ExtBridgeMethods.has => Future<Object?>.value(
+        _hasCapability(caps, '${args['capability']}'),
+      ),
+      _ => Future<Object?>.error(
+        ExtBridgeUnavailableException('unknown bridge method: $method'),
+      ),
     };
+  }
+
+  Future<Object?> _noteSink(Map<String, dynamic> args) async {
+    onAppendNote?.call(_requireText(args));
+    return null;
+  }
+
+  Future<Object?> _followUpSink(
+    StoredExtension ext,
+    Map<String, dynamic> args,
+  ) async {
+    _require(
+      ext.name,
+    ).followUps.enqueue(_requireText(args), config.maxPendingFollowUps);
+    return null;
+  }
+
+  Future<Object?> _fsReadFile(
+    ExtCapabilities caps,
+    Map<String, dynamic> args,
+  ) async {
+    if (!caps.fs) {
+      throw ExtBridgeUnavailableException('fs capability not declared');
+    }
+    return _readConfined(_requireText(args, field: 'path'));
+  }
+
+  Future<Object?> _ioSink(
+    void Function(String text)? sink,
+    Map<String, dynamic> args,
+  ) async {
+    sink?.call(_requireText(args));
+    return null;
+  }
+
+  Future<Object?> _keysReply(
+    ExtCapabilities caps,
+    Map<String, dynamic> args,
+  ) async {
+    if (!caps.keys) {
+      throw ExtBridgeUnavailableException('keys capability not declared');
+    }
+    // v1 CLI never reveals key values (AC10).
+    return {'granted': false, 'name': '${args['name']}'};
   }
 
   String _requireText(Map<String, dynamic> args, {String field = 'text'}) {

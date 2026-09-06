@@ -471,4 +471,119 @@ void main() {
       expect(transcript, isNot(contains(secret)));
     },
   );
+
+  test(
+    '/ext update hash-only change re-grants silently, then is up-to-date',
+    () async {
+      // Trust caps must match the manifest parser's normalized JSON so the
+      // update takes the hash-only path instead of the caps-diff refusal.
+      const normalizedCaps = {
+        'network': false,
+        'allowedCommands': <String>[],
+        'keys': false,
+        'fs': false,
+        'tools': true,
+        'menus': false,
+        'hooks': <String>[],
+      };
+      final store = ExtensionStore(
+        env: env,
+        projectDir: '/work',
+        userDir: '/home',
+      );
+      await store.write(
+        'hello-ext',
+        files: {
+          'manifest.json': jsonEncode({
+            'name': 'hello-ext',
+            'kind': 'cli-extension',
+            'version': '1.0.0',
+            'capabilities': {'tools': true},
+          }),
+          'main.js': '// test extension',
+        },
+        trust: TrustRecord(
+          source: ExtTrustSource.local,
+          sourceRef: '/work/.fah/js-ext/hello-ext',
+          contentSha256: 'deadbeef',
+          capabilities: normalizedCaps,
+          grantedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      io.isInteractive = false;
+      final cli = _cli(env, io);
+      final run = cli.run();
+      await _waitFor(() => io.out.toString().contains('fa>'));
+      // The stored trust hash is a fixture, so the first update re-plans
+      // from the unchanged files and re-grants silently (same capabilities)
+      // — never a prompt, never a refusal.
+      io.sendLine('/ext update hello-ext');
+      await _waitFor(() => io.out.toString().contains('updated hello-ext'));
+      // Idempotent: the second update takes the same silent re-grant path.
+      io.sendLine('/ext update hello-ext');
+      await _waitFor(() => io.out.toString().contains('updated hello-ext'));
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test('/ext update reports not installed for an unknown name', () async {
+    io.isInteractive = false;
+    final cli = _cli(env, io);
+    final run = cli.run();
+    await _waitFor(() => io.out.toString().contains('fa>'));
+    io.sendLine('/ext update ghost-ext');
+    await _waitFor(
+      () => io.out.toString().contains('not installed: ghost-ext'),
+    );
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test(
+    '/ext update capability diff: headless refuses, interactive grants',
+    () async {
+      await _install(env, 'hello-ext');
+      io.isInteractive = false;
+      final cli = _cli(env, io);
+      final run = cli.run();
+      await _waitFor(() => io.out.toString().contains('fa>'));
+      // Grow the manifest capabilities behind the store's back; headless
+      // update refuses to keep a stale grant.
+      await env.writeFile(
+        '/work/.fah/js-ext/hello-ext/manifest.json',
+        jsonEncode({
+          'name': 'hello-ext',
+          'kind': 'cli-extension',
+          'version': '1.1.0',
+          'capabilities': {'tools': true, 'network': true},
+        }),
+      );
+      io.sendLine('/ext update hello-ext');
+      await _waitFor(
+        () => io.out.toString().contains(
+          'update skipped: capability change not approved',
+        ),
+      );
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    '/ext update unknown subcommand words and missing args print usage',
+    () async {
+      io.isInteractive = false;
+      final cli = _cli(env, io);
+      final run = cli.run();
+      await _waitFor(() => io.out.toString().contains('fa>'));
+      io.sendLine('/ext frobnicate');
+      await _waitFor(() => io.out.toString().contains('usage: /ext'));
+      io.sendLine('/ext enable');
+      await _waitFor(() => io.out.toString().contains('usage: /ext'));
+      io.sendLine('/exit');
+      await run;
+      expect('usage: /ext'.allMatches(io.out.toString()).length, 2);
+    },
+  );
 }

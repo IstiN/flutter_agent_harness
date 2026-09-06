@@ -1597,6 +1597,12 @@ class AgentCli {
   Future<void> _tuiPickProvider(String key) async {
     if (key == 'add') return _openAddProviderPicker();
     if (key.startsWith('saved:')) return _tuiPickSavedProviderEdit(key);
+    await _tuiPickExtOrCatalog(key);
+  }
+
+  /// An `ext:<name>:<id>` key runs that extension's provider flow (AC5;
+  /// namespaced keys can never shadow the bare core ids).
+  Future<void> _tuiPickExtOrCatalog(String key) async {
     if (key.startsWith('ext:')) return _startExtProviderFlow(key);
     await _tuiPickCatalogOrSaved(key);
   }
