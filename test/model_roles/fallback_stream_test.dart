@@ -719,6 +719,8 @@ void main() {
         '504 Gateway Timeout',
         '500: Internal network failure, error id: 2026090604313429886c81faba4889, please try again later.',
         '500: internal server error',
+        'TimeoutException after 0:03:00.000000: Future not completed',
+        'Request timed out',
       ]) {
         expect(
           isTransientTransportError(errorMessage(text)),

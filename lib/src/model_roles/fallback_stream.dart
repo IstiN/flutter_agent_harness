@@ -102,6 +102,11 @@ final _transportPatterns = [
   RegExp(r'internal (server|network) error', caseSensitive: false),
   RegExp(r'internal network failure', caseSensitive: false),
   RegExp(r'please try again later', caseSensitive: false),
+  // Provider watchdogs surface wedged endpoints as Dart TimeoutExceptions
+  // ("TimeoutException after 0:03:00.000000: Future not completed") or
+  // plain request-timeout wordings — always retryable.
+  RegExp(r'timeout ?exception', caseSensitive: false),
+  RegExp(r'request (attempt )?timed? ?out', caseSensitive: false),
 ];
 
 /// Whether [message] is a transient transport failure the chain may retry
