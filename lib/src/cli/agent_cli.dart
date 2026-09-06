@@ -2784,28 +2784,3 @@ class AgentCli {
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;
 }
-
-/// Builds the detached wake command for an asleep mailbox:
-/// `nohup <exe> --session <name> "<prompt>" >/dev/null 2>&1 &`. Single
-/// quotes every shell word; falls back to `fa` on PATH when [wakeExecutable]
-/// is null/empty and to [sessionId] when [sessionName] is.
-String mailboxWakeCommand({
-  String? wakeExecutable,
-  required String sessionId,
-  String? sessionName,
-}) {
-  final exe = (wakeExecutable == null || wakeExecutable.isEmpty)
-      ? 'fa'
-      : wakeExecutable;
-  final address = (sessionName == null || sessionName.isEmpty)
-      ? sessionId
-      : sessionName;
-  String q(String s) => "'${s.replaceAll("'", r"'\''")}'";
-  return 'nohup ${q(exe)} --session ${q(address)} '
-      '${q(wakePromptText)} >/dev/null 2>&1 & echo woken';
-}
-
-/// The prompt the headless wake run starts with — the inbox drain delivers
-/// the pending mail into the turn; the session file is shared.
-const wakePromptText =
-    'You have pending inbox messages; read your inbox and handle them now.';
