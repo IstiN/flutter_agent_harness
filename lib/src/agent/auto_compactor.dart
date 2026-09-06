@@ -365,6 +365,15 @@ final class AutoCompactor {
       }
     }
     if (cut <= 0) return null;
+    // Pairing integrity: a token-boundary cut may land between an assistant
+    // tool call and its result. The kept region would then open with an
+    // orphaned ToolResultMessage, and strict providers reject EVERY
+    // subsequent request ('400: tool_call_id is not found') — the session
+    // is wedged until restart (Kimi production report). Skip leading
+    // results; their calls are already outside the kept region.
+    while (cut < messages.length && messages[cut] is ToolResultMessage) {
+      cut++;
+    }
     final kept = messages.sublist(cut);
     if (kept.isEmpty) return null;
     return [

@@ -297,6 +297,83 @@ void main() {
     expect(pass.tokensAfter, lessThan(pass.tokensBefore));
   });
 
+  test('local trim never leaves an orphaned tool result (Kimi 400 '
+      'tool_call_id wedge)', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // Sized so the keep-recent cut lands exactly BETWEEN the assistant's
+    // tool call and its result: without pairing repair the kept context
+    // starts with a result whose call is gone, and strict providers answer
+    // every subsequent request with "400: tool_call_id is not found"
+    // (widgets session wedged on Kimi — production report).
+    for (var i = 0; i < 8; i++) {
+      await session.appendMessage(UserMessage.text('old$i${'a' * 400}'));
+    }
+    await session.appendMessage(
+      AssistantMessage(
+        content: [
+          TextContent(text: 'call it ${'x' * 420}'),
+          ToolCall(id: 'c1', name: 'bash', arguments: const {'command': 'ls'}),
+        ],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: StopReason.toolUse,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    await session.appendMessage(
+      ToolResultMessage(
+        toolCallId: 'c1',
+        toolName: 'bash',
+        content: [TextContent(text: 'ok ${'r' * 100}')],
+        isError: false,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    await session.appendMessage(UserMessage.text('tail${'t' * 400}'));
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+
+    Future<SummarizationResult> failing(SummarizationRequest request) async {
+      throw const CompactionException('summarizer down');
+    }
+
+    final hooks = _RecordingHooks();
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: failing,
+      mainSummary: failing,
+      smolModel: null,
+      hooks: hooks,
+    ).run();
+
+    expect(ok, isTrue);
+    expect(hooks.passes.last.fallback, 'local-trim');
+    // Pairing integrity: every kept tool result has its call kept too.
+    final keptCallIds = <String>{
+      for (final m in state.messages)
+        if (m is AssistantMessage)
+          ...m.content.whereType<ToolCall>().map((c) => c.id),
+    };
+    for (final m in state.messages) {
+      if (m is ToolResultMessage) {
+        expect(
+          keptCallIds.contains(m.toolCallId),
+          isTrue,
+          reason: 'orphaned tool result ${m.toolCallId} after trim',
+        );
+      }
+    }
+    // And no result opens the kept region (providers reject that outright).
+    expect(state.messages.any((m) => m is ToolResultMessage), isFalse);
+  });
+
   test('both summarizers down but the transcript fits the keep budget: '
       'no trim, honest failure', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
