@@ -287,6 +287,13 @@ class JsAppEngine {
     final storage = await _readStorage();
     final config = JsRuntimeConfig(
       widgetId: app.id,
+      // The native router keys live engines by `instanceId ?? widgetId`:
+      // without a unique id, the board tile and the fullscreen engine of
+      // the same app collide on `widgetId` — last registration wins the
+      // route and the FIRST dispose drops the shared route entry, leaving
+      // the surviving engine's render/storage/timer messages dead
+      // (frozen tile, buttons that silently do nothing).
+      instanceId: instanceId,
       initialTheme: initialTheme,
       initialStorage: storage,
       hostBootstrapJs: _faBootstrapJsFor(hostLocale),
