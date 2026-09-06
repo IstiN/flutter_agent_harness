@@ -258,11 +258,14 @@ The layers (`dart/src/security/`, pure Dart over the fake):
   authority, asserted across a hostile corpus with a no-false-lockout
   precondition for real users.
 - **Injection validator** (`injection_validator.dart`, IT-S9) —
-  `InjectionValidator` refuses agent JS on login/SSO/OAuth-shaped pages
-  (`login_form` — URL heuristic + DOM-probing `PageClassifier` seam)
-  and refuses keystroke-capture code everywhere (`keylogger_shaped`,
-  assignment + addEventListener spellings); benign code passes
-  (no over-block).
+  `InjectionValidator` refuses keystroke-capture code everywhere
+  (`keylogger_shaped`, assignment + addEventListener spellings) and
+  carries a `login_form` refusal for credential-shaped pages. Honest
+  limit for v2.1: the shipped classifier is the URL heuristic ONLY —
+  every credential-shape disjunct needs a password field (a DOM fact),
+  so with the default the `login_form` refusal never fires; the
+  DOM-probing `PageClassifier` seam exists for hosts that want the
+  full defense. Benign code passes (no over-block).
 - **Exfiltration gate** (`exfil_gate.dart`, IT-S8) — `ExfilGate`
   evaluates outbound actions (fetch, clipboard write, download, window
   open, mail send) by source: page-derived or tool-output payloads need

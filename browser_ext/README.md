@@ -117,10 +117,11 @@ The agent lives in the browser, not in the panel:
   never GRANT one. Only real user input grants authority.
 - **Credential firewall.** There is no password-dump API in Chrome — the
   permission matrix records that row as impossible by construction.
-  Credential-shaped form-field values are masked
-  (`[REDACTED:credential]`) before anything is persisted, injection into
-  login/SSO-shaped pages is refused, and keystroke-capture code is
-  refused everywhere.
+  (`[REDACTED:credential]`) before anything is persisted, and
+  keystroke-capture code is refused everywhere. (The `login_form`
+  credential-page refusal exists but is inert with the shipped
+  URL-only classifier — v2.1 needs a host-supplied DOM-probing
+  `PageClassifier` to arm it.)
 - **Exfiltration gate.** Actions that move data out of the browser
   (cross-origin fetch, clipboard, download, window open, mail) need
   approval when the payload is page-derived or the origin was never

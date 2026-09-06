@@ -352,7 +352,10 @@ final class BrowserApiToolException implements Exception {
 /// register through [registerBrowserApiTools]; [resultBudget] widens the
 /// per-frame inject_js result budget when a caller knows it needs more;
 /// [pageClassifier] swaps the prompt-injection page classifier consulted
-/// before every scripting execution (default: the URL heuristic);
+/// before every scripting execution. The default is the URL heuristic
+/// ONLY: it leaves both DOM facts false, so the validator's
+/// credential-shape refusal never fires — plumb a DOM-probing classifier
+/// in for the full defense;
 /// [visitedOrigins] wires the exfil gate for tabs_open/downloads_start —
 /// null keeps the gate off, and a set (even empty) enforces it, an empty
 /// set meaning every origin counts as unvisited and prompts.

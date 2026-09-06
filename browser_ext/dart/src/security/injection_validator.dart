@@ -6,6 +6,13 @@
 // [PageClassifier] seam so the surface stays pure Dart — the host probes
 // the DOM, the validator only reasons about the answer.
 //
+// Honest v2.1 limitation: every credential-shape disjunct needs
+// [PageClassification.hasPasswordField], a DOM fact, and the shipped
+// default [urlHeuristicClassifier] is URL-only — so with the default the
+// `login_form` refusal NEVER fires. Keystroke-capture refusal is
+// unaffected (pure code-shape matching). Hosts wanting credential-shape
+// defense must supply a DOM-probing classifier.
+//
 // Pure Dart — compiled into the MV3 service worker: no dart:io, no
 // js_interop.
 library;
