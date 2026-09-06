@@ -115,6 +115,103 @@ final class AssistantMetricDetail {
   final int? outputTokens;
 }
 
+/// Character bound of a [TrajectoryRequestMessageSummary.preview].
+const int requestPreviewChars = 200;
+
+/// One outbound request message, summarized for the details panel.
+final class TrajectoryRequestMessageSummary {
+  /// Creates a [TrajectoryRequestMessageSummary].
+  const TrajectoryRequestMessageSummary({
+    required this.role,
+    required this.chars,
+    required this.preview,
+  });
+
+  /// Role discriminator (`user`, `assistant`, `toolResult`).
+  final String role;
+
+  /// JSON-serialized length of the message payload.
+  final int chars;
+
+  /// Bounded text preview of the message content.
+  final String preview;
+
+  /// Serializes to a JSON map.
+  Map<String, dynamic> toJson() => {
+    'role': role,
+    'chars': chars,
+    'preview': preview,
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  factory TrajectoryRequestMessageSummary.fromJson(Map<String, dynamic> json) {
+    return TrajectoryRequestMessageSummary(
+      role: json['role'] as String? ?? '',
+      chars: json['chars'] as int? ?? 0,
+      preview: json['preview'] as String? ?? '',
+    );
+  }
+}
+
+/// Cheap outbound-request summary recorded before each provider call.
+///
+/// Sizes and previews only: the full payload is already in the transcript,
+/// so the summary carries just enough for the Request tab to describe what
+/// the model was about to receive.
+final class TrajectoryRequestDetail {
+  /// Creates a [TrajectoryRequestDetail].
+  const TrajectoryRequestDetail({
+    required this.messageCount,
+    required this.systemPromptChars,
+    required this.toolCount,
+    required this.toolNames,
+    required this.messages,
+  });
+
+  /// Number of messages in the outbound request.
+  final int messageCount;
+
+  /// Length of the system prompt, when one was sent.
+  final int systemPromptChars;
+
+  /// Number of tools advertised with the request.
+  final int toolCount;
+
+  /// Advertised tool names, in request order.
+  final List<String> toolNames;
+
+  /// Per-message summaries, in request order.
+  final List<TrajectoryRequestMessageSummary> messages;
+
+  /// Serializes to a JSON map.
+  Map<String, dynamic> toJson() => {
+    'messageCount': messageCount,
+    'systemPromptChars': systemPromptChars,
+    'toolCount': toolCount,
+    'toolNames': toolNames,
+    'messages': [for (final message in messages) message.toJson()],
+  };
+
+  /// Deserializes from a JSON map produced by [toJson].
+  factory TrajectoryRequestDetail.fromJson(Map<String, dynamic> json) {
+    return TrajectoryRequestDetail(
+      messageCount: json['messageCount'] as int? ?? 0,
+      systemPromptChars: json['systemPromptChars'] as int? ?? 0,
+      toolCount: json['toolCount'] as int? ?? 0,
+      toolNames: [
+        for (final name in (json['toolNames'] as List?) ?? const [])
+          name as String,
+      ],
+      messages: [
+        for (final message in (json['messages'] as List?) ?? const [])
+          TrajectoryRequestMessageSummary.fromJson(
+            (message as Map).cast<String, dynamic>(),
+          ),
+      ],
+    );
+  }
+}
+
 /// Base of the trajectory ledger hierarchy.
 ///
 /// Sealed counterpart of the TS `TrajectoryCellProps` union over record
@@ -169,7 +266,11 @@ final class TrajectoryAssistantRecord extends TrajectoryRecord {
     this.errorMessage,
     this.requestOnly = false,
     this.displayText = '',
+    this.requestDetail,
   });
+
+  /// Outbound-request summary captured before this step's provider call.
+  final TrajectoryRequestDetail? requestDetail;
 
   /// Session record id of the owning message.
   final String messageId;
@@ -331,6 +432,23 @@ final class TrajectoryToolRecord extends TrajectoryRecord {
       startedAt: startedAt,
     );
   }
+
+  /// A copy with the execution start stamped.
+  TrajectoryToolRecord withStartedAt(DateTime startedAt) {
+    return TrajectoryToolRecord(
+      index: index,
+      recordId: recordId,
+      callId: callId,
+      parentCallId: parentCallId,
+      name: name,
+      argsRaw: argsRaw,
+      result: result,
+      resultPreviewMarkdown: resultPreviewMarkdown,
+      isError: isError,
+      timeSeconds: timeSeconds,
+      startedAt: startedAt,
+    );
+  }
 }
 
 /// A user message row (`user` kind).
@@ -382,6 +500,7 @@ final class TrajectoryContextRecord extends TrajectoryRecord {
     required this.text,
     this.previewMarkdown,
     this.sourceSeq,
+    this.startedAt,
   });
 
   /// Plain-text content of the injection.
@@ -392,6 +511,9 @@ final class TrajectoryContextRecord extends TrajectoryRecord {
 
   /// Source event seq for cross-record navigation, when the host has one.
   final int? sourceSeq;
+
+  /// Wall-clock time the injection was appended, when known.
+  final DateTime? startedAt;
 
   @override
   TrajectoryCellKind get kind => TrajectoryCellKind.context;

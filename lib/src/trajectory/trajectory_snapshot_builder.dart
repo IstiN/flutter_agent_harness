@@ -88,6 +88,8 @@ final class TrajectorySnapshotBuilder {
         _appendSystem(record);
       case CustomMessageRecord(display: true, customType: 'context'):
         _appendContext(record);
+      case CustomRecord(customType: 'model_request_summary', data: final data):
+        _applyRequestSummary(record, data);
       default:
         break; // Not a ledger row.
     }
@@ -102,42 +104,56 @@ final class TrajectorySnapshotBuilder {
 
   TrajectorySnapshot applyEvent(AgentEvent event) {
     switch (event) {
-      case MessageEndEvent(message: final AssistantMessage message):
+      case MessageEndEvent(message: final message):
         return _appendRecord(
-          _syntheticRecord('assistant', message),
-          synthetic: true,
-        );
-      case MessageEndEvent(message: final UserMessage message):
-        return _appendRecord(
-          _syntheticRecord('user', message),
-          synthetic: true,
-        );
-      case MessageEndEvent(message: final ToolResultMessage message):
-        return _appendRecord(
-          _syntheticRecord('result', message),
+          _syntheticRecord(_eventRole(message), message),
           synthetic: true,
         );
       case MessageStartEvent(message: final AssistantMessage message):
         _beginAssistantStream(message);
       case MessageStartEvent(message: UserMessage()):
-        _liveTurn = _lastAssistantTurn + 1;
-        _liveStep = 0;
+        _beginUserTurn();
       case MessageUpdateEvent(:final message):
         _updateAssistantStream(message);
-      case ToolExecutionStartEvent(:final toolCallId, :final toolName):
-        _runningCalls[toolCallId] = TrajectoryRunningToolCall(
-          callId: toolCallId,
-          name: toolName,
-          turn: _liveTurn ?? _lastAssistantTurn,
-          step: _liveStep != 0
-              ? _liveStep
-              : (_lastAssistantStep != 0 ? _lastAssistantStep : 1),
-        );
+      case ToolExecutionStartEvent(
+        :final toolCallId,
+        :final toolName,
+        :final timestamp,
+      ):
+        _beginToolCall(toolCallId, toolName, timestamp);
+      case ModelRequestEvent(:final detail):
+        _attachRequestDetail(_nextAssistantStep(), detail);
       default:
         break; // Not a transcript message; nothing to project.
     }
     _revision++;
     return _snapshot();
+  }
+
+  /// The ledger record kind a transcript message projects to.
+  String _eventRole(Message message) => switch (message) {
+    AssistantMessage() => 'assistant',
+    UserMessage() => 'user',
+    ToolResultMessage() => 'result',
+    _ => 'message',
+  };
+
+  void _beginUserTurn() {
+    _liveTurn = _lastAssistantTurn + 1;
+    _liveStep = 0;
+  }
+
+  void _beginToolCall(String toolCallId, String toolName, DateTime timestamp) {
+    _runningCalls[toolCallId] = TrajectoryRunningToolCall(
+      callId: toolCallId,
+      name: toolName,
+      turn: _liveTurn ?? _lastAssistantTurn,
+      step: _liveStep != 0
+          ? _liveStep
+          : (_lastAssistantStep != 0 ? _lastAssistantStep : 1),
+      startedAt: timestamp,
+    );
+    _markToolStarted(toolCallId, timestamp);
   }
 
   /// The current snapshot state without appending.
@@ -227,6 +243,7 @@ final class TrajectorySnapshotBuilder {
         turn: turn,
         step: step,
         previousTime: _prevAbsTime,
+        requestDetail: _assistantRequests['$turn\u0000$step']?.requestDetail,
       ),
     );
     _finalizeAssistantRequest(turn, step, message);
@@ -268,6 +285,7 @@ final class TrajectorySnapshotBuilder {
       parentCallId: call.parentCallId,
       name: call.name,
       argsRaw: jsonEncode(call.arguments),
+      startedAt: owner.timestamp,
     );
     final known = _resultsByCallId[call.id];
     if (known != null) {
@@ -323,6 +341,7 @@ final class TrajectorySnapshotBuilder {
         ),
         summary: summary,
         firstKeptEntryId: firstKept,
+        previousTime: _prevAbsTime,
       ),
     );
     _compactionRequests.add(
@@ -388,13 +407,13 @@ final class TrajectorySnapshotBuilder {
         ),
         text: text,
         previewMarkdown: text,
+        startedAt: record.timestamp,
       ),
     );
   }
 
   void _beginAssistantStream(AssistantMessage message) {
-    final turn = _liveTurn ?? _lastAssistantTurn;
-    final step = _liveStep + 1;
+    final (turn, step) = _nextAssistantStep();
     _liveTurn = turn;
     _liveStep = step;
     _partial = TrajectoryPartialAssistant(
@@ -407,7 +426,15 @@ final class TrajectorySnapshotBuilder {
     );
     final key = '$turn\u0000$step';
     final existing = _assistantRequests[key];
-    if (existing != null) return;
+    if (existing != null) {
+      // A ModelRequestEvent pre-registered this request; fill in what the
+      // stream start knows and keep the attached request detail.
+      existing
+        ..provider = message.provider
+        ..model = message.model
+        ..startedAt ??= message.timestamp;
+      return;
+    }
     _assistantRequests[key] = _RequestFacts(
       order: _records.length + 0.5,
       turn: turn,
@@ -418,6 +445,60 @@ final class TrajectorySnapshotBuilder {
       status: TrajectoryRequestStatus.running,
       startedAt: message.timestamp,
     );
+  }
+
+  /// Turn/step the NEXT assistant response will occupy (the request always
+  /// precedes its message, so this is where [ModelRequestEvent] details and
+  /// new streams attach).
+  (int, int) _nextAssistantStep() {
+    return (_liveTurn ?? _lastAssistantTurn, _liveStep + 1);
+  }
+
+  /// Stamps the execution start onto a tool row that was already projected
+  /// from its assistant message (live-tail order: message first, then
+  /// tool-execution events).
+  void _markToolStarted(String callId, DateTime startedAt) {
+    final toolIndex = _toolIndexByCallId[callId];
+    if (toolIndex == null) return;
+    final tool = _records[toolIndex] as TrajectoryToolRecord;
+    _records[toolIndex] = tool.withStartedAt(startedAt);
+  }
+
+  /// Attaches a live [ModelRequestEvent] summary to the assistant request
+  /// the upcoming stream belongs to.
+  void _attachRequestDetail(
+    (int, int) turnStep,
+    TrajectoryRequestDetail detail,
+  ) {
+    final key = '${turnStep.$1}\u0000${turnStep.$2}';
+    final facts = _assistantRequests[key];
+    if (facts != null) {
+      facts.requestDetail = detail;
+      return;
+    }
+    _assistantRequests[key] = _RequestFacts(
+      order: _records.length + 0.5,
+      turn: turnStep.$1,
+      step: turnStep.$2,
+      purpose: TrajectoryRequestPurpose.assistant,
+      provider: '',
+      model: '',
+      status: TrajectoryRequestStatus.running,
+      requestDetail: detail,
+    );
+  }
+
+  /// Replays a persisted `model_request_summary` payload onto the matching
+  /// turn/step so replayed sessions carry the same request detail as the
+  /// live path. The record sits on the chain before its assistant message,
+  /// so the chain walk yields the upcoming turn and the step AFTER it (+1).
+  void _applyRequestSummary(SessionRecord record, Object? data) {
+    if (data is! Map) return;
+    final (:turn, :step) = _turnStep(record);
+    _attachRequestDetail((
+      turn,
+      step + 1,
+    ), TrajectoryRequestDetail.fromJson(data.cast<String, dynamic>()));
   }
 
   void _updateAssistantStream(AssistantMessage message) {
@@ -645,6 +726,7 @@ class _RequestFacts {
     this.startedAt,
     this.completedAt,
     this.usage,
+    this.requestDetail,
   });
 
   /// Sort key: assistant-row index, or a fractional position for a request
@@ -677,4 +759,7 @@ class _RequestFacts {
 
   /// Usage reported by this request.
   Usage? usage;
+
+  /// Outbound-request summary captured before the provider call.
+  TrajectoryRequestDetail? requestDetail;
 }

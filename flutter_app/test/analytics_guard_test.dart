@@ -29,10 +29,6 @@ const _documentedExemptions = <String, String>{
       'Two modal key-management dialogs (edit one key, add a key) opened '
       'from the Keys section — the section carries the analytics events; '
       'the dialogs are pure text-entry forms with no actions of their own.',
-  'lib/ui/screens/trajectory_panel_route.dart':
-      'Not a screen — a 20-line helper that opens the shared fa_ui '
-      'trajectory panel (dialog on wide canvases, bottom sheet on narrow '
-      'ones); it renders nothing itself and has no user path of its own.',
   'lib/ui/widgets/chat_composer.dart':
       'Adapter shim — the composer lives in packages/fa_ui; messageSent/'
       'uploadAdded/voiceInputUsed fire via FaChatHost.track, routed into '

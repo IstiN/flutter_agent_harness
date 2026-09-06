@@ -6,11 +6,17 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 import '../chat/markdown_style.dart';
 import 'trajectory_strings.dart';
+
+/// Content length above which a details page collapses behind a size label
+/// and an expander instead of building the full widget tree (E7:
+/// multi-hundred-KiB system prompts and payloads).
+const int _hugeTextChars = 256 * 1024;
 
 /// One tab of the details sheet: stable [id] (drives tab-history restore),
 /// localized [label], and the page builder.
@@ -32,10 +38,17 @@ class TrajectoryDetailsTab {
   final WidgetBuilder build;
 }
 
-/// Tab set for [record] per selection kind: system → [System Prompt, Tools],
-/// compacted → [Summary, Raw Output], user/context/message → [Summary,
-/// Preview, Raw], tool/subtool → [Summary, Payload?, Result?, Schema,
-/// Timing].
+/// Tab set for [record] per selection kind — tabs without data are absent,
+/// never rendered empty:
+///
+/// - system → [System Prompt, Tools] (both keep explicit empty statements)
+/// - compacted → [Summary, Raw Output] (Raw Output hidden when no summary)
+/// - tool/subtool → [Summary, Payload?, Result, Schema?, Timing?]; Result
+///   stays visible while the call runs with an in-progress state
+/// - message → [Summary, Request?, Diff?, Preview, Raw, Timing?]; Request
+///   appears when the record carries a [TrajectoryRequestDetail], Preview
+///   keeps an explicit empty-response state
+/// - user/context → [Summary, Preview?, Raw]
 ///
 /// The Diff tab keys off a prompt pair (before vs after). The landed core
 /// record that carries a pair is [TrajectoryAssistantRecord]
@@ -53,25 +66,40 @@ List<TrajectoryDetailsTab> trajectoryDetailTabs(
         TrajectoryDetailsTab(
           id: 'system-prompt',
           label: strings.tabSystemPrompt,
-          build: (context) => record.detail == null
-              ? _mutedPage(strings.recordSystemPromptMissing)
-              : _markdownPage(context, record.detail!),
+          build: (context) => _TabPage(
+            strings: strings,
+            copyText: record.detail,
+            child: record.detail == null
+                ? _mutedPage(strings.recordSystemPromptMissing)
+                : _bounded(
+                    context,
+                    record.detail!,
+                    (context, text) => _markdownPage(context, text),
+                  ),
+          ),
         ),
         TrajectoryDetailsTab(
           id: 'tools',
           label: strings.tabTools,
-          build: (context) => _mutedPage(strings.recordToolsMissing),
+          build: (context) => _TabPage(
+            strings: strings,
+            child: _mutedPage(strings.recordToolsMissing),
+          ),
         ),
       ];
     case TrajectoryCompactedRecord():
       return [
         _summaryTab(record, snapshot, strings),
-        TrajectoryDetailsTab(
-          id: 'raw',
-          label: strings.tabRawOutput,
-          build: (context) =>
-              _monoPage(record.summary, muted: record.summary.isEmpty),
-        ),
+        if (record.summary.isNotEmpty)
+          TrajectoryDetailsTab(
+            id: 'raw',
+            label: strings.tabRawOutput,
+            build: (context) => _TabPage(
+              strings: strings,
+              copyText: record.summary,
+              child: _bounded(context, record.summary, _textPage),
+            ),
+          ),
       ];
     case TrajectoryToolRecord():
       return [
@@ -80,36 +108,34 @@ List<TrajectoryDetailsTab> trajectoryDetailTabs(
           TrajectoryDetailsTab(
             id: 'payload',
             label: strings.tabPayload,
-            build: (context) =>
-                _monoPage(_prettyJson(record.argsRaw), mono: true),
+            build: (context) => _TabPage(
+              strings: strings,
+              copyText: record.argsRaw,
+              child: _bounded(context, _prettyJson(record.argsRaw), _jsonPage),
+            ),
           ),
-        if (record.result.isNotEmpty || record.isError)
+        TrajectoryDetailsTab(
+          id: 'result',
+          label: strings.tabResult,
+          build: (context) => _resultPage(context, record, strings),
+        ),
+        if (_hasSchema(record, snapshot))
           TrajectoryDetailsTab(
-            id: 'result',
-            label: strings.tabResult,
-            build: (context) => record.result.isEmpty
-                ? _mutedPage(strings.recordNoOutput)
-                : _monoPage(
-                    record.result,
-                    mono: true,
-                    color: record.isError
-                        ? Theme.of(context).colorScheme.error
-                        : null,
-                  ),
+            id: 'schema',
+            label: strings.tabSchema,
+            build: (context) =>
+                _schemaPage(context, record.name, snapshot, strings),
           ),
-        TrajectoryDetailsTab(
-          id: 'schema',
-          label: strings.tabSchema,
-          build: (context) =>
-              _schemaPage(context, record.name, snapshot, strings),
-        ),
-        TrajectoryDetailsTab(
-          id: 'timing',
-          label: strings.tabTiming,
-          build: (context) => _timingPage(record, strings),
-        ),
+        if (_hasTiming(record))
+          TrajectoryDetailsTab(
+            id: 'timing',
+            label: strings.tabTiming,
+            build: (context) =>
+                _TabPage(strings: strings, child: _timingPage(record, strings)),
+          ),
       ];
     case TrajectoryAssistantRecord():
+      final request = record.requestDetail;
       final pair =
           record.previousPromptDetail != null && record.promptDetail != null
           ? (record.previousPromptDetail!, record.promptDetail!)
@@ -117,6 +143,12 @@ List<TrajectoryDetailsTab> trajectoryDetailTabs(
       final preview = _previewMarkdown(record);
       return [
         _summaryTab(record, snapshot, strings),
+        if (request != null)
+          TrajectoryDetailsTab(
+            id: 'request',
+            label: strings.tabRequest,
+            build: (context) => _requestPage(context, request, strings),
+          ),
         if (pair != null)
           TrajectoryDetailsTab(
             id: 'diff',
@@ -127,35 +159,68 @@ List<TrajectoryDetailsTab> trajectoryDetailTabs(
           id: 'preview',
           label: strings.tabPreview,
           build: (context) => preview == null || preview.isEmpty
-              ? _mutedPage(strings.recordNoOutput)
-              : _markdownPage(context, preview),
+              ? _TabPage(
+                  strings: strings,
+                  child: _emptyResponsePage(record, strings),
+                )
+              : _TabPage(
+                  strings: strings,
+                  copyText: preview,
+                  child: _bounded(context, preview, _markdownPage),
+                ),
         ),
         TrajectoryDetailsTab(
           id: 'raw',
           label: strings.tabRaw,
-          build: (context) =>
-              _rawBlocksPage(context, record.sourceBlocks, strings),
+          build: (context) {
+            final json = const JsonEncoder.withIndent(
+              '  ',
+            ).convert(_recordJsonMap(record));
+            return _TabPage(
+              strings: strings,
+              copyText: json,
+              child: _bounded(context, json, _jsonPage),
+            );
+          },
         ),
-        TrajectoryDetailsTab(
-          id: 'timing',
-          label: strings.tabTiming,
-          build: (context) => _timingPage(record, strings),
-        ),
+        if (_hasTiming(record))
+          TrajectoryDetailsTab(
+            id: 'timing',
+            label: strings.tabTiming,
+            build: (context) =>
+                _TabPage(strings: strings, child: _timingPage(record, strings)),
+          ),
       ];
     case TrajectoryUserRecord():
-      return _markdownTabs(
-        summary: _summaryTab(record, snapshot, strings),
-        preview: record.inputDetail ?? record.previewMarkdown ?? record.text,
-        blocks: record.sourceBlocks,
-        strings: strings,
-      );
     case TrajectoryContextRecord():
-      return _markdownTabs(
-        summary: _summaryTab(record, snapshot, strings),
-        preview: record.previewMarkdown ?? record.text,
-        blocks: const [],
-        strings: strings,
-      );
+      final preview = _previewMarkdown(record) ?? '';
+      return [
+        _summaryTab(record, snapshot, strings),
+        if (preview.isNotEmpty)
+          TrajectoryDetailsTab(
+            id: 'preview',
+            label: strings.tabPreview,
+            build: (context) => _TabPage(
+              strings: strings,
+              copyText: preview,
+              child: _bounded(context, preview, _markdownPage),
+            ),
+          ),
+        TrajectoryDetailsTab(
+          id: 'raw',
+          label: strings.tabRaw,
+          build: (context) {
+            final json = const JsonEncoder.withIndent(
+              '  ',
+            ).convert(_recordJsonMap(record));
+            return _TabPage(
+              strings: strings,
+              copyText: json,
+              child: _bounded(context, json, _jsonPage),
+            );
+          },
+        ),
+      ];
   }
 }
 
@@ -284,29 +349,209 @@ TrajectoryDetailsTab _summaryTab(
 ) => TrajectoryDetailsTab(
   id: 'summary',
   label: strings.tabSummary,
-  build: (context) => _summaryPage(context, record, snapshot, strings),
+  build: (context) => _TabPage(
+    strings: strings,
+    child: _summaryPage(context, record, snapshot, strings),
+  ),
 );
 
-List<TrajectoryDetailsTab> _markdownTabs({
-  required TrajectoryDetailsTab summary,
-  required String preview,
-  required List<TrajectorySourceBlock> blocks,
-  required TrajectoryStrings strings,
-}) => [
-  summary,
-  TrajectoryDetailsTab(
-    id: 'preview',
-    label: strings.tabPreview,
-    build: (context) => preview.isEmpty
-        ? _mutedPage(strings.recordNoContent)
-        : _markdownPage(context, preview),
-  ),
-  TrajectoryDetailsTab(
-    id: 'raw',
-    label: strings.tabRaw,
-    build: (context) => _rawBlocksPage(context, blocks, strings),
-  ),
-];
+/// What the model was sent this step: counts, sizes, tool inventory, and
+/// the per-message list with bounded previews.
+Widget _requestPage(
+  BuildContext context,
+  TrajectoryRequestDetail detail,
+  TrajectoryStrings strings,
+) {
+  final dim = _monoStyle(
+    context,
+  )?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant);
+  return _TabPage(
+    strings: strings,
+    copyText: _requestSummaryText(detail, strings),
+    child: _listPage([
+      _DetailRow(strings.requestMessages, '${detail.messageCount}'),
+      if (detail.systemPromptChars > 0)
+        _DetailRow(
+          strings.requestSystemPrompt,
+          strings.unitChars(detail.systemPromptChars),
+        ),
+      if (detail.toolCount > 0) ...[
+        _DetailRow(strings.tabTools, '${detail.toolCount}'),
+        if (detail.toolNames.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(left: 120, bottom: 4),
+            child: Text(
+              detail.toolNames.join(', '),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+      ],
+      const SizedBox(height: 12),
+      if (detail.messages.isNotEmpty)
+        Text(strings.requestMessages, style: _headingStyle),
+      for (final message in detail.messages) ...[
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            '${message.role} · ${strings.unitChars(message.chars)}',
+            style: dim,
+          ),
+        ),
+        Text(
+          message.preview,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    ]),
+  );
+}
+
+/// Compact multi-line summary of the outbound request for the clipboard.
+String _requestSummaryText(
+  TrajectoryRequestDetail detail,
+  TrajectoryStrings strings,
+) => [
+  '${strings.requestMessages}: ${detail.messageCount}',
+  '${strings.requestSystemPrompt}: ${strings.unitChars(detail.systemPromptChars)}',
+  '${strings.tabTools}: ${detail.toolCount}'
+      '${detail.toolNames.isEmpty ? '' : ' (${detail.toolNames.join(', ')})'}',
+  for (final message in detail.messages)
+    '${message.role} · ${strings.unitChars(message.chars)}: '
+        '${message.preview.replaceAll('\n', ' ')}',
+].join('\n');
+
+/// Empty assistant response: an explicit statement plus the stop reason
+/// derived from the recorded blocks — never a bare placeholder.
+Widget _emptyResponsePage(
+  TrajectoryAssistantRecord record,
+  TrajectoryStrings strings,
+) {
+  final stoppedForTool = [
+    ...record.sourceBlocks,
+    ...record.outputBlocks,
+  ].any((block) => block.type == 'toolCall');
+  return _listPage([
+    Text(strings.detailsEmptyResponse, style: _headingStyle),
+    _DetailRow(
+      strings.detailsStopReason,
+      stoppedForTool
+          ? strings.stopReasonToolUse
+          : strings.stopReasonNotRecorded,
+    ),
+  ]);
+}
+
+Widget _resultPage(
+  BuildContext context,
+  TrajectoryToolRecord record,
+  TrajectoryStrings strings,
+) {
+  final running = record.result.isEmpty && !record.isError;
+  return _TabPage(
+    strings: strings,
+    copyText: record.result.isEmpty ? null : record.result,
+    child: running
+        ? _mutedPage(strings.recordResultPending)
+        : record.result.isEmpty
+        ? _mutedPage(strings.recordNoOutput)
+        : _bounded(
+            context,
+            record.result,
+            (context, text) => _textPage(
+              context,
+              text,
+              color: record.isError
+                  ? Theme.of(context).colorScheme.error
+                  : null,
+            ),
+          ),
+  );
+}
+
+Widget _schemaPage(
+  BuildContext context,
+  String toolName,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+) {
+  final raw = snapshot?.callSchemas[toolName];
+  Object? decoded;
+  try {
+    decoded = raw == null ? null : jsonDecode(raw);
+  } on FormatException {
+    decoded = null;
+  }
+  if (decoded is! Map)
+    return _TabPage(
+      strings: strings,
+      child: _mutedPage(strings.recordSchemaUnavailable),
+    );
+  final name = decoded['name'];
+  final description = decoded['description'];
+  final parameters = decoded['parameters'];
+  return _TabPage(
+    strings: strings,
+    copyText: raw,
+    child: _listPage([
+      if (name is String)
+        Text(name, style: Theme.of(context).textTheme.titleMedium),
+      if (description is String && description.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(description),
+        ),
+      Padding(
+        padding: const EdgeInsets.only(top: 12, bottom: 4),
+        child: Text(strings.recordParameters, style: _headingStyle),
+      ),
+      _jsonText(
+        context,
+        parameters == null
+            ? '{}'
+            : const JsonEncoder.withIndent('  ').convert(parameters),
+      ),
+    ]),
+  );
+}
+
+Widget _requestSummaryPage(
+  BuildContext context,
+  TrajectoryRequestNumber request,
+  TrajectorySnapshot? snapshot,
+  TrajectoryStrings strings,
+) {
+  final rows = <Widget>[
+    _DetailRow(
+      strings.detailsStatus,
+      _requestStatusLabel(request.status, strings),
+    ),
+    _DetailRow(strings.detailsProvider, request.provider),
+    _DetailRow(strings.detailsModel, request.model),
+  ];
+  final assistant = snapshot == null
+      ? null
+      : _assistantOfRequest(snapshot, request);
+  if (assistant != null) {
+    rows.add(
+      _DetailRow(
+        strings.detailsToolCalls,
+        '${_countToolCalls(assistant.sourceBlocks) + _countToolCalls(assistant.outputBlocks)}',
+      ),
+    );
+    if (assistant.isError ?? false) {
+      rows.add(
+        _DetailRow(
+          strings.detailsError,
+          _errorMessage(assistant.errorCode, assistant.errorMessage, strings),
+          color: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
+  return _listPage(rows);
+}
 
 Widget _summaryPage(
   BuildContext context,
@@ -401,43 +646,6 @@ Widget _summaryPage(
         TrajectoryUserRecord() ||
         TrajectoryContextRecord():
       break;
-  }
-  return _listPage(rows);
-}
-
-Widget _requestSummaryPage(
-  BuildContext context,
-  TrajectoryRequestNumber request,
-  TrajectorySnapshot? snapshot,
-  TrajectoryStrings strings,
-) {
-  final rows = <Widget>[
-    _DetailRow(
-      strings.detailsStatus,
-      _requestStatusLabel(request.status, strings),
-    ),
-    _DetailRow(strings.detailsProvider, request.provider),
-    _DetailRow(strings.detailsModel, request.model),
-  ];
-  final assistant = snapshot == null
-      ? null
-      : _assistantOfRequest(snapshot, request);
-  if (assistant != null) {
-    rows.add(
-      _DetailRow(
-        strings.detailsToolCalls,
-        '${_countToolCalls(assistant.sourceBlocks) + _countToolCalls(assistant.outputBlocks)}',
-      ),
-    );
-    if (assistant.isError ?? false) {
-      rows.add(
-        _DetailRow(
-          strings.detailsError,
-          _errorMessage(assistant.errorCode, assistant.errorMessage, strings),
-          color: Theme.of(context).colorScheme.error,
-        ),
-      );
-    }
   }
   return _listPage(rows);
 }
@@ -585,74 +793,6 @@ List<Widget> _usageRows(Usage? usage, TrajectoryStrings strings) {
   ];
 }
 
-Widget _schemaPage(
-  BuildContext context,
-  String toolName,
-  TrajectorySnapshot? snapshot,
-  TrajectoryStrings strings,
-) {
-  final raw = snapshot?.callSchemas[toolName];
-  Object? decoded;
-  try {
-    decoded = raw == null ? null : jsonDecode(raw);
-  } on FormatException {
-    decoded = null;
-  }
-  if (decoded is! Map) return _mutedPage(strings.recordSchemaUnavailable);
-  final name = decoded['name'];
-  final description = decoded['description'];
-  final parameters = decoded['parameters'];
-  return _listPage([
-    if (name is String)
-      Text(name, style: Theme.of(context).textTheme.titleMedium),
-    if (description is String && description.isNotEmpty)
-      Padding(padding: const EdgeInsets.only(top: 8), child: Text(description)),
-    Padding(
-      padding: const EdgeInsets.only(top: 12, bottom: 4),
-      child: Text(strings.recordParameters, style: _headingStyle),
-    ),
-    SelectableText(
-      parameters == null
-          ? '{}'
-          : const JsonEncoder.withIndent('  ').convert(parameters),
-      style: _monoStyle(context),
-    ),
-  ]);
-}
-
-Widget _rawBlocksPage(
-  BuildContext context,
-  List<TrajectorySourceBlock> blocks,
-  TrajectoryStrings strings,
-) {
-  if (blocks.isEmpty) return _mutedPage(strings.recordNoContent);
-  final dim = _monoStyle(
-    context,
-  )?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant);
-  return _listPage([
-    for (var i = 0; i < blocks.length; i++)
-      if (blocks[i].type == 'toolCall')
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Row(
-            children: [
-              Text('Block #${i + 1} toolCall', style: dim),
-              const SizedBox(width: 8),
-              Chip(label: Text(blocks[i].toolName ?? '')),
-            ],
-          ),
-        )
-      else
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Text(
-            'Block #${i + 1} ${blocks[i].type}',
-            style: _monoStyle(context),
-          ),
-        ),
-  ]);
-}
-
 Widget _diffPage(BuildContext context, String before, String after) {
   final lines = trajectoryPromptDiffLines(before, after);
   if (lines.isEmpty) return _mutedPage('—');
@@ -674,9 +814,43 @@ Widget _diffPage(BuildContext context, String before, String after) {
   ]);
 }
 
-// Small building blocks --------------------------------------------------------
+// Small building blocks -------------------------------------------------------
 
 const _headingStyle = TextStyle(fontWeight: FontWeight.w600, fontSize: 13);
+
+/// Page scaffold shared by every tab: content wrapped in a [SelectionArea]
+/// (every page is selectable) plus a copy button when [copyText] is
+/// non-empty.
+class _TabPage extends StatelessWidget {
+  const _TabPage({required this.strings, this.copyText, required this.child});
+
+  final TrajectoryStrings strings;
+  final String? copyText;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = copyText;
+    return Column(
+      children: [
+        if (copy != null && copy.isNotEmpty)
+          Align(
+            alignment: Alignment.centerRight,
+            child: Semantics(
+              label: strings.detailsCopy,
+              button: true,
+              child: IconButton(
+                icon: const Icon(Icons.copy),
+                tooltip: strings.detailsCopy,
+                onPressed: () => Clipboard.setData(ClipboardData(text: copy)),
+              ),
+            ),
+          ),
+        Expanded(child: SelectionArea(child: child)),
+      ],
+    );
+  }
+}
 
 Widget _listPage(List<Widget> children) =>
     ListView(padding: const EdgeInsets.all(16), children: children);
@@ -691,25 +865,122 @@ Widget _markdownPage(BuildContext context, String data) => ListView(
   ],
 );
 
-Widget _monoPage(
+/// Plain (optionally monospace, colored) text page; selection comes from
+/// the surrounding [SelectionArea].
+Widget _textPage(
+  BuildContext context,
   String text, {
   bool mono = false,
-  bool muted = false,
   Color? color,
 }) => ListView(
   padding: const EdgeInsets.all(16),
   children: [
-    SelectableText(
+    Text(
       text,
-      style: TextStyle(
-        fontFamily: mono ? 'monospace' : null,
-        color: color ?? (muted ? Colors.grey : null),
-      ),
+      style: TextStyle(fontFamily: mono ? 'monospace' : null, color: color),
     ),
   ],
 );
 
+/// Pretty-printed JSON with lightweight span coloring.
+Widget _jsonPage(BuildContext context, String text) => ListView(
+  padding: const EdgeInsets.all(16),
+  children: [_jsonText(context, text)],
+);
+
+Widget _jsonText(BuildContext context, String text) => Text.rich(
+  TextSpan(style: _monoStyle(context), children: _jsonSpans(context, text)),
+);
+
 Widget _mutedPage(String text) => _listPage([_MutedText(text)]);
+
+/// Builds the full page for [text], or — when the text exceeds
+/// [_hugeTextChars] — a collapsed region with a size label; the full
+/// content builds lazily only after expanding.
+Widget _bounded(
+  BuildContext context,
+  String text,
+  Widget Function(BuildContext, String) buildFull,
+) {
+  if (text.length <= _hugeTextChars) return buildFull(context, text);
+  return _CollapsedContent(
+    text: text,
+    full: (context) => buildFull(context, text),
+  );
+}
+
+class _CollapsedContent extends StatefulWidget {
+  const _CollapsedContent({required this.text, required this.full});
+
+  final String text;
+  final WidgetBuilder full;
+
+  @override
+  State<_CollapsedContent> createState() => _CollapsedContentState();
+}
+
+class _CollapsedContentState extends State<_CollapsedContent> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_expanded) return widget.full(context);
+    final strings = TrajectoryStrings.of(context);
+    return _listPage([
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () => setState(() => _expanded = true),
+          icon: const Icon(Icons.expand_more),
+          label: Text(
+            strings.detailsShowContent(_formatSize(widget.text.length)),
+          ),
+        ),
+      ),
+    ]);
+  }
+}
+
+/// Size label for collapsed content (chars ≈ bytes; a display hint only).
+String _formatSize(int chars) => '${(chars / 1024).toStringAsFixed(1)} KiB';
+
+/// Lightweight JSON tokenizer coloring keys, strings, numbers, and
+/// literals with pure [TextStyle] spans — no syntax package.
+final RegExp _jsonToken = RegExp(
+  r'"(?:[^"\\]|\\.)*"(\s*:)?'
+  r'|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?'
+  r'|\b(?:true|false|null)\b',
+);
+
+List<TextSpan> _jsonSpans(BuildContext context, String text) {
+  final colors = Theme.of(context).colorScheme;
+  final spans = <TextSpan>[];
+  var cursor = 0;
+  for (final match in _jsonToken.allMatches(text)) {
+    if (match.start > cursor) {
+      spans.add(TextSpan(text: text.substring(cursor, match.start)));
+    }
+    final token = match[0]!;
+    final color = match[1] != null
+        ? colors.primary
+        : token.startsWith('"')
+        ? colors.tertiary
+        : token == 'true' || token == 'false' || token == 'null'
+        ? colors.error
+        : colors.secondary;
+    spans.add(
+      TextSpan(
+        text: token,
+        style: TextStyle(color: color),
+      ),
+    );
+    cursor = match.end;
+  }
+  if (cursor < text.length) {
+    spans.add(TextSpan(text: text.substring(cursor)));
+  }
+  return spans;
+}
 
 class _MutedText extends StatelessWidget {
   const _MutedText(this.text);
@@ -769,6 +1040,31 @@ TextStyle? _monoStyle(BuildContext context) =>
     Theme.of(context).textTheme.bodySmall?.copyWith(fontFamily: 'monospace');
 
 // Pure helpers -----------------------------------------------------------------
+
+/// Whether the record carries any wall-clock timestamp; the Timing tab is
+/// hidden otherwise instead of rendering a wall of dashes.
+bool _hasTiming(TrajectoryRecord record) => switch (record) {
+  TrajectoryToolRecord(:final startedAt, :final timeSeconds) =>
+    startedAt != null || timeSeconds != null,
+  TrajectoryCompactedRecord(:final startedAt, :final timeSeconds) =>
+    startedAt != null || timeSeconds != null,
+  TrajectoryAssistantRecord(
+    :final stepStartTime,
+    :final firstTokenTime,
+    :final completedTime,
+    :final timeSeconds,
+  ) =>
+    stepStartTime != null ||
+        firstTokenTime != null ||
+        completedTime != null ||
+        timeSeconds != null,
+  _ => false,
+};
+
+/// The Schema tab appears only when the snapshot actually captured the
+/// call's schema.
+bool _hasSchema(TrajectoryToolRecord record, TrajectorySnapshot? snapshot) =>
+    snapshot?.callSchemas.containsKey(record.name) ?? false;
 
 String _statusLabel(TrajectoryRecord record, TrajectoryStrings strings) =>
     switch (_statusOf(record)) {
@@ -894,6 +1190,124 @@ String? _previewMarkdown(TrajectoryRecord record) => switch (record) {
   TrajectoryCompactedRecord(:final summary) => summary,
   _ => null,
 };
+
+/// Raw view of a record: the full ledger fields as a JSON map, pretty-printed
+/// for the Raw tab and its clipboard payload.
+Map<String, dynamic> _recordJsonMap(TrajectoryRecord record) {
+  final json = <String, dynamic>{
+    'index': record.index,
+    'recordId': record.recordId,
+    'kind': record.kind.name,
+  };
+  switch (record) {
+    case TrajectoryAssistantRecord():
+      json.addAll({
+        'messageId': record.messageId,
+        'turn': record.turn,
+        'step': record.step,
+        if (record.provider != null) 'provider': record.provider,
+        if (record.model != null) 'model': record.model,
+        if (record.usage != null) 'usage': record.usage!.toJson(),
+        if (record.inputTokens != null) 'inputTokens': record.inputTokens,
+        if (record.cacheReadTokens != null)
+          'cacheReadTokens': record.cacheReadTokens,
+        if (record.cacheWriteTokens != null)
+          'cacheWriteTokens': record.cacheWriteTokens,
+        if (record.outputTokens != null) 'outputTokens': record.outputTokens,
+        if (record.reasoningTokens != null)
+          'reasoningTokens': record.reasoningTokens,
+        if (record.stepStartTime != null)
+          'stepStartTime': record.stepStartTime!.toIso8601String(),
+        if (record.firstTokenTime != null)
+          'firstTokenTime': record.firstTokenTime!.toIso8601String(),
+        if (record.completedTime != null)
+          'completedTime': record.completedTime!.toIso8601String(),
+        'sourceBlocks': _blocksJson(record.sourceBlocks),
+        'outputBlocks': _blocksJson(record.outputBlocks),
+        if (record.thinkingDetail != null)
+          'thinkingDetail': record.thinkingDetail,
+        if (record.inputDetail != null) 'inputDetail': record.inputDetail,
+        if (record.outputDetail != null) 'outputDetail': record.outputDetail,
+        if (record.promptDetail != null) 'promptDetail': record.promptDetail,
+        if (record.previousPromptDetail != null)
+          'previousPromptDetail': record.previousPromptDetail,
+        if (record.timeSeconds != null)
+          'timeSeconds': record.timeSeconds!.inMilliseconds,
+        if (record.isError != null) 'isError': record.isError,
+        if (record.errorCode != null) 'errorCode': record.errorCode,
+        if (record.errorMessage != null) 'errorMessage': record.errorMessage,
+        if (record.requestOnly) 'requestOnly': record.requestOnly,
+        if (record.displayText.isNotEmpty) 'displayText': record.displayText,
+        if (record.requestDetail != null)
+          'requestDetail': record.requestDetail!.toJson(),
+      });
+    case TrajectoryToolRecord():
+      json.addAll({
+        'callId': record.callId,
+        if (record.parentCallId != null) 'parentCallId': record.parentCallId,
+        'name': record.name,
+        'argsRaw': record.argsRaw,
+        'result': record.result,
+        if (record.resultPreviewMarkdown != null)
+          'resultPreviewMarkdown': record.resultPreviewMarkdown,
+        'isError': record.isError,
+        if (record.timeSeconds != null)
+          'timeSeconds': record.timeSeconds!.inMilliseconds,
+        if (record.startedAt != null)
+          'startedAt': record.startedAt!.toIso8601String(),
+      });
+    case TrajectoryUserRecord():
+      json.addAll({
+        'text': record.text,
+        'sourceBlocks': _blocksJson(record.sourceBlocks),
+        'opensTurn': record.opensTurn,
+        if (record.inputDetail != null) 'inputDetail': record.inputDetail,
+        if (record.startedAt != null)
+          'startedAt': record.startedAt!.toIso8601String(),
+        if (record.sourceSeq != null) 'sourceSeq': record.sourceSeq,
+      });
+    case TrajectoryContextRecord():
+      json.addAll({
+        'text': record.text,
+        if (record.startedAt != null)
+          'startedAt': record.startedAt!.toIso8601String(),
+        if (record.sourceSeq != null) 'sourceSeq': record.sourceSeq,
+      });
+    case TrajectoryCompactedRecord():
+      json.addAll({
+        'text': record.text,
+        'summary': record.summary,
+        if (record.firstKeptEntryId != null)
+          'firstKeptEntryId': record.firstKeptEntryId,
+        if (record.timeSeconds != null)
+          'timeSeconds': record.timeSeconds!.inMilliseconds,
+        if (record.startedAt != null)
+          'startedAt': record.startedAt!.toIso8601String(),
+        'interrupted': record.interrupted,
+      });
+    case TrajectorySystemRecord():
+      json.addAll({
+        'text': record.text,
+        'change': record.change.name,
+        if (record.detail != null) 'detail': record.detail,
+        if (record.time != null) 'time': record.time!.toIso8601String(),
+        if (record.errorCode != null) 'errorCode': record.errorCode,
+        if (record.errorMessage != null) 'errorMessage': record.errorMessage,
+      });
+  }
+  return json;
+}
+
+List<Map<String, dynamic>> _blocksJson(List<TrajectorySourceBlock> blocks) => [
+  for (final block in blocks)
+    {
+      'type': block.type,
+      'content': block.content,
+      if (block.attachmentName != null) 'attachmentName': block.attachmentName,
+      if (block.callId != null) 'callId': block.callId,
+      if (block.toolName != null) 'toolName': block.toolName,
+    },
+];
 
 TrajectoryRequestNumber? _matchingRequest(
   TrajectorySnapshot snapshot,

@@ -55,6 +55,8 @@ const _coverage = <String, String>{
   'lib/ui/widgets/file_preview.dart': 'test/golden/files_golden_test.dart',
   'lib/ui/widgets/approval_ui.dart': 'test/golden/dialogs_golden_test.dart',
   'lib/ui/widgets/ask_ui.dart': 'test/golden/dialogs_golden_test.dart',
+  'lib/services/aiin_connect_flow.dart':
+      'test/golden/aiin_connect_golden_test.dart',
   'lib/ui/widgets/secret_request_sheet.dart':
       'test/golden/dialogs_golden_test.dart',
   'lib/ui/widgets/chat_message_tile.dart': 'test/golden/apps_golden_test.dart',

@@ -152,6 +152,7 @@ void main() {
         TurnStartEvent,
         MessageStartEvent, // prompt
         MessageEndEvent,
+        ModelRequestEvent,
         MessageStartEvent, // assistant partial
         MessageUpdateEvent, // text_start
         MessageUpdateEvent, // text_delta

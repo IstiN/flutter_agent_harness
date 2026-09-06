@@ -7,9 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'trajectory_cell.dart';
+import 'trajectory_strings.dart';
 
 /// The context-injection ledger row: markdown-stripped single-line
-/// preview.
+/// preview plus the `N chars` meta line.
 class TrajectoryCellContext extends StatelessWidget {
   /// Creates the cell.
   const TrajectoryCellContext({super.key, required this.record});
@@ -19,15 +20,14 @@ class TrajectoryCellContext extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        TrajectoryKindPill.of(context, record),
-        const SizedBox(width: 8),
-        Expanded(
-          child: TrajectoryRowText(
-            text: record.previewMarkdown ?? trajectoryPreviewText(record.text),
-          ),
-        ),
+    return TrajectoryCellScaffold(
+      record: record,
+      title: TrajectoryRowText(
+        text: record.previewMarkdown ?? trajectoryPreviewText(record.text),
+      ),
+      meta: [
+        if (record.text.isNotEmpty)
+          TrajectoryStrings.of(context).unitChars(record.text.length),
       ],
     );
   }

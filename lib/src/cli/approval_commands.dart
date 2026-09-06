@@ -846,13 +846,14 @@ extension ApprovalCommands on AgentCli {
       default:
     }
     await _persistIncremental(event);
-    handleAgentEvent(
+    await handleAgentEvent(
       event,
       onMessageLifecycle: _onMessageLifecycle,
       onMessageUpdate: _onMessageUpdate,
       onToolExecutionStart: _onToolExecutionStart,
       onToolExecutionEnd: _onToolExecutionEnd,
       onTurnEnd: (message) => _usage.add(message.usage),
+      onModelRequest: _onModelRequest,
     );
   }
 

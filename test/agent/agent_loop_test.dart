@@ -161,6 +161,7 @@ void main() {
         TurnStartEvent,
         MessageStartEvent, // prompt
         MessageEndEvent,
+        ModelRequestEvent, // outbound request summary
         MessageStartEvent, // assistant partial
         MessageUpdateEvent, // text_start
         MessageUpdateEvent, // text_delta
@@ -227,6 +228,7 @@ void main() {
         TurnStartEvent,
         MessageStartEvent, // prompt
         MessageEndEvent,
+        ModelRequestEvent,
         MessageStartEvent, // assistant partial
         MessageUpdateEvent, // toolcall_start
         MessageUpdateEvent, // toolcall_end
@@ -237,6 +239,7 @@ void main() {
         MessageEndEvent,
         TurnEndEvent,
         TurnStartEvent,
+        ModelRequestEvent, // second request
         MessageStartEvent, // second assistant partial
         MessageUpdateEvent,
         MessageUpdateEvent,
@@ -805,6 +808,7 @@ void main() {
       expect(_types(events), [
         AgentStartEvent,
         TurnStartEvent,
+        ModelRequestEvent,
         MessageStartEvent,
         MessageUpdateEvent,
         MessageUpdateEvent,

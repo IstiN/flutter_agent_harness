@@ -7,7 +7,10 @@
 /// active drag selection — eight shots over the fixed two-turn timed
 /// fixture (real wall-clock timings, one span-free idle gap). The
 /// selection is a fixed mid-domain window in the active projection's
-/// units, so every mode exercises its own geometry. See
+/// units, so every mode exercises its own geometry. A ninth shot covers
+/// the gantt extremes: an hour-long turn against a millisecond turn with
+/// tool/subtool bars. Pulses stay deterministic via
+/// `TrajectoryTimeline.deterministicPulse` (no live fixture here). See
 /// `golden_test_setup.dart` for the font and determinism conventions.
 library;
 
@@ -51,4 +54,15 @@ void main() {
       });
     }
   }
+
+  testWidgets('timeline/gantt.png', (tester) async {
+    // Actual mode keeps the real clock: the hour bar, the 1min idle gap,
+    // and the clamped 2px millisecond turn are all visibly contained.
+    final controller = timelineGanttController()
+      ..actualDuration = true
+      ..actualTime = true;
+    await pumpGolden(tester, TrajectoryTimeline(controller: controller));
+    await expectGolden(tester, 'timeline/gantt');
+    controller.dispose();
+  });
 }

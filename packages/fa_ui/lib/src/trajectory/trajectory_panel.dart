@@ -5,20 +5,19 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import '../chat/fa_chat_service.dart';
-import '../chat/fa_chat_screen.dart';
 import 'trajectory_controller.dart';
 import 'trajectory_strings.dart';
 import 'trajectory_view.dart';
 
 /// The trajectory ledger over a live `FaChatService.trajectory` stream.
 ///
-/// Subscribes [trajectory], feeds a [TrajectoryController], and renders a
-/// [TrajectoryView]. Shows a loading state until the first snapshot arrives;
-/// hosts that replay their latest snapshot on listen (see
-/// [TrajectoryServiceFeed]) skip it entirely.
+/// Subscribes [trajectory], feeds a [TrajectoryController], and renders the
+/// [TrajectoryBody] shell (header + ledger, master-detail on wide canvases).
+/// Shows a loading state until the first snapshot arrives; hosts that host
+/// their own controller and subscription use [TrajectoryScreen] directly.
 class FaTrajectoryPanel extends StatefulWidget {
   /// Creates a panel subscribing to [trajectory].
   const FaTrajectoryPanel({super.key, required this.trajectory});
@@ -60,8 +59,8 @@ class _FaTrajectoryPanelState extends State<FaTrajectoryPanel> {
   void _onSnapshot(TrajectorySnapshot snapshot) {
     _controller.updateSnapshot(snapshot);
     if (_loaded) return;
-    // Swap the loading state out once; afterwards [TrajectoryView] owns
-    // the rendering and reacts to the controller itself.
+    // Swap the loading state out once; afterwards the body reacts to the
+    // controller itself.
     _loaded = true;
     if (mounted) setState(() {});
   }
@@ -80,43 +79,93 @@ class _FaTrajectoryPanelState extends State<FaTrajectoryPanel> {
         ),
       );
     }
-    return TrajectoryView(controller: _controller);
+    return TrajectoryBody(controller: _controller);
   }
 }
 
-/// Opens the trajectory ledger for [service], adapting to the canvas:
+/// The full-screen trajectory surface: a real page (header, ledger, and on
+/// wide canvases the persistent details pane) over a caller-owned
+/// [TrajectoryController].
 ///
-/// - Wide (>= [kWideLayoutBreakpoint]): a centered dialog page holding the
-///   panel. A true persistent side panel split against the chat is host
-///   shell business (the host mounts [FaTrajectoryPanel] itself); the
-///   shared screen keeps the simple dialog.
-/// - Narrow: a full-height modal bottom sheet.
-void openTrajectoryPanel(
-  BuildContext context, {
-  required FaChatService service,
-}) {
-  final panel = FaTrajectoryPanel(trajectory: service.trajectory);
-  if (MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint) {
-    final size = MediaQuery.sizeOf(context);
-    showDialog<void>(
-      context: context,
-      builder: (_) => Dialog(
-        clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: 840,
-            maxHeight: size.height * 0.85,
+/// The chat screen pushes it as a route on wide canvases and swaps it in as
+/// its body on narrow ones — either way the controller (and with it the
+/// scroll position, selection, and filters) lives at the screen level, so
+/// switching never loses state. [Esc] and the header close button invoke
+/// [onClose]; a pushed route pops, the narrow swap returns to chat.
+class TrajectoryScreen extends StatefulWidget {
+  /// Creates the screen bound to [controller].
+  const TrajectoryScreen({
+    super.key,
+    required this.controller,
+    required this.onClose,
+    this.loaded = true,
+  });
+
+  /// The screen-level controller holding the snapshot and interaction state.
+  final TrajectoryController controller;
+
+  /// Pops the surface (route pop / switch back to chat).
+  final VoidCallback onClose;
+
+  /// Whether the first snapshot has landed; false renders the loading state.
+  final bool loaded;
+
+  @override
+  State<TrajectoryScreen> createState() => _TrajectoryScreenState();
+}
+
+class _TrajectoryScreenState extends State<TrajectoryScreen> {
+  final FocusNode _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    // autofocus alone loses the race against the route's focus-scope
+    // transfer on a Navigator.push; claim focus explicitly on the first
+    // frame so Esc reaches the shortcut.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.loaded) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 12),
+              Text(TrajectoryStrings.of(context).historyLoadingTrajectory),
+            ],
           ),
-          child: panel,
+        ),
+      );
+    }
+    return Scaffold(
+      body: SafeArea(
+        child: CallbackShortcuts(
+          bindings: {
+            LogicalKeySet(LogicalKeyboardKey.escape): widget.onClose,
+          },
+          child: Focus(
+            focusNode: _focus,
+            autofocus: true,
+            child: TrajectoryBody(
+              controller: widget.controller,
+              onClose: widget.onClose,
+            ),
+          ),
         ),
       ),
     );
-    return;
   }
-  showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (_) => SizedBox.expand(child: panel),
-  );
 }

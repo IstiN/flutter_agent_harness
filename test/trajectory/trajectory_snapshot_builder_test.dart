@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/session/session_record.dart';
 import 'package:flutter_agent_harness/src/trajectory/trajectory_record.dart';
@@ -349,6 +352,7 @@ void main() {
       expect(record.kind, TrajectoryCellKind.context);
       expect(record.text, 'project instructions');
       expect(record.previewMarkdown, 'project instructions');
+      expect(record.startedAt, _at(0));
     });
 
     test('hidden custom messages and non-ledger records are skipped', () {
@@ -510,6 +514,326 @@ void main() {
         argsRaw: '{}',
       );
       expect(record.kind, TrajectoryCellKind.subtool);
+    });
+  });
+
+  group('tool start times and request details', () {
+    const detail = TrajectoryRequestDetail(
+      messageCount: 2,
+      systemPromptChars: 40,
+      toolCount: 1,
+      toolNames: ['bash'],
+      messages: [
+        TrajectoryRequestMessageSummary(
+          role: 'user',
+          chars: 11,
+          preview: 'list files',
+        ),
+        TrajectoryRequestMessageSummary(
+          role: 'toolResult',
+          chars: 6,
+          preview: 'files',
+        ),
+      ],
+    );
+
+    AssistantMessage streamMessage(
+      DateTime timestamp, {
+      List<ContentBlock> content = const [],
+      StopReason stopReason = StopReason.stop,
+      String? errorMessage,
+    }) => AssistantMessage(
+      content: content,
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-test',
+      usage: const Usage(
+        input: 10,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 12,
+        cost: UsageCost(),
+      ),
+      stopReason: stopReason,
+      errorMessage: errorMessage,
+      timestamp: timestamp,
+    );
+
+    test('replayed tool rows start when the assistant issued the call', () {
+      final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
+      final snapshot = builder.append(
+        _assistantRecord(
+          'a1',
+          parentId: 'u1',
+          content: [
+            const TextContent(text: 'running'),
+            _toolCall('c1'),
+          ],
+        ),
+      );
+      final tool = snapshot.records.last as TrajectoryToolRecord;
+      expect(tool.startedAt, _at(1), reason: 'assistant record timestamp');
+      final settled = builder.append(
+        _toolResultRecord('r1', parentId: 'a1', callId: 'c1'),
+      );
+      final settledTool = settled.records.last as TrajectoryToolRecord;
+      expect(settledTool.startedAt, _at(1), reason: 'withResult keeps it');
+      expect(settledTool.result, 'done');
+      expect(settledTool.timeSeconds, const Duration(seconds: 5));
+    });
+
+    test('live tool start stamps the row and the running call', () {
+      final builder = TrajectorySnapshotBuilder();
+      builder.applyEvent(
+        MessageEndEvent(UserMessage.text('hi', timestamp: _at(0))),
+      );
+      builder.applyEvent(
+        MessageEndEvent(
+          streamMessage(
+            _at(1),
+            content: [
+              ToolCall(id: 'c1', name: 'bash', arguments: const {'cmd': 'ls'}),
+            ],
+          ),
+        ),
+      );
+      final snapshot = builder.applyEvent(
+        ToolExecutionStartEvent(
+          toolCallId: 'c1',
+          toolName: 'bash',
+          args: const {},
+          timestamp: _at(3),
+        ),
+      );
+      expect((snapshot.records[2] as TrajectoryToolRecord).startedAt, _at(3));
+      expect(snapshot.runningCalls.single.startedAt, _at(3));
+    });
+
+    test('a persisted model_request_summary survives a JSONL round-trip', () {
+      final summary = CustomRecord(
+        id: 'cu9',
+        parentId: 'u1',
+        timestamp: _at(0),
+        customType: 'model_request_summary',
+        data: detail.toJson(),
+      );
+      final restored = SessionRecord.fromJson(
+        jsonDecode(jsonEncode(summary.toJson())) as Map<String, dynamic>,
+      );
+      final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
+      final snapshot = builder.append(restored as CustomRecord);
+      expect(snapshot.records, hasLength(1), reason: 'record stays hidden');
+      final replayed = builder.append(_assistantRecord('a1', parentId: 'u1'));
+      expect(
+        (replayed.records[1] as TrajectoryAssistantRecord).requestDetail
+            ?.toJson(),
+        detail.toJson(),
+      );
+    });
+
+    test('compacted rows measure their duration from the ledger cursor', () {
+      final builder = TrajectorySnapshotBuilder();
+      builder.append(_userRecord('u1'));
+      final snapshot = builder.append(
+        CompactionRecord(
+          id: 'cp1',
+          parentId: 'u1',
+          timestamp: _at(5),
+          summary: 'summary of history',
+          firstKeptEntryId: 'r1',
+          tokensBefore: 100,
+        ),
+      );
+      final record = snapshot.records.last as TrajectoryCompactedRecord;
+      expect(record.timeSeconds, const Duration(seconds: 5));
+      expect(record.startedAt, _at(5));
+    });
+  });
+
+  group('scripted multi-turn session', () {
+    test('tool rows carry startedAt and steps carry request summaries', () {
+      const firstDetail = TrajectoryRequestDetail(
+        messageCount: 1,
+        systemPromptChars: 0,
+        toolCount: 1,
+        toolNames: ['bash'],
+        messages: [
+          TrajectoryRequestMessageSummary(
+            role: 'user',
+            chars: 10,
+            preview: 'list files',
+          ),
+        ],
+      );
+      const secondDetail = TrajectoryRequestDetail(
+        messageCount: 3,
+        systemPromptChars: 0,
+        toolCount: 1,
+        toolNames: ['bash'],
+        messages: [
+          TrajectoryRequestMessageSummary(
+            role: 'user',
+            chars: 10,
+            preview: 'list files',
+          ),
+          TrajectoryRequestMessageSummary(
+            role: 'assistant',
+            chars: 30,
+            preview: '',
+          ),
+          TrajectoryRequestMessageSummary(
+            role: 'toolResult',
+            chars: 7,
+            preview: 'files',
+          ),
+        ],
+      );
+      AssistantMessage step({
+        required DateTime timestamp,
+        List<ContentBlock> content = const [],
+        StopReason stopReason = StopReason.stop,
+        String? errorMessage,
+      }) => AssistantMessage(
+        content: content,
+        api: 'anthropic-messages',
+        provider: 'anthropic',
+        model: 'claude-test',
+        usage: const Usage(
+          input: 10,
+          output: 2,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 12,
+          cost: UsageCost(),
+        ),
+        stopReason: stopReason,
+        errorMessage: errorMessage,
+        timestamp: timestamp,
+      );
+
+      // Live tail: a two-step turn whose first step calls a tool.
+      final live = TrajectorySnapshotBuilder();
+      live.applyEvent(
+        MessageEndEvent(UserMessage.text('list files', timestamp: _at(0))),
+      );
+      live.applyEvent(ModelRequestEvent(detail: firstDetail));
+      final step1 = step(
+        timestamp: _at(2),
+        content: [
+          const TextContent(text: 'running'),
+          ToolCall(id: 'c1', name: 'bash', arguments: const {'cmd': 'ls'}),
+        ],
+      );
+      live.applyEvent(MessageEndEvent(step1));
+      live.applyEvent(
+        ToolExecutionStartEvent(
+          toolCallId: 'c1',
+          toolName: 'bash',
+          args: const {},
+          timestamp: _at(3),
+        ),
+      );
+      live.applyEvent(
+        MessageEndEvent(
+          ToolResultMessage(
+            toolCallId: 'c1',
+            toolName: 'bash',
+            content: const [TextContent(text: 'files')],
+            isError: false,
+            timestamp: _at(6),
+          ),
+        ),
+      );
+      live.applyEvent(ModelRequestEvent(detail: secondDetail));
+      live.applyEvent(
+        MessageEndEvent(
+          step(
+            timestamp: _at(8),
+            stopReason: StopReason.error,
+            errorMessage: 'boom',
+          ),
+        ),
+      );
+      final liveSnapshot = live.build();
+
+      final tools = liveSnapshot.records
+          .whereType<TrajectoryToolRecord>()
+          .toList();
+      expect(tools, hasLength(1));
+      expect(tools.single.startedAt, _at(3));
+      expect(tools.single.result, 'files');
+      expect(tools.single.isError, isFalse);
+      final assistants = liveSnapshot.records
+          .whereType<TrajectoryAssistantRecord>()
+          .toList();
+      expect(assistants, hasLength(2));
+      expect(assistants[0].requestDetail?.toJson(), firstDetail.toJson());
+      expect(assistants[1].isError, isTrue);
+      expect(assistants[1].errorMessage, 'boom');
+      expect(assistants[1].requestDetail?.toJson(), secondDetail.toJson());
+      expect(liveSnapshot.runningCalls, isEmpty);
+      expect(liveSnapshot.requests.map((request) => request.status).toList(), [
+        TrajectoryRequestStatus.completed,
+        TrajectoryRequestStatus.failed,
+      ]);
+
+      // Durable replay of the same session: the summaries persist as
+      // hidden custom records, and every fact matches the live snapshot.
+      CustomRecord summary(Object data, String id, String parentId) =>
+          CustomRecord(
+            id: id,
+            parentId: parentId,
+            timestamp: _at(0),
+            customType: 'model_request_summary',
+            data: data,
+          );
+      final replay = TrajectorySnapshotBuilder();
+      replay.append(_userRecord('u1'));
+      replay.append(summary(firstDetail.toJson(), 's1', 'u1'));
+      replay.append(
+        _assistantRecord(
+          'a1',
+          parentId: 'u1',
+          content: [
+            const TextContent(text: 'running'),
+            _toolCall('c1'),
+          ],
+        ),
+      );
+      replay.append(_toolResultRecord('r1', parentId: 'a1', callId: 'c1'));
+      replay.append(summary(secondDetail.toJson(), 's2', 'r1'));
+      replay.append(
+        _assistantRecord(
+          'a2',
+          parentId: 'r1',
+          stopReason: StopReason.error,
+          errorMessage: 'boom',
+        ),
+      );
+      final replaySnapshot = replay.build();
+      final replayTools = replaySnapshot.records
+          .whereType<TrajectoryToolRecord>()
+          .toList();
+      expect(
+        replayTools.single.startedAt,
+        _at(1),
+        reason: 'replay stamps startedAt from the assistant record',
+      );
+      final replayAssistants = replaySnapshot.records
+          .whereType<TrajectoryAssistantRecord>()
+          .toList();
+      expect(
+        replayAssistants[0].requestDetail?.toJson(),
+        assistants[0].requestDetail?.toJson(),
+        reason: 'replayed request detail equals the live one',
+      );
+      expect(
+        replayAssistants[1].requestDetail?.toJson(),
+        assistants[1].requestDetail?.toJson(),
+      );
     });
   });
 }

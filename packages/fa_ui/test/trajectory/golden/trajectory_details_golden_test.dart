@@ -25,6 +25,7 @@ void main() {
   final sheets = [
     ('assistant', richAssistant),
     ('tool', settledTool),
+    ('tool-failed', failedTool),
     ('user', userPrompt),
     ('system', systemPrompt),
     ('compacted', compacted),

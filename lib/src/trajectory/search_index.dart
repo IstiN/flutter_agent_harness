@@ -230,13 +230,19 @@ class TrajectorySearchIndex {
 /// single trailing flush that always applies the latest layouts.
 class ThrottledTrajectorySearchIndex {
   /// Creates a wrapper flushing at most once per [throttle] window
-  /// (defaults to [searchIndexThrottleMs]).
-  ThrottledTrajectorySearchIndex({Duration? throttle})
+  /// (defaults to [searchIndexThrottleMs]). [onFlushed] fires after a
+  /// trailing flush applied a parked update (never for the immediate
+  /// flush inside [update]), so listeners can re-run their match pass.
+  ThrottledTrajectorySearchIndex({Duration? throttle, this.onFlushed})
     : throttle =
           throttle ?? const Duration(milliseconds: searchIndexThrottleMs);
 
   /// Minimum gap between flushes.
   final Duration throttle;
+
+  /// Invoked after a trailing flush landed a parked index update.
+  final void Function()? onFlushed;
+
 
   final TrajectorySearchIndex _index = TrajectorySearchIndex();
   Timer? _timer;
@@ -267,7 +273,9 @@ class ThrottledTrajectorySearchIndex {
     final changed = _index.update(layouts!);
     _timer = Timer(throttle, () {
       _timer = null;
-      if (_pending != null) _flush();
+      if (_pending == null) return;
+      _flush();
+      onFlushed?.call();
     });
     return changed;
   }

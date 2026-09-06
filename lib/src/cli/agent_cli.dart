@@ -32,6 +32,7 @@ import 'key_event.dart';
 import 'key_status.dart';
 import 'provider_error_text.dart';
 import '../agent/agent_loop.dart';
+import '../trajectory/trajectory_record.dart' show TrajectoryRequestDetail;
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
 import '../providers/models_for_endpoint.dart';
@@ -159,6 +160,7 @@ part 'trajectory_commands.dart';
 part 'agent_cli_cube.dart';
 part 'agent_cli_provider_presets.dart';
 part 'agent_cli_inbox.dart';
+part 'agent_cli_steering.dart';
 part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
 part 'agent_cli_banner.dart';
@@ -1284,19 +1286,8 @@ class AgentCli {
   /// that already has persisted records (e.g. a user message saved before a
   /// run that was interrupted) is also kept.
   Future<void> deleteSessionIfEmpty() async {
-    if (_agent.state.messages.isNotEmpty) return;
-    if (_persistedCount > 0) return;
-    if (_subagentManager.handles.isNotEmpty) return;
-    final session = _session;
-    if (session == null) return;
-    try {
-      await _repo.delete(await session.getMetadata());
-      _session = null;
-      // The session scope is gone — drop it from the resolution.
-      unawaited(AgentCliTools(this).rebuildToolAvailability());
-    } on Object {
-      // Best-effort cleanup.
-    }
+    if (!_sessionIsEmpty()) return;
+    await _deleteEmptySessionFile();
   }
 
   Future<void> _runTuiRepl() async {
@@ -1415,11 +1406,7 @@ class AgentCli {
   /// from happening; dropping prints exactly what was discarded — a silent
   /// drop is indistinguishable from a lost message.
   void _settleLeftoverSteering() {
-    if (_exited || !_agent.hasSteering) return;
-    final outcome = resolveLeftoverSteering(
-      drain: _agent.drainSteeringQueue,
-      abortRequested: _abortRequested,
-    );
+    final outcome = _leftoverSteeringOutcome();
     if (outcome == null) return;
     if (outcome.run) {
       io.writeln(
@@ -1431,11 +1418,7 @@ class AgentCli {
       _startRun(outcome.texts.join('\n'));
       return;
     }
-    io.writeln(_style.dim('dropped steering message(s) after interrupt:'));
-    for (final text in outcome.texts) {
-      final elided = text.length <= 80 ? text : '${text.substring(0, 80)}…';
-      io.writeln(_style.dim('  • ${elided.replaceAll('\n', ' ')}'));
-    }
+    _printDroppedSteering(outcome.texts);
   }
 
   /// Replays the transcript when the TUI opens on a restored session.

@@ -271,4 +271,27 @@ extension on AgentCli {
       }
     });
   }
+
+  /// Whether nothing was ever said in the session and nothing owns it.
+  bool _sessionIsEmpty() =>
+      _sessionHasNoContent &&
+      _subagentManager.handles.isEmpty &&
+      _session != null;
+
+  /// No live messages and no records persisted to disk.
+  bool get _sessionHasNoContent =>
+      _agent.state.messages.isEmpty && _persistedCount == 0;
+
+  Future<void> _deleteEmptySessionFile() async {
+    final session = _session;
+    if (session == null) return;
+    try {
+      await _repo.delete(await session.getMetadata());
+      _session = null;
+      // The session scope is gone — drop it from the resolution.
+      unawaited(AgentCliTools(this).rebuildToolAvailability());
+    } on Object {
+      // Best-effort cleanup.
+    }
+  }
 }

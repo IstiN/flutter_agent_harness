@@ -63,7 +63,18 @@ factual: paths, commands, invariants — no essays.
   `trajectoryTimelineFocusIndexes` (selection → visible ledger indexes),
   and `ThrottledTrajectorySearchIndex` (full-text; matches are stable
   record ids). `formatters.dart` holds the shared duration/token/throughput
-  formatting; `trajectory_preview.dart` the bounded single-line previews.
+  formatting; `trajectory_preview.dart` the bounded single-line previews;
+  `trajectory_export.dart` the whole-snapshot JSON/Markdown exporters the
+  header's copy menu uses. Tool records carry `startedAt` (real launch
+  time, distinct from the projected position) so the Gantt/actual
+  projections plot true spans. Outbound model requests persist for the
+  ledger as hidden `model_request_summary` `CustomRecord`s — the CLI
+  event handler (`agent_event_handler.dart`, emitted through
+  `agent_cli.dart`) and the app's `AgentService` both buffer a
+  `TrajectoryRequestDetail` per call and flush it onto the session
+  record chain right before the assistant message, so replays see it
+  ahead of the reply — and `TrajectorySnapshotBuilder` folds them into
+  the message record's request detail (the Request tab).
   Consumers render, never re-derive: `packages/fa_ui`'s
   `lib/src/trajectory/` widgets and the CLI `/trajectory` family.
 - `lib/src/cli/trajectory_commands.dart` (a `part of` `agent_cli.dart`) +
@@ -579,22 +590,42 @@ factual: paths, commands, invariants — no essays.
   the `FaChatService` interface (which `AgentService` implements;
   `ApprovalModeSelector` needs only the
   `FaApprovalModeController` slice).
-  The trajectory ledger UI lives in `lib/src/trajectory/` (issue #10
-  phases 11+): `TrajectoryController` (view-state owner — debounced
+  The trajectory ledger UI lives in `lib/src/trajectory/` (issue #25
+  redesign): `TrajectoryController` (view-state owner — debounced
   snapshot updates, turn/assistant folds, the four timeline projections
-  with selection, record selection, throttled search), `TrajectoryView`
-  (toolbar + timeline strip + virtualised table with injectable
-  table/timeline builder seams), single-line ledger cells per record kind,
-  the details bottom sheet (tab set per kind; session-scoped last-tab
-  restore, `resetTrajectoryTabHistory()` test seam), and
-  `FaTrajectoryPanel`/`openTrajectoryPanel` (wide = centered dialog page,
-  narrow = full-height bottom sheet) fed by `TrajectoryServiceFeed`
+  with selection, record selection, throttled search),
+  `TrajectoryScreen` (the full-screen trajectory page: wide canvases
+  `>= kWideLayoutBreakpoint` push it as a master-detail route from the
+  chat app bar; narrow canvases swap it in as the chat screen's body via
+  the Chat | Trajectory segmented switcher — controller state lives at
+  screen level so the swap never loses scroll, selection, or filters),
+  `TrajectoryHeader` (title + session stamp, stat pills, the search
+  field with match position and prev/next navigation, the ledger filter
+  chips, and the export overflow menu that copies the session as
+  JSON/Markdown to the clipboard), `TrajectoryBody` (header above the
+  ledger; wide splits ledger ~55% / details ~45% into
+  `TrajectoryDetailsPane`, narrow keeps the tap-for-details sheet),
+  `TrajectoryView` (control strip + Gantt timeline strip + ledger of
+  two-line expandable selectable rows with per-row copy and injectable
+  table/timeline builder seams), the details surface (`showTrajectoryDetails`
+  sheet narrow / persistent pane wide: tab set per record kind with
+  empty tabs hidden, a Request tab for outbound model payloads, per-tab
+  copy, highlighted Raw view; session-scoped last-tab restore,
+  `resetTrajectoryTabHistory()` test seam), and `FaTrajectoryPanel`
+  for hosts that feed their own stream via `TrajectoryServiceFeed`
   (broadcast snapshot stream that replays `latest` to new listeners).
+  `TrajectoryTimeline` draws the Gantt: time ruler + lane labels, three
+  fixed lanes (0 system/user/context, 1 message/compacted, 2 tools), a
+  live pulse on the in-progress span, and the whole strip hidden when
+  the session is untimed.
   Strings: `TrajectoryStrings` en/ru + `TrajectoryStringsScope`. Golden
   baselines: `test/trajectory/golden/` (regenerate with
   `flutter test test/trajectory/golden/ --update-goldens`, verify without
-  the flag) — they render with Flutter's default test font because the
-  package ships no font assets; keep it that way.
+  the flag) — `golden_test_setup.dart` loads the real `Inter` and
+  `JetBrainsMono` families from `test/assets/fonts/` (test-only copies
+  of flutter_app's bundled TTFs; the package itself ships no font
+  assets) plus the bundled MaterialIcons font, so goldens render real
+  glyphs; review every changed PNG after regenerating.
   Package strings live in `FaUiStrings`
   (en/ru defaults resolved from the locale, host-overridable via
   `FaUiStringsScope`) — never the app's gen-l10n. App-level concerns are

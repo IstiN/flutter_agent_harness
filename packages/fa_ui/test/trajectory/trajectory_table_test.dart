@@ -1,15 +1,20 @@
 // Copyright (c) 2026, the Flutter Agent Harness authors.
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
+import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // ponytail: direct src imports — the fa_ui barrel still carries sibling
 // phase 7/8 WIP that fails to compile; switch to the barrel once it lands.
+import 'package:fa_ui/src/theme/app_theme.dart';
 import 'package:fa_ui/src/trajectory/trajectory_controller.dart';
 import 'package:fa_ui/src/trajectory/trajectory_table.dart';
+import 'package:fa_ui/src/trajectory/trajectory_cell.dart';
 import 'package:fa_ui/src/trajectory/trajectory_turn.dart';
 
 import 'fixture_table.dart';
@@ -318,4 +323,424 @@ void main() {
       controller.dispose();
     });
   });
+  group('expand', () {
+    testWidgets('chevron toggles the row expanded with full content', (
+      tester,
+    ) async {
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      final toolId = recordIds(controller, TrajectoryCellKind.tool).first;
+      // Collapsed by default: pretty-printed args are not rendered.
+      expect(find.textContaining('"cmd": "deploy"'), findsNothing);
+      await tester.tap(find.byIcon(Icons.expand_more).at(2));
+      await tester.pumpAndSettle();
+
+      expect(controller.expandedRecordIds, contains(toolId));
+      expect(find.textContaining('"cmd": "deploy"'), findsOneWidget);
+      expect(find.textContaining('deployed'), findsNWidgets(2));
+
+      await tester.tap(find.byIcon(Icons.expand_more).at(2));
+      await tester.pumpAndSettle();
+      expect(controller.expandedRecordIds, isNot(contains(toolId)));
+      expect(find.textContaining('"cmd": "deploy"'), findsNothing);
+      controller.dispose();
+    });
+
+    testWidgets('an expanded assistant shows thinking and output', (
+      tester,
+    ) async {
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      controller.toggleExpandedRow(
+        recordIds(controller, TrajectoryCellKind.message).first,
+      );
+      await tester.pumpAndSettle();
+
+      final texts = _texts(tester).join('\n');
+      expect(texts, contains('Deploying now'));
+      controller.dispose();
+    });
+  });
+
+  group('copy', () {
+    testWidgets('the copy button puts the record JSON on the clipboard', (
+      tester,
+    ) async {
+      final clipboard = <String>[];
+      _mockClipboard(tester, clipboard);
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.copy).first);
+      await tester.pump();
+
+      expect(clipboard, hasLength(1));
+      final json = jsonDecode(clipboard.single) as Map<String, dynamic>;
+      expect(json['kind'], 'user');
+      expect(json['text'], 'Run the deployment');
+      controller.dispose();
+    });
+
+    testWidgets('on touch platforms the copy button is always visible', (
+      tester,
+    ) async {
+      final clipboard = <String>[];
+      _mockClipboard(tester, clipboard);
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      // Default test platform (android) — no hover needed.
+      await tester.tap(find.byIcon(Icons.copy).at(1));
+      await tester.pump();
+
+      expect(clipboard, hasLength(1));
+      final json = jsonDecode(clipboard.single) as Map<String, dynamic>;
+      expect(json['kind'], 'message');
+      controller.dispose();
+    });
+  });
+
+  group('keyboard navigation', () {
+    testWidgets('arrow keys move the selection while the feed has focus', (
+      tester,
+    ) async {
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.textContaining('Run the deployment'));
+      await tester.pumpAndSettle();
+      final order = [
+        for (final row in projectTrajectoryRows(controller))
+          if (row is TrajectoryCellRow) row.record.recordId,
+      ];
+      expect(
+        controller.selectedRecordId,
+        recordIds(controller, TrajectoryCellKind.user).first,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      expect(controller.selectedRecordId, order[1]);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(controller.selectedRecordId, order[0]);
+      controller.dispose();
+    });
+  });
+
+  group('search highlight', () {
+    testWidgets('matches get a tint and the current match a stronger one', (
+      tester,
+    ) async {
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      controller.searchQuery = 'de';
+      await tester.pumpAndSettle();
+      expect(controller.searchMatchOrder, isNotEmpty);
+      expect(controller.currentMatchIndex, 0);
+
+      final context = tester.element(find.textContaining('de').first);
+      final teal = FahColors.of(context).teal;
+      final current =
+          (_rowBox(
+                    tester,
+                    find.textContaining('Run the deployment'),
+                  ).decoration!
+                  as BoxDecoration)
+              .color!;
+      expect(current, teal.withValues(alpha: 0.16));
+
+      final other =
+          (_rowBox(tester, find.textContaining('Deploying now')).decoration!
+                  as BoxDecoration)
+              .color!;
+      expect(other, teal.withValues(alpha: 0.08));
+      controller.dispose();
+    });
+  });
+
+  group('subtool indent', () {
+    testWidgets('a subtool row indents under its parent tool row', (
+      tester,
+    ) async {
+      final controller = subtoolController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+      final parent =
+          _rowBox(tester, find.textContaining('bash')).padding as EdgeInsets;
+      final child =
+          _rowBox(tester, find.textContaining('grep')).padding as EdgeInsets;
+      expect(child.left, parent.left + 24);
+      controller.dispose();
+    });
+  });
+
+  group('empty response', () {
+    testWidgets('an empty assistant step says so instead of an em dash', (
+      tester,
+    ) async {
+      final controller = emptyAssistantController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Empty response'), findsOneWidget);
+      expect(find.textContaining('—'), findsNothing);
+      expect(find.textContaining('step 1'), findsOneWidget);
+      controller.dispose();
+    });
+  });
+
+  group('oversized result', () {
+    testWidgets('a 1.5 MiB result stays collapsed with a byte label', (
+      tester,
+    ) async {
+      final controller = bigResultController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      controller.toggleExpandedRow(
+        recordIds(controller, TrajectoryCellKind.tool).single,
+      );
+      await tester.pumpAndSettle();
+
+      // The body is bounded: preview + byte-size expander, not the full
+      // 1.5 MiB text.
+      expect(find.textContaining('Show content ('), findsOneWidget);
+      expect(find.textContaining('MiB'), findsOneWidget);
+      expect(find.textContaining('END_OF_RESULT'), findsNothing);
+
+      controller.dispose();
+    });
+  });
+
+  group('selection copy', () {
+    testWidgets('copying a selection across rows preserves newlines', (
+      tester,
+    ) async {
+      final clipboard = <String>[];
+      _mockClipboard(tester, clipboard);
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      final region = tester.state<SelectableRegionState>(
+        find.byType(SelectableRegion),
+      );
+      region.selectAll(SelectionChangedCause.toolbar);
+      await tester.pump();
+      region.copySelection(SelectionChangedCause.toolbar);
+      await tester.pump();
+
+      final copied = clipboard.single;
+      expect(copied, contains('\n'));
+      expect(copied, contains('Run the deployment'));
+      expect(copied, contains('Deploying now'));
+      controller.dispose();
+    });
+  });
+
+  group('keyboard copy (AC4)', () {
+    testWidgets('ctrl+C sends the selection to the clipboard', (tester) async {
+      final clipboard = <String>[];
+      _mockClipboard(tester, clipboard);
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      final regionFocus = tester
+          .widgetList<Focus>(
+            find.descendant(
+              of: find.byType(SelectableRegion),
+              matching: find.byWidgetPredicate(
+                (widget) => widget is Focus && widget.focusNode != null,
+              ),
+            ),
+          )
+          .first;
+      regionFocus.focusNode!.requestFocus();
+      tester
+          .state<SelectableRegionState>(find.byType(SelectableRegion))
+          .selectAll(SelectionChangedCause.toolbar);
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(clipboard, hasLength(1));
+      expect(clipboard.single, contains('Run the deployment'));
+      controller.dispose();
+    });
+
+
+    // Runs only on the macOS platform variant (meta-style shortcut).
+    testWidgets(
+      'cmd+C sends the selection to the clipboard on macOS',
+      (tester) async {
+        final clipboard = <String>[];
+        _mockClipboard(tester, clipboard);
+        final controller = tableFixtureController();
+        await tester.pumpWidget(_host(controller));
+        await tester.pumpAndSettle();
+
+        final regionFocus = tester
+            .widgetList<Focus>(
+              find.descendant(
+                of: find.byType(SelectableRegion),
+                matching: find.byWidgetPredicate(
+                  (widget) => widget is Focus && widget.focusNode != null,
+                ),
+              ),
+            )
+            .first;
+        regionFocus.focusNode!.requestFocus();
+        tester
+            .state<SelectableRegionState>(find.byType(SelectableRegion))
+            .selectAll(SelectionChangedCause.toolbar);
+        await tester.pump();
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+        await tester.pump();
+
+        expect(clipboard, hasLength(1));
+        expect(clipboard.single, contains('Run the deployment'));
+        controller.dispose();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
+  });
+
+  group('timeline focus reveal (P2-1)', () {
+    testWidgets('focusRecord scrolls the record row into view', (
+      tester,
+    ) async {
+      final controller = TrajectoryController(
+        initial: buildLargeFixtureSnapshot(turns: 40),
+      );
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      // Near the tail (the exact offset lags the growing extent).
+      expect(position.pixels, greaterThan(position.maxScrollExtent - 1000));
+      // The timeline tap handler marks record 1 the same way.
+      controller.selectRecord(recordIds(controller, TrajectoryCellKind.user).first);
+      controller.focusRecord(1);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Turn 1 prompt'), findsOneWidget);
+      final viewport = tester.getRect(find.byType(TrajectoryTable));
+      final row = tester.getRect(find.textContaining('Turn 1 prompt'));
+      expect(row.top, greaterThanOrEqualTo(viewport.top));
+      expect(row.bottom, lessThanOrEqualTo(viewport.bottom));
+      final revealed = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      expect(revealed.pixels, lessThan(revealed.maxScrollExtent));
+      controller.dispose();
+    });
+  });
+
+  group('layout robustness (E9)', () {
+    testWidgets('RTL rows with unbroken strings and emoji pump clean', (
+      tester,
+    ) async {
+      final controller = overflowProbeController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Directionality(
+            textDirection: TextDirection.rtl,
+            child: Scaffold(
+              body: SizedBox(
+                width: 600,
+                child: TrajectoryTable(controller: controller),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      // The expanded unbroken body stays soft-wrapped too.
+      controller.toggleExpandedRow(
+        recordIds(controller, TrajectoryCellKind.tool).single,
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      controller.dispose();
+    });
+  });
+
+  group('long-session virtualisation (E5)', () {
+    testWidgets('10k records stay virtualised while scrolling', (
+      tester,
+    ) async {
+      final controller = TrajectoryController(
+        initial: buildLargeFixtureSnapshot(turns: 3500),
+      );
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
+
+      int builtRowTexts() =>
+          tester.widgetList<TrajectoryRowText>(
+            find.byType(TrajectoryRowText),
+          ).length;
+      final table = find.byType(TrajectoryTable);
+
+      // At the tail: a bounded window, not 10500 rows.
+      expect(builtRowTexts(), lessThan(400));
+      expect(tester.takeException(), isNull);
+
+      // Scroll through the middle and back to the very top.
+      await tester.drag(table, const Offset(0, 100000));
+      await tester.pumpAndSettle();
+      expect(builtRowTexts(), lessThan(400));
+      expect(tester.takeException(), isNull);
+      expect(_texts(tester).join('\n'), isNot(contains('Turn 3500 prompt')));
+
+      await tester.drag(table, const Offset(0, 1000000));
+      await tester.pumpAndSettle();
+      expect(builtRowTexts(), lessThan(400));
+      expect(tester.takeException(), isNull);
+      expect(_texts(tester).join('\n'), contains('Turn 1 prompt'));
+      controller.dispose();
+    });
+  });
 }
+
+/// Installs a clipboard mock capturing `Clipboard.setData` payloads.
+void _mockClipboard(WidgetTester tester, List<String> sink) {
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (message) async {
+      if (message.method == 'Clipboard.setData') {
+        sink.add((message.arguments as Map)['text'] as String);
+      }
+      return null;
+    },
+  );
+  addTearDown(
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
+  );
+}
+
+/// The feed-row Container nearest [text] (first ancestor Container).
+Container _rowBox(WidgetTester tester, Finder text) => tester.widget<Container>(
+  find.ancestor(of: text, matching: find.byType(Container)).first,
+);

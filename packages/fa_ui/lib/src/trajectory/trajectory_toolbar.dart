@@ -7,12 +7,12 @@ import 'package:flutter/material.dart';
 import 'trajectory_controller.dart';
 import 'trajectory_strings.dart';
 
-/// The trajectory ledger's control row: the duration projection toggle, the
-/// turn and call fold buttons, and the right-aligned search field.
+/// The trajectory ledger's control row: the duration projection toggle and
+/// the turn and call fold buttons.
 ///
 /// Every control disables while the snapshot is empty. The search field
-/// feeds the query straight through — the throttling lives in the
-/// controller's index update, not in the input.
+/// lives in the full-screen header (see [TrajectoryHeader]); this row is
+/// the standalone-feed control strip.
 class TrajectoryToolbar extends StatelessWidget {
   /// Creates a toolbar bound to [controller].
   const TrajectoryToolbar({super.key, required this.controller});
@@ -70,19 +70,6 @@ class TrajectoryToolbar extends StatelessWidget {
                           ? controller.expandAllAssistants
                           : controller.collapseAllAssistants)
                     : null,
-              ),
-              const Spacer(),
-              SizedBox(
-                width: 220,
-                child: TextField(
-                  enabled: enabled,
-                  onChanged: (value) => controller.searchQuery = value,
-                  decoration: InputDecoration(
-                    isDense: true,
-                    prefixIcon: const Icon(Icons.search),
-                    hintText: strings.toolbarSearchPlaceholder,
-                  ),
-                ),
               ),
             ],
           ),

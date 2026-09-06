@@ -104,6 +104,19 @@ extension on AgentCli {
     return trajectorySnapshotOf(await session.getBranch());
   }
 
+  /// Persists the outbound-request summary so replayed sessions rebuild the
+  /// Request tab. A CustomRecord is context-omitted; the ordering matters —
+  /// it must land before its assistant message (the replay walk expects it
+  /// as the step's predecessor), which the event order guarantees.
+  Future<void> _onModelRequest(TrajectoryRequestDetail detail) async {
+    final session = _session;
+    if (session == null) return;
+    await session.appendCustomEntry(
+      customType: 'model_request_summary',
+      data: detail.toJson(),
+    );
+  }
+
   int get _trajectoryWidth => io.columns > 0 ? io.columns : 80;
 }
 

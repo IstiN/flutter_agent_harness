@@ -5,6 +5,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
+
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -19,6 +22,9 @@ import 'trajectory_turn_header.dart';
 /// Tail-follow engages while the viewport sits within this distance of
 /// the bottom edge (TS `BOTTOM_FOLLOW_THRESHOLD_PX`).
 const double _bottomFollowThresholdPx = 2;
+
+/// Left padding added to subtool rows (nested under their parent call).
+const double _subtoolIndent = 24;
 
 /// The virtualised trajectory ledger: `ListView.builder` over the flat,
 /// projected row list with turn/assistant collapse summaries, search
@@ -48,9 +54,21 @@ class TrajectoryTable extends StatefulWidget {
 
 class _TrajectoryTableState extends State<TrajectoryTable> {
   final ScrollController _scroll = ScrollController();
+  final FocusNode _feedFocus = FocusNode();
   bool _following = true;
   int _lastRevision = -1;
   int _lastRowCount = -1;
+  int? _pendingFocusRow;
+  int _pendingFocusCount = 1;
+  int _focusHops = 0;
+
+  /// Cell rows as `(listViewIndex, recordId)` in display order — the
+  /// arrow-key navigation path.
+  List<(int, String)> _cellEntries = const [];
+
+  /// Per-list-index row contexts, for scrolling the selected row into
+  /// view during keyboard navigation.
+  final Map<int, BuildContext> _rowContexts = {};
 
   @override
   void initState() {
@@ -62,6 +80,7 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
   void dispose() {
     _scroll.removeListener(_trackFollowing);
     _scroll.dispose();
+    _feedFocus.dispose();
     super.dispose();
   }
 
@@ -71,12 +90,37 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
         position.maxScrollExtent - position.pixels <= _bottomFollowThresholdPx;
   }
 
+  /// Moves the selection by [delta] cell rows and scrolls it into view.
+  /// Only active while the feed itself holds focus, so the search field
+  /// keeps its arrow keys.
+  void _moveSelection(int delta) {
+    final entries = _cellEntries;
+    if (entries.isEmpty) return;
+    var index = entries.indexWhere(
+      (entry) => entry.$2 == widget.controller.selectedRecordId,
+    );
+    index = index < 0
+        ? (delta > 0 ? 0 : entries.length - 1)
+        : (index + delta).clamp(0, entries.length - 1);
+    final (listIndex, recordId) = entries[index];
+    widget.controller.selectRecord(recordId);
+    final rowContext = _rowContexts[listIndex];
+    if (rowContext != null) {
+      Scrollable.ensureVisible(
+        rowContext,
+        duration: const Duration(milliseconds: 80),
+      );
+    }
+    _feedFocus.requestFocus();
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (context, _) {
         final controller = widget.controller;
+        final focusIndex = controller.takeRecordFocus();
         if (controller.records.isEmpty) return const SizedBox.shrink();
         final rows = projectTrajectoryRows(controller);
         if (rows.isEmpty) {
@@ -87,15 +131,39 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
             ),
           );
         }
-        _scheduleTailFollow(controller, rows.length);
-        return ListView.builder(
-          controller: _scroll,
-          itemCount: rows.length,
-          // Keep ~4 viewports of rows built so tail-follow and the
-          // anchor stays smooth on long sessions.
-          scrollCacheExtent: ScrollCacheExtent.viewport(4),
-          itemBuilder: (context, index) =>
-              _buildRow(context, controller, rows[index]),
+        // A timeline focus outranks tail-follow: scroll that record into
+        // view instead of snapping to the newest row.
+        if (focusIndex == null || !_revealRecordFocus(rows, focusIndex)) {
+          _scheduleTailFollow(controller, rows.length);
+        }
+        _cellEntries = [
+          for (final (index, row) in rows.indexed)
+            if (row is TrajectoryCellRow) (index, row.record.recordId),
+        ];
+        _rowContexts.clear();
+        return SelectionArea(
+          child: CallbackShortcuts(
+            bindings: {
+              SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                  _moveSelection(-1),
+              SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+                  _moveSelection(1),
+            },
+            child: Focus(
+              focusNode: _feedFocus,
+              child: ListView.builder(
+                controller: _scroll,
+                itemCount: rows.length,
+                // Keep ~4 viewports of rows built so tail-follow and the
+                // anchor stays smooth on long sessions.
+                scrollCacheExtent: ScrollCacheExtent.viewport(4),
+                itemBuilder: (context, index) {
+                  _rowContexts[index] = context;
+                  return _buildRow(context, controller, rows[index]);
+                },
+              ),
+            ),
+          ),
         );
       },
     );
@@ -112,6 +180,61 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
       _scroll.jumpTo(_scroll.position.maxScrollExtent);
       _following = true;
     });
+  }
+
+  /// Begins the scroll-to-record for a timeline focus: resolves the
+  /// projected row and converges on it post-frame. Returns false when the
+  /// record is not in the projected rows (nothing to scroll to).
+  bool _revealRecordFocus(List<TrajectoryLedgerRow> rows, int recordIndex) {
+    final rowIndex = rows.indexWhere(
+      (row) => row is TrajectoryCellRow && row.record.index == recordIndex,
+    );
+    if (rowIndex < 0) return false;
+    _pendingFocusRow = rowIndex;
+    _pendingFocusCount = rows.length;
+    _focusHops = 0;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _revealPendingRow();
+    });
+    return true;
+  }
+
+  /// Scrolls the focused row into view. Virtualised rows outside the
+  /// built window have no context yet, so hop proportionally towards the
+  /// target until it builds, then land exactly with ensureVisible.
+  // ponytail: proportional hops converge in a handful of frames at
+  // ledger scale; switch to itemExtent or cached row extents if ever
+  // needed for 100k+ rows.
+  void _revealPendingRow() {
+    final index = _pendingFocusRow;
+    if (index == null || !mounted || !_scroll.hasClients) {
+      _pendingFocusRow = null;
+      return;
+    }
+    _rowContexts.removeWhere((_, element) => !element.mounted);
+    final rowContext = _rowContexts[index];
+    if (rowContext != null) {
+      _pendingFocusRow = null;
+      Scrollable.ensureVisible(
+        rowContext,
+        duration: const Duration(milliseconds: 80),
+      );
+      return;
+    }
+    if (_focusHops++ < 32) {
+      final position = _scroll.position;
+      final extent = position.maxScrollExtent;
+      if (extent > 0) {
+        position.jumpTo(
+          (index / _pendingFocusCount * extent).clamp(0.0, extent),
+        );
+      }
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _revealPendingRow();
+      });
+    } else {
+      _pendingFocusRow = null;
+    }
   }
 
   Widget _buildRow(
@@ -141,26 +264,33 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
   ) {
     final colors = FahColors.of(context);
     final selected = controller.selectedRecordId == record.recordId;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    final order = controller.searchMatchOrder;
+    final currentMatch =
+        controller.currentMatchIndex != null &&
+        order.isNotEmpty &&
+        order[controller.currentMatchIndex!] == record.recordId;
+    // Tint precedence: selection > current match > match > error.
+    final tint = selected
+        ? colors.panelAlt
+        : currentMatch
+        ? colors.teal.withValues(alpha: 0.16)
+        : searchMatch
+        ? colors.teal.withValues(alpha: 0.08)
+        : trajectoryRecordIsError(record)
+        ? colors.error.withValues(alpha: 0.07)
+        : null;
+    return _FeedRow(
+      controller: controller,
+      record: record,
+      selected: selected,
+      tint: tint,
+      expanded: controller.expandedRecordIds.contains(record.recordId),
+      onToggleExpanded: () => controller.toggleExpandedRow(record.recordId),
       onTap: () {
         controller.selectRecord(record.recordId);
+        _feedFocus.requestFocus();
         widget.onRecordTap?.call(record);
       },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: BoxDecoration(
-          color: selected
-              ? colors.panelAlt
-              : searchMatch
-              ? colors.teal.withValues(alpha: 0.08)
-              : null,
-          border: selected
-              ? Border(left: BorderSide(color: colors.teal, width: 2))
-              : null,
-        ),
-        child: buildTrajectoryCell(context, record),
-      ),
     );
   }
 
@@ -207,4 +337,133 @@ class _TrajectoryTableState extends State<TrajectoryTable> {
       ),
     );
   }
+}
+
+/// Whether the record failed, for the row tint. Mirrors the controller's
+/// filter predicate (private there).
+bool trajectoryRecordIsError(TrajectoryRecord record) => switch (record) {
+  TrajectoryAssistantRecord(:final isError) => isError ?? false,
+  TrajectoryToolRecord(:final isError) => isError,
+  TrajectoryCompactedRecord(:final interrupted) => interrupted,
+  TrajectorySystemRecord(:final errorCode, :final errorMessage) =>
+    errorCode != null || errorMessage != null,
+  _ => false,
+};
+
+/// One virtualised feed row: tint + selection state around the cell, the
+/// expand chevron and hover-reveal copy affordance, the subtool indent,
+/// and the inline expanded body when open.
+///
+/// Wrapping the whole table in a [SelectionArea] keeps rows selectable
+/// and copyable across rows while taps still select the record.
+class _FeedRow extends StatefulWidget {
+  const _FeedRow({
+    required this.controller,
+    required this.record,
+    required this.selected,
+    required this.tint,
+    required this.expanded,
+    required this.onToggleExpanded,
+    required this.onTap,
+  });
+
+  final TrajectoryController controller;
+  final TrajectoryRecord record;
+  final bool selected;
+  final Color? tint;
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
+  final VoidCallback onTap;
+
+  @override
+  State<_FeedRow> createState() => _FeedRowState();
+}
+
+class _FeedRowState extends State<_FeedRow> {
+  var _hovering = false;
+
+  /// Touch platforms have no hover — there the copy affordance stays
+  /// visible instead. (Long-press stays with the SelectionArea's word
+  /// selection, so it cannot be the copy gesture.)
+  bool get _alwaysVisibleCopy =>
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android;
+
+  void _copy() => copyTrajectoryRecord(widget.record);
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = FahColors.of(context);
+    final strings = TrajectoryStrings.of(context);
+    final record = widget.record;
+    final indent = record is TrajectoryToolRecord && record.parentCallId != null
+        ? _subtoolIndent
+        : 0.0;
+    final expandable = trajectoryRowExpandable(record);
+    final copyVisible = _alwaysVisibleCopy || _hovering;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Container(
+          padding: EdgeInsets.fromLTRB(12 + indent, 4, 4, 4),
+          decoration: BoxDecoration(
+            color: widget.tint,
+            border: widget.selected
+                ? Border(left: BorderSide(color: colors.teal, width: 2))
+                : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  if (expandable) _chevron(context, strings),
+                  Expanded(child: buildTrajectoryCell(context, record)),
+                  _copyButton(context, strings, copyVisible),
+                ],
+              ),
+              if (widget.expanded) TrajectoryExpandedBody(record: record),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chevron(BuildContext context, TrajectoryStrings strings) =>
+      IconButton(
+        onPressed: widget.onToggleExpanded,
+        tooltip: widget.expanded ? strings.rowCollapse : strings.rowExpand,
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+        icon: AnimatedRotation(
+          turns: widget.expanded ? 0 : -0.25,
+          duration: const Duration(milliseconds: 120),
+          child: const Icon(Icons.expand_more, size: 16),
+        ),
+      );
+
+  Widget _copyButton(
+    BuildContext context,
+    TrajectoryStrings strings,
+    bool visible,
+  ) => Opacity(
+    opacity: visible ? 1 : 0,
+    child: IgnorePointer(
+      ignoring: !visible,
+      child: IconButton(
+        onPressed: _copy,
+        tooltip: strings.detailsCopy,
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+        icon: const Icon(Icons.copy, size: 13),
+      ),
+    ),
+  );
 }

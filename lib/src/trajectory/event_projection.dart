@@ -165,6 +165,7 @@ TrajectoryAssistantRecord projectAssistantRecord({
   required int turn,
   required int step,
   DateTime? previousTime,
+  TrajectoryRequestDetail? requestDetail,
 }) {
   final failed =
       message.stopReason == StopReason.error ||
@@ -197,6 +198,7 @@ TrajectoryAssistantRecord projectAssistantRecord({
     timeSeconds: trajectoryDurationSeconds(message.timestamp, previousTime),
     isError: failed,
     errorMessage: message.errorMessage,
+    requestDetail: requestDetail,
   );
 }
 
@@ -207,6 +209,7 @@ TrajectoryCompactedRecord projectCompactedRecord({
   required String recordId,
   required String summary,
   String? firstKeptEntryId,
+  DateTime? previousTime,
 }) {
   return TrajectoryCompactedRecord(
     index: index,
@@ -214,6 +217,7 @@ TrajectoryCompactedRecord projectCompactedRecord({
     text: trajectoryPreviewText(summary),
     summary: summary,
     firstKeptEntryId: firstKeptEntryId,
+    timeSeconds: trajectoryDurationSeconds(record.timestamp, previousTime),
     startedAt: record.timestamp,
   );
 }

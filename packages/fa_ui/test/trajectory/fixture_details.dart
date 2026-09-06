@@ -66,6 +66,29 @@ final richAssistant = TrajectoryAssistantRecord(
   previousPromptDetail: 'line1\nline2\nline3\nline4\nline5\nline6',
   timeSeconds: const Duration(milliseconds: 2500),
   isError: false,
+  requestDetail: const TrajectoryRequestDetail(
+    messageCount: 3,
+    systemPromptChars: 40,
+    toolCount: 1,
+    toolNames: ['bash'],
+    messages: [
+      TrajectoryRequestMessageSummary(
+        role: 'user',
+        chars: 42,
+        preview: 'Run the deployment',
+      ),
+      TrajectoryRequestMessageSummary(
+        role: 'assistant',
+        chars: 15,
+        preview: 'Deploying now',
+      ),
+      TrajectoryRequestMessageSummary(
+        role: 'toolResult',
+        chars: 8,
+        preview: 'deployed',
+      ),
+    ],
+  ),
 );
 
 /// Assistant without any output detail — Preview shows the empty state.
