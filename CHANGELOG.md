@@ -2692,6 +2692,17 @@
 
 - fix(widgets): unique router instanceId per engine — frozen tiles and dead buttons
 
+## 0.1.311
+
+- fix(messaging): scheduled self-reminders actually arrive — 'self' was never
+  resolved to the agent's mailbox, so schedule_message fired on time and then
+  the mail vanished into a phantom `<root>/self` inbox; start() now migrates
+  the stranded legacy mail into the real mailbox. Cross-mailbox `from`
+  attribution fixed; parseDelay `ms`/fractional units fixed ('90ms' was 90 s).
+- feat(cli): terminal visibility for scheduled messages — dim '[sched] in
+  25m: <text>' when the agent schedules one and '[sched] fired: <text>' when
+  it fires.
+
 ## 0.1.310
 
 - refactor(cli): move trajectory view additions out of agent_cli (file size guard)
