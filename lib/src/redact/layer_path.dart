@@ -42,10 +42,15 @@ bool isCredentialPath(String path) {
 // Dotfile markers must not be preceded by a word character so
 // `process.env` stays clean while `project/.env` and bare `.env` match.
 final RegExp _inlineCredentialPath = RegExp(
-  r'(?<![\w.])\.env(?:\.[a-z0-9_.-]+)?'
-  r'|(?<![\w.])\.(?:npmrc|netrc|ssh/config|aws/credentials|docker/config\.json)\b'
+  // A .env token only matches when a PATH SEGMENT precedes it
+  // (project/.env, ~/app/.env, ./.env) - a bare
+  // .env filename (pubspec asset lists, prose) reveals no secret
+  // location and stays visible (over-redaction fix). The other
+  // markers keep matching bare: .npmrc, id_rsa & co. are distinct
+  // credential names.
+  r'(?<![\w.])\.(?:npmrc|netrc|ssh/config|aws/credentials|docker/config\.json)\b'
   r'|(?<![\w.-])id_(?:rsa|ed25519|ecdsa|dsa)\b'
-  r'|[\w.~/-]*\.pem\b',
+  r'|(?:[\w.~-]+/)+\.env\b(?:\.[a-z0-9_.-]+)?',
   caseSensitive: false,
 );
 
