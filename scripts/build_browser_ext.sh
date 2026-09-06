@@ -55,6 +55,7 @@ if [ "$with_app" -eq 1 ]; then
   # 'app/index.html' against panel/panel.html, so the bundle lives at
   # browser_ext/panel/app/ (a root-level copy is invisible to the panel).
   ( cd flutter_app && flutter pub get >/dev/null && \
+    FLUTTER_WEB_CANVASKIT_URL=./canvaskit/ \
     flutter build web --release --base-href=/panel/app/ )
   rm -rf browser_ext/panel/app
   mkdir -p browser_ext/panel/app

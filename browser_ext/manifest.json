@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "fa — browser agent",
+  "name": "fa \u2014 browser agent",
   "version": "0.2.0",
   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEKyWbUCtoIY5CLA1J8Msmfo+b+3FsPttbTWDA1Pe/XvnNv1D2u7uXXeJwIF3QH8AyhmE26ZRj8JcxFDlf1X0ibw==",
-  "description": "fa — your agent in this browser: the full fa app in the side panel, page powers for the agent.",
+  "description": "fa \u2014 your agent in this browser: the full fa app in the side panel, page powers for the agent.",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",
@@ -11,21 +11,81 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "action": { "default_icon": "icons/icon-32.png" },
-  "permissions": ["alarms", "bookmarks", "contextMenus", "cookies", "debugger", "downloads", "history", "identity", "idle", "notifications", "offscreen", "power", "scripting", "sessions", "sidePanel", "storage", "system.cpu", "system.display", "system.memory", "system.storage", "tabGroups", "tabs", "webNavigation"],
-  "optional_permissions": ["declarativeNetRequest", "desktopCapture", "pageCapture", "readingList", "search", "tabCapture", "topSites", "tts", "userScripts"],
-  "host_permissions": ["<all_urls>"],
-  "optional_host_permissions": ["<all_urls>"],
-  "commands": { "ask-fa": { "suggested_key": { "default": "Ctrl+Shift+1" }, "description": "Ask fa about the current page" } },
-  "omnibox": { "keyword": "fa" },
-  "background": { "service_worker": "sw/main.js" },
-  "side_panel": { "default_path": "panel/panel.html" },
+  "action": {
+    "default_icon": "icons/icon-32.png"
+  },
+  "permissions": [
+    "alarms",
+    "bookmarks",
+    "contextMenus",
+    "cookies",
+    "debugger",
+    "downloads",
+    "history",
+    "identity",
+    "idle",
+    "notifications",
+    "offscreen",
+    "power",
+    "scripting",
+    "sessions",
+    "sidePanel",
+    "storage",
+    "system.cpu",
+    "system.display",
+    "system.memory",
+    "system.storage",
+    "tabGroups",
+    "tabs",
+    "webNavigation"
+  ],
+  "optional_permissions": [
+    "declarativeNetRequest",
+    "desktopCapture",
+    "pageCapture",
+    "readingList",
+    "search",
+    "tabCapture",
+    "topSites",
+    "tts",
+    "userScripts"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "optional_host_permissions": [
+    "<all_urls>"
+  ],
+  "commands": {
+    "ask-fa": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+1"
+      },
+      "description": "Ask fa about the current page"
+    }
+  },
+  "omnibox": {
+    "keyword": "fa"
+  },
+  "background": {
+    "service_worker": "sw/main.js"
+  },
+  "side_panel": {
+    "default_path": "panel/panel.html"
+  },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' 'sha256-9Gr9Rgs0/APnFCP6uCAIw8NbHSckpf7/3knUDa3Gc/c=' 'sha256-uz++N0SUQR+YdD3dJ5ctkUqS0GCeeKRkRsqqiXeJCvM=' 'sha256-NJ/Hyes+j2WX6kdsVms79CBn4wlZELQB/57Fq3PTEno=' 'sha256-Xf3OdQarOaGclUxQYJyiJOorAgp9/grq6gAN73MGwUA='; object-src 'self'"
+  }
 }
