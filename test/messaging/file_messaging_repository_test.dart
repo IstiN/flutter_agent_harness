@@ -412,4 +412,93 @@ void main() {
       expect(await repo.peek('local-child'), hasLength(1));
     });
   });
+
+  group('orphan mailbox reclaim (truncated-id sends)', () {
+    const selfId = '01a060f2-7d4b-73b3-a360-bdf56e8a3a14/main';
+    final orphanDir = '$messagesRoot/01a060f2_main/inbox';
+
+    Future<void> seedOrphan({String file = '1788717144722510_0001_a.json'}) =>
+        () async {
+          await env.createDir(orphanDir);
+          await env.writeFile(
+            '$orphanDir/$file',
+            jsonEncode(msg(to: '01a060f2/main').toJson()),
+          );
+        }();
+
+    test(
+      'moves pending mail into the real inbox and removes the orphan',
+      () async {
+        await repo.touch(selfId);
+        await seedOrphan();
+
+        final moved = await reclaimOrphanMailboxMail(
+          env: env,
+          root: messagesRoot,
+          agentId: selfId,
+        );
+
+        expect(moved, 1);
+        final pending = await repo.peek(selfId);
+        expect(pending, hasLength(1));
+        expect(pending.single.text, 'hello');
+        expect(
+          (await env.exists('$messagesRoot/01a060f2_main')).valueOrNull,
+          isNot(true),
+        );
+      },
+    );
+
+    test('is a no-op when there is no orphan mailbox', () async {
+      await repo.touch(selfId);
+      final moved = await reclaimOrphanMailboxMail(
+        env: env,
+        root: messagesRoot,
+        agentId: selfId,
+      );
+      expect(moved, 0);
+    });
+
+    test('never touches unrelated mailboxes', () async {
+      await repo.touch(selfId);
+      // A DIFFERENT session's main mailbox (not a prefix of selfId).
+      await env.createDir('$messagesRoot/buddy_main/inbox');
+      await env.writeFile(
+        '$messagesRoot/buddy_main/inbox/x.json',
+        jsonEncode(msg(to: 'buddy/main').toJson()),
+      );
+
+      final moved = await reclaimOrphanMailboxMail(
+        env: env,
+        root: messagesRoot,
+        agentId: selfId,
+      );
+
+      expect(moved, 0);
+      expect(
+        (await env.exists('$messagesRoot/buddy_main/inbox/x.json')).valueOrNull,
+        isTrue,
+      );
+    });
+
+    test('keeps both files on a filename collision', () async {
+      await repo.touch(selfId);
+      await seedOrphan(file: 'dup.json');
+      await env.writeFile(
+        '$messagesRoot/${FileMessagingRepository.sanitizeAgentId(selfId)}/'
+        'inbox/dup.json',
+        jsonEncode(msg(id: 'm2', to: selfId).toJson()),
+      );
+
+      final moved = await reclaimOrphanMailboxMail(
+        env: env,
+        root: messagesRoot,
+        agentId: selfId,
+      );
+
+      expect(moved, 1);
+      final pending = await repo.peek(selfId);
+      expect(pending, hasLength(2));
+    });
+  });
 }

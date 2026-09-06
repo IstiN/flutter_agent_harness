@@ -51,28 +51,49 @@ if [ "$with_app" -eq 1 ]; then
     exit 1
   fi
   echo "building fa web app (flutter build web --release)…"
-  ( cd flutter_app && flutter pub get >/dev/null && flutter build web --release )
-  rm -rf browser_ext/app
-  mkdir -p browser_ext/app
-  cp -R flutter_app/build/web/. browser_ext/app/
-  echo "bundled fa web app (browser_ext/app/)"
+  # --base-href MUST match the panel-relative location: panel.js resolves
+  # 'app/index.html' against panel/panel.html, so the bundle lives at
+  # browser_ext/panel/app/ (a root-level copy is invisible to the panel).
+  ( cd flutter_app && flutter pub get >/dev/null && \
+    FLUTTER_WEB_CANVASKIT_URL=./canvaskit/ \
+    flutter build web --release --base-href=/panel/app/ )
+  rm -rf browser_ext/panel/app
+  mkdir -p browser_ext/panel/app
+  cp -R flutter_app/build/web/. browser_ext/panel/app/
+  # The extension CSP forbids remote hosts: point the bootstrap at the
+  # bundled canvaskit copy (FLUTTER_WEB_CANVASKIT_URL does not reach the
+  # generated bootstrap in this flutter).
+  python3 - <<'PYS'
+import glob
+for f in glob.glob('flutter_app/build/web/flutter_bootstrap.js') + glob.glob('browser_ext/panel/app/flutter_bootstrap.js'):
+    t = open(f).read()
+    t = t.replace('https://www.gstatic.com/flutter-canvaskit/', './canvaskit/')
+    t = t.replace('https:\\/\\/www.gstatic.com\\/flutter-canvaskit\\/', '.\\/canvaskit\\/')
+    t = t.replace('"https://www.gstatic.com/flutter-canvaskit"', '"./canvaskit"')
+    open(f, 'w').write(t)
+PYS
+  # The engine requests canvaskit under <engineRevision>/chromium/; the
+  # build lays the copies flat — mirror the layout the bootstrap asks for.
+  REV=$(grep -o 'canvaskit/[a-f0-9]\{32\}' flutter_app/build/web/flutter_bootstrap.js | head -1 | cut -d/ -f2)
+  if [ -n "$REV" ]; then
+    mkdir -p "browser_ext/panel/app/canvaskit/$REV"
+    cp -R "browser_ext/panel/app/canvaskit/." "browser_ext/panel/app/canvaskit/$REV/"
+    echo "canvaskit mirrored to canvaskit/$REV/"
+  fi
+  echo "bundled fa web app (browser_ext/panel/app/)"
 fi
 
 mkdir -p build
 rm -f build/fa-extension.zip
 if command -v zip >/dev/null 2>&1; then
   runtime="manifest.json sw content panel icons"
-  if [ "$with_app" -eq 1 ] && [ -f "browser_ext/app/index.html" ]; then
-    runtime="$runtime app"
-  fi
+  # panel/app rides inside the panel/ dir — no separate root entry.
   ( cd browser_ext && zip -qr ../build/fa-extension.zip $runtime \
       -x 'sw/agent.js.map' 'sw/agent.js.deps' )
 else
-python3 - "$([ "$with_app" -eq 1 ] && [ -f browser_ext/app/index.html ] && echo 1 || echo 0)" <<'PY'
+python3 - <<'PY'
 import os, zipfile
-import sys
-include_app = sys.argv[1] == "1"
-RUNTIME_DIRS = ("sw", "content", "panel", "icons") + (("app",) if include_app else ())
+RUNTIME_DIRS = ("sw", "content", "panel", "icons")
 SKIP_NAMES = {"README.md", "agent.js.map", "agent.js.deps"}
 with zipfile.ZipFile("build/fa-extension.zip", "w", zipfile.ZIP_DEFLATED) as z:
     z.write("browser_ext/manifest.json", "manifest.json")

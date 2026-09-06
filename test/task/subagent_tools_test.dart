@@ -811,4 +811,115 @@ void main() {
       },
     );
   });
+
+  group('truncated-id addressing (agent_directory short ids are safe)', () {
+    Future<SubagentManager> fabricManager(_FakeMessagingRepository repo) async {
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1';
+      await m.register(id: 'a1', name: 'a1', agentType: 'task', task: 'work');
+      return m;
+    }
+
+    Future<dynamic> messageTool(SubagentManager m) async =>
+        subagentMonitoringTools(
+          manager: m,
+          currentSubagentId: () => 'a1',
+        ).firstWhere((t) => t.name == 'agent_message');
+
+    test(
+      'agent_message delivers to the full id for a truncated prefix',
+      () async {
+        final repo = _FakeMessagingRepository(
+          entries: [
+            MailboxEntry(
+              id: '01a060f2-7d4b-73b3-a360-bdf56e8a3a14/main',
+              name: 'support',
+              cwd: '/work/fa',
+              lastActivity: null,
+            ),
+          ],
+        );
+        final m = await fabricManager(repo);
+        final tool = await messageTool(m);
+        final result = await tool.execute(
+          {'to': '01a060f2/main', 'message': 'hi via short id'},
+          null,
+          null,
+        );
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, isNot(contains('error')), reason: text);
+        expect(
+          repo._inboxes['01a060f2-7d4b-73b3-a360-bdf56e8a3a14/main'],
+          hasLength(1),
+        );
+        expect(
+          repo._inboxes.containsKey('01a060f2/main'),
+          isFalse,
+          reason: 'no dead mailbox may be created for a truncated id',
+        );
+      },
+    );
+
+    test('agent_message resolves an ellipsis-decorated short id', () async {
+      final repo = _FakeMessagingRepository(
+        entries: [
+          MailboxEntry(
+            id: '01a060f2-7d4b-73b3-a360-bdf56e8a3a14/main',
+            name: 'support',
+            cwd: '/work/fa',
+            lastActivity: null,
+          ),
+        ],
+      );
+      final m = await fabricManager(repo);
+      final tool = await messageTool(m);
+      final result = await tool.execute(
+        {'to': '01a060f2…/main', 'message': 'hi via copied short id'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, isNot(contains('error')), reason: text);
+      expect(
+        repo._inboxes['01a060f2-7d4b-73b3-a360-bdf56e8a3a14/main'],
+        hasLength(1),
+      );
+    });
+
+    test('agent_message ambiguity by truncated prefix is an error listing '
+        'candidates', () async {
+      final repo = _FakeMessagingRepository(
+        entries: [
+          MailboxEntry(
+            id: '01a06ddb-3098-7f36-95e3-010ca2ca531b/main',
+            name: 'support',
+            cwd: '/work/runtime',
+            lastActivity: null,
+          ),
+          MailboxEntry(
+            id: '01a06ddb-d2b2-7e3a-9471-22ca40d8a1f5/main',
+            name: 'widgets',
+            cwd: '/work/fa',
+            lastActivity: null,
+          ),
+        ],
+      );
+      final m = await fabricManager(repo);
+      final tool = await messageTool(m);
+      final result = await tool.execute(
+        {'to': '01a06ddb/main', 'message': 'hi ambiguous'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('error'));
+      expect(text, contains('01a06ddb-3098-7f36-95e3-010ca2ca531b/main'));
+      expect(text, contains('01a06ddb-d2b2-7e3a-9471-22ca40d8a1f5/main'));
+      expect(
+        repo._inboxes,
+        isEmpty,
+        reason: 'an ambiguous address must deliver nowhere',
+      );
+    });
+  });
 }

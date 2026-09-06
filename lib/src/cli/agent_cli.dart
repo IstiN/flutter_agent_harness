@@ -15,6 +15,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:meta/meta.dart';
@@ -981,6 +982,12 @@ class AgentCli {
   final Map<String, List<String>> _allProvidersModelCache = {};
   bool _allProvidersCacheRefreshed = false;
 
+  /// Providers whose cached list is trusted for THIS session: fetched live
+  /// here, or loaded from a disk entry younger than 24h. A trusted entry
+  /// skips the live refetch; anything else revalidates in the background.
+  final Set<String> _modelCacheFresh = {};
+  bool _modelCacheDiskLoaded = false;
+
   /// Context windows reported by the endpoint's `/models` payload (see
   /// [parseModelsResponse] in provider_commands.dart); empty when the
   /// fetcher is replaced (tests) or the endpoint reports none. Drives
@@ -1032,6 +1039,10 @@ class AgentCli {
   Future<void> run() async {
     await _cubeBootRestore();
     await _loadAgentContext();
+    // Persisted model cache (stale-while-revalidate): the /model picker
+    // serves the last fetched lists instantly at boot; the live refresh
+    // revalidates on the first menu open (stale entries) — no boot HTTP.
+    await _loadPersistedModelCache();
     _session = await _initializeSession();
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
@@ -1115,6 +1126,7 @@ class AgentCli {
   ) {
     var heartbeatTick = 0;
     return Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(_reclaimOrphanFabricMail());
       unawaited(_wakeOnInboxMail());
       if (heartbeatTick++ % 2 == 0) {
         if (presence != null) {

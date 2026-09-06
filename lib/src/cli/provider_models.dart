@@ -17,6 +17,78 @@ extension on AgentCli {
   bool get _modelCacheNeedsRefresh =>
       !_allProvidersCacheRefreshed && _modelCacheFuture == null;
 
+  /// The persisted cross-provider model cache (null when the host has no
+  /// home directory — web, sandboxed tests). `{provider: {ids, fetchedAtMs}}`
+  /// entries power the instant /model picker at boot; the background
+  /// refresh rewrites it after every live fetch.
+  String? get _modelCacheDiskPath => config.homeDir?.isEmpty ?? true
+      ? null
+      : '${config.homeDir}/.fah/model_cache.json';
+
+  static const _modelCacheTtl = Duration(hours: 24);
+
+  /// Loads the persisted model cache into [_allProvidersModelCache]. Entries
+  /// younger than 24h are trusted for this session (no live refetch);
+  /// stale entries still render instantly but revalidate in background.
+  Future<void> _loadPersistedModelCache() async {
+    if (_modelCacheDiskLoaded) return;
+    _modelCacheDiskLoaded = true;
+    final path = _modelCacheDiskPath;
+    if (path == null) return;
+    final text = (await _env.readTextFile(path)).valueOrNull;
+    if (text == null || text.isEmpty) return;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(text);
+    } on FormatException {
+      return;
+    }
+    if (decoded is! Map<String, dynamic>) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    decoded.forEach(
+      (provider, value) => _applyPersistedModelEntry(provider, value, now),
+    );
+  }
+
+  /// Applies one persisted-cache record: non-empty id lists seed the
+  /// in-memory cache (putIfAbsent — a live answer already in hand wins);
+  /// entries younger than 24h are trusted for this session.
+  void _applyPersistedModelEntry(String provider, Object? value, int now) {
+    if (value is! Map<String, dynamic>) return;
+    final ids = [
+      for (final id in (value['ids'] as List<dynamic>? ?? const []))
+        if (id is String && id.isNotEmpty) id,
+    ];
+    if (ids.isEmpty) return;
+    _allProvidersModelCache.putIfAbsent(provider, () => ids);
+    final fetchedAt = value['fetchedAtMs'];
+    final fresh =
+        fetchedAt is int && now - fetchedAt < _modelCacheTtl.inMilliseconds;
+    if (fresh) _modelCacheFresh.add(provider);
+  }
+
+  /// Persists the cross-provider model cache for the next process.
+  /// Best-effort: a failed write only costs boot-time freshness.
+  Future<void> _persistModelCache() async {
+    final path = _modelCacheDiskPath;
+    if (path == null) return;
+    try {
+      await _env.createDir('${config.homeDir}/.fah');
+      await _env.writeFile(
+        path,
+        jsonEncode({
+          for (final entry in _allProvidersModelCache.entries)
+            entry.key: {
+              'ids': entry.value,
+              'fetchedAtMs': DateTime.now().millisecondsSinceEpoch,
+            },
+        }),
+      );
+    } on Object {
+      // Best-effort persistence.
+    }
+  }
+
   List<MenuItem> _buildModelMenu(String filter) {
     if (_modelCacheNeedsRefresh) {
       unawaited(_refreshAllProvidersModelCache());
@@ -211,8 +283,7 @@ extension on AgentCli {
       // hasn't saved the provider as a custom entry.
       final activeProvider = _agent.state.model.provider;
       final activeSpec = catalogProvider(activeProvider);
-      if (activeSpec != null &&
-          !_allProvidersModelCache.containsKey(activeProvider)) {
+      if (activeSpec != null && !_modelCacheFresh.contains(activeProvider)) {
         try {
           final ids = await _fetchProviderModelIds(
             activeSpec.name,
@@ -234,6 +305,8 @@ extension on AgentCli {
       }
       await _refreshEnvKeyedProviders(activeProvider);
       _allProvidersCacheRefreshed = true;
+      _modelCacheFresh.addAll(_allProvidersModelCache.keys);
+      await _persistModelCache();
       _tuiController?.sendModelsRefresh();
     } finally {
       _modelCacheFuture = null;
@@ -254,8 +327,7 @@ extension on AgentCli {
     // endpoint won't talk to us. A provider with neither a live answer
     // nor seeds stays hidden (never listed with zero models).
     for (final spec in enabledProviders()) {
-      if (spec.name == activeProvider ||
-          _allProvidersModelCache.containsKey(spec.name)) {
+      if (spec.name == activeProvider || _modelCacheFresh.contains(spec.name)) {
         continue;
       }
       final envKey = _envKeyEntry(spec);
@@ -514,6 +586,10 @@ extension on AgentCli {
     _modelCacheFuture = completer.future;
     try {
       final model = _agent.state.model;
+      // A disk-backed entry younger than 24h is trusted: the persisted ids
+      // already feed the picker, and the live /models round-trip is skipped
+      // (stale-while-revalidate keeps boot HTTP at zero for fresh caches).
+      if (_modelCacheFresh.contains(model.provider)) return;
       if (model.api == 'openai-completions') {
         final ids = await _fetchActiveProviderModels(model);
         if (ids.isNotEmpty) {
@@ -563,10 +639,7 @@ extension on AgentCli {
     if (refs == null) return (window: false, cap: false);
     for (final ref in refs) {
       if (ref.modelId != model.id) continue;
-      return (
-        window: ref.contextWindow != null,
-        cap: ref.maxTokens != null,
-      );
+      return (window: ref.contextWindow != null, cap: ref.maxTokens != null);
     }
     return (window: false, cap: false);
   }

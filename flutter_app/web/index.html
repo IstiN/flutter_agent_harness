@@ -86,24 +86,7 @@
     <div class="fah-name">Fa</div>
     <div class="fah-bar"></div>
   </div>
-  <script>
-    (function () {
-      function hideSplash(reason) {
-        var splash = document.getElementById('fah-splash');
-        if (!splash) return;
-        if (reason) console.warn('[fah] splash hidden without first frame: ' + reason);
-        splash.classList.add('fah-done');
-        splash.addEventListener('transitionend', function () { splash.remove(); }, { once: true });
-        // Fallback for reduced motion / missed transitionend.
-        setTimeout(function () { splash.remove(); }, 500);
-      }
-      window.addEventListener('flutter-first-frame', function () { hideSplash(); });
-      // Safety net: some engines (seen on Safari) run main() but never fire
-      // flutter-first-frame, which left the splash up forever. If the app is
-      // alive behind the splash, reveal it after a bounded wait.
-      setTimeout(function () { hideSplash('timeout'); }, 12000);
-    })();
-  </script>
+  <script src="inline_script_1.js"></script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader
@@ -123,10 +106,7 @@
        the Dart side (lib/webllm/). Version matches the interop bindings.
        Used chat-only: tool calling is the Dart-side prompt-tools wrapper's
        job, not the engine's native function-calling mode. -->
-  <script type="module">
-    import * as webllm from 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.84/+esm';
-    window.webllm = webllm;
-  </script>
+  <script type="module" src="inline_script_4.js"></script>
   <!-- Transformers.js (@huggingface/transformers, pinned): runs Gemma 4 ONNX
        on-device via ONNX Runtime Web + WebGPU — the web on-device Gemma path
        (lib/transformers_js/), replacing the litert-lm web engine below.
@@ -135,10 +115,7 @@
        from jsdelivr and exposed as window.transformersjs for the Dart side;
        onnxruntime-web's WASM/WebGPU assets load from jsdelivr automatically.
        Weights download from huggingface.co into CacheStorage on first use. -->
-  <script type="module">
-    import * as transformersjs from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/+esm';
-    window.transformersjs = transformersjs;
-  </script>
+  <script type="module" src="inline_script_5.js"></script>
   <!-- LiteRT-LM web engine, formerly used by the on-device Gemma provider.
        DEAD on web since the transformers.js provider above replaced it (the
        pinned @litert-lm/core 0.12.1 crashes creating the GPU executor for
@@ -146,13 +123,7 @@
        web streaming pump) — kept only because removal touches the plugin's
        awaited window.litertLmReady handshake; cleanup is tracked as
        follow-up work. Mobile builds still use flutter_gemma via FFI. -->
-  <script type="module">
-    window.litertLmReady = (async () => {
-      const m = await import('https://cdn.jsdelivr.net/npm/@litert-lm/core@0.12.1/+esm');
-      window.Engine = m.Engine;
-      return m.Engine;
-    })();
-  </script>
+  <script type="module" src="inline_script_6.js"></script>
   <!-- flutter_gemma web storage helpers. opfs_helper.js (defines
        window.flutterGemmaOPFS) is required by WebStorageMode.streaming —
        Gemma 4 E2B/E4B exceed Chrome's ~2 GB single-blob limit, so the model

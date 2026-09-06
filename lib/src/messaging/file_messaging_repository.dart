@@ -357,6 +357,73 @@ final class FileMessagingRepository implements MessagingRepository {
   }
 }
 
+/// Moves pending mail out of orphan mailboxes into [agentId]'s real inbox,
+/// returning the number of messages moved. An orphan mailbox appears when
+/// a sender addressed this agent with a truncated id (the short form
+/// `agent_directory` displays, or an older binary without prefix
+/// resolution): the send then created a fresh directory no watcher ever
+/// polls (`01a060f2_main` for `01a060f2-7d4b-…_main`) — silent mail loss.
+/// An orphan is a `<head>_main` directory whose head is a strict prefix of
+/// [agentId]'s own id. Best-effort: a failing move leaves the orphan in
+/// place; an emptied orphan directory is removed.
+Future<int> reclaimOrphanMailboxMail({
+  required ExecutionEnv env,
+  required String root,
+  required String agentId,
+}) async {
+  final self = FileMessagingRepository.sanitizeAgentId(agentId);
+  const suffix = '_main';
+  if (!self.endsWith(suffix)) return 0;
+  final selfHead = self.substring(0, self.length - suffix.length);
+  final listing = (await env.listDir(root)).valueOrNull ?? const [];
+  var moved = 0;
+  for (final dir in listing) {
+    if (dir.kind != FileKind.directory) continue;
+    final name = dir.path.split('/').last;
+    if (name == self || !name.endsWith(suffix)) continue;
+    final head = name.substring(0, name.length - suffix.length);
+    if (head.isEmpty || !selfHead.startsWith(head)) continue;
+    moved += await _moveInboxFiles(
+      env,
+      from: '${dir.path}/inbox',
+      to: '$root/$self/inbox',
+    );
+    // Best-effort cleanup; a leftover empty orphan is harmless.
+    await env.remove(dir.path, recursive: true, force: true);
+  }
+  return moved;
+}
+
+/// Moves every file from [from] into [to], renaming on filename collision
+/// so no mail is ever dropped. Returns the number of files moved.
+Future<int> _moveInboxFiles(
+  ExecutionEnv env, {
+  required String from,
+  required String to,
+}) async {
+  final listing = (await env.listDir(from)).valueOrNull;
+  if (listing == null) return 0;
+  (await env.createDir(to)).getOrThrow();
+  var moved = 0;
+  for (final file in listing) {
+    if (file.kind != FileKind.file) continue;
+    final name = file.path.split('/').last;
+    var target = '$to/$name';
+    if ((await env.exists(target)).valueOrNull == true) {
+      final dot = name.lastIndexOf('.');
+      target = dot < 0
+          ? '$to/${name}_orphan'
+          : '$to/${name.substring(0, dot)}_orphan${name.substring(dot)}';
+    }
+    final text = (await env.readTextFile(file.path)).valueOrNull;
+    if (text == null) continue;
+    (await env.writeFile(target, text)).getOrThrow();
+    (await env.remove(file.path, force: true)).getOrThrow();
+    moved++;
+  }
+  return moved;
+}
+
 /// A [MessagingRepository] whose backing implementation can be replaced at
 /// runtime. The CLI uses this so the agent messaging fabric can follow the
 /// EFFECTIVE session root: when session creation falls back from the shared

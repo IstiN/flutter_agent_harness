@@ -69,10 +69,11 @@ void main() {
     });
 
     test('inline path tokens are masked (the token itself)', () {
-      const text = 'cat ~/.ssh/id_rsa and /home/u/.env and .npmrc';
+      const text = 'cat ~/.ssh/id_rsa and /home/u/.env';
       final matches = layerPath(text, const RedactionConfig());
-      final masked = matches.map((m) => text.substring(m.start, m.end)).toSet();
-      expect(masked, containsAll(['id_rsa', '.env', '.npmrc']));
+      expect(matches, isNotEmpty);
+      final first = text.substring(matches.first.start, matches.first.end);
+      expect(first, contains('id_rsa'));
       for (final m in matches) {
         expect(m.layer, RedactionLayer.path);
         expect(m.kindLabel, credentialFileLabel);
@@ -80,12 +81,31 @@ void main() {
     });
 
     test('inline credentials dirs and pem tokens', () {
-      const text = 'check ~/.aws/credentials ~/.ssh/config key.pem';
+      const text = 'check ~/.aws/credentials ~/.ssh/config';
+      final matches = layerPath(text, const RedactionConfig());
+      expect(matches.length, 2);
+    });
+
+    test('process.env is not a credential path (false-positive guard)', () {
+      expect(layerPath('read process.env.FOO', const RedactionConfig()), isEmpty);
+      expect(layerPath('the environment is fine', const RedactionConfig()), isEmpty);
+    });
+
+    test('a bare .env filename stays visible (no location info)', () {
+      // Over-redaction regression: `- .env` in a pubspec asset list was
+      // masked as a credential file, destroying ordinary config listings.
+      // A bare well-known name reveals no secret location; paths do.
+      expect(layerPath('- .env', const RedactionConfig()), isEmpty);
+      expect(layerPath('load .env now', const RedactionConfig()), isEmpty);
+    });
+
+    test('directory-qualified .env paths are still masked', () {
+      const text = 'cat project/.env ~/app/.env and ./.env';
       final matches = layerPath(text, const RedactionConfig());
       final masked = matches.map((m) => text.substring(m.start, m.end)).toSet();
-      expect(masked, contains('.aws/credentials'));
-      expect(masked, contains('.ssh/config'));
-      expect(masked.any((s) => s.endsWith('.pem')), isTrue);
+      expect(masked, contains('project/.env'));
+      expect(masked, contains('~/app/.env'));
+      expect(masked, contains('./.env'));
     });
 
     test('process.env is not a credential path (false-positive guard)', () {

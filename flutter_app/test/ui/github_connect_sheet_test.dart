@@ -60,6 +60,9 @@ void main() {
                       token: token,
                       httpClient: github.client,
                     ),
+                    // Tests have no HTTP transport for the device flow: an
+                    // empty client id disables the device tab.
+                    deviceClientId: '',
                   );
                   onResult?.call(result);
                 },

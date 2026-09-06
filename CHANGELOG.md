@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.313
+
 
 - feat(js-ext): JS extension core (issue #32) — `JsrRuntime` engine seam +
   engine-agnostic bootstrap (`jsr.ext.*`: registerTool tiers, six hook
@@ -2793,3 +2794,13 @@
 - feat(trajectory): real-content feed rows, guaranteed details, Gantt timeline (#25 L3-L6)
 - feat(trajectory): full-screen adaptive shell + header (#25 L1-L2)
 - feat(trajectory): data completeness for the ledger view (#25 L7)
+
+## 0.1.314
+
+- fix(app): visible section hint on dark theme + device-flow connect by default (#35)
+- fix(browser_ext): mirror canvaskit into <engineRevision>/chromium/
+- fix(browser_ext): externalize inline web scripts; local canvaskit
+- fix(browser_ext): CSP + local canvaskit let the embedded fa app load
+- fix(browser_ext): bundle the fa web app where the panel probes it
+
+## Unreleased
