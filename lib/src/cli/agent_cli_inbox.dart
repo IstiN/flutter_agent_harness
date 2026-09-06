@@ -201,4 +201,22 @@ extension AgentCliMessagingFlow on AgentCli {
     );
     unawaited(_settled.whenComplete(() => _inboxWakeRunning = false));
   }
+
+  /// Receive-side healing: a sender running an older binary (or any tool
+  /// scripting the fabric directly) can address this agent with a truncated
+  /// id — the send lands in a fresh mailbox directory no watcher polls and
+  /// the message is silently lost. Sweep orphan mailboxes into the real
+  /// inbox before the drain so the mail is never lost. Best-effort; runs on
+  /// the file-backed local root only (this host's messages root).
+  Future<void> _reclaimOrphanFabricMail() async {
+    try {
+      await reclaimOrphanMailboxMail(
+        env: _env,
+        root: _messagesRoot,
+        agentId: _subagentManager.mailboxOf(_subagentManager.selfId),
+      );
+    } on Object {
+      // Never let fabric hygiene break the watcher tick.
+    }
+  }
 }

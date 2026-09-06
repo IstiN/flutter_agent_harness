@@ -436,6 +436,46 @@ Future<String> _asleepTargetNote(
       'fa --session $address resumes the same session).';
 }
 
+/// The entries matching [to] as a session display NAME: a bare name
+/// matches `entry.name` exactly; a `name/suffix` form matches the name
+/// AND the id suffix (so `goal_builder/main` cannot hit a subagent).
+List<MailboxEntry> _nameMatches(List<MailboxEntry> entries, String to) {
+  final slash = to.indexOf('/');
+  return (slash < 0
+          ? entries.where((entry) => entry.name != null && entry.name == to)
+          : entries.where(
+              (entry) =>
+                  entry.id.endsWith('/${to.substring(slash + 1)}') &&
+                  entry.name == to.substring(0, slash),
+            ))
+      .toList();
+}
+
+/// Resolves [to] against [entries] as a truncated mailbox id (the short
+/// form agent_directory displays, `…` decoration included): a unique
+/// prefix returns the one real mailbox id, an ambiguous prefix returns an
+/// error listing the candidates, no match returns `(null, null)`.
+(String?, String?) _resolveTruncatedId(List<MailboxEntry> entries, String to) {
+  final head = to.split('/').first.replaceAll('…', '');
+  if (head.isEmpty) return (null, null);
+  final matches = [
+    for (final entry in entries)
+      if (entry.id != to && entry.id.startsWith(head)) entry,
+  ];
+  if (matches.length == 1) return (matches.single.id, null);
+  if (matches.length <= 1) return (null, null);
+  final listing = matches
+      .map(
+        (entry) =>
+            '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
+      )
+      .join('\n');
+  return (
+    null,
+    '"$to" is an ambiguous id prefix — pick an exact mailbox:\n$listing',
+  );
+}
+
 /// Resolves [to] against the fabric directory by session display NAME when
 /// the raw form does not already hit a deliverable address: a local
 /// sibling handle, `main`, or an exact absolute mailbox id. Returns the
@@ -451,16 +491,18 @@ Future<(String, String?)> _resolveFabricAddress(
   if (to == manager.selfId || manager[to] != null) return (to, null);
   final entries = await fabric.directory();
   if (entries.any((entry) => entry.id == to)) return (to, null);
-  final slash = to.indexOf('/');
-  final matches =
-      (slash < 0
-              ? entries.where((entry) => entry.name != null && entry.name == to)
-              : entries.where(
-                  (entry) =>
-                      entry.id.endsWith('/${to.substring(slash + 1)}') &&
-                      entry.name == to.substring(0, slash),
-                ))
-          .toList();
+  final matches = _nameMatches(entries, to);
+  // A sender may address this agent with a TRUNCATED id — the short form
+  // agent_directory displays by default (`01a060f2/main` for
+  // `01a060f2-7d4b-…/main`). Delivering verbatim would create a fresh
+  // mailbox directory no watcher ever polls: silent mail loss. Resolve a
+  // unique id-prefix to the one real mailbox; an ambiguous prefix is an
+  // error listing the candidates (never a new mailbox).
+  if (matches.isEmpty) {
+    final (prefixTarget, prefixError) = _resolveTruncatedId(entries, to);
+    if (prefixError != null) return (to, prefixError);
+    if (prefixTarget != null) return (prefixTarget, null);
+  }
   if (matches.isEmpty) return (to, null);
   if (matches.length > 1) {
     final listing = matches

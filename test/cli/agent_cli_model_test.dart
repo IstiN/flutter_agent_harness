@@ -32,11 +32,13 @@ void main() {
     String? Function(String name)? envVarValue,
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
-    Future<void> Function(String providerKind, String apiKey)? onProviderChanged,
+    Future<void> Function(String providerKind, String apiKey)?
+    onProviderChanged,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
     String? providerKind,
+    String? homeDir,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -44,6 +46,7 @@ void main() {
         apiKey: 'test-key',
         env: envOverride ?? env,
         sessionRoot: '/sessions',
+        homeDir: homeDir,
         envVarIsSet: envVarIsSet,
         envVarValue: envVarValue,
         modelsFetcher: modelsFetcher,
@@ -791,6 +794,146 @@ void main() {
       expect(cli.agent.state.model.id, 'claude-sonnet-5');
       io.sendLine('/exit');
       await run;
+    });
+  });
+
+  group('persisted model cache (stale-while-revalidate)', () {
+    final orModel = Model(
+      id: 'openrouter/auto',
+      api: 'openai-completions',
+      provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      contextWindow: 100000,
+      maxTokens: 4096,
+    );
+
+    Future<void> writeCache(String ids, int fetchedAtMs) async {
+      await env.createDir('/home/u/.fah');
+      await env.writeFile(
+        '/home/u/.fah/model_cache.json',
+        '{"openrouter": {"ids": $ids, "fetchedAtMs": $fetchedAtMs}}',
+      );
+    }
+
+    test(
+      'a persisted list renders instantly before the live fetch lands',
+      () async {
+        await writeCache(
+          '["persisted-1"]',
+          DateTime.now().millisecondsSinceEpoch,
+        );
+        final gate = Completer<List<String>>();
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(
+          fake.call,
+          model: orModel,
+          modelsFetcher: (baseUrl, {required apiKey}) => gate.future,
+          homeDir: '/home/u',
+        );
+        final run = cli.run();
+        await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+        // The live fetch is still blocked on the gate — the menu already
+        // serves the persisted ids (no synchronous wait at /model open).
+        final items = cli.buildModelMenuForTest('');
+        expect(items.map((i) => i.key), contains('openrouter|persisted-1'));
+        io.sendLine('/exit');
+        gate.complete(const ['live-1']);
+        await run;
+      },
+    );
+
+    test(
+      'a fresh disk entry is trusted: no live refetch this session',
+      () async {
+        await writeCache(
+          '["persisted-1"]',
+          DateTime.now().millisecondsSinceEpoch,
+        );
+        var fetchCalls = 0;
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(
+          fake.call,
+          model: orModel,
+          modelsFetcher: (baseUrl, {required apiKey}) async {
+            fetchCalls++;
+            return const ['live-1'];
+          },
+          homeDir: '/home/u',
+        );
+        final run = cli.run();
+        await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+        cli.buildModelMenuForTest('');
+        // Give the background refresh a chance to (not) fire.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(fetchCalls, 0, reason: 'fresh disk entry skips the refetch');
+        expect(
+          cli.buildModelMenuForTest('').map((i) => i.key),
+          contains('openrouter|persisted-1'),
+        );
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+
+    test('a stale (>24h) disk entry renders instantly and revalidates in '
+        'background', () async {
+      await writeCache(
+        '["persisted-1"]',
+        DateTime.now().millisecondsSinceEpoch -
+            const Duration(hours: 25).inMilliseconds,
+      );
+      final gate = Completer<List<String>>();
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        model: orModel,
+        modelsFetcher: (baseUrl, {required apiKey}) => gate.future,
+        homeDir: '/home/u',
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+      expect(
+        cli.buildModelMenuForTest('').map((i) => i.key),
+        contains('openrouter|persisted-1'),
+      );
+      gate.complete(const ['live-9']);
+      await waitForIt(
+        () => cli
+            .buildModelMenuForTest('')
+            .map((i) => i.key)
+            .contains('openrouter|live-9'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('the live fetch is persisted for the next process', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        model: orModel,
+        modelsFetcher: (baseUrl, {required apiKey}) async => const ['live-9'],
+        homeDir: '/home/u',
+      );
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+      cli.buildModelMenuForTest('');
+      await waitForIt(
+        () => cli
+            .buildModelMenuForTest('')
+            .map((i) => i.key)
+            .contains('openrouter|live-9'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final text = (await env.readTextFile(
+        '/home/u/.fah/model_cache.json',
+      )).valueOrNull;
+      expect(text, isNotNull);
+      expect(text, contains('live-9'));
     });
   });
 }
