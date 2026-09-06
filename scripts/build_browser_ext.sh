@@ -72,6 +72,14 @@ for f in glob.glob('flutter_app/build/web/flutter_bootstrap.js') + glob.glob('br
     t = t.replace('"https://www.gstatic.com/flutter-canvaskit"', '"./canvaskit"')
     open(f, 'w').write(t)
 PYS
+  # The engine requests canvaskit under <engineRevision>/chromium/; the
+  # build lays the copies flat — mirror the layout the bootstrap asks for.
+  REV=$(grep -o 'canvaskit/[a-f0-9]\{32\}' flutter_app/build/web/flutter_bootstrap.js | head -1 | cut -d/ -f2)
+  if [ -n "$REV" ]; then
+    mkdir -p "browser_ext/panel/app/canvaskit/$REV"
+    cp -R "browser_ext/panel/app/canvaskit/." "browser_ext/panel/app/canvaskit/$REV/"
+    echo "canvaskit mirrored to canvaskit/$REV/"
+  fi
   echo "bundled fa web app (browser_ext/panel/app/)"
 fi
 
