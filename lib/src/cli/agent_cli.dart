@@ -756,11 +756,7 @@ class AgentCli {
   /// Persisted delayed messages (`schedule_message`): pending records live
   /// under `<messagesRoot>/_scheduled/` and are delivered into the
   /// agent's own inbox when due, where the idle-wake starts a turn.
-  late final ScheduledMessageQueue _scheduledMessages = ScheduledMessageQueue(
-    env: _env,
-    repo: () => _fabricRepository,
-    root: () => _messagesRoot,
-  );
+  late final ScheduledMessageQueue _scheduledMessages = _newScheduledMessages();
 
   /// The session's retained-subagent registry (tests, the app settings
   /// Agents panel, hosts observing children).

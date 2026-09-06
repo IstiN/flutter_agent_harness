@@ -406,6 +406,11 @@ class AgentService extends ChangeNotifier
       env: env,
       repo: () => fabricRepo,
       root: () => messagesRoot,
+      // Self-reminders must target the session's real mailbox — the legacy
+      // literal 'self' leaked them into a phantom mailbox (the fired mail
+      // itself is already visible in chat as a user message, so no extra
+      // UI notice channel here; the CLI prints [sched] lines).
+      selfMailbox: () => _subagentManager?.mailboxOf('main') ?? 'main',
     );
     // Arm the delivery timer; best-effort (an unwritable root keeps the
     // app booting, the tools just report unavailable).

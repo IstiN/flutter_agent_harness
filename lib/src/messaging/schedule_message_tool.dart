@@ -18,11 +18,13 @@ Duration? parseDelay(String spec) {
     if (m == null) return null;
     final value = double.parse(m.group(1)!);
     total += switch (m.group(2)!) {
-      'ms' => Duration(milliseconds: (value * 1000).round()),
+      // All in milliseconds so fractional units work ('0.5m' = 30 s) and
+      // 'ms' is not accidentally a thousand-fold (bug: 90ms = 90 seconds).
+      'ms' => Duration(milliseconds: value.round()),
       's' => Duration(milliseconds: (value * 1000).round()),
-      'm' => Duration(minutes: value.round()),
-      'h' => Duration(minutes: (value * 60).round()),
-      _ => Duration(days: value.round()),
+      'm' => Duration(milliseconds: (value * 60000).round()),
+      'h' => Duration(milliseconds: (value * 3600000).round()),
+      _ => Duration(milliseconds: (value * 86400000).round()),
     };
     rest = rest.substring(m.end);
   }

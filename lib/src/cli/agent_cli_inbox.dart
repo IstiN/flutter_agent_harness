@@ -111,6 +111,19 @@ extension AgentCliMessagingFlow on AgentCli {
   /// Namespaces this instance's mailboxes with the active session id: two
   /// Fa instances sharing the messaging root never drain each other's
   /// inboxes. Called after every session init/switch.
+  ScheduledMessageQueue _newScheduledMessages() {
+    return ScheduledMessageQueue(
+      env: _env,
+      repo: () => _fabricRepository,
+      root: () => _messagesRoot,
+      selfMailbox: () => _subagentManager.mailboxOf('main'),
+      // Terminal visibility: a dim line when a scheduled message is created
+      // and when it fires, so self-reminders are observable without /tasks.
+      onScheduled: (text) => io.writeln(_style.dim('[sched] $text')),
+      onFired: (text) => io.writeln(_style.dim('[sched] $text')),
+    );
+  }
+
   void _syncMailboxPrefix() {
     _subagentManager.mailboxPrefix = _session?.cachedId ?? '';
     // The prompt's messaging section carries the live mailbox address.

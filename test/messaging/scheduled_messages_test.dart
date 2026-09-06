@@ -12,7 +12,9 @@ void main() {
     expect(parseDelay('25m'), const Duration(minutes: 25));
     expect(parseDelay('1h30m'), const Duration(minutes: 90));
     expect(parseDelay('1d'), const Duration(days: 1));
-    expect(parseDelay('500ms'), isNotNull);
+    expect(parseDelay('500ms'), const Duration(milliseconds: 500));
+    expect(parseDelay('0.5m'), const Duration(seconds: 30));
+    expect(parseDelay('1.5h'), const Duration(minutes: 90));
     expect(parseDelay('abc'), isNull);
     expect(parseDelay('0m'), isNull);
   });
@@ -81,6 +83,149 @@ void main() {
       expect((await repo.peek('main')).single.text, contains('ping later'));
     },
   );
+
+  test(
+    'self-scheduled mail resolves to the host mailbox, not a "self" dir',
+    () async {
+      // Regression: without a `to`, records stored the literal string 'self',
+      // and delivery wrote into a phantom <root>/self mailbox nobody drains —
+      // self-reminders were lost forever (38 on one production machine).
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-1/main',
+      );
+      await queue.schedule(
+        text: 'ping me',
+        delay: const Duration(milliseconds: 20),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      final mail = await repo.peek('sid-1/main');
+      expect(mail.single.text, contains('[scheduled] ping me'));
+      expect(mail.single.fromId, 'sid-1/main');
+      expect(mail.single.toId, 'sid-1/main');
+      // Nothing must be left behind in the phantom self mailbox.
+      expect((await repo.peek('self')).isEmpty, isTrue);
+    },
+  );
+
+  test('cross-mailbox schedule attributes the message to the sender', () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    final root = '/sessions/--work--/messages';
+    final repo = FileMessagingRepository(
+      env: env,
+      root: root,
+      homeDir: '/home/user',
+      decodeSessionCwd: decodeSessionCwd,
+    );
+    final queue = ScheduledMessageQueue(
+      env: env,
+      repo: () => repo,
+      root: () => root,
+      selfMailbox: () => 'sid-1/main',
+    );
+    await queue.schedule(
+      text: 'hey jsr',
+      delay: const Duration(milliseconds: 20),
+      to: 'jsr/main',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await queue.deliverDue();
+    final mail = await repo.peek('jsr/main');
+    expect(mail.single.fromId, 'sid-1/main');
+  });
+
+  test('legacy "self" inbox mail is migrated into the real mailbox', () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    final root = '/sessions/--work--/messages';
+    final repo = FileMessagingRepository(
+      env: env,
+      root: root,
+      homeDir: '/home/user',
+      decodeSessionCwd: decodeSessionCwd,
+    );
+    await repo.register('sid-1/main');
+    // A message delivered by a build predating the self-mailbox fix.
+    await repo.send(
+      AgentMessage(
+        id: 'legacy-1',
+        fromId: 'self',
+        toId: 'self',
+        text: '[scheduled] old reminder',
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+        hops: 0,
+      ),
+    );
+    final queue = ScheduledMessageQueue(
+      env: env,
+      repo: () => repo,
+      root: () => root,
+      selfMailbox: () => 'sid-1/main',
+    );
+    await queue.start();
+    final mail = await repo.peek('sid-1/main');
+    expect(mail.single.text, '[scheduled] old reminder');
+    expect(mail.single.fromId, 'sid-1/main');
+    expect((await repo.peek('self')).isEmpty, isTrue);
+  });
+
+  test('concurrent delivery runs send each record once', () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    final root = '/sessions/--work--/messages';
+    final repo = FileMessagingRepository(
+      env: env,
+      root: root,
+      homeDir: '/home/user',
+      decodeSessionCwd: decodeSessionCwd,
+    );
+    final queue = ScheduledMessageQueue(
+      env: env,
+      repo: () => repo,
+      root: () => root,
+      selfMailbox: () => 'sid-1/main',
+    );
+    await queue.schedule(text: 'once', delay: const Duration(milliseconds: 5));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await Future.wait([queue.deliverDue(), queue.deliverDue()]);
+    expect(await repo.peek('sid-1/main'), hasLength(1));
+  });
+
+  test('schedule/fire notices are surfaced to the host', () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    final root = '/sessions/--work--/messages';
+    final repo = FileMessagingRepository(
+      env: env,
+      root: root,
+      homeDir: '/home/user',
+      decodeSessionCwd: decodeSessionCwd,
+    );
+    final scheduledNotices = <String>[];
+    final firedNotices = <String>[];
+    final queue = ScheduledMessageQueue(
+      env: env,
+      repo: () => repo,
+      root: () => root,
+      selfMailbox: () => 'sid-1/main',
+      onScheduled: scheduledNotices.add,
+      onFired: firedNotices.add,
+    );
+    await queue.schedule(
+      text: 'check CI',
+      delay: const Duration(milliseconds: 10),
+    );
+    expect(scheduledNotices.single, contains('check CI'));
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    expect(firedNotices.single, contains('check CI'));
+  });
 
   test('schedule_message tool validates and schedules', () async {
     final env = MemoryExecutionEnv(cwd: '/work');
