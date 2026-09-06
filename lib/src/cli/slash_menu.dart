@@ -11,6 +11,7 @@ List<MenuItem> buildSlashMenuItems(
   String prefix, {
   required Map<String, String> slashCommands,
   required Map<String, SlashCommand> pluginSlashCommands,
+  Map<String, SlashCommand> extSlashCommands = const {},
   required List<PromptTemplate> templates,
   List<Skill> skills = const [],
 }) {
@@ -18,6 +19,7 @@ List<MenuItem> buildSlashMenuItems(
   return [
     ..._builtinMenuItems(slashCommands, lower),
     ..._pluginMenuItems(pluginSlashCommands, lower),
+    ..._pluginMenuItems(extSlashCommands, lower),
     ..._templateMenuItems(templates, lower),
     ..._skillMenuItems(skills, lower),
   ];
@@ -113,6 +115,7 @@ const builtinSlashCommands = <String, String>{
   '/redact': '[on|off|block on|block off|stats|layers] — secret redaction',
   '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
+  '/ext': '[list|enable|disable|audit|remove|update|reload] — JS extensions',
   '/agents': '[types|<id>|open <id>] — live agents tree, observe, open session',
   '/model': '<provider/model> — select model (opens selector)',
   '/models': '[filter] | config | set <slot> <model> [baseUrl] | remove <slot>',
@@ -149,6 +152,7 @@ const builtinSlashCommands = <String, String>{
 List<String> helpLines({
   String filter = '',
   required Map<String, SlashCommand> pluginSlashCommands,
+  Map<String, SlashCommand> extSlashCommands = const {},
   required List<PromptTemplate> templates,
   required TuiStyle style,
   List<Skill> skills = const [],
@@ -172,7 +176,13 @@ List<String> helpLines({
   if (filter.isNotEmpty) return lines;
   return [
     ...lines,
-    ..._helpExtrasLines(pluginSlashCommands, templates, style, skills),
+    ..._helpExtrasLines(
+      pluginSlashCommands,
+      extSlashCommands,
+      templates,
+      style,
+      skills,
+    ),
   ];
 }
 
@@ -185,6 +195,7 @@ String _helpEmptyLine(String filter) => filter.isNotEmpty
 /// and the steer hint.
 List<String> _helpExtrasLines(
   Map<String, SlashCommand> pluginSlashCommands,
+  Map<String, SlashCommand> extSlashCommands,
   List<PromptTemplate> templates,
   TuiStyle style,
   List<Skill> skills,
@@ -195,6 +206,12 @@ List<String> _helpExtrasLines(
       style.bold('[Plugin commands]'),
       for (final entry in pluginSlashCommands.entries)
         '  ${style.cyan(entry.key)}',
+      if (extSlashCommands.isNotEmpty) ...[
+        '',
+        style.bold('[Extension commands]'),
+        for (final entry in extSlashCommands.entries)
+          '  ${style.cyan(entry.key)}',
+      ],
     ],
     if (templates.isNotEmpty) ...[
       '',

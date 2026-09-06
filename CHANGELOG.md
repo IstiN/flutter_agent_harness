@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- feat(js-ext): JS extension core (issue #32) — `JsrRuntime` engine seam +
+  engine-agnostic bootstrap (`jsr.ext.*`: registerTool tiers, six hook
+  events, slash commands, provider flows, session/fs/exec/keys/io/has
+  bridges) over three transports (qjs stdio, flutter_js send-message, web
+  worker); `JsExtensionHost` wires commits into the agent with
+  deny-precedence hook composition (JS can only tighten), append-only
+  `afterToolCall` redacted twice (before JS sees it, before persist),
+  read-only `prepareNextTurn`, E14 follow-up collapse, and 30/10/120 s
+  load/hook/tool budgets that degrade to log lines, never crash the loop;
+  manifest/trust/install machinery — strict accumulating manifest parse
+  (E12), TOFU trust with capability-diff re-prompt + hash-only silent
+  re-grant, local/zip/gh/catalog/bundled planners with sha256-verified
+  hostile-zip rules, and the tolerant v2 catalog client (unions `widgets`
+  + `extensions`).
+- feat(cli-ext): `fa ext list|install|remove|update|audit` with
+  `--pin <sha256>`/`--trust`/`--strict`/`--bundled`/`--json` (enable/
+  disable stay REPL-only), the quickjs-ng engine process (`qjs --std`,
+  binary via explicit override → `FA_QJS_BIN` → PATH, missing binary
+  degrades to an `engine unavailable` skip), the `/ext` REPL family
+  (list/enable/disable/audit/remove/update/reload), and idempotent
+  `.fah/bootstrap.yaml` applies at every start — project then user, E16
+  project-wins shadowing, E15 named soft-fail lines unless
+  `FA_EXT_BOOTSTRAP_STRICT=1`.
+- feat(app-ext): `flutter_app/lib/services/ext/` — `AppExtensionService`
+  owns the on-device store roots + host; flutter_js (native) and web
+  worker (web) runtimes behind one factory. v1 scope: trusted-only load
+  (no trust prompt — untrusted extensions tombstone-skip); the app trust
+  UI lands in a later wave.
+- feat(js-ext): bundled `crap-guard` reference extension (post-edit CRAP +
+  2800-line guard via `crap4dart`, 2 s edit debounce, one aggregated
+  `{append}` per burst, E17 single missing-tool note) compiled in as const
+  strings, byte-mirrored into `js-ext-registry/crap-guard/` for publishing
+  (sync test enforces equality) with a README covering the fa_widgets
+  `catalog.json` entry, zip + `shasum -a 256` recipe, and gh-repo layout;
+  authoring guide in docs/js-extensions.md.
+
 - feat(browser-ext): browser extension v2.1 (issue #30) — fa web moves
   into the extension and grows browser superpowers. The panel is now an
   app-hosting bootstrap: `scripts/build_browser_ext.sh --with-app`

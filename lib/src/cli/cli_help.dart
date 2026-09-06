@@ -101,6 +101,30 @@ QUICK COMMANDS
                                session or out-of-range record exits 1
                                with a message on stderr.
 
+  ext                          fa ext <list|install|remove|update|audit|
+                               enable|disable> [--json]: manage JS
+                               extensions headless. list shows engine
+                               availability, scope/kind/version and trust
+                               state (platform-incompatible entries are
+                               marked "unsupported here"). install sources:
+                               ./path | /abs | path.zip | gh:owner/repo |
+                               https://github.com/owner/repo | catalog:<id>
+                               | <id> | --bundled [name] (bare --bundled =
+                               all bundled); flags --pin <sha256>, --trust,
+                               --strict. Interactive installs review a
+                               trust prompt; non-interactive installs
+                               REQUIRE --trust --pin. update re-plans from
+                               the recorded trust source (hash-only changes
+                               auto-apply headless; capability changes need
+                               an interactive re-approval). audit prints the
+                               trust record. enable/disable are REPL-only
+                               (/ext inside fa). Every normal start applies
+                               .fa/bootstrap.yaml (project, then user)
+                               idempotently — entries: source [+ pin]; E15
+                               failures are named on stderr; E16 name
+                               conflicts: project wins. FA_EXT_BOOTSTRAP_
+                               STRICT=1 makes bootstrap failures fatal.
+
 PROVIDERS AND API KEYS${_providerSectionSuffix()}
   openai-completions (default)
       Key: OPENROUTER_API_KEY (fallback OPENAI_API_KEY)

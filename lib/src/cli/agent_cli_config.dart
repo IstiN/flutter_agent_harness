@@ -79,6 +79,9 @@ final class AgentCliConfig {
     this.cubeSettings,
     this.onCubeSettingsChanged,
     this.cubeRegistryClient,
+    this.extRuntimeFactory,
+    this.extBootstrapJs = '$kExtTransportStdioJs\n;\n$kExtBootstrapCoreJs',
+    this.jsExtensionsEnabled = true,
     this.dapHubState,
     this.runtimeTools,
     this.onToolsConfigChanged,
@@ -510,4 +513,19 @@ final class AgentCliConfig {
   /// The controller's `attached` flag is the capability floor and its
   /// `onAvailabilityChanged` hook triggers the live availability rebuild.
   final BrowserController? browserController;
+
+  /// Creates the JS engine for one stored extension (issue #32). The host
+  /// executable injects the `QjsProcessRuntime` factory from `lib/io.dart`;
+  /// tests inject a `FakeJsrRuntime` factory. Null keeps JS extensions
+  /// disabled regardless of [jsExtensionsEnabled].
+  final JsrRuntime Function(StoredExtension ext)? extRuntimeFactory;
+
+  /// Engine bootstrap source evaluated before each extension's `main.js`
+  /// (transport + core from `ext_bootstrap_js.dart`; the stdio transport
+  /// default matches the qjs-process engine).
+  final String extBootstrapJs;
+
+  /// Master switch for JS extensions. Effective only together with a
+  /// non-null [extRuntimeFactory] — both must be on for extensions to load.
+  final bool jsExtensionsEnabled;
 }

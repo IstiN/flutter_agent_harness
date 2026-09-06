@@ -61,6 +61,14 @@ import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
 import '../env/session_vars_execution_env.dart';
 import '../exceptions.dart';
+import '../js_ext/ext_bootstrap_js.dart';
+import '../js_ext/ext_catalog.dart';
+import '../js_ext/ext_install.dart';
+import '../js_ext/ext_manifest.dart';
+import '../js_ext/extension_host.dart';
+import '../js_ext/extension_store.dart';
+import '../js_ext/jsr_runtime.dart';
+import '../js_ext/trust.dart';
 import '../lsp/lsp_tool.dart';
 import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
@@ -165,6 +173,7 @@ part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_commands.dart';
+part 'agent_cli_ext.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -506,6 +515,10 @@ class AgentCli {
       mcpManager.onChanged = _onMcpChanged;
       mcpManager.start();
     }
+    // JS extensions (issue #32): connect in the background like MCP. The
+    // microtask keeps hook-attach order correct: approval + redaction are
+    // wrapped above, so the JS hooks land OUTERMOST and run last.
+    scheduleMicrotask(() => unawaited(initJsExtensions()));
     // Browser bridge liveness: an extension pairing or dropping flips the
     // browser capability floor, so rebuild availability (same path as
     // /tools reload — re-resolves scopes, re-applies, rebuilds the prompt).
@@ -842,10 +855,15 @@ class AgentCli {
   /// The pending CLI-prompt input line, if a guided flow (the custom
   /// provider setup) is waiting on a free-form answer. Like the ask routing,
   /// EMPTY lines complete too (the key step's "none" affordance); `null` on
-  /// cancel (Ctrl-C, input shutdown).
+  /// cancel or input shutdown.
   Completer<String?>? _pendingPromptAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
   final List<ExternalInbox> _pluginInboxes = [];
+
+  /// JS-extension wiring state (extensions cannot add fields) — the live
+  /// host, ext slash commands, and the prompt section. See
+  /// agent_cli_ext.dart.
+  final AgentCliExtState _ext = AgentCliExtState();
   late AgentMode _currentMode;
   List<PromptTemplate> _templates = [];
 
@@ -897,6 +915,7 @@ class AgentCli {
       ),
       memorySection: _memorySection,
       messagingSection: _messagingSection(),
+      extSection: _ext.promptSection,
     );
   }
 
@@ -1131,6 +1150,7 @@ class AgentCli {
     await _settled;
     // Live-session presence off: the session stops being "running in
     // the CLI" for app viewers.
+    await _extSessionEndBounded();
     if (presence != null) {
       await presence.store.unregister(presence.sessionId);
     }
@@ -1480,6 +1500,7 @@ class AgentCli {
     prefix,
     slashCommands: builtinSlashCommands,
     pluginSlashCommands: _pluginSlashCommands,
+    extSlashCommands: _ext.slashCommands,
     templates: _templates,
     skills: _skills,
   );
@@ -1557,11 +1578,14 @@ class AgentCli {
   }
 
   /// A provider-picker selection: `custom` starts the guided flow,
-  /// `saved:<name>` switches to a saved custom provider, anything else is a
-  /// catalog provider name.
+  /// `saved:<name>` opens a saved provider's edit/delete picker,
+  /// `ext:<name>:<id>` runs that extension's provider flow (AC5; namespaced
+  /// keys can never shadow the bare core ids), anything else is a catalog
+  /// provider name.
   Future<void> _tuiPickProvider(String key) async {
     if (key == 'add') return _openAddProviderPicker();
     if (key.startsWith('saved:')) return _tuiPickSavedProviderEdit(key);
+    if (key.startsWith('ext:')) return _startExtProviderFlow(key);
     await _tuiPickCatalogOrSaved(key);
   }
 

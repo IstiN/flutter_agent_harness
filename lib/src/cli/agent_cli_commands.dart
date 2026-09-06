@@ -28,6 +28,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/agents': (cli, rest) async => cli.handleAgentsCommand(rest),
   '/browser': (cli, rest) async => cli._browserSlash(rest),
   '/a2a': (cli, rest) async => cli._printA2aStatus(),
+  '/ext': (cli, rest) async => cli._extSlash(rest),
 };
 
 /// Slash-command dispatch on [AgentCli].
@@ -277,6 +278,11 @@ extension SlashCommandDispatch on AgentCli {
     final pluginHandler = _pluginSlashCommands[command];
     if (pluginHandler != null) {
       await pluginHandler(rest.split(RegExp(r'\s+')));
+      return;
+    }
+    final extHandler = _ext.slashCommands[command];
+    if (extHandler != null) {
+      await extHandler(rest.split(RegExp(r'\s+')));
       return;
     }
     final expanded = expandPromptTemplate(trimmed, _templates);

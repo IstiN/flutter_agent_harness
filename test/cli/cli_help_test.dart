@@ -56,6 +56,16 @@ void main() {
       'trajectory <view|tail|cost|inspect>',
       '[--json] [--at N]',
       '/trajectory',
+      // JS extensions (fa ext + REPL /ext + bootstrap).
+      'fa ext',
+      'fa ext <list|install|remove|update|audit|',
+      'enable|disable> [--json]',
+      '--bundled [name]',
+      '--pin <sha256>',
+      'REPL-only',
+      '.fa/bootstrap.yaml',
+      'FA_EXT_BOOTSTRAP_',
+      '/ext',
       // Providers and keys.
       'openai-completions',
       'kimi',

@@ -31,6 +31,7 @@ import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
+import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
 // The ONLY place the core CLI imports the hub client package: downstream
@@ -336,6 +337,12 @@ void _applyProviderFilterEnv() {
 bool _envNotFalsy(String name) {
   final value = Platform.environment[name]?.trim().toLowerCase();
   return value != '0' && value != 'false' && value != 'no' && value != 'off';
+}
+
+/// Truthy env-var check for opt-in flags (`1`/`true`/`yes`/`on`).
+bool _envTruthy(String name) {
+  final value = Platform.environment[name]?.trim().toLowerCase();
+  return value == '1' || value == 'true' || value == 'yes' || value == 'on';
 }
 
 /// [CliIO] bound to the real terminal: stdin lines, stdout writes, and a
@@ -1017,6 +1024,38 @@ Future<void> _runApp(List<String> args) async {
     exit(await _runTrajectoryCommand(trajectory, parsed));
   }
 
+  // `fa ext <verb> ...` — headless JS extension management, intercepted
+  // like trajectory: no agent boot, the exit code propagates.
+  final ext = parsed.ext;
+  if (ext != null) {
+    final extEnv = LocalExecutionEnv(cwd: parsed.cwd ?? Directory.current.path);
+    exit(
+      await runExtCliCommand(
+        ext,
+        io: _TerminalCliIO(headless: true),
+        env: extEnv,
+        projectDir: extEnv.cwd,
+        userDir: _homeDir(),
+      ),
+    );
+  }
+
+  // JS extension bootstrap (.fa/bootstrap.yaml, project then user): every
+  // normal start applies it idempotently before the REPL or headless run;
+  // E15 soft-fail lines go to stderr. FA_EXT_BOOTSTRAP_STRICT=1 makes a
+  // bootstrap failure fatal instead.
+  try {
+    await applyBootstrapIfPresent(
+      io: _TerminalCliIO(headless: parsed.isHeadless),
+      env: LocalExecutionEnv(cwd: parsed.cwd ?? Directory.current.path),
+      projectDir: parsed.cwd ?? Directory.current.path,
+      userDir: _homeDir(),
+      strict: _envTruthy('FA_EXT_BOOTSTRAP_STRICT'),
+    );
+  } on Object catch (error) {
+    _fail('ext bootstrap failed: $error');
+  }
+
   // Headless prompt resolution: -p verbatim; a first positional naming an
   // existing file inlines text files (.md/.markdown/.txt) or attaches other
   // files as a path reference; anything else is plain prompt text.
@@ -1485,6 +1524,11 @@ Future<void> _runApp(List<String> args) async {
       // A2A remote agents (`a2a:` config section, Phase 5a): pure-Dart HTTP
       // client, connects lazily per server.
       a2aConfig: saved.a2a,
+      // JS extensions (#32): per-extension isolated QuickJS engines — the
+      // io-side runtime spawns `qjs` (FA_QJS_BIN override) speaking the
+      // stdio transport. Engine absence degrades per-extension (E1), never
+      // blocks boot.
+      extRuntimeFactory: (_) => QjsProcessRuntime(),
       // `/browser connect` + the browser tools' controller: one handle
       // owning the loopback bridge over the launch-cwd fabric (both
       // implemented above).
