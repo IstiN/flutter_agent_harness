@@ -2666,4 +2666,8 @@
 - fix(roles): classify 5xx internal errors as transient transport failures
 - feat(messaging): readable agent_directory + auto-wake for asleep mailboxes
 
+## 0.1.305
+
+- feat(aiin): use the hosted AIIN sign-in page as the connect entry
+
 ## Unreleased
