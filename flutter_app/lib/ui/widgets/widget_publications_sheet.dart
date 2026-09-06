@@ -180,7 +180,7 @@ class _PublicationTile extends StatelessWidget {
                 Text(
                   l10n.publicationSubmittedAt(_submittedDate()),
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.outline,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],

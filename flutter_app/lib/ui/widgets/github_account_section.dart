@@ -82,7 +82,7 @@ class GithubAccountSection extends StatelessWidget {
         Text(
           l10n.githubAccountHint,
           style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.outline,
+            color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 8),

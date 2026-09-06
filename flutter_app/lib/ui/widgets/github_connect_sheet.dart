@@ -18,19 +18,30 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         CopilotDeviceFlowError,
         CopilotDeviceFlowErrorKind,
         CopilotDeviceGrant,
+        copilotDeviceClientId,
         pollCopilotDeviceGrant,
         requestCopilotDeviceGrant;
 
 /// The "Fa Widgets" OAuth App client id, injected at build time (`--dart
-/// -define=FA_GITHUB_CLIENT_ID=...`). Empty until the OAuth App is
-/// registered (card §Open questions) — then only the PAT tab shows.
+/// -define=FA_GITHUB_CLIENT_ID=...`). When empty the device flow falls back
+/// to the VS Code Copilot plugin's public client id
+/// ([copilotDeviceClientId] — same github.com/login/device endpoint); the
+/// `public_repo` scope is granted by the user on the device page either way.
 const String githubWidgetsClientId = String.fromEnvironment(
   'FA_GITHUB_CLIENT_ID',
 );
 
+/// Resolves the device-flow client id: the build-time OAuth App when
+/// configured, else the public Copilot plugin id. Empty disables the tab.
+String resolveGithubDeviceClientId() =>
+    githubWidgetsClientId.isNotEmpty
+        ? githubWidgetsClientId
+        : copilotDeviceClientId;
+
 /// Opens the "Connect GitHub" sheet (issue #35): PAT paste (always
-/// available) plus, when [githubWidgetsClientId] is configured and the
-/// platform is not web, the RFC 8628 device flow.
+/// available) plus, on non-web platforms, the RFC 8628 device flow
+/// ([resolveGithubDeviceClientId] — build-time OAuth App or the public
+/// Copilot plugin id).
 ///
 /// Resolves `true` when an account was connected, `false`/null otherwise.
 /// [clientFactory] injects a scripted `GithubApiClient` in tests.
@@ -38,14 +49,18 @@ Future<bool?> showGithubConnectSheet(
   BuildContext context, {
   required GithubAccountStore account,
   GithubApiClient Function(String token)? clientFactory,
+  String? deviceClientId,
 }) {
   return showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     showDragHandle: true,
-    builder: (_) =>
-        GithubConnectSheet(account: account, clientFactory: clientFactory),
+    builder: (_) => GithubConnectSheet(
+      account: account,
+      clientFactory: clientFactory,
+      deviceClientId: deviceClientId,
+    ),
   );
 }
 
@@ -55,12 +70,18 @@ class GithubConnectSheet extends StatefulWidget {
     super.key,
     required this.account,
     this.clientFactory,
+    this.deviceClientId,
   });
 
   final GithubAccountStore account;
 
   /// Test hook: builds the API client used to validate a pasted token.
   final GithubApiClient Function(String token)? clientFactory;
+
+  /// Device-flow client id override. Null resolves
+  /// [resolveGithubDeviceClientId] (build-time OAuth App, else the public
+  /// Copilot plugin id); an empty string disables the device tab (tests).
+  final String? deviceClientId;
 
   @override
   State<GithubConnectSheet> createState() => _GithubConnectSheetState();
@@ -69,9 +90,13 @@ class GithubConnectSheet extends StatefulWidget {
 class _GithubConnectSheetState extends State<GithubConnectSheet> {
   final _tokenController = TextEditingController();
 
-  /// Whether the device-flow tab exists (needs the OAuth client id and a
-  /// non-web platform — github.com serves no CORS headers).
-  bool get _deviceFlowAvailable => !kIsWeb && githubWidgetsClientId.isNotEmpty;
+  /// The resolved device-flow client id (see [GithubConnectSheet]).
+  late final String _deviceClientId =
+      widget.deviceClientId ?? resolveGithubDeviceClientId();
+
+  /// Whether the device-flow tab exists (needs a client id and a non-web
+  /// platform — github.com serves no CORS headers).
+  bool get _deviceFlowAvailable => !kIsWeb && _deviceClientId.isNotEmpty;
 
   /// True while the device tab is the visible one.
   late bool _deviceMode = _deviceFlowAvailable;
@@ -145,7 +170,7 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
     });
     try {
       final grant = await requestCopilotDeviceGrant(
-        clientId: githubWidgetsClientId,
+        clientId: _deviceClientId,
         scope: 'public_repo',
       );
       if (_cancelled) return;
@@ -158,7 +183,7 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
       );
       final token = await pollCopilotDeviceGrant(
         grant: grant,
-        clientId: githubWidgetsClientId,
+        clientId: _deviceClientId,
         delay: Future<void>.delayed,
       );
       if (_cancelled) return;
