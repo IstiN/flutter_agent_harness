@@ -49,6 +49,34 @@ final class _Responder {
 
 void main() {
   group('GithubApiClient', () {
+    test('createRepo 403 "not accessible by integration" gets the token hint', () async {
+      final gh = _ScriptedGithub()
+        ..on(
+          'POST',
+          '/user/repos',
+          {
+            'message': 'Resource not accessible by integration',
+            'documentation_url':
+                'https://docs.github.com/rest/users/users#create-a-user-repository',
+          },
+          status: 403,
+        );
+      final client = GithubApiClient(
+        token: 'secret-token',
+        httpClient: gh.client,
+      );
+      expect(
+        () => client.createRepo(name: 'fa-widget-x'),
+        throwsA(
+          isA<GithubApiException>().having(
+            (e) => e.message,
+            'message',
+            contains('classic PAT with the public_repo scope'),
+          ),
+        ),
+      );
+    });
+
     test('sends the bearer token only to api.github.com', () async {
       final gh = _ScriptedGithub()
         ..on('GET', '/user', {'login': 'octocat', 'avatar_url': 'a'});
