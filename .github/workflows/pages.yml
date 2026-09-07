@@ -11,6 +11,8 @@ on:
       - 'flutter_app/**'
       - 'lib/**'
       - 'vendor/**'
+      - 'browser_ext/**'
+      - 'scripts/build_browser_ext.sh'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -61,6 +63,15 @@ jobs:
           --base-href /app/
           --output ../build/pages/app
 
+      # The Chrome extension ships on the site too (download + load
+      # unpacked): dart2js the SW agent and zip it — flutter is already on
+      # PATH here and the script's --with-app embeds the same web build.
+      - name: Build Chrome extension
+        run: |
+          dart pub get
+          cd browser_ext/dart && dart pub get && cd ../..
+          bash scripts/build_browser_ext.sh --with-app
+
       - name: Assemble Pages artifact
         run: |
           mkdir -p build/pages/root
@@ -68,6 +79,11 @@ jobs:
           # Only copy the web app if it built successfully.
           if [ -d build/pages/app ]; then
             cp -R build/pages/app build/pages/root/app
+          fi
+          # The extension zip lives under /extension/ on fa1.dev.
+          if [ -f build/fa-extension.zip ]; then
+            mkdir -p build/pages/root/extension
+            cp build/fa-extension.zip build/pages/root/extension/fa-extension.zip
           fi
 
       - name: Cache-bust static assets

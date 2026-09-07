@@ -224,12 +224,15 @@
         <a class="btn" id="macos-download" href="https://github.com/IstiN/flutter_agent_harness/releases/latest" target="_blank" rel="noopener">
           Download for macOS (no sandbox)
         </a>
+        <a class="btn" id="extension-download" href="./extension/fa-extension.zip">
+          Chrome extension
+        </a>
         <a class="btn" href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
         <a class="btn" href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
       </div>
       <ul class="pills" aria-label="Supported platforms">
         <li>iOS</li><li>Android</li><li>Web</li><li>macOS</li>
-        <li>Windows</li><li>Linux</li><li>CLI</li>
+        <li>Windows</li><li>Linux</li><li>CLI</li><li>Chrome</li>
       </ul>
     </div>
 
@@ -320,6 +323,15 @@ flutter run</pre>
         <p>No install at all — the full agent runs in your browser with your
         own key. <a href="#demo">Try it above ↑</a> or
         <a href="./app/" target="_blank" rel="noopener">open it full screen ↗</a>.</p>
+      </article>
+      <article class="card">
+        <h3>Chrome extension</h3>
+        <p>Fa lives in your browser: it reads the page, drives tabs, takes
+        screenshots and answers with the full tool loop.
+        <a id="extension-download-alt" href="./extension/fa-extension.zip">Download the zip</a>,
+        unzip it, then open <code>chrome://extensions</code>, enable
+        <em>Developer mode</em>, <em>Load unpacked</em> → pick the unzipped
+        folder and pin Fa from the puzzle-piece menu.</p>
       </article>
     </div>
   </section>
@@ -571,6 +583,12 @@ flutter run</pre>
                  || release.assets.find(a => /^fa-macos-nosandbox.*\.dmg$/i.test(a.name));
       if (asset) {
         document.getElementById('macos-download').href = asset.browser_download_url;
+      }
+      // The Chrome extension rides every release too; prefer the release
+      // asset (always the latest build) over the site-hosted copy.
+      const extAsset = release.assets.find(a => a.name === 'fa-extension.zip');
+      if (extAsset) {
+        document.getElementById('extension-download').href = extAsset.browser_download_url;
       }
     } catch (_) {
       // Keep the fallback link to the releases page.

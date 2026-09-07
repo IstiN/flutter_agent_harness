@@ -2846,3 +2846,25 @@
 - fix(browser_ext): the panel relay never connected — port name + envelope mismatch
 
 ## Unreleased
+
+- fix(browser_ext): page/app screenshots reach the model as vision image
+  blocks — `page_screenshot`/`app_screenshot` and the v1 `screenshot` op
+  return `ImageContent` plus compact metadata text; the base64 blob no
+  longer floods the context as invisible text (provider adapters already
+  serialize tool-result images for openai-completions/anthropic/google).
+- fix(browser_ext): thinking deltas stream to the panel as
+  `thinking_delta` UI events (they were dropped at the host) — the relay
+  chat renders reasoning as its own collapsible bubble; pure event→UI
+  mappings extracted to `host_event_map.dart` (VM-testable, agent_host
+  stays web-only).
+- fix(app): a relay client without a mounted approval handler stays
+  silent instead of instantly denying — a bystander surface raced ahead
+  of the real UI and recorded denials the user never chose; the SW's
+  120s timeout remains the backstop, and a throwing handler still denies.
+- test(browser_ext): live e2e grows read_dom (reads example.com's real
+  heading), screenshot (vision block through the loop) and thinking
+  count legs; robust multi-approval auto-allow; scripted fake provider
+  gained `think`/`screenshot` directives and an image-seen reply.
+- ci: the Chrome extension builds in the release pipeline and ships as a
+  release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
+  page gains the download + load-unpacked card.
