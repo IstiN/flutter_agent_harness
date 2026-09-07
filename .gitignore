@@ -102,6 +102,7 @@ fa-local/
 !.fah/agents/
 !.fah/skills/
 !.fah/packages.yaml
+!.fah/bootstrap.yaml
 
 # Embedded browser-extension agent: dart2js output (built by
 # scripts/build_browser_ext.sh), plus the local package's tooling dirs.
