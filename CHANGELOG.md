@@ -2774,4 +2774,8 @@
 - fix(app): actionable hint when the GitHub token cannot create repos (#35)
 - fix(redact): a bare .env filename is no longer masked as a credential
 
+## 0.1.316
+
+- fix(app): reject repo-rightless GitHub tokens at connect time (#35)
+
 ## Unreleased
