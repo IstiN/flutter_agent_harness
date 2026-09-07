@@ -222,8 +222,12 @@ abstract class FaTransport {
   void _receive(UiProtocolMessage message) {
     _events.add(ProtocolMessageReceived(message));
     switch (message) {
-      case StreamMsg():
-        if (_state is TransportAttached) {
+      case StreamMsg(:final event):
+        // Status mirrors (running flags) are not turn traffic: they must
+        // not flip the connection state machine — the SW's post-attach
+        // status snapshot would otherwise push an IDLE panel into
+        // `streaming` and the typing indicator would never clear.
+        if (event['type'] != 'status' && _state is TransportAttached) {
           _setState(const TransportStreaming());
         }
       // A turn ends with its final message or an error; anything else that
