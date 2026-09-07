@@ -493,8 +493,12 @@ class AgentService extends ChangeNotifier
     final taskJobManager = TaskJobManager();
     _taskConfig = TaskToolConfig(
       childTools: const [],
-      streamFunction: streamFunction ?? _streamFunctionFor(config),
-      model: config.toModel(),
+      // Live accessors (resolved per spawn): a provider switch or SSO
+      // re-auth re-points `_agent.streamFunction`, and children spawned
+      // afterwards must inherit the live credential — a wiring frozen at
+      // boot would send the stale key (401).
+      streamFunction: () => _agent.streamFunction,
+      model: () => _agent.state.model,
       subagentManager: _subagentManager,
       jobManager: taskJobManager,
     );
@@ -608,8 +612,8 @@ class AgentService extends ChangeNotifier
         .toList();
     _taskConfig = TaskToolConfig(
       childTools: childSurface,
-      streamFunction: streamFunction ?? _streamFunctionFor(config),
-      model: config.toModel(),
+      streamFunction: () => _agent.streamFunction,
+      model: () => _agent.state.model,
       rolesResolver: _taskRolesResolver,
       subagentManager: _subagentManager,
       childSessionFactory: _childSessionFactory,

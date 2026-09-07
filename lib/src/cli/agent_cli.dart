@@ -397,8 +397,12 @@ class AgentCli {
     );
     _taskConfig = TaskToolConfig(
       childTools: coreTools,
-      streamFunction: _streamFunction,
-      model: config.model,
+      // Live accessors, resolved per spawn: a runtime `/provider`/`/model`
+      // switch (or a token refresh) re-points `_streamFunction`/the agent
+      // model, and children spawned afterwards must inherit the LIVE
+      // credential — the boot wiring here would send the stale key (401).
+      streamFunction: () => _agent.streamFunction,
+      model: () => _agent.state.model,
       rolesResolver: config.modelRolesResolver,
       subagentManager: _subagentManager,
       a2aManager: _a2aManager,
