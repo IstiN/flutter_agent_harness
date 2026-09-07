@@ -156,6 +156,113 @@ $('saveProvider').addEventListener('click', async () => {
   if (res?.ok) log('provider saved (stored in the service worker only)');
 });
 
+// -- CodeMie cookie sign-in (ext ops over the fa-ui-v2 port) ------------------
+// The service worker serves three one-shot ops to this panel only:
+// `fetch` (cookie-auth'd HTTP — MV3 + host permissions, no CORS), `tabs.create`
+// (open the CodeMie login page) and `cookies.get_all` (direct jar reads). A
+// CodeMie provider never needs an API key: the browser jar IS the credential.
+
+const extPort = chrome.runtime.connect({ name: 'fa-ui-v2' });
+let extSeq = 0;
+const extPending = new Map();
+extPort.onMessage.addListener((m) => {
+  if (m?.kind !== 'ext_result') return;
+  const p = extPending.get(m.id);
+  if (!p) return;
+  extPending.delete(m.id);
+  if (m.ok) p.resolve(m.data ?? {});
+  else p.reject(new Error(m.error || 'ext op failed'));
+});
+function extCall(op, params = {}) {
+  return new Promise((resolve, reject) => {
+    const id = `x${++extSeq}`;
+    extPending.set(id, { resolve, reject });
+    extPort.postMessage({ kind: 'ext_request', id, op, params });
+    setTimeout(() => {
+      if (extPending.delete(id)) reject(new Error(`${op} timed out`));
+    }, 45000);
+  });
+}
+
+function codeMieStatus(text) {
+  $('codeMieStatus').textContent = text;
+}
+
+// `<org>` or `<org>/…` → `<org>/code-assistant-api/v1` (the models base).
+function codeMieApiBase(raw) {
+  const base = String(raw || '').trim().replace(/\/+$/, '');
+  if (!base) return null;
+  if (base.includes('/code-assistant-api/v1')) return base;
+  return `${base}/code-assistant-api/v1`;
+}
+
+// One cookie check: 200 → jar alive (and we surface model ids);
+// 401/403 → the user must (re-)log in. Anything else surfaces as-is.
+async function codeMieProbe(apiBase) {
+  const res = await extCall('fetch', {
+    url: `${apiBase}/llm_models?include_all=true`,
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(`not signed in (${res.status})`);
+  }
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`CodeMie answered ${res.status}`);
+  }
+  try {
+    const models = JSON.parse(res.body);
+    return Array.isArray(models)
+      ? models.map((m) => m && (m.id || m.base_name || m.deployment_name)).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+$('codeMieLogin').addEventListener('click', async () => {
+  const apiBase = codeMieApiBase($('pBaseUrl').value);
+  if (!apiBase) {
+    codeMieStatus('enter the CodeMie base URL above first');
+    return;
+  }
+  codeMieStatus('checking cookies…');
+  let models;
+  try {
+    models = await codeMieProbe(apiBase);
+  } catch (e) {
+    if (!/not signed in/.test(String(e.message))) {
+      codeMieStatus(e.message);
+      return;
+    }
+    // Open the login page, then poll: the moment the jar holds a live
+    // session the probe succeeds (bounded wait, no infinite loop).
+    codeMieStatus('opened the login tab — sign in, keeping this panel open');
+    const origin = new URL(apiBase).origin;
+    await extCall('tabs.create', { url: `${origin}/login` }).catch(() => {});
+    const deadline = Date.now() + 5 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 4000));
+      try {
+        models = await codeMieProbe(apiBase);
+        break;
+      } catch (e) {
+        if (!/not signed in/.test(String(e.message))) {
+          codeMieStatus(e.message);
+          return;
+        }
+      }
+    }
+    if (!models) return; // gave up quietly; the user can press again
+  }
+  codeMieStatus(`cookies OK${models.length ? ` — ${models.length} models` : ''}`);
+  if (models.length && !$('pModel').value.trim()) {
+    $('pModel').value = models[0];
+  }
+  // Pre-select the first model in the picker list; the key stays EMPTY —
+  // CodeMie authenticates by cookie.
+  $('pApiKey').value = '';
+  log(`CodeMie ready: ${apiBase} (${models.length} models, cookie auth)`);
+});
+
 // -- Provider registry (issue #34 item 3) -------------------------------------
 // Synced (from the CLI bridge) + local (.fahx import) entries with their
 // provenance. Remove filters the stored doc directly; the agent re-resolves

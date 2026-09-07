@@ -231,6 +231,48 @@ void main() {
       isTrue,
     );
   });
+
+  test('cookie-auth hosts bypass the relay and stream direct', () {
+    final relayStreams = <Stream<String>>[];
+    final fakeRelay = _FakeRelay(relayStreams);
+    activeRelay = (relay: fakeRelay, providerName: 'p1');
+    addSetterTearDown(() => activeRelay = null);
+
+    // A keyless CodeMie entry must NOT ride the relay — the relay would
+    // strip the browser cookies and CodeMie would 401. The direct SW
+    // fetch (FetchClient credentials:include) carries the jar.
+    final codemie = (
+      baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+      apiKey: '',
+      model: 'gpt-x',
+    );
+    expect(isCookieAuthUrl(codemie.baseUrl), isTrue);
+    final fn = resolveStreamFn(codemie);
+    fn(
+      modelForConfig(codemie),
+      Context(systemPrompt: null, messages: [UserMessage.text('hi')]),
+    );
+    expect(fakeRelay.calls, 0, reason: 'cookie-auth host streams direct');
+
+    // A non-CodeMie host keeps the relay routing.
+    final relayed = resolveStreamFn((
+      baseUrl: 'https://api/v1',
+      apiKey: '',
+      model: 'gpt-x',
+    ));
+    relayed(
+      modelForConfig((baseUrl: 'https://api/v1', apiKey: '', model: 'gpt-x')),
+      Context(systemPrompt: null, messages: [UserMessage.text('hi')]),
+    );
+    expect(fakeRelay.calls, 1);
+  });
+
+  test('isCookieAuthUrl: classification edges', () {
+    expect(isCookieAuthUrl('https://codemie.lab.epam.com/'), isTrue);
+    expect(isCookieAuthUrl('https://api.openai.com/v1'), isFalse);
+    expect(isCookieAuthUrl('not a url'), isFalse);
+    expect(isCookieAuthUrl(''), isFalse);
+  });
 }
 
 void addSetterTearDown(void Function() fn) => addTearDown(fn);

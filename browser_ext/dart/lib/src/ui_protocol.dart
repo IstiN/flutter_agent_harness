@@ -427,6 +427,62 @@ final class ToolsPutMsg extends UiProtocolMessage {
   };
 }
 
+/// UI → SW: a one-shot host-capability request (`ext_request`) — a small
+/// op surface ONLY the extension page may use, answered by the SW with
+/// [ExtResultMsg]: `cookies.get_all` (the user's live cookie jar for an
+/// origin — CodeMie's cookie auth without any localhost SSO dance),
+/// `fetch` (an SW-relayed HTTP call; MV3 + `<all_urls>` host permissions
+/// bypass CORS, so provider endpoints unreachable from a web page work),
+/// `tabs.create` (open the provider's login page for an interactive
+/// sign-in).
+final class ExtRequestMsg extends UiProtocolMessage {
+  const ExtRequestMsg({required this.id, required this.op, this.params});
+
+  final String id;
+  final String op;
+  final Map<String, dynamic>? params;
+
+  @override
+  String get kind => 'ext_request';
+
+  @override
+  Map<String, dynamic> encode() => {
+    'kind': kind,
+    'id': id,
+    'op': op,
+    if (params != null) 'params': params,
+  };
+}
+
+/// SW → UI: the answer to [ExtRequestMsg], matched by [id]. `ok: false`
+/// carries a human-readable [error]; the op surface is trusted (extension
+/// page only) but every op still validates its params.
+final class ExtResultMsg extends UiProtocolMessage {
+  const ExtResultMsg({
+    required this.id,
+    required this.ok,
+    this.data,
+    this.error,
+  });
+
+  final String id;
+  final bool ok;
+  final Map<String, dynamic>? data;
+  final String? error;
+
+  @override
+  String get kind => 'ext_result';
+
+  @override
+  Map<String, dynamic> encode() => {
+    'kind': kind,
+    'id': id,
+    'ok': ok,
+    if (data != null) 'data': data,
+    if (error != null) 'error': error,
+  };
+}
+
 /// UI → SW: link keepalive. An open MV3 port does NOT keep the service
 /// worker alive — only events reset the 30s idle timer — so an attached
 /// panel pings on a fixed cadence to stay connected instead of flapping
@@ -482,6 +538,12 @@ class _Malformed implements Exception {
 }
 
 Never _bad(String detail) => throw _Malformed(detail);
+
+bool _reqBool(Map<String, dynamic> json, String field) {
+  final v = json[field];
+  if (v is bool) return v;
+  _bad('field "$field" must be a bool');
+}
 
 String _reqStr(Map<String, dynamic> json, String field) {
   final v = json[field];
@@ -594,6 +656,19 @@ UiProtocolMessage _decode(Map<String, dynamic> json) {
         return ToolsStateMsg(tools: _reqToolList(json, 'tools'));
       case 'tools_put':
         return ToolsPutMsg(tools: _reqToolList(json, 'tools'));
+      case 'ext_request':
+        return ExtRequestMsg(
+          id: _reqStr(json, 'id'),
+          op: _reqStr(json, 'op'),
+          params: _optMap(json, 'params'),
+        );
+      case 'ext_result':
+        return ExtResultMsg(
+          id: _reqStr(json, 'id'),
+          ok: _reqBool(json, 'ok'),
+          data: _optMap(json, 'data'),
+          error: _optStr(json, 'error'),
+        );
       case 'ping':
         return const PingMsg();
       case 'pong':

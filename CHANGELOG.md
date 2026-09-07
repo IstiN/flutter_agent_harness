@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- feat(browser_ext): CodeMie cookie sign-in without any API key or SSO
+  dance — the panel now talks to a small `ext_request` op surface on the
+  service worker (`cookies.get_all`, SW-relayed `fetch` with
+  `credentials: 'include'` — MV3 + host permissions mean no CORS and the
+  browser jar rides along — and `tabs.create` for the login page).
+  `codeMieLogin` probes `llm_models`: 200 → cookies alive, model ids
+  prefill, the key field stays empty; 401/403 → the login tab opens and
+  the probe repeats until the jar holds a session. A CodeMie base URL
+  (`isCookieAuthUrl`) streams DIRECT from the SW — never through the
+  bridge relay, which would strip the cookies and 401. New
+  `ext_request`/`ext_result` protocol kinds; every op validates its
+  params and answers a structured result, unknown ops never crash.
+- fix(browser_ext): the exfil gate's ask under yolo now stays silent —
+  the user's contract is that yolo asks for NOTHING (the extension has
+  no bash to carry critical patterns), so only the interactive modes
+  (ask/write) surface the outbound dialog; unattended keeps allowing
+  without asking.
+
 ## 0.1.321
 
 
