@@ -1674,4 +1674,8 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get launcherPublishWidget => 'Опубликовать…';
+
+  @override
+  String get githubTokenNoRepoScope =>
+      'Этот токен не может создавать репозитории — для публикации нужны права на repo. Используй classic PAT со скоупом public_repo (или fine-grained PAT с All repositories + Administration + Contents read/write). Вход по Device code часто даёт токен без прав на репозитории.';
 }

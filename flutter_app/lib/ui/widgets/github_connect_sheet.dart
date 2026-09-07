@@ -12,7 +12,6 @@ import 'package:url_launcher/url_launcher.dart' as url_launcher;
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/github_account_store.dart';
 import 'package:fa/services/github_api_client.dart';
-import 'package:fa_llm/fa_llm.dart' show fetchGithubLogin;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
         CopilotDeviceFlowError,
@@ -135,8 +134,17 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
     try {
       final client =
           widget.clientFactory?.call(token) ?? GithubApiClient(token: token);
-      final user = await client.getUser();
+      final (user, scopes) = await client.getUserAndScopes();
       if (_cancelled) return;
+      if (!GithubApiClient.tokenCanCreateRepos(scopes)) {
+        if (mounted) {
+          setState(() {
+            _busy = false;
+            _error = context.l10n.githubTokenNoRepoScope;
+          });
+        }
+        return;
+      }
       await widget.account.connect(
         token: token,
         login: user.login,
@@ -187,9 +195,28 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
         delay: Future<void>.delayed,
       );
       if (_cancelled) return;
-      final login = await fetchGithubLogin(githubToken: token);
+      // Publishing needs repo rights: verify the granted scopes before
+      // storing the connection — the public Copilot plugin id often
+      // yields a token without public_repo, which would only fail later
+      // at repo creation with an opaque 403.
+      final probe =
+          widget.clientFactory?.call(token) ?? GithubApiClient(token: token);
+      final (user, scopes) = await probe.getUserAndScopes();
       if (_cancelled) return;
-      await widget.account.connect(token: token, login: login);
+      if (!GithubApiClient.tokenCanCreateRepos(scopes)) {
+        if (mounted) {
+          setState(() {
+            _busy = false;
+            _error = context.l10n.githubTokenNoRepoScope;
+          });
+        }
+        return;
+      }
+      await widget.account.connect(
+        token: token,
+        login: user.login,
+        avatarUrl: user.avatarUrl,
+      );
       if (mounted) Navigator.of(context).pop(true);
     } on CopilotDeviceFlowError catch (error) {
       if (_cancelled || !mounted) return;

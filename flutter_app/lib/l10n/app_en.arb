@@ -541,5 +541,9 @@
   "launcherPublishWidget": "Publish…",
   "@launcherPublishWidget": {
     "description": "Tile-menu action that opens the widget publish sheet (issue #35)"
+  },
+  "githubTokenNoRepoScope": "This token cannot create repositories — publishing needs repo rights. Use a classic PAT with the public_repo scope (or a fine-grained PAT with All repositories + Administration + Contents read/write). The Device code login often yields a token without repo rights.",
+  "@githubTokenNoRepoScope": {
+    "description": "Shown when a connected GitHub token lacks repository rights"
   }
 }

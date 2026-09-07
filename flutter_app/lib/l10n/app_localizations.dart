@@ -3001,6 +3001,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Publish…'**
   String get launcherPublishWidget;
+
+  /// Shown when a connected GitHub token lacks repository rights
+  ///
+  /// In en, this message translates to:
+  /// **'This token cannot create repositories — publishing needs repo rights. Use a classic PAT with the public_repo scope (or a fine-grained PAT with All repositories + Administration + Contents read/write). The Device code login often yields a token without repo rights.'**
+  String get githubTokenNoRepoScope;
 }
 
 class _AppLocalizationsDelegate

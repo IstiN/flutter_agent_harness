@@ -1661,4 +1661,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get launcherPublishWidget => 'Publish…';
+
+  @override
+  String get githubTokenNoRepoScope =>
+      'This token cannot create repositories — publishing needs repo rights. Use a classic PAT with the public_repo scope (or a fine-grained PAT with All repositories + Administration + Contents read/write). The Device code login often yields a token without repo rights.';
 }

@@ -208,6 +208,49 @@ class GithubApiClient {
     return GithubUser.fromJson(json as Map<String, dynamic>);
   }
 
+  /// `GET /user` returning the account AND the token's OAuth scopes from
+  /// the `X-OAuth-Scopes` response header. Fine-grained PATs report an
+  /// empty scope list — their permissions are implicit.
+  Future<(GithubUser, List<String>)> getUserAndScopes() async {
+    final uri = Uri.parse('$baseUrl/user');
+    final request = http.Request('GET', uri)..headers.addAll(_headers);
+    final streamed = await _http.send(request);
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode >= 400) {
+      // Same message extraction as [_request] so tests and UI show the
+      // server's human message ("Bad credentials"), not the raw JSON.
+      String message = response.body;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['message'] != null) {
+          message = decoded['message'].toString();
+        }
+      } on FormatException {
+        // Non-JSON error body — keep the raw text.
+      }
+      throw GithubApiException(response.statusCode, message);
+    }
+    final user = GithubUser.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+    final raw = response.headers['x-oauth-scopes'] ?? '';
+    final scopes = [
+      for (final part in raw.split(',')) part.trim(),
+    ]..removeWhere((scope) => scope.isEmpty);
+    return (user, scopes);
+  }
+
+  /// Whether a token with these scopes can create repositories and open
+  /// pull requests — what publishing needs. Classic/OAuth-app tokens must
+  /// carry `public_repo` (or the full `repo`); an empty list (fine-grained
+  /// PATs report no scopes) is treated as "unknown — assume yes" and let
+  /// the publish flow surface a precise failure when the rights are
+  /// actually missing.
+  static bool tokenCanCreateRepos(List<String> scopes) =>
+      scopes.isEmpty ||
+      scopes.contains('public_repo') ||
+      scopes.contains('repo');
+
   // --- repositories --------------------------------------------------------
 
   /// `GET /repos/<owner>/<name>`; null when the repo does not exist.
