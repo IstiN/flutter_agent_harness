@@ -1,7 +1,8 @@
 // Pins the fake: provider script (the deterministic CI seam, AC2/AC6):
-// the navigate directive, the "[from <sender>] dm …" dap_dm seam, and the
-// tool-result turn. No network, no browser — the fake provider is pure
-// Dart, so this runs on the VM.
+// the navigate directive, the "[from <sender>] dm …" dap_dm seam, the
+// inject_js / sessions_restore e2e directives, and the tool-result turn.
+// No network, no browser — the fake provider is pure Dart, so this runs on
+// the VM.
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/types.dart';
@@ -86,6 +87,33 @@ void main() {
       'fake: browser_navigate succeeded',
     );
   });
+
+  test('inject_js directive → inject_js call with tabId/world/code', () async {
+    final (reason, message) = await _finalOf([
+      UserMessage.text(
+        'inject_js 42 MAIN window.__faMain = "hi";\nsecond line',
+      ),
+    ]);
+    expect(reason, StopReason.toolUse);
+    final call = message.content.whereType<ToolCall>().single;
+    expect(call.name, 'inject_js');
+    expect(call.arguments['tabId'], 42);
+    expect(call.arguments['world'], 'MAIN');
+    expect(call.arguments['code'], 'window.__faMain = "hi";\nsecond line');
+  });
+
+  test(
+    'sessions_restore directive → sessions_restore call with the id',
+    () async {
+      final (reason, message) = await _finalOf([
+        UserMessage.text('sessions_restore 17'),
+      ]);
+      expect(reason, StopReason.toolUse);
+      final call = message.content.whereType<ToolCall>().single;
+      expect(call.name, 'sessions_restore');
+      expect(call.arguments['sessionId'], '17');
+    },
+  );
 
   test('plain prompt is echoed as text', () async {
     final (reason, message) = await _finalOf([UserMessage.text('hello agent')]);

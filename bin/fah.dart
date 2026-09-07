@@ -47,6 +47,7 @@ import 'fah_hub_plugin.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 import 'serve_bridge.dart';
+import 'package:flutter_agent_harness/src/cli/provider_export.dart';
 
 const _fallbackVersion = '0.1.0';
 
@@ -725,6 +726,8 @@ final class _FaBrowserBridgeHandle implements BrowserBridgeHandle {
     required String sessionRoot,
     required String homeDir,
     required String faVersion,
+    this.providers = const [],
+    this.keys,
   }) : _messaging = _projectMessagingRepository(
          env: env,
          sessionRoot: sessionRoot,
@@ -736,6 +739,13 @@ final class _FaBrowserBridgeHandle implements BrowserBridgeHandle {
   final MessagingRepository _messaging;
   final String _projectRoot;
   final String _version;
+
+  /// Saved custom providers: pushed (metadata) to every pairing that
+  /// asks, and the key slots the LLM relay resolves against.
+  final List<CustomProviderEntry> providers;
+
+  /// Key lookups for copy-mode staging and the relay. Null = lookups miss.
+  final SecureKeyCache? keys;
   BridgeServer? _server;
   _FaBrowserController? _controller;
   var _attached = false;
@@ -771,7 +781,10 @@ final class _FaBrowserBridgeHandle implements BrowserBridgeHandle {
   }
 
   @override
-  Future<BrowserBridgeSession> connect({int port = bridgeDefaultPort}) async {
+  Future<BrowserBridgeSession> connect({
+    int port = bridgeDefaultPort,
+    bool copyKeys = false,
+  }) async {
     final existing = _server;
     if (existing != null && existing.running) {
       return BrowserBridgeSession(
@@ -788,6 +801,9 @@ final class _FaBrowserBridgeHandle implements BrowserBridgeHandle {
       token: token,
       version: _version,
       onClientsChanged: _onClientsChanged,
+      providers: providers,
+      keys: keys,
+      copyKeys: copyKeys,
     );
     await server.start();
     _server = server;
@@ -1038,6 +1054,24 @@ Future<void> _runApp(List<String> args) async {
   // Provider watchdog overrides (`providerTimeouts:` section): process-wide,
   // read by the adapters' connect/idle watchdogs on every request.
   providerTimeoutsOverride = saved.providerTimeouts;
+
+  // `fa config <verb>` — headless config management (e.g.
+  // export-providers), intercepted before prompt resolution. A throwaway
+  // key cache: the process exits when the verb returns.
+  final configCmd = parsed.config;
+  if (configCmd != null) {
+    final exportKeys = SecureKeyCache(platformSecureKeyStore());
+    await exportKeys.preload(secureKeyPreloadNames(saved, baseUrl: null));
+    exit(
+      await runProviderExportCommand(
+        configCmd,
+        io: _TerminalCliIO(headless: true),
+        env: LocalExecutionEnv(cwd: Directory.current.path),
+        entries: saved.customProviders,
+        secureRead: exportKeys.read,
+      ),
+    );
+  }
 
   late final ({
     CliArgs args,
@@ -1405,6 +1439,8 @@ Future<void> _runApp(List<String> args) async {
     sessionRoot: sessionRoot,
     homeDir: home,
     faVersion: packageVersion,
+    providers: saved.customProviders,
+    keys: keyCache,
   );
 
   // The execution env shared by the CLI config (tools, session storage)

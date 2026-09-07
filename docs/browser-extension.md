@@ -429,6 +429,31 @@ ECDH; the hub only ever sees ciphertext).
   payloads surface as `[hub] undecryptable message from <from>` — never
   dropped, never shown as plaintext.
 
+## Advanced: power tools (Settings-gated, second tier)
+
+Five higher-power browser tools ship registered-but-hidden until you turn
+them on in the panel's "Advanced — power tools" section (issue #34 AC4d):
+
+| Tool | Chrome permission | What it does |
+|---|---|---|
+| `browser_search` | `search` | web search via the browser's default engine |
+| `top_sites` | `topSites` | lists the most-visited sites |
+| `reading_list` | `readingList` | list / add / remove reading-list entries |
+| `page_capture` | `pageCapture` | captures a tab as MHTML (returns size only) |
+| `tts_speak` | `tts` | speaks text through the browser's speech engine |
+
+Toggle semantics: enabling a tool asks Chrome for its optional permission
+(the checkbox click is the user gesture MV3 requires) and the tool
+registers in the live agent immediately; disabling revokes the permission
+and the tool disappears. The capability is the hard floor (#19 semantics):
+a tool stays hidden even when enabled unless Chrome has granted its
+permission, and a permission revoked out-of-band hides an enabled tool on
+the spot. The enabled set persists in `faBrowserTools`
+(chrome.storage.local); excluded APIs (`userScripts`,
+`declarativeNetRequest`, `tabCapture`, …) are absent from the manifest AND
+the registry — see `permission_matrix.dart` for the audited three-tier
+table.
+
 ## Build & load
 
 ```bash
@@ -469,7 +494,32 @@ registry, `ApprovalManager`, JSONL session persistence, auto-compaction.
   the app's own Settings) → Base URL, API key, Model. Any
   OpenAI-compatible chat-completions endpoint works. Config lands in
   `chrome.storage.local` (`faProvider`), read ONLY inside the service
-  worker (AC8).
+  worker (AC8). The synced **registry** (`faProviders`) is primary when
+  present; the legacy single-provider map stays as the fallback.
+- **Provider sharing (§S6, issue #34 item 3) — implemented.** A paired
+  CLI pushes a `providersSync` frame right after `welcome` (the
+  extension hello advertises the `providers-sync` capability). Entries
+  land in `chrome.storage.local` under `faProviders` with provenance
+  `synced-from-cli@<host>`. Two key modes:
+  - **proxy** (default): keys never leave the CLI. The registry stores
+    metadata only; a keyless synced entry routes its LLM calls through
+    the bridge `llmReq`/`llmRes` relay, which injects auth server-side
+    (UT-S1: a proxy push never puts key bytes in storage). Bridge down
+    = the stream ends with a clean `desktop link is down` error (E26);
+    local/fake providers keep working and nothing hangs.
+  - **copy** (`/browser connect --copy-keys`): each key rides ONCE in
+    the sync frame, is stored with its entry, and the extension acks by
+    echoing the sync frame id — the ack wipes the server's staged copy.
+  - **Provenance protects edits (UT-S2/E27):** panel `.fahx` imports
+    stamp provenance `local`; a re-pair's sync replaces synced rows but
+    NEVER silently overwrites local ones.
+- **`.fahx` import (§S6 fallback tier) — implemented.** The panel's
+  **Import .fahx…** picker decrypts an export produced by
+  `fa config export-providers` (PBKDF2-HMAC-SHA256 + HMAC-SHA256-CTR,
+  encrypt-then-MAC; bit-compatible with the CLI envelope). File,
+  passphrase, decrypt, and the `faProviders` merge all happen inside
+  the service worker; a wrong passphrase or a tampered file fails
+  loudly with nothing written.
 - **`fake:*` provider.** A model id starting with `fake:` selects a
   deterministic scripted provider — no network. It echoes the prompt;
   a prompt containing `navigate <url>` makes it emit one
@@ -502,13 +552,18 @@ Four layers, cheapest first:
    (badge/alarms/offscreen/entry points), `quarantine_test.dart`
    (hostile corpus, UT-S6 + the IT-S8 no-false-lockout precondition),
    `injection_exfil_test.dart` (IT-S8/IT-S9 over the tool surface),
-   `providers_test.dart`, `fake_chrome_test.dart`, `dap_frames_test.dart`.
+   `providers_test.dart`, `fake_chrome_test.dart`, `dap_frames_test.dart`,
+   `providers_sync_test.dart` (registry merge/resolve/relay routing,
+   UT-S2, E26), `fahx_import_test.dart` (bit-compatible `.fahx`
+   roundtrip against the CLI's export, wrong-passphrase + tamper).
 2. **Node vm tests** — `node --test browser_ext/test/` (Node 22):
    `ops_trusted.test.mjs`, `cdp_smoke.test.mjs` drive the real
    `ops.js`/`cdp.js` in a `node:vm` sandbox against a stubbed `chrome`;
    `v21_manifest_test.mjs` pins the v2.1 manifest (permission tiers,
    commands, omnibox) and `panel_loader_test.mjs` the app-hosting
-   bootstrap.
+   bootstrap; `providers_sync.test.mjs` exercises the SW bridge glue —
+   hello capability, copy-mode sync storage + acked echo, re-pair
+   overwrite, UT-S1 byte-scan, llmReq stream/done/error.
 3. **Headless Chrome E2E (issue #23, unchanged)** — `test/browser_ext/`
    launches a real Chrome with the extension loaded and exercises the
    whole path (extension load + agent self-test, fixture task, bridge
@@ -596,9 +651,10 @@ Honest state of v2.1:
   not yet share one loop.
 - **Playwright e2e is pending.** CI runs the issue #23 headless Chrome
   suite; the Playwright layer from the issue's CI wiring is not built.
-- **S6 provider-sharing tiers are design-only.** The keyless-proxy /
-  metadata-sync tiers from the issue (providers.sync, `.fahx`,
-  merge UI) are not implemented in the extension.
+- **S6 app-panel Settings provider sharing.** The SW agent + basic
+  panel implement providers.sync, the keyless relay, and `.fahx`
+  import; the app panel's own Settings provider flows still need to
+  learn the registry.
 - **Store publication** has not started (see the CWS checklist above).
 
 ## Roadmap / non-goals

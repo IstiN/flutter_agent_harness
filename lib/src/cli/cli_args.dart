@@ -88,6 +88,7 @@ final class CliArgs extends CliArgsResult {
     this.tools,
     this.redact,
     this.trajectory,
+    this.config,
     this.positionals = const [],
   }) : super._();
 
@@ -180,6 +181,11 @@ final class CliArgs extends CliArgsResult {
   /// the trajectory reader instead of a prompt run.
   final TrajectoryCliCommand? trajectory;
 
+  /// The `fa config <verb>` subcommand (e.g. `export-providers`), when
+  /// the invocation routed to the headless config manager instead of a
+  /// prompt run.
+  final ConfigCliCommand? config;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless => prompt != null || positionals.isNotEmpty;
@@ -195,6 +201,11 @@ CliArgsResult parseCliArgs(List<String> args) {
   // intercepted before prompt parsing (the verb words are not prompts).
   if (args.isNotEmpty && args.first == 'trajectory') {
     return _parseTrajectoryArgs(args.sublist(1));
+  }
+  // `fa config <verb> [args]` — the headless config verb subcommand,
+  // intercepted the same way (verb words are not prompts).
+  if (args.isNotEmpty && args.first == 'config') {
+    return _parseConfigArgs(args.sublist(1));
   }
   final values = _CliArgValues();
   for (var i = 0; i < args.length; i++) {
@@ -377,6 +388,81 @@ void _validateTrajectoryVerb(String verb, List<String> positionals, int? at) {
   if (at != null && verb != 'view') {
     throw const CliArgsException('--at only applies to fa trajectory view');
   }
+}
+
+/// The `fa config` subcommand: headless config management.
+///
+/// `export-providers` writes the saved custom providers (+ their keys,
+/// resolved from the environment / secure store) to a passphrase-
+/// encrypted `.fahx` file — the fallback tier when the bridge pairing is
+/// not available (issue #34 item 3).
+final class ConfigCliCommand {
+  /// Creates a [ConfigCliCommand].
+  const ConfigCliCommand({
+    required this.verb,
+    this.out,
+    this.passphraseStdin = false,
+  });
+
+  /// One of [configVerbs].
+  final String verb;
+
+  /// `--out <file>`: the `.fahx` target (default `providers.fahx` in the
+  /// working directory).
+  final String? out;
+
+  /// `--passphrase-stdin`: read the passphrase from one stdin line
+  /// instead of the double prompt (headless).
+  final bool passphraseStdin;
+}
+
+/// The verbs accepted by `fa config`.
+const configVerbs = {'export-providers'};
+
+const _configUsage =
+    'usage: fa config export-providers [--out <file.fahx>] '
+    '[--passphrase-stdin]';
+
+/// Parses the `config` subcommand operands (everything after the `config`
+/// word). Unknown verbs and flags are usage errors so a typo never
+/// becomes a prompt sent to a model.
+CliArgsResult _parseConfigArgs(List<String> args) {
+  if (args.contains('--help') || args.contains('-h')) {
+    return const CliArgsHelp();
+  }
+  if (args.isEmpty) {
+    throw const CliArgsException(_configUsage);
+  }
+  final verb = args.first;
+  if (!configVerbs.contains(verb)) {
+    throw CliArgsException(
+      'unknown config verb: $verb '
+      '(expected one of ${configVerbs.join('|')})\n$_configUsage',
+    );
+  }
+  String? out;
+  var passphraseStdin = false;
+  for (var i = 1; i < args.length; i++) {
+    final arg = args[i];
+    switch (arg) {
+      case '--out':
+        if (i + 1 >= args.length) {
+          throw const CliArgsException('--out requires a value');
+        }
+        out = args[++i];
+      case '--passphrase-stdin':
+        passphraseStdin = true;
+      default:
+        throw CliArgsException('unknown argument: $arg\n$_configUsage');
+    }
+  }
+  return CliArgs(
+    config: ConfigCliCommand(
+      verb: verb,
+      out: out,
+      passphraseStdin: passphraseStdin,
+    ),
+  );
 }
 
 /// A value-taking CLI flag: its canonical name (for error messages, so

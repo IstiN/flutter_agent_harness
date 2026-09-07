@@ -13,13 +13,18 @@ final class _FakeHandle implements BrowserBridgeHandle {
   final Object? failConnect;
   var connectCalls = 0;
   var lastPort = 0;
+  var lastCopyKeys = false;
   var statusCalls = 0;
 
   @override
-  Future<BrowserBridgeSession> connect({int port = bridgeDefaultPort}) async {
+  Future<BrowserBridgeSession> connect({
+    int port = bridgeDefaultPort,
+    bool copyKeys = false,
+  }) async {
     if (failConnect != null) throw failConnect!;
     connectCalls++;
     lastPort = port;
+    lastCopyKeys = copyKeys;
     return BrowserBridgeSession(
       url: 'ws://127.0.0.1:$port/ws',
       token: 'f' * 64,

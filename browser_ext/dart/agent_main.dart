@@ -21,8 +21,10 @@ import 'src/agent_host.dart';
 import 'src/background/alarms.dart';
 import 'src/background/badge.dart';
 import 'src/background/entry_points.dart';
+import 'src/bridge_relay.dart';
 import 'src/chrome_api.dart' show ChromeApi, ChromeApiException;
 import 'src/chrome_api_js.dart';
+import 'src/fahx_import.dart' show FahxException, importFahxProviders;
 import 'src/dap/dap_integration.dart';
 import 'src/fetch_client.dart';
 import 'src/providers.dart';
@@ -89,14 +91,21 @@ Future<void> main() async {
   providerHttpClientFactory = () => FetchClient();
 
   final faAgent = JSObject();
-  // ponytail: seven explicit binds — .toJS needs a statically known type.
+  // ponytail: explicit binds — .toJS needs a statically known type.
   _setProperty(faAgent, 'boot'.toJS, _bootImpl.toJS);
   _setProperty(faAgent, 'sendUser'.toJS, _sendUserImpl.toJS);
   _setProperty(faAgent, 'pushMail'.toJS, _pushMailImpl.toJS);
   _setProperty(faAgent, 'decide'.toJS, _decideImpl.toJS);
   _setProperty(faAgent, 'onEvent'.toJS, _onEventImpl.toJS);
   _setProperty(faAgent, 'getState'.toJS, _getStateImpl.toJS);
+  _setProperty(
+    faAgent,
+    'applyToolVisibility'.toJS,
+    _applyToolVisibilityImpl.toJS,
+  );
   _setProperty(faAgent, 'selfTest'.toJS, _selfTestImpl.toJS);
+  _setProperty(faAgent, 'providersMerge'.toJS, _providersMergeImpl.toJS);
+  _setProperty(faAgent, 'importFahx'.toJS, _importFahxImpl.toJS);
   _setProperty(globalContext, 'faAgent'.toJS, faAgent);
   _bindV2Surface();
 
@@ -134,6 +143,20 @@ Future<void> main() async {
       (nav) => _rememberOrigin(nav.url),
     );
     _listenUiPorts();
+
+    // Live second-tier re-surface (issue #34 AC4d, #19 semantics): a
+    // permission granted/revoked out-of-band (panel checkbox) re-applies
+    // the capability floor — the enabled-set in the host is unchanged,
+    // only which of its tools may exist.
+    chromeApi.permissions.onAdded.listen((_) => _host?.reapplyToolGate());
+    chromeApi.permissions.onRemoved.listen((_) => _host?.reapplyToolGate());
+    // Provider registry changes (bridge sync push, .fahx import, panel
+    // remove) re-resolve the active provider on the live host — the same
+    // converging path as boot, so an in-flight turn is never disturbed.
+    chromeApi.storage.onChanged.listen((change) {
+      if (change.key != 'faProviders') return;
+      unawaited(_reapplyProviderConfig());
+    });
   }
 
   // Auto-boot with the stored panel config (provider form + approval mode).
@@ -142,8 +165,10 @@ Future<void> main() async {
   _ensureHost(
     _configFrom(
       provider: stored['faProvider'],
+      providers: stored['faProviders'],
       approval: stored['faApproval'],
       dap: stored['faDap'],
+      browserTools: stored['faBrowserTools'],
     ),
   );
 }
@@ -166,10 +191,16 @@ Future<JSAny?> _bootMerged(JSAny? config) async {
       provider: map.containsKey('provider')
           ? map['provider']
           : stored['faProvider'],
+      providers: map.containsKey('providers')
+          ? map['providers']
+          : stored['faProviders'],
       approval: map.containsKey('approvalMode')
           ? map['approvalMode']
           : stored['faApproval'],
       dap: map.containsKey('dap') ? map['dap'] : stored['faDap'],
+      browserTools: map.containsKey('browserTools')
+          ? map['browserTools']
+          : stored['faBrowserTools'],
     ),
   );
   return {'ok': true}.jsify();
@@ -497,10 +528,25 @@ void _applySettings(Map<String, Object?> settings) {
   host.reconfigure(
     _configFrom(
       provider: settings['faProvider'],
+      providers: settings['faProviders'],
       approval: settings['faApproval'],
       dap: settings['faDap'],
+      browserTools: settings['faBrowserTools'],
     ),
   );
+}
+
+/// tools.set from the panel: re-surface the gate live (storage is the
+/// service worker's job — it persists before calling here).
+void _applyToolVisibilityImpl(JSAny? enabled) {
+  final host = _host;
+  if (host == null) return;
+  final raw = enabled?.dartify();
+  if (raw is! Map) return;
+  host.applyToolVisibility({
+    for (final MapEntry(:key, :value) in raw.entries)
+      if (value is bool) key: value,
+  });
 }
 
 Future<void> _persistSetting(String key, Object? value) async {
@@ -514,7 +560,13 @@ Future<void> _persistSetting(String key, Object? value) async {
 Future<Map<Object?, Object?>> _loadStoredRaw() async {
   try {
     final result = await _storageGet(
-      ['faProvider', 'faApproval', 'faDap'].jsify(),
+      [
+        'faProvider',
+        'faProviders',
+        'faApproval',
+        'faDap',
+        'faBrowserTools',
+      ].jsify(),
     ).toDart;
     if (result != null) {
       return (result as JSObject).dartify() as Map<Object?, Object?>;
@@ -525,15 +577,39 @@ Future<Map<Object?, Object?>> _loadStoredRaw() async {
   return const {};
 }
 
-HostConfig _configFrom({Object? provider, Object? approval, Object? dap}) {
+HostConfig _configFrom({
+  Object? provider,
+  Object? providers,
+  Object? approval,
+  Object? dap,
+  Object? browserTools,
+}) {
   ProviderConfig? resolved;
-  if (provider is Map) {
-    final baseUrl = '${provider['baseUrl'] ?? ''}'.trim();
-    final apiKey = '${provider['apiKey'] ?? ''}';
-    final model = '${provider['model'] ?? ''}'.trim();
-    if (model.isNotEmpty) {
-      resolved = (baseUrl: baseUrl, apiKey: apiKey, model: model);
+  // The synced registry is primary; the legacy single `faProvider` map is
+  // the fallback. A registry entry with an EMPTY key and a live bridge
+  // routes through the llmReq relay — install it as [activeRelay] here,
+  // the one place every config path converges. Every other shape clears
+  // the relay so a stale route never outlives its config.
+  final entry = pickActiveEntry(legacy: provider, doc: providers);
+  if (entry != null) {
+    resolved = (
+      baseUrl: entry.baseUrl,
+      apiKey: entry.apiKey,
+      model: entry.modelId,
+    );
+    activeRelay = routeFor(entry) == ProviderRoute.relay
+        ? (relay: const BridgeRelayClient(), providerName: entry.name)
+        : null;
+  } else {
+    if (provider is Map) {
+      final baseUrl = '${provider['baseUrl'] ?? ''}'.trim();
+      final apiKey = '${provider['apiKey'] ?? ''}';
+      final model = '${provider['model'] ?? ''}'.trim();
+      if (model.isNotEmpty) {
+        resolved = (baseUrl: baseUrl, apiKey: apiKey, model: model);
+      }
     }
+    activeRelay = null;
   }
   return (
     provider: resolved,
@@ -541,7 +617,80 @@ HostConfig _configFrom({Object? provider, Object? approval, Object? dap}) {
     // main.js overlays the live bridge mailbox name onto pushed status.
     mailbox: '',
     dap: _dapFrom(dap),
+    browserTools: _browserToolsFrom(browserTools),
   );
+}
+
+/// faAgent.providersMerge: the SW's providersSync handler calls this with
+/// the previous stored doc and the raw sync frame; the merged doc (local
+/// edits preserved) goes back to chrome.storage.
+JSAny? _providersMergeImpl(JSAny? existing, JSAny? sync) {
+  final prev = existing?.dartify();
+  final doc = sync?.dartify();
+  if (doc is! Map) return existing;
+  return mergeSyncedProviders(prev is Map ? prev : null, doc).jsify();
+}
+
+/// faAgent.importFahx: decrypt a .fahx envelope (wrong passphrase or a
+/// tampered file fails LOUDLY, nothing is written) and merge the entries
+/// in as `local` — an explicit import wins over a synced row.
+Future<JSAny?> _importFahxImpl(JSAny? content, JSAny? passphrase) async {
+  try {
+    final text = content.isA<JSString>() ? (content as JSString).toDart : '';
+    final pass = passphrase.isA<JSString>()
+        ? (passphrase as JSString).toDart
+        : '';
+    final imported = [
+      for (final f in importFahxProviders(text, pass))
+        (
+          name: f.name,
+          apiType: f.apiType,
+          baseUrl: f.baseUrl,
+          modelId: f.modelId,
+          provenance: localProvenance,
+          apiKey: f.key ?? '',
+        ),
+    ];
+    final prev = await _loadStoredRaw();
+    final doc = mergeLocalProviders(
+      prev['faProviders'] as Map<Object?, Object?>?,
+      imported,
+    );
+    await _persistSetting('faProviders', doc);
+    return {'ok': true, 'imported': imported.length}.jsify();
+  } on FahxException catch (error) {
+    return {'ok': false, 'error': error.message}.jsify();
+  } on Object catch (error) {
+    return {'ok': false, 'error': '$error'}.jsify();
+  }
+}
+
+/// Reloads storage and re-resolves the active provider on the live host
+/// (faProviders changed out-of-band under us).
+Future<void> _reapplyProviderConfig() async {
+  if (_host == null) return;
+  final stored = await _loadStoredRaw();
+  _ensureHost(
+    _configFrom(
+      provider: stored['faProvider'],
+      providers: stored['faProviders'],
+      approval: stored['faApproval'],
+      dap: stored['faDap'],
+      browserTools: stored['faBrowserTools'],
+    ),
+  );
+}
+
+// -- Storage shaping ---------------------------------------------------------------------
+
+/// faBrowserTools storage shape: `{toolName: bool}`. Absent/other = the
+/// tool stays hidden; only true keys count as enabled.
+Map<String, bool> _browserToolsFrom(Object? raw) {
+  if (raw is! Map) return const {};
+  return {
+    for (final MapEntry(:key, :value) in raw.entries)
+      if (value == true) key: true,
+  };
 }
 
 /// faDap storage shape: `{url, name}`. Empty url = no hub presence.

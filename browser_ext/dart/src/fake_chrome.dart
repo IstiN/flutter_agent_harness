@@ -121,6 +121,12 @@ final class FakeChrome implements ChromeApi {
     _webNavigationApi = _FakeWebNavigation(this);
     _systemApi = const _FakeSystem();
     _identityApi = _FakeIdentity(this);
+    _searchApi = _SearchApiFake(this);
+    _topSitesApi = _FakeTopSites(this);
+    _readingListApi = _FakeReadingList(this);
+    _pageCaptureApi = _FakePageCapture(this);
+    _ttsApi = _FakeTts(this);
+    _permissionsApi = _FakePermissions(this);
   }
 
   /// Canned executeScript output per call; null (default) answers
@@ -171,6 +177,35 @@ final class FakeChrome implements ChromeApi {
   final Map<String, _AlarmRec> _alarms = {};
   final Map<String, _NotifRec> _notifications = {};
   final Map<String, _MenuRec> _menus = {};
+
+  // -- Second-tier state (optional permissions + the APIs they gate) --------
+
+  /// Optionally-granted permissions (chrome.permissions semantics: starts
+  /// empty; [grantPermissions]/[revokePermissions] mutate and emit).
+  final Set<String> _grantedPermissions = {};
+
+  /// The most-visited list chrome.topSites.get would answer.
+  final List<TopSite> _topSites = [];
+
+  /// Reading-list entries keyed by url (add/query/remove through the API).
+  final Map<String, ReadingListEntry> _readingList = {};
+
+  /// Last chrome.search.query dispatch (test observability).
+  String? lastSearch;
+
+  /// Last chrome.tts.speak dispatch (test observability).
+  String? lastUtterance;
+
+  /// Raw MHTML the pageCapture fake answers (default below).
+  String mhtmlPayload =
+      'MIME-Version: 1.0\nContent-Type: multipart/related; '
+      'boundary="----MultipartBoundary--fake----"\n';
+  late final _SearchApiFake _searchApi;
+  late final _FakeTopSites _topSitesApi;
+  late final _FakeReadingList _readingListApi;
+  late final _FakePageCapture _pageCaptureApi;
+  late final _FakeTts _ttsApi;
+  late final _FakePermissions _permissionsApi;
   final Map<int, _DlRec> _downloads = {};
   final Map<String, Cookie> _cookies = {};
   final List<HistoryItem> _history = [];
@@ -215,6 +250,12 @@ final class FakeChrome implements ChromeApi {
   final _omniEntered = StreamController<OmniboxInput>.broadcast(sync: true);
   final _commandPressed = StreamController<String>.broadcast(sync: true);
   final _navCompleted = StreamController<NavCompleted>.broadcast(sync: true);
+  final _permissionsAdded = StreamController<List<String>>.broadcast(
+    sync: true,
+  );
+  final _permissionsRemoved = StreamController<List<String>>.broadcast(
+    sync: true,
+  );
 
   // -- ChromeApi ------------------------------------------------------------
   @override
@@ -263,6 +304,18 @@ final class FakeChrome implements ChromeApi {
   SystemApi get system => _systemApi;
   @override
   IdentityApi get identity => _identityApi;
+  @override
+  SearchApi get search => _searchApi;
+  @override
+  TopSitesApi get topSites => _topSitesApi;
+  @override
+  ReadingListApi get readingList => _readingListApi;
+  @override
+  PageCaptureApi get pageCapture => _pageCaptureApi;
+  @override
+  TtsApi get tts => _ttsApi;
+  @override
+  PermissionsApi get permissions => _permissionsApi;
 
   // -- Deterministic time ---------------------------------------------------
   /// Fake wall clock (ms epoch): the injected clock plus the offset that
@@ -364,6 +417,7 @@ final class FakeChrome implements ChromeApi {
 
   /// Fake-only history seeding (chrome.history.addUrl is not on the
   /// facade; tests need entries to search).
+
   void seedHistory({required String url, String? title}) {
     _history.insert(
       0,
@@ -375,6 +429,25 @@ final class FakeChrome implements ChromeApi {
       ),
     );
   }
+
+  /// chrome.permissions.request equivalent: grants the set and emits
+  /// permissions.onAdded (the signal the second-tier gate rides).
+  Future<void> grantPermissions(List<String> permissions) async {
+    _grantedPermissions.addAll(permissions);
+    _permissionsAdded.add(List.of(permissions));
+  }
+
+  /// chrome.permissions.remove equivalent: revokes the set and emits
+  /// permissions.onRemoved.
+  Future<void> revokePermissions(List<String> permissions) async {
+    _grantedPermissions.removeAll(permissions);
+    _permissionsRemoved.add(List.of(permissions));
+  }
+
+  /// Fake-only topSites seeding (chrome.topSites has no write API).
+  void seedTopSites(List<TopSite> sites) => _topSites
+    ..clear()
+    ..addAll(sites);
 
   // -- Test observability ---------------------------------------------------
   String? get badgeText => _badgeText;
@@ -1603,6 +1676,98 @@ final class _FakeIdentity implements IdentityApi {
   @override
   Future<String> launchWebAuthFlow({required String url}) async =>
       _c.authRedirectUrl;
+}
+
+final class _SearchApiFake implements SearchApi {
+  _SearchApiFake(this._c);
+  final FakeChrome _c;
+
+  @override
+  Future<void> query({required String text, String? disposition}) async {
+    _c.lastSearch = text;
+  }
+}
+
+final class _FakeTopSites implements TopSitesApi {
+  _FakeTopSites(this._c);
+  final FakeChrome _c;
+
+  @override
+  Future<List<TopSite>> get() async => List.of(_c._topSites);
+}
+
+final class _FakeReadingList implements ReadingListApi {
+  _FakeReadingList(this._c);
+  final FakeChrome _c;
+
+  @override
+  Future<List<ReadingListEntry>> query({String? title, String? url}) async => [
+    for (final e in _c._readingList.values)
+      if ((title == null || e.title.contains(title)) &&
+          (url == null || e.url.contains(url)))
+        e,
+  ];
+
+  @override
+  Future<void> addEntry({
+    required String url,
+    required String title,
+    bool? hasBeenRead,
+  }) async {
+    _c._readingList[url] = ReadingListEntry(
+      url: url,
+      title: title,
+      hasBeenRead: hasBeenRead ?? false,
+    );
+  }
+
+  @override
+  Future<void> removeEntry({required String url}) async {
+    if (_c._readingList.remove(url) == null) {
+      throw _err('no_reading_list_entry', 'no reading-list entry for $url');
+    }
+  }
+}
+
+final class _FakePageCapture implements PageCaptureApi {
+  _FakePageCapture(this._c);
+  final FakeChrome _c;
+
+  @override
+  Future<String> captureMhtml({required int tabId}) async {
+    _c._tabOrThrow(tabId); // capturing a ghost tab is no_tab, like chrome
+    return _c.mhtmlPayload;
+  }
+}
+
+final class _FakeTts implements TtsApi {
+  _FakeTts(this._c);
+  final FakeChrome _c;
+
+  @override
+  Future<void> speak(
+    String utterance, {
+    String? voiceName,
+    double? rate,
+    double? pitch,
+  }) async {
+    _c.lastUtterance = utterance;
+  }
+}
+
+final class _FakePermissions implements PermissionsApi {
+  _FakePermissions(this._c);
+  final FakeChrome _c;
+
+  @override
+  Future<bool> contains(List<String> permissions) async =>
+      permissions.every(_c._grantedPermissions.contains);
+
+  @override
+  Stream<List<String>> get onAdded => _c._permissionsAdded.stream;
+
+  @override
+  Stream<List<String>> get onRemoved => _c._permissionsRemoved.stream;
 }
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,10 @@ void main() {
       'trajectory <view|tail|cost|inspect>',
       '[--json] [--at N]',
       '/trajectory',
+      // Headless config verbs (fa config).
+      'fa config export-providers',
+      '--passphrase-stdin',
+      '.fahx',
       // Providers and keys.
       'openai-completions',
       'kimi',

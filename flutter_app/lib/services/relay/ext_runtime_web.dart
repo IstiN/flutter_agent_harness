@@ -20,8 +20,16 @@ import 'package:fa_browser_agent/fa_browser_agent.dart';
 @JS('chrome.runtime.id')
 external JSString? get _runtimeId;
 
+/// Port name the SW's UI port server serves (`agent_main.dart` drops every
+/// other port) — pinned across packages; agent_main owns the private twin.
+const _uiPortName = 'fa-ui-v2';
+
+extension type _JsConnectInfo._(JSObject _) implements JSObject {
+  external _JsConnectInfo({String? name});
+}
+
 @JS('chrome.runtime.connect')
-external _JsPort? _connect();
+external _JsPort? _connect([_JsConnectInfo? connectInfo]);
 
 extension type _JsPort._(JSObject _) implements JSObject {
   external void postMessage(JSAny? message);
@@ -40,7 +48,7 @@ bool isExtensionHost() => _runtimeId != null;
 /// Opens a `chrome.runtime` port channel, or null when unavailable.
 UiPortChannel? createPortChannel() {
   if (!isExtensionHost()) return null;
-  final port = _connect();
+  final port = _connect(_JsConnectInfo(name: _uiPortName));
   if (port == null) return null;
   return _RuntimePortChannel(port);
 }

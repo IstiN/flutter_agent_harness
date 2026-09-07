@@ -110,3 +110,8 @@ browser_ext/sw/agent.js.map
 browser_ext/sw/agent.js.deps
 browser_ext/app/
 browser_ext/dart/build/
+
+# Playwright e2e (browser_ext/e2e): deps and run artifacts, never committed.
+browser_ext/e2e/node_modules/
+browser_ext/e2e/test-results/
+browser_ext/e2e/playwright-report/

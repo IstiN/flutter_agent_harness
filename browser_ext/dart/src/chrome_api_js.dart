@@ -176,6 +176,13 @@ List<Map<String, Object?>> _maps(Object? raw) => [
       if (entry is Map) Map<String, Object?>.from(entry),
 ];
 
+List<String> _strings(Object? raw) => raw is List
+    ? [
+        for (final v in raw)
+          if (v is String) v,
+      ]
+    : const [];
+
 int? _i(Object? v) => v is num ? v.toInt() : null;
 String _s(Object? v, [String fallback = '']) => v is String ? v : fallback;
 bool _b(Object? v, [bool fallback = false]) => v is bool ? v : fallback;
@@ -1136,8 +1143,100 @@ final class _Identity implements IdentityApi {
   );
 }
 
+final class _Search implements SearchApi {
+  @override
+  Future<void> query({required String text, String? disposition}) =>
+      _invoke('search.query', [
+        {'text': text, 'disposition': ?disposition},
+      ]);
+}
+
+final class _TopSites implements TopSitesApi {
+  @override
+  Future<List<TopSite>> get() async => [
+    for (final m in _maps(await _invoke('topSites.get')))
+      TopSite(url: _s(m['url']), title: _s(m['title'])),
+  ];
+}
+
+final class _ReadingList implements ReadingListApi {
+  @override
+  Future<List<ReadingListEntry>> query({String? title, String? url}) async => [
+    for (final m in _maps(
+      await _invoke('readingList.query', [
+        {'title': ?title, 'url': ?url},
+      ]),
+    ))
+      ReadingListEntry(
+        url: _s(m['url']),
+        title: _s(m['title']),
+        hasBeenRead: _b(m['hasBeenRead']),
+      ),
+  ];
+
+  @override
+  Future<void> addEntry({
+    required String url,
+    required String title,
+    bool? hasBeenRead,
+  }) => _invoke('readingList.addEntry', [
+    {'url': url, 'title': title, 'hasBeenRead': ?hasBeenRead},
+  ]);
+
+  @override
+  Future<void> removeEntry({required String url}) =>
+      _invoke('readingList.removeEntry', [
+        {'url': url},
+      ]);
+}
+
+final class _PageCapture implements PageCaptureApi {
+  @override
+  Future<String> captureMhtml({required int tabId}) async => _s(
+    await _invoke('pageCapture.captureMHTML', [
+      {'tabId': tabId},
+    ]),
+  );
+}
+
+final class _Tts implements TtsApi {
+  @override
+  Future<void> speak(
+    String utterance, {
+    String? voiceName,
+    double? rate,
+    double? pitch,
+  }) => _invoke('tts.speak', [
+    utterance,
+    {'voiceName': ?voiceName, 'rate': ?rate, 'pitch': ?pitch},
+  ]);
+}
+
+final class _Permissions implements PermissionsApi {
+  @override
+  Future<bool> contains(List<String> permissions) async => _b(
+    await _invoke('permissions.contains', [
+      {'permissions': permissions},
+    ]),
+  );
+
+  @override
+  Stream<List<String>> get onAdded =>
+      _eventStream('permissions.onAdded', 1, (perms, _, _) {
+        final dart = perms?.dartify();
+        return dart == null ? null : _strings(dart);
+      });
+
+  @override
+  Stream<List<String>> get onRemoved =>
+      _eventStream('permissions.onRemoved', 1, (perms, _, _) {
+        final dart = perms?.dartify();
+        return dart == null ? null : _strings(dart);
+      });
+}
+
 // ---------------------------------------------------------------------------
-// The facade — 23 sub-facades, one instance each, built lazily
+// The facade — 29 sub-facades, one instance each, built lazily
 // ---------------------------------------------------------------------------
 
 /// The production [ChromeApi]: binds the real chrome global through the
@@ -1200,4 +1299,16 @@ final class JsChromeApi implements ChromeApi {
   late final system = _System();
   @override
   late final identity = _Identity();
+  @override
+  late final search = _Search();
+  @override
+  late final topSites = _TopSites();
+  @override
+  late final readingList = _ReadingList();
+  @override
+  late final pageCapture = _PageCapture();
+  @override
+  late final tts = _Tts();
+  @override
+  late final permissions = _Permissions();
 }

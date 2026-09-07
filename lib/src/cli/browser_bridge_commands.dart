@@ -62,14 +62,19 @@ abstract interface class BrowserBridgeHandle {
   /// [bridgeDefaultPort]) and mints a FRESH pairing token — any token
   /// handed out earlier stops working.
   ///
+  /// [copyKeys] opts the pairing into copy-on-pair: the saved providers'
+  /// keys transfer once in the providersSync push and the bridge wipes
+  /// its staged copy on the client's ack. Default (false) is keyless
+  /// proxy — keys never leave the CLI.
+  ///
   /// Throws when the port cannot be bound; the command surfaces the error.
-  Future<BrowserBridgeSession> connect({int port});
+  Future<BrowserBridgeSession> connect({int port, bool copyKeys = false});
 
   /// Snapshot of connected extensions and the fabric mailbox directory.
   Future<BrowserBridgeStatus> status();
 }
 
-const _usage = ['usage: /browser [connect [port]|status]'];
+const _usage = ['usage: /browser [connect [--copy-keys] [port]|status]'];
 
 List<String> _unavailableNote() => [
   'bridge: not available on this host — the browser bridge needs an '
@@ -105,7 +110,16 @@ Future<List<String>> _browserConnect(
   List<String> args,
 ) async {
   if (handle == null) return _unavailableNote();
-  final portArg = args.length > 1 ? args[1] : null;
+  var portArg = args.length > 1 ? args[1] : null;
+  final copyKeys = args.contains('--copy-keys');
+  if (copyKeys) {
+    args = [
+      args.first,
+      for (final arg in args.skip(1))
+        if (arg != '--copy-keys') arg,
+    ];
+    portArg = args.length > 1 ? args[1] : null;
+  }
   if (portArg != null && int.tryParse(portArg) == null) {
     return ['bridge: not a port: $portArg', ..._usage];
   }
@@ -113,6 +127,7 @@ Future<List<String>> _browserConnect(
   try {
     session = await handle.connect(
       port: int.parse(portArg ?? '$bridgeDefaultPort'),
+      copyKeys: copyKeys,
     );
   } on Object catch (error) {
     return ['bridge: $error'];
@@ -121,6 +136,9 @@ Future<List<String>> _browserConnect(
     'bridge: ${session.alreadyRunning ? 'already running' : 'started'} on ${session.url}',
     'token (one-time — old tokens are invalid): ${session.token}',
     'pair as: browser-ext/<agentId> (the extension picks its agentId)',
+    if (copyKeys)
+      'keys: copy-on-pair — saved keys transfer once on pairing, '
+          'then the bridge copy is wiped',
   ];
 }
 

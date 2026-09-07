@@ -50,6 +50,10 @@ typedef HostConfig = ({
   String approvalMode, // 'ask' | 'write' | 'yolo' | 'unattended'
   String mailbox,
   DapConfig? dap, // null = no hub presence
+  /// Second-tier browser tools the user enabled in Settings (issue #34
+  /// AC4d): tool name → enabled. Actual registration still requires the
+  /// chrome permission to be granted (#19 capability floor).
+  Map<String, bool> browserTools,
 });
 
 const _sessionPath = '/session.jsonl';
@@ -87,6 +91,14 @@ final class AgentHost implements UiHostBackend {
   DapIntegration? _dap;
   DapConfig? _dapConfig;
 
+  /// Second-tier gate state (issue #34 AC4d): the browser surface (null
+  /// when the host booted without chrome), the enabled-set it reflects,
+  /// and the serialized re-apply chain keeping overlapping settings and
+  /// permission events ordered.
+  BrowserApiToolSurface? _browserSurface;
+  Set<String> _enabledTools = {};
+  Future<void> _gateSync = Future.value();
+
   /// AC18: one deduper across bridge + DAP mail, so a peer message that
   /// arrives on both links is delivered once (bridge copy wins — it lands
   /// first).
@@ -105,7 +117,8 @@ final class AgentHost implements UiHostBackend {
 
   /// Constructs the host: restores the storage env, opens (or creates) the
   /// JSONL session, and builds the agent over the restored transcript.
-  /// [chrome] non-null joins the v2 browser-API family (34 power tools)
+  /// [chrome] non-null joins the v2 browser-API family (34 core power
+  /// tools plus the Settings-gated second tier, issue #34 AC4d)
   /// to the v1 browser_* ops — [visitedOrigins] wires their exfil gate to
   /// the caller's LIVE set (the SW wiring keeps updating it as the user
   /// navigates; the gate reads it at call time).
@@ -134,10 +147,12 @@ final class AgentHost implements UiHostBackend {
         _browserTool(key, value),
     ]);
     if (chrome != null) {
-      registerBrowserApiTools(
+      _enabledTools = _enabledOf(config.browserTools);
+      _browserSurface = await registerBrowserApiTools(
         _registry,
         chrome,
         visitedOrigins: visitedOrigins,
+        enabledSecondTier: _enabledTools,
       );
     }
     _approvals = ApprovalManager(
@@ -167,8 +182,9 @@ final class AgentHost implements UiHostBackend {
     _emitStatus();
   }
 
-  /// Re-reads provider/approval config (panel "Save"): swaps the stream
-  /// function, model, and approval mode in place. Ignored mid-run.
+  /// Re-reads provider/approval/tool config (panel "Save"): swaps the
+  /// stream function, model, approval mode, and the second-tier tool gate
+  /// in place. Ignored mid-run.
   void reconfigure(HostConfig config) {
     if (!_booted) return;
     if (_running) {
@@ -180,10 +196,42 @@ final class AgentHost implements UiHostBackend {
         approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk;
     _provider = config.provider;
     _applyDapConfig(config.dap);
+    applyToolVisibility(config.browserTools);
     _agent.streamFunction = _streamFn();
     _agent.state.model = _currentModel();
     _emitStatus();
   }
+
+  /// Live second-tier re-surface (issue #19 semantics): the panel pushes
+  /// the enabled-map on settings changes; a permission granted
+  /// out-of-band surfaces its enabled tool immediately, a revocation
+  /// hides it. The registry sync is chained through [_gateSync] so
+  /// overlapping settings and permission events stay ordered.
+  void applyToolVisibility(Map<String, bool> enabled) {
+    _enabledTools = _enabledOf(enabled);
+    reapplyToolGate();
+  }
+
+  /// Re-applies the gate with the CURRENT enabled-set — the permission-
+  /// event path (chrome.permissions.onAdded/onRemoved): config unchanged,
+  /// only the capability floor moved. No-op without a browser surface.
+  void reapplyToolGate() {
+    final surface = _browserSurface;
+    if (surface == null) return; // v1-only boot: nothing gated exists
+    _gateSync = _gateSync
+        .then((_) => syncSecondTierTools(_registry, surface, _enabledTools))
+        .then((_) => _syncAgentTools())
+        .catchError((Object _) {
+          // A failed re-apply must not poison the chain; the next event
+          // retries the full idempotent sync.
+        });
+  }
+
+  /// Enabled-tool keys with a true value (absent/false = hidden).
+  Set<String> _enabledOf(Map<String, bool> browserTools) => {
+    for (final MapEntry(:key, :value) in browserTools.entries)
+      if (value) key,
+  };
 
   /// Starts/stops/retargets the hub presence without touching the agent.
   void _applyDapConfig(DapConfig? dap) {

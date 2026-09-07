@@ -166,6 +166,66 @@ void main() {
     });
   });
 
+  group('issue #34 item 3: providersSync / llmReq / llmRes', () {
+    test('the new ops are registered in bridgeKnownOps', () {
+      expect(
+        bridgeKnownOps,
+        containsAll(['providersSync', 'llmReq', 'llmRes']),
+      );
+    });
+
+    test('the new ops round-trip through the envelope', () {
+      final sync = BridgeFrame(
+        id: '1-sync',
+        op: BridgeOps.providersSync,
+        fields: {
+          'sync': {
+            'version': 1,
+            'mode': 'proxy',
+            'host': 'macbook',
+            'providers': [],
+          },
+        },
+      );
+      final decodedSync = BridgeFrame.decode(sync.encode());
+      expect(decodedSync.op, 'providersSync');
+      expect((decodedSync.fields['sync'] as Map)['mode'], 'proxy');
+
+      final req = BridgeFrame(
+        id: '2-llm1',
+        op: BridgeOps.llmReq,
+        fields: {
+          'req': {
+            'baseUrl': 'https://api.test/v1',
+            'model': 'm1',
+            'messages': [
+              {'role': 'user', 'content': 'hi'},
+            ],
+          },
+        },
+      );
+      final decodedReq = BridgeFrame.decode(req.encode());
+      expect(decodedReq.op, 'llmReq');
+      expect((decodedReq.fields['req'] as Map)['model'], 'm1');
+
+      final res = BridgeFrame(
+        id: '2-llm1',
+        op: BridgeOps.llmRes,
+        fields: {'delta': 'hello'},
+      );
+      expect(BridgeFrame.decode(res.encode()).op, 'llmRes');
+    });
+
+    test('unknown ops still decode fine — an old peer answers bad_op instead '
+        'of crashing (additive versioning)', () {
+      final frame = BridgeFrame.decode(
+        BridgeFrame(id: '3-x', op: 'someFutureOp', fields: {}).encode(),
+      );
+      expect(frame.op, 'someFutureOp');
+      expect(bridgeKnownOps.contains('someFutureOp'), isFalse);
+    });
+  });
+
   group('error codes', () {
     test('wire names are stable snake_case strings', () {
       expect(BridgeErrorCode.badToken.wire, 'bad_token');

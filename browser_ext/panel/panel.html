@@ -87,6 +87,13 @@
         </select>
       </label>
       <button id="saveProvider">Save provider</button>
+      <div id="providerList" class="dim"></div>
+      <div class="row">
+        <input id="fahxFile" type="file" accept=".fahx,.json" style="display:none">
+        <button id="importFahx">Import .fahx…</button>
+        <input id="fahxPass" type="password" placeholder="passphrase for the .fahx file" spellcheck="false">
+      </div>
+      <div id="fahxMsg" class="dim"></div>
     </section>
 
     <section>
@@ -99,6 +106,20 @@
       </label>
       <button id="saveHub">Save hub</button>
       <div id="hubStatus" class="dim"></div>
+    </section>
+
+    <section>
+      <h2>Advanced — power tools</h2>
+      <div class="dim">
+        Each toggle asks Chrome for the tool's optional permission. Enabled
+        tools register live; a permission Chrome has not granted keeps its
+        tool hidden even when the toggle is on.
+      </div>
+      <label><input type="checkbox" id="tool-browser_search"> Web search</label>
+      <label><input type="checkbox" id="tool-top_sites"> Top sites</label>
+      <label><input type="checkbox" id="tool-reading_list"> Reading list</label>
+      <label><input type="checkbox" id="tool-page_capture"> Page capture (MHTML)</label>
+      <label><input type="checkbox" id="tool-tts_speak"> Text to speech</label>
     </section>
 
     <h2>Events</h2>

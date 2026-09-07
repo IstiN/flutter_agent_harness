@@ -151,6 +151,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         agent?.boot({ provider: cur.faProvider, approvalMode: cur.faApproval, dap: url ? { url, name } : null });
         return { ok: true };
       }
+      case 'providers.import': {
+        // .fahx import (issue #34 item 3): the Dart agent owns the decrypt;
+        // a wrong passphrase or tampered file fails loudly, nothing written.
+        if (!agent) return { ok: false, error: 'agent not built (missing sw/agent.js)' };
+        const out = await agent.importFahx(String(msg.contents ?? ''), String(msg.passphrase ?? ''));
+        return out;
+      }
+      case 'tools.set': {
+        // Second-tier power tools (issue #34 AC4d): store the enabled map,
+        // then push it into the live agent — the gate re-applies there.
+        const enabled = {};
+        for (const [name, on] of Object.entries(msg.enabled ?? {})) {
+          if (on === true) enabled[name] = true;
+        }
+        await store.set({ faBrowserTools: enabled });
+        agent?.applyToolVisibility(enabled);
+        return { ok: true, enabled };
+      }
       default:
         return { ok: false, error: `unknown message type "${msg?.type}"` };
     }

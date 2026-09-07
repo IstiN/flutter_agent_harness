@@ -61,6 +61,12 @@ const _expectedNames = [
   'page_screenshot',
   'app_screenshot',
   'nav_wait',
+  // second tier (Settings-gated, issue #34 AC4d)
+  'browser_search',
+  'top_sites',
+  'reading_list',
+  'page_capture',
+  'tts_speak',
 ];
 
 /// Minimal VALID args per tool: enough to pass validation so the call
@@ -106,11 +112,39 @@ const _minArgs = <String, Map<String, Object?>>{
   'page_screenshot': {},
   'app_screenshot': {},
   'nav_wait': {'tabId': 1, 'timeoutMs': 1000},
+  'browser_search': {'text': 'q'},
+  'top_sites': {},
+  'reading_list': {'mode': 'list'},
+  'page_capture': {'tabId': 1},
+  'tts_speak': {'utterance': 'hello'},
 };
 
-ToolRegistry _reg(ChromeApi chrome) {
+/// Core-only registry by default; [enabledSecondTier] turns the gate on
+/// for the named tools (they still need chrome's permission grant).
+Future<ToolRegistry> _reg(
+  ChromeApi chrome, {
+  Set<String> enabledSecondTier = const {},
+}) async {
   final reg = ToolRegistry();
-  registerBrowserApiTools(reg, chrome);
+  await registerBrowserApiTools(
+    reg,
+    chrome,
+    enabledSecondTier: enabledSecondTier,
+  );
+  return reg;
+}
+
+/// Registry with EVERY tool registered: core through the gate, gated ones
+/// directly (behavior sweeps exercise tools, not gate placement).
+Future<ToolRegistry> _fullReg(ChromeApi chrome) async {
+  final reg = ToolRegistry();
+  final surface = await registerBrowserApiTools(reg, chrome);
+  reg.registerAll([
+    for (final t in surface.tools())
+      if (BrowserApiToolSurface.specOf(t.name).visibility ==
+          BrowserToolVisibility.secondTier)
+        t,
+  ]);
   return reg;
 }
 
@@ -165,20 +199,35 @@ void main() {
   late FakeChrome chrome;
   late ToolRegistry reg;
 
-  setUp(() {
+  setUp(() async {
     chrome = FakeChrome(clock: () => 1730000000000);
-    reg = _reg(chrome);
+    reg = await _reg(chrome);
   });
 
   // -------------------------------------------------------------------------
   group('specs table (UT-T4)', () {
-    test('34 tools with the exact contracted names', () {
+    test('39 tools (34 core + 5 Settings-gated) with exact names', () {
       final specs = browserApiToolSpecs();
       expect(specs.map((s) => s.name), unorderedEquals(_expectedNames));
-      expect(specs.map((s) => s.name).toSet().length, 34);
+      expect(specs.map((s) => s.name).toSet().length, 39);
     });
 
-    test('every spec: tier, visibility core, alwaysPrompts, permissions', () {
+    test('exactly five second-tier specs, all others core', () {
+      final gated = browserApiToolSpecs()
+          .where((s) => s.visibility == BrowserToolVisibility.secondTier)
+          .map((s) => s.name)
+          .toSet();
+      expect(gated, secondTierToolNames());
+      expect(gated.length, 5);
+      expect(
+        browserApiToolSpecs()
+            .where((s) => s.visibility == BrowserToolVisibility.core)
+            .length,
+        34,
+      );
+    });
+
+    test('every spec: tier, visibility, alwaysPrompts, permissions', () {
       const reads = {
         'tabs_query',
         'windows_list',
@@ -189,8 +238,14 @@ void main() {
         'cookies_get',
         'nav_wait',
         'app_screenshot',
+        'top_sites', // second tier
       };
-      const execs = {'inject_js', 'cdp_eval', 'page_screenshot'};
+      const execs = {
+        'inject_js',
+        'cdp_eval',
+        'page_screenshot',
+        'page_capture',
+      };
       for (final s in browserApiToolSpecs()) {
         expect(
           s.tier,
@@ -201,7 +256,13 @@ void main() {
               : ApprovalTier.write,
           reason: '${s.name}: wrong tier',
         );
-        expect(s.visibility, BrowserToolVisibility.core, reason: s.name);
+        expect(
+          s.visibility,
+          secondTierToolNames().contains(s.name)
+              ? BrowserToolVisibility.secondTier
+              : BrowserToolVisibility.core,
+          reason: s.name,
+        );
         expect(s.alwaysPrompts, s.name == 'inject_js', reason: s.name);
         expect(s.permissions, isNotEmpty, reason: s.name);
       }
@@ -212,17 +273,113 @@ void main() {
       );
     });
 
-    test('registry contents match the spec table exactly (name + tier)', () {
+    test(
+      'FULL registry contents match the spec table exactly (name + tier)',
+      () async {
+        final full = await _fullReg(chrome);
+        expect(
+          full.names.toSet(),
+          browserApiToolSpecs().map((s) => s.name).toSet(),
+        );
+        expect(full.length, 39);
+        final specs = {for (final s in browserApiToolSpecs()) s.name: s};
+        for (final tool in full.agentTools) {
+          expect(tool.tier, specs[tool.name]!.tier, reason: tool.name);
+          expect(tool.name, isIn(_expectedNames));
+        }
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  group('second-tier Settings gate (issue #34 AC4d, #19 semantics)', () {
+    // Each test starts from a FRESH chrome (outer setUp) with the grants
+    // it needs — the floor is per-test behavior, not shared state.
+    test('enabled + granted → registered', () async {
+      await chrome.grantPermissions([
+        'search',
+        'topSites',
+        'readingList',
+        'pageCapture',
+        'tts',
+      ]);
+      final gated = await _reg(
+        chrome,
+        enabledSecondTier: secondTierToolNames(),
+      );
       expect(
-        reg.names.toSet(),
+        gated.names.toSet(),
         browserApiToolSpecs().map((s) => s.name).toSet(),
       );
-      expect(reg.length, 34);
-      final specs = {for (final s in browserApiToolSpecs()) s.name: s};
-      for (final tool in reg.agentTools) {
-        expect(tool.tier, specs[tool.name]!.tier, reason: tool.name);
-        expect(tool.name, isIn(_expectedNames));
-      }
+      expect(gated.length, 39);
+    });
+
+    test('enabled + NOT granted → hidden (capability floor)', () async {
+      // Fresh chrome: zero grants.
+      final gated = await _reg(
+        FakeChrome(clock: () => 1730000000000),
+        enabledSecondTier: secondTierToolNames(),
+      );
+      expect(gated.names, everyElement(isNot(isIn(secondTierToolNames()))));
+      expect(gated.length, 34);
+    });
+
+    test(
+      'disabled + granted → hidden (config cannot beat the floor)',
+      () async {
+        final gated = await _reg(chrome); // nothing enabled
+        expect(gated.names, everyElement(isNot(isIn(secondTierToolNames()))));
+        expect(gated.length, 34);
+      },
+    );
+
+    test('grant/revoke after registration surfaces/hides live', () async {
+      final reg = ToolRegistry();
+      final surface = await registerBrowserApiTools(
+        reg,
+        chrome,
+        enabledSecondTier: secondTierToolNames(),
+      );
+      // Not granted yet → hidden even though enabled.
+      expect(reg.names, everyElement(isNot(isIn(secondTierToolNames()))));
+
+      await chrome.grantPermissions(['search']);
+      await syncSecondTierTools(reg, surface, secondTierToolNames());
+      expect(reg.names, contains('browser_search'));
+      expect(reg.names, isNot(contains('top_sites')));
+
+      await chrome.revokePermissions(['search']);
+      await syncSecondTierTools(reg, surface, secondTierToolNames());
+      expect(reg.names, everyElement(isNot(isIn(secondTierToolNames()))));
+      expect(reg.length, 34); // core unaffected
+    });
+
+    test('sync is idempotent: double-apply does not duplicate', () async {
+      await chrome.grantPermissions(['tts']);
+      final reg = ToolRegistry();
+      final surface = await registerBrowserApiTools(
+        reg,
+        chrome,
+        enabledSecondTier: {'tts_speak'},
+      );
+      await syncSecondTierTools(reg, surface, {'tts_speak'});
+      expect(reg.length, 35);
+      await syncSecondTierTools(reg, surface, {'tts_speak'});
+      expect(reg.length, 35);
+    });
+
+    test('dynamically granting an optional permission surfaces its tool '
+        'through the host gate (#19 semantics)', () async {
+      final reg = ToolRegistry();
+      final surface = await registerBrowserApiTools(
+        reg,
+        chrome,
+        enabledSecondTier: {'top_sites'},
+      );
+      expect(reg.names, isNot(contains('top_sites')));
+      await chrome.grantPermissions(['topSites']);
+      await syncSecondTierTools(reg, surface, {'top_sites'});
+      expect(reg.names, contains('top_sites'));
     });
   });
 
@@ -230,7 +387,7 @@ void main() {
   group('schema validation sweep (UT-T1)', () {
     test('every tool: missing args → structured bad_args (or a mapped '
         'facade error when nothing is required), never a crash', () async {
-      final throwReg = _reg(_ThrowingChrome());
+      final throwReg = await _fullReg(_ThrowingChrome());
       for (final spec in browserApiToolSpecs()) {
         final schema = throwReg[spec.name].parameters;
         final required = (schema['required']! as List).cast<String>();
@@ -252,7 +409,7 @@ void main() {
 
     test('every tool: wrong-typed required args → error naming the '
         'argument', () async {
-      final throwReg = _reg(_ThrowingChrome());
+      final throwReg = await _fullReg(_ThrowingChrome());
       for (final spec in browserApiToolSpecs()) {
         final schema = throwReg[spec.name].parameters;
         final required = (schema['required']! as List).cast<String>();
@@ -287,7 +444,7 @@ void main() {
 
     test('every tool maps a raw ChromeApiException to a thrown coded tool '
         'error — no leak', () async {
-      final throwReg = _reg(_ThrowingChrome());
+      final throwReg = await _fullReg(_ThrowingChrome());
       for (final spec in browserApiToolSpecs()) {
         await expectLater(
           _run(throwReg, spec.name, _minArgs[spec.name]!),
