@@ -45,6 +45,15 @@ import 'security/quarantine.dart';
 /// surface constructor widens it when a caller needs more.
 const defaultResultBudgetBytes = 64 * 1024;
 
+/// The host-side ask the exfil gate routes flagged outbound actions
+/// through (cross_origin / data_exit / page_derived): resolves true when
+/// the user authorizes the call — typically the host's approval prompt
+/// (which, per the harness critical-pattern semantics, stays reachable
+/// even in yolo; unattended hosts answer true without asking). The host
+/// seeds the visited set on allow, so the ask is once per ORIGIN.
+typedef ExfilApprovalAsk =
+    Future<bool> Function(OutboundKind kind, String url, String explanation);
+
 /// Where a tool sits in the panel's permission UX: `core` tools ship with
 /// the default tool set, `secondTier` ones only surface in power mode.
 enum BrowserToolVisibility { core, secondTier }
@@ -410,6 +419,7 @@ final class BrowserApiToolSurface {
     this.resultBudget = defaultResultBudgetBytes,
     this.pageClassifier = urlHeuristicClassifier,
     this.visitedOrigins,
+    this.exfilApproval,
   });
 
   final ChromeApi _chrome;
@@ -426,6 +436,14 @@ final class BrowserApiToolSurface {
 
   /// Origins the user actually visited; null = exfil gate off.
   final Set<String>? visitedOrigins;
+
+  /// Host-provided ask for outbound actions the gate flags (cross_origin,
+  /// data_exit, …): resolves true when the user (or the approval mode)
+  /// authorizes the call — the tool then proceeds. Null keeps the old
+  /// hard-error behavior (the conservative backstop for bare surfaces).
+  /// The host seeds [visitedOrigins] on allow, so the ask is once per
+  /// origin, not once per call.
+  final ExfilApprovalAsk? exfilApproval;
 
   final InjectionValidator _injection = const InjectionValidator();
   final ExfilGate _exfilGate = const ExfilGate();
@@ -1554,8 +1572,12 @@ final class BrowserApiToolSurface {
   /// Exfil gate for tabs_open/downloads_start. Tool calls are
   /// user-authorized at this layer (source realUser); the approval
   /// tiering itself stays the host's approval gate — when the gate is
-  /// wired (non-null [visitedOrigins]) a requiresApproval verdict
-  /// surfaces as 'approval_required' carrying the gate's explanation.
+  /// wired (non-null [visitedOrigins]) a requiresApproval verdict is
+  /// ROUTED THROUGH THE HOST'S ASK ([exfilApproval], wired to the
+  /// approval prompt): allow proceeds (and the host seeds the visited
+  /// set — once per origin), deny surfaces as 'approval_required'
+  /// carrying the gate's explanation. Without a wired ask the old
+  /// hard-error behavior stands.
   Future<void> _gateOutbound(OutboundKind kind, String url) async {
     final visited = visitedOrigins;
     if (visited == null) return;
@@ -1566,12 +1588,11 @@ final class BrowserApiToolSurface {
       source: ActionSource.realUser,
     );
     final decision = _exfilGate.evaluate(action, userVisitedOrigins: visited);
-    if (decision.requiresApproval) {
-      throw BrowserApiToolException(
-        'approval_required',
-        _exfilGate.explain(action, decision),
-      );
-    }
+    if (!decision.requiresApproval) return;
+    final explanation = _exfilGate.explain(action, decision);
+    final ask = exfilApproval;
+    if (ask != null && await ask(kind, url, explanation)) return;
+    throw BrowserApiToolException('approval_required', explanation);
   }
 
   /// Page-derived READ results (history rows, bookmark titles):
@@ -1752,8 +1773,13 @@ Future<BrowserApiToolSurface> registerBrowserApiTools(
   ChromeApi chrome, {
   Set<String>? visitedOrigins,
   Set<String> enabledSecondTier = const {},
+  ExfilApprovalAsk? exfilApproval,
 }) async {
-  final surface = BrowserApiToolSurface(chrome, visitedOrigins: visitedOrigins);
+  final surface = BrowserApiToolSurface(
+    chrome,
+    visitedOrigins: visitedOrigins,
+    exfilApproval: exfilApproval,
+  );
   final tools = surface.tools();
   registry.registerAll([
     for (final tool in tools)

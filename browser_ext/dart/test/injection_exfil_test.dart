@@ -39,12 +39,14 @@ PageClassification _page({
   PageClassifier? classifier,
   Set<String>? visited,
   Object? Function(String method, Map<String, Object?> params)? cdpResponder,
+  Future<bool> Function(OutboundKind, String, String)? exfilApproval,
 }) {
   final chrome = FakeChrome(cdpResponder: cdpResponder);
   final tools = BrowserApiToolSurface(
     chrome,
     pageClassifier: classifier ?? urlHeuristicClassifier,
     visitedOrigins: visited,
+    exfilApproval: exfilApproval,
   ).tools();
   return (ToolRegistry()..registerAll(tools), chrome);
 }
@@ -248,6 +250,44 @@ void main() {
         expect(out, contains('started download'));
       },
     );
+
+    test('cross-origin ASKS the host when wired — allow proceeds', () async {
+      // Regression: the gate used to throw approval_required WITHOUT ever
+      // consulting a prompt surface, so even yolo could not open a new
+      // origin — the model just looped on the tool error.
+      final asks = <(OutboundKind, String, String)>[];
+      final (reg, chrome) = _reg(
+        visited: {'https://a.example'},
+        exfilApproval: (kind, url, explanation) async {
+          asks.add((kind, url, explanation));
+          return true;
+        },
+      );
+      final out = await _run(reg, 'tabs_open', {'url': 'https://b.example/x'});
+      expect(out, contains('opened tab'));
+      expect(asks, hasLength(1));
+      final (kind, url, explanation) = asks.single;
+      expect(kind, OutboundKind.windowOpen);
+      expect(url, 'https://b.example/x');
+      expect(explanation, contains('cross_origin'));
+      expect(explanation, contains('b.example'));
+    });
+
+    test('cross-origin ask DENIED → the tool error stays', () async {
+      final (reg, chrome) = _reg(
+        visited: {'https://a.example'},
+        exfilApproval: (kind, url, explanation) async => false,
+      );
+      await expectLater(
+        _run(reg, 'tabs_open', {'url': 'https://b.example/x'}),
+        throwsA(
+          _errMsg(
+            'approval_required',
+            allOf(contains('b.example'), contains('cross_origin')),
+          ),
+        ),
+      );
+    });
 
     test('default surface keeps the gate off (legacy behavior)', () async {
       final (reg, chrome) = _reg();

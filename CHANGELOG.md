@@ -3,6 +3,16 @@
 ## 0.1.321
 
 
+- fix(browser_ext): cross-origin `tabs_open`/`downloads_start` no longer
+  hard-fail without asking — the exfil gate threw `approval_required`
+  straight at the model, so even yolo could not open a never-visited
+  site (the agent looped on the tool error, "reads the page but can't
+  open apple.com"). Flagged outbound actions now route through the
+  host's approval prompt: one dialog per new ORIGIN (an allow seeds the
+  visited set), deny keeps the tool error, and unattended hosts allow
+  without asking so autonomous runs never stall on the 120s backstop.
+  The ask is an injectable `ExfilApprovalAsk` on the tool surface;
+  unwired surfaces keep the conservative hard error.
 - fix(browser_ext): the approval loop could not be answered or rescued —
   the extension panel's primary chat surface (the narrow-layout session
   sheet) never installed an approval handler, so every gated tool call

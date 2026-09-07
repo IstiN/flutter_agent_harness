@@ -29,6 +29,7 @@ import 'active_tab_context.dart';
 import 'approval_flow.dart';
 import 'host_event_map.dart' show hostEventOf, messageToJs, v1OpToolResult;
 import 'browser_api_tools.dart';
+import 'security/exfil_gate.dart' show OutboundKind, originOf;
 import 'chrome_api.dart';
 import 'chrome_storage_env.dart';
 import 'dap/dap_frames.dart';
@@ -183,6 +184,7 @@ final class AgentHost implements UiHostBackend {
         chrome,
         visitedOrigins: visitedOrigins,
         enabledSecondTier: _enabledTools,
+        exfilApproval: _askOutbound,
       );
     }
     _visitedOrigins = visitedOrigins;
@@ -605,6 +607,36 @@ final class AgentHost implements UiHostBackend {
       reason: request.reason,
     );
     return allow ? ApprovalDecision.approveOnce : ApprovalDecision.deny;
+  }
+
+  /// The exfil gate's ask (cross_origin / data_exit outbound actions),
+  /// routed through the SAME prompt surface as ordinary approvals — the
+  /// gate used to hard-error without asking anybody, so even yolo could
+  /// not open a never-visited origin and the model looped on the tool
+  /// error. Mirrors the core gate's critical-pattern semantics: the ask
+  /// survives yolo (one dialog per new ORIGIN — an allow seeds the
+  /// visited set), and unattended — the no-user-present mode — allows
+  /// without asking so an autonomous run never stalls on the 120s
+  /// backstop.
+  Future<bool> _askOutbound(
+    OutboundKind kind,
+    String url,
+    String explanation,
+  ) async {
+    if (_approvals.mode == ApprovalMode.unattended) return true;
+    final allow = await _promptApproval(
+      ApprovalRequest(
+        toolName: kind.name,
+        tier: ApprovalTier.exec,
+        arguments: {'url': url},
+        reason: explanation,
+      ),
+    ).then((d) => d != ApprovalDecision.deny);
+    if (allow) {
+      final origin = originOf(url);
+      if (origin != null) _visitedOrigins?.add(origin);
+    }
+    return allow;
   }
 
   // -- Browser tools (over __faOps) ---------------------------------------------
