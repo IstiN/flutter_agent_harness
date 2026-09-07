@@ -216,6 +216,26 @@ void main() {
       },
     );
 
+    test('/terminal-setup prints per-terminal Shift+Enter guidance', () async {
+      // The command rides the info-command dispatch table; this drives the
+      // REAL binary to prove the whole path (dispatch → renderer → output).
+      final tempHome = _tempHome();
+      final harness = await FaCliHarness.spawn(
+        extraEnv: {'HOME': tempHome.path},
+      );
+      addTearDown(() async {
+        await harness.close();
+        tempHome.deleteSync(recursive: true);
+      });
+      await harness.waitForBoot();
+
+      await harness.runSlashCommand('/terminal-setup');
+      await harness.waitForText(
+        'Ctrl+O inserts a newline',
+        timeout: const Duration(seconds: 20),
+      );
+    });
+
     test('prompt zone frame is aligned (regression)', () async {
       final tempHome = _tempHome();
       final harness = await FaCliHarness.spawn(

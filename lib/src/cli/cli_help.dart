@@ -515,6 +515,10 @@ TERMINAL
   ↑ pops the last queued message back for editing. With an empty input
   ↑/↓ browses the submitted-message history (shell-style); PgUp/PgDn
   scrolls the transcript.
+  Multi-line input: Shift+Enter inserts a newline on terminals that send
+  it distinctly (kitty protocol, xterm modifyOtherKeys, macOS; Warp sends
+  ESC+CR). In any terminal Ctrl+O (often Alt+Enter) inserts a newline;
+  /terminal-setup prints the setup for yours.
 
 CONFIGURATION FILES
   ~/.fah/config.yaml   user preferences: provider, model, baseUrl, mode,

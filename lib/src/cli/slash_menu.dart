@@ -136,6 +136,8 @@ const builtinSlashCommands = <String, String>{
   '/settings': '— settings hub: provider, model, approval, keys, MCP',
   '/allow': '[tool] — always-allow a tool (or list them)',
   '/mcp': '[list|reload] — show MCP servers or reload config',
+  '/terminal-setup':
+      'Shift+Enter newline support per terminal (Ctrl+O always works)',
   '/tools':
       '[enable|disable <id> [global|project|session]|reload] — tool '
       'availability',
