@@ -5,6 +5,11 @@
 const KEEPALIVE_ALARM = 'fa-bridge-keepalive';
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
+// In-worker reconnect budget: after this many attempts the setTimeout chain
+// stops (each retry's socket events reset the MV3 30s idle timer, so the SW
+// could never idle out and the alarm-driven revival path would be dead
+// code). The 1-min KEEPALIVE_ALARM owns retries from there.
+const RETRY_TIMER_ATTEMPTS = 6;
 const QUEUE_CAP = 100;
 const DEDUPE_CAP = 512;
 const PING_MS = 20000;
@@ -34,6 +39,7 @@ const state = {
   statusSubs: [],
   mailSubs: [],
   reqHandler: null,
+  llmWaiters: new Map(), // llmReq frame id -> {onDelta, resolve, reject}
 };
 
 function memSession() {
@@ -101,6 +107,7 @@ function startPing() {
 
 /** Terminal failure: stop retrying, surface reason (e.g. bad_token). */
 function permanent(reason) {
+  rejectLlmWaiters();
   state.phase = 'disconnected';
   state.lastError = reason;
   stopPing();
@@ -121,10 +128,15 @@ function scheduleRetry() {
   const delay = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** state.attempt);
   state.attempt++;
   state.nextAttemptAt = Date.now() + delay;
+  if (state.attempt > RETRY_TIMER_ATTEMPTS) {
+    state.retryTimer = null; // alarm-only retries: let the SW idle out
+    return;
+  }
   state.retryTimer = setTimeout(openSocket, delay);
 }
 
 function onSocketClose() {
+  rejectLlmWaiters();
   state.ws = null;
   stopPing();
   if (!state.cfg || state.phase === 'disconnected') return; // deliberate or terminal
@@ -152,7 +164,7 @@ function openSocket() {
       name: 'fa — browser agent',
       proto: 1,
       token: state.cfg.token,
-      caps: ['tabs', 'dom', 'cdp'],
+      caps: ['tabs', 'dom', 'cdp', 'providers-sync'],
     });
   };
   ws.onmessage = (ev) => handleFrame(ev.data);
@@ -192,6 +204,42 @@ function seenAdd(msgId) {
   return true;
 }
 
+/** Reject every pending llm relay waiter — the link is gone. */
+function rejectLlmWaiters(reason = 'desktop link is down') {
+  for (const waiter of state.llmWaiters.values()) waiter.reject(new Error(reason));
+  state.llmWaiters.clear();
+}
+
+/** Providers sync push (issue #34 item 3): store the registry + ack copy mode. */
+async function onProvidersSync(f) {
+  const sync = f.sync ?? {};
+  // UT-S1: proxy mode NEVER carries keys into storage — the field is
+  // dropped here before anything else runs. Copy mode rides its `keys`
+  // field once; the server wipes its staged copy when we ack below.
+  const stored = {
+    version: sync.version ?? 1,
+    mode: sync.mode,
+    host: sync.host,
+    providers: Array.isArray(sync.providers) ? sync.providers : [],
+  };
+  if (sync.mode === 'copy' && sync.keys && typeof sync.keys === 'object') {
+    stored.keys = sync.keys;
+  }
+  // The agent owns merge semantics: provenance-`local` entries (panel
+  // edits, .fahx imports) survive re-pairs (UT-S2). Scaffold mode (no
+  // agent.js) has no local entries to protect — sync lands as-is.
+  const prev = (await chrome.storage.local.get('faProviders')).faProviders;
+  let doc = stored;
+  try {
+    const merged = await globalThis.faAgent?.providersMerge?.(prev, stored);
+    if (merged && typeof merged === 'object') doc = merged;
+  } catch {
+    // A merge failure must not block the sync or the ack.
+  }
+  await chrome.storage.local.set({ faProviders: doc });
+  if (sync.mode === 'copy') send({ v: 1, id: f.id, op: 'acked' }); // echo wipes server staging
+}
+
 async function handleFrame(raw) {
   let f;
   try { f = JSON.parse(raw); } catch { return; }
@@ -200,6 +248,20 @@ async function handleFrame(raw) {
     case 'welcome': return onWelcome(f);
     case 'pong': return void (state.lastPong = Date.now());
     case 'error': return onErrorFrame(f);
+    case 'providersSync': return onProvidersSync(f);
+    case 'llmRes': {
+      const waiter = state.llmWaiters.get(f.id);
+      if (!waiter) return;
+      if (f.error !== undefined) {
+        state.llmWaiters.delete(f.id);
+        return waiter.reject(new Error(f.error || 'relay failed'));
+      }
+      if (f.done) {
+        state.llmWaiters.delete(f.id);
+        return waiter.resolve();
+      }
+      return waiter.onDelta?.(f.delta ?? '');
+    }
     case 'acked': {
       const ackId = f.ackId ?? f.id;
       const waiter = state.acks.get(ackId);
@@ -240,6 +302,7 @@ const bridge = {
       ws.onclose = ws.onmessage = ws.onerror = null;
       ws.close();
     }
+    rejectLlmWaiters(); // a re-pair never leaves stale relay waiters hanging
     clearTimeout(state.retryTimer);
     state.retryTimer = null;
     state.cfg = { url, token };
@@ -286,6 +349,24 @@ const bridge = {
       send({ v: 1, id: item.id, op: 'mail', to, text, kind });
     }
     return new Promise((resolve, reject) => state.acks.set(item.id, { resolve, reject }));
+  },
+
+  /**
+   * Keyless LLM relay (issue #34 item 3): sends one llmReq frame and
+   * correlates the streamed llmRes frames. `onDelta` fires per text
+   * chunk; the promise resolves on `done` and rejects on `error` or a
+   * dropped link ("desktop link is down"). All frame glue lives here —
+   * callers stream deltas and await.
+   */
+  sendLlm(req, onDelta) {
+    if (state.phase !== 'connected') {
+      return Promise.reject(new Error('desktop link is down'));
+    }
+    const id = frameId();
+    return new Promise((resolve, reject) => {
+      state.llmWaiters.set(id, { onDelta, resolve, reject });
+      send({ v: 1, id, op: 'llmReq', req });
+    });
   },
 
   /** Subscribe to inbound fabric mail. */

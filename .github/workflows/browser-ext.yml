@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'browser_ext/**'
+      - 'browser_ext/e2e/**'
       - 'lib/src/browser/**'
       - 'bin/serve_bridge.dart'
       - 'test/browser_ext/**'
@@ -18,6 +19,7 @@ on:
     branches: [main]
     paths:
       - 'browser_ext/**'
+      - 'browser_ext/e2e/**'
       - 'lib/src/browser/**'
       - 'bin/serve_bridge.dart'
       - 'test/browser_ext/**'
@@ -76,8 +78,70 @@ jobs:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: dart test test/browser_ext/ -j 1 --tags integration
 
+      # Playwright drives the SAME unpacked extension in the SAME Chrome for
+      # Testing build (issue #34 item 2). npm ci needs the committed
+      # package-lock.json; the agent.js build above satisfies global-setup.
+      # FA_E2E_CI opts the SW-residency spec in (real idle shutdown + alarm
+      # revival — too wall-clock-flaky for dev machines).
+      - name: Playwright e2e (extension, real Chrome)
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          FA_E2E_CI: '1'
+        run: |
+          cd browser_ext/e2e
+          npm ci
+          npx playwright test --reporter=line
+
       - name: Upload extension zip (AC11)
         uses: actions/upload-artifact@v4
         with:
           name: fa-extension
           path: build/fa-extension.zip
+
+  # Manual variant only: rebuilds the extension WITH the bundled fa web app
+  # and re-runs the playwright suite so panel-app.spec.ts exercises the app
+  # branch (FA_E2E_WITH_APP=1). Push/PR pipelines stay lean by default.
+  playwright-e2e-app:
+    name: Playwright e2e (panel app build)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install Chrome for Testing
+        id: chrome
+        run: |
+          npx -y @puppeteer/browsers install chrome@stable --path "$RUNNER_TEMP/cft"
+          echo "chrome-path=$(find "$RUNNER_TEMP/cft" -name chrome -type f | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: dart pub get (root)
+        run: dart pub get
+
+      - name: Build extension with the fa web app
+        run: |
+          (cd flutter_app && flutter pub get)
+          bash scripts/build_browser_ext.sh --with-app
+
+      - name: Playwright e2e (app branch)
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          FA_E2E_CI: '1'
+          FA_E2E_WITH_APP: '1'
+        run: |
+          cd browser_ext/e2e
+          npm ci
+          npx playwright test --reporter=line

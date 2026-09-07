@@ -8,6 +8,9 @@
 //   * a steering mail shaped "[from <sender>] dm <text>" → one `dap_dm`
 //     tool call replying to the sender (deterministic E2E DM seam, AC6),
 //     then DoneEvent(toolUse).
+//   * "inject_js <tabId> <world> <code…>" → one `inject_js` tool call with
+//     the tab/world/code verbatim (bad worlds fail cleanly in the tool, E2).
+//   * "sessions_restore <sessionId>" → one `sessions_restore` tool call.
 //   * any other turn (including the turn after a tool result) → report the
 //     executed tool, DoneEvent(stop).
 // `selfTest()` asserts the tool result lands in the transcript.
@@ -26,6 +29,9 @@ import 'package:flutter_agent_harness/src/types.dart';
 //   * a steering mail shaped "[from <sender>] dm <text>" → one `dap_dm`
 //     tool call replying to the sender (deterministic E2E DM seam, AC6),
 //     then DoneEvent(toolUse).
+//   * "inject_js <tabId> <world> <code…>" → one `inject_js` tool call with
+//     the tab/world/code verbatim (bad worlds fail cleanly in the tool, E2).
+//   * "sessions_restore <sessionId>" → one `sessions_restore` tool call.
 //   * any other turn (including the turn after a tool result) → report the
 //     executed tool, DoneEvent(stop).
 // `selfTest()` asserts the tool result lands in the transcript.
@@ -57,12 +63,42 @@ AssistantMessageEventStream fakeStream(
       : '';
 
   // Steering DM: "[from <sender>] dm <text>" → dap_dm back to the sender.
-  final dm = RegExp(
-    r'^\[from (\S+)\] dm (.*)',
-    dotAll: true,
-  ).firstMatch(prompt);
+  // NOT ^-anchored: the host prepends a "[context] active tab: …" line to
+  // turns (issue #34), and an anchored match then never fires — the DM was
+  // echoed instead of answered (issue #41).
+  final dm = RegExp(r'\[from (\S+)\] dm (.*)', dotAll: true).firstMatch(prompt);
   if (dm != null) {
     _emitDm(stream, model, to: dm.group(1)!, text: 'fake: dm ${dm.group(2)!}');
+    return stream;
+  }
+
+  // Page-code injection: "inject_js <tabId> <world> <code…>" — code is the
+  // rest of the match, verbatim. A bad world is emitted as-is: the tool's
+  // clean `bad_world` result (E2) is the observable under test. NOT
+  // ^-anchored: the host prepends a "[context] active tab: …" line to
+  // turns (issue #34) — an anchored match never fires (same trap the dm
+  // directive hit in issue #41).
+  final inject = RegExp(
+    r'inject_js (\d+) (\S+) (.+)',
+    dotAll: true,
+  ).firstMatch(prompt);
+  if (inject != null) {
+    _emitInjectJs(
+      stream,
+      model,
+      tabId: int.parse(inject.group(1)!),
+      world: inject.group(2)!,
+      code: inject.group(3)!,
+    );
+    return stream;
+  }
+
+  // Session restore: "sessions_restore <sessionId>" (the tool requires the
+  // id from sessions_recent — there is no default restore path). Unanchored
+  // for the same [context]-prefix reason as inject_js.
+  final restore = RegExp(r'sessions_restore (\S+)').firstMatch(prompt);
+  if (restore != null) {
+    _emitSessionsRestore(stream, model, sessionId: restore.group(1)!);
     return stream;
   }
 
@@ -97,6 +133,42 @@ void _emitNavigate(
       id: 'fake-call-1',
       name: 'browser_navigate',
       arguments: {'url': url},
+    ),
+  );
+}
+
+void _emitInjectJs(
+  AssistantMessageEventStream stream,
+  Model model, {
+  required int tabId,
+  required String world,
+  required String code,
+}) {
+  _emitToolCall(
+    stream,
+    model,
+    'fake: inject_js $world → tab $tabId',
+    ToolCall(
+      id: 'fake-call-inject',
+      name: 'inject_js',
+      arguments: {'tabId': tabId, 'world': world, 'code': code},
+    ),
+  );
+}
+
+void _emitSessionsRestore(
+  AssistantMessageEventStream stream,
+  Model model, {
+  required String sessionId,
+}) {
+  _emitToolCall(
+    stream,
+    model,
+    'fake: sessions_restore $sessionId',
+    ToolCall(
+      id: 'fake-call-restore',
+      name: 'sessions_restore',
+      arguments: {'sessionId': sessionId},
     ),
   );
 }

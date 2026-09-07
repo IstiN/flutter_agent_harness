@@ -56,6 +56,10 @@ void main() {
       'trajectory <view|tail|cost|inspect>',
       '[--json] [--at N]',
       '/trajectory',
+      // Headless config verbs (fa config).
+      'fa config export-providers',
+      '--passphrase-stdin',
+      '.fahx',
       // JS extensions (fa ext + REPL /ext + bootstrap).
       'fa ext',
       'fa ext <list|install|remove|update|audit|',

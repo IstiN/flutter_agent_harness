@@ -12,21 +12,20 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import 'package:flutter_agent_harness/src/agent/tool_registry.dart';
+
 import '../src/browser_api_tools.dart';
+import '../src/fake_chrome.dart';
 import '../src/permission_matrix.dart';
 
-/// The real extension manifest's permissions, located relative to the
-/// package root (`dart test` cwd) or the repo root.
-Set<String> _realManifestPermissions() {
+Map<String, dynamic> _manifestJsonMap() {
   for (final path in const [
-    '../manifest.json',
-    '../../browser_ext/manifest.json',
+    'browser_ext/manifest.json', // cwd = repo root (dart test <path>)
+    '../manifest.json', // cwd = browser_ext/dart (package root)
   ]) {
     final file = File(path);
     if (file.existsSync()) {
-      final decoded =
-          jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-      return {...(decoded['permissions'] as List<dynamic>).cast<String>()};
+      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
     }
   }
   fail(
@@ -34,6 +33,12 @@ Set<String> _realManifestPermissions() {
     '${Directory.current.path}',
   );
 }
+
+/// The real extension manifest's permissions, located relative to the
+/// package root (`dart test` cwd) or the repo root.
+Set<String> _realManifestPermissions() => {
+  ...(_manifestJsonMap()['permissions'] as List<dynamic>).cast<String>(),
+};
 
 /// Names a compliant registry would key: every table row the agent may
 /// actually run. Excluded rows are documentation, never registrations.
@@ -118,6 +123,53 @@ void main() {
       test('registry names are unique', () {
         expect(specs.map((s) => s.name).toSet(), hasLength(specs.length));
       });
+
+      test(
+        'AC4d: one matrix across all three tiers (registry + manifest)',
+        () async {
+          final chrome = FakeChrome(clock: () => 1730000000000);
+          final reg = ToolRegistry();
+          await registerBrowserApiTools(reg, chrome); // default gate: core only
+          for (final spec in specs) {
+            switch (spec.visibility) {
+              case BrowserToolVisibility.core:
+                expect(
+                  reg.names,
+                  contains(spec.name),
+                  reason: 'core "${spec.name}" must register and be visible',
+                );
+              case BrowserToolVisibility.secondTier:
+                expect(
+                  reg.names,
+                  isNot(contains(spec.name)),
+                  reason: 'second-tier "${spec.name}" is hidden by default',
+                );
+            }
+          }
+          // Excluded rows: absent from the registry (nothing to register)
+          final optional = {
+            ...((_manifestJsonMap()['optional_permissions']
+                        as List<dynamic>?) ??
+                    const [])
+                .cast<String>(),
+          };
+          final excluded = {
+            for (final entry in manifestEntries())
+              if (entry.tier == MatrixTier.excluded) ...entry.permissions,
+          };
+          expect(excluded, isNotEmpty, reason: 'the table has excluded rows');
+          expect(
+            _registryFootprint().intersection(excluded),
+            isEmpty,
+            reason: 'excluded permissions must never back a registered tool',
+          );
+          expect(
+            optional.intersection(excluded),
+            isEmpty,
+            reason: 'excluded permissions must stay out of the manifest',
+          );
+        },
+      );
     });
 
     test('table covers every real manifest permission in use today', () {

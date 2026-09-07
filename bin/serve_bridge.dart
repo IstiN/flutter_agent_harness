@@ -78,10 +78,16 @@ final class BridgeServer {
     this.pollInterval = bridgePollInterval,
     this.heartbeatInterval = bridgeHeartbeatInterval,
     this.dispatchTimeout = bridgeDispatchTimeout,
+    this.providers = const [],
+    this.copyKeys = false,
+    this.keys,
+    this.llmRelay,
+    String? hostname,
   }) : _messaging = messaging,
        _root = root,
        _token = token,
        _port = port,
+       _hostname = hostname ?? Platform.localHostname,
        _address = address ?? InternetAddress.loopbackIPv4 {
     if (!_address.isLoopback) {
       throw ArgumentError.value(
@@ -104,6 +110,73 @@ final class BridgeServer {
 
   /// Server label sent in `welcome` (`fa/<version>`).
   final String version;
+
+  /// Saved custom providers pushed (metadata) on every pairing that asks
+  /// for it (issue #34 item 3). Empty = no providers-sync capability.
+  final List<CustomProviderEntry> providers;
+
+  /// Copy-on-pair mode: keys transfer once in the sync push and the
+  /// staged bridge copy is wiped on the client's ack. Opt-in via
+  /// `/browser connect --copy-keys`; default is keyless proxy.
+  final bool copyKeys;
+
+  /// Key lookups for the relay and the copy-mode staging. Null (tests,
+  /// web hosts): every key lookup misses.
+  final SecureKeyCache? keys;
+
+  /// The relay transport (`llmReq` streaming). Null: llmReq answers with
+  /// a clean llmRes error.
+  final LlmRelayStream? llmRelay;
+
+  final String _hostname;
+
+  /// Provenance host stamped on synced entries (`synced-from-cli@<host>`).
+  String get hostname => _hostname;
+
+  /// The welcome capabilities: mail + browser, plus `providers-sync`
+  /// when there are saved providers to push (additive — old clients
+  /// ignore the extra entry).
+  List<String> get capabilities => [
+    'mail',
+    'browser',
+    if (providers.isNotEmpty) providersSyncCapability,
+  ];
+
+  /// The `llmReq` handler: frame glue over [llmRelay] with key
+  /// resolution against [providers] + [keys]. Null when no transport is
+  /// wired — llmReq then answers with a clean llmRes error.
+  BridgeLlmRelay? get llmRelayHandler => llmRelay == null
+      ? null
+      : BridgeLlmRelay(relay: llmRelay!, resolveKey: _relayResolveKey);
+
+  /// Resolves the key for a relay request: the matching saved entry's
+  /// slot (env first, then the secure store — the CLI's own lookup
+  /// order). An unknown provider falls back to the host-scoped slot.
+  String? _relayResolveKey(String baseUrl, String? providerName) {
+    final entry = providerName != null
+        ? providers.where((e) => e.name == providerName).firstOrNull
+        : providers.where((e) => e.baseUrl == baseUrl).firstOrNull;
+    if (entry != null) return resolveProviderKey(entry);
+    return _readStoredKey(CustomProviderRegistry.keyNameFor(baseUrl));
+  }
+
+  /// Resolves one saved entry's key: its explicit [CustomProviderEntry
+  /// .keyName] when set, else the host(+entry)-scoped slot name.
+  String? resolveProviderKey(CustomProviderEntry entry) {
+    return _readStoredKey(
+      entry.keyName ??
+          CustomProviderRegistry.keyNameFor(
+            entry.baseUrl,
+            providerName: entry.name,
+          ),
+    );
+  }
+
+  String? _readStoredKey(String keyName) {
+    final env = Platform.environment[keyName];
+    if (env != null && env.isNotEmpty) return env;
+    return keys?.read(keyName);
+  }
 
   /// Called with every connection right after the WebSocket upgrade.
   final void Function(BridgeConnection)? onClient;
@@ -288,6 +361,17 @@ final class BridgeConnection {
   var _paired = false;
   var _disposed = false;
 
+  /// Envelope id of the pushed providersSync frame (ack correlation).
+  String? _syncFrameId;
+
+  /// Copy-on-pair staging: the keys sent in the sync push, held ONLY
+  /// until the client acks. Null everywhere else.
+  Map<String, String>? _stagedKeys;
+
+  /// Test/observability seam: the staged copy-on-pair keys (non-null
+  /// between the sync push and the client's ack, then wiped).
+  Map<String, String>? get stagedCopyKeys => _stagedKeys;
+
   /// Starts reading frames. Called once by the server after the upgrade.
   void listen() {
     _subscription = _socket.listen(
@@ -327,6 +411,10 @@ final class BridgeConnection {
         await _reply(frame, BridgeOps.pong);
       case BridgeOps.browserRes:
         _onBrowserRes(frame);
+      case BridgeOps.acked:
+        _onSyncAck(frame);
+      case BridgeOps.llmReq:
+        await _onLlmReq(frame);
       default:
         await _sendError(
           BridgeErrorCode.badOp,
@@ -377,9 +465,18 @@ final class BridgeConnection {
       fields: {
         'mailbox': mailboxId,
         'server': 'fa/${_server.version}',
-        'capabilities': ['mail', 'browser'],
+        'capabilities': _server.capabilities,
       },
     );
+    // Providers sync (issue #34 item 3): pushed right after welcome, but
+    // ONLY to hellos advertising the capability — an older extension
+    // never sees the frame, so the additive op degrades to silence
+    // instead of badOp noise.
+    final caps = frame.fields['caps'];
+    if (caps is List && caps.contains(providersSyncCapability)) {
+      await _pushProvidersSync();
+    }
+
     // The offline queue drains immediately on welcome, then the poll keeps
     // the extension current (1s cadence) and the heartbeat keeps the
     // mailbox live in directory listings (5s cadence).
@@ -392,6 +489,64 @@ final class BridgeConnection {
       _heartbeatInterval,
       (_) => unawaited(_server.messaging.touch(mailboxId!)),
     );
+  }
+
+  /// Builds and pushes the providers-sync frame. Proxy mode (default)
+  /// sends metadata only; copy mode adds the resolved keys in the
+  /// dedicated `keys` field and stages them here until the client acks.
+  Future<void> _pushProvidersSync() async {
+    if (_server.providers.isEmpty) return;
+    final copyKeys = <String, String>{};
+    if (_server.copyKeys) {
+      for (final entry in _server.providers) {
+        final key = _server.resolveProviderKey(entry);
+        if (key != null && key.isNotEmpty) copyKeys[entry.name] = key;
+      }
+    }
+    final payload = buildProvidersSync(
+      _server.providers,
+      mode: _server.copyKeys ? ProvidersSyncMode.copy : ProvidersSyncMode.proxy,
+      hostname: _server.hostname,
+      keys: copyKeys,
+    );
+    final id = nextFrameId();
+    _syncFrameId = id;
+    await _send(
+      BridgeFrame(
+        id: id,
+        op: BridgeOps.providersSync,
+        fields: {'sync': payload.toJson()},
+      ),
+    );
+    // Copy-on-pair staging: held ONLY until the ack wipes it (or the
+    // connection dies — close() clears it too).
+    if (copyKeys.isNotEmpty) _stagedKeys = copyKeys;
+  }
+
+  /// The client acked the sync push: wipe the staged key copy from
+  /// memory (copy-on-pair contract — the bridge never keeps a copy).
+  void _onSyncAck(BridgeFrame frame) {
+    if (frame.id == _syncFrameId) {
+      _stagedKeys = null;
+      _syncFrameId = null;
+    }
+  }
+
+  /// Routes an `llmReq` through the server's relay (key injected
+  /// server-side; key bytes never ride a frame or a log line).
+  Future<void> _onLlmReq(BridgeFrame frame) async {
+    final relay = _server.llmRelayHandler;
+    if (relay == null) {
+      await _send(
+        BridgeFrame(
+          id: frame.id,
+          op: BridgeOps.llmRes,
+          fields: {'error': 'llm relay not available on this bridge'},
+        ),
+      );
+      return;
+    }
+    await relay.handle(frame, _send);
   }
 
   Future<void> _onMail(BridgeFrame frame) async {
@@ -538,6 +693,7 @@ final class BridgeConnection {
       }
     }
     _pending.clear();
+    _stagedKeys = null;
     _server._remove(this);
     try {
       await _socket.close(code);

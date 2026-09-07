@@ -100,6 +100,14 @@ QUICK COMMANDS
                                emits one JSON object per row. An unknown
                                session or out-of-range record exits 1
                                with a message on stderr.
+  config                       fa config export-providers [--out
+                               <file.fahx>] [--passphrase-stdin]: write
+                               the saved custom providers (plus their
+                               keys, resolved from the environment /
+                               secure store) to a passphrase-encrypted
+                               .fahx file — the fallback sync tier when
+                               browser pairing is unavailable; import
+                               lands with the extension half
 
   ext                          fa ext <list|install|remove|update|audit|
                                enable|disable> [--json]: manage JS

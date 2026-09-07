@@ -1,0 +1,13 @@
+{
+  "name": "fa-browser-ext-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.20.1",
+    "typescript": "5.9"
+  }
+}

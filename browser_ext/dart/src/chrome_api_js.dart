@@ -82,6 +82,32 @@ void _call(String path, [List<Object?> args = const []]) {
   _applyFn(fn, self, args.jsify() as JSArray);
 }
 
+@JS('globalThis')
+external JSObject get _globalRoot;
+
+/// Resolves `globalThis.faSw.cdp.<name>` when the SW's cdp.js module is
+/// loaded; null otherwise (hosts without the classic-SW glue).
+(JSObject, JSFunction)? _cdpSeam(String name) {
+  final faSw = _getProperty(_globalRoot, 'faSw'.toJS);
+  if (faSw == null || !faSw.isA<JSObject>()) return null;
+  final cdp = _getProperty(faSw as JSObject, 'cdp'.toJS);
+  if (cdp == null || !cdp.isA<JSObject>()) return null;
+  final fn = _getProperty(cdp as JSObject, name.toJS);
+  if (fn == null || !fn.isA<JSFunction>()) return null;
+  return (cdp, fn as JSFunction);
+}
+
+/// Calls a resolved seam function; awaits its promise, dartifies the value.
+Future<Object?> _callSeam(
+  (JSObject, JSFunction) seam,
+  List<Object?> args,
+) async {
+  final (self, fn) = seam;
+  final raw = _applyFn(fn, self, args.jsify() as JSArray);
+  if (raw == null || !raw.isA<JSPromise>()) return raw?.dartify();
+  return (await (raw as JSPromise<JSAny?>).toDart)?.dartify();
+}
+
 /// Maps a raw chrome failure onto the ops.js error vocabulary. Message
 /// shapes mirror sw/ops.js injectError; anything unknown stays
 /// 'chrome_error' with chrome's own text (never swallowed).
@@ -175,6 +201,13 @@ List<Map<String, Object?>> _maps(Object? raw) => [
     for (final entry in raw)
       if (entry is Map) Map<String, Object?>.from(entry),
 ];
+
+List<String> _strings(Object? raw) => raw is List
+    ? [
+        for (final v in raw)
+          if (v is String) v,
+      ]
+    : const [];
 
 int? _i(Object? v) => v is num ? v.toInt() : null;
 String _s(Object? v, [String fallback = '']) => v is String ? v : fallback;
@@ -623,14 +656,42 @@ final class _Scripting implements ScriptingApi {
         // funcSource is code, so it rides a function wrapper when args are
         // supplied (chrome.scripting func+args semantics).
         : '(function(){ $funcSource }).apply(null, ${jsonEncode(args)})';
+    // The SW's cdp.js seam owns debugger evaluation: Chrome omits
+    // contextId from createIsolatedWorld's response over the debugger
+    // channel, so the isolated world's id is captured from
+    // Runtime.executionContextCreated there. The direct debugger path
+    // below is the fallback for hosts without the seam.
+    final seam = _cdpSeam('executeInWorld');
+    if (seam != null) {
+      final outcome = _m(
+        await _callSeam(seam, [tabId, world ?? 'ISOLATED', expression]),
+      );
+      final ok = outcome['ok'];
+      if (ok is bool && !ok) {
+        throw ChromeApiException(
+          '${outcome['code'] ?? 'cdp'}',
+          '${outcome['message'] ?? 'executeInWorld failed'}',
+        );
+      }
+      return [ScriptResult(frameId: frameId, result: outcome['value'])];
+    }
     final borrowed = await _attach(tabId);
     try {
       Object? contextId;
       if ((world ?? 'ISOLATED') == 'ISOLATED') {
+        // createIsolatedWorld needs the REAL frame id (hex) — the numeric
+        // frameId 0 is not a valid CDP frame key.
+        final tree = await _invoke('debugger.sendCommand', [
+          {'tabId': tabId},
+          'Page.getFrameTree',
+          <String, Object?>{},
+        ]);
+        final frameTree = _m(_m(tree)['frameTree']);
+        final frame = _m(frameTree['frame']);
         final worldResponse = await _invoke('debugger.sendCommand', [
           {'tabId': tabId},
           'Page.createIsolatedWorld',
-          {'frameId': frameId, 'worldName': 'fa-isolated'},
+          {'frameId': frame['id'], 'worldName': 'fa-isolated'},
         ]);
         contextId = _m(worldResponse)['contextId'];
       }
@@ -1136,8 +1197,87 @@ final class _Identity implements IdentityApi {
   );
 }
 
+final class _Search implements SearchApi {
+  @override
+  Future<void> query({required String text, String? disposition}) =>
+      _invoke('search.query', [
+        {'text': text, 'disposition': ?disposition},
+      ]);
+}
+
+final class _TopSites implements TopSitesApi {
+  @override
+  Future<List<TopSite>> get() async => [
+    for (final m in _maps(await _invoke('topSites.get')))
+      TopSite(url: _s(m['url']), title: _s(m['title'])),
+  ];
+}
+
+final class _ReadingList implements ReadingListApi {
+  @override
+  Future<List<ReadingListEntry>> query({String? title, String? url}) async => [
+    for (final m in _maps(
+      await _invoke('readingList.query', [
+        {'title': ?title, 'url': ?url},
+      ]),
+    ))
+      ReadingListEntry(
+        url: _s(m['url']),
+        title: _s(m['title']),
+        hasBeenRead: _b(m['hasBeenRead']),
+      ),
+  ];
+
+  @override
+  Future<void> addEntry({
+    required String url,
+    required String title,
+    bool? hasBeenRead,
+  }) => _invoke('readingList.addEntry', [
+    {'url': url, 'title': title, 'hasBeenRead': ?hasBeenRead},
+  ]);
+
+  @override
+  Future<void> removeEntry({required String url}) =>
+      _invoke('readingList.removeEntry', [
+        {'url': url},
+      ]);
+}
+
+final class _PageCapture implements PageCaptureApi {
+  @override
+  Future<String> captureMhtml({required int tabId}) async => _s(
+    await _invoke('pageCapture.captureMHTML', [
+      {'tabId': tabId},
+    ]),
+  );
+}
+
+final class _Permissions implements PermissionsApi {
+  @override
+  Future<bool> contains(List<String> permissions) async => _b(
+    await _invoke('permissions.contains', [
+      {'permissions': permissions},
+    ]),
+  );
+
+  @override
+  Stream<List<String>> get onAdded =>
+      _eventStream('permissions.onAdded', 1, (perms, _, _) {
+        final dart = perms?.dartify();
+        return dart == null ? null : _strings(dart);
+      });
+
+  @override
+  Stream<List<String>> get onRemoved =>
+      _eventStream('permissions.onRemoved', 1, (perms, _, _) {
+        final dart = perms?.dartify();
+        return dart == null ? null : _strings(dart);
+      });
+}
+
 // ---------------------------------------------------------------------------
-// The facade — 23 sub-facades, one instance each, built lazily
+// The facade — 29 sub-facades, one instance each, built lazily
 // ---------------------------------------------------------------------------
 
 /// The production [ChromeApi]: binds the real chrome global through the
@@ -1200,4 +1340,14 @@ final class JsChromeApi implements ChromeApi {
   late final system = _System();
   @override
   late final identity = _Identity();
+  @override
+  late final search = _Search();
+  @override
+  late final topSites = _TopSites();
+  @override
+  late final readingList = _ReadingList();
+  @override
+  late final pageCapture = _PageCapture();
+  @override
+  late final permissions = _Permissions();
 }

@@ -81,6 +81,22 @@ abstract final class BridgeOps {
   /// Extension → server reply, correlated by the `id` field.
   static const browserRes = 'browserRes';
 
+  /// Server → extension push, right after `welcome`: the CLI's saved
+  /// custom-provider metadata (issue #34 item 3). Sent only to hellos
+  /// advertising the `providers-sync` capability — older extensions never
+  /// see the frame (additive versioning: no badOp noise, no crash).
+  static const providersSync = 'providersSync';
+
+  /// Extension → server LLM relay request (keyless-proxy mode). Correlated
+  /// like `browserReq`: the reply (`llmRes`) echoes the envelope `id`.
+  /// Older CLI servers answer with a `bad_op` error — a clean, handleable
+  /// degradation, never a crash.
+  static const llmReq = 'llmReq';
+
+  /// Server → extension relay reply: `{delta}` per streamed chunk, a final
+  /// `{done: true}`, or `{error}`. Echoes the `llmReq` envelope id.
+  static const llmRes = 'llmRes';
+
   /// Envelope-level rejection (bad token, unknown op, malformed frame).
   static const error = 'error';
 }
@@ -96,6 +112,9 @@ const Set<String> bridgeKnownOps = {
   BridgeOps.pong,
   BridgeOps.browserReq,
   BridgeOps.browserRes,
+  BridgeOps.providersSync,
+  BridgeOps.llmReq,
+  BridgeOps.llmRes,
   BridgeOps.error,
 };
 

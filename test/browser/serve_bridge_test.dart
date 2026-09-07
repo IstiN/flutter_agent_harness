@@ -41,6 +41,10 @@ void main() {
     Duration heartbeatInterval = const Duration(milliseconds: 60),
     Duration dispatchTimeout = const Duration(milliseconds: 800),
     void Function(BridgeConnection)? onClient,
+    List<CustomProviderEntry> providers = const [],
+    bool copyKeys = false,
+    SecureKeyCache? keys,
+    LlmRelayStream? llmRelay,
   }) async {
     final started = BridgeServer(
       messaging: repo,
@@ -52,6 +56,10 @@ void main() {
       heartbeatInterval: heartbeatInterval,
       dispatchTimeout: dispatchTimeout,
       onClient: onClient,
+      providers: providers,
+      copyKeys: copyKeys,
+      keys: keys,
+      llmRelay: llmRelay,
     );
     await started.start();
     return started;
@@ -494,6 +502,196 @@ void main() {
     });
   });
 
+  group('providers sync / llm relay (issue #34 item 3)', () {
+    final entry = CustomProviderEntry(
+      name: 'zai',
+      apiType: 'openai',
+      baseUrl: 'https://api.z.ai/api/paas/v4',
+      modelId: 'glm-4.6',
+      keyName: 'FA_KEY_TEST_ZAI',
+    );
+    const secret = 'sk-super-secret-key-bytes';
+
+    /// A key cache over an in-memory fake store, [names] preloaded.
+    Future<SecureKeyCache> keyCache(Map<String, String> names) async {
+      final cache = SecureKeyCache(_MapKeyStore(names));
+      await cache.preload(names.keys);
+      return cache;
+    }
+
+    /// Connects a sync-capable scripted client and returns it.
+    Future<_ExtClient> connectSync(Set<String> caps) async {
+      final socket = await WebSocket.connect(server.url);
+      final client = _ExtClient(socket);
+      client.send({
+        'v': 1,
+        'id': '1-hello',
+        'op': 'hello',
+        'agentId': 'sync1',
+        'proto': 1,
+        'token': _token,
+        'caps': caps.toList(),
+      });
+      return client;
+    }
+
+    test('a sync-capable hello gets welcome then a proxy-mode providersSync '
+        'push carrying metadata but no key bytes', () async {
+      server = await spin(providers: [entry], keys: await keyCache({}));
+      final client = await connectSync({'tabs', providersSyncCapability});
+      final welcome = await client.next();
+      expect(welcome['capabilities'], contains(providersSyncCapability));
+      final sync = await client.next();
+      expect(sync['op'], 'providersSync');
+      final payload = sync['sync'] as Map<String, dynamic>;
+      expect(payload['version'], 1);
+      expect(payload['mode'], 'proxy');
+      expect(payload['host'], isNotEmpty);
+      expect(payload['providers'], hasLength(1));
+      final provider =
+          (payload['providers'] as List).single as Map<String, dynamic>;
+      expect(provider['name'], 'zai');
+      expect(provider['provenance'], startsWith('synced-from-cli@'));
+      expect(payload.containsKey('keys'), isFalse);
+      // Key bytes absent from EVERY frame the client sees.
+      final wire = jsonEncode(sync);
+      expect(wire, isNot(contains(secret)));
+      expect(wire, isNot(contains('FA_KEY_TEST_ZAI')));
+      await client.close();
+    });
+
+    test('an old client (no providers-sync cap) never sees the push', () async {
+      server = await spin(providers: [entry]);
+      final client = await connectSync({'tabs'});
+      await client.next(); // welcome
+      expect(
+        await client.nextOrNull(const Duration(milliseconds: 400)),
+        isNull,
+      );
+      await client.close();
+    });
+
+    test('no saved providers: no capability advertised, no push', () async {
+      server = await spin();
+      final client = await connectSync({providersSyncCapability});
+      final welcome = await client.next();
+      expect(welcome['capabilities'], isNot(contains(providersSyncCapability)));
+      expect(
+        await client.nextOrNull(const Duration(milliseconds: 400)),
+        isNull,
+      );
+      await client.close();
+    });
+
+    test('copy mode (--copy-keys) transfers keys once, stages them, and the '
+        'ack wipes the staged copy', () async {
+      late BridgeConnection connection;
+      server = await spin(
+        providers: [entry],
+        copyKeys: true,
+        keys: await keyCache({'FA_KEY_TEST_ZAI': secret}),
+        onClient: (c) => connection = c,
+      );
+      final client = await connectSync({providersSyncCapability});
+      await client.next(); // welcome
+      final sync = await client.next();
+      final payload = sync['sync'] as Map<String, dynamic>;
+      expect(payload['mode'], 'copy');
+      expect((payload['keys'] as Map)['zai'], secret);
+      // The bridge holds its staged copy until the ack...
+      expect(connection.stagedCopyKeys, {'zai': secret});
+      // ...the client acks the push (echoing the sync frame id)...
+      client.send({'v': 1, 'id': sync['id'], 'op': 'acked'});
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      // ...and the staged copy is gone from bridge memory.
+      expect(connection.stagedCopyKeys, isNull);
+      await client.close();
+    });
+
+    test('llmReq streams llmRes deltas then done; the key is injected '
+        'server-side and never appears in any frame', () async {
+      final seenKeys = <String?>[];
+      server = await spin(
+        providers: [entry],
+        keys: await keyCache({'FA_KEY_TEST_ZAI': secret}),
+        llmRelay: (request, onDelta) async {
+          seenKeys.add(request.key);
+          onDelta('hel');
+          onDelta('lo');
+        },
+      );
+      final client = await connectSync({'tabs'});
+      await client.next(); // welcome
+      client.send({
+        'v': 1,
+        'id': '2-llm1',
+        'op': 'llmReq',
+        'req': {
+          'baseUrl': entry.baseUrl,
+          'model': 'glm-4.6',
+          'messages': [
+            {'role': 'user', 'content': 'hi'},
+          ],
+        },
+      });
+      final first = await client.next();
+      expect(first['op'], 'llmRes');
+      expect(first['id'], '2-llm1');
+      expect(first['delta'], 'hel');
+      final second = await client.next();
+      expect(second['delta'], 'lo');
+      final done = await client.next();
+      expect(done['done'], isTrue);
+      // The key reached the relay transport server-side...
+      expect(seenKeys, everyElement(secret));
+      // ...but no frame the client saw carried it.
+      for (final frame in client.frames) {
+        expect(jsonEncode(frame), isNot(contains(secret)));
+      }
+      await client.close();
+    });
+
+    test('llmReq with no relay wired answers a clean llmRes error', () async {
+      server = await spin(providers: [entry]);
+      final client = await connectSync({'tabs'});
+      await client.next(); // welcome
+      client.send({
+        'v': 1,
+        'id': '2-llm2',
+        'op': 'llmReq',
+        'req': {'baseUrl': entry.baseUrl, 'model': 'glm-4.6', 'messages': []},
+      });
+      final error = await client.next();
+      expect(error['op'], 'llmRes');
+      expect(error['error'], contains('not available'));
+      await client.close();
+    });
+
+    test(
+      'llmReq for a keyless endpoint answers a no-key llmRes error',
+      () async {
+        server = await spin(
+          providers: [entry],
+          keys: await keyCache({}),
+          llmRelay: (request, onDelta) async {},
+        );
+        final client = await connectSync({'tabs'});
+        await client.next(); // welcome
+        client.send({
+          'v': 1,
+          'id': '2-llm3',
+          'op': 'llmReq',
+          'req': {'baseUrl': entry.baseUrl, 'model': 'glm-4.6', 'messages': []},
+        });
+        final error = await client.next();
+        expect(error['op'], 'llmRes');
+        expect(error['error'], contains('no key for'));
+        expect(jsonEncode(error), isNot(contains('FA_KEY_TEST_ZAI')));
+        await client.close();
+      },
+    );
+  });
+
   group('token file', () {
     late Directory temp;
 
@@ -548,6 +746,9 @@ final class _ExtClient {
   final Completer<void> _done = Completer();
   StreamSubscription<dynamic>? _subscription;
 
+  /// Every frame received so far, in arrival order (key-leak assertions).
+  List<Map<String, dynamic>> get frames => _frames;
+
   /// The close code observed by the server-side close handshake.
   int? get closeCode => socket.closeCode;
 
@@ -579,5 +780,31 @@ final class _ExtClient {
   Future<void> close() async {
     await _subscription?.cancel();
     await socket.close();
+  }
+}
+
+/// An in-memory [SecureKeyStore] for the relay/copy-mode key lookups.
+final class _MapKeyStore implements SecureKeyStore {
+  _MapKeyStore(this.map);
+
+  final Map<String, String> map;
+
+  @override
+  String get label => 'fake store';
+
+  @override
+  Future<bool> isAvailable() async => true;
+
+  @override
+  Future<String?> read(String name) async => map[name];
+
+  @override
+  Future<void> write(String name, String value) async {
+    map[name] = value;
+  }
+
+  @override
+  Future<void> delete(String name) async {
+    map.remove(name);
   }
 }

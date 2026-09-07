@@ -156,10 +156,125 @@ $('saveProvider').addEventListener('click', async () => {
   if (res?.ok) log('provider saved (stored in the service worker only)');
 });
 
+// -- Provider registry (issue #34 item 3) -------------------------------------
+// Synced (from the CLI bridge) + local (.fahx import) entries with their
+// provenance. Remove filters the stored doc directly; the agent re-resolves
+// the active provider on the storage.onChanged ping.
+
+function renderProviders(doc) {
+  const list = $('providerList');
+  list.textContent = '';
+  const provs = doc?.providers ?? [];
+  if (!provs.length) {
+    list.textContent = 'no registry entries — the legacy form above still applies';
+    return;
+  }
+  for (const p of provs) {
+    const row = document.createElement('div');
+    const badge = document.createElement('span');
+    badge.textContent = p.provenance === 'local' ? '[local]' : '[synced]';
+    const label = document.createElement('span');
+    label.textContent = ` ${p.name} — ${p.baseUrl} — ${p.modelId || '(CLI model)'} `;
+    const rm = document.createElement('button');
+    rm.textContent = 'remove';
+    rm.className = 'ghost';
+    rm.addEventListener('click', () => removeProvider(p.name));
+    row.append(badge, label, rm);
+    list.appendChild(row);
+  }
+}
+
+async function removeProvider(name) {
+  const doc = (await chrome.storage.local.get('faProviders')).faProviders;
+  doc.providers = (doc?.providers ?? []).filter((p) => p.name !== name);
+  await chrome.storage.local.set({ faProviders: doc });
+  log(`provider ${name} removed`);
+}
+
+chrome.storage?.local?.get('faProviders')
+  ?.then((s) => renderProviders(s.faProviders));
+chrome.storage?.onChanged?.addListener?.((change, area) => {
+  if (area === 'local' && change.faProviders) {
+    renderProviders(change.faProviders.newValue);
+  }
+});
+
+// .fahx import: file content + passphrase go to the SW agent, which owns
+// the decrypt (PBKDF2 + HMAC-CTR, matching the CLI exporter). Wrong
+// passphrase or a tampered file fails loudly — nothing is written.
+$('importFahx').addEventListener('click', () => $('fahxFile').click());
+$('fahxFile').addEventListener('change', async () => {
+  const file = $('fahxFile').files[0];
+  const pass = $('fahxPass').value;
+  const msg = $('fahxMsg');
+  if (!file || !pass) {
+    msg.textContent = 'pick a .fahx file and enter its passphrase';
+    return;
+  }
+  msg.textContent = 'importing…';
+  const res = await call({
+    type: 'providers.import',
+    contents: await file.text(),
+    passphrase: pass,
+  });
+  $('fahxFile').value = '';
+  if (res?.ok) {
+    msg.textContent = `imported ${res.imported} provider(s)`;
+    log(`.fahx import: ${res.imported} provider(s)`);
+  } else {
+    msg.textContent = `import failed: ${res?.error ?? 'no response'}`;
+  }
+});
+
 $('saveHub').addEventListener('click', async () => {
   const res = await call({ type: 'hub.save', url: $('hubUrl').value, name: $('hubName').value });
   if (res?.ok) log('hub settings saved');
 });
+
+// -- Advanced: Settings-gated power tools (issue #34 AC4d) --------------------
+// Each toggle is the user gesture Chrome requires: enabling requests the
+// tool's optional permission, disabling revokes it, then the enabled-map
+// goes to the service worker (store + live agent re-surface).
+
+const POWER_TOOLS = [
+  { id: 'browser_search', perm: 'search' },
+  { id: 'top_sites', perm: 'topSites' },
+  { id: 'reading_list', perm: 'readingList' },
+  { id: 'page_capture', perm: 'pageCapture' },
+];
+
+function enabledTools() {
+  const enabled = {};
+  for (const { id } of POWER_TOOLS) enabled[id] = $(`tool-${id}`).checked;
+  return enabled;
+}
+
+function renderTools(enabled) {
+  for (const { id } of POWER_TOOLS) $(`tool-${id}`).checked = !!enabled?.[id];
+}
+
+async function setTool({ id, perm }, on) {
+  try {
+    const granted = on
+      ? await chrome.permissions.request({ permissions: [perm] })
+      : await chrome.permissions.remove({ permissions: [perm] });
+    if (!granted) {
+      $(`tool-${id}`).checked = !on; // toggle follows the capability
+      return;
+    }
+    const res = await call({ type: 'tools.set', enabled: enabledTools() });
+    if (res?.ok) log(`tool ${id} ${on ? 'on' : 'off'}`);
+  } catch (e) {
+    log(`tool ${id}: ${e.message ?? e}`);
+    $(`tool-${id}`).checked = !on;
+  }
+}
+
+for (const tool of POWER_TOOLS) {
+  $(`tool-${tool.id}`).addEventListener('change', (e) => setTool(tool, e.target.checked));
+}
+chrome.storage?.local?.get('faBrowserTools')
+  ?.then((s) => renderTools(s.faBrowserTools));
 
 const port = chrome.runtime.connect({ name: 'fa-panel' });
 port.onMessage.addListener((m) => {

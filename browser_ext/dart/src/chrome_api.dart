@@ -45,6 +45,11 @@ abstract interface class ChromeApi {
   WebNavigationApi get webNavigation;
   SystemApi get system;
   IdentityApi get identity;
+  SearchApi get search;
+  TopSitesApi get topSites;
+  ReadingListApi get readingList;
+  PageCaptureApi get pageCapture;
+  PermissionsApi get permissions;
 }
 
 /// The only error type this facade (and its fake) ever throws.
@@ -584,6 +589,37 @@ final class DisplayInfo {
   };
 }
 
+/// One chrome.topSites entry (MostVisitedURL — url + title is the whole
+/// record chrome gives).
+final class TopSite {
+  const TopSite({required this.url, required this.title});
+
+  final String url;
+  final String title;
+
+  Map<String, Object?> toJson() => {'url': url, 'title': title};
+}
+
+/// One chrome.readingList entry (the subset the tools surface: chrome also
+/// carries ids/timestamps the agent never needs).
+final class ReadingListEntry {
+  const ReadingListEntry({
+    required this.url,
+    required this.title,
+    required this.hasBeenRead,
+  });
+
+  final String url;
+  final String title;
+  final bool hasBeenRead;
+
+  Map<String, Object?> toJson() => {
+    'url': url,
+    'title': title,
+    'hasBeenRead': hasBeenRead,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Sub-facades — one per chrome namespace, signatures mirror the chrome API
 // ---------------------------------------------------------------------------
@@ -855,4 +891,48 @@ abstract interface class SystemApi {
 /// chrome.identity — the launchWebAuthFlow slice only.
 abstract interface class IdentityApi {
   Future<String> launchWebAuthFlow({required String url});
+}
+
+/// chrome.search — runs the default-provider web search. The promise
+/// carries NO results payload: results land in the tab chrome picks per
+/// the disposition, so tools report the dispatch, not a result list.
+abstract interface class SearchApi {
+  Future<void> query({required String text, String? disposition});
+}
+
+/// chrome.topSites — the most-visited list the new-tab page shows.
+abstract interface class TopSitesApi {
+  Future<List<TopSite>> get();
+}
+
+/// chrome.readingList — the reading-list sidebar entries.
+abstract interface class ReadingListApi {
+  /// All entries matching an optional url/title substring filter.
+  Future<List<ReadingListEntry>> query({String? title, String? url});
+  Future<void> addEntry({
+    required String url,
+    required String title,
+    bool? hasBeenRead,
+  });
+  Future<void> removeEntry({required String url});
+}
+
+/// chrome.pageCapture — full-content MHTML capture of one tab.
+abstract interface class PageCaptureApi {
+  /// The raw MHTML document. Chrome refuses restricted pages itself.
+  Future<String> captureMhtml({required int tabId});
+}
+
+/// chrome.permissions — the optional-permission slice the second-tier
+/// gate reads: is a set granted, and what did the user just change in
+/// the panel (or chrome's own UI).
+abstract interface class PermissionsApi {
+  /// Whether ALL of [permissions] are currently granted.
+  Future<bool> contains(List<String> permissions);
+
+  /// Permission set granted since the last event.
+  Stream<List<String>> get onAdded;
+
+  /// Permission set revoked since the last event.
+  Stream<List<String>> get onRemoved;
 }

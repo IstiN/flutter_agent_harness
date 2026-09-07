@@ -1,4 +1,4 @@
-// Browser-power tool surface (issue #30 v2.1): 34 tools over the typed
+// Browser-power tool surface (issue #30 v2.1): 39 tools over the typed
 // [ChromeApi] facade, the v2 successor of the v1 `browser_*` family in
 // lib/src/browser/browser_tools.dart (same discipline: JSON-schema-style
 // parameter maps, terse descriptions, throw-on-failure so the error code
@@ -253,6 +253,33 @@ List<BrowserToolSpec> browserApiToolSpecs() => List.unmodifiable(const [
     permissions: {'webNavigation'},
     tier: ApprovalTier.read,
   ),
+  // --- second tier: Settings-gated power tools (issue #34 AC4d) ---------
+  // Registered only when the user enables the tool AND chrome has granted
+  // its permission (registerBrowserApiTools); hidden otherwise.
+  BrowserToolSpec(
+    name: 'browser_search',
+    permissions: {'search'},
+    tier: ApprovalTier.write, // navigates the tab like tabs_open
+    visibility: BrowserToolVisibility.secondTier,
+  ),
+  BrowserToolSpec(
+    name: 'top_sites',
+    permissions: {'topSites'},
+    tier: ApprovalTier.read,
+    visibility: BrowserToolVisibility.secondTier,
+  ),
+  BrowserToolSpec(
+    name: 'reading_list',
+    permissions: {'readingList'},
+    tier: ApprovalTier.write, // add/remove are writes; the list rides along
+    visibility: BrowserToolVisibility.secondTier,
+  ),
+  BrowserToolSpec(
+    name: 'page_capture',
+    permissions: {'pageCapture'},
+    tier: ApprovalTier.exec, // full-content capture — page_screenshot's class
+    visibility: BrowserToolVisibility.secondTier,
+  ),
 ]);
 
 /// Per-tool approval overrides for the always-prompting specs (today:
@@ -369,6 +396,10 @@ final class BrowserApiToolSurface {
 
   final ChromeApi _chrome;
 
+  /// The facade this surface drives (hosts re-read permissions through it
+  /// when re-applying the second-tier gate).
+  ChromeApi get chrome => _chrome;
+
   /// Serialized-bytes budget per injected frame result (E4).
   final int resultBudget;
 
@@ -391,8 +422,12 @@ final class BrowserApiToolSurface {
     for (final s in browserApiToolSpecs()) s.name: s,
   };
 
-  /// Builds the whole family (34 tools), names matching
-  /// [browserApiToolSpecs] exactly.
+  /// Spec metadata for one registered tool name. Tools are built from
+  /// this table, so the lookup always succeeds for a built tool.
+  static BrowserToolSpec specOf(String name) => _specsByName[name]!;
+
+  /// Builds the whole family (39 tools: 34 core + 5 Settings-gated),
+  /// names matching [browserApiToolSpecs] exactly.
   List<AgentTool> tools() {
     AgentTool tool(
       String name,
@@ -1168,6 +1203,7 @@ final class BrowserApiToolSurface {
                   'panel first',
             );
           }
+
           final data = await _captureScreenshot(app.id, fullPage: false);
           return _json({
             'ok': true,
@@ -1198,6 +1234,82 @@ final class BrowserApiToolSurface {
         },
         ['tabId', 'timeoutMs'],
         _navWait,
+      ),
+      // -------------------------------------------------------------------
+      // second tier — surfaced only through the Settings gate
+      // -------------------------------------------------------------------
+      tool(
+        'browser_search',
+        "Runs a web search with the browser's default engine; chrome "
+            'navigates per the disposition, so the results live in the '
+            'tab (open/read it after) rather than in this result.',
+        {
+          'text': _strProp('search text'),
+          'disposition': {
+            'type': 'string',
+            'description':
+                "where results open: 'CURRENT_TAB' (default), "
+                "'NEW_TAB' or 'NEW_WINDOW'",
+          },
+        },
+        ['text'],
+        (args) async {
+          final text = _reqStr(args, 'text');
+          await _chrome.search.query(
+            text: text,
+            disposition: _optStr(args, 'disposition'),
+          );
+          return ToolExecutionResult.text('searching for "$text"');
+        },
+      ),
+      tool(
+        'top_sites',
+        "Lists the user's most-visited sites (the new-tab-page list).",
+        const {},
+        const [],
+        (args) async {
+          final sites = await _chrome.topSites.get();
+          return _hardenedListJson([
+            for (final s in sites) s.toJson(),
+          ], source: 'top_sites');
+        },
+      ),
+      tool(
+        'reading_list',
+        'Reading-list entries: list them (default), add one or remove '
+            "one via 'mode'.",
+        {
+          'mode': {
+            'type': 'string',
+            'enum': ['list', 'add', 'remove'],
+            'description': 'list (default) | add | remove',
+          },
+          'url': _strProp('entry url — add/remove; list url filter'),
+          'title': _strProp('entry title — add; list title filter'),
+          'hasBeenRead': {
+            'type': 'boolean',
+            'description': 'add: mark the entry read (default false)',
+          },
+        },
+        const [],
+        _readingList,
+      ),
+      tool(
+        'page_capture',
+        "Captures a tab's full content as MHTML. Returns only the byte "
+            'size — the captured document never enters the transcript.',
+        {'tabId': _intProp('tab to capture')},
+        ['tabId'],
+        (args) async {
+          final tabId = _reqInt(args, 'tabId');
+          await _restrictScripting(tabId); // capture family obeys E1/E17
+          final mhtml = await _chrome.pageCapture.captureMhtml(tabId: tabId);
+          return _json({
+            'ok': true,
+            'tabId': tabId,
+            'mhtmlBytes': utf8.encode(mhtml).length,
+          });
+        },
       ),
     ];
   }
@@ -1351,6 +1463,36 @@ final class BrowserApiToolSurface {
     return ToolExecutionResult.text(
       'navigation completed: tab $tabId → ${nav.url}',
     );
+  }
+
+  /// reading_list: one tool, three modes — chrome's readingList verbs
+  /// (query / addEntry / removeEntry) share the small argument map.
+  /// List results are page-derived reads: redacted + quarantined.
+  Future<ToolExecutionResult> _readingList(Map<String, dynamic> args) async {
+    switch (_optStr(args, 'mode') ?? 'list') {
+      case 'list':
+        final entries = await _chrome.readingList.query(
+          title: _optStr(args, 'title'),
+          url: _optStr(args, 'url'),
+        );
+        return _hardenedListJson([
+          for (final e in entries) e.toJson(),
+        ], source: 'reading_list');
+      case 'add':
+        final url = _reqStr(args, 'url');
+        await _chrome.readingList.addEntry(
+          url: url,
+          title: _reqStr(args, 'title'),
+          hasBeenRead: _optBool(args, 'hasBeenRead'),
+        );
+        return ToolExecutionResult.text('added $url to the reading list');
+      case 'remove':
+        final url = _reqStr(args, 'url');
+        await _chrome.readingList.removeEntry(url: url);
+        return ToolExecutionResult.text('removed $url from the reading list');
+      default:
+        return _bad("argument 'mode' must be list, add or remove");
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1572,22 +1714,78 @@ Map<String, Object?> _intListProp(String d) => {
   'description': d,
 };
 
-/// Registers the whole browser-API family on [registry] and returns the
-/// surface it built, so hosts that need a shared accessor (the per-turn
-/// active-tab context injector reuses [BrowserApiToolSurface.activeTab])
-/// grab it without constructing a second surface over the same chrome.
-/// Names are the [browserApiToolSpecs] entries — one registration path
-/// for every host (SW agent host today, panel tooling later).
+/// Registers the browser-API family on [registry]: the CORE tools always,
+/// the second tier gated by [enabledSecondTier] × chrome's granted
+/// permissions (issue #34 AC4d, #19 semantics). Names are the
+/// [browserApiToolSpecs] entries — one registration path for every host.
 /// [visitedOrigins] passes through to the surface constructor: the exfil
 /// gate reads the LIVE set at every outbound call, so hosts keep mutating
 /// their own set after registration (SW wiring seeds it from tabs +
-/// webNavigation).
-BrowserApiToolSurface registerBrowserApiTools(
+/// webNavigation). Returns the surface so hosts can keep calling
+/// [syncSecondTierTools] when settings or permissions change.
+Future<BrowserApiToolSurface> registerBrowserApiTools(
   ToolRegistry registry,
   ChromeApi chrome, {
   Set<String>? visitedOrigins,
-}) {
+  Set<String> enabledSecondTier = const {},
+}) async {
   final surface = BrowserApiToolSurface(chrome, visitedOrigins: visitedOrigins);
-  registry.registerAll(surface.tools());
+  final tools = surface.tools();
+  registry.registerAll([
+    for (final tool in tools)
+      if (BrowserApiToolSurface.specOf(tool.name).visibility ==
+          BrowserToolVisibility.core)
+        tool,
+  ]);
+  await syncSecondTierTools(registry, surface, enabledSecondTier);
   return surface;
+}
+
+/// The Settings-gated tool names — derived from the spec table's
+/// visibility flags, so the table stays the single source of truth.
+Set<String> secondTierToolNames() => {
+  for (final spec in browserApiToolSpecs())
+    if (spec.visibility == BrowserToolVisibility.secondTier) spec.name,
+};
+
+/// Re-applies the second-tier gate on [registry]: a gated tool is
+/// registered IFF enabled in [enabled] AND every backing permission is
+/// granted (#19 semantics — the capability is the hard floor: config
+/// cannot surface an ungranted tool, and a revocation hides an enabled
+/// one). Idempotent, so settings changes and permissions.onAdded/
+/// onRemoved events all land here safely.
+Future<void> syncSecondTierTools(
+  ToolRegistry registry,
+  BrowserApiToolSurface surface,
+  Set<String> enabled,
+) async {
+  final wanted = <String, AgentTool>{};
+  for (final tool in surface.tools()) {
+    final spec = BrowserApiToolSurface.specOf(tool.name);
+    if (spec.visibility != BrowserToolVisibility.secondTier) continue;
+    if (!enabled.contains(tool.name)) continue;
+    if (await _permissionsGranted(surface, spec.permissions)) {
+      wanted[tool.name] = tool;
+    }
+  }
+  for (final name in secondTierToolNames()) {
+    final want = wanted[name];
+    final have = registry.lookup(name);
+    if (want != null && have == null) registry.register(want);
+    if (want == null && have != null) registry.unregister(name);
+  }
+}
+
+/// The capability floor: every [permissions] granted. A chrome build
+/// without the permissions surface at all (stripped store profile)
+/// degrades to "not granted" — nothing gated shows.
+Future<bool> _permissionsGranted(
+  BrowserApiToolSurface surface,
+  Set<String> permissions,
+) async {
+  try {
+    return await surface.chrome.permissions.contains(permissions.toList());
+  } on ChromeApiException {
+    return false;
+  }
 }

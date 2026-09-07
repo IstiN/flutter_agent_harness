@@ -32,7 +32,7 @@ abstract interface class UiHostBackend {
 /// chrome.storage keys the settings flow reads and writes — identical to
 /// the v1 panel provider.save flow, so panel settings stay one source of
 /// truth regardless of which surface wrote them.
-const uiSettingsKeys = {'faProvider', 'faApproval', 'faDap'};
+const uiSettingsKeys = {'faProvider', 'faApproval', 'faDap', 'faBrowserTools'};
 
 /// [UiHostConnector] over a lazily-resolved host. The backend resolves at
 /// CALL time (not construction) because the SW boots asynchronously: ports

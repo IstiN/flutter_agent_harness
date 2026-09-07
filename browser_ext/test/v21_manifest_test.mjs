@@ -18,8 +18,8 @@ const CORE = [
   'tabGroups', 'tabs', 'webNavigation',
 ];
 const OPTIONAL = [
-  'declarativeNetRequest', 'desktopCapture', 'pageCapture', 'readingList',
-  'search', 'tabCapture', 'topSites', 'tts', 'userScripts',
+  'desktopCapture', 'pageCapture', 'readingList', 'search', 'tabCapture',
+  'topSites', 'userScripts',
 ];
 const FORBIDDEN = ['browsingData', 'privacy', 'proxy', 'management', 'gcm', 'devtools', 'passwords'];
 
@@ -42,9 +42,9 @@ test('forbidden permissions appear in neither list nor host_permissions', () => 
   }
 });
 
-test('host_permissions stay <all_urls>, optional_host_permissions added', () => {
+test('host_permissions stay <all_urls>; no optional host permissions', () => {
   assert.deepEqual(manifest.host_permissions, ['<all_urls>']);
-  assert.deepEqual(manifest.optional_host_permissions, ['<all_urls>']);
+  assert.equal(manifest.optional_host_permissions, undefined);
 });
 
 test('commands registers ask-fa with a suggested_key', () => {
@@ -73,8 +73,8 @@ test('v1 anchors intact: side_panel, background, mv3, chrome floor, identity fie
   assert.equal(manifest.content_scripts[0].js[0], 'content/content.js');
 });
 
-test('version bumped to 0.2.0 and description is the v2.1 product line', () => {
-  assert.equal(manifest.version, '0.2.0');
+test('version bumped to 0.3.0 and description is the v2.1 product line', () => {
+  assert.equal(manifest.version, '0.3.0');
   assert.equal(
     manifest.description,
     'fa — your agent in this browser: the full fa app in the side panel, page powers for the agent.',
