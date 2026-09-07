@@ -33,6 +33,7 @@ import 'package:flutter_agent_harness/src/agent/agent_tool.dart';
 import 'package:flutter_agent_harness/src/agent/tool_registry.dart';
 import 'package:flutter_agent_harness/src/approval/approval.dart';
 import 'package:flutter_agent_harness/src/redact/redaction_pipeline.dart';
+import 'package:flutter_agent_harness/src/types.dart';
 
 import 'chrome_api.dart';
 import 'security/exfil_gate.dart';
@@ -328,6 +329,23 @@ String? restrictedReason(String url) {
   }
   return null;
 }
+
+/// Screenshot tool results carry the PNG as a vision [ImageContent] block
+/// (the model SEES the shot — provider adapters serialize tool-result
+/// images as vision inputs for openai-completions, anthropic and google)
+/// plus compact JSON metadata on the text channel. The base64 blob never
+/// rides as text: it is invisible to vision and floods the context.
+ToolExecutionResult screenshotToolResult(
+  String pngBase64, {
+  required Map<String, Object?> meta,
+}) => ToolExecutionResult(
+  content: [
+    ImageContent(data: pngBase64, mimeType: 'image/png'),
+    // `image` tells text-only models the shot exists even though they
+    // cannot see it (vision models get the actual block attached).
+    TextContent(text: jsonEncode({'ok': true, 'image': 'png', ...meta})),
+  ],
+);
 
 /// Result-budget clamp (E4): fits [result] inside [budgetBytes] of UTF-8
 /// JSON. Oversized results come back as the longest byte-safe prefix of
@@ -1158,8 +1176,9 @@ final class BrowserApiToolSurface {
       tool(
         'page_screenshot',
         'Captures a PNG of a tab (default: the active tab) via the '
-            'debugger. Returns the base64 PNG string. Restricted pages '
-            "refuse with 'restricted_page'.",
+            'debugger. The image comes back as a vision block you can '
+            "see; the text channel carries compact metadata. Restricted "
+            "pages refuse with 'restricted_page'.",
         {
           'tabId': _intProp('tab to capture (default: active tab)'),
           'fullPage': {
@@ -1174,15 +1193,22 @@ final class BrowserApiToolSurface {
           final tabId = explicit ?? await _activeTabId();
           await _restrictScripting(tabId);
           final data = await _captureScreenshot(tabId, fullPage: fullPage);
-          return _json({'ok': true, 'tabId': tabId, 'pngBase64': data});
+          return screenshotToolResult(
+            data,
+            meta: {
+              'tabId': tabId,
+              'tool': 'page_screenshot',
+              if (fullPage) 'fullPage': true,
+            },
+          );
         },
       ),
       tool(
         'app_screenshot',
         "Captures this extension's own app page (the chrome-extension:// "
-            "tab serving /app/, falling back to /panel/) as base64 PNG — "
-            "never user content. No app page open fails cleanly with "
-            "'no_app_page' (E14).",
+            "tab serving /app/, falling back to /panel/) as a vision "
+            "image block — never user content. No app page open fails "
+            "cleanly with 'no_app_page' (E14).",
         const {},
         const [],
         (args) async {
@@ -1205,12 +1231,10 @@ final class BrowserApiToolSurface {
           }
 
           final data = await _captureScreenshot(app.id, fullPage: false);
-          return _json({
-            'ok': true,
-            'tabId': app.id,
-            'url': app.url,
-            'pngBase64': data,
-          });
+          return screenshotToolResult(
+            data,
+            meta: {'tabId': app.id, 'tool': 'app_screenshot', 'url': app.url},
+          );
         },
       ),
 

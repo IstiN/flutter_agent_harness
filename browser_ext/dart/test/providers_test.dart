@@ -138,6 +138,70 @@ void main() {
     },
   );
 
+  test('tool result carrying an image reports the vision seen', () async {
+    // The scripted stand-in for a vision model: an ImageContent block in
+    // the tool result must reach the model context (the screenshot tools'
+    // contract) and be acknowledged in the reply.
+    final (reason, message) = await _finalOf([
+      UserMessage.text('shoot'),
+      AssistantMessage(
+        content: const [
+          ToolCall(id: 'c2', name: 'page_screenshot', arguments: {}),
+        ],
+        api: 'openai-completions',
+        provider: 'fake',
+        model: 'fake:test',
+        usage: Usage.zero,
+        stopReason: StopReason.toolUse,
+        timestamp: DateTime.now(),
+      ),
+      ToolResultMessage(
+        toolCallId: 'c2',
+        toolName: 'page_screenshot',
+        content: const [
+          ImageContent(data: 'cGl4', mimeType: 'image/png'),
+          TextContent(text: '{"ok":true,"tabId":1}'),
+        ],
+        isError: false,
+        timestamp: DateTime.now(),
+      ),
+    ]);
+    expect(reason, StopReason.stop);
+    expect(
+      message.content.whereType<TextContent>().single.text,
+      'fake: page_screenshot succeeded (image seen)',
+    );
+  });
+
+  test('think directive streams thinking deltas before the text', () async {
+    final thinking = <String>[];
+    final text = <String>[];
+    StopReason reason = StopReason.stop;
+    await for (final event in fakeStream(
+      _fakeModel,
+      _contextOf([UserMessage.text('fake: think it through')]),
+    )) {
+      if (event is ThinkingDeltaEvent) thinking.add(event.delta);
+      if (event is TextDeltaEvent) text.add(event.delta);
+      if (event is DoneEvent) reason = event.reason;
+    }
+    expect(reason, StopReason.stop);
+    expect(thinking.join(), isNotEmpty);
+    expect(text.join(), contains('fake:'));
+  });
+
+  test('screenshot directive → browser_screenshot tool call', () async {
+    final (reason, message) = await _finalOf([
+      UserMessage.text('take a screenshot now'),
+    ]);
+    expect(reason, StopReason.toolUse);
+    expect(
+      message.content.whereType<ToolCall>().single.name,
+      'browser_screenshot',
+    );
+  });
+
+
   test('plain prompt is echoed as text', () async {
     final (reason, message) = await _finalOf([UserMessage.text('hello agent')]);
     expect(reason, StopReason.stop);

@@ -138,6 +138,63 @@ void main() {
     addTearDown(channel.close);
   });
 
+  test('thinking deltas render a thinking bubble before the answer', () async {
+    final (:service, :channel) = await _attached();
+    channel
+      ..fromWorker(StreamMsg(event: {'type': 'thinking_delta', 'text': 'hmm '}))
+      ..fromWorker(
+        StreamMsg(event: {'type': 'thinking_delta', 'text': 'let me see'}),
+      )
+      ..fromWorker(StreamMsg(event: {'type': 'delta', 'text': 'Answer'}))
+      ..fromWorker(
+        MessageDoneMsg(message: {'role': 'assistant', 'text': 'Answer'}),
+      );
+    await Future<void>.delayed(Duration.zero);
+    final thinking = service.messages
+        .where((m) => m.role == 'thinking')
+        .toList();
+    expect(thinking, hasLength(1));
+    expect(thinking.single.content, 'hmm let me see');
+    // Thinking stays out of the assistant text.
+    expect(
+      service.messages.where((m) => m.role == 'assistant').last.content,
+      'Answer',
+    );
+    addTearDown(channel.close);
+  });
+
+  test('a new turn streams thinking into a fresh bubble', () async {
+    final (:service, :channel) = await _attached();
+    channel
+      ..fromWorker(StreamMsg(event: {'type': 'thinking_delta', 'text': 't1'}))
+      ..fromWorker(MessageDoneMsg(message: {'role': 'assistant', 'text': 'a1'}))
+      ..fromWorker(StreamMsg(event: {'type': 'thinking_delta', 'text': 't2'}))
+      ..fromWorker(
+        MessageDoneMsg(message: {'role': 'assistant', 'text': 'a2'}),
+      );
+    await Future<void>.delayed(Duration.zero);
+    final thinking = service.messages
+        .where((m) => m.role == 'thinking')
+        .toList();
+    expect(thinking.map((m) => m.content), ['t1', 't2']);
+    addTearDown(channel.close);
+  });
+
+  test('thinking replays into thinking bubbles on rebuild', () async {
+    final (:service, :channel) = await _attached(
+      replay: [
+        {'type': 'thinking_delta', 'text': 'replayed thought'},
+        {'type': 'message_done', 'role': 'assistant', 'text': 'replied'},
+      ],
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      service.messages.where((m) => m.role == 'thinking').single.content,
+      'replayed thought',
+    );
+    addTearDown(channel.close);
+  });
+
   test('tool results render collapsed tool messages', () async {
     final (:service, :channel) = await _attached();
     channel.fromWorker(
@@ -183,11 +240,35 @@ void main() {
     addTearDown(channel.close);
   });
 
-  test('no approval handler mounted denies conservatively', () async {
+  test(
+    'no approval handler mounted leaves the decision to another client',
+    () async {
+      // A UI that cannot ask the human must not steal the decision from one
+      // that can (a second panel, the e2e driver, a remote attach view): the
+      // SW's 120s timeout stays the conservative backstop and denies with a
+      // note if nobody answers. An instant bystander deny recorded a denial
+      // the user never chose (live e2e regression).
+      final (:service, :channel) = await _attached();
+      channel.fromWorker(
+        ApprovalRequestMsg(id: 'ap-2', call: {}, reason: 'unattended'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        channel.sentOf('approval_response'),
+        isNull,
+        reason: 'a bystander client must not answer approvals',
+      );
+      addTearDown(channel.close);
+    },
+  );
+
+  test('a handler error still denies — the surface owes an answer', () async {
     final (:service, :channel) = await _attached();
-    channel.fromWorker(
-      ApprovalRequestMsg(id: 'ap-2', call: {}, reason: 'unattended'),
-    );
+    service.approvalPromptHandler = (request) async {
+      throw StateError('dialog exploded');
+    };
+    channel.fromWorker(ApprovalRequestMsg(id: 'ap-3', call: {}, reason: 'r'));
+    await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
     expect(channel.sentOf('approval_response')!['decision'], 'deny');
     addTearDown(channel.close);
@@ -285,17 +366,17 @@ void main() {
         sessionId: 'sw-1',
       ),
     );
+    channel.fromWorker(const AttachedMsg(sessionId: 'sw-1', replay: []));
     channel.fromWorker(
-      const AttachedMsg(sessionId: 'sw-1', replay: []),
-    );
-    channel.fromWorker(
-      const SettingsResultMsg(settings: {
-        'faProvider': {
-          'baseUrl': 'https://api.kimi.com/coding/v1',
-          'apiKey': 'k',
-          'model': 'kimi-k2',
+      const SettingsResultMsg(
+        settings: {
+          'faProvider': {
+            'baseUrl': 'https://api.kimi.com/coding/v1',
+            'apiKey': 'k',
+            'model': 'kimi-k2',
+          },
         },
-      }),
+      ),
     );
     await done;
     expect(service.swProvider!['model'], 'kimi-k2');

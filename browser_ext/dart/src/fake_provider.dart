@@ -45,13 +45,17 @@ AssistantMessageEventStream fakeStream(
   final stream = AssistantMessageEventStream();
   final last = context.messages.isEmpty ? null : context.messages.last;
 
-  // A turn that answers a tool result: report the outcome, stop.
+  // A turn that answers a tool result: report the outcome, stop. A tool
+  // result carrying a vision image block is acknowledged — the scripted
+  // stand-in for what a vision model would do with a screenshot.
   if (last is ToolResultMessage) {
     final ok = !last.isError;
+    final seesImage = last.content.any((block) => block is ImageContent);
     _emitText(
       stream,
       model,
-      'fake: ${last.toolName} ${ok ? 'succeeded' : 'failed'}',
+      'fake: ${last.toolName} ${ok ? 'succeeded' : 'failed'}'
+      '${seesImage ? ' (image seen)' : ''}',
       StopReason.stop,
     );
     return stream;
@@ -109,6 +113,29 @@ AssistantMessageEventStream fakeStream(
         ? 'data:text/html,<h1>fa-fake</h1>'
         : rest.split(RegExp(r'\s')).first;
     _emitNavigate(stream, model, url);
+    return stream;
+  }
+
+  // "screenshot" anywhere in the prompt → the v1 screenshot op.
+  if (prompt.toLowerCase().contains('screenshot')) {
+    _emitToolCall(
+      stream,
+      model,
+      'fake: capturing the page',
+      ToolCall(id: 'fake-call-shot', name: 'browser_screenshot', arguments: {}),
+    );
+    return stream;
+  }
+
+  // "think" streams a reasoning block before the text — exercises the
+  // panel's thinking_delta path (CI seam for the reasoning UI).
+  if (prompt.toLowerCase().contains('think')) {
+    _emitThinking(
+      stream,
+      model,
+      'fake: weighing the request…',
+      'fake: done thinking',
+    );
     return stream;
   }
   _emitText(
@@ -265,5 +292,58 @@ void _emitText(
   stream.push(TextDeltaEvent(contentIndex: 0, delta: text, partial: partial()));
   stream.push(TextEndEvent(contentIndex: 0, content: text, partial: partial()));
   stream.push(DoneEvent(reason: done, message: partial()));
+  stream.end();
+}
+
+/// Streams a thinking block (Start/Delta/End at index 0) followed by the
+/// text block (index 1) — the reasoning shape real providers produce.
+void _emitThinking(
+  AssistantMessageEventStream stream,
+  Model model,
+  String thinking,
+  String text,
+) {
+  AssistantMessage partial(List<ContentBlock> content) => AssistantMessage(
+    content: content,
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: Usage.zero,
+    stopReason: StopReason.stop,
+    timestamp: DateTime.now(),
+  );
+
+  final thinkingOnly = [ThinkingContent(thinking: thinking)];
+  stream.push(StartEvent(partial: partial(thinkingOnly)));
+  stream.push(
+    ThinkingStartEvent(contentIndex: 0, partial: partial(thinkingOnly)),
+  );
+  stream.push(
+    ThinkingDeltaEvent(
+      contentIndex: 0,
+      delta: thinking,
+      partial: partial(thinkingOnly),
+    ),
+  );
+  stream.push(
+    ThinkingEndEvent(
+      contentIndex: 0,
+      content: thinking,
+      partial: partial(thinkingOnly),
+    ),
+  );
+
+  final withText = [
+    ThinkingContent(thinking: thinking),
+    TextContent(text: text),
+  ];
+  stream.push(TextStartEvent(contentIndex: 1, partial: partial(withText)));
+  stream.push(
+    TextDeltaEvent(contentIndex: 1, delta: text, partial: partial(withText)),
+  );
+  stream.push(
+    TextEndEvent(contentIndex: 1, content: text, partial: partial(withText)),
+  );
+  stream.push(DoneEvent(reason: StopReason.stop, message: partial(withText)));
   stream.end();
 }

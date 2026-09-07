@@ -2,8 +2,9 @@
 // wire: launches Chrome for Testing with browser_ext unpacked, opens an
 // extension page, connects a `fa-ui-v2` port and speaks the protocol a
 // panel speaks — hello/attach (tools_state), settings_put with a REAL
-// provider, then two real turns: a plain reply and one answered through
-// the browser_active_tab tool.
+// provider, then real turns: a plain reply, browser_active_tab, read_dom
+// against https://example.com, a screenshot (vision image block through
+// the loop) and a thinking-delta count.
 //
 // Usage (repo root):
 //   FA_ZAI_KEY="<key>" FA_TEST_CHROME=<path> \
@@ -50,6 +51,9 @@ Future<void> main(List<String> args) async {
     if (m != null && !wsUrlCompleter.isCompleted) {
       wsUrlCompleter.complete(m.group(1)!);
     }
+    // SW console (decide() prints) is the ground truth for approval
+    // routing — mirror it, tagged.
+    if (l.contains('[fah]')) stderr.writeln('sw| $l');
   });
   final wsUrl = await wsUrlCompleter.future.timeout(
     const Duration(seconds: 20),
@@ -165,7 +169,11 @@ Future<void> main(List<String> args) async {
   try {
     port = chrome.runtime.connect({ name: 'fa-ui-v2' });
   } catch (e) { return JSON.stringify(['FAIL: port connect threw ' + e]); }
-  port.onMessage.addListener((m) => events.push(m));
+  let thinkingSeen = 0;
+  port.onMessage.addListener((m) => {
+    events.push({...m, _t: Date.now()});
+    if (m?.event?.type === 'thinking_delta') thinkingSeen++;
+  });
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const until = async (pred, label, timeoutMs) => {
     const deadline = Date.now() + (timeoutMs || 30000);
@@ -221,29 +229,100 @@ Future<void> main(List<String> args) async {
         ' errors=' + JSON.stringify(errs()).slice(0, 300));
 
   // 5. real turn through a browser tool; the SW gates tool calls behind
-  // approvals — the panel answers them from its sheet, so do we. The
-  // assistant's toolcall message ends (empty text) BEFORE the approval —
-  // wait for the assistant count to GROW past that.
+  // approvals — the panel answers them from its sheet, so do we.
+  // Turn shape: the tool-call-only assistant message ends (empty text)
+  // BEFORE the approval, a model may make SEVERAL gated calls per turn,
+  // and each approval needs its own response — so auto-allow everything
+  // until the FINAL (non-empty) assistant message lands.
   events.length = 0;
   port.postMessage({ kind: 'prompt', id: 'e2e-p2',
     text: 'Call the browser_active_tab tool and reply with only the URL it reports.' });
   const approvalsSeen = () => events.filter(e => e.kind === 'approval_request');
-  await until(() => approvalsSeen().length > 0, 'approval_request', 60000);
-  const baseline = assistantDones().length;
-  for (const e of approvalsSeen()) {
-    port.postMessage({ kind: 'approval_response', id: e.id, decision: 'allow' });
-  }
-  await until(() => assistantDones().length > baseline,
-      'post-approval assistant done', 120000);
-  const text2 = assistantDones().map(e => e.message.text || '').join(' | ');
+  const finalAssistantDone = () => assistantDones().find(
+    e => (e.message.text || '').trim().length > 0);
+  const allowUntilFinal = setInterval(() => {
+    for (const e of approvalsSeen()) {
+      if (!e._answered) {
+        e._answered = true;
+        port.postMessage({ kind: 'approval_response', id: e.id, decision: 'allow' });
+      }
+    }
+  }, 300);
+  await until(() => finalAssistantDone() != null, 'final assistant done', 150000);
+  clearInterval(allowUntilFinal);
+  const text2 = finalAssistantDone() ? finalAssistantDone().message.text || '' : '';
   const toolEvents = events.filter(e => e.kind === 'stream' && e.event &&
     (e.event.type === 'tool_result' || e.event.type === 'toolcall_end' ||
      e.event.type === 'tool_end' || e.event.type === 'tool_start'));
+  const dumpApprovals = () => JSON.stringify(approvalsSeen().map(e => ({
+          id: e.id, answered: !!e._answered, at: e._t,
+          resolved: events.filter(r => r.type === 'approval_resolved' && r.id === e.id),
+        })));
   text2.includes('example.com')
     ? ok('tool turn saw example.com: ' + JSON.stringify(text2.slice(0, 160)))
     : fail('tool turn: text=' + JSON.stringify(text2.slice(0, 300)) +
-        ' toolEvents=' + JSON.stringify(toolEvents).slice(0, 400) +
-        ' allEvents=' + JSON.stringify(events).slice(0, 1500));
+        ' toolEvents=' + JSON.stringify(toolEvents).slice(0, 600) +
+        ' approvals=' + dumpApprovals());
+
+  // 6. read_dom: open a stable page, read its DOM, report the heading.
+  events.length = 0;
+  port.postMessage({ kind: 'prompt', id: 'e2e-p3',
+    text: 'Open https://example.com in a new tab, then use read_dom on that page and reply with ONLY the text of its main heading.' });
+  const allowUntilFinal6 = setInterval(() => {
+    for (const e of approvalsSeen()) {
+      if (!e._answered) {
+        e._answered = true;
+        port.postMessage({ kind: 'approval_response', id: e.id, decision: 'allow' });
+      }
+    }
+  }, 300);
+  await until(() => finalAssistantDone() != null, 'read_dom final assistant done', 150000);
+  clearInterval(allowUntilFinal6);
+  const text3 = finalAssistantDone().message.text || '';
+  const domToolRan = events.some(e => e.kind === 'stream' && e.event &&
+    e.event.type === 'tool_result' && !e.event.isError &&
+    /read_dom|tabs_open|navigate/.test(e.event.toolName || ''));
+  text3.includes('Example Domain') && domToolRan && errs().length === 0
+    ? ok('read_dom turn read the heading: ' + JSON.stringify(text3.slice(0, 120)))
+    : fail('read_dom turn: text=' + JSON.stringify(text3.slice(0, 300)) +
+        ' domToolRan=' + domToolRan + ' errors=' + JSON.stringify(errs()).slice(0, 300) +
+        ' approvals=' + JSON.stringify(approvalsSeen().map(e => ({
+          id: e.id, answered: !!e._answered, call: e.call }))));
+
+  // 7. screenshot: the tool result must come back as a vision image block
+  // (no base64 flood) and the turn completes without a provider error.
+  events.length = 0;
+  port.postMessage({ kind: 'prompt', id: 'e2e-p4',
+    text: 'Take a screenshot of the active tab, then reply with exactly: SHOT OK' });
+  const allowUntilFinal7 = setInterval(() => {
+    for (const e of approvalsSeen()) {
+      if (!e._answered) {
+        e._answered = true;
+        port.postMessage({ kind: 'approval_response', id: e.id, decision: 'allow' });
+      }
+    }
+  }, 300);
+  await until(() => finalAssistantDone() != null, 'screenshot final assistant done', 150000);
+  clearInterval(allowUntilFinal7);
+  const text4 = finalAssistantDone().message.text || '';
+  const shotResult = events.find(e => e.kind === 'stream' && e.event &&
+    e.event.type === 'tool_result' && /screenshot/.test(e.event.toolName || ''));
+  text4.includes('SHOT OK') && shotResult && shotResult.event.isError === false && errs().length === 0
+    ? ok('screenshot turn completed, tool_result=' +
+        JSON.stringify((shotResult.event.text || '').slice(0, 120)) +
+        ' reply=' + JSON.stringify(text4.slice(0, 80)))
+    : fail('screenshot turn: text=' + JSON.stringify(text4.slice(0, 200)) +
+        ' shotResult=' + JSON.stringify(shotResult || null).slice(0, 300) +
+        ' errors=' + JSON.stringify(errs()).slice(0, 300) +
+        ' approvals=' + JSON.stringify(approvalsSeen().map(e => ({
+          id: e.id, answered: !!e._answered, at: e._t }))));
+
+  // 8. thinking: reasoning deltas must reach the panel when the model
+  // emits them (they used to be dropped at the host). Soft check — a
+  // model without reasoning emits none, which is INFO, not FAIL.
+  thinkingSeen > 0
+    ? ok('thinking deltas reached the panel: ' + thinkingSeen)
+    : log.push('INFO: no thinking deltas from this model (nothing to render)');
 
   return done();
 })()
@@ -258,7 +337,7 @@ Future<void> main(List<String> args) async {
     'expression': driver,
     'returnByValue': true,
     'awaitPromise': true,
-    'timeout': 200000,
+    'timeout': 300000,
   }, pageSession);
   final value = res['result']?['value'];
   final lines = <String>[];

@@ -59,6 +59,7 @@ final class RelayAgentService extends AgentService {
 
   final _messages = <fa_ui.FaChatMessage>[];
   fa_ui.FaChatMessage? _currentAssistant;
+  fa_ui.FaChatMessage? _currentThinking;
   bool _running = false;
   String? _error;
   String _modelId = '';
@@ -311,6 +312,7 @@ final class RelayAgentService extends AgentService {
   void _rebuild(List<Map<String, dynamic>> replay) {
     _messages.clear();
     _currentAssistant = null;
+    _currentThinking = null;
     for (final entry in replay) {
       final event = entry['event'];
       if (event is Map<String, dynamic>) _onHostEvent(event, silent: true);
@@ -325,6 +327,15 @@ final class RelayAgentService extends AgentService {
           fa_ui.FaChatMessage(role: 'assistant', content: ''),
         );
         _currentAssistant!.content += event['text'] as String? ?? '';
+      case 'thinking_delta':
+        // Reasoning stream from the model: its own collapsible bubble
+        // (same shape the local AgentService renders), never merged into
+        // the assistant text. A new turn starts a fresh bubble —
+        // _finishAssistant clears the current one.
+        _currentThinking ??= _append(
+          fa_ui.FaChatMessage(role: 'thinking', content: ''),
+        );
+        _currentThinking!.content += event['text'] as String? ?? '';
       case 'message_done':
         if ((event['role'] as String? ?? 'assistant') == 'user') {
           // The composer echoes the raw text locally, so the live user
@@ -450,6 +461,9 @@ final class RelayAgentService extends AgentService {
     final partial = _currentAssistant;
     if (partial != null) _messages.remove(partial);
     _currentAssistant = null;
+    // The finished thinking bubble stays on screen; the next turn's
+    // reasoning opens a fresh one.
+    _currentThinking = null;
     if (role == 'assistant' && text.isEmpty) {
       // A tool-call-only assistant turn legitimately has no text — the
       // tool_result rows that follow tell the story; a placeholder here
@@ -491,9 +505,15 @@ final class RelayAgentService extends AgentService {
   ) async {
     final handler = _approvalHandler;
     if (handler == null) {
-      // No UI mounted: deny conservatively — same default as the CLI's
-      // null-prompt policy (never silently execute).
-      _transport.dispatch(ApprovalResponseMsg(id: id, decision: 'deny'));
+      // No UI mounted: stay silent. The decision belongs to a surface that
+      // can actually ask the human — another panel client (or the e2e
+      // driver) may answer; the SW's 120s timeout is the conservative
+      // backstop and denies with a note if nobody does. An instant deny
+      // here once raced ahead of the real UI and recorded a denial the
+      // user never chose.
+      debugPrint(
+        '[fah][relay] approval id=$id has no handler — leaving it unanswered',
+      );
       return;
     }
     final summary = call['toolName'] as String? ?? 'tool';
@@ -508,9 +528,14 @@ final class RelayAgentService extends AgentService {
           reason: reason,
         ),
       );
-    } on Object {
+    } on Object catch (error) {
+      // The surface owes an answer, but the caller is unawaited — a
+      // rethrow would vanish into an unhandled async error. Log and deny.
+      debugPrint(
+        '[fah][relay] approval handler threw: $error — denying id=$id',
+      );
       _transport.dispatch(ApprovalResponseMsg(id: id, decision: 'deny'));
-      rethrow;
+      return;
     }
     debugPrint('[fah][relay] approval answered id=$id decision=$decision');
     _transport.dispatch(

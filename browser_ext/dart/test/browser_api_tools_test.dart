@@ -9,6 +9,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/src/agent/tool_registry.dart';
+import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/approval/approval.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
@@ -175,6 +176,14 @@ Future<String> _run(
 
 Map<String, Object?> _jsonOf(String text) =>
     jsonDecode(text) as Map<String, Object?>;
+
+/// Runs a tool and returns the full result (image blocks included) —
+/// `_run` only collects the text channel.
+Future<ToolExecutionResult> _runRes(
+  ToolRegistry reg,
+  String name, [
+  Map<String, Object?> args = const {},
+]) => reg[name].execute(Map<String, dynamic>.of(args), null, null);
 
 TypeMatcher<BrowserApiToolException> _err(String code) =>
     isA<BrowserApiToolException>().having((e) => e.code, 'code', code);
@@ -1040,7 +1049,7 @@ void main() {
     });
 
     test(
-      'page_screenshot returns base64 PNG via Page.captureScreenshot',
+      'page_screenshot returns a vision image block, not base64 text',
       () async {
         final png = base64Encode([1, 2, 3, 4]);
         final (cReg, c) = _cannedReg(
@@ -1048,12 +1057,23 @@ void main() {
               method == 'Page.captureScreenshot' ? {'data': png} : null,
         );
         final t = await c.tabs.create(url: 'https://a.example/');
-        final out = await _run(cReg, 'page_screenshot', {
+        final res = await _runRes(cReg, 'page_screenshot', {
           'tabId': t.id,
           'fullPage': true,
         });
-        final parsed = _jsonOf(out);
-        expect(parsed['pngBase64'], png);
+        // The model SEES the shot: one image block with the PNG.
+        final images = res.content.whereType<ImageContent>().toList();
+        expect(images, hasLength(1));
+        expect(images.single.data, png);
+        expect(images.single.mimeType, 'image/png');
+        // The text channel stays compact metadata — no base64 flood.
+        final text = res.content
+            .whereType<TextContent>()
+            .map((c) => c.text)
+            .join('\n');
+        expect(text, contains('"tabId":${t.id}'));
+        expect(text, contains('"fullPage":true'));
+        expect(text, isNot(contains(png)));
         expect(c.cdpCalls.single.method, 'Page.captureScreenshot');
         expect(c.cdpCalls.single.params['captureBeyondViewport'], true);
       },
@@ -1102,6 +1122,27 @@ void main() {
         _run(reg, 'app_screenshot'),
         throwsA(_err('no_app_page')),
       );
+    });
+
+    test('app_screenshot carries the vision image block', () async {
+      final png = base64Encode([5, 6, 7]);
+      final appChrome = FakeChrome(
+        clock: () => 1730000000000,
+        cdpResponder: (method, params) => {'data': png},
+      );
+      await appChrome.tabs.create(url: 'chrome-extension://fa/app/index.html');
+      final shotReg = ToolRegistry()
+        ..registerAll(BrowserApiToolSurface(appChrome).tools());
+      final res = await _runRes(shotReg, 'app_screenshot');
+      final images = res.content.whereType<ImageContent>().toList();
+      expect(images, hasLength(1));
+      expect(images.single.data, png);
+      final text = res.content
+          .whereType<TextContent>()
+          .map((c) => c.text)
+          .join('\n');
+      expect(text, contains('/app/'));
+      expect(text, isNot(contains(png)));
     });
   });
 

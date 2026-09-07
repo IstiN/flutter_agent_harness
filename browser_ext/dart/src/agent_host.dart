@@ -27,6 +27,7 @@ import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 
 import 'active_tab_context.dart';
+import 'host_event_map.dart' show hostEventOf, messageToJs, v1OpToolResult;
 import 'security/exfil_gate.dart' show originOf;
 import 'browser_api_tools.dart';
 import 'chrome_api.dart';
@@ -451,7 +452,7 @@ final class AgentHost implements UiHostBackend {
     attachApproval(testAgent, ApprovalManager(mode: ApprovalMode.unattended));
     final transcript = <Map<String, dynamic>>[];
     testAgent.subscribe((event, token) async {
-      if (event is MessageEndEvent) transcript.add(_messageToJs(event.message));
+      if (event is MessageEndEvent) transcript.add(messageToJs(event.message));
     });
     try {
       await testAgent.prompt(
@@ -508,34 +509,16 @@ final class AgentHost implements UiHostBackend {
   }
 
   Future<void> _onAgentEvent(AgentEvent event, CancelToken token) async {
-    switch (event) {
-      case MessageUpdateEvent(:final assistantMessageEvent):
-        if (assistantMessageEvent is TextDeltaEvent) {
-          _sink({'type': 'delta', 'text': assistantMessageEvent.delta});
-        }
-      case MessageEndEvent(:final message):
-        await _persistMessage(message);
-        _sink({'type': 'message_done', ..._messageToJs(message)});
-      case ToolExecutionEndEvent(
-        toolName: final toolName,
-        result: final result,
-        isError: final isError,
-      ):
-        _sink({
-          'type': 'tool_result',
-          'toolName': toolName,
-          'isError': isError,
-          'text': result.content
-              .whereType<TextContent>()
-              .map((b) => b.text)
-              .join('\n'),
-        });
-      case AgentSettledEvent():
-        await _env.flush();
-        await _compactIfDue();
-      default:
-        break;
+    // Persist before announcing: a panel that reacts to message_done by
+    // reloading sees the persisted transcript, not a stale one.
+    if (event is MessageEndEvent) await _persistMessage(event.message);
+    if (event case AgentSettledEvent()) {
+      await _env.flush();
+      await _compactIfDue();
+      return;
     }
+    final uiEvent = hostEventOf(event);
+    if (uiEvent != null) _sink(uiEvent);
   }
 
   Future<void> _persistMessage(Message message) async {
@@ -709,9 +692,9 @@ final class AgentHost implements UiHostBackend {
         if (res['ok'] != true) {
           throw Exception(res['error'] ?? 'op "$op" failed');
         }
-        return ToolExecutionResult.text(
-          res['result'] == null ? 'ok' : jsonEncode(res['result']),
-        );
+        // Screenshots arrive as vision image blocks; everything else as
+        // compact text (see host_event_map.dart).
+        return v1OpToolResult(op, res);
       },
     );
   }
@@ -720,37 +703,6 @@ final class AgentHost implements UiHostBackend {
 
   void _emitStatus() {
     _sink({'type': 'status', ...getState()});
-  }
-
-  Map<String, dynamic> _messageToJs(Message message) {
-    final text = switch (message) {
-      AssistantMessage(:final content) => [
-        for (final block in content)
-          if (block is TextContent) block.text,
-      ].join('\n'),
-      UserMessage(:final content) when content is String => content,
-      ToolResultMessage(:final content) => [
-        for (final block in content)
-          if (block is TextContent) block.text,
-      ].join('\n'),
-      _ => '',
-    };
-    return {
-      'role': message.role,
-      'text': text,
-      // Tool-call names let the UI tell a tool-call-only turn (no text,
-      // the tool results tell the story) apart from a genuinely empty
-      // response (placeholder-worthy).
-      if (message is AssistantMessage)
-        'toolCalls': [
-          for (final block in message.content)
-            if (block is ToolCall) block.name,
-        ],
-      if (message is ToolResultMessage) 'toolName': message.toolName,
-      if (message is ToolResultMessage) 'isError': message.isError,
-      if (message is AssistantMessage && message.errorMessage != null)
-        'error': message.errorMessage,
-    };
   }
 }
 
