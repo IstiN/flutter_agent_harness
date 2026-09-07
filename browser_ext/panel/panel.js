@@ -241,7 +241,6 @@ const POWER_TOOLS = [
   { id: 'top_sites', perm: 'topSites' },
   { id: 'reading_list', perm: 'readingList' },
   { id: 'page_capture', perm: 'pageCapture' },
-  { id: 'tts_speak', perm: 'tts' },
 ];
 
 function enabledTools() {

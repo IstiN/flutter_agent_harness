@@ -68,6 +68,18 @@ final class FakeHostConnector implements UiHostConnector {
     {'id': 's0', 'title': 'old'},
   ];
 
+  var tools = const [
+    UiToolState(name: 'browser_active_tab', enabled: true),
+    UiToolState(name: 'browser_inject_js', enabled: true),
+  ];
+  final toolsPuts = <List<UiToolState>>[];
+
+  @override
+  List<UiToolState> toolsList() => tools;
+
+  @override
+  void toolsPut(List<UiToolState> value) => toolsPuts.add(value);
+
   @override
   void sendUser(String text) => users.add(text);
 
@@ -108,6 +120,52 @@ int _countEvent(FakeChannel c, String text) => c.sent
 Future<void> _pump() => Future<void>.delayed(Duration.zero);
 
 void main() {
+  test('attach answers tools_state with the host tool list', () async {
+    final host = FakeHostConnector();
+    final server = UiPortServer(host: host);
+    final c = FakeChannel();
+    server.serve(c);
+    c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+    c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
+    await _pump();
+    final kinds = [
+      for (final raw in c.sent) raw['kind'],
+    ];
+    expect(
+      kinds.where((k) => k != 'stream'),
+      containsAllInOrder(['hello_ack', 'attached', 'tools_state']),
+    );
+    final state = _ofKind(c, 'tools_state');
+    expect(state, isNotNull);
+    expect((state!['tools'] as List).first, {
+      'name': 'browser_active_tab',
+      'enabled': true,
+    });
+  });
+
+  test('tools_put applies through the host and re-answers tools_state', () async {
+    final host = FakeHostConnector();
+    final server = UiPortServer(host: host);
+    final c = FakeChannel();
+    server.serve(c);
+    c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+    c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
+    await _pump();
+    c.injectMsg(
+      const ToolsPutMsg(tools: [
+        UiToolState(name: 'browser_inject_js', enabled: false),
+      ]),
+    );
+    await _pump();
+    expect(host.toolsPuts.single.single.name, 'browser_inject_js');
+    // The put is answered with the (host-mutated) fresh state.
+    final states = [
+      for (final raw in c.sent) if (raw['kind'] == 'tools_state') raw,
+    ];
+    expect(states, hasLength(2));
+  });
+
+
   group('UT-S1: hello / hello_ack', () {
     test('acks negotiated version, capabilities and sessionId', () {
       final host = FakeHostConnector();

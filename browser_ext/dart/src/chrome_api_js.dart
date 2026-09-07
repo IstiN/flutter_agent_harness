@@ -1199,19 +1199,6 @@ final class _PageCapture implements PageCaptureApi {
   );
 }
 
-final class _Tts implements TtsApi {
-  @override
-  Future<void> speak(
-    String utterance, {
-    String? voiceName,
-    double? rate,
-    double? pitch,
-  }) => _invoke('tts.speak', [
-    utterance,
-    {'voiceName': ?voiceName, 'rate': ?rate, 'pitch': ?pitch},
-  ]);
-}
-
 final class _Permissions implements PermissionsApi {
   @override
   Future<bool> contains(List<String> permissions) async => _b(
@@ -1307,8 +1294,6 @@ final class JsChromeApi implements ChromeApi {
   late final readingList = _ReadingList();
   @override
   late final pageCapture = _PageCapture();
-  @override
-  late final tts = _Tts();
   @override
   late final permissions = _Permissions();
 }

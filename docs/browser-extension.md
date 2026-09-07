@@ -175,15 +175,17 @@ two-way checker (`checkMatrix`) turns every drift into a typed
 | Tier | Rows | Treatment |
 |---|---|---|
 | **Core** | 28 (26 manifest permissions + `runtime`, which needs none) | Registered and exposed; an unpacked manifest must carry the permission |
-| **Second tier** | 9 (`search`, `topSites`, `readingList`, `pageCapture`, `tabCapture`, `desktopCapture`, `tts`, `userScripts`, `declarativeNetRequest`) | Implemented but registered-hidden — a Settings gate turns them on; permissions ride `optional_permissions` |
-| **Excluded** | 11 (`browsingData`, `privacy`, `proxy`, `management`, `gcm`, `devtools`, `fileBrowserHandler`, `printing`, `printingMetrics`, `fileSystemProvider`, `passwords`) | Absent from manifest AND registry; the table row records the rationale so absence is auditable |
+| **Second tier** | 8 (`search`, `topSites`, `readingList`, `pageCapture`, `tabCapture`, `desktopCapture`, `userScripts`, `declarativeNetRequest`) | Implemented but registered-hidden — a Settings gate turns them on; permissions ride `optional_permissions` |
+| **Excluded** | 12 (`browsingData`, `privacy`, `proxy`, `management`, `gcm`, `devtools`, `fileBrowserHandler`, `printing`, `printingMetrics`, `fileSystemProvider`, `tts`, `passwords`) | Absent from manifest AND registry; the table row records the rationale so absence is auditable |
 
 Excluded rationales: `browsingData` wipes user data; `privacy`/`proxy`
 mutate browser-wide settings; `management` controls other extensions;
 `gcm` is push transport, not an agent surface; `devtools` opens
 interactive windows; the ChromeOS-only quartet
 (`fileBrowserHandler`, `printing`, `printingMetrics`,
-`fileSystemProvider`) has no desktop meaning. The `passwords` row is
+`fileSystemProvider`) has no desktop meaning. `tts` is not
+optional-eligible — Chrome refuses to list it in `optional_permissions`
+— so no agent surface ships on it. The `passwords` row is
 **impossible by construction** — chrome exposes no password API — and
 the checker flags anything (manifest entry, tool spec, prompt vocabulary)
 reaching for one wherever it appears.
@@ -431,7 +433,7 @@ ECDH; the hub only ever sees ciphertext).
 
 ## Advanced: power tools (Settings-gated, second tier)
 
-Five higher-power browser tools ship registered-but-hidden until you turn
+Four higher-power browser tools ship registered-but-hidden until you turn
 them on in the panel's "Advanced — power tools" section (issue #34 AC4d):
 
 | Tool | Chrome permission | What it does |
@@ -440,7 +442,6 @@ them on in the panel's "Advanced — power tools" section (issue #34 AC4d):
 | `top_sites` | `topSites` | lists the most-visited sites |
 | `reading_list` | `readingList` | list / add / remove reading-list entries |
 | `page_capture` | `pageCapture` | captures a tab as MHTML (returns size only) |
-| `tts_speak` | `tts` | speaks text through the browser's speech engine |
 
 Toggle semantics: enabling a tool asks Chrome for its optional permission
 (the checkbox click is the user gesture MV3 requires) and the tool

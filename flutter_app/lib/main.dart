@@ -10,6 +10,7 @@ import 'dart:async' show unawaited;
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
+import 'package:fa/services/relay/relay_probe.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
@@ -73,8 +74,24 @@ import 'package:fa/firebase_options.dart';
 /// the chat is served by the service-worker agent over the worker relay —
 /// the UI holds no keys and gains the SW's browser tools. Null for plain
 /// web/desktop, which keeps the local [AgentService.create] path.
-Future<RelayAgentService?> createRelayServiceIfHosted() async =>
-    isExtensionHost() ? await RelayAgentService.create() : null;
+///
+/// The host is decided by [decideRelay]: the build flag
+/// (`--dart-define=FA_HOST=extension`, set by `build_browser_ext.sh
+/// --with-app`) wins over the runtime probe, and the decision + reason are
+/// ALWAYS logged — a silent fallthrough here once cost a debugging session
+/// ("extension panel, but the local web agent answered").
+Future<RelayAgentService?> createRelayServiceIfHosted() async {
+  final decision = decideRelay(buildHost: kFaBuildHost, probe: isExtensionHost);
+  debugPrint('[fah] relay probe: ${decision.reason}');
+  if (!decision.hosted) return null;
+  final relay = await RelayAgentService.create();
+  debugPrint(
+    relay == null
+        ? '[fah] relay: hosted, but no port channel (SW unreachable?)'
+        : '[fah] relay: worker transport created',
+  );
+  return relay;
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -656,6 +673,17 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   @override
   void initState() {
     super.initState();
+    // Extension panel (issue #34): the SW owns providers, config and the
+    // session — local onboarding/restore paths never apply, whatever they
+    // persisted on previous builds.
+    if (isExtensionHost()) {
+      debugPrint('[fah] extension host detected: booting the SW relay');
+      _onboardingDone = true;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => unawaited(_bootRelay()),
+      );
+      return;
+    }
     _config = restorableBootConfig(
       connection: widget.lastConnectionStore?.connection,
       registry: widget.registry,
@@ -719,6 +747,68 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
     AppAnalytics.instance.skillsAccessChanged(access.name);
     await store.save(access);
   }
+
+  /// Extension-panel boot: connect to the service-worker agent and go
+  /// straight to chat — no provider form (the SW's chrome.storage config
+  /// is edited in Settings, which round-trips `settings_put`), no local
+  /// session store.
+  Future<void> _bootRelay() async {
+    final env = widget.env ?? await createPlatformEnv();
+    final manager = FlutterSessionManager(
+      env: env,
+      sessionsRoot: defaultSessionsRoot(env.sessionCwd),
+    );
+    try {
+      final relay = await RelayAgentService.create();
+      if (relay == null) {
+        debugPrint('[fah] relay create returned null (not hosted?)');
+        if (!mounted) return;
+        setState(() => _relayError = 'extension service worker not reachable');
+        return;
+      }
+      manager.addSession(
+        relay.relaySessionId.isEmpty ? 'relay' : relay.relaySessionId,
+        relay,
+      );
+      // The models/provider screens read this registry; in relay mode the
+      // truth lives in the SW's chrome.storage, so seed one entry from the
+      // attach-time settings snapshot. The key stays session-only
+      // (rememberKey) — re-saving the form round-trips it via
+      // settings_put instead of losing it.
+      ProviderRegistry? registry;
+      final sw = relay.swProvider;
+      if (sw != null && sw['baseUrl']!.isNotEmpty) {
+        registry = ProviderRegistry.inMemory();
+        final base = Uri.tryParse(sw['baseUrl']!);
+        final provider = await registry.add(
+          name: base?.host ?? sw['baseUrl']!,
+          baseUrl: sw['baseUrl']!,
+          modelId: sw['model'] ?? '',
+        );
+        registry.rememberKey(provider.id, sw['apiKey'] ?? '');
+      }
+      if (!mounted) return;
+      AppAnalytics.instance.bootstrapResult('chat');
+      final navigator = Navigator.of(context);
+      await navigator.pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => faHomeScreen(
+            context: navigator.context,
+            manager: manager,
+            registry: registry,
+          ),
+        ),
+      );
+    } on Object catch (e) {
+      debugPrint('[fah] relay boot failed: $e');
+      if (!mounted) return;
+      setState(() => _relayError = '$e');
+    }
+  }
+
+  /// Set when the extension-panel relay could not attach (SW dead/broken
+  /// build): the screen shows the error with a retry instead of onboarding.
+  String? _relayError;
 
   Future<void> _boot() async {
     final config = _config!;
@@ -842,6 +932,48 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   @override
   Widget build(BuildContext context) {
     final config = _config;
+    // Extension panel with an unreachable service worker: retry in place,
+    // never fall back to the local provider/onboarding flow.
+    if (config == null && isExtensionHost() && _relayError == null) {
+      // Relay boot in progress — never flash the local onboarding/home.
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FaBrandTile(size: 48),
+              SizedBox(height: 24),
+              CircularProgressIndicator(),
+            ],
+          ),
+        ),
+      );
+    }
+    if (config == null && _relayError != null) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const FaBrandTile(size: 48),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(_relayError!, textAlign: TextAlign.center),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () {
+                  setState(() => _relayError = null);
+                  _bootRelay();
+                },
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     if (config == null) {
       if (_showOnboarding) return _buildOnboardingScreen();
       // After onboarding (seen flag set) the user has already walked

@@ -42,9 +42,13 @@ final class RelayAgentService extends AgentService {
   static Future<RelayAgentService?> create() async {
     final channel = createPortChannel();
     if (channel == null) return null;
-    return RelayAgentService._(
+    final service = RelayAgentService._(
       detectTransport(portFactory: () => channel, forceOverride: true),
     );
+    // Wait (bounded) for the attach + settings snapshot: boot code seeds
+    // the provider registry from [swProvider] right after this returns.
+    await service.ready;
+    return service;
   }
 
   /// Test seam: drive the relay over a fake channel-backed transport.
@@ -176,21 +180,48 @@ final class RelayAgentService extends AgentService {
   Stream<TrajectorySnapshot> get trajectory => const Stream.empty();
 
   // -- FaChatConnection ------------------------------------------------------
+  // Reflects the SW connection once its snapshot landed; falls back to the
+  // idle local defaults before that (the boot screens render early).
 
   @override
-  String get providerKind => 'relay';
+  String get providerKind =>
+      _baseUrl.isNotEmpty ? 'openai-completions' : super.providerKind;
 
   @override
-  String get activeBaseUrl => _baseUrl;
+  String get activeBaseUrl =>
+      _baseUrl.isNotEmpty ? _baseUrl : super.activeBaseUrl;
 
   @override
   String? get activeProviderId => null;
 
   @override
-  String get modelId => _modelId;
+  String get modelId => _modelId.isNotEmpty ? _modelId : super.modelId;
 
   /// The SW-side session id (from hello_ack/attached); '' before attached.
   String get relaySessionId => _sessionId;
+
+  Completer<void>? _readyCompleter = Completer<void>();
+
+  /// Completes once the SW handshake landed (attached + first settings
+  /// snapshot) so callers seeding UI state read real values. Bounded by
+  /// [readyTimeout]; never throws.
+  Future<void> get ready {
+    final c = _readyCompleter;
+    if (c == null) return Future.value();
+    return c.future.timeout(readyTimeout, onTimeout: () {});
+  }
+
+  static const readyTimeout = Duration(seconds: 5);
+
+  /// The SW's stored provider snapshot (settings_result `faProvider`), or
+  /// null before the first snapshot arrives. Seeds the panel's provider
+  /// registry so the models screens reflect the SW configuration.
+  Map<String, String>? get swProvider =>
+      _swProvider == null ? null : Map<String, String>.of(_swProvider!);
+  Map<String, String>? _swProvider;
+
+  /// The SW agent's tool state (tools_state), keyed by tool name.
+  final _swTools = <String, bool>{};
 
   // -- transport plumbing ----------------------------------------------------
 
@@ -226,12 +257,29 @@ final class RelayAgentService extends AgentService {
       case AttachedMsg(:final sessionId, :final replay):
         _sessionId = sessionId;
         _rebuild(replay);
+        // Pick up the SW's persisted provider/model (chrome.storage) so the
+        // composer reflects reality; reconfigure() writes back the same way.
+        _transport.dispatch(const SettingsQueryMsg());
       case MessageDoneMsg(:final message):
         _finishAssistant(message);
       case ApprovalRequestMsg(:final id, :final call, :final reason):
         unawaited(_decideApproval(id, call, reason));
       case StreamMsg(:final event):
         _onHostEvent(event);
+      case SettingsResultMsg(:final settings):
+        _applySwSettings(settings);
+        final c = _readyCompleter;
+        if (c != null && !_sessionId.isEmpty) {
+          _readyCompleter = null;
+          c.complete();
+        }
+      case ToolsStateMsg(:final tools):
+        _swTools
+          ..clear()
+          ..addEntries([for (final t in tools) MapEntry(t.name, t.enabled)]);
+        notifyListeners();
+      case ToolsPutMsg():
+        break; // UI -> SW only
       case ErrorMsg(:final message):
         _error = message;
         notifyListeners();
@@ -283,6 +331,71 @@ final class RelayAgentService extends AgentService {
   }
 
   /// Replaces the streaming partial (if any) with the finalized message.
+  /// The SW's merged settings snapshot (settings_result): the provider
+  /// trio feeds the models screens and the composer.
+  void _applySwSettings(Map<String, dynamic> settings) {
+    final provider = settings['faProvider'];
+    if (provider is Map) {
+      _modelId = '${provider['model'] ?? ''}'.trim();
+      _baseUrl = '${provider['baseUrl'] ?? ''}'.trim();
+      _swProvider = {
+        'baseUrl': _baseUrl,
+        'model': _modelId,
+        'apiKey': '${provider['apiKey'] ?? ''}',
+      };
+      notifyListeners();
+    }
+  }
+
+  /// The Tools section renders the SW agent's registry, not a local one:
+  /// every SW tool is capability-present; the enabled flag is the SW's.
+  @override
+  Map<String, ResolvedToolAvailability> get toolAvailability => {
+    for (final entry in _swTools.entries)
+      entry.key: ResolvedToolAvailability(
+        enabled: entry.value,
+        scope: ToolScope.builtin,
+        capabilityPresent: true,
+      ),
+  };
+
+  /// Tool toggles travel as `tools_put`; the local map updates
+  /// optimistically and the SW's tools_state confirms (or corrects).
+  @override
+  Future<void> setToolEnabled(String id, bool enabled) async {
+    if (!_swTools.containsKey(id) || _swTools[id] == enabled) return;
+    _swTools[id] = enabled;
+    notifyListeners();
+    _transport.dispatch(
+      ToolsPutMsg(
+        tools: [UiToolState(name: id, enabled: enabled)],
+      ),
+    );
+  }
+
+  /// Settings save from the panel UI goes over the wire as `settings_put`:
+  /// the SW persists it to chrome.storage and reconfigures its agent. The
+  /// local (idle) agent is deliberately never touched — the panel holds no
+  /// provider state of its own in extension mode.
+  @override
+  Future<void> reconfigure(AgentConfig config) async {
+    _modelId = config.modelId;
+    _baseUrl = config.baseUrl;
+    final k = config.apiKey;
+    _transport.dispatch(
+      SettingsPutMsg(
+        settings: {
+          'faProvider': {
+            'baseUrl': config.baseUrl,
+            'apiKey': k,
+            'model': config.modelId,
+          },
+        },
+      ),
+    );
+    notifyListeners();
+  }
+
   void _finishAssistant(Map<String, dynamic> message) {
     final role = message['role'] as String? ?? 'assistant';
     final text = message['text'] as String? ?? '';

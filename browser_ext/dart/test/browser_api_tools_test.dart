@@ -66,7 +66,6 @@ const _expectedNames = [
   'top_sites',
   'reading_list',
   'page_capture',
-  'tts_speak',
 ];
 
 /// Minimal VALID args per tool: enough to pass validation so the call
@@ -116,7 +115,6 @@ const _minArgs = <String, Map<String, Object?>>{
   'top_sites': {},
   'reading_list': {'mode': 'list'},
   'page_capture': {'tabId': 1},
-  'tts_speak': {'utterance': 'hello'},
 };
 
 /// Core-only registry by default; [enabledSecondTier] turns the gate on
@@ -206,19 +204,19 @@ void main() {
 
   // -------------------------------------------------------------------------
   group('specs table (UT-T4)', () {
-    test('39 tools (34 core + 5 Settings-gated) with exact names', () {
+    test('38 tools (34 core + 4 Settings-gated) with exact names', () {
       final specs = browserApiToolSpecs();
       expect(specs.map((s) => s.name), unorderedEquals(_expectedNames));
-      expect(specs.map((s) => s.name).toSet().length, 39);
+      expect(specs.map((s) => s.name).toSet().length, 38);
     });
 
-    test('exactly five second-tier specs, all others core', () {
+    test('exactly four second-tier specs, all others core', () {
       final gated = browserApiToolSpecs()
           .where((s) => s.visibility == BrowserToolVisibility.secondTier)
           .map((s) => s.name)
           .toSet();
       expect(gated, secondTierToolNames());
-      expect(gated.length, 5);
+      expect(gated.length, 4);
       expect(
         browserApiToolSpecs()
             .where((s) => s.visibility == BrowserToolVisibility.core)
@@ -281,7 +279,7 @@ void main() {
           full.names.toSet(),
           browserApiToolSpecs().map((s) => s.name).toSet(),
         );
-        expect(full.length, 39);
+        expect(full.length, 38);
         final specs = {for (final s in browserApiToolSpecs()) s.name: s};
         for (final tool in full.agentTools) {
           expect(tool.tier, specs[tool.name]!.tier, reason: tool.name);
@@ -301,7 +299,6 @@ void main() {
         'topSites',
         'readingList',
         'pageCapture',
-        'tts',
       ]);
       final gated = await _reg(
         chrome,
@@ -311,7 +308,7 @@ void main() {
         gated.names.toSet(),
         browserApiToolSpecs().map((s) => s.name).toSet(),
       );
-      expect(gated.length, 39);
+      expect(gated.length, 38);
     });
 
     test('enabled + NOT granted → hidden (capability floor)', () async {
@@ -355,16 +352,16 @@ void main() {
     });
 
     test('sync is idempotent: double-apply does not duplicate', () async {
-      await chrome.grantPermissions(['tts']);
+      await chrome.grantPermissions(['topSites']);
       final reg = ToolRegistry();
       final surface = await registerBrowserApiTools(
         reg,
         chrome,
-        enabledSecondTier: {'tts_speak'},
+        enabledSecondTier: {'top_sites'},
       );
-      await syncSecondTierTools(reg, surface, {'tts_speak'});
+      await syncSecondTierTools(reg, surface, {'top_sites'});
       expect(reg.length, 35);
-      await syncSecondTierTools(reg, surface, {'tts_speak'});
+      await syncSecondTierTools(reg, surface, {'top_sites'});
       expect(reg.length, 35);
     });
 

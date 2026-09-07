@@ -125,7 +125,6 @@ final class FakeChrome implements ChromeApi {
     _topSitesApi = _FakeTopSites(this);
     _readingListApi = _FakeReadingList(this);
     _pageCaptureApi = _FakePageCapture(this);
-    _ttsApi = _FakeTts(this);
     _permissionsApi = _FakePermissions(this);
   }
 
@@ -193,9 +192,6 @@ final class FakeChrome implements ChromeApi {
   /// Last chrome.search.query dispatch (test observability).
   String? lastSearch;
 
-  /// Last chrome.tts.speak dispatch (test observability).
-  String? lastUtterance;
-
   /// Raw MHTML the pageCapture fake answers (default below).
   String mhtmlPayload =
       'MIME-Version: 1.0\nContent-Type: multipart/related; '
@@ -204,7 +200,6 @@ final class FakeChrome implements ChromeApi {
   late final _FakeTopSites _topSitesApi;
   late final _FakeReadingList _readingListApi;
   late final _FakePageCapture _pageCaptureApi;
-  late final _FakeTts _ttsApi;
   late final _FakePermissions _permissionsApi;
   final Map<int, _DlRec> _downloads = {};
   final Map<String, Cookie> _cookies = {};
@@ -312,8 +307,6 @@ final class FakeChrome implements ChromeApi {
   ReadingListApi get readingList => _readingListApi;
   @override
   PageCaptureApi get pageCapture => _pageCaptureApi;
-  @override
-  TtsApi get tts => _ttsApi;
   @override
   PermissionsApi get permissions => _permissionsApi;
 
@@ -1737,21 +1730,6 @@ final class _FakePageCapture implements PageCaptureApi {
   Future<String> captureMhtml({required int tabId}) async {
     _c._tabOrThrow(tabId); // capturing a ghost tab is no_tab, like chrome
     return _c.mhtmlPayload;
-  }
-}
-
-final class _FakeTts implements TtsApi {
-  _FakeTts(this._c);
-  final FakeChrome _c;
-
-  @override
-  Future<void> speak(
-    String utterance, {
-    String? voiceName,
-    double? rate,
-    double? pitch,
-  }) async {
-    _c.lastUtterance = utterance;
   }
 }
 

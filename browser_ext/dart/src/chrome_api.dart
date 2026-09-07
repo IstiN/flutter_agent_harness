@@ -49,7 +49,6 @@ abstract interface class ChromeApi {
   TopSitesApi get topSites;
   ReadingListApi get readingList;
   PageCaptureApi get pageCapture;
-  TtsApi get tts;
   PermissionsApi get permissions;
 }
 
@@ -922,18 +921,6 @@ abstract interface class ReadingListApi {
 abstract interface class PageCaptureApi {
   /// The raw MHTML document. Chrome refuses restricted pages itself.
   Future<String> captureMhtml({required int tabId});
-}
-
-/// chrome.tts — speech synthesis through the user's sound device.
-abstract interface class TtsApi {
-  /// Dispatches the utterance to a speech engine; chrome resolves before
-  /// speech finishes (fire-and-forget at this layer).
-  Future<void> speak(
-    String utterance, {
-    String? voiceName,
-    double? rate,
-    double? pitch,
-  });
 }
 
 /// chrome.permissions — the optional-permission slice the second-tier

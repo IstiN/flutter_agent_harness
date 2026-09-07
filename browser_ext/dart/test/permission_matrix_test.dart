@@ -20,9 +20,8 @@ import '../src/permission_matrix.dart';
 
 Map<String, dynamic> _manifestJsonMap() {
   for (final path in const [
+    'browser_ext/manifest.json', // cwd = repo root (dart test <path>)
     '../manifest.json', // cwd = browser_ext/dart (package root)
-    '../../browser_ext/manifest.json', // cwd = browser_ext/dart/test
-    'browser_ext/manifest.json', // cwd = repo root
   ]) {
     final file = File(path);
     if (file.existsSync()) {
@@ -313,6 +312,9 @@ void main() {
 
   group('UT-T2: table self-checks', () {
     test('secondTierOptionalPermissions is exactly the second tier', () {
+      // `tts` and `declarativeNetRequest` are NOT optional-eligible in
+      // Chrome (load-time warnings: "cannot be listed as optional") — they
+      // moved to the excluded record, see manifest.json.
       expect(secondTierOptionalPermissions, {
         'search',
         'topSites',
@@ -320,9 +322,7 @@ void main() {
         'pageCapture',
         'tabCapture',
         'desktopCapture',
-        'tts',
         'userScripts',
-        'declarativeNetRequest',
       });
     });
 

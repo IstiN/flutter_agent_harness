@@ -280,12 +280,6 @@ List<BrowserToolSpec> browserApiToolSpecs() => List.unmodifiable(const [
     tier: ApprovalTier.exec, // full-content capture — page_screenshot's class
     visibility: BrowserToolVisibility.secondTier,
   ),
-  BrowserToolSpec(
-    name: 'tts_speak',
-    permissions: {'tts'},
-    tier: ApprovalTier.write, // talks through the user's speakers
-    visibility: BrowserToolVisibility.secondTier,
-  ),
 ]);
 
 /// Per-tool approval overrides for the always-prompting specs (today:
@@ -1317,37 +1311,6 @@ final class BrowserApiToolSurface {
           });
         },
       ),
-      tool(
-        'tts_speak',
-        "Speaks an utterance through the browser's speech engine. "
-            'Fire-and-forget: returns once the engine accepts it; speech '
-            'continues in the background.',
-        {
-          'utterance': _strProp('text to speak'),
-          'voiceName': _strProp('specific voice to use'),
-          'rate': {
-            'type': 'number',
-            'description': 'relative speed (default 1.0)',
-          },
-          'pitch': {
-            'type': 'number',
-            'description': 'relative pitch (default 1.0)',
-          },
-        },
-        ['utterance'],
-        (args) async {
-          final utterance = _reqStr(args, 'utterance');
-          await _chrome.tts.speak(
-            utterance,
-            voiceName: _optStr(args, 'voiceName'),
-            rate: _optNum(args, 'rate'),
-            pitch: _optNum(args, 'pitch'),
-          );
-          return ToolExecutionResult.text(
-            'speaking (${utterance.length} chars)',
-          );
-        },
-      ),
     ];
   }
 
@@ -1601,16 +1564,26 @@ final class BrowserApiToolSurface {
     );
   }
 
-  /// Active tab of the focused window, for tabId-optional tools.
-  Future<int> _activeTabId() async {
+  /// Active tab of the focused window (the same accessor the
+  /// tabId-optional tools resolve through), or null when there is none.
+  /// The per-turn context injector (agent_host) reuses this so the
+  /// `[context] active tab:` line and the tools agree on "active" — one
+  /// chrome query, not two.
+  Future<Tab?> activeTab() async {
     final tabs = await _chrome.tabs.query(active: true, currentWindow: true);
-    if (tabs.isEmpty) {
+    return tabs.isEmpty ? null : tabs.first;
+  }
+
+  /// Active tab id for tabId-optional tools; `no_tab` when none.
+  Future<int> _activeTabId() async {
+    final tab = await activeTab();
+    if (tab == null) {
       throw BrowserApiToolException(
         'no_tab',
         'no active tab in the current window',
       );
     }
-    return tabs.first.id;
+    return tab.id;
   }
 
   /// Attaches the debugger; true when WE attached (false = a session was
@@ -1694,13 +1667,6 @@ int? _optInt(Map<String, dynamic> args, String key) {
   if (v == null) return null;
   if (v is int) return v;
   _bad("argument '$key' must be an integer");
-}
-
-double? _optNum(Map<String, dynamic> args, String key) {
-  final v = args[key];
-  if (v == null) return null;
-  if (v is num) return v.toDouble();
-  _bad("argument '$key' must be a number");
 }
 
 bool? _optBool(Map<String, dynamic> args, String key) {

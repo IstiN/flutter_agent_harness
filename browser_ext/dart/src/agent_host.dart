@@ -26,12 +26,15 @@ import 'package:flutter_agent_harness/src/session/session_tree.dart';
 import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 
+import 'active_tab_context.dart';
 import 'browser_api_tools.dart';
 import 'chrome_api.dart';
 import 'chrome_storage_env.dart';
 import 'dap/dap_frames.dart';
 import 'dap/dap_integration.dart';
 import 'providers.dart';
+import 'tool_gate.dart';
+import 'ui_protocol.dart';
 import 'ui_host_adapter.dart';
 
 /// Calls the browser op table bound by sw/main.js (`globalThis.__faOps` →
@@ -68,7 +71,11 @@ const _systemPrompt =
     'and debugging tools refuse restricted pages (chrome://, extension '
     'pages, the Web Store) — tab management still works there. Keep small '
     'notes under / through the read/write/edit/ls file tools. There is no '
-    'shell. Be terse.';
+    'shell. Be terse. '
+    'A turn may open with a `[context] active tab:` line naming the page '
+    'focused when the turn started (or `restricted page, tools '
+    'unavailable`); it is environment context, not part of the request, '
+    'and is only resent when that page changed.';
 
 /// Owns the agent, its tools, approvals, session, and the event bridge.
 final class AgentHost implements UiHostBackend {
@@ -80,6 +87,10 @@ final class AgentHost implements UiHostBackend {
 
   late ApprovalManager _approvals;
   late ToolRegistry _registry;
+
+  /// Panel-driven per-tool enable/disable (issue #34 `tools_put`); owns
+  /// the desired state, [_registry] mirrors it via [_gate].sync.
+  late ToolGate _gate;
   late Agent _agent;
   Session? _session;
   ProviderConfig? _provider;
@@ -91,13 +102,21 @@ final class AgentHost implements UiHostBackend {
   DapIntegration? _dap;
   DapConfig? _dapConfig;
 
-  /// Second-tier gate state (issue #34 AC4d): the browser surface (null
-  /// when the host booted without chrome), the enabled-set it reflects,
-  /// and the serialized re-apply chain keeping overlapping settings and
-  /// permission events ordered.
+  /// The browser-API surface, when the host booted with a [ChromeApi]:
+  /// the registered tools, the per-turn active-tab context injector, and
+  /// the second-tier gate (issue #34 AC4d) all read it.
   BrowserApiToolSurface? _browserSurface;
+
+  /// Second-tier gate state: the enabled-set it reflects and the
+  /// serialized re-apply chain keeping overlapping settings and
+  /// permission events ordered.
   Set<String> _enabledTools = {};
   Future<void> _gateSync = Future.value();
+
+  /// Per-turn active-tab memory: the last (url, title) announced to the
+  /// model, in-memory only — a SW restart re-announces once (safe
+  /// direction), and each host instance owns its own session.
+  final _tabContext = ActiveTabContext();
 
   /// AC18: one deduper across bridge + DAP mail, so a peer message that
   /// arrives on both links is delivered once (bridge copy wins — it lands
@@ -155,6 +174,9 @@ final class AgentHost implements UiHostBackend {
         enabledSecondTier: _enabledTools,
       );
     }
+    _gate = ToolGate({
+      for (final t in _registry.agentTools) t.name: t,
+    });
     _approvals = ApprovalManager(
       mode:
           approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk,
@@ -271,6 +293,16 @@ final class AgentHost implements UiHostBackend {
   void _syncAgentTools() {
     if (!_booted) return; // _agent is late — nothing to sync pre-init
     _agent.state.tools = _registry.tools;
+  }
+
+  @override
+  List<UiToolState> toolsList() => _gate.snapshot();
+
+  @override
+  void toolsPut(List<UiToolState> tools) {
+    if (!_gate.apply(tools)) return;
+    _gate.sync(_registry);
+    _syncAgentTools();
   }
 
   Model _currentModel() {
@@ -433,13 +465,31 @@ final class AgentHost implements UiHostBackend {
     _running = true;
     _emitStatus();
     try {
-      await _agent.prompt(text);
+      await _agent.prompt(await _turnTextWithTabContext(text));
     } on Object catch (error) {
       _sink({'type': 'error', 'error': '$error'});
     } finally {
       _running = false;
       _emitStatus();
     }
+  }
+
+  /// Per-turn active-tab context (issue #34): prepends the
+  /// `[context] active tab:` line when the focused page changed since the
+  /// last injected turn. Best-effort on both ends — hosts booted without
+  /// the v2 browser surface have no accessor (no line), and a failed
+  /// probe never blocks the turn.
+  Future<String> _turnTextWithTabContext(String text) async {
+    final surface = _browserSurface;
+    if (surface == null) return text;
+    final Tab? tab;
+    try {
+      tab = await surface.activeTab();
+    } on Object {
+      return text; // probe failed: run the turn bare instead
+    }
+    final line = _tabContext.lineFor(tab);
+    return line == null ? text : '$line\n$text';
   }
 
   Future<void> _onAgentEvent(AgentEvent event, CancelToken token) async {

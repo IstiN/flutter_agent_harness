@@ -358,6 +358,77 @@ final class SettingsResultMsg extends UiProtocolMessage {
   Map<String, dynamic> encode() => {'kind': kind, 'settings': settings};
 }
 
+/// One tool's availability as the SW agent sees it (issue #34: the panel
+/// Tools section renders the SW's registry, not a local one).
+final class UiToolState {
+  const UiToolState({required this.name, required this.enabled});
+
+  final String name;
+  final bool enabled;
+
+  Map<String, dynamic> encode() => {'name': name, 'enabled': enabled};
+
+  static UiToolState decode(Map<String, dynamic> json) => UiToolState(
+        name: json['name'] as String,
+        enabled: json['enabled'] as bool,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is UiToolState &&
+      other.name == name &&
+      other.enabled == enabled;
+
+  @override
+  int get hashCode => Object.hash(name, enabled);
+}
+
+List<UiToolState> _reqToolList(Map<String, dynamic> json, String field) {
+  final v = json[field];
+  if (v is List) {
+    return [
+      for (final e in v)
+        UiToolState.decode(Map<String, dynamic>.from(e as Map)),
+    ];
+  }
+  _bad('field "$field" must be a list of tool states');
+}
+
+/// SW → UI: the SW agent's tool list with enabled flags. Sent after
+/// `attached` and after every applied `tools_put`.
+final class ToolsStateMsg extends UiProtocolMessage {
+  const ToolsStateMsg({required this.tools});
+
+  final List<UiToolState> tools;
+
+  @override
+  String get kind => 'tools_state';
+
+  @override
+  Map<String, dynamic> encode() => {
+        'kind': kind,
+        'tools': [for (final t in tools) t.encode()],
+      };
+}
+
+/// UI → SW: apply per-tool enabled flags (the panel Tools toggles). The
+/// SW unregisters disabled tools from the live agent and answers with a
+/// fresh `tools_state`.
+final class ToolsPutMsg extends UiProtocolMessage {
+  const ToolsPutMsg({required this.tools});
+
+  final List<UiToolState> tools;
+
+  @override
+  String get kind => 'tools_put';
+
+  @override
+  Map<String, dynamic> encode() => {
+        'kind': kind,
+        'tools': [for (final t in tools) t.encode()],
+      };
+}
+
 /// The only failure channel — also what [UiProtocolMessage.decode] answers
 /// with for `unknown_kind` and `malformed` inputs.
 final class ErrorMsg extends UiProtocolMessage {
@@ -495,6 +566,10 @@ UiProtocolMessage _decode(Map<String, dynamic> json) {
         return SettingsPutMsg(settings: _reqMap(json, 'settings'));
       case 'settings_result':
         return SettingsResultMsg(settings: _reqMap(json, 'settings'));
+      case 'tools_state':
+        return ToolsStateMsg(tools: _reqToolList(json, 'tools'));
+      case 'tools_put':
+        return ToolsPutMsg(tools: _reqToolList(json, 'tools'));
       case 'error':
         return ErrorMsg(
           code: _reqStr(json, 'code'),

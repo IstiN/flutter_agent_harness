@@ -53,7 +53,7 @@ permission — the windows_* tools request nothing extra.
 | `<all_urls>` (in `host_permissions`) | unpacked (core) | The agent acts on whichever page the user points it at — page identity is chosen per prompt, not at install time. All script injections are approval-gated. |
 | `<all_urls>` (in `optional_host_permissions`) | store | Store builds can drop broad host access; the user grants sites on demand. |
 
-## Second tier (9, in `optional_permissions`)
+## Second tier (8, in `optional_permissions`)
 
 Implemented, but not registered by default — a Settings gate turns each
 on; the store manifest carries them as optional so nothing is requested
@@ -68,7 +68,6 @@ up front.
 | `search` | Trigger browser search | Lets the agent run a browser search the user asked for. |
 | `tabCapture` | Tab capture | Lets the agent capture the visible tab for "look at this" workflows. |
 | `topSites` | Top sites | Read-only list of most-visited sites, used as context when the user asks about "my usual sites". |
-| `tts` | Speak answers | Reads an answer aloud when the user asks for it. |
 | `userScripts` | User-script registration | Lets the agent register persistent user scripts on explicit request; opt-in and approval-gated. |
 
 ## Excluded (no manifest permission, no tool)
@@ -87,6 +86,7 @@ Recorded in the matrix so the absence is auditable, not accidental:
 | `printing` | ChromeOS-only. |
 | `printingMetrics` | ChromeOS-only. |
 | `fileSystemProvider` | ChromeOS-only. |
+| `tts` | Chrome does not let it ride `optional_permissions` (not optional-eligible); no agent surface ships on it. |
 | `passwords` | **Impossible by construction**: chrome exposes no password API at all. There is no manifest entry, no tool, and no prompt vocabulary that can reach saved passwords — the matrix checker flags anything that tries, wherever it appears. |
 
 ## Profiles

@@ -28,7 +28,10 @@ export '../src/ui_protocol.dart'
         SessionsQueryMsg,
         SteerMsg,
         StreamMsg,
+        ToolsPutMsg,
+        ToolsStateMsg,
         UiProtocolMessage,
+        UiToolState,
         uiProtocolVersion;
 export '../src/ui_transport.dart'
     show

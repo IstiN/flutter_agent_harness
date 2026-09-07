@@ -3007,6 +3007,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This token cannot create repositories — publishing needs repo rights. Use a classic PAT with the public_repo scope (or a fine-grained PAT with All repositories + Administration + Contents read/write). The Device code login often yields a token without repo rights.'**
   String get githubTokenNoRepoScope;
+
+  /// Warning shown on the device-flow tab when only the fallback Copilot plugin client id is available
+  ///
+  /// In en, this message translates to:
+  /// **'Heads-up: this device login uses the public Copilot Plugin app, whose tokens GitHub limits to identity-only — they cannot publish. To publish via device code, register your own GitHub OAuth App (Settings → Developer settings → OAuth Apps, set the Authorization callback URL to https://fa1.dev/oauth/callback) and save its client id in Settings → Keys as github_oauth_client_id, or rebuild the app with --dart-define=FA_GITHUB_CLIENT_ID=<id>. Until then, connect with a classic PAT (public_repo) on the Token tab.'**
+  String get githubDeviceFallbackWarn;
+
+  /// Connect-sheet tab running the GitHub OAuth web flow through the fa1.dev callback page
+  ///
+  /// In en, this message translates to:
+  /// **'Browser'**
+  String get githubConnectWebTab;
+
+  /// Instructions shown on the Browser (OAuth web flow) tab
+  ///
+  /// In en, this message translates to:
+  /// **'Opens github.com in your browser. After \"Authorize\" the fa1.dev callback page shows a one-time code — paste it below. Needs your own OAuth App: its client id in Keys as github_oauth_client_id and its secret as github_oauth_client_secret.'**
+  String get githubBrowserHint;
+
+  /// Re-opens the github.com authorize page on the Browser tab
+  ///
+  /// In en, this message translates to:
+  /// **'Open GitHub again'**
+  String get githubBrowserOpen;
+
+  /// Hint of the one-time-code field on the Browser tab
+  ///
+  /// In en, this message translates to:
+  /// **'One-time code from fa1.dev'**
+  String get githubBrowserCodeHint;
 }
 
 class _AppLocalizationsDelegate

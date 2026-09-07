@@ -39,6 +39,12 @@ abstract interface class UiHostConnector {
   /// Merges [settings] into the stored settings (`settings_put`).
   void settingsPut(Map<String, dynamic> settings);
 
+  /// The live tool list with enabled flags (`tools_state`).
+  List<UiToolState> toolsList();
+
+  /// Applies per-tool enabled flags (`tools_put`).
+  void toolsPut(List<UiToolState> tools);
+
   /// Known past sessions (`sessions_query`).
   List<Map<String, dynamic>> sessionsList();
 }
@@ -150,6 +156,9 @@ final class UiPortServer {
             replay: _replay(m.lastEventId),
           ),
         );
+        // The panel renders the SW's Tools section from this — always
+        // current as of the attach it belongs to.
+        _send(channel, ToolsStateMsg(tools: host.toolsList()));
       case final PromptMsg m:
         if (_prompts.register(m.id)) host.sendUser(m.text);
       case final SteerMsg m:
@@ -165,6 +174,9 @@ final class UiPortServer {
       case final SettingsPutMsg m:
         host.settingsPut(m.settings);
         _send(channel, SettingsResultMsg(settings: host.settingsGet()));
+      case final ToolsPutMsg m:
+        host.toolsPut(m.tools);
+        _send(channel, ToolsStateMsg(tools: host.toolsList()));
       default:
         break; // UI-bound kinds echoed back at us: ignore
     }
