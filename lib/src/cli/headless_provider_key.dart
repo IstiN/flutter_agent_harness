@@ -23,11 +23,17 @@ List<String> apiKeyEnvNames(String provider) => switch (provider) {
         const ['OPENROUTER_API_KEY', 'OPENAI_API_KEY'],
 };
 
-/// Resolves [provider]'s API key headlessly: a genuine environment value
-/// of the catalog env names, then endpoint-scoped secure-store entries
-/// (`FA_KEY_<HOST>` — what /provider writes — plus any saved custom entry's
-/// name-scoped key for this endpoint), then legacy env-name store entries
-/// from older versions. [env] overrides Platform.environment (tests).
+/// Resolves [provider]'s API key headlessly. On the catalog spec's DEFAULT
+/// endpoint: a genuine environment value of the catalog env names, then
+/// endpoint-scoped secure-store entries (`FA_KEY_<HOST>` — what /provider
+/// writes — plus any saved custom entry's name-scoped key for this
+/// endpoint), then legacy env-name store entries from older versions. On
+/// ANY OTHER endpoint only the endpoint-scoped entries resolve — the
+/// catalog env names describe the default endpoint and must never hijack a
+/// custom one (issue #40: the user's `OPENROUTER_API_KEY` environment key
+/// silently serving api.z.ai), mirroring the shared
+/// [resolveEndpointKey] chain. [env] overrides Platform.environment
+/// (tests).
 String? optionalProviderApiKey(
   String provider,
   SecureKeyCache keys, {
@@ -37,9 +43,14 @@ String? optionalProviderApiKey(
 }) {
   final environment = env ?? Platform.environment;
   final names = apiKeyEnvNames(provider);
-  for (final name in names) {
-    final value = environment[name];
-    if (value != null && value.isNotEmpty) return value;
+  final spec = catalogProvider(provider);
+  final customEndpoint =
+      spec != null && baseUrl != null && baseUrl != spec.defaultBaseUrl;
+  if (!customEndpoint) {
+    for (final name in names) {
+      final value = environment[name];
+      if (value != null && value.isNotEmpty) return value;
+    }
   }
   if (baseUrl != null) {
     final candidates = [
@@ -51,9 +62,11 @@ String? optionalProviderApiKey(
       if (stored != null && stored.isNotEmpty) return stored;
     }
   }
-  for (final name in names) {
-    final stored = keys.read(name);
-    if (stored != null && stored.isNotEmpty) return stored;
+  if (!customEndpoint) {
+    for (final name in names) {
+      final stored = keys.read(name);
+      if (stored != null && stored.isNotEmpty) return stored;
+    }
   }
   return null;
 }
