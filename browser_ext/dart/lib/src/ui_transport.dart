@@ -222,8 +222,12 @@ abstract class FaTransport {
   void _receive(UiProtocolMessage message) {
     _events.add(ProtocolMessageReceived(message));
     switch (message) {
-      case StreamMsg():
-        if (_state is TransportAttached) {
+      case StreamMsg(:final event):
+        // Status mirrors (running flags) are not turn traffic: they must
+        // not flip the connection state machine — the SW's post-attach
+        // status snapshot would otherwise push an IDLE panel into
+        // `streaming` and the typing indicator would never clear.
+        if (event['type'] != 'status' && _state is TransportAttached) {
           _setState(const TransportStreaming());
         }
       // A turn ends with its final message or an error; anything else that
@@ -299,6 +303,12 @@ final class WorkerRelayTransport extends FaTransport {
   UiPortChannel? _probed;
   UiPortChannel? _channel;
   StreamSubscription<Map<String, dynamic>>? _subscription;
+
+  /// Link keepalive while attached (see [PingMsg]): an open MV3 port does
+  /// not keep the service worker alive — only messages reset the 30s idle
+  /// timer — so an attached transport pings on a fixed cadence instead of
+  /// flapping through disconnect/backoff/reconnect cycles every half minute.
+  Timer? _keepalive;
 
   /// One connect cycle at a time: stale channel events and double connects
   /// are ignored (same pattern as the DAP client's generation counter).
@@ -382,6 +392,10 @@ final class WorkerRelayTransport extends FaTransport {
       case AttachedMsg(:final sessionId, :final replay):
         _sessionId = sessionId; // the worker's id is authoritative now
         _setState(const TransportAttached());
+        _keepalive?.cancel();
+        _keepalive = Timer.periodic(_keepaliveInterval, (_) {
+          _trySend(const PingMsg()); // pongs are ignored below
+        });
         final reconnecting = _handshake;
         _handshake = null;
         reconnecting?.complete();
@@ -391,8 +405,14 @@ final class WorkerRelayTransport extends FaTransport {
         }
         // Replayed partials surface exactly like live stream events, so a
         // turn that kept running while the SW restarted draws itself back.
+        // They are HISTORY, though: they must bypass the state machine —
+        // feeding them through _receive flips it to `streaming` for each
+        // replayed stream event, so a panel booting into a ring whose last
+        // delta predates the turn's end stuck on "typing…" forever. The
+        // SW appends the authoritative status snapshot right after this
+        // replay, which is what re-syncs the run state.
         for (final event in replay) {
-          _receive(_envelopeOf(event));
+          _events.add(ProtocolMessageReceived(_envelopeOf(event)));
         }
         _flushPending();
       default:
@@ -419,6 +439,8 @@ final class WorkerRelayTransport extends FaTransport {
   }
 
   void _teardown() {
+    _keepalive?.cancel();
+    _keepalive = null;
     final channel = _channel;
     _channel = null;
     unawaited(_subscription?.cancel());
@@ -427,6 +449,9 @@ final class WorkerRelayTransport extends FaTransport {
   }
 
   /// Backoff for attempt N (1-based): the schedule, then 15s forever.
+  /// Keepalive cadence: comfortably under Chrome's 30s SW idle timeout.
+  static const _keepaliveInterval = Duration(seconds: 20);
+
   static Duration _backoffFor(int attempt) =>
       _backoffSchedule[(attempt.clamp(1, _backoffSchedule.length)) - 1];
 

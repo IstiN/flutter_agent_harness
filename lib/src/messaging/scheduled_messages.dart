@@ -1,3 +1,4 @@
+// ignore_for_file: prefer_initializing_formals
 /// Persisted delayed messages ("send myself a note on a timer").
 ///
 /// `schedule_message` writes a pending JSON record under
@@ -24,18 +25,13 @@ final class ScheduledMessageQueue {
     String Function()? selfMailbox,
     this.onScheduled,
     this.onFired,
-  }) : // ignore: prefer_initializing_formals
-       _env = env,
-       // ignore: prefer_initializing_formals
+  }) : _env = env,
        _repo = repo,
-       // ignore: prefer_initializing_formals
        _selfMailbox = selfMailbox,
-       // ignore: prefer_initializing_formals
        _root = root;
 
   final ExecutionEnv _env;
   final MessagingRepository Function() _repo;
-  // ignore: prefer_initializing_formals
   final String Function() _root;
 
   /// The scheduling agent's own mailbox (e.g. `&lt;sessionId&gt;/main`). Records

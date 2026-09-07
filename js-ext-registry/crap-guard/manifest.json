@@ -1,0 +1,1 @@
+{"name":"crap-guard","kind":"cli-extension","version":"1.0.0","description":"Post-edit CRAP + file-size guard wired to crap4dart and the repo line cap","platforms":["cli","macos","linux","windows"],"capabilities":{"exec":{"allowedCommands":["dart"]},"fs":{"read":true},"hooks":["afterToolCall","onSessionEnd"]}}

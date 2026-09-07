@@ -3,7 +3,6 @@
 // in the LICENSE file.
 
 import 'dart:async';
-import 'dart:html' as html;
 import 'dart:js_interop';
 
 import 'package:fa/sandbox/fs_persistence.dart';

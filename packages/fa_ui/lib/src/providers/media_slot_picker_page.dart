@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -115,6 +116,13 @@ class MediaSlotProviderPickerPage extends StatelessWidget {
     final theme = Theme.of(context);
     final strings = FaUiStrings.of(context);
     final registry = this.registry ?? ProviderRegistry.inMemory();
+    debugPrint(
+      '[fah][picker] $title: '
+      'registry=${registry.providers.length} providers='
+      '${registry.providers.map((p) => p.name).toList()} '
+      'connectedOnly=$connectedOnly '
+      'hadRegistry=${this.registry != null}',
+    );
     // The provider backing the current override gets the check icon.
     final initial = this.initial;
     final selected = initial == null

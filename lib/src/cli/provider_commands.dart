@@ -344,12 +344,32 @@ extension on AgentCli {
       keyName: keyName,
       authMethod: existingEntry?.authMethod ?? CustomProviderAuthMethod.apiKey,
     );
-    registry.add(entry);
-    _activeCustomName = entry.name;
+    // The wizard persists via its own switch-time fire (below); only the
+    // extension flows use the persisting variant of the shared helper.
+    await _saveCustomProviderEntry(entry, persist: false);
     if (editName == null) {
       io.writeln('saved provider ${entry.name} (listed first in /provider)');
     }
     return entry;
+  }
+
+  /// The registry-append seam shared by the custom wizard
+  /// ([_recordSetupEntry]) and the extension provider flows: adds [entry]
+  /// and marks it the active custom provider. [persist] additionally
+  /// notifies [AgentCliConfig.onProviderChanged] — the callback the
+  /// executable persists the `customProviders:` config section on — which
+  /// only the extension flows need (the wizard fires at switch time).
+  Future<void> _saveCustomProviderEntry(
+    CustomProviderEntry entry, {
+    bool persist = true,
+  }) async {
+    final registry = config.customProviders;
+    if (registry == null) return;
+    registry.add(entry);
+    _activeCustomName = entry.name;
+    if (persist) {
+      await config.onProviderChanged?.call(_providerKind, _apiKey);
+    }
   }
 
   /// The key-name/persistence step of [_applyCustomProviderSetup]: returns
@@ -456,6 +476,7 @@ extension on AgentCli {
   void _openProviderPicker() {
     final items = <MenuItem>[
       ..._savedProviderItems(),
+      ..._extProviderItems(),
       const MenuItem(
         key: 'add',
         label: '+ Add provider',
@@ -516,6 +537,13 @@ extension on AgentCli {
       } on Object catch (error) {
         io.writeln('provider switch failed: $error');
       }
+      return;
+    }
+    // Extension flows (AC5): namespaced `ext:<name>:<id>` keys, checked
+    // AFTER the saved lookup — core entries always win on bare ids (E10;
+    // by construction a flow key never equals one).
+    if (args.length == 1 && args.first.startsWith('ext:')) {
+      _startExtProviderFlow(args.first);
       return;
     }
     try {
@@ -2268,6 +2296,7 @@ extension on AgentCli {
     final keyStatus = _keyStatusView.keyStatusLine(model);
     if (keyStatus != null) io.writeln('  $keyStatus');
     _printSavedProviders();
+    _printExtProviders();
     io.writeln('supported providers:');
     for (final spec in enabledProviders()) {
       io.writeln('  ${spec.name} — ${spec.defaultBaseUrl}');

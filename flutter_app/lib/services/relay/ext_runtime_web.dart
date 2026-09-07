@@ -12,7 +12,6 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:js_interop';
 
 import 'package:fa_browser_agent/fa_browser_agent.dart';
@@ -46,6 +45,10 @@ extension type _JsEvent._(JSObject _) implements JSObject {
 bool isExtensionHost() => _runtimeId != null;
 
 /// Opens a `chrome.runtime` port channel, or null when unavailable.
+///
+/// The port MUST be named `fa-ui-v2` — that is the name the SW's UI port
+/// server (`agent_main.dart` `_uiPortName`) filters on; an unnamed port is
+/// silently dropped by both SW listeners and the relay never answers.
 UiPortChannel? createPortChannel() {
   if (!isExtensionHost()) return null;
   final port = _connect(_JsConnectInfo(name: _uiPortName));
@@ -73,17 +76,16 @@ final class _RuntimePortChannel implements UiPortChannel {
   final _inbound = StreamController<Map<String, dynamic>>.broadcast();
   var closed = false;
 
-  /// One JSON envelope per port message; undecodable frames are dropped —
-  /// the transport's protocol decoder never sees garbage and the SW-side
-  /// `malformed` error path stays the single source of protocol failures.
+  /// Structured-clone envelopes: the SW's port adapter dartifies incoming
+  /// maps directly (no JSON round-trip), so this side must post maps too —
+  /// a JSON *string* frame is silently skipped as protocol garbage by the
+  /// SW. Non-map frames here are dropped the same way.
   static Map<String, dynamic>? _decode(JSAny? raw) {
     try {
-      final text = (raw as JSString).toDart;
-      final decoded = jsonDecode(text);
-      if (decoded is Map<String, dynamic>) return decoded;
+      final decoded = raw?.dartify();
       if (decoded is Map) return Map<String, dynamic>.from(decoded);
     } on Object {
-      // fallthrough: not a JSON string envelope
+      // fallthrough: not a map envelope
     }
     return null;
   }
@@ -91,7 +93,7 @@ final class _RuntimePortChannel implements UiPortChannel {
   @override
   void send(Map<String, dynamic> json) {
     if (closed) return;
-    _port.postMessage(jsonEncode(json).toJS);
+    _port.postMessage(json.jsify());
   }
 
   @override

@@ -102,14 +102,11 @@ Future<void> main(List<String> args) async {
     );
     if (swTarget == null) {
       if (attempt % 5 == 4) {
-        stderr.writeln(
-          '=== targets so far: ${jsonEncode(
-                (targets['targetInfos'] as List)
-                    .map((t) => [t['type'], t['url']])
-                    .take(12)
-                    .toList(),
-              )}',
-        );
+        final infos = targets['targetInfos'] as List;
+        final targetsSoFar = [
+          for (final t in infos.cast<Map>()) [t['type'], t['url']],
+        ].take(12).toList();
+        stderr.writeln('=== targets so far: ${jsonEncode(targetsSoFar)}');
       }
       await Future<void>.delayed(const Duration(milliseconds: 500));
     }
@@ -125,7 +122,7 @@ Future<void> main(List<String> args) async {
   });
   final swSession = sw['sessionId'] as String;
   await send('Runtime.enable', null, swSession);
-  stderr.writeln('=== sw target: ${swTarget['url'] as String}');
+  stderr.writeln('=== sw target: ${swTarget['url']}');
   final extOrigin = 'chrome-extension://$ourId';
 
   // Open the flutter panel page as the port client (the surface a real

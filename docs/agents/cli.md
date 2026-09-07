@@ -43,3 +43,15 @@ Interactive TUI picker; line mode prints a summary. Entries launch the same flow
 | Agent mode | `/agent` |
 | API keys | `/key` |
 | MCP servers | `/mcp` |
+
+## JS extensions
+
+Sandboxed `main.js`+`manifest.json` add-ons (issue #32) loaded into the
+agent: tools with approval tiers, lifecycle hooks, slash commands, provider
+flows — one quickjs-ng engine per extension, gated by manifest capabilities
+granted at a TOFU trust prompt. Install sources: local dir/zip, `gh:owner/repo`,
+`catalog:<id>`, `--bundled`. Headless: `fa ext list|install|remove|update|audit`
+(`--pin`/`--trust` for CI); in-REPL: the `/ext` family. `.fah/bootstrap.yaml`
+(project + user) auto-installs a pinned set at every start. Authoring guide,
+full `jsr.ext.*` API reference, and the security model:
+[js-extensions.md](../js-extensions.md).

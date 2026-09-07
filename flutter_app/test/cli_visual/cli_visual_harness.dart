@@ -125,8 +125,11 @@ final class CliVisualHarness {
   void attach(WidgetTester tester) => _tester = tester;
 
   /// Runs [body] in the real-async zone (PTY I/O and timer-based waits
-  /// freeze in the widget test's fake zone). runAsync returns T?; every
-  /// body here returns a value, so the null case cannot happen.
+  /// freeze in the widget test's fake zone). runAsync completes with null
+  /// for void bodies (the common case here), so the nullable result is
+  /// cast blindly — a genuine null for non-void T only happens when the
+  /// tester is torn down mid-await, and the surrounding expect/timeout
+  /// already reports the real failure.
   Future<T> _live<T>(Future<T> Function() body) async =>
       (await _tester.runAsync(body)) as T;
 

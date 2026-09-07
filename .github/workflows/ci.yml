@@ -123,6 +123,27 @@ jobs:
           fi
           dart test --tags integration
 
+  js-ext-integration:
+    name: JS engine integration (quickjs-ng)
+    runs-on: ubuntu-latest
+    needs: quality
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - name: Install quickjs-ng
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/qjs" \
+            https://github.com/quickjs-ng/quickjs/releases/download/v0.16.2/qjs-linux-x86_64
+          chmod +x "$RUNNER_TEMP/qjs"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: dart test --tags integration (qjs engine suites)
+        run: dart test --tags integration test/cli/ext_engine_process_test.dart test/js_ext/integration/
+
   publish:
     name: Publish to pub.dev
     runs-on: ubuntu-latest

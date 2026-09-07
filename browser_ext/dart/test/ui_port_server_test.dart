@@ -120,6 +120,51 @@ int _countEvent(FakeChannel c, String text) => c.sent
 Future<void> _pump() => Future<void>.delayed(Duration.zero);
 
 void main() {
+  test(
+    'attach ends with a fresh status snapshot (run-state re-sync)',
+    () async {
+      final host = FakeHostConnector();
+      final server = UiPortServer(host: host);
+      final c = FakeChannel();
+      server.serve(c);
+      c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+      c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
+      await _pump();
+      final status = [
+        for (final raw in c.sent)
+          if (raw['kind'] == 'stream' &&
+              (raw['event'] as Map)['type'] == 'status')
+            raw['event'] as Map,
+      ];
+      expect(
+        status,
+        isNotEmpty,
+        reason:
+            'every attach must end with the authoritative run state, '
+            'or a panel that missed a turn end stays "typing" forever',
+      );
+      expect(status.last, containsPair('running', anything));
+    },
+  );
+
+  test('ping is answered with pong (keepalive)', () async {
+    final host = FakeHostConnector();
+    final server = UiPortServer(host: host);
+    final c = FakeChannel();
+    server.serve(c);
+    c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+    await _pump();
+    c.injectMsg(const PingMsg());
+    await _pump();
+    final kinds = [for (final raw in c.sent) raw['kind']];
+    expect(kinds.last, 'pong');
+    expect(
+      kinds.where((k) => k == 'pong').length,
+      1,
+      reason: 'exactly one pong per ping; keepalive traffic stays quiet',
+    );
+  });
+
   test('attach answers tools_state with the host tool list', () async {
     final host = FakeHostConnector();
     final server = UiPortServer(host: host);
@@ -128,9 +173,7 @@ void main() {
     c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
     c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
     await _pump();
-    final kinds = [
-      for (final raw in c.sent) raw['kind'],
-    ];
+    final kinds = [for (final raw in c.sent) raw['kind']];
     expect(
       kinds.where((k) => k != 'stream'),
       containsAllInOrder(['hello_ack', 'attached', 'tools_state']),
@@ -143,28 +186,31 @@ void main() {
     });
   });
 
-  test('tools_put applies through the host and re-answers tools_state', () async {
-    final host = FakeHostConnector();
-    final server = UiPortServer(host: host);
-    final c = FakeChannel();
-    server.serve(c);
-    c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
-    c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
-    await _pump();
-    c.injectMsg(
-      const ToolsPutMsg(tools: [
-        UiToolState(name: 'browser_inject_js', enabled: false),
-      ]),
-    );
-    await _pump();
-    expect(host.toolsPuts.single.single.name, 'browser_inject_js');
-    // The put is answered with the (host-mutated) fresh state.
-    final states = [
-      for (final raw in c.sent) if (raw['kind'] == 'tools_state') raw,
-    ];
-    expect(states, hasLength(2));
-  });
-
+  test(
+    'tools_put applies through the host and re-answers tools_state',
+    () async {
+      final host = FakeHostConnector();
+      final server = UiPortServer(host: host);
+      final c = FakeChannel();
+      server.serve(c);
+      c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+      c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
+      await _pump();
+      c.injectMsg(
+        const ToolsPutMsg(
+          tools: [UiToolState(name: 'browser_inject_js', enabled: false)],
+        ),
+      );
+      await _pump();
+      expect(host.toolsPuts.single.single.name, 'browser_inject_js');
+      // The put is answered with the (host-mutated) fresh state.
+      final states = [
+        for (final raw in c.sent)
+          if (raw['kind'] == 'tools_state') raw,
+      ];
+      expect(states, hasLength(2));
+    },
+  );
 
   group('UT-S1: hello / hello_ack', () {
     test('acks negotiated version, capabilities and sessionId', () {

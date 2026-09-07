@@ -268,7 +268,12 @@ void main() {
           if (message is StreamMsg) message.event,
       ];
       expect(stream.single, equals(replayed));
-      expect(transport.state, const TransportStreaming()); // turn still live
+      // Replay is HISTORY: it must not flip the state machine to
+      // streaming — a booting panel replaying a ring whose last delta
+      // predates the turn's end would stick on "streaming" forever. The
+      // authoritative run state arrives as the SW's post-attach status
+      // snapshot instead.
+      expect(transport.state, const TransportAttached());
     });
 
     test(

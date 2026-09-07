@@ -77,3 +77,13 @@ sequenceDiagram
 ## macOS window chrome
 
 `MainFlutterWindow.swift` uses the modern unified titlebar (`titlebarAppearsTransparent`, hidden title, `fullSizeContentView`, `toolbarStyle = .unifiedCompact`, window background `#070A10`; deployment target 14.0 in `project.pbxproj`), so the compact traffic lights float over Flutter content; `MaterialApp.builder` in `main.dart` reserves a 28px top strip on macOS so they never overlap the app header.
+
+## JS extensions
+
+`flutter_app/lib/services/ext/` hosts the app side of the JS-extension
+stack (issue #32): `AppExtensionService` owns the on-device store roots and
+the `JsExtensionHost`; engines are flutter_js (native) and a web worker
+(web). v1 scope: trusted-only load — there is NO trust prompt/UI yet, so
+untrusted extensions tombstone-skip (`untrusted`) and never run; install
+management happens through the CLI. Authoring guide and API reference:
+[js-extensions.md](../js-extensions.md).

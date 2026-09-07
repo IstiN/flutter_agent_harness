@@ -800,11 +800,10 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline>
   final FocusNode focusNode = FocusNode();
 
   /// Drives the in-progress pulse; repeats only while pulses are visible
-  /// and determinism is off.
-  late final AnimationController _pulseClock = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1200),
-  )..addListener(() => setState(() {}));
+  /// and determinism is off. Created in [initState] — a `late final`
+  /// initializer here would first run at DISPOSE time when the field was
+  /// never read (creating a ticker on a deactivated widget tree).
+  late final AnimationController _pulseClock;
 
   TrajectoryController get _controller => widget.controller;
 
@@ -813,6 +812,10 @@ class _TrajectoryTimelineState extends State<TrajectoryTimeline>
   @override
   void initState() {
     super.initState();
+    _pulseClock = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..addListener(() => setState(() {}));
     _controller.addListener(_onControllerChanged);
   }
 
