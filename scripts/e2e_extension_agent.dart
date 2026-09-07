@@ -43,15 +43,14 @@ Future<void> main(List<String> args) async {
     '--disable-gpu',
     'about:blank',
   ]);
-  proc.stderr
-      .transform(utf8.decoder)
-      .transform(const LineSplitter())
-      .listen((l) {
-        final m = RegExp(r'DevTools listening on (ws://\S+)').firstMatch(l);
-        if (m != null && !wsUrlCompleter.isCompleted) {
-          wsUrlCompleter.complete(m.group(1)!);
-        }
-      });
+  proc.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((
+    l,
+  ) {
+    final m = RegExp(r'DevTools listening on (ws://\S+)').firstMatch(l);
+    if (m != null && !wsUrlCompleter.isCompleted) {
+      wsUrlCompleter.complete(m.group(1)!);
+    }
+  });
   final wsUrl = await wsUrlCompleter.future.timeout(
     const Duration(seconds: 20),
     onTimeout: () => throw StateError('chrome devtools endpoint never came up'),
@@ -64,7 +63,9 @@ Future<void> main(List<String> args) async {
     final msg = jsonDecode(raw as String) as Map<String, dynamic>;
     final id = msg['id'] as int?;
     if (id != null && pending.containsKey(id)) {
-      pending.remove(id)!.complete(msg['result'] as Map<dynamic, dynamic>? ?? {});
+      pending
+          .remove(id)!
+          .complete(msg['result'] as Map<dynamic, dynamic>? ?? {});
     }
   });
   Future<Map<dynamic, dynamic>> send(
@@ -94,18 +95,18 @@ Future<void> main(List<String> args) async {
     final targets = await send('Target.getTargets');
     final infos = targets['targetInfos'] as List;
     swTarget = infos.cast<Map<dynamic, dynamic>?>().firstWhere(
-          (t) =>
-              t != null &&
-              (t['url'] as String?)!
-                  .startsWith('chrome-extension://$ourId/sw/'),
-          orElse: () => null,
-        );
+      (t) =>
+          t != null &&
+          (t['url'] as String?)!.startsWith('chrome-extension://$ourId/sw/'),
+      orElse: () => null,
+    );
     if (swTarget == null) {
       if (attempt % 5 == 4) {
-        stderr.writeln('=== targets so far: ${jsonEncode((targets['targetInfos'] as List)
-                .map((t) => [(t as Map)['type'], (t)['url']])
-                .take(12)
-                .toList())}');
+        final infos = targets['targetInfos'] as List;
+        final targetsSoFar = [
+          for (final t in infos.cast<Map>()) [t['type'], t['url']],
+        ].take(12).toList();
+        stderr.writeln('=== targets so far: ${jsonEncode(targetsSoFar)}');
       }
       await Future<void>.delayed(const Duration(milliseconds: 500));
     }
@@ -121,7 +122,7 @@ Future<void> main(List<String> args) async {
   });
   final swSession = sw['sessionId'] as String;
   await send('Runtime.enable', null, swSession);
-  stderr.writeln('=== sw target: ${swTarget['url'] as String}');
+  stderr.writeln('=== sw target: ${swTarget['url']}');
   final extOrigin = 'chrome-extension://$ourId';
 
   // Open the flutter panel page as the port client (the surface a real
@@ -153,7 +154,8 @@ Future<void> main(List<String> args) async {
   await Future<void>.delayed(const Duration(seconds: 2));
 
   final keyJson = jsonEncode(key);
-  final driver = """
+  final driver =
+      """
 (async () => {
   const log = [];
   const fail = (m) => { log.push('FAIL: ' + m); };

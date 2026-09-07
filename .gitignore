@@ -110,3 +110,7 @@ browser_ext/sw/agent.js.map
 browser_ext/sw/agent.js.deps
 browser_ext/app/
 browser_ext/dart/build/
+browser_ext/panel/app/
+
+# Local git worktrees from past sessions
+.worktrees/
