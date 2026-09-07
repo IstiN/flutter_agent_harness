@@ -2837,4 +2837,12 @@
 
 - fix(app): publish widget sources at the repo root, full-snapshot tree (#35)
 
+## 0.1.320
+
+- feat(js-ext): JavaScript extension system — QuickJS engines, jsr.ext.* bridges, install/trust, fa ext CLI, crap-guard (issue #32) (#37)
+- chore: dart fix drift + ignore local worktree/panel build dirs; memory: session notes
+- fix(extension): live e2e with a real provider — approvals, user bubbles, yolo mode
+- fix(browser_ext): status snapshots must not flip the transport to streaming
+- fix(browser_ext): the panel relay never connected — port name + envelope mismatch
+
 ## Unreleased
