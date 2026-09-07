@@ -104,6 +104,23 @@ jobs:
         with:
           path: build/pages/root
 
+      # Gate the deploy on a real-browser boot smoke: serve the assembled
+      # artifact and drive headless Chromium — the app must mount and run
+      # Dart main() with zero console errors. Dart tests cannot catch
+      # runtime JS-interop crashes (once shipped: the extension probe threw
+      # a null-check on every normal page); this can and did.
+      - name: Web boot smoke (headless Chromium)
+        working-directory: build/pages/root
+        run: |
+          python3 -m http.server 8788 --bind 127.0.0.1 >/dev/null 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          cd "$GITHUB_WORKSPACE"
+          npm init -y >/dev/null
+          npm i --no-fund --no-audit playwright@1.49.1 >/dev/null
+          npx playwright install chromium --with-deps >/dev/null
+          node scripts/web_boot_smoke.mjs http://127.0.0.1:8788/app/
+
   deploy:
     name: Deploy to GitHub Pages
     needs: build
