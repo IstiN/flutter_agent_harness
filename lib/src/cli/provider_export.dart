@@ -250,60 +250,65 @@ List<ExportedProvider> importProvidersExport(
   String contents,
   String passphrase,
 ) {
-  final Object? envelope;
-  try {
-    envelope = jsonDecode(contents);
-  } on FormatException {
-    throw const ProviderExportException('.fahx file is not valid JSON');
-  }
-  if (envelope is! Map<String, dynamic>) {
-    throw const ProviderExportException('.fahx file is not valid JSON');
-  }
-  final plaintext = decryptProvidersExport(envelope, passphrase);
-  final Object? payload;
-  try {
-    payload = jsonDecode(plaintext);
-  } on FormatException {
-    throw const ProviderExportException('.fahx payload is not valid JSON');
-  }
-  if (payload is! Map<String, dynamic> ||
-      payload['version'] != providerExportVersion ||
+  final envelope = _decodeJsonObject(contents, '.fahx file is not valid JSON');
+  final payload = _decodeJsonObject(
+    decryptProvidersExport(envelope, passphrase),
+    '.fahx payload is not valid JSON',
+  );
+  if (payload['version'] != providerExportVersion ||
       payload['providers'] is! List) {
     throw const ProviderExportException('.fahx payload is malformed');
   }
-  final imported = <ExportedProvider>[];
-  for (final raw in payload['providers'] as List) {
-    if (raw is! Map<String, dynamic>) {
-      throw const ProviderExportException('.fahx payload is malformed');
-    }
-    final name = raw['name'];
-    final apiType = raw['apiType'];
-    final baseUrl = raw['baseUrl'];
-    final modelId = raw['modelId'];
-    if (name is! String ||
-        name.isEmpty ||
-        apiType is! String ||
-        baseUrl is! String ||
-        baseUrl.isEmpty ||
-        modelId is! String) {
-      throw const ProviderExportException('.fahx payload is malformed');
-    }
-    final keyName = raw['keyName'];
-    final key = raw['key'];
-    imported.add(
-      ExportedProvider(
-        entry: CustomProviderEntry(
-          name: name,
-          apiType: apiType,
-          baseUrl: baseUrl,
-          modelId: modelId,
-          keyName: keyName is String && keyName.isNotEmpty ? keyName : null,
-        ),
-        key: key is String && key.isNotEmpty ? key : null,
-      ),
-    );
+  return [
+    for (final raw in payload['providers'] as List) _parseProviderEntry(raw),
+  ];
+}
+
+/// Decodes [text] and requires a JSON object; anything else is a loud
+/// [ProviderExportException] with [message].
+Map<String, dynamic> _decodeJsonObject(String text, String message) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(text);
+  } on FormatException {
+    throw ProviderExportException(message);
   }
-  return imported;
+  if (decoded is! Map<String, dynamic>) {
+    throw ProviderExportException(message);
+  }
+  return decoded;
+}
+
+/// Validates one `providers` list entry and decodes it into an
+/// [ExportedProvider]; a missing name/apiType/baseUrl/modelId is malformed.
+ExportedProvider _parseProviderEntry(Object? raw) {
+  if (raw is! Map<String, dynamic>) {
+    throw const ProviderExportException('.fahx payload is malformed');
+  }
+  final name = raw['name'];
+  final apiType = raw['apiType'];
+  final baseUrl = raw['baseUrl'];
+  final modelId = raw['modelId'];
+  if (name is! String ||
+      name.isEmpty ||
+      apiType is! String ||
+      baseUrl is! String ||
+      baseUrl.isEmpty ||
+      modelId is! String) {
+    throw const ProviderExportException('.fahx payload is malformed');
+  }
+  final keyName = raw['keyName'];
+  final key = raw['key'];
+  return ExportedProvider(
+    entry: CustomProviderEntry(
+      name: name,
+      apiType: apiType,
+      baseUrl: baseUrl,
+      modelId: modelId,
+      keyName: keyName is String && keyName.isNotEmpty ? keyName : null,
+    ),
+    key: key is String && key.isNotEmpty ? key : null,
+  );
 }
 
 // ---------------------------------------------------------------------------

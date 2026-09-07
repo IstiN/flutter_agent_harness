@@ -252,4 +252,123 @@ void main() {
       expect(parseCliArgs(const ['--version']), isA<CliArgsVersion>());
     });
   });
+
+  group('parseCliArgs config', () {
+    test('no verb is a usage error', () {
+      expect(
+        () => parseCliArgs(const ['config']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('usage: fa config'),
+          ),
+        ),
+      );
+    });
+
+    test('--help and -h request usage', () {
+      expect(parseCliArgs(const ['config', '--help']), isA<CliArgsHelp>());
+      expect(parseCliArgs(const ['config', '-h']), isA<CliArgsHelp>());
+      expect(
+        parseCliArgs(const ['config', 'export-providers', '--help']),
+        isA<CliArgsHelp>(),
+      );
+    });
+
+    test('export-providers parses with defaults', () {
+      final args =
+          parseCliArgs(const ['config', 'export-providers']) as CliArgs;
+      expect(args.config!.verb, 'export-providers');
+      expect(args.config!.out, isNull);
+      expect(args.config!.passphraseStdin, isFalse);
+    });
+
+    test('--out and --passphrase-stdin parse together', () {
+      final args =
+          parseCliArgs(const [
+                'config',
+                'export-providers',
+                '--out',
+                'backup.fahx',
+              ])
+              as CliArgs;
+      expect(args.config!.out, 'backup.fahx');
+      expect(args.config!.passphraseStdin, isFalse);
+
+      final headless =
+          parseCliArgs(const [
+                'config',
+                'export-providers',
+                '--passphrase-stdin',
+              ])
+              as CliArgs;
+      expect(headless.config!.passphraseStdin, isTrue);
+      expect(headless.config!.out, isNull);
+
+      final both =
+          parseCliArgs(const [
+                'config',
+                'export-providers',
+                '--out',
+                'b.fahx',
+                '--passphrase-stdin',
+              ])
+              as CliArgs;
+      expect(both.config!.out, 'b.fahx');
+      expect(both.config!.passphraseStdin, isTrue);
+    });
+
+    test('an unknown verb is an error', () {
+      expect(
+        () => parseCliArgs(const ['config', 'export-keys']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown config verb: export-keys'),
+          ),
+        ),
+      );
+    });
+
+    test('--out without a value is an error', () {
+      expect(
+        () => parseCliArgs(const ['config', 'export-providers', '--out']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--out requires a value'),
+          ),
+        ),
+      );
+    });
+
+    test('an unknown flag is an error', () {
+      expect(
+        () => parseCliArgs(const ['config', 'export-providers', '--bogus']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown argument: --bogus'),
+          ),
+        ),
+      );
+    });
+
+    test('a stray positional is an error', () {
+      expect(
+        () => parseCliArgs(const ['config', 'export-providers', 'extra']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown argument: extra'),
+          ),
+        ),
+      );
+    });
+  });
 }

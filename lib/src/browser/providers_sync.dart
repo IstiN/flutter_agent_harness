@@ -119,29 +119,42 @@ final class ProvidersSyncPayload {
     if (mode == null) return null;
     final host = json['host'];
     if (host is! String || host.isEmpty) return null;
-    final rawProviders = json['providers'];
-    if (rawProviders is! List) return null;
+    final providers = _parseProviders(json['providers']);
+    if (providers == null) return null;
+    // Keys ride only in copy mode, in their own field — never inline.
+    return ProvidersSyncPayload(
+      mode: mode,
+      host: host,
+      providers: providers,
+      keys: mode == ProvidersSyncMode.copy
+          ? _parseKeys(json['keys'])
+          : const {},
+    );
+  }
+
+  /// The `providers` list section: null on any entry the shape cannot
+  /// trust (one malformed entry poisons the whole payload).
+  static List<ProvidersSyncProvider>? _parseProviders(Object? raw) {
+    if (raw is! List) return null;
     final providers = <ProvidersSyncProvider>[];
-    for (final entry in rawProviders) {
+    for (final entry in raw) {
       if (entry is! Map<String, dynamic>) return null;
       final provider = ProvidersSyncProvider.fromJson(entry);
       if (provider == null) return null;
       providers.add(provider);
     }
-    // Keys ride only in copy mode, in their own field — never inline.
-    final rawKeys = json['keys'];
+    return providers;
+  }
+
+  /// The `keys` section (copy mode): non-string/empty values dropped.
+  static Map<String, String> _parseKeys(Object? raw) {
     final keys = <String, String>{};
-    if (rawKeys is Map<String, dynamic>) {
-      rawKeys.forEach((name, key) {
+    if (raw is Map<String, dynamic>) {
+      raw.forEach((name, key) {
         if (key is String && key.isNotEmpty) keys[name] = key;
       });
     }
-    return ProvidersSyncPayload(
-      mode: mode,
-      host: host,
-      providers: providers,
-      keys: mode == ProvidersSyncMode.copy ? keys : const {},
-    );
+    return keys;
   }
 
   final ProvidersSyncMode mode;

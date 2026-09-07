@@ -10,11 +10,13 @@
 /// path's own primitives (`sendProviderRequest` + `createSseIterator`).
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
 import '../providers/provider_common.dart';
+import '../sse_decoder.dart';
 import 'bridge_protocol.dart';
 
 /// One decoded relay request: `{req: {baseUrl, model, messages, provider?}}`.
@@ -161,10 +163,26 @@ Future<void> relayOpenAiCompletion(
   if (key == null || key.isEmpty) {
     throw StateError('relayOpenAiCompletion needs an injected key');
   }
+  // No injected client: the shared keep-alive client (never closed per
+  // call — same as every streaming adapter).
+  final response = await sendProviderRequest(
+    client ?? sharedProviderHttpClient(),
+    _relayCall(request, key),
+    null,
+  );
+  await _forwardDeltas(
+    createSseIterator(response, null, idleTimeout: idleTimeout),
+    onDelta,
+  );
+}
+
+/// Builds the one streaming POST the relay sends: `{baseUrl}/chat/completions`
+/// with the injected key and `stream: true`.
+http.Request _relayCall(LlmRelayRequest request, String key) {
   final base = request.baseUrl.endsWith('/')
       ? request.baseUrl.substring(0, request.baseUrl.length - 1)
       : request.baseUrl;
-  final call = http.Request('POST', Uri.parse('$base/chat/completions'))
+  return http.Request('POST', Uri.parse('$base/chat/completions'))
     ..headers['authorization'] = 'Bearer $key'
     ..headers['content-type'] = 'application/json'
     ..body = jsonEncode({
@@ -172,44 +190,31 @@ Future<void> relayOpenAiCompletion(
       'messages': request.messages,
       'stream': true,
     });
-  final ownedClient = client ?? http.Client();
-  final http.StreamedResponse response;
-  try {
-    response = await sendProviderRequest(ownedClient, call, null);
-  } on Object {
-    if (client == null) ownedClient.close();
-    rethrow;
-  }
-  if (response.statusCode != 200) {
-    if (client == null) ownedClient.close();
-    throw StateError('provider answered HTTP ${response.statusCode}');
-  }
-  try {
-    final iterator = createSseIterator(
-      response,
-      null,
-      idleTimeout: idleTimeout,
-    );
-    while (await iterator.moveNext()) {
-      final data = iterator.current.data;
-      if (data == '[DONE]') break;
-      // Tolerant delta parse: keepalives/non-JSON chunks are skipped, a
-      // broken stream ends the relay (the done frame follows normally).
-      final Object? decoded;
-      try {
-        decoded = jsonDecode(data);
-      } on FormatException {
-        continue;
-      }
-      if (decoded is! Map<String, dynamic>) continue;
-      final choices = decoded['choices'];
-      if (choices is! List || choices.isEmpty) continue;
-      final delta = (choices.first as Map<String, dynamic>)['delta'];
-      if (delta is Map<String, dynamic> && delta['content'] is String) {
-        onDelta(delta['content'] as String);
-      }
+}
+
+/// Drives the SSE stream to completion, forwarding each text delta.
+///
+/// Tolerant parse: keepalives/non-JSON chunks are skipped, a broken stream
+/// ends the relay (the done frame follows normally).
+Future<void> _forwardDeltas(
+  StreamIterator<ServerSentEvent> iterator,
+  void Function(String delta) onDelta,
+) async {
+  while (await iterator.moveNext()) {
+    final data = iterator.current.data;
+    if (data == '[DONE]') break;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(data);
+    } on FormatException {
+      continue;
     }
-  } finally {
-    if (client == null) ownedClient.close();
+    if (decoded is! Map<String, dynamic>) continue;
+    final choices = decoded['choices'];
+    if (choices is! List || choices.isEmpty) continue;
+    final delta = (choices.first as Map<String, dynamic>)['delta'];
+    if (delta is Map<String, dynamic> && delta['content'] is String) {
+      onDelta(delta['content'] as String);
+    }
   }
 }

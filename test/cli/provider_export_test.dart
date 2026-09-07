@@ -152,6 +152,119 @@ void main() {
         throwsA(isA<ProviderExportException>()),
       );
     });
+
+    test('a non-JSON file is a loud rejection', () {
+      expect(
+        () => importProvidersExport('not json at all', 'right'),
+        throwsA(
+          isA<ProviderExportException>().having(
+            (e) => e.message,
+            'message',
+            contains('.fahx file is not valid JSON'),
+          ),
+        ),
+      );
+    });
+
+    test('a JSON envelope that is not an object is a loud rejection', () {
+      expect(
+        () => importProvidersExport('[1, 2]', 'right'),
+        throwsA(
+          isA<ProviderExportException>().having(
+            (e) => e.message,
+            'message',
+            contains('.fahx file is not valid JSON'),
+          ),
+        ),
+      );
+    });
+
+    test('a payload that is not an object is malformed', () {
+      final envelope = encryptProvidersExport('[true]', 'right');
+      expect(
+        () => importProvidersExport(jsonEncode(envelope), 'right'),
+        throwsA(isA<ProviderExportException>()),
+      );
+    });
+
+    test(
+      'a payload with a wrong version or non-list providers is malformed',
+      () {
+        for (final payload in [
+          {'version': 99, 'providers': []},
+          {'version': providerExportVersion, 'providers': 'nope'},
+        ]) {
+          final envelope = encryptProvidersExport(jsonEncode(payload), 'right');
+          expect(
+            () => importProvidersExport(jsonEncode(envelope), 'right'),
+            throwsA(
+              isA<ProviderExportException>().having(
+                (e) => e.message,
+                'message',
+                contains('.fahx payload is malformed'),
+              ),
+            ),
+          );
+        }
+      },
+    );
+
+    test('entries with missing or empty required fields are malformed', () {
+      for (final entry in [
+        'not-an-object',
+        {'apiType': 'openai', 'baseUrl': 'https://x', 'modelId': 'm'},
+        {
+          'name': '',
+          'apiType': 'openai',
+          'baseUrl': 'https://x',
+          'modelId': 'm',
+        },
+        {'name': 'n', 'apiType': 'openai', 'modelId': 'm'},
+        {'name': 'n', 'apiType': 'openai', 'baseUrl': '', 'modelId': 'm'},
+        {'name': 'n', 'apiType': 'openai', 'baseUrl': 'https://x'},
+      ]) {
+        final envelope = encryptProvidersExport(
+          jsonEncode({
+            'version': providerExportVersion,
+            'providers': [entry],
+          }),
+          'right',
+        );
+        expect(
+          () => importProvidersExport(jsonEncode(envelope), 'right'),
+          throwsA(
+            isA<ProviderExportException>().having(
+              (e) => e.message,
+              'message',
+              contains('.fahx payload is malformed'),
+            ),
+          ),
+          reason: '$entry must be rejected',
+        );
+      }
+    });
+
+    test('empty keyName/key strings import as absent', () {
+      final envelope = encryptProvidersExport(
+        jsonEncode({
+          'version': providerExportVersion,
+          'providers': [
+            {
+              'name': 'n',
+              'apiType': 'openai',
+              'baseUrl': 'https://x',
+              'modelId': 'm',
+              'keyName': '',
+              'key': '',
+            },
+          ],
+        }),
+        'right',
+      );
+      final imported = importProvidersExport(jsonEncode(envelope), 'right');
+      expect(imported.single.entry.keyName, isNull);
+      expect(imported.single.key, isNull);
+    });
   });
 
   group('runProviderExportCommand', () {
