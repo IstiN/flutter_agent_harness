@@ -260,6 +260,9 @@ void main() {
 
   group('UT-T2: table self-checks', () {
     test('secondTierOptionalPermissions is exactly the second tier', () {
+      // `tts` and `declarativeNetRequest` are NOT optional-eligible in
+      // Chrome (load-time warnings: "cannot be listed as optional") — they
+      // moved to the excluded record, see manifest.json.
       expect(secondTierOptionalPermissions, {
         'search',
         'topSites',
@@ -267,9 +270,7 @@ void main() {
         'pageCapture',
         'tabCapture',
         'desktopCapture',
-        'tts',
         'userScripts',
-        'declarativeNetRequest',
       });
     });
 

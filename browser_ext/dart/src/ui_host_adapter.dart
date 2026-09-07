@@ -7,6 +7,7 @@ library;
 import 'dart:async';
 
 import 'ui_port_server.dart';
+import 'ui_protocol.dart';
 
 /// The slice of the host the adapter forwards to. An interface (not
 /// agent_host.dart directly) so this file and its tests stay free of the
@@ -19,6 +20,12 @@ abstract interface class UiHostBackend {
   Map<String, dynamic> getState();
   String get sessionId;
   List<Map<String, dynamic>> sessionsList();
+
+  /// The live tool list with enabled flags (panel Tools section).
+  List<UiToolState> toolsList();
+
+  /// Applies per-tool enabled flags from the panel.
+  void toolsPut(List<UiToolState> tools);
 }
 
 /// chrome.storage keys the settings flow reads and writes — identical to
@@ -71,6 +78,12 @@ final class UiHostAdapter implements UiHostConnector {
     }
     if (changed) onSettings(Map.of(_settings));
   }
+
+  @override
+  List<UiToolState> toolsList() => backend()?.toolsList() ?? const [];
+
+  @override
+  void toolsPut(List<UiToolState> tools) => backend()?.toolsPut(tools);
 
   @override
   void sendUser(String text) => backend()?.sendUser(text);

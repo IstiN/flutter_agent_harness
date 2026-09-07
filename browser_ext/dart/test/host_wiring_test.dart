@@ -220,6 +220,14 @@ final class _FakeBackend implements UiHostBackend {
   List<Map<String, dynamic>> sessionsList() => [
     {'id': 'sess-1', 'messages': 3, 'running': false},
   ];
+
+  @override
+  List<UiToolState> toolsList() => const [
+    UiToolState(name: 'browser_active_tab', enabled: true),
+  ];
+
+  @override
+  void toolsPut(List<UiToolState> tools) {}
 }
 
 final class _FakeChannel implements UiPortChannel {

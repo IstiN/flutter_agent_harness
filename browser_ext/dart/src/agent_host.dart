@@ -33,6 +33,8 @@ import 'chrome_storage_env.dart';
 import 'dap/dap_frames.dart';
 import 'dap/dap_integration.dart';
 import 'providers.dart';
+import 'tool_gate.dart';
+import 'ui_protocol.dart';
 import 'ui_host_adapter.dart';
 
 /// Calls the browser op table bound by sw/main.js (`globalThis.__faOps` →
@@ -81,6 +83,10 @@ final class AgentHost implements UiHostBackend {
 
   late ApprovalManager _approvals;
   late ToolRegistry _registry;
+
+  /// Panel-driven per-tool enable/disable (issue #34 `tools_put`); owns
+  /// the desired state, [_registry] mirrors it via [_gate].sync.
+  late ToolGate _gate;
   late Agent _agent;
   Session? _session;
   ProviderConfig? _provider;
@@ -155,6 +161,9 @@ final class AgentHost implements UiHostBackend {
         visitedOrigins: visitedOrigins,
       );
     }
+    _gate = ToolGate({
+      for (final t in _registry.agentTools) t.name: t,
+    });
     _approvals = ApprovalManager(
       mode:
           approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk,
@@ -238,6 +247,16 @@ final class AgentHost implements UiHostBackend {
   void _syncAgentTools() {
     if (!_booted) return; // _agent is late — nothing to sync pre-init
     _agent.state.tools = _registry.tools;
+  }
+
+  @override
+  List<UiToolState> toolsList() => _gate.snapshot();
+
+  @override
+  void toolsPut(List<UiToolState> tools) {
+    if (!_gate.apply(tools)) return;
+    _gate.sync(_registry);
+    _syncAgentTools();
   }
 
   Model _currentModel() {

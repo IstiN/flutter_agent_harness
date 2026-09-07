@@ -192,6 +192,16 @@ final class RelayAgentService extends AgentService {
   /// The SW-side session id (from hello_ack/attached); '' before attached.
   String get relaySessionId => _sessionId;
 
+  /// The SW's stored provider snapshot (settings_result `faProvider`), or
+  /// null before the first snapshot arrives. Seeds the panel's provider
+  /// registry so the models screens reflect the SW configuration.
+  Map<String, String>? get swProvider =>
+      _swProvider == null ? null : Map<String, String>.of(_swProvider!);
+  Map<String, String>? _swProvider;
+
+  /// The SW agent's tool state (tools_state), keyed by tool name.
+  final _swTools = <String, bool>{};
+
   // -- transport plumbing ----------------------------------------------------
 
   void _onTransportEvent(UiTransportEvent event) {
@@ -237,6 +247,13 @@ final class RelayAgentService extends AgentService {
         _onHostEvent(event);
       case SettingsResultMsg(:final settings):
         _applySwSettings(settings);
+      case ToolsStateMsg(:final tools):
+        _swTools
+          ..clear()
+          ..addEntries([for (final t in tools) MapEntry(t.name, t.enabled)]);
+        notifyListeners();
+      case ToolsPutMsg():
+        break; // UI -> SW only
       case ErrorMsg(:final message):
         _error = message;
         notifyListeners();
@@ -288,15 +305,46 @@ final class RelayAgentService extends AgentService {
   }
 
   /// Replaces the streaming partial (if any) with the finalized message.
-  /// The SW's merged settings snapshot (settings_result): only the provider
-  /// trio matters for display here.
+  /// The SW's merged settings snapshot (settings_result): the provider
+  /// trio feeds the models screens and the composer.
   void _applySwSettings(Map<String, dynamic> settings) {
     final provider = settings['faProvider'];
     if (provider is Map) {
       _modelId = '${provider['model'] ?? ''}'.trim();
       _baseUrl = '${provider['baseUrl'] ?? ''}'.trim();
+      _swProvider = {
+        'baseUrl': _baseUrl,
+        'model': _modelId,
+        'apiKey': '${provider['apiKey'] ?? ''}',
+      };
       notifyListeners();
     }
+  }
+
+  /// The Tools section renders the SW agent's registry, not a local one:
+  /// every SW tool is capability-present; the enabled flag is the SW's.
+  @override
+  Map<String, ResolvedToolAvailability> get toolAvailability => {
+    for (final entry in _swTools.entries)
+      entry.key: ResolvedToolAvailability(
+        enabled: entry.value,
+        scope: ToolScope.builtin,
+        capabilityPresent: true,
+      ),
+  };
+
+  /// Tool toggles travel as `tools_put`; the local map updates
+  /// optimistically and the SW's tools_state confirms (or corrects).
+  @override
+  Future<void> setToolEnabled(String id, bool enabled) async {
+    if (!_swTools.containsKey(id) || _swTools[id] == enabled) return;
+    _swTools[id] = enabled;
+    notifyListeners();
+    _transport.dispatch(
+      ToolsPutMsg(
+        tools: [UiToolState(name: id, enabled: enabled)],
+      ),
+    );
   }
 
   /// Settings save from the panel UI goes over the wire as `settings_put`:
@@ -309,13 +357,15 @@ final class RelayAgentService extends AgentService {
     _baseUrl = config.baseUrl;
     final k = config.apiKey;
     _transport.dispatch(
-      SettingsPutMsg(settings: {
-        'faProvider': {
-          'baseUrl': config.baseUrl,
-          'apiKey': k,
-          'model': config.modelId,
+      SettingsPutMsg(
+        settings: {
+          'faProvider': {
+            'baseUrl': config.baseUrl,
+            'apiKey': k,
+            'model': config.modelId,
+          },
         },
-      }),
+      ),
     );
     notifyListeners();
   }

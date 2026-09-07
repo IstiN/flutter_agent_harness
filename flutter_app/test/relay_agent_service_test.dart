@@ -200,6 +200,67 @@ void main() {
     addTearDown(channel.close);
   });
 
+  test('tools_state after attach drives the Tools section', () async {
+    final (:service, :channel) = await _attached();
+    channel.fromWorker(
+      const ToolsStateMsg(
+        tools: [
+          UiToolState(name: 'browser_active_tab', enabled: true),
+          UiToolState(name: 'browser_inject_js', enabled: false),
+        ],
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    final availability = service.toolAvailability;
+    expect(
+      availability.keys,
+      unorderedEquals(['browser_active_tab', 'browser_inject_js']),
+    );
+    expect(availability['browser_active_tab']!.enabled, isTrue);
+    expect(availability['browser_active_tab']!.capabilityPresent, isTrue);
+    expect(availability['browser_inject_js']!.enabled, isFalse);
+    addTearDown(channel.close);
+  });
+
+  test('setToolEnabled sends tools_put and updates optimistically', () async {
+    final (:service, :channel) = await _attached();
+    channel.fromWorker(
+      const ToolsStateMsg(
+        tools: [UiToolState(name: 'browser_active_tab', enabled: true)],
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await service.setToolEnabled('browser_active_tab', false);
+    final put = channel.sentOf('tools_put');
+    expect(put, isNotNull);
+    expect((put!['tools'] as List).single, {
+      'name': 'browser_active_tab',
+      'enabled': false,
+    });
+    expect(service.toolAvailability['browser_active_tab']!.enabled, isFalse);
+    addTearDown(channel.close);
+  });
+
+  test('the SW provider snapshot feeds the models screens', () async {
+    final (:service, :channel) = await _attached();
+    channel.fromWorker(
+      const SettingsResultMsg(
+        settings: {
+          'faProvider': {
+            'baseUrl': 'https://api.kimi.com/coding/v1',
+            'apiKey': 'k2-secret',
+            'model': 'kimi-k2',
+          },
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(service.swProvider, isNotNull);
+    expect(service.swProvider!['model'], 'kimi-k2');
+    expect(service.swProvider!['baseUrl'], 'https://api.kimi.com/coding/v1');
+    addTearDown(channel.close);
+  });
+
   test('an empty assistant message gets the placeholder', () async {
     final (:service, :channel) = await _attached();
     channel.fromWorker(
