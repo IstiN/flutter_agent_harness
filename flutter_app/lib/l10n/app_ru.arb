@@ -543,8 +543,24 @@
   "@githubTokenNoRepoScope": {
     "description": "Shown when a connected GitHub token lacks repository rights"
   },
-  "githubDeviceFallbackWarn": "Важно: этот вход через устройство использует публичный app «Copilot Plugin» — GitHub ограничивает его токены правами «только идентификация», публиковать они не могут. Чтобы публиковать по device code, зарегистрируй свой GitHub OAuth App (Settings → Developer settings → OAuth Apps, callback любой) и сохрани его client id в Settings → Keys как github_oauth_client_id — либо собери приложение с --dart-define=FA_GITHUB_CLIENT_ID=<id>. А пока подключайся classic PAT (public_repo) на вкладке Token.",
+  "githubDeviceFallbackWarn": "Важно: этот вход через устройство использует публичный app «Copilot Plugin» — GitHub ограничивает его токены правами «только идентификация», публиковать они не могут. Чтобы публиковать по device code, зарегистрируй свой GitHub OAuth App (Settings → Developer settings → OAuth Apps, в поле Authorization callback URL укажи https://fa1.dev/oauth/callback) и сохрани его client id в Settings → Keys как github_oauth_client_id — либо собери приложение с --dart-define=FA_GITHUB_CLIENT_ID=<id>. А пока подключайся classic PAT (public_repo) на вкладке Token.",
   "@githubDeviceFallbackWarn": {
     "description": "Warning shown on the device-flow tab when only the fallback Copilot plugin client id is available"
+  },
+  "githubConnectWebTab": "Браузер",
+  "@githubConnectWebTab": {
+    "description": "Connect-sheet tab running the GitHub OAuth web flow through the fa1.dev callback page"
+  },
+  "githubBrowserHint": "Открывает github.com в браузере. После «Authorize» страница fa1.dev покажет одноразовый код — вставь его ниже. Нужен свой OAuth App: его client id в Keys как github_oauth_client_id и secret как github_oauth_client_secret.",
+  "@githubBrowserHint": {
+    "description": "Instructions shown on the Browser (OAuth web flow) tab"
+  },
+  "githubBrowserOpen": "Открыть GitHub снова",
+  "@githubBrowserOpen": {
+    "description": "Re-opens the github.com authorize page on the Browser tab"
+  },
+  "githubBrowserCodeHint": "Одноразовый код с fa1.dev",
+  "@githubBrowserCodeHint": {
+    "description": "Hint of the one-time-code field on the Browser tab"
   }
 }

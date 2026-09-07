@@ -13,6 +13,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/github_account_store.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/github_api_client.dart';
+import 'package:fa/services/github_oauth_web_flow.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
         CopilotDeviceFlowError,
@@ -38,18 +39,25 @@ const String githubWidgetsClientId = String.fromEnvironment(
 /// [githubOauthClientIdKeyName] key in the settings Keys section.
 const githubOauthClientIdKeyName = 'github_oauth_client_id';
 
+/// Which connect method the sheet shows.
+enum _ConnectTab { token, device, web }
+
 /// Opens the "Connect GitHub" sheet (issue #35): PAT paste (always
-/// available) plus, on non-web platforms, the RFC 8628 device flow
-/// (build-time OAuth App, the runtime Keys entry, or the public
-/// Copilot plugin id).
+/// available) plus, on non-web platforms, the RFC 8628 device flow and the
+/// OAuth web flow (both need a client id — the build-time OAuth App or the
+/// runtime Keys entry; device also falls back to the public Copilot plugin
+/// id, which GitHub limits to identity-only tokens).
 ///
 /// Resolves `true` when an account was connected, `false`/null otherwise.
-/// [clientFactory] injects a scripted `GithubApiClient` in tests.
+/// [clientFactory] injects a scripted `GithubApiClient` in tests,
+/// [webFlow] the github.com code exchange.
 Future<bool?> showGithubConnectSheet(
   BuildContext context, {
   required GithubAccountStore account,
   GithubApiClient Function(String token)? clientFactory,
   String? deviceClientId,
+  String? webClientId,
+  GithubOauthWebFlow webFlow = const GithubOauthWebFlow(),
 }) {
   return showModalBottomSheet<bool>(
     context: context,
@@ -60,6 +68,8 @@ Future<bool?> showGithubConnectSheet(
       account: account,
       clientFactory: clientFactory,
       deviceClientId: deviceClientId,
+      webClientId: webClientId,
+      webFlow: webFlow,
     ),
   );
 }
@@ -71,6 +81,8 @@ class GithubConnectSheet extends StatefulWidget {
     required this.account,
     this.clientFactory,
     this.deviceClientId,
+    this.webClientId,
+    this.webFlow = const GithubOauthWebFlow(),
   });
 
   final GithubAccountStore account;
@@ -82,6 +94,16 @@ class GithubConnectSheet extends StatefulWidget {
   /// the build-time OAuth App, the runtime Keys entry, or the public
   /// Copilot plugin id); an empty string disables the device tab (tests).
   final String? deviceClientId;
+
+  /// Web-flow (Browser tab) client id override. Null resolves the
+  /// build-time OAuth App or the runtime Keys entry; an empty string
+  /// disables the tab (tests). The public Copilot fallback id never
+  /// enables it — the web flow needs OUR app: its redirect URI is
+  /// registered to us and the code exchange needs its secret.
+  final String? webClientId;
+
+  /// Test hook: replaces the github.com code exchange.
+  final GithubOauthWebFlow webFlow;
 
   @override
   State<GithubConnectSheet> createState() => _GithubConnectSheetState();
@@ -103,8 +125,13 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
   /// platform — github.com serves no CORS headers).
   bool get _deviceFlowAvailable => !kIsWeb && _deviceClientId!.isNotEmpty;
 
-  /// True while the device tab is the visible one.
-  bool _deviceMode = false;
+  /// Whether the browser (OAuth web flow) tab exists: it needs an owned
+  /// OAuth App id and a non-web platform (github.com serves no CORS
+  /// headers, so the web build cannot exchange the code).
+  bool get _webFlowAvailable => !kIsWeb && _webClientId!.isNotEmpty;
+
+  /// The connect method the sheet shows.
+  _ConnectTab _tab = _ConnectTab.token;
 
   /// Guards the one-time device-flow auto-start after id resolution.
   bool _deviceStarted = false;
@@ -118,10 +145,16 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
 
   CopilotDeviceGrant? _grant;
 
-  @override
-  void initState() {
-    super.initState();
-  }
+  /// The web-flow (Browser tab) client id; '' = no owned OAuth App, the
+  /// tab stays hidden. Resolved alongside the device id.
+  String? _webClientId;
+
+  /// The one-time code field of the Browser tab.
+  final _webCodeController = TextEditingController();
+
+  /// Guards the one-time authorize-URL auto-open per tab entry.
+  bool _webLaunched = false;
+
 
   @override
   void didChangeDependencies() {
@@ -149,11 +182,32 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
           _fallbackDeviceId = true;
         }
       }
-      _deviceMode = _deviceFlowAvailable;
+      _resolveWebClientId();
+      _tab = _deviceFlowAvailable ? _ConnectTab.device : _ConnectTab.token;
     }
-    if (_deviceMode && !_deviceStarted && _grant == null && !_busy) {
+    if (_tab == _ConnectTab.device &&
+        !_deviceStarted &&
+        _grant == null &&
+        !_busy) {
       _deviceStarted = true;
       _startDeviceFlow();
+    }
+  }
+
+  /// Resolves the Browser-tab client id once: the explicit override
+  /// (empty string hides the tab), the build-time OAuth App, or the
+  /// runtime Keys entry. Never the public Copilot fallback id.
+  void _resolveWebClientId() {
+    final override = widget.webClientId?.trim();
+    if (override != null) {
+      _webClientId = override;
+    } else if (githubWidgetsClientId.isNotEmpty) {
+      _webClientId = githubWidgetsClientId;
+    } else {
+      final keys = SessionKeysScope.maybeOf(context);
+      final configured = keys?.valueOf(githubOauthClientIdKeyName)?.trim();
+      _webClientId =
+          (configured != null && configured.isNotEmpty) ? configured : '';
     }
   }
 
@@ -161,7 +215,48 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
   void dispose() {
     _cancelled = true;
     _tokenController.dispose();
+    _webCodeController.dispose();
     super.dispose();
+  }
+
+  // --- shared connect tail ---------------------------------------------------
+
+  /// Validates the fresh token's scopes and stores the connection — the
+  /// shared tail of all three connect methods. Publishing needs repo
+  /// rights: verify the granted scopes before storing the connection —
+  /// the public Copilot plugin id often yields a token without
+  /// public_repo, which would only fail later at repo creation with an
+  /// opaque 403.
+  Future<void> _finishConnect(String token) async {
+    final client =
+        widget.clientFactory?.call(token) ?? GithubApiClient(token: token);
+    final (user, scopes) = await client.getUserAndScopes();
+    if (_cancelled) return;
+    if (!GithubApiClient.tokenCanCreateRepos(scopes)) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = context.l10n.githubTokenNoRepoScope;
+        });
+      }
+      return;
+    }
+    await widget.account.connect(
+      token: token,
+      login: user.login,
+      avatarUrl: user.avatarUrl,
+    );
+    if (mounted) Navigator.of(context).pop(true);
+  }
+
+  /// Shared failure handling: GitHub errors surface their server message,
+  /// anything else its toString.
+  void _connectFailed(Object error) {
+    if (_cancelled || !mounted) return;
+    setState(() {
+      _busy = false;
+      _error = error is GithubApiException ? error.message : error.toString();
+    });
   }
 
   // --- PAT -----------------------------------------------------------------
@@ -237,36 +332,14 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
         delay: Future<void>.delayed,
       );
       if (_cancelled) return;
-      // Publishing needs repo rights: verify the granted scopes before
-      // storing the connection — the public Copilot plugin id often
-      // yields a token without public_repo, which would only fail later
-      // at repo creation with an opaque 403.
-      final probe =
-          widget.clientFactory?.call(token) ?? GithubApiClient(token: token);
-      final (user, scopes) = await probe.getUserAndScopes();
-      if (_cancelled) return;
-      if (!GithubApiClient.tokenCanCreateRepos(scopes)) {
-        if (mounted) {
-          setState(() {
-            _busy = false;
-            _error = context.l10n.githubTokenNoRepoScope;
-          });
-        }
-        return;
-      }
-      await widget.account.connect(
-        token: token,
-        login: user.login,
-        avatarUrl: user.avatarUrl,
-      );
-      if (mounted) Navigator.of(context).pop(true);
+      await _finishConnect(token);
     } on CopilotDeviceFlowError catch (error) {
       if (_cancelled || !mounted) return;
       if (error.kind == CopilotDeviceFlowErrorKind.endpointDisabled) {
         // The OAuth App is not registered (or its device flow is off):
         // fall back to the PAT tab, carrying the explanation.
         setState(() {
-          _deviceMode = false;
+          _tab = _ConnectTab.token;
           _busy = false;
           _error = error.message;
         });
@@ -285,12 +358,49 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
     }
   }
 
-  void _switchTab({required bool device}) {
+  void _switchTab(_ConnectTab tab) {
     setState(() {
-      _deviceMode = device;
+      _tab = tab;
       _error = null;
     });
-    if (device && _grant == null) _startDeviceFlow();
+    if (tab == _ConnectTab.device && _grant == null) _startDeviceFlow();
+    if (tab == _ConnectTab.web) _openWebAuthorize();
+  }
+
+  // --- browser (OAuth web flow) ---------------------------------------------
+
+  /// Opens the github.com authorize page once per sheet lifetime; the user
+  /// completes sign-in in the browser and copies the one-time code the
+  /// fa1.dev callback page shows ([githubOauthWebRedirectUri]).
+  void _openWebAuthorize() {
+    if (_webLaunched || _webClientId!.isEmpty) return;
+    _webLaunched = true;
+    unawaited(
+      url_launcher.launchUrl(
+        buildGithubOauthAuthorizeUrl(clientId: _webClientId!),
+        mode: url_launcher.LaunchMode.externalApplication,
+      ),
+    );
+  }
+
+  Future<void> _connectWithBrowser() async {
+    final code = _webCodeController.text.trim();
+    if (code.isEmpty || _busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final keys = SessionKeysScope.maybeOf(context);
+      final token = await widget.webFlow.exchange(
+        clientId: _webClientId!,
+        code: code,
+        clientSecret: keys?.valueOf(githubOauthClientSecretKeyName)?.trim(),
+      );
+      await _finishConnect(token);
+    } on Object catch (error) {
+      _connectFailed(error);
+    }
   }
 
   @override
@@ -311,28 +421,34 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 12),
-          if (_deviceFlowAvailable) ...[
-            SegmentedButton<bool>(
+          if (_deviceFlowAvailable || _webFlowAvailable) ...[
+            SegmentedButton<_ConnectTab>(
               segments: [
                 ButtonSegment(
-                  value: false,
+                  value: _ConnectTab.token,
                   label: Text(l10n.githubConnectTokenTab),
                 ),
-                ButtonSegment(
-                  value: true,
-                  label: Text(l10n.githubConnectDeviceTab),
-                ),
+                if (_deviceFlowAvailable)
+                  ButtonSegment(
+                    value: _ConnectTab.device,
+                    label: Text(l10n.githubConnectDeviceTab),
+                  ),
+                if (_webFlowAvailable)
+                  ButtonSegment(
+                    value: _ConnectTab.web,
+                    label: Text(l10n.githubConnectWebTab),
+                  ),
               ],
-              selected: {_deviceMode},
-              onSelectionChanged: (selection) =>
-                  _switchTab(device: selection.first),
+              selected: {_tab},
+              onSelectionChanged: (selection) => _switchTab(selection.first),
             ),
             const SizedBox(height: 12),
           ],
-          if (_deviceMode)
-            _buildDevicePane(context)
-          else
-            _buildPatPane(context),
+          switch (_tab) {
+            _ConnectTab.device => _buildDevicePane(context),
+            _ConnectTab.web => _buildWebPane(context),
+            _ConnectTab.token => _buildPatPane(context),
+          },
           if (_error != null) ...[
             const SizedBox(height: 12),
             Text(
@@ -456,6 +572,52 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
             height: 18,
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWebPane(BuildContext context) {
+    final l10n = context.l10n;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          l10n.githubBrowserHint,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        if (!_webLaunched) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () {
+              _webLaunched = false;
+              _openWebAuthorize();
+            },
+            icon: const Icon(Icons.open_in_new, size: 16),
+            label: Text(l10n.githubBrowserOpen),
+          ),
+        ],
+        const SizedBox(height: 12),
+        TextField(
+          controller: _webCodeController,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: InputDecoration(
+            hintText: l10n.githubBrowserCodeHint,
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (_) => _connectWithBrowser(),
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: _busy ? null : _connectWithBrowser,
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(l10n.githubConnect),
         ),
       ],
     );

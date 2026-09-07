@@ -1668,5 +1668,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get githubDeviceFallbackWarn =>
-      'Heads-up: this device login uses the public Copilot Plugin app, whose tokens GitHub limits to identity-only — they cannot publish. To publish via device code, register your own GitHub OAuth App (Settings → Developer settings → OAuth Apps, any callback URL) and save its client id in Settings → Keys as github_oauth_client_id, or rebuild the app with --dart-define=FA_GITHUB_CLIENT_ID=<id>. Until then, connect with a classic PAT (public_repo) on the Token tab.';
+      'Heads-up: this device login uses the public Copilot Plugin app, whose tokens GitHub limits to identity-only — they cannot publish. To publish via device code, register your own GitHub OAuth App (Settings → Developer settings → OAuth Apps, set the Authorization callback URL to https://fa1.dev/oauth/callback) and save its client id in Settings → Keys as github_oauth_client_id, or rebuild the app with --dart-define=FA_GITHUB_CLIENT_ID=<id>. Until then, connect with a classic PAT (public_repo) on the Token tab.';
+
+  @override
+  String get githubConnectWebTab => 'Browser';
+
+  @override
+  String get githubBrowserHint =>
+      'Opens github.com in your browser. After \"Authorize\" the fa1.dev callback page shows a one-time code — paste it below. Needs your own OAuth App: its client id in Keys as github_oauth_client_id and its secret as github_oauth_client_secret.';
+
+  @override
+  String get githubBrowserOpen => 'Open GitHub again';
+
+  @override
+  String get githubBrowserCodeHint => 'One-time code from fa1.dev';
 }
