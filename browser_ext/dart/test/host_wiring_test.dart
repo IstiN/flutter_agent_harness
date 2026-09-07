@@ -15,6 +15,32 @@ import '../src/ui_protocol.dart';
 import '../src/ui_transport.dart';
 
 void main() {
+  test('settings_put merges faProvider field-wise (no wipes)', () {
+    var persisted = <String, Object?>{};
+    final adapter = UiHostAdapter(
+      backend: () => null,
+      onSettings: (_) {},
+      persist: (key, value) async => persisted[key] = value,
+      merge: faProviderMergeHook,
+    );
+    adapter.seed({
+      'faProvider': {
+        'baseUrl': 'https://api.z.ai/api/paas/v4',
+        'apiKey': 'old-key',
+        'model': 'glm-5.3-flash',
+      },
+    });
+    adapter.settingsPut({
+      'faProvider': {'baseUrl': '', 'apiKey': '', 'model': ''},
+    });
+    final stored = adapter.settingsGet()['faProvider'] as Map;
+    expect(stored['baseUrl'], 'https://api.z.ai/api/paas/v4');
+    expect(stored['apiKey'], 'old-key');
+    expect(stored['model'], 'glm-5.3-flash');
+    expect(persisted['faProvider'], stored);
+  });
+
+
   group('originOf (visited-set seeding)', () {
     test('http(s) origins normalize to scheme://host[:port]', () {
       expect(
