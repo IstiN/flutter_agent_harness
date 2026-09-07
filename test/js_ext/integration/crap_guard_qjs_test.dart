@@ -46,7 +46,7 @@ final Object _qjsSkip = () {
     return File(bin).existsSync() ? false : 'FA_QJS_BIN binary not found: $bin';
   }
   for (final dir in (Platform.environment['PATH'] ?? '').split(
-    Platform.pathSeparator,
+    Platform.isWindows ? ';' : ':',
   )) {
     if (dir.isEmpty) continue;
     final f = File('$dir/$bin');
