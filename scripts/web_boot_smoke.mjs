@@ -24,7 +24,15 @@ const bootLog = [];
 
 const browser = await chromium.launch();
 try {
-  const page = await browser.newPage();
+  // A REAL browser always reports a navigator.language; emulate one (CI
+  // containers can boot without any locale, which is not a state real
+  // users see). SMOKE_LOCALE overrides for regression hunting.
+  const locale = process.env.SMOKE_LOCALE || 'en-US';
+  const context = await browser.newContext({
+    locale: locale || undefined,
+    timezoneId: 'UTC',
+  });
+  const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => {
     const text = m.text();

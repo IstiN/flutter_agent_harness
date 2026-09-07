@@ -379,6 +379,17 @@ class MyApp extends StatelessWidget {
           themeMode: theme.themeMode,
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
+          // Some embedded browsers (CI containers, stripped webviews) report
+          // an EMPTY navigator.language; resolving through intl then throws
+          // "Incorrect locale information provided" and the app never boots.
+          // Fall back to English for a bogus device locale.
+          localeResolutionCallback: (deviceLocale, supported) {
+            if (deviceLocale == null ||
+                deviceLocale.languageCode.isEmpty) {
+              return const Locale('en');
+            }
+            return basicLocaleListResolution([deviceLocale], supported);
+          },
           navigatorObservers: analytics != null
               ? [FirebaseAnalyticsObserver(analytics: analytics!)]
               : const <NavigatorObserver>[],
