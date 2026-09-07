@@ -105,11 +105,21 @@ test.describe('service worker residency', () => {
       [bridge!.url, bridge!.token],
     );
     await fa.swEval(
-      ([url, token]) => faBridge().connect(url, token),
+      ([url, token]) => {
+        const seams = globalThis as unknown as BridgeHost; // seams bound by sw/agent.js
+        return seams.faSw.bridge.connect(url, token);
+      },
       [bridge!.url, bridge!.token],
     );
     await expect
-      .poll(() => fa.swEval(() => faBridge().status()), { timeout: 30_000 })
+      .poll(
+        () =>
+          fa.swEval(() => {
+            const seams = globalThis as unknown as BridgeHost; // seams bound by sw/agent.js
+            return seams.faSw.bridge.status();
+          }),
+        { timeout: 30_000 },
+      )
       .toMatchObject({ phase: 'connected' });
 
     // A tracked agent tab exists under the bridge task (beginTask ran on
@@ -137,15 +147,33 @@ test.describe('service worker residency', () => {
       .poll(() => fa.context.serviceWorkers().length, { timeout: 150_000 })
       .toBeGreaterThan(0);
     await expect
-      .poll(() => fa.swEval(() => faBridge().status()), { timeout: 60_000 })
+      .poll(
+        () =>
+          fa.swEval(() => {
+            const seams = globalThis as unknown as BridgeHost; // seams bound by sw/agent.js
+            return seams.faSw.bridge.status();
+          }),
+        { timeout: 60_000 },
+      )
       .toMatchObject({ phase: 'connected' });
-
-    // The agent booted again and tabs.init re-adopted the surviving group.
     await expect
-      .poll(() => fa.swEval(() => faAgentBooted()), { timeout: 60_000 })
+      .poll(
+        () =>
+          fa.swEval(() => {
+            const seams = globalThis as unknown as BootedHost; // seams bound by sw/agent.js
+            return Boolean(seams.faAgent?.getState().booted);
+          }),
+        { timeout: 60_000 },
+      )
       .toBe(true);
     await expect
-      .poll(() => fa.swEval(() => faTaskStatus()))
+      .poll(
+        () =>
+          fa.swEval(() => {
+            const seams = globalThis as unknown as TaskStatusHost; // seams bound by sw/agent.js
+            return seams.faSw?.status() ?? {};
+          }),
+      )
       .toMatchObject({ taskId: expect.any(String) });
     const fixtureTabs = await fa.swEval(
       async (base) =>
@@ -164,35 +192,15 @@ test.describe('service worker residency', () => {
   });
 });
 
-/** bridge seam on the fresh worker (faSw is reassembled by the js glue). */
-function faBridge(): {
+/** bridge seam on the worker (faSw is reassembled by the js glue). */
+interface BridgeSeam {
   connect(url: string, token: string): Promise<void>;
   status(): { phase: string } & Record<string, unknown>;
-} {
-  return (
-    globalThis as unknown as {
-      faSw: {
-        bridge: {
-          connect(url: string, token: string): Promise<void>;
-          status(): { phase: string } & Record<string, unknown>;
-        };
-      };
-    }
-  ).faSw.bridge;
 }
-
-function faAgentBooted(): boolean {
-  return Boolean(
-    (globalThis as unknown as { faAgent?: { getState(): { booted: boolean } } })
-      .faAgent?.getState().booted,
-  );
-}
-
-function faTaskStatus(): { taskId?: string } {
-  return (
-    globalThis as unknown as { faSw?: { status(): { taskId?: string } } }
-  ).faSw?.status() ?? {};
-}
+/** SW runtime seam hosts (bound by sw/agent.js; faSw reassembled by glue). */
+type BridgeHost = { faSw: { bridge: BridgeSeam } };
+type BootedHost = { faAgent?: { getState(): { booted: boolean } } };
+type TaskStatusHost = { faSw?: { status(): { taskId?: string } } };
 
 /** os.tmpdir()-rooted temp path prefix (kept tiny — mkdtemp needs a prefix). */
 function path2Join(prefix: string): string {

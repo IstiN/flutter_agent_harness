@@ -30,14 +30,13 @@ interface PortWindow {
   __msgs: PortMsg[];
 }
 
-const portWindow = () => window as unknown as PortWindow;
-
 /** Installs a fa-ui-v2 port + message collector inside an extension page. */
 async function attachPort(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const w = portWindow();
+    const w = window as unknown as PortWindow; // panel page globals
     w.__msgs = [];
-    const port = (window as unknown as ExtPageChrome).chrome.runtime.connect({
+    const ext = window as unknown as ExtPageChrome; // chrome.* in extension page
+    const port = ext.chrome.runtime.connect({
       name: 'fa-ui-v2',
     });
     w.__port = port;
@@ -50,7 +49,10 @@ async function portSend(
   page: Page,
   msg: Record<string, unknown>,
 ): Promise<void> {
-  await page.evaluate((m) => portWindow().__port?.postMessage(m), msg);
+  await page.evaluate((m) => {
+    const w = window as unknown as PortWindow; // panel page globals
+    return w.__port?.postMessage(m);
+  }, msg);
 }
 
 async function portMsg(
@@ -61,7 +63,12 @@ async function portMsg(
   let found: PortMsg | undefined;
   await expect
     .poll(async () => {
-      found = (await page.evaluate(() => portWindow().__msgs)).find(pred);
+      found = (
+        await page.evaluate(() => {
+          const w = window as unknown as PortWindow; // panel page globals
+          return w.__msgs;
+        })
+      ).find(pred);
       return found ?? null;
     }, { timeout })
     .not.toBeNull();

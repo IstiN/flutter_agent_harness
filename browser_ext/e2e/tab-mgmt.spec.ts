@@ -23,8 +23,7 @@ interface ChromeTabs {
   };
 }
 
-const chromeOf = () => (globalThis as unknown as ChromeTabs).chrome;
-const faSw = () => (globalThis as unknown as { faSw: FaSwSeam }).faSw;
+type SwHost = { faSw: FaSwSeam };
 
 test.describe('tab management', () => {
   skipWithoutChrome();
@@ -35,7 +34,10 @@ test.describe('tab management', () => {
     await fa.bootAgent();
 
     const taskId = `e2e-${Date.now()}`;
-    await fa.swEval((id) => faSw().beginTask(id), taskId);
+    await fa.swEval((id) => {
+      const sw = globalThis as unknown as SwHost; // seams bound by sw/agent.js
+      return sw.faSw.beginTask(id);
+    }, taskId);
 
     // A user tab the agent never opened.
     const userTab = await fa.context.newPage();
@@ -46,12 +48,18 @@ test.describe('tab management', () => {
     const agentTabId = nav.result!.tabId!;
 
     // The task's tab group carries the "fa — <id>" label.
-    const status = await fa.swEval(() => faSw().status());
+    const status = await fa.swEval(() => {
+      const sw = globalThis as unknown as SwHost; // seams bound by sw/agent.js
+      return sw.faSw.status();
+    });
     expect(status.taskId).toBe(taskId);
     expect(status.groupId).toBeTruthy();
     const groupId = status.groupId!;
     const group = await fa.swEval(
-      (id) => chromeOf().tabGroups.get(id),
+      (id) => {
+        const chromeApi = globalThis as unknown as ChromeTabs; // chrome.* in SW
+        return chromeApi.chrome.tabGroups.get(id);
+      },
       groupId,
     );
     expect(group.title).toBe(`fa — ${taskId}`);
@@ -62,10 +70,13 @@ test.describe('tab management', () => {
     await expect
       .poll(() =>
         fa.swEval(
-          (id) =>
-            chromeOf()
-              .tabs.get(id)
-              .then(() => true, () => false),
+          (id) => {
+            const chromeApi = globalThis as unknown as ChromeTabs; // chrome.* in SW
+            return chromeApi.chrome.tabs.get(id).then(
+              () => true,
+              () => false,
+            );
+          },
           agentTabId,
         ),
       )
@@ -85,9 +96,13 @@ test.describe('tab management', () => {
 
     // Close it like a user would, then fish its sessionId out of the
     // recently-closed list (the tool contract takes an explicit id).
-    await fa.swEval((id) => chromeOf().tabs.remove(id), tabId);
+    await fa.swEval((id) => {
+      const chromeApi = globalThis as unknown as ChromeTabs; // chrome.* in SW
+      return chromeApi.chrome.tabs.remove(id);
+    }, tabId);
     const sessionId = await fa.swEval(async (base) => {
-      const entries = await chromeOf().sessions.getRecentlyClosed();
+      const chromeApi = globalThis as unknown as ChromeTabs; // chrome.* in SW
+      const entries = await chromeApi.sessions.getRecentlyClosed();
       return (
         entries.find((e) => e.tab?.url?.startsWith(base))?.tab?.sessionId ??
         null
@@ -104,7 +119,11 @@ test.describe('tab management', () => {
     await expect
       .poll(() =>
         fa.swEval(
-          async (base) => (await chromeOf().tabs.query({ url: `${base}*` })).length,
+          async (base) => {
+            const chromeApi = globalThis as unknown as ChromeTabs; // chrome.* in SW
+            const tabs = await chromeApi.chrome.tabs.query({ url: `${base}*` });
+            return tabs.length;
+          },
           [fa.fixture.url],
         ),
       )

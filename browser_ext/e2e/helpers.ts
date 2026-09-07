@@ -69,7 +69,6 @@ type SwGlobals = { faAgent: FaAgentSeam; faSw: FaSwSeam; __faEvents?: FaEvent[] 
 interface SwEvaluate {
   evaluate<R, A>(fn: (arg: A) => R | Promise<R>, arg: A): Promise<R>;
 }
-const sw = () => globalThis as unknown as SwGlobals;
 
 /** chrome.* surface available inside the extension's own pages. */
 interface ExtPage {
@@ -84,8 +83,6 @@ interface ExtPage {
     storage: { local: { set(keys: Record<string, unknown>): Promise<void> } };
   };
 }
-
-const extPage = () => window as unknown as ExtPage;
 
 /** $CHROME_PATH wins, then the usual PATH names; null when nothing exists. */
 export function chromeBinary(): string | null {
@@ -222,7 +219,9 @@ export class FaHarness {
       // Fire-and-forget on purpose (mirrors wakeServiceWorker): awaiting the
       // sendMessage promise can hang while the worker boots.
       await this.panel.evaluate(() => {
-        const pending = extPage().chrome.runtime.sendMessage({ type: 'status' });
+        // chrome.* surface of the extension's own page (runtime-provided).
+        const ext = window as unknown as ExtPage;
+        const pending = ext.chrome.runtime.sendMessage({ type: 'status' });
         pending?.catch(() => {});
       });
     } catch {
@@ -254,25 +253,34 @@ export class FaHarness {
   }
   /** Boots the embedded agent with the deterministic fake: provider. */
   async bootAgent(): Promise<void> {
-    await this.swEval((config) => sw().faAgent.boot(config), {
-      approvalMode: 'unattended',
-    });
+    await this.swEval((config) => {
+      const sw = globalThis as unknown as SwGlobals; // seams bound by sw/agent.js
+      return sw.faAgent.boot(config);
+    }, { approvalMode: 'unattended' });
     await expect
-      .poll(() => this.swEval(() => sw().faAgent.getState().booted))
+      .poll(() =>
+        this.swEval(() => {
+          const sw = globalThis as unknown as SwGlobals; // seams bound by sw/agent.js
+          return sw.faAgent.getState().booted;
+        }),
+      )
       .toBe(true);
   }
 
   /** Installs the event collector the specs poll (faAgent.onEvent is one cb). */
   async collectEvents(): Promise<void> {
     await this.swEval(() => {
-      const w = sw();
+      const w = globalThis as unknown as SwGlobals; // seams bound by sw/agent.js
       w.__faEvents = [];
       w.faAgent.onEvent((event) => w.__faEvents?.push(event));
     });
   }
 
   events(): Promise<FaEvent[]> {
-    return this.swEval(() => sw().__faEvents ?? []);
+    return this.swEval(() => {
+      const sw = globalThis as unknown as SwGlobals; // seams bound by sw/agent.js
+      return sw.__faEvents ?? [];
+    });
   }
 
   /** First matching agent event, polling until it lands. */
@@ -291,13 +299,18 @@ export class FaHarness {
   }
 
   sendUser(text: string): Promise<void> {
-    return this.swEval((t) => sw().faAgent.sendUser(t), text);
+    return this.swEval((t) => {
+      const sw = globalThis as unknown as SwGlobals; // seams bound by sw/agent.js
+      return sw.faAgent.sendUser(t);
+    }, text);
   }
 
   decide(id: string, allow = true): Promise<void> {
     return this.swEval(
-      (payload: [string, boolean]) =>
-        sw().faAgent.decide(payload[0], payload[1]),
+      (payload: [string, boolean]) => {
+        const sw = globalThis as unknown as SwGlobals; // seams bound by sw/agent.js
+        return sw.faAgent.decide(payload[0], payload[1]);
+      },
       [id, allow],
     );
   }
@@ -308,8 +321,10 @@ export class FaHarness {
     args: Record<string, unknown> = {},
   ): Promise<FaEnvelope> {
     return this.swEval(
-      (payload: [string, Record<string, unknown>]) =>
-        sw().faSw.dispatch(payload[0], payload[1]),
+      (payload: [string, Record<string, unknown>]) => {
+        const sw = globalThis as unknown as SwGlobals; // seams bound by sw/agent.js
+        return sw.faSw.dispatch(payload[0], payload[1]);
+      },
       [op, args],
     );
   }
