@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.321
+
 
 - fix(browser_ext): the approval loop could not be answered or rescued —
   the extension panel's primary chat surface (the narrow-layout session
@@ -2890,3 +2891,5 @@
 - ci: the Chrome extension builds in the release pipeline and ships as a
   release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
   page gains the download + load-unpacked card.
+
+## Unreleased
