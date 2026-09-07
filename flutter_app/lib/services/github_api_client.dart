@@ -331,7 +331,10 @@ class GithubApiClient {
       final object = json['object'];
       return object is Map ? object['sha']?.toString() : null;
     } on GithubApiException catch (error) {
-      if (error.isNotFound) return null;
+      // A repo without commits (freshly created) answers 409 "Git
+      // Repository is empty." on the ref read — that is "no branch yet",
+      // not a failure.
+      if (error.isNotFound || error.statusCode == 409) return null;
       rethrow;
     }
   }
@@ -349,6 +352,32 @@ class GithubApiClient {
             )
             as Map<String, dynamic>;
     return (json['sha'] as String);
+  }
+
+  /// `PUT /repos/<owner>/<repo>/contents/<path>` — creates [path] in a
+  /// single commit and returns the new commit sha. The ONLY write endpoint
+  /// that works on a repo with zero commits (the git data API 409s on
+  /// those) — used to bootstrap a freshly created repo.
+  Future<String> putFile(
+    String owner,
+    String repo,
+    String path, {
+    required String message,
+    required String content,
+    String branch = 'main',
+  }) async {
+    final json =
+        await _request(
+              'PUT',
+              '/repos/$owner/$repo/contents/$path',
+              body: {
+                'message': message,
+                'content': base64Encode(utf8.encode(content)),
+                'branch': branch,
+              },
+            )
+            as Map<String, dynamic>;
+    return ((json['commit'] as Map)['sha'] as String);
   }
 
   /// `POST /git/trees` — entries relative to [baseTreeSha] (null = a fresh

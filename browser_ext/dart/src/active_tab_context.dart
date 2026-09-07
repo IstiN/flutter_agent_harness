@@ -47,12 +47,21 @@ final class ActiveTabContext {
   /// [probe] (the shared surface accessor) and prepends the line when
   /// [lineFor] asks for one. A failed probe is swallowed — context is
   /// best-effort and must never block a turn, so the text runs bare.
-  Future<String> decorate(Future<Tab?> Function() probe, String text) async {
+  ///
+  /// A HUNG probe is likewise bounded by [probeTimeout] (default 2s —
+  /// generous for a `chrome.tabs.query`): without the bound a stuck bridge
+  /// held every prompt hostage and the DAP e2e timed out waiting for the
+  /// agent's reply (issue #41).
+  Future<String> decorate(
+    Future<Tab?> Function() probe,
+    String text, {
+    Duration probeTimeout = const Duration(seconds: 2),
+  }) async {
     final Tab? tab;
     try {
-      tab = await probe();
+      tab = await probe().timeout(probeTimeout);
     } on Object {
-      return text; // probe failed: run the turn without context
+      return text; // probe failed or hung: run the turn without context
     }
     final line = lineFor(tab);
     return line == null ? text : '$line\n$text';

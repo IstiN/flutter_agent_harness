@@ -329,6 +329,20 @@ class WidgetPublishService {
         }
       }
 
+      // The git data API (blobs/trees/commits) answers 409 "Git
+      // Repository is empty." on a repo with zero commits — bootstrap it
+      // with a Contents-API commit first (the only write endpoint that
+      // works there); it also creates refs/heads/main for the follow-up
+      // updateRef.
+      var parentSha = headSha;
+      parentSha ??= await client.putFile(
+          owner,
+          name,
+          'README.md',
+          message: 'Initialize Fa widget repo',
+          content: _repoReadme(app),
+        );
+
       // Commit the widget sources (flat repo root = widget root).
       final files = await _collectWidgetFiles(app);
       final entries = <GithubTreeEntry>[
@@ -343,14 +357,14 @@ class WidgetPublishService {
         owner,
         name,
         entries,
-        baseTreeSha: headSha,
+        baseTreeSha: parentSha,
       );
       repoCommit = await client.createCommit(
         owner,
         name,
         treeSha: treeSha,
         message: 'Publish ${app.id} ${app.version}',
-        parentSha: headSha,
+        parentSha: parentSha,
       );
       await client.updateRef(owner, name, 'main', repoCommit);
       // E7: record the reached step BEFORE the PR work so an app kill
@@ -505,6 +519,16 @@ class WidgetPublishService {
   static String _repoDescription(JsAppInfo app) =>
       'Fa widget: ${app.name} — published to the fa_widgets catalog '
       '(${_provenanceMarker(app.id)})';
+
+  /// The bootstrap README of a freshly created widget repo (the first
+  /// commit, before the widget sources land).
+  static String _repoReadme(JsAppInfo app) =>
+      '# Fa Widget: ${app.name}\n'
+      '\n'
+      'Published from the [Fa app](https://fa1.dev) to the '
+      '[IstiN/fa_widgets](https://github.com/IstiN/fa_widgets) catalog.\n'
+      '\n'
+      'Widget id: `${app.id}`\n';
 
   static String _prBody(
     JsAppInfo app, {
