@@ -8,6 +8,8 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'dart:async' show unawaited;
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/relay_agent_service.dart';
+import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
@@ -66,6 +68,14 @@ import 'package:fa/services/platform_http_client.dart';
 
 import 'package:fa/firebase_options.dart';
 
+/// The extension-panel relay factory (issue #34 item 1): when this build
+/// runs inside the browser extension panel (a `chrome.runtime.id` page),
+/// the chat is served by the service-worker agent over the worker relay —
+/// the UI holds no keys and gains the SW's browser tools. Null for plain
+/// web/desktop, which keeps the local [AgentService.create] path.
+Future<RelayAgentService?> createRelayServiceIfHosted() async =>
+    isExtensionHost() ? await RelayAgentService.create() : null;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Use NSURLSession on iOS/macOS instead of dart:io HttpClient; this fixes
@@ -82,7 +92,12 @@ Future<void> main() async {
     if (message != null) AppLog.i('debug', message);
   };
   final options = DefaultFirebaseOptions.currentPlatform;
-  if (!options.apiKey.startsWith('YOUR_')) {
+  // The browser-extension panel runs the same web build under
+  // chrome-extension://, whose MV3 CSP blocks the inline-script bootstrap
+  // firebase_core_web uses to load the JS SDK — initializing there ends in
+  // an uncaught error. The panel does not need Firebase; skip it.
+  final inExtension = Uri.base.scheme == 'chrome-extension';
+  if (!inExtension && !options.apiKey.startsWith('YOUR_')) {
     // The native Firebase SDK auto-configures the [DEFAULT] app from
     // GoogleService-Info.plist when the plugins register — a second
     // initializeApp throws [core/duplicate-app] and, unhandled here in
@@ -1034,21 +1049,34 @@ class SetupScreen extends StatelessWidget {
       env: resolvedEnv,
       sessionsRoot: defaultSessionsRoot(resolvedEnv.sessionCwd),
     );
-    await manager.createOrResumeSession(
-      config: config,
-      createFactory: () => AgentService.create(
+    // Inside the extension panel the relay serves the chat (no local
+    // agent, no keys in the UI); null keeps the plain-web local path.
+    final relay = await createRelayServiceIfHosted();
+    if (relay != null) {
+      // The relay session id is the SW's; the manager only needs a stable
+      // key for the tile/active-session bookkeeping. The local session
+      // lifecycle below does not apply — the SW owns the JSONL session.
+      manager.addSession(
+        relay.relaySessionId.isEmpty ? 'relay' : relay.relaySessionId,
+        relay,
+      );
+    } else {
+      await manager.createOrResumeSession(
         config: config,
-        env: env,
-        sessionKeys: sessionKeysStore,
-        providerRegistry: registry,
-      ),
-      openFactory: () => AgentService.create(
-        config: config,
-        env: env,
-        sessionKeys: sessionKeysStore,
-        providerRegistry: registry,
-      ),
-    );
+        createFactory: () => AgentService.create(
+          config: config,
+          env: env,
+          sessionKeys: sessionKeysStore,
+          providerRegistry: registry,
+        ),
+        openFactory: () => AgentService.create(
+          config: config,
+          env: env,
+          sessionKeys: sessionKeysStore,
+          providerRegistry: registry,
+        ),
+      );
+    }
     // Connected — remember where we landed for the next boot (non-secret;
     // the key never reaches the store). Saved before navigation: the push
     // below completes only when the chat screen pops, which may be never.

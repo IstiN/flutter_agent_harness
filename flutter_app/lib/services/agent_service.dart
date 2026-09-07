@@ -142,6 +142,31 @@ class AgentService extends ChangeNotifier
     );
   }
 
+  /// Relay-mode base construction (issue #34 item 1): builds the shell the
+  /// [RelayAgentService] extends — an idle local agent that never runs (its
+  /// stream function throws if it ever were), a memory env, and no external
+  /// session watching. Every chat surface member is overridden by the
+  /// subclass; the local loop below stays untouched.
+  AgentService.relayBase()
+    : this(
+        agent: Agent(
+          streamFunction: _idleRelayStreamFunction,
+          toolRegistry: ToolRegistry(const []),
+        ),
+        env: MemoryExecutionEnv(),
+        sessionsRoot: 'memory://relay',
+        watchExternalSessions: false,
+      );
+
+  /// The idle loop behind [relayBase]: proof it never runs.
+  static AssistantMessageEventStream _idleRelayStreamFunction(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    throw UnsupportedError('relay mode: the local agent loop never runs');
+  }
+
   /// Convenience factory that creates the right [ExecutionEnv] for the
   /// platform and wires up the agent.
   ///
