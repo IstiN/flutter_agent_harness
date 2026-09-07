@@ -10,6 +10,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:fa_ui/fa_ui.dart' show FaChatSurfaceHandlers;
 
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
@@ -166,6 +167,17 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// Last measured natural bar height; seeded with an estimate.
   double _barHeight = 96;
 
+  /// The interactive handler trio (approval dialog, ask sheets,
+  /// secret-request sheets) bound to this sheet's context. The sheet is
+  /// the PRIMARY chat surface on narrow layouts (the extension panel!):
+  /// without this binding approvals had no handler, every gated tool
+  /// call stalled out the service-worker's 120s backstop and was denied
+  /// with the user never asked — "busy" badge, no output, and no dialog
+  /// to answer.
+  late final FaChatSurfaceHandlers _surfaceHandlers = FaChatSurfaceHandlers(
+    context: context,
+  );
+
   List<FlutterManagedSession> get _liveSessions => widget.manager.sessions;
 
   AgentService? get _activeService => widget.manager.active?.service;
@@ -220,6 +232,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   @override
   void dispose() {
+    _surfaceHandlers.detach();
     widget.manager.removeListener(_onManagerChanged);
     _namesStore?.removeListener(_onChanged);
     _presence?.removeListener(_onPresenceChanged);
@@ -504,6 +517,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
   Widget build(BuildContext context) {
     final service = _activeService;
     if (service == null) return const SizedBox.shrink();
+    // Keep the interactive trio bound to the ACTIVE session's service —
+    // a no-op while it is unchanged, and it moves the binding when the
+    // user switches sessions (or the relay re-attaches).
+    _surfaceHandlers.attach(service);
     final colors = FahColors.of(context);
     final size = MediaQuery.sizeOf(context);
     final drawerW = math.min(_drawerWidth, size.width * 0.82);

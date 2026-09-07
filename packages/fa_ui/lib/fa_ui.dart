@@ -11,6 +11,7 @@ export 'src/chat/agents_section.dart';
 export 'src/chat/approval_ui.dart';
 export 'src/chat/ask_ui.dart';
 export 'src/chat/chat_composer.dart';
+export 'src/chat/chat_surface_handlers.dart';
 export 'src/chat/chat_message_tile.dart';
 export 'src/chat/chat_strings.dart';
 export 'src/chat/fa_glyphs.dart';

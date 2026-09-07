@@ -8,7 +8,6 @@
 // chrome.storage by agent_main.dart and passed in as [HostConfig]; nothing
 // here is ever exposed to content scripts or pages (AC8).
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter_agent_harness/src/agent/agent.dart';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
@@ -27,8 +26,8 @@ import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 
 import 'active_tab_context.dart';
+import 'approval_flow.dart';
 import 'host_event_map.dart' show hostEventOf, messageToJs, v1OpToolResult;
-import 'security/exfil_gate.dart' show originOf;
 import 'browser_api_tools.dart';
 import 'chrome_api.dart';
 import 'chrome_storage_env.dart';
@@ -62,7 +61,6 @@ typedef HostConfig = ({
 });
 
 const _sessionPath = '/session.jsonl';
-const _approvalTimeout = Duration(seconds: 120);
 
 const _systemPrompt =
     'You are fa, an agent running inside a Chrome extension service worker. '
@@ -81,7 +79,8 @@ const _systemPrompt =
 
 /// Owns the agent, its tools, approvals, session, and the event bridge.
 final class AgentHost implements UiHostBackend {
-  AgentHost._(this._env, this._ops, this._sink);
+  AgentHost._(this._env, this._ops, this._sink)
+    : _flow = ApprovalFlow(sink: _sink);
 
   final ChromeStorageEnv _env;
   final OpCaller _ops;
@@ -128,19 +127,19 @@ final class AgentHost implements UiHostBackend {
   /// Bridge mail waiting for the next turn boundary (drained as steering).
   final _mail = <({String from, String text})>[];
 
-  /// Pending approval prompts: id → decision completer.
   /// Live visited-origin set shared with the browser tools' exfil gate
   /// (the same instance agent_main passes in); null = gate off.
   Set<String>? _visitedOrigins;
 
-  final _pendingApprovals = <String, Completer<bool>>{};
-
-  /// Approval id → target origin parsed from the call args (tabs_open
-  /// and friends). A panel ALLOW also registers the origin with the
-  /// exfil gate's visited set: the user just explicitly approved a call
-  /// targeting it, which is exactly what cross_origin asks for.
-  final _approvalOrigins = <String, String>{};
-  var _approvalSeq = 0;
+  /// Pending-approval flow (pure core: approval_flow.dart, VM-tested).
+  /// Owns prompt ids (`ap-N`), the 120s deny backstop, and the mid-run
+  /// rescue: a live approval-mode flip to yolo/unattended resolves every
+  /// pending prompt as allowed instead of stalling the turn for the full
+  /// timeout per gated tool call. A panel ALLOW surfaces the call's
+  /// target origin here, which the host seeds into the exfil gate's
+  /// visited set — the user explicitly approved a call targeting it,
+  /// which is exactly what cross_origin asks for.
+  late final ApprovalFlow _flow;
 
   /// Messages already persisted this SW lifetime (identity set — partial
   /// assistant snapshots share objects with the final message).
@@ -217,22 +216,63 @@ final class AgentHost implements UiHostBackend {
 
   /// Re-reads provider/approval/tool config (panel "Save"): swaps the
   /// stream function, model, approval mode, and the second-tier tool gate
-  /// in place. Ignored mid-run.
+  /// in place. The approval mode applies LIVE — mid-run included — and a
+  /// flip to yolo/unattended resolves pending prompts as allowed; every
+  /// other field is ignored mid-run with the busy error (unsafe to swap
+  /// under a running turn).
   void reconfigure(HostConfig config) {
     if (!_booted) return;
+    final mode =
+        approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk;
+    final modeChanged = mode != _approvals.mode;
+    _approvals.mode = mode;
+    if (modeChanged &&
+        (mode == ApprovalMode.yolo || mode == ApprovalMode.unattended)) {
+      final resolved = _flow.resolveAll(
+        allow: true,
+        note: 'approval mode → ${mode.label}: pending prompts allowed',
+      );
+      print('[fah][sw] reconfigure: mode=${mode.label} resolved=$resolved');
+    }
+    final needsIdle = reconfigureNeedsIdle(
+      mailboxChanged: _mailbox != config.mailbox,
+      providerChanged: _provider != config.provider,
+      dapChanged: !_sameDapTarget(config.dap),
+      toolsChanged: !_sameEnabledTools(config.browserTools),
+    );
     if (_running) {
-      _sink({'type': 'error', 'error': 'busy: finish the current turn first'});
+      if (needsIdle) {
+        _sink({
+          'type': 'error',
+          'error': 'busy: finish the current turn first',
+        });
+      }
       return;
     }
     _mailbox = config.mailbox;
-    _approvals.mode =
-        approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk;
     _provider = config.provider;
     _applyDapConfig(config.dap);
     applyToolVisibility(config.browserTools);
     _agent.streamFunction = _streamFn();
     _agent.state.model = _currentModel();
     _emitStatus();
+  }
+
+  /// Whether [next] targets the same hub as the live DAP config (null ≡
+  /// null; otherwise sameTargetAs — url + name).
+  bool _sameDapTarget(DapConfig? next) {
+    final current = _dapConfig;
+    if (next == null && current == null) return true;
+    if (next == null || current == null) return false;
+    return next.sameTargetAs(current);
+  }
+
+  /// Whether [next] enables the same second-tier set the gate currently
+  /// reflects (extra false entries are semantically absent).
+  bool _sameEnabledTools(Map<String, bool> next) {
+    final enabled = _enabledOf(next);
+    return enabled.length == _enabledTools.length &&
+        enabled.containsAll(_enabledTools);
   }
 
   /// Live second-tier re-surface (issue #19 semantics): the panel pushes
@@ -408,12 +448,13 @@ final class AgentHost implements UiHostBackend {
   /// Panel answered an approval banner.
   @override
   void decide(String id, bool allow) {
-    print(
-      '[fah][sw] decide id=$id allow=$allow pending=${_pendingApprovals.keys.toList()}',
-    );
-    final origin = _approvalOrigins.remove(id);
+    final outcome = _flow.decide(id, allow);
+    print('[fah][sw] decide id=$id allow=$allow found=${outcome.found}');
+    // An ALLOW registers the target origin with the exfil gate's visited
+    // set: the user just explicitly approved a call targeting it. A deny
+    // (or a late double-answer, found=false) must never seed it.
+    final origin = outcome.origin;
     if (allow && origin != null) _visitedOrigins?.add(origin);
-    _pendingApprovals.remove(id)?.complete(allow);
   }
 
   @override
@@ -558,39 +599,11 @@ final class AgentHost implements UiHostBackend {
   // -- Approvals ---------------------------------------------------------------
 
   Future<ApprovalDecision> _promptApproval(ApprovalRequest request) async {
-    final id = 'ap-${++_approvalSeq}';
-    final completer = Completer<bool>();
-    _pendingApprovals[id] = completer;
-    final targetUrl = request.arguments['url'];
-    if (targetUrl is String) {
-      final origin = originOf(targetUrl);
-      if (origin != null) _approvalOrigins[id] = origin;
-    }
-    final summary = '${request.toolName} ${jsonEncode(request.arguments)}';
-    _sink({
-      'type': 'approval_request',
-      'id': id,
-      'summary': summary.length > 300
-          ? '${summary.substring(0, 300)}…'
-          : summary,
-      // The panel dialog reads the tool name and raw args from here.
-      'call': {'toolName': request.toolName, ...request.arguments},
-      'reason': request.reason,
-    });
-    final timer = Timer(_approvalTimeout, () {
-      if (!completer.isCompleted) {
-        completer.complete(false); // timeout → deny, noted
-        _sink({
-          'type': 'approval_resolved',
-          'id': id,
-          'allow': false,
-          'note': 'timed out after 120s — denied',
-        });
-      }
-    });
-    final allow = await completer.future;
-    timer.cancel();
-    _pendingApprovals.remove(id);
+    final allow = await _flow.request(
+      toolName: request.toolName,
+      arguments: request.arguments,
+      reason: request.reason,
+    );
     return allow ? ApprovalDecision.approveOnce : ApprovalDecision.deny;
   }
 

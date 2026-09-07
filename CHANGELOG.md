@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- fix(browser_ext): the approval loop could not be answered or rescued —
+  the extension panel's primary chat surface (the narrow-layout session
+  sheet) never installed an approval handler, so every gated tool call
+  sat out the SW's 120s backstop and was denied with the user never
+  asked: the turn looped "busy", produced no output, and the model kept
+  retrying gated tools. Fixes, three ways:
+  - `FaChatSurfaceHandlers` (fa_ui): a reusable binder installing the
+    approval dialog + ask sheet + secret-request sheet on the active
+    service for as long as a chat surface shows; the session sheet now
+    binds it (moves on session switch, clears exactly its own handlers
+    on dispose, never clobbers a foreign handler).
+  - `ApprovalFlow` (browser_ext/dart, pure + VM-tested): the SW host's
+    pending-approval core extracted from agent_host (same wire events);
+    `resolveAll` completes every pending prompt at once.
+  - live approval-mode changes: `reconfigure` no longer drops the mode
+    behind the busy guard — the mode applies mid-run, and flipping to
+    yolo/unattended resolves pending prompts as allowed (the user's
+    rescue gesture); only provider/mailbox/hub/tool changes still
+    require an idle host.
+
 ## 0.1.313
 
 
