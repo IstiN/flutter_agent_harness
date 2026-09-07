@@ -110,6 +110,13 @@ final class _SetInputTextMsg extends Msg {
   final String text;
 }
 
+/// Message replacing the submitted-message history (a resumed session
+/// restores its recorded messages so ↑ recalls them instead of scrolling).
+final class SetInputHistoryMsg extends Msg {
+  SetInputHistoryMsg(this.history);
+  final List<String> history;
+}
+
 /// Message asking the model picker to refresh its items.
 final class _ModelsRefreshMsg extends Msg {}
 
@@ -792,6 +799,16 @@ final class FaTuiModel extends Model {
     if (msg is _SetInputTextMsg) {
       return (
         copyWith(inputText: msg.text, cursor: msg.text.length, menuOpen: false),
+        null,
+      );
+    }
+    if (msg is SetInputHistoryMsg) {
+      return (
+        copyWith(
+          inputHistory: msg.history,
+          historyIndex: -1,
+          historyDraft: null,
+        ),
         null,
       );
     }
@@ -2405,6 +2422,12 @@ final class FaTuiController {
   /// so the user can type arguments before pressing Enter).
   void sendInputText(String text) {
     _send(_SetInputTextMsg(text));
+  }
+
+  /// Replaces the submitted-message history (a resumed session restores
+  /// its recorded messages so ↑ recalls them instead of scrolling).
+  void setInputHistory(List<String> history) {
+    _send(SetInputHistoryMsg(history));
   }
 
   /// Opens the interactive prompt zone (ask/secret/approval) and resolves

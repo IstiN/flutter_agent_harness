@@ -1056,6 +1056,22 @@ void main() {
       model = result.$1 as FaTuiModel;
       expect(model.inputHistory, ['steer this']);
     });
+
+    test('a resumed session restores its history for recall', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = send(model, SetInputHistoryMsg(['resumed one', 'resumed two']));
+      expect(model.inputHistory, ['resumed one', 'resumed two']);
+
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.inputText, 'resumed two');
+      expect(model.historyIndex, 1);
+
+      // A later restore (switching sessions again) resets stale browsing
+      // state; leftover composer text still gates recall (shell semantics).
+      model = send(model, SetInputHistoryMsg(['fresh']));
+      expect(model.historyIndex, -1);
+      expect(model.historyDraft, isNull);
+    });
   });
 
   group('follow latch (auto-scroll)', () {
