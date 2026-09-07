@@ -2787,4 +2787,14 @@
 - fix(browser_ext): extension panel boots the relay before any local path (#34 item 1)
 - feat(browser_ext): the panel agent moves onto the worker relay (#34 item 1)
 
+## 0.1.318
+
+- fix(scripts): dart fix e2e_extension_agent — unblock the repo analyze gate
+- fix(app): bootstrap empty widget repos via the Contents API (#35)
+- fix(browser_ext): issue #41 — unbreak DAP dm replies under tab-context decoration
+- fix(app): publish into a freshly created (empty) GitHub repo (#35)
+- feat(app): Browser connect tab — GitHub OAuth web flow via fa1.dev (#35)
+- fix(app): the relay IS the FaChatConnection the models screens render (#34)
+- feat(browser_ext): real-wire e2e for the extension agent + provider merge semantics (#34)
+
 ## Unreleased
