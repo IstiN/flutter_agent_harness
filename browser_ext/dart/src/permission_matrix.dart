@@ -230,18 +230,8 @@ const List<ToolManifestEntry> _table = [
     tier: MatrixTier.secondTier,
   ),
   ToolManifestEntry(
-    tool: 'tts',
-    permissions: {'tts'},
-    tier: MatrixTier.secondTier,
-  ),
-  ToolManifestEntry(
     tool: 'userScripts',
     permissions: {'userScripts'},
-    tier: MatrixTier.secondTier,
-  ),
-  ToolManifestEntry(
-    tool: 'declarativeNetRequest',
-    permissions: {'declarativeNetRequest'},
     tier: MatrixTier.secondTier,
   ),
 
@@ -251,6 +241,20 @@ const List<ToolManifestEntry> _table = [
     permissions: {'browsingData'},
     tier: MatrixTier.excluded,
     rationale: 'wipes user data',
+  ),
+  ToolManifestEntry(
+    tool: 'tts',
+    permissions: {'tts'},
+    tier: MatrixTier.excluded,
+    rationale: 'Chrome omits tts from optional_permissions (not '
+        'optional-eligible); no agent surface ships on it yet',
+  ),
+  ToolManifestEntry(
+    tool: 'declarativeNetRequest',
+    permissions: {'declarativeNetRequest'},
+    tier: MatrixTier.excluded,
+    rationale: 'Chrome omits declarativeNetRequest from '
+        'optional_permissions (not optional-eligible)',
   ),
   ToolManifestEntry(
     tool: 'privacy',
@@ -345,9 +349,7 @@ const Set<String> secondTierOptionalPermissions = {
   'pageCapture',
   'tabCapture',
   'desktopCapture',
-  'tts',
   'userScripts',
-  'declarativeNetRequest',
 };
 
 /// Profile: a developer/unpacked build carries the full core permission

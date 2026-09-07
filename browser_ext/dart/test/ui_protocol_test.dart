@@ -98,6 +98,13 @@ void main() {
         const SettingsQueryMsg(),
         const SettingsPutMsg(settings: {'theme': 'dark', 'n': 3}),
         const SettingsResultMsg(settings: {'theme': 'dark', 'n': 3}),
+        const ToolsStateMsg(tools: [
+          UiToolState(name: 'browser_active_tab', enabled: true),
+          UiToolState(name: 'browser_inject_js', enabled: false),
+        ]),
+        const ToolsPutMsg(tools: [
+          UiToolState(name: 'browser_active_tab', enabled: false),
+        ]),
         const ErrorMsg(code: 'boom', message: 'nope'),
       ];
       for (final msg in cases) {

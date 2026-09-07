@@ -541,5 +541,29 @@
   "launcherPublishWidget": "Publish…",
   "@launcherPublishWidget": {
     "description": "Tile-menu action that opens the widget publish sheet (issue #35)"
+  },
+  "githubTokenNoRepoScope": "This token cannot create repositories — publishing needs repo rights. Use a classic PAT with the public_repo scope (or a fine-grained PAT with All repositories + Administration + Contents read/write). The Device code login often yields a token without repo rights.",
+  "@githubTokenNoRepoScope": {
+    "description": "Shown when a connected GitHub token lacks repository rights"
+  },
+  "githubDeviceFallbackWarn": "Heads-up: this device login uses the public Copilot Plugin app, whose tokens GitHub limits to identity-only — they cannot publish. To publish via device code, register your own GitHub OAuth App (Settings → Developer settings → OAuth Apps, set the Authorization callback URL to https://fa1.dev/oauth/callback) and save its client id in Settings → Keys as github_oauth_client_id, or rebuild the app with --dart-define=FA_GITHUB_CLIENT_ID=<id>. Until then, connect with a classic PAT (public_repo) on the Token tab.",
+  "@githubDeviceFallbackWarn": {
+    "description": "Warning shown on the device-flow tab when only the fallback Copilot plugin client id is available"
+  },
+  "githubConnectWebTab": "Browser",
+  "@githubConnectWebTab": {
+    "description": "Connect-sheet tab running the GitHub OAuth web flow through the fa1.dev callback page"
+  },
+  "githubBrowserHint": "Opens github.com in your browser. After \"Authorize\" the fa1.dev callback page shows a one-time code — paste it below. Needs your own OAuth App: its client id in Keys as github_oauth_client_id and its secret as github_oauth_client_secret.",
+  "@githubBrowserHint": {
+    "description": "Instructions shown on the Browser (OAuth web flow) tab"
+  },
+  "githubBrowserOpen": "Open GitHub again",
+  "@githubBrowserOpen": {
+    "description": "Re-opens the github.com authorize page on the Browser tab"
+  },
+  "githubBrowserCodeHint": "One-time code from fa1.dev",
+  "@githubBrowserCodeHint": {
+    "description": "Hint of the one-time-code field on the Browser tab"
   }
 }

@@ -1674,4 +1674,25 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get launcherPublishWidget => 'Опубликовать…';
+
+  @override
+  String get githubTokenNoRepoScope =>
+      'Этот токен не может создавать репозитории — для публикации нужны права на repo. Используй classic PAT со скоупом public_repo (или fine-grained PAT с All repositories + Administration + Contents read/write). Вход по Device code часто даёт токен без прав на репозитории.';
+
+  @override
+  String get githubDeviceFallbackWarn =>
+      'Важно: этот вход через устройство использует публичный app «Copilot Plugin» — GitHub ограничивает его токены правами «только идентификация», публиковать они не могут. Чтобы публиковать по device code, зарегистрируй свой GitHub OAuth App (Settings → Developer settings → OAuth Apps, в поле Authorization callback URL укажи https://fa1.dev/oauth/callback) и сохрани его client id в Settings → Keys как github_oauth_client_id — либо собери приложение с --dart-define=FA_GITHUB_CLIENT_ID=<id>. А пока подключайся classic PAT (public_repo) на вкладке Token.';
+
+  @override
+  String get githubConnectWebTab => 'Браузер';
+
+  @override
+  String get githubBrowserHint =>
+      'Открывает github.com в браузере. После «Authorize» страница fa1.dev покажет одноразовый код — вставь его ниже. Нужен свой OAuth App: его client id в Keys как github_oauth_client_id и secret как github_oauth_client_secret.';
+
+  @override
+  String get githubBrowserOpen => 'Открыть GitHub снова';
+
+  @override
+  String get githubBrowserCodeHint => 'Одноразовый код с fa1.dev';
 }

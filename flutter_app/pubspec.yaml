@@ -19,6 +19,11 @@ dependencies:
   # The local fa_ui package: the Fa theme + provider/model settings widgets.
   fa_ui:
     path: ../packages/fa_ui
+  # The extension panel's worker-relay transports + protocol (issue #34).
+  # Path dep: fa_browser_agent ships inside the repo's browser_ext/ and is
+  # compiled into the SW separately; the app only shares the wire types.
+  fa_browser_agent:
+    path: ../browser_ext/dart
 
 
   # The local fa_llm package: the LLM config + Copilot device-flow types

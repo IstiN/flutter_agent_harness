@@ -6,7 +6,9 @@ library;
 
 import 'dart:async';
 
+import 'settings_merge.dart';
 import 'ui_port_server.dart';
+import 'ui_protocol.dart';
 
 /// The slice of the host the adapter forwards to. An interface (not
 /// agent_host.dart directly) so this file and its tests stay free of the
@@ -19,6 +21,12 @@ abstract interface class UiHostBackend {
   Map<String, dynamic> getState();
   String get sessionId;
   List<Map<String, dynamic>> sessionsList();
+
+  /// The live tool list with enabled flags (panel Tools section).
+  List<UiToolState> toolsList();
+
+  /// Applies per-tool enabled flags from the panel.
+  void toolsPut(List<UiToolState> tools);
 }
 
 /// chrome.storage keys the settings flow reads and writes — identical to
@@ -35,11 +43,18 @@ final class UiHostAdapter implements UiHostConnector {
     required this.backend,
     required this.onSettings,
     this.persist,
+    this.merge,
   });
 
   final UiHostBackend? Function() backend;
   final void Function(Map<String, Object?> settings) onSettings;
   final Future<void> Function(String key, Object? value)? persist;
+
+  /// Optional field-level merge applied before a put is stored/persisted
+  /// (`faProvider` uses it so a partial panel save cannot wipe stored
+  /// values — see settings_merge.dart).
+  final Object? Function(String key, Object? incoming, Object? stored)?
+  merge;
 
   /// In-memory mirror of the stored settings. chrome.storage is async,
   /// the protocol's settingsGet is sync — the wiring seeds this snapshot
@@ -62,15 +77,25 @@ final class UiHostAdapter implements UiHostConnector {
     var changed = false;
     for (final key in uiSettingsKeys) {
       if (!settings.containsKey(key)) continue;
-      _settings[key] = settings[key];
+      final m = merge;
+      final value = m == null
+          ? settings[key]
+          : m(key, settings[key], _settings[key]);
+      _settings[key] = value;
       changed = true;
       final sink = persist;
       if (sink != null) {
-        unawaited(sink(key, settings[key]).catchError((Object _) {}));
+        unawaited(sink(key, value).catchError((Object _) {}));
       }
     }
     if (changed) onSettings(Map.of(_settings));
   }
+
+  @override
+  List<UiToolState> toolsList() => backend()?.toolsList() ?? const [];
+
+  @override
+  void toolsPut(List<UiToolState> tools) => backend()?.toolsPut(tools);
 
   @override
   void sendUser(String text) => backend()?.sendUser(text);
@@ -93,3 +118,14 @@ final class UiHostAdapter implements UiHostConnector {
   List<Map<String, dynamic>> sessionsList() =>
       backend()?.sessionsList() ?? const [];
 }
+
+/// The [UiHostAdapter.merge] hook for `faProvider`: field-level merge so a
+/// panel save without a model (or without retyping the key) keeps the
+/// stored values instead of wiping the provider.
+Object? faProviderMergeHook(String key, Object? incoming, Object? stored) =>
+    key == 'faProvider'
+        ? mergeProvider(
+            stored is Map ? Map<Object?, Object?>.from(stored) : null,
+            incoming is Map ? Map<Object?, Object?>.from(incoming) : const {},
+          )
+        : incoming;

@@ -153,4 +153,56 @@ void main() {
     expect(provider.name, startsWith('AIIN'));
     expect(registry.keyFor(provider.id), 'sk-aiin-test-1234567890');
   });
+
+  testWidgets('re-auth mode refreshes the existing entry instead of adding '
+      'one', (tester) async {
+    final registry = ProviderRegistry.inMemory();
+    final existing = await registry.add(
+      name: 'user@aiin.by',
+      baseUrl: aiinDefaultChatBaseUrl,
+      modelId: 'moonshotai/kimi-k2',
+    );
+    registry.rememberKey(existing.id, 'sk-aiin-old-key-000000000');
+    BuildContext? flowContext;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Builder(
+              builder: (context) {
+                flowContext = context;
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final done = runAiinConnectFlow(
+      context: flowContext!,
+      registry: registry,
+      service: null,
+      lastConnectionStore: LastConnectionStore.inMemory(),
+      aiinOpenPopupFn: () => true,
+      aiinNavigatePopupFn: (_) {},
+      aiinWebTimeout: const Duration(milliseconds: 200),
+      reauthenticateFor: existing,
+    );
+
+    // Timeout → paste-key dialog → paste the fresh key.
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'sk-aiin-new-9999999999');
+    await tester.pump();
+    await tester.tap(find.text('Connect'));
+    await tester.pumpAndSettle();
+
+    expect(done, completion(true));
+    // Still exactly one entry, same id/name/model; the key is refreshed.
+    expect(registry.providers.length, 1);
+    expect(registry.providers.first.id, existing.id);
+    expect(registry.providers.first.modelId, 'moonshotai/kimi-k2');
+    expect(registry.keyFor(existing.id), 'sk-aiin-new-9999999999');
+  });
 }

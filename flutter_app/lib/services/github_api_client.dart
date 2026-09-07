@@ -130,6 +130,36 @@ final class GithubApiException implements Exception {
   bool get isRateLimited =>
       statusCode == 403 && message.toLowerCase().contains('rate limit');
 
+  /// 403 "Resource not accessible by integration" — the token cannot act
+  /// on this resource at all. Typical for fine-grained PATs (especially
+  /// scoped to "Only select repositories": a repo that does not exist yet
+  /// can never be in the selection) or tokens without the Administration
+  /// repo permission — repository creation needs it.
+  bool get isForbiddenIntegration =>
+      statusCode == 403 &&
+      message.toLowerCase().contains('resource not accessible by integration');
+
+  /// The actionable fix for [isForbiddenIntegration], appended to the
+  /// server message by the write paths ([createRepo], [ensureFork],
+  /// [createPull]).
+  static const tokenPermissionHint =
+      'The connected GitHub token lacks permission for this. Use a classic '
+      'PAT with the public_repo scope, or a fine-grained PAT with "All '
+      'repositories" + Administration (read/write) + Contents (read/write).';
+
+  /// Rethrows [error] with [tokenPermissionHint] appended when it is a
+  /// forbidden-integration failure; otherwise rethrows unchanged.
+  static Never rethrowWithPermissionHint(GithubApiException error) {
+    if (error.isForbiddenIntegration) {
+      throw GithubApiException(
+        error.statusCode,
+        '${error.message}. $tokenPermissionHint',
+        errors: error.errors,
+      );
+    }
+    throw error;
+  }
+
   /// Validation failed (422) — e.g. fork already exists, ref exists.
   bool get isValidation => statusCode == 422;
 
@@ -178,6 +208,49 @@ class GithubApiClient {
     return GithubUser.fromJson(json as Map<String, dynamic>);
   }
 
+  /// `GET /user` returning the account AND the token's OAuth scopes from
+  /// the `X-OAuth-Scopes` response header. Fine-grained PATs report an
+  /// empty scope list — their permissions are implicit.
+  Future<(GithubUser, List<String>)> getUserAndScopes() async {
+    final uri = Uri.parse('$baseUrl/user');
+    final request = http.Request('GET', uri)..headers.addAll(_headers);
+    final streamed = await _http.send(request);
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode >= 400) {
+      // Same message extraction as [_request] so tests and UI show the
+      // server's human message ("Bad credentials"), not the raw JSON.
+      String message = response.body;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['message'] != null) {
+          message = decoded['message'].toString();
+        }
+      } on FormatException {
+        // Non-JSON error body — keep the raw text.
+      }
+      throw GithubApiException(response.statusCode, message);
+    }
+    final user = GithubUser.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+    final raw = response.headers['x-oauth-scopes'] ?? '';
+    final scopes = [
+      for (final part in raw.split(',')) part.trim(),
+    ]..removeWhere((scope) => scope.isEmpty);
+    return (user, scopes);
+  }
+
+  /// Whether a token with these scopes can create repositories and open
+  /// pull requests — what publishing needs. Classic/OAuth-app tokens must
+  /// carry `public_repo` (or the full `repo`); an empty list (fine-grained
+  /// PATs report no scopes) is treated as "unknown — assume yes" and let
+  /// the publish flow surface a precise failure when the rights are
+  /// actually missing.
+  static bool tokenCanCreateRepos(List<String> scopes) =>
+      scopes.isEmpty ||
+      scopes.contains('public_repo') ||
+      scopes.contains('repo');
+
   // --- repositories --------------------------------------------------------
 
   /// `GET /repos/<owner>/<name>`; null when the repo does not exist.
@@ -199,18 +272,26 @@ class GithubApiClient {
     String? description,
     bool private = false,
   }) async {
-    final json =
-        await _request(
-              'POST',
-              '/user/repos',
-              body: {
-                'name': name,
-                'private': private,
-                'description': ?description,
-                'auto_init': false,
-              },
-            )
-            as Map<String, dynamic>;
+    final Map<String, dynamic> json;
+    try {
+      json =
+          await _request(
+                'POST',
+                '/user/repos',
+                body: {
+                  'name': name,
+                  'private': private,
+                  'description': ?description,
+                  'auto_init': false,
+                },
+              )
+              as Map<String, dynamic>;
+    } on GithubApiException catch (error) {
+      // Creating a repo is exactly what fine-grained PATs without the
+      // Administration permission (or scoped to select repositories)
+      // cannot do — surface the token fix immediately.
+      throw GithubApiException.rethrowWithPermissionHint(error);
+    }
     return GithubRepo.fromJson(json);
   }
 
@@ -250,7 +331,10 @@ class GithubApiClient {
       final object = json['object'];
       return object is Map ? object['sha']?.toString() : null;
     } on GithubApiException catch (error) {
-      if (error.isNotFound) return null;
+      // A repo without commits (freshly created) answers 409 "Git
+      // Repository is empty." on the ref read — that is "no branch yet",
+      // not a failure.
+      if (error.isNotFound || error.statusCode == 409) return null;
       rethrow;
     }
   }
@@ -268,6 +352,32 @@ class GithubApiClient {
             )
             as Map<String, dynamic>;
     return (json['sha'] as String);
+  }
+
+  /// `PUT /repos/<owner>/<repo>/contents/<path>` — creates [path] in a
+  /// single commit and returns the new commit sha. The ONLY write endpoint
+  /// that works on a repo with zero commits (the git data API 409s on
+  /// those) — used to bootstrap a freshly created repo.
+  Future<String> putFile(
+    String owner,
+    String repo,
+    String path, {
+    required String message,
+    required String content,
+    String branch = 'main',
+  }) async {
+    final json =
+        await _request(
+              'PUT',
+              '/repos/$owner/$repo/contents/$path',
+              body: {
+                'message': message,
+                'content': base64Encode(utf8.encode(content)),
+                'branch': branch,
+              },
+            )
+            as Map<String, dynamic>;
+    return ((json['commit'] as Map)['sha'] as String);
   }
 
   /// `POST /git/trees` — entries relative to [baseTreeSha] (null = a fresh
@@ -359,13 +469,18 @@ class GithubApiClient {
     required String title,
     required String body,
   }) async {
-    final json =
-        await _request(
-              'POST',
-              '/repos/$owner/$repo/pulls',
-              body: {'head': head, 'base': base, 'title': title, 'body': body},
-            )
-            as Map<String, dynamic>;
+    final Map<String, dynamic> json;
+    try {
+      json =
+          await _request(
+                'POST',
+                '/repos/$owner/$repo/pulls',
+                body: {'head': head, 'base': base, 'title': title, 'body': body},
+              )
+              as Map<String, dynamic>;
+    } on GithubApiException catch (error) {
+      throw GithubApiException.rethrowWithPermissionHint(error);
+    }
     return GithubPull.fromJson(json);
   }
 

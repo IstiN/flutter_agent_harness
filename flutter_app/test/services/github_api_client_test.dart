@@ -16,8 +16,16 @@ final class _ScriptedGithub {
   final requests = <http.Request>[];
   final _responders = <_Responder>[];
 
-  void on(String method, String path, Object responseBody, {int status = 200}) {
-    _responders.add(_Responder(method, path, status, jsonEncode(responseBody)));
+  void on(
+    String method,
+    String path,
+    Object responseBody, {
+    int status = 200,
+    Map<String, String> headers = const {},
+  }) {
+    _responders.add(
+      _Responder(method, path, status, jsonEncode(responseBody), headers),
+    );
   }
 
   http.Client get client => MockClient((request) async {
@@ -27,7 +35,11 @@ final class _ScriptedGithub {
       if (request.method == responder.method &&
           request.url.path == responder.path) {
         _responders.removeAt(i);
-        return http.Response(responder.body, responder.status);
+        return http.Response(
+          responder.body,
+          responder.status,
+          headers: responder.headers,
+        );
       }
     }
     return http.Response(
@@ -40,15 +52,70 @@ final class _ScriptedGithub {
 }
 
 final class _Responder {
-  _Responder(this.method, this.path, this.status, this.body);
+  _Responder(
+    this.method,
+    this.path,
+    this.status,
+    this.body, [this.headers = const {}]);
   final String method;
   final String path;
   final int status;
   final String body;
+  final Map<String, String> headers;
 }
 
 void main() {
   group('GithubApiClient', () {
+    test('getUserAndScopes reads X-OAuth-Scopes; scope check gates repo rights', () async {
+      final gh = _ScriptedGithub()
+        ..on(
+          'GET',
+          '/user',
+          {'login': 'octocat', 'avatar_url': 'a'},
+          headers: {'x-oauth-scopes': 'read:user, gist'},
+        );
+      final client = GithubApiClient(
+        token: 'secret-token',
+        httpClient: gh.client,
+      );
+      final (user, scopes) = await client.getUserAndScopes();
+      expect(user.login, 'octocat');
+      expect(scopes, ['read:user', 'gist']);
+      expect(GithubApiClient.tokenCanCreateRepos(scopes), isFalse);
+      expect(GithubApiClient.tokenCanCreateRepos(['public_repo']), isTrue);
+      expect(GithubApiClient.tokenCanCreateRepos(['repo']), isTrue);
+      // Fine-grained PATs report no scopes: unknown — assume yes.
+      expect(GithubApiClient.tokenCanCreateRepos(const []), isTrue);
+    });
+
+    test('createRepo 403 "not accessible by integration" gets the token hint', () async {
+      final gh = _ScriptedGithub()
+        ..on(
+          'POST',
+          '/user/repos',
+          {
+            'message': 'Resource not accessible by integration',
+            'documentation_url':
+                'https://docs.github.com/rest/users/users#create-a-user-repository',
+          },
+          status: 403,
+        );
+      final client = GithubApiClient(
+        token: 'secret-token',
+        httpClient: gh.client,
+      );
+      expect(
+        () => client.createRepo(name: 'fa-widget-x'),
+        throwsA(
+          isA<GithubApiException>().having(
+            (e) => e.message,
+            'message',
+            contains('classic PAT with the public_repo scope'),
+          ),
+        ),
+      );
+    });
+
     test('sends the bearer token only to api.github.com', () async {
       final gh = _ScriptedGithub()
         ..on('GET', '/user', {'login': 'octocat', 'avatar_url': 'a'});
@@ -188,6 +255,30 @@ void main() {
         }, status: 404);
       final client = GithubApiClient(token: 't', httpClient: gh.client);
       expect(await client.getHeadSha('o', 'r', 'main'), isNull);
+    });
+
+    test('putFile creates a file and returns the commit sha', () async {
+      final gh = _ScriptedGithub()
+        ..on('PUT', '/repos/o/r/contents/README.md', {
+          'content': {'path': 'README.md'},
+          'commit': {'sha': 'boot-1'},
+        });
+      final client = GithubApiClient(
+        token: 'x',
+        httpClient: gh.client,
+      );
+      final sha = await client.putFile(
+        'o',
+        'r',
+        'README.md',
+        message: 'Initialize Fa widget repo',
+        content: '# hi',
+      );
+      expect(sha, 'boot-1');
+      final body = jsonDecode(gh.requests.last.body) as Map<String, dynamic>;
+      expect(body['branch'], 'main');
+      expect(body['message'], 'Initialize Fa widget repo');
+      expect(body['content'], base64Encode(utf8.encode('# hi')));
     });
 
     test('createBranch tolerates 422 (ref already exists)', () async {

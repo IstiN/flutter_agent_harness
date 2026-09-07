@@ -2803,4 +2803,24 @@
 - fix(browser_ext): CSP + local canvaskit let the embedded fa app load
 - fix(browser_ext): bundle the fa web app where the panel probes it
 
+## 0.1.315
+
+- fix(browser_ext): panel boots clean — verified by a headless CDP check
+- feat(aiin): re-authenticate an existing AIIN entry from the editor
+- fix(app): actionable hint when the GitHub token cannot create repos (#35)
+- fix(redact): a bare .env filename is no longer masked as a credential
+
+## 0.1.316
+
+- fix(app): reject repo-rightless GitHub tokens at connect time (#35)
+
+## 0.1.317
+
+- feat(browser_ext): tools_state/tools_put wire the panel Tools section; seed models from the SW snapshot (#34 phase 2)
+- revert(app): restore main.dart and build_browser_ext.sh pre-48f757ba
+- revert(app): un-publish support agent's staged WIP accidentally included in 48f757ba
+- feat(app): runtime-configurable device-flow OAuth app + fallback warning (#35)
+- fix(browser_ext): extension panel boots the relay before any local path (#34 item 1)
+- feat(browser_ext): the panel agent moves onto the worker relay (#34 item 1)
+
 ## Unreleased

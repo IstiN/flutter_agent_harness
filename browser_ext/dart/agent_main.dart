@@ -74,6 +74,7 @@ final _adapter = UiHostAdapter(
   backend: () => _host,
   onSettings: _applySettings,
   persist: _persistSetting,
+  merge: faProviderMergeHook,
 );
 
 final _ports = UiPortServer(host: _adapter);
