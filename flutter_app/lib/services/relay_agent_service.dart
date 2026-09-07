@@ -171,9 +171,12 @@ final class RelayAgentService extends AgentService {
 
   @override
   void setApprovalMode(ApprovalMode mode) {
-    // Local preference; the SW gate keeps its own mode until the protocol
-    // carries settings_put for approvals (issue #34 phase 2).
+    // The selector's segments rebuild off this notifier — without it the
+    // button reads as dead (the tap "does nothing"). The SW gate learns
+    // the mode through settings_put (faApproval → reconfigure).
     approval.mode = mode;
+    notifyListeners();
+    _transport.dispatch(SettingsPutMsg(settings: {'faApproval': mode.label}));
   }
 
   @override
@@ -270,6 +273,13 @@ final class RelayAgentService extends AgentService {
         _transport.dispatch(const SettingsQueryMsg());
         debugPrint('[fah][relay] settings_query sent');
       case MessageDoneMsg(:final message):
+        if ((message['role'] as String? ?? 'assistant') == 'user') {
+          // Live user copy: the composer already echoed the raw text
+          // (the SW's version carries the per-turn [context] prefix —
+          // rendering both reads as a duplicated bubble). Replay covers
+          // history via _onHostEvent's silent branch instead.
+          break;
+        }
         _finishAssistant(message);
       case ApprovalRequestMsg(:final id, :final call, :final reason):
         unawaited(_decideApproval(id, call, reason));
@@ -316,7 +326,22 @@ final class RelayAgentService extends AgentService {
         );
         _currentAssistant!.content += event['text'] as String? ?? '';
       case 'message_done':
-        _finishAssistant(event);
+        if ((event['role'] as String? ?? 'assistant') == 'user') {
+          // The composer echoes the raw text locally, so the live user
+          // message_done is redundant (and carries the per-turn [context]
+          // prefix — rendering it reads as a duplicated bubble). On
+          // replay there is no local echo, so the copy is needed there.
+          if (silent) {
+            _append(
+              fa_ui.FaChatMessage(
+                role: 'user',
+                content: event['text'] as String? ?? '',
+              ),
+            );
+          }
+        } else {
+          _finishAssistant(event);
+        }
       case 'tool_result':
         _append(
           fa_ui.FaChatMessage(
@@ -397,8 +422,8 @@ final class RelayAgentService extends AgentService {
   Future<void> reconfigure(AgentConfig config) async {
     debugPrint(
       '[fah][relay] reconfigure -> settings_put: '
-      'baseUrl=\${config.baseUrl} model=\${config.modelId} '
-      'key.len=\${config.apiKey.length}',
+      'baseUrl=${config.baseUrl} model=${config.modelId} '
+      'key.len=${config.apiKey.length}',
     );
     _modelId = config.modelId;
     _baseUrl = config.baseUrl;
@@ -420,17 +445,26 @@ final class RelayAgentService extends AgentService {
   void _finishAssistant(Map<String, dynamic> message) {
     final role = message['role'] as String? ?? 'assistant';
     final text = message['text'] as String? ?? '';
+    debugPrint('[fah][relay] message_done role=$role len=${text.length}');
     // The streaming partial is replaced by the finalized message.
     final partial = _currentAssistant;
     if (partial != null) _messages.remove(partial);
     _currentAssistant = null;
     if (role == 'assistant' && text.isEmpty) {
-      _append(
-        fa_ui.FaChatMessage(
-          content: fa_ui.emptyResponsePlaceholder,
-          role: 'assistant',
-        ),
-      );
+      // A tool-call-only assistant turn legitimately has no text — the
+      // tool_result rows that follow tell the story; a placeholder here
+      // reads like a failure mid-flow (the approval dialog opens while
+      // the empty bubble is already on screen).
+      final toolCalls = message['toolCalls'];
+      final hasToolCalls = toolCalls is List && toolCalls.isNotEmpty;
+      if (!hasToolCalls) {
+        _append(
+          fa_ui.FaChatMessage(
+            content: fa_ui.emptyResponsePlaceholder,
+            role: 'assistant',
+          ),
+        );
+      }
     } else if (role == 'tool') {
       _append(
         fa_ui.FaChatMessage(
@@ -463,6 +497,7 @@ final class RelayAgentService extends AgentService {
       return;
     }
     final summary = call['toolName'] as String? ?? 'tool';
+    debugPrint('[fah][relay] approval dialog open id=$id tool=$summary');
     late final ApprovalDecision decision;
     try {
       decision = await handler(
@@ -477,6 +512,7 @@ final class RelayAgentService extends AgentService {
       _transport.dispatch(ApprovalResponseMsg(id: id, decision: 'deny'));
       rethrow;
     }
+    debugPrint('[fah][relay] approval answered id=$id decision=$decision');
     _transport.dispatch(
       ApprovalResponseMsg(
         id: id,

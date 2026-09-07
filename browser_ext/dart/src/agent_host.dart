@@ -27,6 +27,7 @@ import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 
 import 'active_tab_context.dart';
+import 'security/exfil_gate.dart' show originOf;
 import 'browser_api_tools.dart';
 import 'chrome_api.dart';
 import 'chrome_storage_env.dart';
@@ -56,7 +57,7 @@ typedef HostConfig = ({
 });
 
 const _sessionPath = '/session.jsonl';
-const _approvalTimeout = Duration(seconds: 30);
+const _approvalTimeout = Duration(seconds: 120);
 
 const _systemPrompt =
     'You are fa, an agent running inside a Chrome extension service worker. '
@@ -117,7 +118,17 @@ final class AgentHost implements UiHostBackend {
   final _mail = <({String from, String text})>[];
 
   /// Pending approval prompts: id → decision completer.
+  /// Live visited-origin set shared with the browser tools' exfil gate
+  /// (the same instance agent_main passes in); null = gate off.
+  Set<String>? _visitedOrigins;
+
   final _pendingApprovals = <String, Completer<bool>>{};
+
+  /// Approval id → target origin parsed from the call args (tabs_open
+  /// and friends). A panel ALLOW also registers the origin with the
+  /// exfil gate's visited set: the user just explicitly approved a call
+  /// targeting it, which is exactly what cross_origin asks for.
+  final _approvalOrigins = <String, String>{};
   var _approvalSeq = 0;
 
   /// Messages already persisted this SW lifetime (identity set — partial
@@ -161,6 +172,7 @@ final class AgentHost implements UiHostBackend {
         visitedOrigins: visitedOrigins,
       );
     }
+    _visitedOrigins = visitedOrigins;
     _gate = ToolGate({for (final t in _registry.agentTools) t.name: t});
     _approvals = ApprovalManager(
       mode:
@@ -349,6 +361,11 @@ final class AgentHost implements UiHostBackend {
   /// Panel answered an approval banner.
   @override
   void decide(String id, bool allow) {
+    print(
+      '[fah][sw] decide id=$id allow=$allow pending=${_pendingApprovals.keys.toList()}',
+    );
+    final origin = _approvalOrigins.remove(id);
+    if (allow && origin != null) _visitedOrigins?.add(origin);
     _pendingApprovals.remove(id)?.complete(allow);
   }
 
@@ -515,6 +532,11 @@ final class AgentHost implements UiHostBackend {
     final id = 'ap-${++_approvalSeq}';
     final completer = Completer<bool>();
     _pendingApprovals[id] = completer;
+    final targetUrl = request.arguments['url'];
+    if (targetUrl is String) {
+      final origin = originOf(targetUrl);
+      if (origin != null) _approvalOrigins[id] = origin;
+    }
     final summary = '${request.toolName} ${jsonEncode(request.arguments)}';
     _sink({
       'type': 'approval_request',
@@ -522,6 +544,8 @@ final class AgentHost implements UiHostBackend {
       'summary': summary.length > 300
           ? '${summary.substring(0, 300)}…'
           : summary,
+      // The panel dialog reads the tool name and raw args from here.
+      'call': {'toolName': request.toolName, ...request.arguments},
       'reason': request.reason,
     });
     final timer = Timer(_approvalTimeout, () {
@@ -531,7 +555,7 @@ final class AgentHost implements UiHostBackend {
           'type': 'approval_resolved',
           'id': id,
           'allow': false,
-          'note': 'timed out after 30s — denied',
+          'note': 'timed out after 120s — denied',
         });
       }
     });
@@ -668,6 +692,14 @@ final class AgentHost implements UiHostBackend {
     return {
       'role': message.role,
       'text': text,
+      // Tool-call names let the UI tell a tool-call-only turn (no text,
+      // the tool results tell the story) apart from a genuinely empty
+      // response (placeholder-worthy).
+      if (message is AssistantMessage)
+        'toolCalls': [
+          for (final block in message.content)
+            if (block is ToolCall) block.name,
+        ],
       if (message is ToolResultMessage) 'toolName': message.toolName,
       if (message is ToolResultMessage) 'isError': message.isError,
       if (message is AssistantMessage && message.errorMessage != null)
