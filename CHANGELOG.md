@@ -2767,4 +2767,11 @@
 - fix(browser_ext): CSP + local canvaskit let the embedded fa app load
 - fix(browser_ext): bundle the fa web app where the panel probes it
 
+## 0.1.315
+
+- fix(browser_ext): panel boots clean — verified by a headless CDP check
+- feat(aiin): re-authenticate an existing AIIN entry from the editor
+- fix(app): actionable hint when the GitHub token cannot create repos (#35)
+- fix(redact): a bare .env filename is no longer masked as a credential
+
 ## Unreleased
