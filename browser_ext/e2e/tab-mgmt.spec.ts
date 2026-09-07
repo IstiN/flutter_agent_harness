@@ -102,7 +102,7 @@ test.describe('tab management', () => {
     }, tabId);
     const sessionId = await fa.swEval(async (base) => {
       const chromeApi = globalThis as unknown as ChromeTabs; // chrome.* in SW
-      const entries = await chromeApi.sessions.getRecentlyClosed();
+      const entries = await chromeApi.chrome.sessions.getRecentlyClosed();
       return (
         entries.find((e) => e.tab?.url?.startsWith(base))?.tab?.sessionId ??
         null

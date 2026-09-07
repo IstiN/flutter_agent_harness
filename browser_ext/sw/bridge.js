@@ -5,6 +5,11 @@
 const KEEPALIVE_ALARM = 'fa-bridge-keepalive';
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
+// In-worker reconnect budget: after this many attempts the setTimeout chain
+// stops (each retry's socket events reset the MV3 30s idle timer, so the SW
+// could never idle out and the alarm-driven revival path would be dead
+// code). The 1-min KEEPALIVE_ALARM owns retries from there.
+const RETRY_TIMER_ATTEMPTS = 6;
 const QUEUE_CAP = 100;
 const DEDUPE_CAP = 512;
 const PING_MS = 20000;
@@ -123,6 +128,10 @@ function scheduleRetry() {
   const delay = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** state.attempt);
   state.attempt++;
   state.nextAttemptAt = Date.now() + delay;
+  if (state.attempt > RETRY_TIMER_ATTEMPTS) {
+    state.retryTimer = null; // alarm-only retries: let the SW idle out
+    return;
+  }
   state.retryTimer = setTimeout(openSocket, delay);
 }
 

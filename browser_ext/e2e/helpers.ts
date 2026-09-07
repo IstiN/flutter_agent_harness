@@ -251,12 +251,12 @@ export class FaHarness {
       return await run(await this.sw());
     }
   }
-  /** Boots the embedded agent with the deterministic fake: provider. */
-  async bootAgent(): Promise<void> {
+  /** mode: 'ask' makes every tool call prompt (approval specs decide()). */
+  async bootAgent(mode = 'unattended'): Promise<void> {
     await this.swEval((config) => {
       const sw = globalThis as unknown as SwGlobals; // seams bound by sw/agent.js
       return sw.faAgent.boot(config);
-    }, { approvalMode: 'unattended' });
+    }, { approvalMode: mode });
     await expect
       .poll(() =>
         this.swEval(() => {

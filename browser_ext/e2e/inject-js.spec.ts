@@ -41,7 +41,7 @@ test.describe('inject_js worlds', () => {
   test('MAIN writes land in the page world the tab evaluates', async ({
     fa,
   }) => {
-    await fa.bootAgent();
+    await fa.bootAgent('ask');
     await fa.collectEvents();
     const tabId = await fixtureTab(fa);
 
@@ -55,7 +55,7 @@ test.describe('inject_js worlds', () => {
   test('ISOLATED shares the DOM but not window — both directions', async ({
     fa,
   }) => {
-    await fa.bootAgent();
+    await fa.bootAgent('ask');
     await fa.collectEvents();
     const tabId = await fixtureTab(fa);
 
@@ -86,7 +86,7 @@ test.describe('inject_js worlds', () => {
   test('bad world → clean bad_world error, no code executed', async ({
     fa,
   }) => {
-    await fa.bootAgent();
+    await fa.bootAgent('ask');
     await fa.collectEvents();
     const tabId = await fixtureTab(fa);
 
