@@ -47,26 +47,37 @@ String? optionalProviderApiKey(
   final customEndpoint =
       spec != null && baseUrl != null && baseUrl != spec.defaultBaseUrl;
   if (!customEndpoint) {
-    for (final name in names) {
-      final value = environment[name];
-      if (value != null && value.isNotEmpty) return value;
-    }
+    final envKey = _firstEnvValue(names, environment);
+    if (envKey != null) return envKey;
   }
   if (baseUrl != null) {
-    final candidates = [
+    final stored = _firstStoredValue([
       CustomProviderRegistry.keyNameFor(baseUrl),
       ...?scopedKeyNames,
-    ];
-    for (final name in candidates) {
-      final stored = keys.read(name);
-      if (stored != null && stored.isNotEmpty) return stored;
-    }
+    ], keys);
+    if (stored != null) return stored;
   }
   if (!customEndpoint) {
-    for (final name in names) {
-      final stored = keys.read(name);
-      if (stored != null && stored.isNotEmpty) return stored;
-    }
+    final stored = _firstStoredValue(names, keys);
+    if (stored != null) return stored;
+  }
+  return null;
+}
+
+/// The first non-empty environment value among [names], or null.
+String? _firstEnvValue(List<String> names, Map<String, String> environment) {
+  for (final name in names) {
+    final value = environment[name];
+    if (value != null && value.isNotEmpty) return value;
+  }
+  return null;
+}
+
+/// The first non-empty store value among [names], or null.
+String? _firstStoredValue(List<String> names, SecureKeyCache keys) {
+  for (final name in names) {
+    final stored = keys.read(name);
+    if (stored != null && stored.isNotEmpty) return stored;
   }
   return null;
 }
