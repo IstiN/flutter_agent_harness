@@ -39,49 +39,56 @@ const terminalSetupFamilies = <String>{
   'unknown',
 };
 
-/// Detects the terminal family from host env vars (an empty lookup — tests,
-/// web — lands on `unknown`). tmux is checked first: it masks the inner
-/// terminal's own markers.
-String detectTerminalFamily(EnvVarLookup env) {
-  String? tryEnv(List<String> names) {
-    for (final name in names) {
-      final value = env(name);
-      if (value != null && value.isNotEmpty) return value;
-    }
-    return null;
-  }
+/// Env-var markers checked in order; the first set variable names the
+/// family. tmux comes first: it masks the inner terminal's own markers.
+const _envFamilyMarkers = <String, List<String>>{
+  'tmux': ['TMUX'],
+  'kitty': ['KITTY_WINDOW_ID', 'KITTY_PID'],
+  'ghostty': ['GHOSTTY_RESOURCES_DIR'],
+  'wezterm': ['WEZTERM_EXECUTABLE'],
+  'windows-terminal': ['WT_SESSION'],
+  'konsole': ['KONSOLE_VERSION'],
+  'vte': ['VTE_VERSION'],
+  'xterm': ['XTERM_VERSION'],
+  'alacritty': ['ALACRITTY_LOG'],
+};
 
-  if (tryEnv(['TMUX']) != null) return 'tmux';
-  if (tryEnv(['KITTY_WINDOW_ID', 'KITTY_PID']) != null) return 'kitty';
-  if (tryEnv(['GHOSTTY_RESOURCES_DIR']) != null) return 'ghostty';
-  if (tryEnv(['WEZTERM_EXECUTABLE']) != null) return 'wezterm';
-  if (tryEnv(['WT_SESSION']) != null) return 'windows-terminal';
-  if (tryEnv(['KONSOLE_VERSION']) != null) return 'konsole';
-  if (tryEnv(['VTE_VERSION']) != null) return 'vte';
-  if (tryEnv(['XTERM_VERSION']) != null) return 'xterm';
-  if (tryEnv(['ALACRITTY_LOG']) != null) return 'alacritty';
-  if (tryEnv(['TERM_PROGRAM']) case final program?) {
-    switch (program) {
-      case 'iTerm.app':
-        return 'iterm2';
-      case 'Apple_Terminal':
-        return 'apple-terminal';
-      case 'WarpTerminal':
-        return 'warp';
-      case 'vscode':
-        return 'vscode';
-      case 'WezTerm':
-        return 'wezterm';
-      case 'ghostty':
-        return 'ghostty';
+/// `TERM_PROGRAM` value → family id.
+const _termProgramFamilies = <String, String>{
+  'iTerm.app': 'iterm2',
+  'Apple_Terminal': 'apple-terminal',
+  'WarpTerminal': 'warp',
+  'vscode': 'vscode',
+  'WezTerm': 'wezterm',
+  'ghostty': 'ghostty',
+};
+
+/// `TERM` prefix → family id (WSL/Linux terminfo names).
+const _termPrefixFamilies = <String, String>{
+  'xterm-kitty': 'kitty',
+  'xterm-ghostty': 'ghostty',
+  'alacritty': 'alacritty',
+  'foot': 'foot',
+};
+
+/// Detects the terminal family from host env vars (an empty lookup — tests,
+/// web — lands on `unknown`).
+String detectTerminalFamily(EnvVarLookup env) {
+  for (final entry in _envFamilyMarkers.entries) {
+    for (final name in entry.value) {
+      final value = env(name);
+      if (value != null && value.isNotEmpty) return entry.key;
     }
   }
-  final term = tryEnv(['TERM']) ?? '';
-  if (term.startsWith('xterm-kitty') || term.startsWith('xterm-ghostty')) {
-    return term.startsWith('xterm-kitty') ? 'kitty' : 'ghostty';
+  final program = env('TERM_PROGRAM');
+  if (program != null && program.isNotEmpty) {
+    final family = _termProgramFamilies[program];
+    if (family != null) return family;
   }
-  if (term.startsWith('alacritty')) return 'alacritty';
-  if (term.startsWith('foot')) return 'foot';
+  final term = env('TERM') ?? '';
+  for (final entry in _termPrefixFamilies.entries) {
+    if (term.startsWith(entry.key)) return entry.value;
+  }
   return 'unknown';
 }
 
@@ -114,63 +121,67 @@ List<String> terminalSetupLines(EnvVarLookup env) {
   return lines;
 }
 
-/// The guidance block for one family; `unknown` carries no block of its own
-/// (its users read the full list + the fallback footer).
+/// Display names for the kitty-protocol families (recipe headline).
+const _kittyProtocolFamilyNames = <String, String>{
+  'kitty': 'kitty',
+  'ghostty': 'Ghostty',
+  'foot': 'foot',
+  'wezterm': 'WezTerm',
+  'alacritty': 'Alacritty',
+  'konsole': 'Konsole',
+};
+
+/// Recipe bodies for families outside the kitty-protocol group; `unknown`
+/// is absent (its users read the full list + the fallback footer).
+const _familyRecipeBodies = <String, List<String>>{
+  'xterm': [
+    'Your terminal (xterm ≥374) honors modifyOtherKeys, which fa enables',
+    'at startup: Shift+Enter already inserts a newline.',
+  ],
+  'iterm2': [
+    'macOS: fa reads the Shift key state directly (Core Graphics), so',
+    'Shift+Enter already inserts a newline in iTerm2.',
+  ],
+  'apple-terminal': [
+    'macOS: fa reads the Shift key state directly (Core Graphics), so',
+    'Shift+Enter already inserts a newline in Terminal.app.',
+  ],
+  'warp': [
+    'Warp sends Shift+Enter as the legacy ESC+CR wire, which fa decodes:',
+    'it already inserts a newline.',
+  ],
+  'tmux': [
+    'tmux: turn on extended keys in ~/.tmux.conf so Shift+Enter is sent',
+    '  set -g extended-keys on',
+    'then reload (tmux source-file ~/.tmux.conf) or restart tmux.',
+  ],
+  'vscode': [
+    'VS Code: add a keybinding (Preferences: Open Keyboard Shortcuts (JSON)):',
+    '  { "key": "shift+enter", "command":',
+    '    "workbench.action.terminal.sendSequence",',
+    '    "args": { "text": "\\u001b\\r" }, "when": "terminalFocus" }',
+  ],
+  'windows-terminal': [
+    'Windows Terminal: add a keybinding in Settings → Actions (settings.json):',
+    '  { "command": { "action": "sendInput", "input": "\\u001b\\r" },',
+    '    "keys": "shift+enter" }',
+  ],
+  'vte': [
+    'Your terminal (gnome-terminal / other VTE-based) folds Shift+Enter',
+    'into Enter and cannot rebind it. Use Ctrl+O for a new line, or run',
+    'fa in a kitty-protocol terminal (kitty, Ghostty, foot, WezTerm,',
+    'Alacritty, Konsole) where Shift+Enter works out of the box.',
+  ],
+};
+
+/// The guidance block for one family.
 List<String>? _familyRecipe(String family) {
-  switch (family) {
-    case 'kitty':
-    case 'ghostty':
-    case 'foot':
-    case 'wezterm':
-    case 'alacritty':
-    case 'konsole':
-      return [
-        'Your terminal ($family) supports the kitty keyboard protocol:',
-        'Shift+Enter already inserts a newline — nothing to set up.',
-      ];
-    case 'xterm':
-      return [
-        'Your terminal (xterm ≥374) honors modifyOtherKeys, which fa enables',
-        'at startup: Shift+Enter already inserts a newline.',
-      ];
-    case 'iterm2':
-    case 'apple-terminal':
-      return [
-        'macOS: fa reads the Shift key state directly (Core Graphics), so',
-        'Shift+Enter already inserts a newline in $family.',
-      ];
-    case 'warp':
-      return [
-        'Warp sends Shift+Enter as the legacy ESC+CR wire, which fa decodes:',
-        'it already inserts a newline.',
-      ];
-    case 'tmux':
-      return [
-        'tmux: turn on extended keys in ~/.tmux.conf so Shift+Enter is sent',
-        '  set -g extended-keys on',
-        'then reload (tmux source-file ~/.tmux.conf) or restart tmux.',
-      ];
-    case 'vscode':
-      return [
-        'VS Code: add a keybinding (Preferences: Open Keyboard Shortcuts (JSON)):',
-        '  { "key": "shift+enter", "command":',
-        '    "workbench.action.terminal.sendSequence",',
-        '    "args": { "text": "\\u001b\\r" }, "when": "terminalFocus" }',
-      ];
-    case 'windows-terminal':
-      return [
-        'Windows Terminal: add a keybinding in Settings → Actions (settings.json):',
-        '  { "command": { "action": "sendInput", "input": "\\u001b\\r" },',
-        '    "keys": "shift+enter" }',
-      ];
-    case 'vte':
-      return [
-        'Your terminal (gnome-terminal / other VTE-based) folds Shift+Enter',
-        'into Enter and cannot rebind it. Use Ctrl+O for a new line, or run',
-        'fa in a kitty-protocol terminal (kitty, Ghostty, foot, WezTerm,',
-        'Alacritty, Konsole) where Shift+Enter works out of the box.',
-      ];
-    default:
-      return null;
+  final kittyName = _kittyProtocolFamilyNames[family];
+  if (kittyName != null) {
+    return [
+      'Your terminal ($kittyName) supports the kitty keyboard protocol:',
+      'Shift+Enter already inserts a newline — nothing to set up.',
+    ];
   }
+  return _familyRecipeBodies[family];
 }
