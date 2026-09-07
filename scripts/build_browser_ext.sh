@@ -56,7 +56,7 @@ if [ "$with_app" -eq 1 ]; then
   # browser_ext/panel/app/ (a root-level copy is invisible to the panel).
   ( cd flutter_app && flutter pub get >/dev/null && \
     FLUTTER_WEB_CANVASKIT_URL=./canvaskit/ \
-    flutter build web --release --base-href=/panel/app/ )
+    flutter build web --release --pwa-strategy=none --base-href=/panel/app/ )
   rm -rf browser_ext/panel/app
   mkdir -p browser_ext/panel/app
   cp -R flutter_app/build/web/. browser_ext/panel/app/
@@ -74,11 +74,30 @@ for f in glob.glob('flutter_app/build/web/flutter_bootstrap.js') + glob.glob('br
 PYS
   # The engine requests canvaskit under <engineRevision>/chromium/; the
   # build lays the copies flat — mirror the layout the bootstrap asks for.
-  REV=$(grep -o 'canvaskit/[a-f0-9]\{32\}' flutter_app/build/web/flutter_bootstrap.js | head -1 | cut -d/ -f2)
+  # Extract the FULL engine revision from the bootstrap config — a bounded
+  # grep like [a-f0-9]{32} silently truncates the 40-char SHA1 and the
+  # engine then 404s on canvaskit/<rev>/chromium/ (regression).
+  REV=$(grep -o '"engineRevision":"[a-f0-9]*"' flutter_app/build/web/flutter_bootstrap.js | head -1 | sed 's/.*":"//;s/"//')
   if [ -n "$REV" ]; then
+    if [ ${#REV} -ne 40 ]; then
+      echo "FATAL: engineRevision '$REV' is not 40 hex chars" >&2
+      exit 1
+    fi
+    # Copy from the BUILD OUTPUT, never from the bundle copy itself —
+    # the rev dir lives inside the bundle copy, so self-copying there
+    # recurses into itself (File name too long on the next run).
     mkdir -p "browser_ext/panel/app/canvaskit/$REV"
-    cp -R "browser_ext/panel/app/canvaskit/." "browser_ext/panel/app/canvaskit/$REV/"
-    echo "canvaskit mirrored to canvaskit/$REV/"
+    cp -R "flutter_app/build/web/canvaskit/." "browser_ext/panel/app/canvaskit/$REV/"
+    for f in canvaskit.js canvaskit.wasm; do
+      [ -f "browser_ext/panel/app/canvaskit/$REV/chromium/$f" ] || {
+        echo "FATAL: canvaskit/$REV/chromium/$f missing after mirror" >&2
+        exit 1
+      }
+    done
+    echo "canvaskit mirrored to canvaskit/$REV/chromium/ (verified)"
+  else
+    echo "FATAL: engineRevision not found in flutter_bootstrap.js" >&2
+    exit 1
   fi
   echo "bundled fa web app (browser_ext/panel/app/)"
 fi

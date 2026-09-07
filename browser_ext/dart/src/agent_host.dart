@@ -26,6 +26,7 @@ import 'package:flutter_agent_harness/src/session/session_tree.dart';
 import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 
+import 'active_tab_context.dart';
 import 'browser_api_tools.dart';
 import 'chrome_api.dart';
 import 'chrome_storage_env.dart';
@@ -64,7 +65,11 @@ const _systemPrompt =
     'and debugging tools refuse restricted pages (chrome://, extension '
     'pages, the Web Store) — tab management still works there. Keep small '
     'notes under / through the read/write/edit/ls file tools. There is no '
-    'shell. Be terse.';
+    'shell. Be terse. '
+    'A turn may open with a `[context] active tab:` line naming the page '
+    'focused when the turn started (or `restricted page, tools '
+    'unavailable`); it is environment context, not part of the request, '
+    'and is only resent when that page changed.';
 
 /// Owns the agent, its tools, approvals, session, and the event bridge.
 final class AgentHost implements UiHostBackend {
@@ -86,6 +91,16 @@ final class AgentHost implements UiHostBackend {
   /// Hub presence (null when no faDap config).
   DapIntegration? _dap;
   DapConfig? _dapConfig;
+
+  /// The v2 browser-API surface, when the host booted with a [ChromeApi].
+  /// Both the registered tools and the per-turn context injector read the
+  /// active tab through it (one accessor, one chrome vocabulary).
+  BrowserApiToolSurface? _browserSurface;
+
+  /// Per-turn active-tab memory: the last (url, title) announced to the
+  /// model, in-memory only — a SW restart re-announces once (safe
+  /// direction), and each host instance owns its own session.
+  final _tabContext = ActiveTabContext();
 
   /// AC18: one deduper across bridge + DAP mail, so a peer message that
   /// arrives on both links is delivered once (bridge copy wins — it lands
@@ -134,7 +149,7 @@ final class AgentHost implements UiHostBackend {
         _browserTool(key, value),
     ]);
     if (chrome != null) {
-      registerBrowserApiTools(
+      _browserSurface = registerBrowserApiTools(
         _registry,
         chrome,
         visitedOrigins: visitedOrigins,
@@ -385,13 +400,31 @@ final class AgentHost implements UiHostBackend {
     _running = true;
     _emitStatus();
     try {
-      await _agent.prompt(text);
+      await _agent.prompt(await _turnTextWithTabContext(text));
     } on Object catch (error) {
       _sink({'type': 'error', 'error': '$error'});
     } finally {
       _running = false;
       _emitStatus();
     }
+  }
+
+  /// Per-turn active-tab context (issue #34): prepends the
+  /// `[context] active tab:` line when the focused page changed since the
+  /// last injected turn. Best-effort on both ends — hosts booted without
+  /// the v2 browser surface have no accessor (no line), and a failed
+  /// probe never blocks the turn.
+  Future<String> _turnTextWithTabContext(String text) async {
+    final surface = _browserSurface;
+    if (surface == null) return text;
+    final Tab? tab;
+    try {
+      tab = await surface.activeTab();
+    } on Object {
+      return text; // probe failed: run the turn bare instead
+    }
+    final line = _tabContext.lineFor(tab);
+    return line == null ? text : '$line\n$text';
   }
 
   Future<void> _onAgentEvent(AgentEvent event, CancelToken token) async {

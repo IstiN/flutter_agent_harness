@@ -226,12 +226,17 @@ final class RelayAgentService extends AgentService {
       case AttachedMsg(:final sessionId, :final replay):
         _sessionId = sessionId;
         _rebuild(replay);
+        // Pick up the SW's persisted provider/model (chrome.storage) so the
+        // composer reflects reality; reconfigure() writes back the same way.
+        _transport.dispatch(const SettingsQueryMsg());
       case MessageDoneMsg(:final message):
         _finishAssistant(message);
       case ApprovalRequestMsg(:final id, :final call, :final reason):
         unawaited(_decideApproval(id, call, reason));
       case StreamMsg(:final event):
         _onHostEvent(event);
+      case SettingsResultMsg(:final settings):
+        _applySwSettings(settings);
       case ErrorMsg(:final message):
         _error = message;
         notifyListeners();
@@ -283,6 +288,38 @@ final class RelayAgentService extends AgentService {
   }
 
   /// Replaces the streaming partial (if any) with the finalized message.
+  /// The SW's merged settings snapshot (settings_result): only the provider
+  /// trio matters for display here.
+  void _applySwSettings(Map<String, dynamic> settings) {
+    final provider = settings['faProvider'];
+    if (provider is Map) {
+      _modelId = '${provider['model'] ?? ''}'.trim();
+      _baseUrl = '${provider['baseUrl'] ?? ''}'.trim();
+      notifyListeners();
+    }
+  }
+
+  /// Settings save from the panel UI goes over the wire as `settings_put`:
+  /// the SW persists it to chrome.storage and reconfigures its agent. The
+  /// local (idle) agent is deliberately never touched — the panel holds no
+  /// provider state of its own in extension mode.
+  @override
+  Future<void> reconfigure(AgentConfig config) async {
+    _modelId = config.modelId;
+    _baseUrl = config.baseUrl;
+    final k = config.apiKey;
+    _transport.dispatch(
+      SettingsPutMsg(settings: {
+        'faProvider': {
+          'baseUrl': config.baseUrl,
+          'apiKey': k,
+          'model': config.modelId,
+        },
+      }),
+    );
+    notifyListeners();
+  }
+
   void _finishAssistant(Map<String, dynamic> message) {
     final role = message['role'] as String? ?? 'assistant';
     final text = message['text'] as String? ?? '';

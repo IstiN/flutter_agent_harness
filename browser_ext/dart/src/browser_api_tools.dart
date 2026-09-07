@@ -1422,16 +1422,26 @@ final class BrowserApiToolSurface {
     );
   }
 
-  /// Active tab of the focused window, for tabId-optional tools.
-  Future<int> _activeTabId() async {
+  /// Active tab of the focused window (the same accessor the
+  /// tabId-optional tools resolve through), or null when there is none.
+  /// The per-turn context injector (agent_host) reuses this so the
+  /// `[context] active tab:` line and the tools agree on "active" — one
+  /// chrome query, not two.
+  Future<Tab?> activeTab() async {
     final tabs = await _chrome.tabs.query(active: true, currentWindow: true);
-    if (tabs.isEmpty) {
+    return tabs.isEmpty ? null : tabs.first;
+  }
+
+  /// Active tab id for tabId-optional tools; `no_tab` when none.
+  Future<int> _activeTabId() async {
+    final tab = await activeTab();
+    if (tab == null) {
       throw BrowserApiToolException(
         'no_tab',
         'no active tab in the current window',
       );
     }
-    return tabs.first.id;
+    return tab.id;
   }
 
   /// Attaches the debugger; true when WE attached (false = a session was
@@ -1562,18 +1572,22 @@ Map<String, Object?> _intListProp(String d) => {
   'description': d,
 };
 
-/// Registers the whole browser-API family on [registry]. Names are the
-/// [browserApiToolSpecs] entries — one registration path for every host
-/// (SW agent host today, panel tooling later). [visitedOrigins] passes
-/// through to the surface constructor: the exfil gate reads the LIVE set
-/// at every outbound call, so hosts keep mutating their own set after
-/// registration (SW wiring seeds it from tabs + webNavigation).
-void registerBrowserApiTools(
+/// Registers the whole browser-API family on [registry] and returns the
+/// surface it built, so hosts that need a shared accessor (the per-turn
+/// active-tab context injector reuses [BrowserApiToolSurface.activeTab])
+/// grab it without constructing a second surface over the same chrome.
+/// Names are the [browserApiToolSpecs] entries — one registration path
+/// for every host (SW agent host today, panel tooling later).
+/// [visitedOrigins] passes through to the surface constructor: the exfil
+/// gate reads the LIVE set at every outbound call, so hosts keep mutating
+/// their own set after registration (SW wiring seeds it from tabs +
+/// webNavigation).
+BrowserApiToolSurface registerBrowserApiTools(
   ToolRegistry registry,
   ChromeApi chrome, {
   Set<String>? visitedOrigins,
 }) {
-  registry.registerAll(
-    BrowserApiToolSurface(chrome, visitedOrigins: visitedOrigins).tools(),
-  );
+  final surface = BrowserApiToolSurface(chrome, visitedOrigins: visitedOrigins);
+  registry.registerAll(surface.tools());
+  return surface;
 }
