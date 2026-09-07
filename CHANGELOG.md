@@ -2797,4 +2797,8 @@
 - fix(app): the relay IS the FaChatConnection the models screens render (#34)
 - feat(browser_ext): real-wire e2e for the extension agent + provider merge semantics (#34)
 
+## 0.1.319
+
+- fix(app): publish widget sources at the repo root, full-snapshot tree (#35)
+
 ## Unreleased
