@@ -396,7 +396,18 @@ void main() {
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/commits', {
             'sha': 'commit1',
           })
-          ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/refs', {});
+          ..on(
+            'PUT',
+            '/repos/octocat/fa-widget-pomodoro/contents/README.md',
+            {
+              'commit': {'sha': 'boot1'},
+            },
+          )
+          ..on(
+            'PATCH',
+            '/repos/octocat/fa-widget-pomodoro/git/refs/heads/main',
+            {},
+          );
         _scriptForkAndPr(gh, widgetSha: 'commit1', prNumber: 42);
 
         final ledger = await WidgetPublicationStore.load(env);
@@ -433,20 +444,21 @@ void main() {
         expect(blobs, contains('export function render() {}\n'));
         expect(blobs.any((c) => c.contains('secret')), isFalse);
 
-        // Empty repo: tree without base, commit without parents.
+        // Empty repo: the README bootstrap commit is the base — the git
+        // data API 409s on a zero-commit repo without it.
         final treeBody = gh.bodyOf(
           gh
               .where('POST', '/repos/octocat/fa-widget-pomodoro/git/trees')
               .single,
         );
-        expect(treeBody.containsKey('base_tree'), isFalse);
+        expect(treeBody['base_tree'], 'boot1');
         final commitBody = gh.bodyOf(
           gh
               .where('POST', '/repos/octocat/fa-widget-pomodoro/git/commits')
               .single,
         );
         expect(commitBody['message'], 'Publish pomodoro 1.0.0');
-        expect(commitBody.containsKey('parents'), isFalse);
+        expect(commitBody['parents'], ['boot1']);
 
         // Fork tree: gitlink pinned to the pushed commit + overlay + gitmodules.
         final prTree = gh.bodyOf(

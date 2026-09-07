@@ -257,6 +257,30 @@ void main() {
       expect(await client.getHeadSha('o', 'r', 'main'), isNull);
     });
 
+    test('putFile creates a file and returns the commit sha', () async {
+      final gh = _ScriptedGithub()
+        ..on('PUT', '/repos/o/r/contents/README.md', {
+          'content': {'path': 'README.md'},
+          'commit': {'sha': 'boot-1'},
+        });
+      final client = GithubApiClient(
+        token: 'x',
+        httpClient: gh.client,
+      );
+      final sha = await client.putFile(
+        'o',
+        'r',
+        'README.md',
+        message: 'Initialize Fa widget repo',
+        content: '# hi',
+      );
+      expect(sha, 'boot-1');
+      final body = jsonDecode(gh.requests.last.body) as Map<String, dynamic>;
+      expect(body['branch'], 'main');
+      expect(body['message'], 'Initialize Fa widget repo');
+      expect(body['content'], base64Encode(utf8.encode('# hi')));
+    });
+
     test('createBranch tolerates 422 (ref already exists)', () async {
       final gh = _ScriptedGithub()
         ..on('POST', '/repos/o/r/git/refs', {
