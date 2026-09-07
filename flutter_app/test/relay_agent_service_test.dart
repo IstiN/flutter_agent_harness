@@ -258,6 +258,47 @@ void main() {
     expect(service.swProvider, isNotNull);
     expect(service.swProvider!['model'], 'kimi-k2');
     expect(service.swProvider!['baseUrl'], 'https://api.kimi.com/coding/v1');
+
+    // The Default-chat-model row renders the FaChatConnection getters —
+    // they must reflect the SW snapshot, not the idle local agent.
+    expect(service.modelId, 'kimi-k2');
+    expect(service.activeBaseUrl, 'https://api.kimi.com/coding/v1');
+    expect(service.providerKind, 'openai-completions');
+    addTearDown(channel.close);
+  });
+
+  test('ready completes once attach and settings snapshot landed', () async {
+    final channel = FakePortChannel();
+    final transport = WorkerRelayTransport(
+      portFactory: () => channel,
+      channel: channel,
+    );
+    final service = RelayAgentService.forTest(transport);
+    final done = service.ready.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () => fail('ready never completed'),
+    );
+    channel.fromWorker(
+      HelloAckMsg(
+        protoVersion: uiProtocolVersion,
+        serverCapabilities: const [],
+        sessionId: 'sw-1',
+      ),
+    );
+    channel.fromWorker(
+      const AttachedMsg(sessionId: 'sw-1', replay: []),
+    );
+    channel.fromWorker(
+      const SettingsResultMsg(settings: {
+        'faProvider': {
+          'baseUrl': 'https://api.kimi.com/coding/v1',
+          'apiKey': 'k',
+          'model': 'kimi-k2',
+        },
+      }),
+    );
+    await done;
+    expect(service.swProvider!['model'], 'kimi-k2');
     addTearDown(channel.close);
   });
 

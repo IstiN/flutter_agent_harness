@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "fa — browser agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEKyWbUCtoIY5CLA1J8Msmfo+b+3FsPttbTWDA1Pe/XvnNv1D2u7uXXeJwIF3QH8AyhmE26ZRj8JcxFDlf1X0ibw==",
   "description": "fa — your agent in this browser: the full fa app in the side panel, page powers for the agent.",
   "minimum_chrome_version": "116",
