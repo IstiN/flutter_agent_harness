@@ -213,6 +213,9 @@ void main() {
         // Legacy ESC CR encoding (terminals without protocol support, e.g.
         // Warp's passthrough) — decoded as alt+enter.
         await expectNewline('\x1b\r');
+        // Raw Ctrl+O control byte (0x0F): the universal legacy wire —
+        // a plain control character, so it works in EVERY terminal.
+        await expectNewline('\x0f');
       },
     );
 

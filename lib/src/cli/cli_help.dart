@@ -500,6 +500,8 @@ SKILLS AND CONTEXT FILES
   /code              switch to coding mode
   /architect         switch to architect mode
   /review            switch to review mode
+  /terminal-setup    Shift+Enter newline support per terminal (Ctrl+O
+                     always inserts one; /help TERMINAL has the keys)
   /help              in-REPL command summary
   !<command>         run a shell command directly
   /<template> args   expand a prompt template (see PROMPTS)
