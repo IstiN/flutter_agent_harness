@@ -385,10 +385,19 @@ void main() {
             'sha': 'b1',
           })
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
+            'sha': 'b4',
+          })
+          ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
             'sha': 'b2',
           })
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
+            'sha': 'b4x',
+          })
+          ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
             'sha': 'b3',
+          })
+          ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
+            'sha': 'b4x',
           })
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/trees', {
             'sha': 'tree1',
@@ -439,19 +448,32 @@ void main() {
                   utf8.decode(base64Decode(gh.bodyOf(r)['content'] as String)),
             )
             .toList();
-        expect(blobs, hasLength(3));
+        expect(blobs, hasLength(4));
         expect(blobs, contains('<svg/>\n'));
         expect(blobs, contains('export function render() {}\n'));
+        expect(blobs, contains(contains('# Fa Widget: Pomodoro')));
         expect(blobs.any((c) => c.contains('secret')), isFalse);
 
-        // Empty repo: the README bootstrap commit is the base — the git
-        // data API 409s on a zero-commit repo without it.
+        // The widget tree is a full snapshot: README + widget sources,
+        // no base_tree (so earlier garbage cannot survive a re-publish).
         final treeBody = gh.bodyOf(
           gh
               .where('POST', '/repos/octocat/fa-widget-pomodoro/git/trees')
               .single,
         );
-        expect(treeBody['base_tree'], 'boot1');
+        expect(treeBody.containsKey('base_tree'), isFalse);
+        final treePaths = (treeBody['tree'] as List<dynamic>)
+            .map((e) => (e as Map)['path'])
+            .toList();
+        expect(
+          treePaths,
+          containsAll([
+            'README.md',
+            'manifest.json',
+            'widget.js',
+            'icon.svg',
+          ]),
+        );
         final commitBody = gh.bodyOf(
           gh
               .where('POST', '/repos/octocat/fa-widget-pomodoro/git/commits')
@@ -508,6 +530,61 @@ void main() {
       },
     );
 
+    test('widgetRelativePath anchors on the widget folder name', () {
+      JsAppInfo app(String id) => JsAppInfo(
+        id: id,
+        name: 'Pomodoro',
+        description: 'Focus timer',
+        icon: '🍅',
+        version: '1.0.0',
+        declaredPermissions: const AppPermissions(),
+      );
+
+      final pomodoro = app('pomodoro');
+      // macOS shape: the walk reports host-absolute paths while app.dir is
+      // sandbox-relative — the widget-root cut must still be right.
+      expect(
+        WidgetPublishService.widgetRelativePath(
+          pomodoro,
+          '/Users/u/proj/apps/pomodoro/manifest.json',
+        ),
+        'manifest.json',
+      );
+      // Sandbox-relative walk paths keep working.
+      expect(
+        WidgetPublishService.widgetRelativePath(
+          pomodoro,
+          'apps/pomodoro/deep/dir/widget.js',
+        ),
+        'deep/dir/widget.js',
+      );
+      // Outside the widget folder → never published.
+      expect(
+        WidgetPublishService.widgetRelativePath(
+          pomodoro,
+          '/Users/u/other/thing.json',
+        ),
+        isNull,
+      );
+      // The FIRST folder occurrence wins: a same-named directory nested
+      // inside the widget stays nested instead of collapsing.
+      expect(
+        WidgetPublishService.widgetRelativePath(
+          pomodoro,
+          '/p/apps/pomodoro/sub/pomodoro/x.js',
+        ),
+        'sub/pomodoro/x.js',
+      );
+      // A different widget's files are outside this widget's folder.
+      expect(
+        WidgetPublishService.widgetRelativePath(
+          app('clock'),
+          '/Users/u/proj/apps/pomodoro/manifest.json',
+        ),
+        isNull,
+      );
+    });
+
     test(
       're-publish updates the repo and reuses the open PR (no duplicate)',
       () async {
@@ -540,10 +617,19 @@ void main() {
             'sha': 'b1',
           })
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
+            'sha': 'b4x',
+          })
+          ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
             'sha': 'b2',
           })
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
+            'sha': 'b4x',
+          })
+          ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
             'sha': 'b3',
+          })
+          ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
+            'sha': 'b4x',
           })
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/trees', {
             'sha': 'tree2',
@@ -573,13 +659,19 @@ void main() {
         // No new repo, no new PR.
         expect(gh.where('POST', '/user/repos'), isEmpty);
         expect(gh.where('POST', '/repos/IstiN/fa_widgets/pulls'), isEmpty);
-        // Update commit is based on the previous head.
+        // Update commit is based on the previous head, and the tree is a
+        // full snapshot (no base_tree): the repo root stays exactly the
+        // widget sources + README.
         final treeBody = gh.bodyOf(
           gh
               .where('POST', '/repos/octocat/fa-widget-pomodoro/git/trees')
               .single,
         );
-        expect(treeBody['base_tree'], 'head1');
+        expect(treeBody.containsKey('base_tree'), isFalse);
+        expect(
+          (treeBody['tree'] as List<dynamic>).map((e) => (e as Map)['path']),
+          contains('README.md'),
+        );
         final commitBody = gh.bodyOf(
           gh
               .where('POST', '/repos/octocat/fa-widget-pomodoro/git/commits')

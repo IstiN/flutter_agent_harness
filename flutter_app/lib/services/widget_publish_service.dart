@@ -343,22 +343,21 @@ class WidgetPublishService {
           content: _repoReadme(app),
         );
 
-      // Commit the widget sources (flat repo root = widget root).
+      // Commit the widget sources (flat repo root = widget root). The
+      // tree is a FULL SNAPSHOT (no base_tree): the repo root must be
+      // exactly the widget sources + README — carrying a base over would
+      // keep any earlier garbage alive forever.
       final files = await _collectWidgetFiles(app);
+      final readmeBlob = await client.createBlob(owner, name, _repoReadme(app));
       final entries = <GithubTreeEntry>[
+        GithubTreeEntry.file('README.md', readmeBlob),
         for (final path in (files.keys.toList()..sort()))
           GithubTreeEntry.file(
             path,
             await client.createBlob(owner, name, files[path]!),
           ),
       ];
-      // The Trees API accepts a commit sha as base_tree.
-      final treeSha = await client.createTree(
-        owner,
-        name,
-        entries,
-        baseTreeSha: parentSha,
-      );
+      final treeSha = await client.createTree(owner, name, entries);
       repoCommit = await client.createCommit(
         owner,
         name,
@@ -516,6 +515,21 @@ class WidgetPublishService {
 
   static String _provenanceMarker(String widgetId) => 'fa-widget:$widgetId';
 
+  /// Maps a walked file path onto its widget-root-relative publish path,
+  /// or null when the path is outside the widget folder. The env walk may
+  /// report host-absolute paths (`/Users/<name>/…/apps/<id>/…`) while
+  /// [JsAppInfo.dir] is the sandbox-relative `apps/<id>` — so the cut
+  /// anchors on the app folder NAME, never on the app.dir prefix (a
+  /// missed prefix once published a Users/… mirror of the home directory
+  /// into the widget repo). The FIRST `/<id>/` occurrence wins, so a
+  /// same-named directory nested inside the widget stays nested.
+  static String? widgetRelativePath(JsAppInfo app, String path) {
+    final marker = '/${app.id}/';
+    final cut = path.indexOf(marker);
+    if (cut < 0) return null;
+    return path.substring(cut + marker.length);
+  }
+
   static String _repoDescription(JsAppInfo app) =>
       'Fa widget: ${app.name} — published to the fa_widgets catalog '
       '(${_provenanceMarker(app.id)})';
@@ -573,11 +587,8 @@ class WidgetPublishService {
   Future<Map<String, String>> _collectWidgetFiles(JsAppInfo app) async {
     final files = <String, String>{};
     await _walk(app.dir, (path, size) async {
-      var relative = path;
-      if (relative.startsWith('/')) relative = relative.substring(1);
-      if (relative.startsWith('${app.dir}/')) {
-        relative = relative.substring(app.dir.length + 1);
-      }
+      final relative = widgetRelativePath(app, path);
+      if (relative == null || relative.isEmpty) return;
       if (relative == 'storage.json') return; // user data, never published
       final bytes = (await _env.readBinaryFile(path)).valueOrNull;
       if (bytes == null) return;
