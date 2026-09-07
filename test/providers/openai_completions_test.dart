@@ -1913,4 +1913,131 @@ void main() {
       );
     });
   });
+
+  group('text-only endpoint rejects image content (issue #42)', () {
+    // The verbatim z.ai glm-5.3 rejection: image/mixed history replayed to
+    // a text-only chat endpoint.
+    const content400 =
+        '{"error":{"code":"1211","message":"'
+        "messages.content.type is invalid, allowed values: ['text']\"}}";
+
+    Context imageContext() => Context(
+      messages: [
+        UserMessage(
+          content: const [
+            TextContent(text: 'what is on this image?'),
+            ImageContent(data: 'aGk=', mimeType: 'image/png'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+      ],
+    );
+
+    test('retries once with images downgraded to placeholders', () async {
+      final bodies = <String>[];
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        bodies.add(await body.bytesToString());
+        if (calls == 1) {
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(content400)),
+            400,
+          );
+        }
+        return http.StreamedResponse(
+          Stream.value(
+            utf8.encode(
+              sseBody([
+                {
+                  'choices': [
+                    {
+                      'delta': {'content': 'no image seen'},
+                    },
+                  ],
+                },
+                {
+                  'choices': [
+                    {'delta': <String, dynamic>{}, 'finish_reason': 'stop'},
+                  ],
+                },
+                'data: [DONE]\n\n',
+              ]),
+            ),
+          ),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+
+      final stream = streamOpenAICompletions(
+        testModel,
+        imageContext(),
+        const OpenAICompletionsOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      expect(events.whereType<ErrorEvent>(), isEmpty);
+      final done = events.last as DoneEvent;
+      expect(done.reason, StopReason.stop);
+      expect(
+        done.message.content.whereType<TextContent>().map((b) => b.text).join(),
+        contains('no image seen'),
+      );
+
+      expect(calls, 2);
+      // First attempt carried the image part; the retry must not.
+      expect(bodies[0], contains('image_url'));
+      expect(bodies[1], isNot(contains('image_url')));
+      expect(bodies[1], contains('image omitted'));
+    });
+
+    test('an unrelated 400 does not retry', () async {
+      var calls = 0;
+      final client = http_testing.MockClient.streaming((request, body) async {
+        calls++;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('{"error":{"message":"bad request"}}')),
+          400,
+        );
+      });
+
+      final stream = streamOpenAICompletions(
+        testModel,
+        imageContext(),
+        const OpenAICompletionsOptions(apiKey: 'test-key'),
+        client,
+      );
+
+      final events = await stream.toList();
+      expect(calls, 1);
+      expect(events.whereType<ErrorEvent>(), isNotEmpty);
+    });
+
+    test(
+      'an image-content 400 without images in the request does not retry',
+      () async {
+        var calls = 0;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          calls++;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(content400)),
+            400,
+          );
+        });
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: 'test-key'),
+          client,
+        );
+
+        final events = await stream.toList();
+        expect(calls, 1);
+        expect(events.whereType<ErrorEvent>(), isNotEmpty);
+      },
+    );
+  });
 }
