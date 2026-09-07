@@ -635,7 +635,10 @@ JSAny? _providersMergeImpl(JSAny? existing, JSAny? sync) {
 /// faAgent.importFahx: decrypt a .fahx envelope (wrong passphrase or a
 /// tampered file fails LOUDLY, nothing is written) and merge the entries
 /// in as `local` — an explicit import wins over a synced row.
-Future<JSAny?> _importFahxImpl(JSAny? content, JSAny? passphrase) async {
+JSPromise<JSAny?> _importFahxImpl(JSAny? content, JSAny? passphrase) =>
+    _importFahx(content, passphrase).toJS;
+
+Future<JSAny?> _importFahx(JSAny? content, JSAny? passphrase) async {
   try {
     final text = content.isA<JSString>() ? (content as JSString).toDart : '';
     final pass = passphrase.isA<JSString>()
