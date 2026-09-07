@@ -775,17 +775,32 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       // attach-time settings snapshot. The key stays session-only
       // (rememberKey) — re-saving the form round-trips it via
       // settings_put instead of losing it.
-      ProviderRegistry? registry;
+      // The persisted registry (providers.json) — the Providers screen's
+      // adds live here across reloads. NEVER swap it for a session-only
+      // in-memory instance: the Default-chat-model picker shares this
+      // instance, and an empty one makes the picker show nothing while the
+      // Providers screen (its own null-fallback registry) looks fine.
+      final registry = await ProviderRegistry.load(env);
       final sw = relay.swProvider;
+      debugPrint(
+        '[fah] relay boot: session=${relay.relaySessionId} '
+        'swProvider=${sw == null ? 'none' : '${sw['baseUrl']} / ${sw['model']}'} '
+        'registry=${registry.providers.length}',
+      );
       if (sw != null && sw['baseUrl']!.isNotEmpty) {
-        registry = ProviderRegistry.inMemory();
-        final base = Uri.tryParse(sw['baseUrl']!);
-        final provider = await registry.add(
-          name: base?.host ?? sw['baseUrl']!,
-          baseUrl: sw['baseUrl']!,
-          modelId: sw['model'] ?? '',
-        );
-        registry.rememberKey(provider.id, sw['apiKey'] ?? '');
+        // Make sure the SW's active provider exists as a picker tile (the
+        // key stays session-only; the apply flow round-trips it via
+        // settings_put).
+        final known = registry.providers.any((p) => p.baseUrl == sw['baseUrl']);
+        if (!known) {
+          final base = Uri.tryParse(sw['baseUrl']!);
+          final provider = await registry.add(
+            name: base?.host ?? sw['baseUrl']!,
+            baseUrl: sw['baseUrl']!,
+            modelId: sw['model'] ?? '',
+          );
+          registry.rememberKey(provider.id, sw['apiKey'] ?? '');
+        }
       }
       if (!mounted) return;
       AppAnalytics.instance.bootstrapResult('chat');
@@ -967,7 +982,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
                   setState(() => _relayError = null);
                   _bootRelay();
                 },
-                child: const Text('Retry'),
+                child: Text(context.l10n.bootstrapRetry),
               ),
             ],
           ),

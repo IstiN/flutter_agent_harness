@@ -57,11 +57,8 @@ AssistantMessageEventStream fakeStream(
       : '';
 
   // Steering DM: "[from <sender>] dm <text>" → dap_dm back to the sender.
-  // NOT ^-anchored: the host prepends a "[context] active tab: …" line to
-  // turns (issue #34), and an anchored match then never fires — the DM was
-  // echoed instead of answered (issue #41).
   final dm = RegExp(
-    r'\[from (\S+)\] dm (.*)',
+    r'^\[from (\S+)\] dm (.*)',
     dotAll: true,
   ).firstMatch(prompt);
   if (dm != null) {

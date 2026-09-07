@@ -152,6 +152,10 @@ class DefaultChatModelSection extends StatelessWidget {
                     addProviderPage: addProviderPage,
                   ),
                 );
+                debugPrint(
+                  '[fah][dcm] picker result: '
+                  '${result == null ? '<null>' : (result.cleared ? '<cleared>' : 'override model=${result.override!.modelId} baseUrl=${result.override!.baseUrl} apiKeyName=${result.override!.apiKeyName}')}',
+                );
                 if (result == null || result.cleared) return;
                 final override = result.override!;
                 if (!context.mounted) return;

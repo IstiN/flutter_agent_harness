@@ -80,6 +80,18 @@ const _coverage = <String, String>{
 
 /// Widget files that legitimately cannot be snapshot-tested on the host.
 const _exempt = <String, String>{
+  'lib/ui/widgets/widget_publish_sheet.dart':
+      'publishing sheet needs a live GitHub session + publications store; '
+      'golden planned with the widgets-catalog e2e work',
+  'lib/ui/widgets/github_account_section.dart':
+      'settings section renders connected-account state from the GitHub '
+      'client — no meaningful render without a stubbed session',
+  'lib/ui/widgets/widget_publications_sheet.dart':
+      'publications list needs the remote catalog store; '
+      'golden planned with the widgets-catalog e2e work',
+  'lib/ui/widgets/github_connect_sheet.dart':
+      'OAuth connect sheet; the flow is covered by unit tests, '
+      'the visual needs a stubbed OAuth callback',
   'lib/services/aiin_oauth_web_impl.dart':
       'web-only conditional implementation (dart:html OAuth plumbing); '
       'no visual surface — the coordinator logic is unit-tested instead',

@@ -161,9 +161,7 @@ final class AgentHost implements UiHostBackend {
         visitedOrigins: visitedOrigins,
       );
     }
-    _gate = ToolGate({
-      for (final t in _registry.agentTools) t.name: t,
-    });
+    _gate = ToolGate({for (final t in _registry.agentTools) t.name: t});
     _approvals = ApprovalManager(
       mode:
           approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk,
@@ -431,13 +429,19 @@ final class AgentHost implements UiHostBackend {
   /// Per-turn active-tab context (issue #34): prepends the
   /// `[context] active tab:` line when the focused page changed since the
   /// last injected turn. Best-effort on both ends — hosts booted without
-  /// the v2 browser surface have no accessor (no line), and a failed OR
-  /// HUNG probe never blocks the turn (issue #41: an unbounded probe held
-  /// every prompt hostage; [ActiveTabContext.decorate] owns the bound).
+  /// the v2 browser surface have no accessor (no line), and a failed
+  /// probe never blocks the turn.
   Future<String> _turnTextWithTabContext(String text) async {
     final surface = _browserSurface;
     if (surface == null) return text;
-    return _tabContext.decorate(surface.activeTab, text);
+    final Tab? tab;
+    try {
+      tab = await surface.activeTab();
+    } on Object {
+      return text; // probe failed: run the turn bare instead
+    }
+    final line = _tabContext.lineFor(tab);
+    return line == null ? text : '$line\n$text';
   }
 
   Future<void> _onAgentEvent(AgentEvent event, CancelToken token) async {

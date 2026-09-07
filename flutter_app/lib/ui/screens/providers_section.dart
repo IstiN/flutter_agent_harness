@@ -96,8 +96,14 @@ class DefaultChatModelSection extends StatelessWidget {
     if (onDeviceKinds.contains(config.providerKind)) {
       await onDeviceConfigStore?.markConfigured(config.providerKind);
     }
+    debugPrint(
+      '[fah] default chat model apply: kind=\${config.providerKind} '
+      'model=\${config.modelId} baseUrl=\${config.baseUrl} '
+      'key.len=\${config.apiKey.length}',
+    );
     await service.reconfigure(config);
     await lastConnectionStore?.saveFromConfig(config);
+    debugPrint('[fah] default chat model apply done');
   }
 
   @override

@@ -369,15 +369,13 @@ final class UiToolState {
   Map<String, dynamic> encode() => {'name': name, 'enabled': enabled};
 
   static UiToolState decode(Map<String, dynamic> json) => UiToolState(
-        name: json['name'] as String,
-        enabled: json['enabled'] as bool,
-      );
+    name: json['name'] as String,
+    enabled: json['enabled'] as bool,
+  );
 
   @override
   bool operator ==(Object other) =>
-      other is UiToolState &&
-      other.name == name &&
-      other.enabled == enabled;
+      other is UiToolState && other.name == name && other.enabled == enabled;
 
   @override
   int get hashCode => Object.hash(name, enabled);
@@ -406,9 +404,9 @@ final class ToolsStateMsg extends UiProtocolMessage {
 
   @override
   Map<String, dynamic> encode() => {
-        'kind': kind,
-        'tools': [for (final t in tools) t.encode()],
-      };
+    'kind': kind,
+    'tools': [for (final t in tools) t.encode()],
+  };
 }
 
 /// UI → SW: apply per-tool enabled flags (the panel Tools toggles). The
@@ -424,9 +422,35 @@ final class ToolsPutMsg extends UiProtocolMessage {
 
   @override
   Map<String, dynamic> encode() => {
-        'kind': kind,
-        'tools': [for (final t in tools) t.encode()],
-      };
+    'kind': kind,
+    'tools': [for (final t in tools) t.encode()],
+  };
+}
+
+/// UI → SW: link keepalive. An open MV3 port does NOT keep the service
+/// worker alive — only events reset the 30s idle timer — so an attached
+/// panel pings on a fixed cadence to stay connected instead of flapping
+/// through reconnect cycles. The SW answers [PongMsg]; either direction
+/// alone is enough to reset the timer, the reply just confirms the link.
+final class PingMsg extends UiProtocolMessage {
+  const PingMsg();
+
+  @override
+  String get kind => 'ping';
+
+  @override
+  Map<String, dynamic> encode() => {'kind': kind};
+}
+
+/// SW → UI: the keepalive reply.
+final class PongMsg extends UiProtocolMessage {
+  const PongMsg();
+
+  @override
+  String get kind => 'pong';
+
+  @override
+  Map<String, dynamic> encode() => {'kind': kind};
 }
 
 /// The only failure channel — also what [UiProtocolMessage.decode] answers
@@ -570,6 +594,10 @@ UiProtocolMessage _decode(Map<String, dynamic> json) {
         return ToolsStateMsg(tools: _reqToolList(json, 'tools'));
       case 'tools_put':
         return ToolsPutMsg(tools: _reqToolList(json, 'tools'));
+      case 'ping':
+        return const PingMsg();
+      case 'pong':
+        return const PongMsg();
       case 'error':
         return ErrorMsg(
           code: _reqStr(json, 'code'),

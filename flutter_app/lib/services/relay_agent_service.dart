@@ -208,7 +208,12 @@ final class RelayAgentService extends AgentService {
   Future<void> get ready {
     final c = _readyCompleter;
     if (c == null) return Future.value();
-    return c.future.timeout(readyTimeout, onTimeout: () {});
+    return c.future.timeout(
+      readyTimeout,
+      onTimeout: () {
+        debugPrint('[fah][relay] ready TIMEOUT after $readyTimeout');
+      },
+    );
   }
 
   static const readyTimeout = Duration(seconds: 5);
@@ -257,9 +262,13 @@ final class RelayAgentService extends AgentService {
       case AttachedMsg(:final sessionId, :final replay):
         _sessionId = sessionId;
         _rebuild(replay);
+        debugPrint(
+          '[fah][relay] attached: session=$sessionId replay=${replay.length}',
+        );
         // Pick up the SW's persisted provider/model (chrome.storage) so the
         // composer reflects reality; reconfigure() writes back the same way.
         _transport.dispatch(const SettingsQueryMsg());
+        debugPrint('[fah][relay] settings_query sent');
       case MessageDoneMsg(:final message):
         _finishAssistant(message);
       case ApprovalRequestMsg(:final id, :final call, :final reason):
@@ -335,9 +344,16 @@ final class RelayAgentService extends AgentService {
   /// trio feeds the models screens and the composer.
   void _applySwSettings(Map<String, dynamic> settings) {
     final provider = settings['faProvider'];
+    debugPrint(
+      '[fah][relay] settings snapshot: hasProvider=${provider != null} '
+      'keys=${settings.keys.toList()}',
+    );
     if (provider is Map) {
       _modelId = '${provider['model'] ?? ''}'.trim();
       _baseUrl = '${provider['baseUrl'] ?? ''}'.trim();
+      debugPrint(
+        '[fah][relay] snapshot applied: model=$_modelId baseUrl=$_baseUrl',
+      );
       _swProvider = {
         'baseUrl': _baseUrl,
         'model': _modelId,
@@ -379,6 +395,11 @@ final class RelayAgentService extends AgentService {
   /// provider state of its own in extension mode.
   @override
   Future<void> reconfigure(AgentConfig config) async {
+    debugPrint(
+      '[fah][relay] reconfigure -> settings_put: '
+      'baseUrl=\${config.baseUrl} model=\${config.modelId} '
+      'key.len=\${config.apiKey.length}',
+    );
     _modelId = config.modelId;
     _baseUrl = config.baseUrl;
     final k = config.apiKey;

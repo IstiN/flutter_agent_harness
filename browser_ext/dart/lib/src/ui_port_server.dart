@@ -159,6 +159,12 @@ final class UiPortServer {
         // The panel renders the SW's Tools section from this — always
         // current as of the attach it belongs to.
         _send(channel, ToolsStateMsg(tools: host.toolsList()));
+        // Run-state re-sync: the replay ring is volatile (a service-worker
+        // restart wipes it), so a panel that missed a turn's final status —
+        // or whose completion fell out of the capped ring — would stay on
+        // its stale streaming state ("Fa is typing…" forever). The
+        // authoritative snapshot ends every attach.
+        _send(channel, StreamMsg(event: {'type': 'status', ...host.state()}));
       case final PromptMsg m:
         if (_prompts.register(m.id)) host.sendUser(m.text);
       case final SteerMsg m:
@@ -177,6 +183,8 @@ final class UiPortServer {
       case final ToolsPutMsg m:
         host.toolsPut(m.tools);
         _send(channel, ToolsStateMsg(tools: host.toolsList()));
+      case final PingMsg _:
+        _send(channel, const PongMsg());
       default:
         break; // UI-bound kinds echoed back at us: ignore
     }

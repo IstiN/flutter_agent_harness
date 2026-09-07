@@ -246,7 +246,9 @@ void main() {
       );
       await harness.screenshot(shotsDir, '29_add_provider_copilot');
 
-      // OpenRouter, ChatGPT (Codex), GitHub Copilot — two downs, enter.
+      // Picker order (top → down): AIIN, OpenRouter, ChatGPT (Codex),
+      // GitHub Copilot — three downs, enter.
+      harness.sendArrowDown();
       harness.sendArrowDown();
       harness.sendArrowDown();
       harness.sendEnter();
