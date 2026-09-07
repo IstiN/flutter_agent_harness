@@ -6,7 +6,6 @@ import {
   chromium,
   expect,
   test as base,
-  type Browser,
   type BrowserContext,
   type Page,
   type Worker,
@@ -14,6 +13,7 @@ import {
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -181,7 +181,6 @@ export class FixtureServer {
  */
 export class FaHarness {
   private constructor(
-    readonly browser: Browser,
     readonly context: BrowserContext,
     readonly extId: string,
     readonly fixture: FixtureServer,
@@ -191,27 +190,26 @@ export class FaHarness {
   static async start(): Promise<FaHarness> {
     const fixture = new FixtureServer();
     await fixture.start();
-    const browser = await chromium.launch({
+    // Extensions only load in a PERSISTENT context — contexts from
+    // browser.newContext() get no extensions (ERR_BLOCKED_BY_CLIENT on
+    // chrome-extension:// navigations). The one documented Playwright path.
+    const userDataDir = await fs.promises.mkdtemp(
+      path.join(tmpdir(), 'fa-e2e-'),
+    );
+    const context = await chromium.launchPersistentContext(userDataDir, {
       executablePath: chromeBinary()!,
-      headless: false, // real mode = the --headless=new arg below
+      headless: true, // new headless loads MV3 extensions
       args: [
-        '--headless=new',
         '--no-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
+        `--disable-extensions-except=${extDir}`,
         `--load-extension=${extDir}`,
       ],
     });
-    const context = await browser.newContext();
-    const panel = await context.newPage();
+    const panel = context.pages()[0] ?? (await context.newPage());
     await panel.goto(`chrome-extension://${extensionId()}/panel/panel.html`);
-    return new FaHarness(
-      browser,
-      context,
-      extensionId(),
-      fixture,
-      panel,
-    );
+    return new FaHarness(context, extensionId(), fixture, panel);
   }
 
   /** The extension SW target, waking it first (it only exists while it runs). */
@@ -339,7 +337,7 @@ export const test = base.extend<{ fa: FaHarness }>({
     async ({}, use) => {
       const fa = await FaHarness.start();
       await use(fa);
-      await fa.browser.close();
+      await fa.context.close();
       await fa.fixture.stop();
     },
     { timeout: 300_000 },
