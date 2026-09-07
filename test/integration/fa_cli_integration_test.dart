@@ -216,6 +216,61 @@ void main() {
       },
     );
 
+    test(
+      'double Esc during thinking streaming aborts the run (issue #46)',
+      () async {
+        // Two Escape presses landing in ONE stdin chunk (a fast
+        // double-tap) used to decode as a single unknown key and BOTH were
+        // swallowed — the abort never fired and the TUI kept streaming
+        // with no visible reaction ("not responding"). The real binary is
+        // driven over a PTY against a mock endpoint that streams
+        // reasoning deltas slowly, so the abort window stays open.
+        final mock = _SlowThinkingMockServer();
+        await mock.start();
+        final tempHome = _tempHomeForMock(mock.port);
+        final harness = await FaCliHarness.spawn(
+          extraEnv: {'HOME': tempHome.path},
+        );
+        addTearDown(() async {
+          await harness.close();
+          tempHome.deleteSync(recursive: true);
+          await mock.close();
+        });
+        await harness.waitForBoot();
+
+        harness.sendText('hello');
+        await harness.waitForOutput(settleMs: 200);
+        harness.sendEnter();
+        // The mock starts streaming reasoning deltas immediately; the busy
+        // row is the TUI's marker for the in-flight run.
+        await harness.waitForText(
+          'Working',
+          timeout: const Duration(seconds: 30),
+        );
+
+        // ONE write carrying both presses — the exact wire shape of a fast
+        // double-tap that the decoder used to swallow whole.
+        harness.sendText('\x1b\x1b');
+
+        // The run must abort promptly: the provider surfaces the abort and
+        // the CLI prints the aborted turn, retiring the busy row.
+        await harness.waitForText(
+          'abort',
+          timeout: const Duration(seconds: 15),
+        );
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        while (DateTime.now().isBefore(deadline)) {
+          if (!harness.screenText.contains('Working')) break;
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        expect(
+          harness.screenText.contains('Working'),
+          isFalse,
+          reason: 'busy row still up after the double-Esc abort',
+        );
+      },
+    );
+
     test('prompt zone frame is aligned (regression)', () async {
       final tempHome = _tempHome();
       final harness = await FaCliHarness.spawn(
@@ -631,4 +686,71 @@ final class _MockOpenAiServer {
       ],
     }),
   ];
+}
+
+/// An OpenAI-compatible SSE mock that streams `reasoning_content` deltas
+/// SLOWLY (one every 150ms for ~15s, for every chat request) so a test has
+/// a long window to interact with the run mid-thinking-stream. The abort
+/// under test closes the stream before the script finishes.
+final class _SlowThinkingMockServer {
+  HttpServer? _server;
+
+  int get port => _server!.port;
+
+  Future<void> start() async {
+    _server = await HttpServer.bind('127.0.0.1', 0);
+    _server!.listen((request) async {
+      if (request.method == 'GET' && request.uri.path.endsWith('/models')) {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'object': 'list', 'data': []}));
+        await request.response.close();
+        return;
+      }
+      if (request.method != 'POST' ||
+          !request.uri.path.endsWith('/chat/completions')) {
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+        return;
+      }
+      await utf8.decoder.bind(request).join();
+      request.response.headers.contentType = ContentType(
+        'text',
+        'event-stream',
+      );
+      Map<String, dynamic> chunk(String reasoning) => {
+        'id': 'chatcmpl-think',
+        'object': 'chat.completion.chunk',
+        'model': 'test-model',
+        'choices': [
+          {
+            'index': 0,
+            'delta': {'reasoning_content': reasoning},
+            'finish_reason': null,
+          },
+        ],
+      };
+      for (var i = 0; i < 100; i++) {
+        request.response.write('data: ${jsonEncode(chunk('t$i '))}\n\n');
+        await request.response.flush();
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+      request.response.write(
+        'data: ${jsonEncode({
+          'choices': [
+            {
+              'index': 0,
+              'delta': {'content': 'done'},
+              'finish_reason': 'stop',
+            },
+          ],
+        })}\n\n',
+      );
+      request.response.write('data: [DONE]\n\n');
+      await request.response.close();
+    });
+  }
+
+  Future<void> close() async {
+    await _server?.close(force: true);
+  }
 }
