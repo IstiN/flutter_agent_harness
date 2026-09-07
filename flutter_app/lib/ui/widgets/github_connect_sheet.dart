@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/github_account_store.dart';
+import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/github_api_client.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
@@ -31,15 +32,15 @@ const String githubWidgetsClientId = String.fromEnvironment(
 );
 
 /// Resolves the device-flow client id: the build-time OAuth App when
-/// configured, else the public Copilot plugin id. Empty disables the tab.
-String resolveGithubDeviceClientId() =>
-    githubWidgetsClientId.isNotEmpty
-        ? githubWidgetsClientId
-        : copilotDeviceClientId;
+/// configured, else the public Copilot plugin id (identity-only — GitHub
+/// pins its consent screen, the token can never publish). At runtime the
+/// app can configure a user-registered OAuth App via the
+/// [githubOauthClientIdKeyName] key in the settings Keys section.
+const githubOauthClientIdKeyName = 'github_oauth_client_id';
 
 /// Opens the "Connect GitHub" sheet (issue #35): PAT paste (always
 /// available) plus, on non-web platforms, the RFC 8628 device flow
-/// ([resolveGithubDeviceClientId] — build-time OAuth App or the public
+/// (build-time OAuth App, the runtime Keys entry, or the public
 /// Copilot plugin id).
 ///
 /// Resolves `true` when an account was connected, `false`/null otherwise.
@@ -78,7 +79,7 @@ class GithubConnectSheet extends StatefulWidget {
   final GithubApiClient Function(String token)? clientFactory;
 
   /// Device-flow client id override. Null resolves
-  /// [resolveGithubDeviceClientId] (build-time OAuth App, else the public
+  /// the build-time OAuth App, the runtime Keys entry, or the public
   /// Copilot plugin id); an empty string disables the device tab (tests).
   final String? deviceClientId;
 
@@ -89,16 +90,24 @@ class GithubConnectSheet extends StatefulWidget {
 class _GithubConnectSheetState extends State<GithubConnectSheet> {
   final _tokenController = TextEditingController();
 
-  /// The resolved device-flow client id (see [GithubConnectSheet]).
-  late final String _deviceClientId =
-      widget.deviceClientId ?? resolveGithubDeviceClientId();
+  /// The resolved device-flow client id; set in [didChangeDependencies]
+  /// (needs the inherited keys store). Null until then.
+  String? _deviceClientId;
+
+  /// True when the fallback Copilot plugin id is in use: GitHub pins that
+  /// app's consent to identity-only scopes, so the token can verify the
+  /// login but can NEVER publish (no public_repo). Surfaced as a warning.
+  bool _fallbackDeviceId = false;
 
   /// Whether the device-flow tab exists (needs a client id and a non-web
   /// platform — github.com serves no CORS headers).
-  bool get _deviceFlowAvailable => !kIsWeb && _deviceClientId.isNotEmpty;
+  bool get _deviceFlowAvailable => !kIsWeb && _deviceClientId!.isNotEmpty;
 
   /// True while the device tab is the visible one.
-  late bool _deviceMode = _deviceFlowAvailable;
+  bool _deviceMode = false;
+
+  /// Guards the one-time device-flow auto-start after id resolution.
+  bool _deviceStarted = false;
 
   String? _error;
   bool _busy = false;
@@ -112,7 +121,40 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
   @override
   void initState() {
     super.initState();
-    if (_deviceMode) _startDeviceFlow();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_deviceClientId == null) {
+      final override = widget.deviceClientId?.trim();
+      if (override != null) {
+        // Explicit override: empty string disables the device tab (tests).
+        _deviceClientId = override;
+      } else if (githubWidgetsClientId.isNotEmpty) {
+        _deviceClientId = githubWidgetsClientId;
+      } else {
+        // A user-registered OAuth App id can be configured at runtime in
+        // Settings → Keys under [githubOauthClientIdKeyName] — no rebuild
+        // needed. Without it the fallback Copilot plugin id stays
+        // identity-only (GitHub pins its consent screen).
+        final keys = SessionKeysScope.maybeOf(context);
+        final configured = keys?.valueOf(
+          githubOauthClientIdKeyName,
+        )?.trim();
+        if (configured != null && configured.isNotEmpty) {
+          _deviceClientId = configured;
+        } else {
+          _deviceClientId = copilotDeviceClientId;
+          _fallbackDeviceId = true;
+        }
+      }
+      _deviceMode = _deviceFlowAvailable;
+    }
+    if (_deviceMode && !_deviceStarted && _grant == null && !_busy) {
+      _deviceStarted = true;
+      _startDeviceFlow();
+    }
   }
 
   @override
@@ -178,7 +220,7 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
     });
     try {
       final grant = await requestCopilotDeviceGrant(
-        clientId: _deviceClientId,
+        clientId: _deviceClientId!,
         scope: 'public_repo',
       );
       if (_cancelled) return;
@@ -191,7 +233,7 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
       );
       final token = await pollCopilotDeviceGrant(
         grant: grant,
-        clientId: _deviceClientId,
+        clientId: _deviceClientId!,
         delay: Future<void>.delayed,
       );
       if (_cancelled) return;
@@ -352,6 +394,28 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
           l10n.githubConnectDeviceInstructions,
           style: Theme.of(context).textTheme.bodySmall,
         ),
+        if (_fallbackDeviceId) ...[
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                size: 16,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  l10n.githubDeviceFallbackWarn,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 12),
         Center(
           child: SelectableText(

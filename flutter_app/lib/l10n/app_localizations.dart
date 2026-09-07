@@ -3007,6 +3007,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This token cannot create repositories — publishing needs repo rights. Use a classic PAT with the public_repo scope (or a fine-grained PAT with All repositories + Administration + Contents read/write). The Device code login often yields a token without repo rights.'**
   String get githubTokenNoRepoScope;
+
+  /// Warning shown on the device-flow tab when only the fallback Copilot plugin client id is available
+  ///
+  /// In en, this message translates to:
+  /// **'Heads-up: this device login uses the public Copilot Plugin app, whose tokens GitHub limits to identity-only — they cannot publish. To publish via device code, register your own GitHub OAuth App (Settings → Developer settings → OAuth Apps, any callback URL) and save its client id in Settings → Keys as github_oauth_client_id, or rebuild the app with --dart-define=FA_GITHUB_CLIENT_ID=<id>. Until then, connect with a classic PAT (public_repo) on the Token tab.'**
+  String get githubDeviceFallbackWarn;
 }
 
 class _AppLocalizationsDelegate

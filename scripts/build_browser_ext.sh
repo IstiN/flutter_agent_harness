@@ -56,7 +56,8 @@ if [ "$with_app" -eq 1 ]; then
   # browser_ext/panel/app/ (a root-level copy is invisible to the panel).
   ( cd flutter_app && flutter pub get >/dev/null && \
     FLUTTER_WEB_CANVASKIT_URL=./canvaskit/ \
-    flutter build web --release --pwa-strategy=none --base-href=/panel/app/ )
+    flutter build web --release --pwa-strategy=none --base-href=/panel/app/ \
+      --dart-define=FA_HOST=extension )
   rm -rf browser_ext/panel/app
   mkdir -p browser_ext/panel/app
   cp -R flutter_app/build/web/. browser_ext/panel/app/

@@ -1678,4 +1678,8 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get githubTokenNoRepoScope =>
       'Этот токен не может создавать репозитории — для публикации нужны права на repo. Используй classic PAT со скоупом public_repo (или fine-grained PAT с All repositories + Administration + Contents read/write). Вход по Device code часто даёт токен без прав на репозитории.';
+
+  @override
+  String get githubDeviceFallbackWarn =>
+      'Важно: этот вход через устройство использует публичный app «Copilot Plugin» — GitHub ограничивает его токены правами «только идентификация», публиковать они не могут. Чтобы публиковать по device code, зарегистрируй свой GitHub OAuth App (Settings → Developer settings → OAuth Apps, callback любой) и сохрани его client id в Settings → Keys как github_oauth_client_id — либо собери приложение с --dart-define=FA_GITHUB_CLIENT_ID=<id>. А пока подключайся classic PAT (public_repo) на вкладке Token.';
 }
