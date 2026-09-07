@@ -66,20 +66,20 @@ AssistantMessageEventStream fakeStream(
   // NOT ^-anchored: the host prepends a "[context] active tab: …" line to
   // turns (issue #34), and an anchored match then never fires — the DM was
   // echoed instead of answered (issue #41).
-  final dm = RegExp(
-    r'\[from (\S+)\] dm (.*)',
-    dotAll: true,
-  ).firstMatch(prompt);
+  final dm = RegExp(r'\[from (\S+)\] dm (.*)', dotAll: true).firstMatch(prompt);
   if (dm != null) {
     _emitDm(stream, model, to: dm.group(1)!, text: 'fake: dm ${dm.group(2)!}');
     return stream;
   }
 
   // Page-code injection: "inject_js <tabId> <world> <code…>" — code is the
-  // rest of the prompt, verbatim. A bad world is emitted as-is: the tool's
-  // clean `bad_world` result (E2) is the observable under test.
+  // rest of the match, verbatim. A bad world is emitted as-is: the tool's
+  // clean `bad_world` result (E2) is the observable under test. NOT
+  // ^-anchored: the host prepends a "[context] active tab: …" line to
+  // turns (issue #34) — an anchored match never fires (same trap the dm
+  // directive hit in issue #41).
   final inject = RegExp(
-    r'^inject_js (\d+) (\S+) (.+)$',
+    r'inject_js (\d+) (\S+) (.+)',
     dotAll: true,
   ).firstMatch(prompt);
   if (inject != null) {
@@ -94,8 +94,9 @@ AssistantMessageEventStream fakeStream(
   }
 
   // Session restore: "sessions_restore <sessionId>" (the tool requires the
-  // id from sessions_recent — there is no default restore path).
-  final restore = RegExp(r'^sessions_restore (\S+)$').firstMatch(prompt);
+  // id from sessions_recent — there is no default restore path). Unanchored
+  // for the same [context]-prefix reason as inject_js.
+  final restore = RegExp(r'sessions_restore (\S+)').firstMatch(prompt);
   if (restore != null) {
     _emitSessionsRestore(stream, model, sessionId: restore.group(1)!);
     return stream;

@@ -17,13 +17,20 @@ async function inject(
   world: string,
   code: string,
 ): Promise<{ isError: boolean; text: string }> {
+  // Scope the waits to THIS turn: sequential injects in one test would
+  // otherwise re-match the previous turn's approval/result events.
+  const after = (await fa.eventCount()) - 1;
   await fa.sendUser(`inject_js ${tabId} ${world} ${code}`);
   const request = await fa.waitEvent(
     (e) => e.type === 'approval_request' && String(e.summary).includes('inject_js'),
+    45_000,
+    after,
   );
   await fa.decide(request.id!, true);
   const result = await fa.waitEvent(
     (e) => e.type === 'tool_result' && e.toolName === 'inject_js',
+    45_000,
+    after,
   );
   return { isError: result.isError === true, text: String(result.text ?? '') };
 }

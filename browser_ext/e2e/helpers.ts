@@ -283,15 +283,30 @@ export class FaHarness {
     });
   }
 
-  /** First matching agent event, polling until it lands. */
+  /** Collected event count — snapshot before a turn to scope waitEvent. */
+  eventCount(): Promise<number> {
+    return this.swEval(() => {
+      const sw = globalThis as unknown as SwGlobals; // seams bound by sw/agent.js
+      return sw.__faEvents?.length ?? 0;
+    });
+  }
+
+  /**
+   * First matching agent event at index > `after`, polling until it lands.
+   * `after` (an eventCount snapshot minus one) keeps sequential turns in
+   * one test from re-matching the previous turn's events.
+   */
   async waitEvent(
     pred: (event: FaEvent) => boolean,
     timeout = 45_000,
+    after = -1,
   ): Promise<FaEvent> {
     let found: FaEvent | undefined;
     await expect
       .poll(async () => {
-        found = (await this.events()).find(pred);
+        const events = await this.events();
+        const idx = events.findIndex((e, i) => i > after && pred(e));
+        found = idx >= 0 ? events[idx] : undefined;
         return found ?? null;
       }, { timeout })
       .not.toBeNull();

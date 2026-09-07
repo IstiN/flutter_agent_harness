@@ -23,7 +23,13 @@ function mapErr(e) {
 // DevTools / another client stealing the target ends our session: evict.
 chrome.debugger.onDetach.addListener((src) => {
   if (src && src.tabId != null) attached.delete(src.tabId);
+  worldCtx.delete(src && src.tabId);
 });
+
+/** tabId -> cached isolated-world context id. Chrome dedupes worlds by
+ *  name, so a second createIsolatedWorld fires no event — cache the id
+ *  for the life of the debugger session (dies with attach). */
+const worldCtx = new Map();
 
 /** Attach protocol '1.3' to the tab unless cached; cache lives until evict/detach. */
 async function ensure(tabId) {
@@ -43,7 +49,7 @@ async function send(tabId, method, params) {
   try {
     return await chrome.debugger.sendCommand({ tabId }, method, params ?? {});
   } catch (e) {
-    if (/not attached|inspector detached|was detached/i.test(String(e?.message || e))) attached.delete(tabId);
+    if (/not attached|inspector detached|was detached/i.test(String(e?.message || e))) { attached.delete(tabId); worldCtx.delete(tabId); }
     throw mapErr(e);
   }
 }
@@ -122,6 +128,61 @@ async function captureTab(tabId) {
   return { pngBase64: (res && res.data) || '', mimeType: 'image/png' };
 }
 
+/**
+ * Evaluate `code` in the tab's MAIN world or an isolated 'fa-isolated'
+ * world (world: 'MAIN' | 'ISOLATED'). Chrome omits contextId from
+ * createIsolatedWorld's response over the debugger channel, so the id is
+ * captured from Runtime.executionContextCreated (any fa-isolated world
+ * matches — same name, same isolation). Resolves { ok, value } or
+ * { ok: false, code, message } (ops vocabulary).
+ */
+async function executeInWorld(tabId, world, code) {
+  const w = world === 'MAIN' ? 'MAIN' : 'ISOLATED';
+  try {
+    await ensure(tabId);
+    let contextId;
+    if (w === 'ISOLATED' && worldCtx.has(tabId)) {
+      contextId = worldCtx.get(tabId);
+    } else if (w === 'ISOLATED') {
+      const tree = await send(tabId, 'Page.getFrameTree');
+      const frameId = tree && tree.frameTree && tree.frameTree.frame && tree.frameTree.frame.id;
+      let seen;
+      const found = new Promise((resolve) => { seen = resolve; });
+      const onEvent = (src, method, params) => {
+        const ctx = method === 'Runtime.executionContextCreated' && params && params.context;
+        if (ctx && ctx.name === 'fa-isolated') {
+          chrome.debugger.onEvent.removeListener(onEvent);
+          seen(ctx.id);
+        }
+      };
+      chrome.debugger.onEvent.addListener(onEvent);
+      try {
+        await send(tabId, 'Runtime.enable'); // replays existing contexts first
+        await send(tabId, 'Page.createIsolatedWorld', { frameId, worldName: 'fa-isolated' });
+        const timer = new Promise((_, reject) => {
+          setTimeout(() => reject(cdpErr('isolated world context never appeared', 'cdp')), 5_000);
+        });
+        contextId = await Promise.race([found, timer]);
+        worldCtx.set(tabId, contextId);
+      } finally {
+        chrome.debugger.onEvent.removeListener(onEvent);
+      }
+    }
+    const res = await send(tabId, 'Runtime.evaluate', {
+      expression: code, returnByValue: true, awaitPromise: true, userGesture: true,
+      ...(contextId != null ? { contextId } : {}),
+    });
+    if (res && res.exceptionDetails) {
+      return { ok: false, code: 'page_error', message: JSON.stringify(res.exceptionDetails) };
+    }
+    return { ok: true, value: (res && res.result && res.result.value) ?? null };
+  } catch (e) {
+    return e && e.code
+      ? { ok: false, code: e.code, message: String(e.message || e) }
+      : { ok: false, code: 'cdp', message: String((e && e.message) || e) };
+  }
+}
+
 /** Detach every tab we still hold (ops.task_end calls this). Count detached. */
 async function detachAll() {
   const ids = [...attached.keys()];
@@ -131,7 +192,6 @@ async function detachAll() {
   }));
   return ids.length;
 }
-
 /** Debug snapshot: tabIds with a live debugger session. */
 function status() {
   return { attached: [...attached.keys()] };
@@ -140,6 +200,6 @@ function status() {
 // Classic-SW module glue (see tabs.js). Loads after ops.js; ops reaches the
 // namespace lazily at call time, never via top-level destructure.
 globalThis.faSw = Object.assign(globalThis.faSw ?? {}, {
-  cdp: { ensure, rect, trustedClick, trustedType, trustedPressKey, captureTab, detachAll, status },
+  cdp: { ensure, rect, trustedClick, trustedType, trustedPressKey, captureTab, executeInWorld, detachAll, status },
 });
 })();

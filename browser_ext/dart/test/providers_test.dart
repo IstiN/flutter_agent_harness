@@ -59,22 +59,25 @@ void main() {
     expect(call.arguments['text'], 'fake: dm ping-browser-loop');
   });
 
-  test('dm directive survives a prepended [context] line (issue #41)', () async {
-    // The host decorates turns with "[context] active tab: …" (issue #34);
-    // a ^-anchored DM regex then never matches and the DM gets echoed
-    // instead of answered — the DAP e2e timed out on exactly this.
-    final (reason, message) = await _finalOf([
-      UserMessage.text(
-        '[context] active tab: t — https://a.dev\n'
-        '[from abc123def45678] dm ping-browser-loop',
-      ),
-    ]);
-    expect(reason, StopReason.toolUse);
-    final call = message.content.whereType<ToolCall>().single;
-    expect(call.name, 'dap_dm');
-    expect(call.arguments['to'], 'abc123def45678');
-    expect(call.arguments['text'], 'fake: dm ping-browser-loop');
-  });
+  test(
+    'dm directive survives a prepended [context] line (issue #41)',
+    () async {
+      // The host decorates turns with "[context] active tab: …" (issue #34);
+      // a ^-anchored DM regex then never matches and the DM gets echoed
+      // instead of answered — the DAP e2e timed out on exactly this.
+      final (reason, message) = await _finalOf([
+        UserMessage.text(
+          '[context] active tab: t — https://a.dev\n'
+          '[from abc123def45678] dm ping-browser-loop',
+        ),
+      ]);
+      expect(reason, StopReason.toolUse);
+      final call = message.content.whereType<ToolCall>().single;
+      expect(call.name, 'dap_dm');
+      expect(call.arguments['to'], 'abc123def45678');
+      expect(call.arguments['text'], 'fake: dm ping-browser-loop');
+    },
+  );
 
   test('tool-result turn reports the executed tool and stops', () async {
     final (reason, message) = await _finalOf([
@@ -108,6 +111,7 @@ void main() {
   test('inject_js directive → inject_js call with tabId/world/code', () async {
     final (reason, message) = await _finalOf([
       UserMessage.text(
+        '[context] active tab: t — https://a.dev\n'
         'inject_js 42 MAIN window.__faMain = "hi";\nsecond line',
       ),
     ]);
@@ -123,7 +127,9 @@ void main() {
     'sessions_restore directive → sessions_restore call with the id',
     () async {
       final (reason, message) = await _finalOf([
-        UserMessage.text('sessions_restore 17'),
+        UserMessage.text(
+          '[context] active tab: t — https://a.dev\nsessions_restore 17',
+        ),
       ]);
       expect(reason, StopReason.toolUse);
       final call = message.content.whereType<ToolCall>().single;
