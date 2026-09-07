@@ -11,6 +11,8 @@
 // yolo mid-run was DROPPED by the busy guard, so the rescue never landed.
 import 'dart:async';
 
+import 'package:flutter_agent_harness/src/approval/approval.dart'
+    show ApprovalMode;
 import 'package:test/test.dart';
 
 import '../src/approval_flow.dart';
@@ -135,6 +137,15 @@ void main() {
     expect(summary.length, 301);
     expect(summary.endsWith('…'), isTrue);
     flow.decide('ap-1', true);
+  });
+
+  test('exfilGateShouldAsk: yolo/unattended silent, ask/write prompt', () {
+    expect(exfilGateShouldAsk(ApprovalMode.alwaysAsk), isTrue);
+    expect(exfilGateShouldAsk(ApprovalMode.write), isTrue);
+    // The user's contract: yolo = NOTHING asks, ever. The extension has
+    // no bash, so no critical pattern can justify a prompt there.
+    expect(exfilGateShouldAsk(ApprovalMode.yolo), isFalse);
+    expect(exfilGateShouldAsk(ApprovalMode.unattended), isFalse);
   });
 
   test('reconfigureNeedsIdle: approval-mode-only change applies live', () {
