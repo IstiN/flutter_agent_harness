@@ -331,7 +331,10 @@ class GithubApiClient {
       final object = json['object'];
       return object is Map ? object['sha']?.toString() : null;
     } on GithubApiException catch (error) {
-      if (error.isNotFound) return null;
+      // A repo without commits (freshly created) answers 409 "Git
+      // Repository is empty." on the ref read — that is "no branch yet",
+      // not a failure.
+      if (error.isNotFound || error.statusCode == 409) return null;
       rethrow;
     }
   }

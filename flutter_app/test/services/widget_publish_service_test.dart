@@ -378,8 +378,8 @@ void main() {
           ..on(
             'GET',
             '/repos/octocat/fa-widget-pomodoro/git/ref/heads/main',
-            {'message': 'nf'},
-            status: 404,
+            {'message': 'Git Repository is empty.'},
+            status: 409,
           )
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
             'sha': 'b1',
@@ -396,11 +396,7 @@ void main() {
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/commits', {
             'sha': 'commit1',
           })
-          ..on(
-            'PATCH',
-            '/repos/octocat/fa-widget-pomodoro/git/refs/heads/main',
-            {},
-          );
+          ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/refs', {});
         _scriptForkAndPr(gh, widgetSha: 'commit1', prNumber: 42);
 
         final ledger = await WidgetPublicationStore.load(env);

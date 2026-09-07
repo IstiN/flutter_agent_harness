@@ -352,7 +352,14 @@ class WidgetPublishService {
         message: 'Publish ${app.id} ${app.version}',
         parentSha: headSha,
       );
-      await client.updateRef(owner, name, 'main', repoCommit);
+      if (headSha == null) {
+        // Freshly created (or never-pushed) repo: refs/heads/main does not
+        // exist yet — the root commit must CREATE the ref; PATCH has
+        // nothing to move.
+        await client.createBranch(owner, name, 'main', repoCommit);
+      } else {
+        await client.updateRef(owner, name, 'main', repoCommit);
+      }
       // E7: record the reached step BEFORE the PR work so an app kill
       // resumes here instead of duplicating the push.
       await _ledger.record(
