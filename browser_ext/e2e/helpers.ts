@@ -139,7 +139,19 @@ export class FixtureServer {
     const { promise, resolve } = Promise.withResolvers<void>();
     this.server = http.createServer((req, res) => {
       const rel = (req.url ?? '/').split('?')[0];
-      const file = path.join(fixtureRoot, rel === '/' ? 'index.html' : rel);
+      // Contain to fixtureRoot (CodeQL js/path-injection): resolve kills
+      // ".." segments, then the prefix check refuses anything that escaped
+      // the root — this loopback server is test-only, but the check is
+      // cheap and keeps the security gate green without a dismissal.
+      const file = path.resolve(
+        fixtureRoot,
+        rel === '/' ? 'index.html' : `.${rel}`,
+      );
+      if (!file.startsWith(fixtureRoot + path.sep)) {
+        res.statusCode = 403;
+        res.end();
+        return;
+      }
       fs.readFile(file, (err, data) => {
         if (err) {
           res.statusCode = 404;
