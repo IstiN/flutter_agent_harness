@@ -201,26 +201,23 @@ final class CliArgs extends CliArgsResult {
 /// Throws [CliArgsException] on unknown flags, missing flag values, an
 /// unknown provider, `--system-prompt` combined with `--system-prompt-file`,
 /// or `-p`/`--prompt` combined with positional arguments.
+/// Subcommands intercepted BEFORE prompt parsing — their verb words are
+/// never prompts. Each parser takes the words after the subcommand name.
+const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
+  'trajectory': _parseTrajectoryArgs,
+  'config': _parseConfigArgs,
+  'ext': _parseExtArgs,
+};
+
 CliArgsResult parseCliArgs(List<String> args) {
-  // `fa trajectory <verb> [args]` — the trajectory reader subcommand,
-  // intercepted before prompt parsing (the verb words are not prompts).
-  if (args.isNotEmpty && args.first == 'trajectory') {
-    return _parseTrajectoryArgs(args.sublist(1));
-  }
-  // `fa config <verb> [args]` — the headless config verb subcommand,
-  // intercepted the same way (verb words are not prompts).
-  if (args.isNotEmpty && args.first == 'config') {
-    return _parseConfigArgs(args.sublist(1));
-  }
-  // `fa ext <verb> [args]` — the JS extension subcommand, intercepted the
-  // same way (verb words are not prompts).
-  if (args.isNotEmpty && args.first == 'ext') {
-    return _parseExtArgs(args.sublist(1));
+  final subcommand = args.isEmpty ? null : _cliSubcommands[args.first];
+  if (subcommand != null) {
+    return subcommand(args.sublist(1));
   }
   final values = _CliArgValues();
   for (var i = 0; i < args.length; i++) {
     final arg = args[i];
-    if (arg == '--help' || arg == '-h') return const CliArgsHelp();
+    if (const {'--help', '-h'}.contains(arg)) return const CliArgsHelp();
     if (arg == '--version') return const CliArgsVersion();
     final flag = _valueFlags[arg];
     if (flag != null) {
