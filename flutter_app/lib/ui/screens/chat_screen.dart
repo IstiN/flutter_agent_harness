@@ -190,6 +190,7 @@ class _ChatScreenState extends State<ChatScreen> {
       title: context.l10n.appTitle,
       settingsBuilder: (_) => SettingsScreen(
         service: service,
+        env: service.env,
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
       ),

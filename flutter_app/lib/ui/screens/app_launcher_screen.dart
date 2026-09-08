@@ -838,6 +838,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
       MaterialPageRoute<void>(
         builder: (_) => SettingsScreen(
           service: service,
+          env: widget.manager.env,
           registry: widget.registry,
           lastConnectionStore: widget.lastConnectionStore,
           // The same store instance the launcher listens to — grid changes

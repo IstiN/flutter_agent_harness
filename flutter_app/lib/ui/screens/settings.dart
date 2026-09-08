@@ -1845,6 +1845,7 @@ class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
     this.service,
+    this.env,
     this.registry,
     this.lastConnectionStore,
     this.layoutStore,
@@ -1860,6 +1861,12 @@ class SettingsScreen extends StatefulWidget {
   /// with `service == null` and renders a "Connect a provider" CTA at
   /// the top instead of the service-dependent sections.
   final AgentService? service;
+
+  /// The sandbox the "GitHub account" section wires into "My
+  /// publications" (shared ledger + publish service) — the app manager
+  /// env, the same instance the launcher/apps-panel publish menus use.
+  /// Null keeps the publications sheet read-only.
+  final ExecutionEnv? env;
 
   /// The user-added providers shown in the Providers section and the
   /// pickers.
@@ -2169,8 +2176,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 16),
               // The GitHub account used for widget publishing (issue #35)
               // — resolves its store from SessionKeysScope, so it renders
-              // without an active agent service, like DapHubSection.
-              const GithubAccountSection(),
+              // without an active agent service, like DapHubSection. The
+              // env wires "My publications" to the live status polling.
+              GithubAccountSection(env: widget.env),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
@@ -2389,9 +2397,6 @@ class ResetAppsSection extends StatelessWidget {
             child: Text(l10n.commonCancel),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(dialogContext).colorScheme.error,
-            ),
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: Text(l10n.settingsResetApps),
           ),

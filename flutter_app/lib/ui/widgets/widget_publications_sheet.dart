@@ -107,8 +107,12 @@ class _WidgetPublicationsSheetState extends State<WidgetPublicationsSheet>
     try {
       // refreshStatus persists the new state into the ledger (and notifies
       // listeners) itself; a single failure (offline, deleted repo) must
-      // not block the rest.
+      // not block the rest. Records without an open/known PR have nothing
+      // to poll — skipping them keeps reached/failed a measure of real
+      // network attempts (an early return must never mask an offline
+      // cycle, nor fake a reached one).
       for (final publication in widget.ledger.publications) {
+        if (publication.prNumber == null) continue;
         try {
           await service.refreshStatus(publication);
           reached++;

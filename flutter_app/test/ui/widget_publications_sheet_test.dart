@@ -14,7 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 class _FakePublishService implements WidgetPublishService {
   _FakePublishService({this.fail = false});
 
-  final bool fail;
+  bool fail;
   var calls = 0;
 
   @override
@@ -115,6 +115,40 @@ void main() {
       'success', (tester) async {
     final ledger = WidgetPublicationStore.inMemory();
     await ledger.record(_publication());
+    // One mutable fake: the SAME sheet instance runs failing -> reaching
+    // cycles, so the hint's true -> false transition is the real one.
+    final service = _FakePublishService(fail: true);
+    await _pump(
+      tester,
+      WidgetPublicationsSheet(ledger: ledger, service: service),
+    );
+
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byIcon(Icons.wifi_off), findsOneWidget);
+    expect(find.text('Offline — showing last known states.'), findsOneWidget);
+
+    service.fail = false;
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byIcon(Icons.wifi_off), findsNothing);
+  });
+
+  testWidgets('PR-less records are skipped: never reached, never failed', (
+    tester,
+  ) async {
+    final ledger = WidgetPublicationStore.inMemory();
+    // stepRepoPushed record without a PR: nothing to poll yet.
+    await ledger.record(
+      WidgetPublication(
+        widgetId: 'early',
+        version: '0.1.0',
+        repoFullName: 'octocat/fa-widget-early',
+        repoCommit: 'deadbeef',
+        step: WidgetPublication.stepRepoPushed,
+        submittedAt: DateTime.utc(2026, 2, 1, 12),
+      ),
+    );
     final failing = _FakePublishService(fail: true);
     await _pump(
       tester,
@@ -123,16 +157,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.refresh));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.byIcon(Icons.wifi_off), findsOneWidget);
-    expect(find.text('Offline — showing last known states.'), findsOneWidget);
-
-    // A later cycle that reaches the PRs clears the hint again.
-    await _pump(
-      tester,
-      WidgetPublicationsSheet(ledger: ledger, service: _FakePublishService()),
-    );
-    await tester.tap(find.byIcon(Icons.refresh));
-    await tester.pump(const Duration(milliseconds: 100));
+    expect(failing.calls, 0);
     expect(find.byIcon(Icons.wifi_off), findsNothing);
   });
 
