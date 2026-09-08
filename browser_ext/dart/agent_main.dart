@@ -187,6 +187,29 @@ Future<JSAny?> _bootMerged(JSAny? config) async {
   final map = config == null
       ? const <Object?, Object?>{}
       : (config as JSObject).dartify() as Map<Object?, Object?>;
+  // EXPLICIT boot keys persist to chrome.storage. The SW's auto-boot
+  // (main(), storage snapshot) races explicit boots — panel/tests — and
+  // _ensureHost is last-writer-wins: when the auto-boot's stale snapshot
+  // lands AFTER an explicit boot, it silently reverts it (observed as the
+  // e2e's unattended approval mode flipping back to always-ask, leaving a
+  // write-tier tool stuck on an approval no headless run can answer).
+  // Persisting the explicit keys makes every config path — however
+  // ordered — converge on the explicit values instead.
+  const bootKeyToStorage = {
+    'approvalMode': 'faApproval',
+    'provider': 'faProvider',
+    'providers': 'faProviders',
+    'dap': 'faDap',
+    'browserTools': 'faBrowserTools',
+  };
+  for (final entry in bootKeyToStorage.entries) {
+    if (map.containsKey(entry.key)) {
+      final value = map[entry.key];
+      if (value != null) {
+        unawaited(_persistSetting(entry.value, value));
+      }
+    }
+  }
   _ensureHost(
     _configFrom(
       provider: map.containsKey('provider')
