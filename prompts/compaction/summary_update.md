@@ -14,6 +14,10 @@ Update the existing structured summary with new information. RULES:
 
 Use this EXACT format:
 
+## Open User Requests
+- [ ] <keep every open ask>
+  Here "no longer relevant" NEVER removes; ONLY explicit user cancel or Done+evidence inline. Unevidenced acceptance = "(Partial — acceptance pending)", stays.
+
 ## Goal
 [Preserve existing goals, add new ones if the task expanded]
 

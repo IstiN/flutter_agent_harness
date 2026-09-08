@@ -6,6 +6,10 @@ The messages above are a conversation to summarize. Create a structured context 
 
 Use this EXACT format:
 
+## Open User Requests
+- [ ] <one-line ask + THEIR acceptance criterion> (asked <date>, record id)
+  Max 10 oldest-first, ≤200 chars. Closes ONLY via Done+evidence (test id/PR/user) or explicit user cancel. Unevidenced acceptance = "(Partial — acceptance pending)", stays. Empty: "(none)".
+
 ## Goal
 [What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
 
