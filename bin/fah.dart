@@ -236,9 +236,14 @@ FahPlugin? _builtInPlugin(
   String name,
   HubPlugin hubPlugin, {
   required bool fabricDeliversMail,
+  Map<String, String>? dapEnvironment,
 }) {
   return switch (name) {
-    'hub' => HubPluginHost(hubPlugin, fabricDeliversMail: fabricDeliversMail),
+    'hub' => HubPluginHost(
+      hubPlugin,
+      environment: dapEnvironment,
+      fabricDeliversMail: fabricDeliversMail,
+    ),
     'inspect_image' => const InspectImagePlugin(),
     'transcribe_audio' => const TranscribeAudioPlugin(),
     _ => null,
@@ -287,7 +292,12 @@ Future<
     HubFabricRepository? hubFabric,
   })
 >
-_resolvePlugins(CliArgs args, ExecutionEnv env, HubPlugin hubPlugin) async {
+_resolvePlugins(
+  CliArgs args,
+  ExecutionEnv env,
+  HubPlugin hubPlugin,
+  Map<String, String> dapEnvironment,
+) async {
   final Map<String, dynamic> config;
   try {
     config = await loadPackagesConfig(env);
@@ -305,6 +315,7 @@ _resolvePlugins(CliArgs args, ExecutionEnv env, HubPlugin hubPlugin) async {
       name,
       hubPlugin,
       fabricDeliversMail: hubFabric != null,
+      dapEnvironment: dapEnvironment,
     );
     if (plugin == null) _fail('unknown plugin: $name');
     plugins.add(plugin);
@@ -1409,8 +1420,18 @@ Future<void> _runApp(List<String> args) async {
   // plugin when enabled, and read by the settings-hub DAP / Hub flow's
   // snapshot seam below. Constructing it has no side effects — the client
   // connects only in `start()` (driven by the plugin host).
-  final hubPlugin = HubPlugin();
-  final resolved = await _resolvePlugins(effective, cliEnv, hubPlugin);
+  // A MUTABLE copy of the process environment shared with the plugin
+  // host: Platform.environment is read-only, but the interactive /dap
+  // "Set master secret" flow enables DAP at runtime by writing into
+  // this map (the hub plugin re-reads it on every access).
+  final dapEnvironment = Map<String, String>.of(Platform.environment);
+  final hubPlugin = HubPlugin(environment: dapEnvironment);
+  final resolved = await _resolvePlugins(
+    effective,
+    cliEnv,
+    hubPlugin,
+    dapEnvironment,
+  );
 
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {
     _fail('unknown mode: ${effective.mode}');
