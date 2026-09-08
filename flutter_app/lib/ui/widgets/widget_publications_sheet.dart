@@ -77,18 +77,50 @@ class _WidgetPublicationsSheetState extends State<WidgetPublicationsSheet>
 
   Timer? _pollTimer;
 
+  /// Consecutive fully-failed refresh cycles — stretches the next poll
+  /// delay (E2: an offline / rate-limited account must not be hammered
+  /// every interval).
+  int _failedCycles = 0;
+
   @override
   void initState() {
     super.initState();
     if (widget.service != null) {
       WidgetsBinding.instance.addObserver(this);
-      _pollTimer = Timer.periodic(widget.pollInterval, (_) => _refresh());
+      _startTimer();
     }
+  }
+
+  /// Schedules the next poll tick. Self-rescheduling (not periodic) so a
+  /// run of failed cycles can stretch the cadence: 1x → 2x → 4x → 8x of
+  /// [WidgetPublicationsSheet.pollInterval], capped; the first reaching
+  /// cycle resets to 1x.
+  void _startTimer() {
+    _pollTimer?.cancel();
+    final stretch = 1 << _failedCycles.clamp(0, 3);
+    _pollTimer = Timer(widget.pollInterval * stretch, _onTick);
+  }
+
+  Future<void> _onTick() async {
+    await _refresh();
+    if (!mounted) return;
+    _failedCycles = _offline ? _failedCycles + 1 : 0;
+    _startTimer();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refresh();
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // Background pause (E2): while backgrounded the timer is
+        // cancelled, so resuming refreshes once and restarts the cadence.
+        _refresh();
+        _startTimer();
+      case AppLifecycleState.paused || AppLifecycleState.hidden:
+        _pollTimer?.cancel();
+      case AppLifecycleState.inactive || AppLifecycleState.detached:
+        break;
+    }
   }
 
   @override

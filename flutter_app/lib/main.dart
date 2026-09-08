@@ -14,6 +14,7 @@ import 'package:fa/services/relay/relay_probe.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/widgets/widget_publication_resume_refresh.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/ui/widgets/downloaded_models_quick_start.dart';
 import 'package:fa/services/session_names_store.dart';
@@ -384,8 +385,7 @@ class MyApp extends StatelessWidget {
           // "Incorrect locale information provided" and the app never boots.
           // Fall back to English for a bogus device locale.
           localeResolutionCallback: (deviceLocale, supported) {
-            if (deviceLocale == null ||
-                deviceLocale.languageCode.isEmpty) {
+            if (deviceLocale == null || deviceLocale.languageCode.isEmpty) {
               return const Locale('en');
             }
             return basicLocaleListResolution([deviceLocale], supported);
@@ -566,35 +566,37 @@ Widget faHomeScreen({
   AppsStore? appsStore,
 }) {
   final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
-  if (isWide) {
-    return WideLayoutShell(
-      manager: manager,
-      registry: registry,
-      lastConnectionStore: lastConnectionStore,
-      sessionNamesStore: sessionNamesStore,
-      uploadPicker: uploadPicker,
-      asr: asr,
-      asrTranscriber: asrTranscriber,
-      audioControllerFactory: audioControllerFactory,
-      videoControllerFactory: videoControllerFactory,
-      tileEngineFactory: tileEngineFactory,
-      layoutStore: layoutStore,
-      appsStore: appsStore,
-    );
-  }
-  return AppLauncherScreen(
-    manager: manager,
-    registry: registry,
-    lastConnectionStore: lastConnectionStore,
-    sessionNamesStore: sessionNamesStore,
-    uploadPicker: uploadPicker,
-    asr: asr,
-    asrTranscriber: asrTranscriber,
-    audioControllerFactory: audioControllerFactory,
-    videoControllerFactory: videoControllerFactory,
-    tileEngineFactory: tileEngineFactory,
-    layoutStore: layoutStore,
-    appsStore: appsStore,
+  return WidgetPublicationResumeRefresher(
+    env: manager.env,
+    child: isWide
+        ? WideLayoutShell(
+            manager: manager,
+            registry: registry,
+            lastConnectionStore: lastConnectionStore,
+            sessionNamesStore: sessionNamesStore,
+            uploadPicker: uploadPicker,
+            asr: asr,
+            asrTranscriber: asrTranscriber,
+            audioControllerFactory: audioControllerFactory,
+            videoControllerFactory: videoControllerFactory,
+            tileEngineFactory: tileEngineFactory,
+            layoutStore: layoutStore,
+            appsStore: appsStore,
+          )
+        : AppLauncherScreen(
+            manager: manager,
+            registry: registry,
+            lastConnectionStore: lastConnectionStore,
+            sessionNamesStore: sessionNamesStore,
+            uploadPicker: uploadPicker,
+            asr: asr,
+            asrTranscriber: asrTranscriber,
+            audioControllerFactory: audioControllerFactory,
+            videoControllerFactory: videoControllerFactory,
+            tileEngineFactory: tileEngineFactory,
+            layoutStore: layoutStore,
+            appsStore: appsStore,
+          ),
   );
 }
 
