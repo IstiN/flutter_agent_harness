@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.330
+
 
 - feat(27): A2A boundary gateway (issue #27 phase 3) — cross-machine
   `agent_message` rides A2A: `name@machine` addresses resolve the machine
@@ -3024,6 +3025,8 @@
   are deliverable through `agent_message`. Docs: `docs/dap.md` §12.
   Discovery/presence states (`busy`) and the A2A gateway remain for
   phases 2-3.
+
+## Unreleased
 
 ## Unreleased
 
