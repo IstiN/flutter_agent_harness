@@ -1,0 +1,20 @@
+name: fa_llm_mock
+description: >-
+  Scripted OpenAI-compatible mock LLM server for integration tests.
+  YAML/JSON config maps user messages to response queues: text, tool
+  calls, tool-result echo, and error simulation. No real LLM, no
+  external network — reachable from any test environment (CLI, headless
+  browser, macOS/iOS simulator) over loopback HTTP.
+version: 0.1.0
+repository: https://github.com/IstiN/flutter_agent_harness
+homepage: https://github.com/IstiN/flutter_agent_harness/tree/main/packages/fa_llm_mock
+issue_tracker: https://github.com/IstiN/flutter_agent_harness/issues
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+dependencies:
+  yaml: ^3.1.3
+
+dev_dependencies:
+  test: ^1.31.2
