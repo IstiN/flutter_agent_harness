@@ -153,6 +153,49 @@ void main() {
     addTearDown(channel.close);
   });
 
+  test('listSessions returns the SW history over sessions_query', () async {
+    final (:service, :channel) = await _attached();
+    final future = service.listSessions();
+    await Future<void>.delayed(Duration.zero);
+    expect(channel.sentOf('sessions_query'), isNotNull);
+    channel.fromWorker(
+      const SessionsResultMsg(
+        sessions: [
+          {
+            'id': 'live-1',
+            'running': true,
+            'createdAt': '2026-09-08T11:47:00.000Z',
+            'cwd': '/',
+          },
+          {
+            'id': 'arch-1',
+            'archived': true,
+            'createdAt': '2026-09-07T09:00:00.000Z',
+            'cwd': '/',
+          },
+        ],
+      ),
+    );
+    final sessions = await future;
+    expect(sessions, hasLength(2));
+    expect(sessions[0].id, 'live-1');
+    expect(sessions[0].createdAt.year, 2026);
+    expect(sessions[1].metadata?['archived'], isTrue);
+    addTearDown(channel.close);
+  });
+
+  test('openSessionAction dispatches session_open with the id', () async {
+    final (:service, :channel) = await _attached();
+    final open = service.openSessionAction;
+    expect(open, isNotNull);
+    await open!('arch-1');
+    await Future<void>.delayed(Duration.zero);
+    final msg = channel.sentOf('session_open');
+    expect(msg, isNotNull);
+    expect(msg!['sessionId'], 'arch-1');
+    addTearDown(channel.close);
+  });
+
   test('a live turn steers instead of prompting', () async {
     final (:service, :channel) = await _attached();
     channel.fromWorker(StreamMsg(event: {'type': 'status', 'running': true}));

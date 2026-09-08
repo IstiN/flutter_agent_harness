@@ -97,6 +97,59 @@ final class RelayAgentService extends AgentService {
           _transport.newSession();
         };
 
+  /// Panel "open a past session" (`session_open`): the SW archives the
+  /// current live session and restores the archive's transcript; the
+  /// attach trio rebuilds this side onto it. Same busy rule.
+  @override
+  Future<void> Function(String sessionId)? get openSessionAction => _running
+      ? null
+      : (id) async {
+          _transport.openSession(id);
+        };
+
+  @override
+  String? get liveSessionId => _sessionId.isEmpty ? null : _sessionId;
+
+  /// The SW's session history (live + archives), fetched over
+  /// `sessions_query`. Single-flight: overlapping callers share the
+  /// in-flight query; `_onProtocolMessage` completes it.
+  Completer<List<Map<String, dynamic>>>? _sessionsQuery;
+
+  @override
+  Future<List<SessionMetadata>> listSessions() async {
+    final inFlight = _sessionsQuery;
+    final rows = inFlight != null
+        ? await inFlight.future
+        : await () async {
+            final completer = _sessionsQuery =
+                Completer<List<Map<String, dynamic>>>();
+            _transport.dispatch(const SessionsQueryMsg());
+            try {
+              return await completer.future.timeout(
+                const Duration(seconds: 10),
+                onTimeout: () => const <Map<String, dynamic>>[],
+              );
+            } finally {
+              _sessionsQuery = null;
+            }
+          }();
+    return [
+      for (final row in rows)
+        SessionMetadata(
+          id: row['id'] as String? ?? '',
+          createdAt:
+              DateTime.tryParse(row['createdAt'] as String? ?? '') ??
+              DateTime.fromMillisecondsSinceEpoch(0),
+          cwd: row['cwd'] as String? ?? '',
+          path: '/session-${row['id'] ?? ''}.jsonl',
+          metadata: {
+            if (row['archived'] == true) 'archived': true,
+            if (row['running'] == true) 'running': true,
+          },
+        ),
+    ];
+  }
+
   @override
   Future<void> sendText(String text) async {
     _error = null;
@@ -310,6 +363,8 @@ final class RelayAgentService extends AgentService {
           ..clear()
           ..addEntries([for (final t in tools) MapEntry(t.name, t.enabled)]);
         notifyListeners();
+      case SessionsResultMsg(:final sessions):
+        _sessionsQuery?.complete(sessions);
       case ToolsPutMsg():
         break; // UI -> SW only
       case ErrorMsg(:final message):

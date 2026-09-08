@@ -53,6 +53,11 @@ abstract interface class UiHostConnector {
   /// transcript. Answers busy with an error event while a turn runs.
   Future<void> newSession();
 
+  /// Opens a past (archived) session as the live one (`session_open`) —
+  /// the current live session is archived first, the archive's transcript
+  /// is restored. Same busy/booted rules as [newSession].
+  Future<void> openSession(String sessionId);
+
   /// One-shot host capability request (`ext_request`: cookies.get_all /
   /// fetch / tabs.create) — the same op surface the host backend serves.
   Future<Map<String, dynamic>> extRequest(
@@ -201,6 +206,23 @@ final class UiPortServer {
           _send(channel, ErrorMsg(code: 'session_new', message: '$error'));
           break;
         }
+        // The reset invalidates the ring: a reconnect replaying OLD-session
+        // events would resurface the archived transcript.
+        _ring.clear();
+        _send(
+          channel,
+          AttachedMsg(sessionId: host.sessionId, replay: const []),
+        );
+        _send(channel, ToolsStateMsg(tools: host.toolsList()));
+        _send(channel, StreamMsg(event: {'type': 'status', ...host.state()}));
+      case final SessionOpenMsg m:
+        try {
+          await host.openSession(m.sessionId);
+        } on Object catch (error) {
+          _send(channel, ErrorMsg(code: 'session_open', message: '$error'));
+          break;
+        }
+        _ring.clear();
         _send(
           channel,
           AttachedMsg(sessionId: host.sessionId, replay: const []),

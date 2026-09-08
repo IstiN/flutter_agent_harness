@@ -40,3 +40,25 @@ Future<String> archiveLiveSession({
   }
   return archivePath;
 }
+
+/// `session_open`'s storage half: copies an archived session back onto the
+/// live path so [JsonlSessionStorage.open] picks it up (header id intact).
+/// Throws when the archive is missing/unreadable — the caller must not
+/// half-swap the live session.
+Future<void> restoreArchivedSession({
+  required FileSystem fs,
+  required String sessionPath,
+  required String archivePath,
+}) async {
+  if ((await fs.exists(archivePath)).valueOrNull != true) {
+    throw StateError('session_open: no such session archive');
+  }
+  final text = (await fs.readTextFile(archivePath)).valueOrNull;
+  if (text == null) {
+    throw StateError('session_open: session archive unreadable');
+  }
+  final written = await fs.writeFile(sessionPath, text);
+  if (written.isErr) {
+    throw StateError('session_open: live session write failed');
+  }
+}
