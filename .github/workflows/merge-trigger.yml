@@ -1,31 +1,31 @@
-# Merge Trigger — PORTABLE TEMPLATE (machine-kit).
+# Merge Trigger — GitHub-issues tracker variant (machine-kit).
 #
 # Placeholder tokens (rendered by machine-kit/setup.sh):
-#   CI   — the workflow whose green run arms the trigger
-#                              (e.g. "Quality" in dmtools-dart, "CI" elsewhere)
-#   epam/dmtools-dart — GitHub repo whose latest release ships the
-#                              dmtools CLI install.sh (default: epam/dmtools-dart)
+#   CI — the workflow whose green run arms the trigger
+#                            (e.g. "Quality" in dmtools-dart, "CI" elsewhere)
 #
-# When CI passes on any branch, run the dmtools-agents sm_merge JSRunner job —
-# it applies JQL rules to find tickets labeled `pr_approved` and launches
-# their merge configs (agents/retry_merge.json → js/retryMergePR.js). This is
-# the auto-merge half of the dark-factory merge loop
-# (auto-update-prs.yml is the actualization half).
+# The tracker is THIS repo's GitHub issues (no Jira, no external services):
 #
-# FUSED OFF via the MERGE_TRIGGER_ENABLED repo variable
-# (Settings → Secrets and variables → Actions → Variables): the job skips
-# itself until the variable is `true`. Fuse ON is safe only when
-# branch protection is active AND required checks are green on main.
+#   issue labeled `pr_approved` → linked PR found → required checks green
+#   (branch protection is the gate: mergeStateStatus CLEAN) → squash-merge →
+#   label removed → comment posted on the issue.
 #
-# Required repo config:
-#   secrets: JIRA_EMAIL/JIRA_API_TOKEN/JIRA_BASE_PATH (Jira polling),
-#            SOURCE_GITHUB_TOKEN (scm.js PR operations)
-#   vars:    MERGE_TRIGGER_ENABLED
-#   submodule: agents/ (IstiN/dmtools-agents, pinned)
+# Linking conventions (either works):
+#   - PR body contains `Closes #NN` / `Fixes #NN` / `Resolves #NN`
+#   - PR branch name starts with `NN-` (e.g. `42-fix-foo`)
+#
+# Prerequisites:
+#   vars: MERGE_TRIGGER_ENABLED (fuse — job skips itself until `true`)
+#   branch protection on main with required checks + strict (the machine
+#   only merges CLEAN PRs, so protection defines what "ready" means).
+#   No secrets needed: github.token is sufficient (merge + issues + PR write).
+#   Recommended: PAT_TOKEN so auto-update-prs re-runs CI on updated branches
+#   (github.token pushes do not trigger workflows) — without it, PRs updated
+#   after a main push wait for any later commit before they can go CLEAN.
 
 name: Merge Trigger
 
-run-name: 'Merge Trigger : CI passed → retry pr_approved merges'
+run-name: 'Merge Trigger : CI passed → merge pr_approved issues'
 
 on:
   workflow_run:
@@ -33,14 +33,15 @@ on:
     types: [completed]
 
 permissions:
-  contents: read
-  pull-requests: read
+  contents: write
+  pull-requests: write
+  issues: write
   actions: read
 
 jobs:
   merge-trigger:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     # Same-repo guard: PRs from forks must not trigger merges.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
@@ -61,36 +62,63 @@ jobs:
             echo "::notice::merge-trigger scaffold is wired but disabled — set the MERGE_TRIGGER_ENABLED repo variable to true (after branch protection + required checks are in place)."
           fi
 
-      - name: Checkout repository
-        if: steps.gate.outputs.enabled == 'true'
-        uses: actions/checkout@v4
-        with:
-          submodules: true # agents/ (sm_merge.json + JS actions)
-
-      - name: Install DMTools CLI from latest release
-        if: steps.gate.outputs.enabled == 'true'
-        run: |
-          curl -fsSL \
-            "https://github.com/epam/dmtools-dart/releases/latest/download/install.sh" \
-            | sh
-          echo "$HOME/.dmtools/bin" >> "$GITHUB_PATH"
-
-      - name: Configure Git Author
-        if: steps.gate.outputs.enabled == 'true'
-        run: |
-          git config --global user.name "dm.ai"
-          git config --global user.email "dm.ai@epam.com"
-
-      - name: Run Merge Trigger
+      - name: Merge issues labeled pr_approved
         if: steps.gate.outputs.enabled == 'true'
         env:
-          CI_RUN_URL: ${{ github.event.workflow_run.html_url }}
-          # Tracker + SCM secrets (same names as the reference repo)
-          JIRA_EMAIL: ${{ vars.JIRA_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          JIRA_BASE_PATH: ${{ vars.JIRA_BASE_PATH }}
-          SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
           GH_TOKEN: ${{ github.token }}
-          DMTOOLS_INTEGRATIONS: jira,github,file
+          LABEL: pr_approved
+          CI_RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
-          dmtools run agents/sm_merge.json --ciRunUrl "${CI_RUN_URL}"
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          issues=$(gh issue list --repo "$repo" --label "$LABEL" --state open \
+            --json number --jq '.[].number')
+          if [ -z "$issues" ]; then
+            echo "no issues labeled '$LABEL' — nothing to merge"
+            exit 0
+          fi
+          merged=0; skipped=0
+          for n in $issues; do
+            echo "::group::issue #$n"
+            pr=$(gh pr list --repo "$repo" --state open \
+              --json number,body,headRefName --jq '
+              [.[]
+                | select(
+                    ((.body // "") | test("(?i)\\b(closes|fixes|resolves)\\s+#'"$n"'\\b"))
+                    or (.headRefName | test("^'"$n"'[-_.]"))
+                  )
+                | .number] | first // empty')
+            if [ -z "$pr" ]; then
+              echo "issue #$n: no linked open PR (add 'Closes #$n' to the PR body or name the branch '$n-…') — skipping"
+              skipped=$((skipped+1)); echo "::endgroup::"; continue
+            fi
+            state=$(gh pr view "$pr" --repo "$repo" \
+              --json mergeable,mergeStateStatus \
+              --jq '.mergeable + ":" + .mergeStateStatus')
+            echo "linked PR #$pr — $state"
+            case "$state" in
+              MERGEABLE:CLEAN)
+                if err=$(gh pr merge "$pr" --repo "$repo" --squash 2>&1); then
+                  merged=$((merged+1))
+                  gh issue edit "$n" --repo "$repo" --remove-label "$LABEL" || true
+                  gh issue comment "$n" --repo "$repo" \
+                    --body "🔀 Merged #$pr (CI: ${CI_RUN_URL:-run})" || true
+                  echo "✅ merged #$pr for issue #$n"
+                else
+                  skipped=$((skipped+1))
+                  echo "❌ merge of #$pr failed: $err"
+                fi
+                ;;
+              MERGEABLE:BEHIND)
+                skipped=$((skipped+1)); echo "⏳ behind main — auto-update-prs will refresh it"
+                ;;
+              MERGEABLE:BLOCKED|MERGEABLE:UNSTABLE)
+                skipped=$((skipped+1)); echo "⏳ required checks not green yet"
+                ;;
+              *)
+                skipped=$((skipped+1)); echo "⛔ not mergeable ($state) — needs manual attention"
+                ;;
+            esac
+            echo "::endgroup::"
+          done
+          echo "summary: merged=$merged skipped=$skipped"

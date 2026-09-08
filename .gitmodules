@@ -1,4 +1,0 @@
-[submodule "agents"]
-	path = agents
-	url = https://github.com/IstiN/dmtools-agents
-	branch = main
