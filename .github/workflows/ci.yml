@@ -446,7 +446,7 @@ jobs:
           bin="build/out/bundle/bin/fa"
           [ "${{ matrix.os }}" = "windows" ] && bin="build/out/bundle/bin/fa.exe"
           out=$("$bin" --help)
-          echo "$out" | head -5 || true
+          echo "$out"
           [ -n "$out" ] || { echo "fa --help produced no output"; exit 1; }
 
   # Aggregation job so branch protection can require ONE stable context
@@ -458,10 +458,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: All platforms built and smoked
-        if: needs.binaries-pr.result == 'success'
+        if: needs.binaries-pr.result == 'success' || needs.binaries-pr.result == 'skipped'
         run: echo "binaries-pr = ${{ needs.binaries-pr.result }}"
       - name: Fail the gate
-        if: needs.binaries-pr.result != 'success'
+        if: needs.binaries-pr.result != 'success' && needs.binaries-pr.result != 'skipped'
         run: |
           echo "binaries-pr result: ${{ needs.binaries-pr.result }}"
           exit 1

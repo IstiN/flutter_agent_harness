@@ -261,6 +261,12 @@ final class _FakeBackend implements UiHostBackend {
   @override
   Future<void> newSession() async => newSessionCalls++;
 
+  var openedSessions = <String>[];
+
+  @override
+  Future<void> openSession(String sessionId) async =>
+      openedSessions.add(sessionId);
+
   @override
   List<UiToolState> toolsList() => const [
     UiToolState(name: 'browser_active_tab', enabled: true),

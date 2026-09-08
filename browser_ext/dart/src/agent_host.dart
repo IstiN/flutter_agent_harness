@@ -8,7 +8,9 @@
 // chrome.storage by agent_main.dart and passed in as [HostConfig]; nothing
 // here is ever exposed to content scripts or pages (AC8).
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/agent/agent.dart';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/agent/agent_tool.dart';
@@ -157,6 +159,9 @@ final class AgentHost implements UiHostBackend {
   /// assistant snapshots share objects with the final message).
   final _persisted = <Message>{};
 
+  /// Last [_refreshArchives] snapshot (sessionsList is sync, the fs is not).
+  List<Map<String, dynamic>>? _archivesCache;
+
   /// Constructs the host: restores the storage env, opens (or creates) the
   /// JSONL session, and builds the agent over the restored transcript.
   /// [chrome] non-null joins the v2 browser-API family (34 core power
@@ -225,6 +230,7 @@ final class AgentHost implements UiHostBackend {
     attachApproval(_agent, _approvals);
     _agent.subscribe(_onAgentEvent);
     _booted = true;
+    unawaited(_refreshArchives());
     _emitStatus();
   }
 
@@ -445,6 +451,39 @@ final class AgentHost implements UiHostBackend {
     _session = Session(await _openSession(fresh: true));
     _persisted.clear();
     _agent.state.messages = const [];
+    unawaited(_refreshArchives());
+    _emitStatus();
+  }
+
+  /// `session_open` (panel taps a past session): archive the current live
+  /// session (same rules as [newSession]), restore the archive onto the
+  /// live path and load its transcript into the agent. Refused while a
+  /// turn runs, or when the archive does not exist.
+  @override
+  Future<void> openSession(String requestedId) async {
+    if (!_booted) throw StateError('not booted');
+    if (_running) throw StateError('busy: finish the current turn first');
+    final archivePath = sessionArchivePath(requestedId);
+    if ((await _env.exists(archivePath)).valueOrNull != true) {
+      throw StateError('no such session: $requestedId');
+    }
+    final currentId = _session?.cachedId ?? '';
+    if (currentId.isNotEmpty && currentId != requestedId) {
+      await archiveLiveSession(
+        fs: _env,
+        sessionPath: _sessionPath,
+        sessionId: currentId,
+      );
+    }
+    await restoreArchivedSession(
+      fs: _env,
+      sessionPath: _sessionPath,
+      archivePath: archivePath,
+    );
+    _session = Session(await JsonlSessionStorage.open(_env, _sessionPath));
+    _persisted.clear();
+    _agent.state.messages = await _session!.buildContextMessages();
+    unawaited(_refreshArchives());
     _emitStatus();
   }
 
@@ -453,15 +492,74 @@ final class AgentHost implements UiHostBackend {
   @override
   String get sessionId => _session?.cachedId ?? '';
 
-  /// Known sessions for the v2 UI: this SW owns exactly one.
+  /// Known sessions for the v2 UI: the live JSONL plus every archived one
+  /// (`/session-<id>.jsonl`, written by session_new / session_open). The
+  /// interface is sync but the fs listing is async — this reads the last
+  /// [_refreshArchives] snapshot; the sheet polls every 3s and every
+  /// mutation (new/open) refreshes, so the list converges within a poll.
   @override
-  List<Map<String, dynamic>> sessionsList() => [
-    {
-      'id': sessionId,
-      'messages': _booted ? _agent.state.messages.length : 0,
-      'running': _running,
-    },
-  ];
+  List<Map<String, dynamic>> sessionsList() {
+    final live = sessionId;
+    return [
+      {
+        'id': live,
+        'messages': _booted ? _agent.state.messages.length : 0,
+        'running': _running,
+        if (_session?.cachedMetadata?.createdAt != null)
+          'createdAt': _session!.cachedMetadata!.createdAt.toIso8601String(),
+        'cwd': _env.cwd,
+      },
+      ...?_archivesCache,
+    ];
+  }
+
+  /// Rescans `/session-*.jsonl` (names + header line for id/timestamp).
+  /// Never throws: a broken entry is skipped — the drawer listing must
+  /// not break the host.
+  Future<void> _refreshArchives() async {
+    final listed = await _env.listDir('/');
+    final entries = listed.valueOrNull ?? const <FileInfo>[];
+    final rows = <Map<String, dynamic>>[];
+    for (final entry in entries) {
+      if (entry.kind != FileKind.file) continue;
+      final name = entry.name;
+      const prefix = 'session-';
+      const suffix = '.jsonl';
+      if (!name.startsWith(prefix) || !name.endsWith(suffix)) continue;
+      final id = name.substring(prefix.length, name.length - suffix.length);
+      if (id.isEmpty) continue;
+      String? createdAt;
+      final header = (await _env.readTextLines(
+        '/$name',
+        maxLines: 1,
+      )).valueOrNull?.firstOrNull;
+      if (header != null) {
+        try {
+          final decoded = jsonDecode(header);
+          if (decoded is Map) {
+            final ts = decoded['timestamp'];
+            if (ts is String) createdAt = ts;
+          }
+        } on Object {
+          // Header parse failure keeps the entry, just undated.
+        }
+      }
+      rows.add({
+        'id': id,
+        'messages': 0,
+        'running': false,
+        if (createdAt != null) 'createdAt': createdAt,
+        'cwd': _env.cwd,
+        'archived': true,
+      });
+    }
+    rows.sort((a, b) {
+      final aT = a['createdAt'] as String? ?? '';
+      final bT = b['createdAt'] as String? ?? '';
+      return bT.compareTo(aT); // newest first
+    });
+    _archivesCache = rows;
+  }
 
   /// Peer mail intake (bridge + DAP): deduped (AC18), queued for steering
   /// mid-run, starts a turn when idle.

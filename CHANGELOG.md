@@ -2968,6 +2968,11 @@
   release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
   page gains the download + load-unpacked card.
 
+## 0.1.325
+
+- feat(browser_ext): session history in the extension panel — list + open SW archives (#64)
+- fix(ci): binary smoke SIGPIPE + smoke gate passes skipped matrix on push/schedule (#63)
+
 ## Unreleased
 
 ## Unreleased

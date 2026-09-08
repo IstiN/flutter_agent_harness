@@ -71,4 +71,34 @@ void main() {
     // No half archive appeared.
     expect((await fs.exists('/session-abc.jsonl')).valueOrNull, isFalse);
   });
+
+  test(
+    'restoreArchivedSession copies the archive onto the live path',
+    () async {
+      final fs = MemoryFileSystem(cwd: '/')
+        ..writeFile('/session-old.jsonl', '{"id":"old"}\n{"r":1}\n')
+        ..writeFile('/session.jsonl', '{"id":"live"}\n');
+      await restoreArchivedSession(
+        fs: fs,
+        sessionPath: '/session.jsonl',
+        archivePath: '/session-old.jsonl',
+      );
+      expect(
+        (await fs.readTextFile('/session.jsonl')).valueOrNull,
+        '{"id":"old"}\n{"r":1}\n',
+      );
+    },
+  );
+
+  test('restoreArchivedSession: missing archive throws', () async {
+    final fs = MemoryFileSystem(cwd: '/');
+    await expectLater(
+      restoreArchivedSession(
+        fs: fs,
+        sessionPath: '/session.jsonl',
+        archivePath: '/session-ghost.jsonl',
+      ),
+      throwsStateError,
+    );
+  });
 }
