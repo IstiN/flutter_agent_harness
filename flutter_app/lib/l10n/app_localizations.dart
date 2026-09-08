@@ -2924,6 +2924,12 @@ abstract class AppLocalizations {
   /// **'Refresh'**
   String get publicationsRefresh;
 
+  /// No description provided for @publicationsOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline — showing last known states.'**
+  String get publicationsOffline;
+
   /// No description provided for @publicationStateOpen.
   ///
   /// In en, this message translates to:

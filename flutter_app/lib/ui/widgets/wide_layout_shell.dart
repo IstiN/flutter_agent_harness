@@ -904,6 +904,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       context,
       SettingsScreen(
         service: widget.manager.active?.service,
+        env: widget.manager.env,
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
         layoutStore: widget.layoutStore,

@@ -14,6 +14,7 @@ import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/widgets/github_connect_sheet.dart';
 import 'package:fa/ui/widgets/widget_publications_sheet.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// The shared app-wide GitHub account store for widget publishing.
 ///
@@ -33,24 +34,35 @@ GithubAccountStore? _shared;
 class GithubAccountSection extends StatelessWidget {
   const GithubAccountSection({
     super.key,
+    this.env,
     this.store,
     this.ledger,
     this.publishService,
     this.clientFactory,
   });
 
+  /// The sandbox the publications ledger + publish service run against —
+  /// the app manager env the launcher/apps-panel menus use for the same
+  /// purpose. When set, "My publications" builds the shared ledger and a
+  /// [WidgetPublishService] on demand (the same wiring
+  /// `AppsPanel._publishApp` uses), so the sheet gets live status polling
+  /// and the Refresh action. Null keeps the sheet read-only (bare tests).
+  final ExecutionEnv? env;
+
   /// Store override (tests); falls back to [sharedGithubAccountStore]
   /// resolved from the nearest [SessionKeysScope].
   final GithubAccountStore? store;
 
-  /// Ledger override for the "My publications" sheet; falls back to
-  /// [sharedWidgetPublicationStore].
+  /// Ledger override for the "My publications" sheet; falls back to the
+  /// shared store (initialized from [env] when present).
   final WidgetPublicationStore? ledger;
 
-  /// Status refresher for the publications sheet (null = read-only).
+  /// Status refresher override (tests); when null and [env] is set, a real
+  /// service is built on demand. Null env + null override = read-only.
   final WidgetPublishService? publishService;
 
-  /// Test hook forwarded to the connect sheet.
+  /// Test hook forwarded to the connect sheet and the on-demand publish
+  /// service.
   final GithubApiClient Function(String token)? clientFactory;
 
   GithubAccountStore? _resolveStore(BuildContext context) {
@@ -143,17 +155,44 @@ class GithubAccountSection extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         TextButton.icon(
-          onPressed: () => unawaited(
-            showWidgetPublicationsSheet(
-              context,
-              ledger: ledger ?? sharedWidgetPublicationStore(),
-              service: publishService,
-            ),
-          ),
+          onPressed: () => unawaited(_openPublications(context, store)),
           icon: const Icon(Icons.list_alt, size: 18),
           label: Text(l10n.myPublications),
         ),
       ],
+    );
+  }
+
+  /// Opens "My publications". An explicit [publishService] (tests) wins;
+  /// otherwise an [env] builds the shared ledger + a real service on
+  /// demand — the same on-demand wiring the launcher/apps-panel publish
+  /// menus use — so the sheet runs the timed status polling and keeps the
+  /// Refresh action. Nothing to build with → read-only last-known view.
+  Future<void> _openPublications(
+    BuildContext context,
+    GithubAccountStore store,
+  ) async {
+    final env = this.env;
+    final service = publishService;
+    final ledger =
+        this.ledger ??
+        (env == null
+            ? sharedWidgetPublicationStore()
+            : await initSharedWidgetPublicationStore(env));
+    if (!context.mounted) return;
+    await showWidgetPublicationsSheet(
+      context,
+      ledger: ledger,
+      service:
+          service ??
+          (env == null
+              ? null
+              : WidgetPublishService(
+                  env: env,
+                  account: store,
+                  ledger: ledger,
+                  clientFactory: clientFactory,
+                )),
     );
   }
 

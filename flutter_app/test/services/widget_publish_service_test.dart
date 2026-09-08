@@ -978,5 +978,63 @@ void main() {
       expect(comments.first.body, 'c10');
       expect(comments.last.body, 'c59');
     });
+
+    test('an unchanged poll tick does not rewrite the ledger', () async {
+      final env = MemoryExecutionEnv();
+      final ledger = await WidgetPublicationStore.load(env);
+      await ledger.record(
+        WidgetPublication(
+          widgetId: 'pomodoro',
+          version: '1.0.0',
+          repoFullName: 'octocat/fa-widget-pomodoro',
+          repoCommit: 'abc',
+          step: WidgetPublication.stepPrOpened,
+          submittedAt: DateTime.utc(2026, 2, 1),
+          prNumber: 42,
+          lastKnownState: WidgetPublication.stateOpen,
+          comments: [
+            WidgetPublicationComment(
+              author: 'IstiN',
+              body: 'Looks good.',
+              createdAt: DateTime.utc(2026, 2, 2, 9),
+              isReview: false,
+            ),
+          ],
+        ),
+      );
+      // The poller ticks every 5 minutes: a no-change tick must not
+      // persist (no file rewrite, no listener spam).
+      var records = 0;
+      ledger.addListener(() => records++);
+      // Scripted responders are one-shot: a fresh transport per tick.
+      Map<String, Object?> comment(String body, String at) => {
+        'user': {'login': 'IstiN'},
+        'body': body,
+        'created_at': at,
+      };
+      final gh = _ScriptedGithub()
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42', _pullJson(42))
+        ..on('GET', '/repos/IstiN/fa_widgets/issues/42/comments', [
+          comment('Looks good.', '2026-02-02T09:00:00Z'),
+        ])
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42/comments', []);
+      final account = await _connectedAccount();
+      final publication = ledger.byWidgetId('pomodoro')!;
+
+      await _service(env, account, ledger, gh).refreshStatus(publication);
+      expect(records, 0);
+
+      // One new comment lands: exactly one persist.
+      final gh2 = _ScriptedGithub()
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42', _pullJson(42))
+        ..on('GET', '/repos/IstiN/fa_widgets/issues/42/comments', [
+          comment('Looks good.', '2026-02-02T09:00:00Z'),
+          comment('Merging after CI.', '2026-02-02T10:00:00Z'),
+        ])
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42/comments', []);
+      await _service(env, account, ledger, gh2).refreshStatus(publication);
+      expect(records, 1);
+      expect(ledger.byWidgetId('pomodoro')!.comments, hasLength(2));
+    });
   });
 }

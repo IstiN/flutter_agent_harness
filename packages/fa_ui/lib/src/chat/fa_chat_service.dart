@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'approval_ui.dart';
+
 /// One message in the chat transcript the [FaChatScreen] renders.
 ///
 /// Moved out of the app's agent service so hosts can adapt any backend
@@ -53,7 +55,7 @@ const emptyResponsePlaceholder = '(empty response — try again)';
 /// Implement it over your agent backend (Fa's `AgentService` already
 /// satisfies every member; other hosts write a thin adapter). The chat
 /// listens via [Listenable] and re-reads [messages] on every notify.
-abstract interface class FaChatService implements Listenable {
+abstract interface class FaChatService implements FaApprovalModeController {
   /// The transcript, oldest first; re-read on every change notification.
   List<FaChatMessage> get messages;
 
@@ -107,9 +109,11 @@ abstract interface class FaChatService implements Listenable {
   set secretRequestHandler(RequestSecretCallback? handler);
 
   /// The approval manager (mode selector in the composer menu).
+  @override
   ApprovalManager get approval;
 
   /// Applies a new approval mode.
+  @override
   void setApprovalMode(ApprovalMode mode);
 
   /// The live trajectory ledger: a [TrajectorySnapshot] per change, in

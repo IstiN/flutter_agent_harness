@@ -211,10 +211,12 @@ final class AgentHost implements UiHostBackend {
       mode:
           approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk,
       // alwaysPrompts (inject_js) rides the per-tool prompt override, which
-      // outranks the session mode, turn grants and the always-allow set.
+      // outranks the session mode, turn grants and the always-allow set —
+      // except in yolo, which means EVERYTHING (see applyModePromptOverrides).
       overrides: alwaysPromptOverrides(),
       prompt: _promptApproval,
     );
+    applyModePromptOverrides(_approvals, _approvals.mode);
 
     final storage = await _openSession();
     _session = Session(storage);
@@ -247,6 +249,9 @@ final class AgentHost implements UiHostBackend {
         approvalModeFromLabel(config.approvalMode) ?? ApprovalMode.alwaysAsk;
     final modeChanged = mode != _approvals.mode;
     _approvals.mode = mode;
+    // yolo drops the inject_js always-prompt guard; other modes restore
+    // it (a per-tool prompt override outranks the session mode).
+    applyModePromptOverrides(_approvals, mode);
     if (modeChanged &&
         (mode == ApprovalMode.yolo || mode == ApprovalMode.unattended)) {
       final resolved = _flow.resolveAll(
