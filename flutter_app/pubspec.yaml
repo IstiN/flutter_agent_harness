@@ -142,6 +142,8 @@ dependencies:
   firebase_crashlytics: 5.2.6
 
 dev_dependencies:
+  # Mock seam for url_launcher in widget/golden tests.
+  url_launcher_platform_interface: ^2.3.2
   flutter_test:
     sdk: flutter
   integration_test:

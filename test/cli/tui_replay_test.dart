@@ -73,6 +73,40 @@ void main() {
     });
   });
 
+  group('restoredInputHistory', () {
+    test('collects plain user messages, skipping commands and chrome', () {
+      final messages = [
+        UserMessage.text('first question'),
+        assistant([TextContent(text: 'the answer')]),
+        UserMessage.text('/resume'),
+        UserMessage.text('!ls -la'),
+        UserMessage.text('   '),
+        assistant([ToolCall(id: 't1', name: 'read', arguments: {})]),
+        UserMessage.text('duplicated'),
+        UserMessage.text('duplicated'),
+      ];
+      expect(restoredInputHistory(messages), ['first question', 'duplicated']);
+    });
+
+    test('system notices and compaction summaries are not history', () {
+      const notice = '<system-notice>job sh-1 finished</system-notice>';
+      final messages = [
+        UserMessage.text(notice),
+        UserMessage.text('$compactionSummaryPrefix<span>summary</span>'),
+        UserMessage.text('a real message'),
+      ];
+      expect(restoredInputHistory(messages), ['a real message']);
+    });
+
+    test('keeps only the last 100 entries', () {
+      final messages = [for (var i = 0; i < 120; i++) UserMessage.text('m$i')];
+      final history = restoredInputHistory(messages);
+      expect(history, hasLength(100));
+      expect(history.first, 'm20');
+      expect(history.last, 'm119');
+    });
+  });
+
   group('replayLinesTui', () {
     test('a plain-text user message renders as the background echo box', () {
       final lines = replayLinesTui(

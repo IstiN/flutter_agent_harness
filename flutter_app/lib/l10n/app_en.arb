@@ -526,6 +526,12 @@
       "date": {}
     }
   },
+  "publicationComments": "{count, plural, =1{1 comment}other{{count} comments}}",
+  "@publicationComments": {
+    "placeholders": {
+      "count": {}
+    }
+  },
   "publishWidgetTitle": "Publish “{name}”",
   "@publishWidgetTitle": {
     "placeholders": {

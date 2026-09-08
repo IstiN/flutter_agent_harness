@@ -14,6 +14,7 @@ import 'package:fa/services/github_account_store.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/github_api_client.dart';
 import 'package:fa/services/github_oauth_web_flow.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
         CopilotDeviceFlowError,
@@ -58,6 +59,9 @@ Future<bool?> showGithubConnectSheet(
   String? deviceClientId,
   String? webClientId,
   GithubOauthWebFlow webFlow = const GithubOauthWebFlow(),
+
+  /// Test hook: transport for the device-flow requests (github.com).
+  http.Client? httpClient,
 }) {
   return showModalBottomSheet<bool>(
     context: context,
@@ -70,6 +74,7 @@ Future<bool?> showGithubConnectSheet(
       deviceClientId: deviceClientId,
       webClientId: webClientId,
       webFlow: webFlow,
+      httpClient: httpClient,
     ),
   );
 }
@@ -83,6 +88,7 @@ class GithubConnectSheet extends StatefulWidget {
     this.deviceClientId,
     this.webClientId,
     this.webFlow = const GithubOauthWebFlow(),
+    this.httpClient,
   });
 
   final GithubAccountStore account;
@@ -104,6 +110,9 @@ class GithubConnectSheet extends StatefulWidget {
 
   /// Test hook: replaces the github.com code exchange.
   final GithubOauthWebFlow webFlow;
+
+  /// Test hook: transport for the device-flow requests (github.com).
+  final http.Client? httpClient;
 
   @override
   State<GithubConnectSheet> createState() => _GithubConnectSheetState();
@@ -317,6 +326,7 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
       final grant = await requestCopilotDeviceGrant(
         clientId: _deviceClientId!,
         scope: 'public_repo',
+        client: widget.httpClient,
       );
       if (_cancelled) return;
       setState(() => _grant = grant);
@@ -330,6 +340,7 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
         grant: grant,
         clientId: _deviceClientId!,
         delay: Future<void>.delayed,
+        client: widget.httpClient,
       );
       if (_cancelled) return;
       await _finishConnect(token);

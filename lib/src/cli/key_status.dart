@@ -69,11 +69,12 @@ final class KeyStatusRenderer {
   ///
   /// Legacy mode reads the names by provider KIND, matching the executable's
   /// key lookup: `openai-completions` accepts OPENROUTER_API_KEY/
-  /// OPENAI_API_KEY even on custom endpoints, where the model's provider
-  /// flips to `openai`. Roles mode keys per resolved chain entry, so the
-  /// live model's provider names are the right ones there. An explicit
-  /// `/provider` token has no env var to name and reads as "provided" — the
-  /// value is never printed.
+  /// OPENAI_API_KEY on the catalog default endpoint; on a custom endpoint
+  /// only endpoint-scoped store keys count (the env names describe the
+  /// default endpoint — issue #40). Roles mode keys per resolved chain
+  /// entry, so the live model's provider names are the right ones there. An
+  /// explicit `/provider` token has no env var to name and reads as
+  /// "provided" — the value is never printed.
   String? keyStatusLine(Model model) {
     final spec = catalogProvider(rolesDriven ? model.provider : providerKind);
     final names = spec?.apiKeyEnvNames;
@@ -103,19 +104,24 @@ final class KeyStatusRenderer {
     return 'key: provided';
   }
 
-  /// Key status from the resolution order: genuine environment values first
-  /// (they differ from the store's entry); then the active custom entry's
-  /// slot (multi-account entries use name-scoped ones), the host-scoped
-  /// slot, and legacy env-name entries (env or store — indistinguishable
-  /// here).
+  /// Key status from the resolution order: on the spec's DEFAULT endpoint
+  /// genuine environment values first (they differ from the store's
+  /// entry); then the active custom entry's slot (multi-account entries
+  /// use name-scoped ones), the host-scoped slot, and legacy env-name
+  /// entries (env or store — indistinguishable here). On a custom endpoint
+  /// the catalog env names are never in play (they describe the default
+  /// endpoint — the same rule [optionalProviderApiKey] enforces at boot),
+  /// so only the store slots can be the source.
   String? resolvedKeyStatus(
     Model model,
     ProviderSpec? spec,
     List<String> names,
   ) {
     final keys = secureKeys;
-    final envKey = envKeyStatus(names);
-    if (envKey != null) return envKey;
+    if (!_legacyCustomEndpoint(model, spec)) {
+      final envKey = envKeyStatus(names);
+      if (envKey != null) return envKey;
+    }
     final entryKey = activeCustomKeyName();
     if (entryKey != null && keys?.read(entryKey) != null) {
       return 'key: $entryKey';
@@ -125,18 +131,25 @@ final class KeyStatusRenderer {
     return fallbackKeyStatus(model, spec, names);
   }
 
+  /// Whether legacy mode resolves on a CUSTOM endpoint (base URL other than
+  /// the catalog default). Roles mode is exempt: its keys live in the
+  /// environment by design.
+  bool _legacyCustomEndpoint(Model model, ProviderSpec? spec) =>
+      !rolesDriven && spec != null && model.baseUrl != spec.defaultBaseUrl;
+
   /// Key status fallback: any legacy env-name entry, else the "no key set"
-  /// guidance (null for non-default endpoints without a key).
+  /// guidance (null for non-default endpoints without a key — they may
+  /// legitimately run keyless).
   String? fallbackKeyStatus(
     Model model,
     ProviderSpec? spec,
     List<String> names,
   ) {
+    if (_legacyCustomEndpoint(model, spec)) return null;
     final set = names
         .where((name) => envVarIsSet?.call(name) ?? false)
         .firstOrNull;
     if (set != null) return 'key: $set';
-    if (spec != null && model.baseUrl != spec.defaultBaseUrl) return null;
     return 'key: no key set (want ${names.first})';
   }
 
@@ -202,23 +215,28 @@ final class KeyStatusRenderer {
 
   /// The ` — ...` suffix for [errorLine] on auth failures. Never prints key
   /// material — names and sources only. Mirrors the provider key resolution
-  /// order: genuine environment value → endpoint-scoped store entry →
-  /// legacy env-name store entry.
+  /// order: on the spec's DEFAULT endpoint a genuine environment value →
+  /// endpoint-scoped store entry → legacy env-name store entry; on a custom
+  /// endpoint only the endpoint-scoped store entries can be the source (the
+  /// boot resolver never probes the catalog env names there — issue #40).
   String authHint(String baseUrl) {
     if (rolesDriven) {
       return ' — roles mode reads keys from the environment only; check '
           'the chain env vars in ~/.fah/config.yaml';
     }
     final spec = catalogProvider(providerKind);
-    final names = spec?.apiKeyEnvNames;
-    if (names == null || names.isEmpty) {
+    if (spec == null || spec.apiKeyEnvNames.isEmpty) {
       return ' — check the credentials for $baseUrl';
     }
+    final names = spec.apiKeyEnvNames;
     final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
-    // A genuine environment key in play: warn when it shadows a different
-    // same-name store entry, else name it as the source.
-    final envHint = envActiveHint(names, baseUrl);
-    if (envHint != null) return envHint;
+    final onDefaultEndpoint = baseUrl == spec.defaultBaseUrl;
+    if (onDefaultEndpoint) {
+      // A genuine environment key in play: warn when it shadows a different
+      // same-name store entry, else name it as the source.
+      final envHint = envActiveHint(names, baseUrl);
+      if (envHint != null) return envHint;
+    }
     // Endpoint-scoped store key (what /provider and the wizard write): the
     // active custom entry's name-scoped slot first, then the host-scoped
     // one.
@@ -226,11 +244,13 @@ final class KeyStatusRenderer {
     final scoped = entryKey ?? scopedName;
     final storedHint = storedKeyHint(scoped, baseUrl);
     if (storedHint != null) return storedHint;
-    // Legacy env-name store key (older versions wrote these).
-    final legacy = names
-        .where((name) => (envVarValue?.call(name) ?? '').isNotEmpty)
-        .firstOrNull;
-    if (legacy != null) return storeHintMessage(legacy, baseUrl);
+    if (onDefaultEndpoint) {
+      // Legacy env-name store key (older versions wrote these).
+      final legacy = names
+          .where((name) => (envVarValue?.call(name) ?? '').isNotEmpty)
+          .firstOrNull;
+      if (legacy != null) return storeHintMessage(legacy, baseUrl);
+    }
     return noKeyHint(entryKey, baseUrl, spec, scopedName, names);
   }
 

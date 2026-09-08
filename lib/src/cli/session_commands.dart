@@ -104,6 +104,9 @@ extension on AgentCli {
   /// the END (see [buildReplayEntries] — a typical session replays in full,
   /// only marathon ones truncate, and the header says so).
   void _replayRestoredHistory(List<Message> messages, String label) {
+    // Restore the composer's ↑ history from the session's user messages so
+    // recall — not viewport scrolling — answers ↑ right after a resume.
+    _tuiController?.setInputHistory(restoredInputHistory(messages));
     if (messages.isEmpty) return;
     // Below the TUI history cap (2000 lines) so the replay never trims its
     // own head in TUI mode.

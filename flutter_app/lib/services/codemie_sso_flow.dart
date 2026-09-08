@@ -11,7 +11,9 @@ import 'package:flutter_agent_harness/io.dart'
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/codemie_extension_signin.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/ui/screens/codemie_sso_webview.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa_ui/fa_ui.dart' show FaModelListPicker, pushFaPage;
@@ -51,16 +53,29 @@ Future<bool> runCodemieSsoFlow({
   required LastConnectionStore lastConnectionStore,
   String orgUrl = defaultCodeMieBaseUrl,
 }) async {
-  // The web build cannot run the loopback callback server — say so
-  // honestly instead of crashing on dart:io Platform access.
+  // The web build cannot run the loopback callback server — but INSIDE
+  // the extension it never needs one: the app page may open the login
+  // tab and fetch with the browser jar (`chrome.tabs` + `credentials:
+  // 'include'`, no CORS under host permissions). The redirect
+  // interception is a desktop/mobile-only concern.
   if (kIsWeb) {
+    if (isExtensionHost()) {
+      return _extensionCookieSignin(
+        context: context,
+        registry: registry,
+        service: service,
+        lastConnectionStore: lastConnectionStore,
+        orgUrl: orgUrl,
+      );
+    }
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
             'CodeMie sign-in needs the desktop or mobile app '
-            '(a localhost callback server). Use a key-based provider '
-            'in the web build.',
+            '(a localhost callback server), or the browser extension '
+            '(cookie sign-in). Use a key-based provider in the plain '
+            'web build.',
           ),
         ),
       );
@@ -184,6 +199,127 @@ Future<bool> runCodemieSsoFlow({
   if (service != null) await service.reconfigure(config);
   await lastConnectionStore.saveFromConfig(config);
 
+  return true;
+}
+
+/// The extension-host branch of the CodeMie sign-in: no SSO redirect and
+/// no key — the login page opens in a normal browser tab, the cookie jar
+/// is shared with the extension, and the app page's fetch
+/// (`credentials: 'include'`) polls the models endpoint until the session
+/// lands. The saved provider keeps an EMPTY key: the service worker's
+/// streaming fetch carries the jar; a bearer key never exists.
+Future<bool> _extensionCookieSignin({
+  required BuildContext context,
+  required ProviderRegistry registry,
+  required AgentService? service,
+  required LastConnectionStore lastConnectionStore,
+  required String orgUrl,
+}) async {
+  final apiBase = codeMieApiBase(orgUrl);
+  final baseUrl = '$apiBase/v1';
+  final probeUrl = '$apiBase/v1/llm_models?include_all=true';
+
+  // A cancellable wait — the dialog carries only the story and the
+  // Cancel button; the poll below owns the actual waiting.
+  var cancelled = false;
+  if (context.mounted) {
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('CodeMie cookie sign-in'),
+          content: const Text(
+            'A browser tab with the CodeMie login page is opening. '
+            'Sign in there — this dialog closes the moment the session '
+            'lands (the extension shares the browser cookie jar).',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                cancelled = true;
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  final models = await pollCodeMieSignIn(
+    probe: () async {
+      final result = await extFetchString(probeUrl);
+      if (result == null) throw StateError('not an extension host');
+      return result;
+    },
+    openLoginPage: () {
+      unawaited(extOpenTab('$orgUrl/login'));
+    },
+    cancelled: () => cancelled,
+  );
+
+  if (context.mounted) {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) navigator.pop(); // the wait dialog
+  }
+  if (models == null) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'CodeMie sign-in did not complete — no live session appeared '
+            'within the wait window (or it was cancelled). Try again.',
+          ),
+        ),
+      );
+    }
+    return false;
+  }
+
+  if (!context.mounted) return false;
+
+  // Re-login keeps the same model (pre-selected in the picker).
+  final existing = registry.providers
+      .where((p) => p.baseUrl == baseUrl)
+      .firstOrNull;
+  final modelId = await _pickModel(
+    context,
+    models,
+    preselected: existing?.modelId,
+  );
+  if (modelId == null || modelId.isEmpty) return false;
+  if (!context.mounted) return false;
+
+  // Save + connect. The key is deliberately NOT set: CodeMie here
+  // authenticates by cookie, and the SW's fetch attaches it.
+  final name = _hostFromUrl(orgUrl);
+  if (existing != null) {
+    final updated = CustomProvider(
+      id: existing.id,
+      name: existing.name,
+      baseUrl: baseUrl,
+      modelId: modelId,
+    );
+    await registry.update(updated);
+    registry.rememberKey(updated.id, '');
+  } else {
+    final provider = await registry.add(
+      name: name,
+      baseUrl: baseUrl,
+      modelId: modelId,
+    );
+    registry.rememberKey(provider.id, '');
+  }
+  final config = AgentConfig(
+    providerKind: 'openai-completions',
+    modelId: modelId,
+    baseUrl: baseUrl,
+    apiKey: '',
+  );
+  if (service != null) await service.reconfigure(config);
+  await lastConnectionStore.saveFromConfig(config);
   return true;
 }
 

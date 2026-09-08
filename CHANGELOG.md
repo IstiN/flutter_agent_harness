@@ -1,6 +1,22 @@
 # Changelog
 
 ## Unreleased
+- fix(43): typing during minutes-long thinking streams no longer degrades —
+  the 32KB tail hard-split in `_appendOutput` used to land on
+  `TranscriptMarkdown`'s commit boundary (fresh substring identities
+  defeat both resumability sentinels) and force a full O(transcript)
+  markdown+wrap rebuild, so frame builds grew with the session
+  (real-PTY e2e at 200 reasoning deltas/s: frame-build p99 24.8ms /
+  max 81ms after 60s, keystroke echo p99 59.5ms). The grown-tail
+  rollback now also recognizes the split shape — the boundary line
+  survives as a prefix of the concatenated chunks (`_boundarySurvivesAsChunks`,
+  one O(boundary) string compare per suspected split) — rolls back one
+  source line and re-walks the chunks; replaced content still takes the
+  documented rebuild path. Rebuilds in the flood regime: 0 (bench
+  `scripts/tui_typing_bench.dart --grow-tail`; frame-build p99 5.0ms /
+  max 7.4ms flat). Contracts: split-resume trio in
+  `test/cli/transcript_markdown_perf_test.dart`; perf log:
+  docs/performance-cli-tui.md.
 
 - feat(skills): the `fa-self-config` skill (issue #29, phase 1) — fa
   configures itself by editing the config files the CLI settings commands
@@ -19,6 +35,17 @@
 ## 0.1.322
 
 
+- feat(flutter_app): CodeMie sign-in works inside the browser extension —
+  no webview, no localhost callback, no API key. The app page detects the
+  extension host (`chrome.runtime.id`), opens the login page in a NORMAL
+  browser tab (IdPs forbid framing; MV3 has no webview), and polls the
+  models endpoint with `credentials: 'include'` until the shared cookie
+  jar holds a session. The redirect-interception dance (localhost
+  callback server) stays a desktop/mobile-only concern; the saved
+  provider keeps an EMPTY key — the service worker's streaming fetch
+  carries the jar. Poll/parse core is pure and tested
+  (`codemie_extension_signin.dart`); `extOpenTab`/`extFetchString`
+  bindings live beside the existing `chrome.runtime` interop.
 - feat(browser_ext): CodeMie cookie sign-in without any API key or SSO
   dance — the panel now talks to a small `ext_request` op surface on the
   service worker (`cookies.get_all`, SW-relayed `fetch` with
@@ -2915,7 +2942,8 @@
 - fix(browser_ext): status snapshots must not flip the transport to streaming
 - fix(browser_ext): the panel relay never connected — port name + envelope mismatch
 
-## Unreleased
+## 0.1.323
+
 
 - fix(browser_ext): page/app screenshots reach the model as vision image
   blocks — `page_screenshot`/`app_screenshot` and the v1 `screenshot` op
@@ -2938,6 +2966,8 @@
 - ci: the Chrome extension builds in the release pipeline and ships as a
   release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
   page gains the download + load-unpacked card.
+
+## Unreleased
 
 ## Unreleased
 

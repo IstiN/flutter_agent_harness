@@ -375,12 +375,9 @@ void main() {
             _repoJson('octocat/fa-widget-pomodoro'),
             status: 201,
           )
-          ..on(
-            'GET',
-            '/repos/octocat/fa-widget-pomodoro/git/ref/heads/main',
-            {'message': 'Git Repository is empty.'},
-            status: 409,
-          )
+          ..on('GET', '/repos/octocat/fa-widget-pomodoro/git/ref/heads/main', {
+            'message': 'Git Repository is empty.',
+          }, status: 409)
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/blobs', {
             'sha': 'b1',
           })
@@ -405,13 +402,9 @@ void main() {
           ..on('POST', '/repos/octocat/fa-widget-pomodoro/git/commits', {
             'sha': 'commit1',
           })
-          ..on(
-            'PUT',
-            '/repos/octocat/fa-widget-pomodoro/contents/README.md',
-            {
-              'commit': {'sha': 'boot1'},
-            },
-          )
+          ..on('PUT', '/repos/octocat/fa-widget-pomodoro/contents/README.md', {
+            'commit': {'sha': 'boot1'},
+          })
           ..on(
             'PATCH',
             '/repos/octocat/fa-widget-pomodoro/git/refs/heads/main',
@@ -467,12 +460,7 @@ void main() {
             .toList();
         expect(
           treePaths,
-          containsAll([
-            'README.md',
-            'manifest.json',
-            'widget.js',
-            'icon.svg',
-          ]),
+          containsAll(['README.md', 'manifest.json', 'widget.js', 'icon.svg']),
         );
         final commitBody = gh.bodyOf(
           gh
@@ -860,6 +848,135 @@ void main() {
         }, status: 404);
       await _service(env, account, ledger, gh3).refreshStatus(publication);
       expect(ledger.byWidgetId('pomodoro')!.lastKnownState, 'unknown');
+    });
+
+    test('refresh snapshots reviewer comments into the ledger', () async {
+      final env = MemoryExecutionEnv();
+      final ledger = await WidgetPublicationStore.load(env);
+      final publication = await ledger.record(
+        WidgetPublication(
+          widgetId: 'pomodoro',
+          version: '1.0.0',
+          repoFullName: 'octocat/fa-widget-pomodoro',
+          repoCommit: 'abc',
+          step: WidgetPublication.stepPrOpened,
+          submittedAt: DateTime.utc(2026, 2, 1),
+          prNumber: 42,
+        ),
+      );
+      final gh = _ScriptedGithub()
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42', _pullJson(42))
+        ..on('GET', '/repos/IstiN/fa_widgets/issues/42/comments', [
+          {
+            'user': {'login': 'IstiN'},
+            'body': 'Please bump the icon size.',
+            'created_at': '2026-02-02T10:00:00Z',
+          },
+        ])
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42/comments', [
+          {
+            'user': {'login': 'IstiN'},
+            'body': 'manifest.json line 3: semver ok',
+            'created_at': '2026-02-02T09:00:00Z',
+          },
+        ]);
+      await _service(
+        env,
+        await _connectedAccount(),
+        ledger,
+        gh,
+      ).refreshStatus(publication);
+      final comments = ledger.byWidgetId('pomodoro')!.comments;
+      expect(comments, hasLength(2));
+      // Conversation + review comments merge date-sorted, oldest first.
+      expect(comments[0].body, 'manifest.json line 3: semver ok');
+      expect(comments[0].isReview, isTrue);
+      expect(comments[1].author, 'IstiN');
+      expect(comments[1].body, 'Please bump the icon size.');
+      expect(comments[1].isReview, isFalse);
+      // Persisted for the next app start (kill-resume parity with state).
+      final reloaded = await WidgetPublicationStore.load(env);
+      expect(reloaded.byWidgetId('pomodoro')!.comments, hasLength(2));
+      expect(
+        reloaded.byWidgetId('pomodoro')!.comments[1].body,
+        'Please bump the icon size.',
+      );
+    });
+
+    test('comment fetch failure degrades to a state-only refresh', () async {
+      final env = MemoryExecutionEnv();
+      final ledger = await WidgetPublicationStore.load(env);
+      final publication = await ledger.record(
+        WidgetPublication(
+          widgetId: 'pomodoro',
+          version: '1.0.0',
+          repoFullName: 'octocat/fa-widget-pomodoro',
+          repoCommit: 'abc',
+          step: WidgetPublication.stepPrOpened,
+          submittedAt: DateTime.utc(2026, 2, 1),
+          prNumber: 42,
+        ),
+      );
+      final gh = _ScriptedGithub()
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42', {
+          ..._pullJson(42),
+          'state': 'closed',
+          'merged_at': '2026-02-02T00:00:00Z',
+        })
+        ..on('GET', '/repos/IstiN/fa_widgets/issues/42/comments', {
+          'message': 'boom',
+        }, status: 500)
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42/comments', {
+          'message': 'boom',
+        }, status: 500);
+      await _service(
+        env,
+        await _connectedAccount(),
+        ledger,
+        gh,
+      ).refreshStatus(publication);
+      final stored = ledger.byWidgetId('pomodoro')!;
+      expect(stored.lastKnownState, 'merged');
+      expect(stored.comments, isEmpty);
+    });
+
+    test('comment snapshot is capped at the newest 50', () async {
+      final env = MemoryExecutionEnv();
+      final ledger = await WidgetPublicationStore.load(env);
+      final publication = await ledger.record(
+        WidgetPublication(
+          widgetId: 'pomodoro',
+          version: '1.0.0',
+          repoFullName: 'octocat/fa-widget-pomodoro',
+          repoCommit: 'abc',
+          step: WidgetPublication.stepPrOpened,
+          submittedAt: DateTime.utc(2026, 2, 1),
+          prNumber: 42,
+        ),
+      );
+      List<Map<String, Object?>> commentAt(int minute) => [
+        {
+          'user': {'login': 'IstiN'},
+          'body': 'c$minute',
+          'created_at':
+              '2026-02-02T00:${minute.toString().padLeft(2, '0')}:00Z',
+        },
+      ];
+      final issueComments = [for (var i = 0; i < 60; i++) ...commentAt(i)];
+      final gh = _ScriptedGithub()
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42', _pullJson(42))
+        ..on('GET', '/repos/IstiN/fa_widgets/issues/42/comments', issueComments)
+        ..on('GET', '/repos/IstiN/fa_widgets/pulls/42/comments', []);
+      await _service(
+        env,
+        await _connectedAccount(),
+        ledger,
+        gh,
+      ).refreshStatus(publication);
+      final comments = ledger.byWidgetId('pomodoro')!.comments;
+      expect(comments, hasLength(50));
+      expect(comments.first.body, 'c10');
+      expect(comments.last.body, 'c59');
     });
   });
 }

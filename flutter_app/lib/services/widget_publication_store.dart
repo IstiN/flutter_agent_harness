@@ -20,6 +20,43 @@ WidgetPublicationState widgetPublicationStateOf(String raw) => switch (raw) {
   _ => WidgetPublicationState.unknown,
 };
 
+/// One reviewer comment of a publication's catalog PR, snapshotted by
+/// status polling (plain text only — rendered as text in the UI, never as
+/// markdown: reviewer input is display-only data).
+final class WidgetPublicationComment {
+  const WidgetPublicationComment({
+    required this.author,
+    required this.body,
+    required this.createdAt,
+    required this.isReview,
+  });
+
+  factory WidgetPublicationComment.fromJson(Map<String, dynamic> json) {
+    return WidgetPublicationComment(
+      author: (json['author'] ?? '').toString(),
+      body: (json['body'] ?? '').toString(),
+      createdAt:
+          DateTime.tryParse((json['createdAt'] ?? '').toString())?.toUtc() ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      isReview: json['isReview'] == true,
+    );
+  }
+
+  final String author;
+  final String body;
+  final DateTime createdAt;
+
+  /// True for line-level review comments, false for conversation comments.
+  final bool isReview;
+
+  Map<String, Object?> toJson() => {
+    'author': author,
+    'body': body,
+    'createdAt': createdAt.toUtc().toIso8601String(),
+    'isReview': isReview,
+  };
+}
+
 /// One widget-publishing submission recorded in the local ledger
 /// (card `goal/widget-publishing-github.md`, issue #35).
 ///
@@ -37,6 +74,7 @@ final class WidgetPublication {
     this.prNumber,
     this.prHtmlUrl,
     this.lastKnownState = stateOpen,
+    this.comments = const [],
   });
 
   factory WidgetPublication.fromJson(Map<String, dynamic> json) {
@@ -52,6 +90,11 @@ final class WidgetPublication {
       prNumber: (json['prNumber'] as num?)?.toInt(),
       prHtmlUrl: json['prHtmlUrl']?.toString(),
       lastKnownState: (json['lastKnownState'] ?? stateOpen).toString(),
+      comments: [
+        for (final raw in (json['comments'] as List<dynamic>? ?? const []))
+          if (raw is Map<String, dynamic>)
+            WidgetPublicationComment.fromJson(raw),
+      ],
     );
   }
 
@@ -93,6 +136,10 @@ final class WidgetPublication {
   /// ([stateOpen] / [stateMerged] / [stateClosed] / [stateUnknown]).
   final String lastKnownState;
 
+  /// The reviewer comments at the last refresh (oldest first, newest last,
+  /// capped by the poller). Empty until the first refresh.
+  final List<WidgetPublicationComment> comments;
+
   /// The UI-facing state projection of [lastKnownState].
   WidgetPublicationState get state => widgetPublicationStateOf(lastKnownState);
 
@@ -111,6 +158,7 @@ final class WidgetPublication {
     Object? prNumber = _unset,
     Object? prHtmlUrl = _unset,
     String? lastKnownState,
+    List<WidgetPublicationComment>? comments,
   }) {
     return WidgetPublication(
       widgetId: widgetId,
@@ -124,6 +172,7 @@ final class WidgetPublication {
           ? this.prHtmlUrl
           : prHtmlUrl as String?,
       lastKnownState: lastKnownState ?? this.lastKnownState,
+      comments: comments ?? this.comments,
     );
   }
 
@@ -137,6 +186,7 @@ final class WidgetPublication {
     if (prNumber != null) 'prNumber': prNumber,
     if (prHtmlUrl != null) 'prHtmlUrl': prHtmlUrl,
     'lastKnownState': lastKnownState,
+    if (comments.isNotEmpty) 'comments': [for (final c in comments) c.toJson()],
   };
 
   @override

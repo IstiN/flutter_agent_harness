@@ -1650,6 +1650,19 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String publicationComments(num count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count комментария',
+      many: '$count комментариев',
+      few: '$count комментария',
+      one: '1 комментарий',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String publishWidgetTitle(Object name) {
     return 'Публикация «$name»';
   }

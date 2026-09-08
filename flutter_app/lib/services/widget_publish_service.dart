@@ -90,6 +90,9 @@ class WidgetPublishService {
   static const maxFolderBytes = 5 * 1024 * 1024;
   static const maxFolderFiles = 100;
 
+  /// Newest reviewer comments kept per publication in the ledger.
+  static const _maxStoredComments = 50;
+
   static final _idPattern = RegExp(r'^[a-z0-9-]+$');
   static final _semverPattern = RegExp(
     r'^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$',
@@ -336,12 +339,12 @@ class WidgetPublishService {
       // updateRef.
       var parentSha = headSha;
       parentSha ??= await client.putFile(
-          owner,
-          name,
-          'README.md',
-          message: 'Initialize Fa widget repo',
-          content: _repoReadme(app),
-        );
+        owner,
+        name,
+        'README.md',
+        message: 'Initialize Fa widget repo',
+        content: _repoReadme(app),
+      );
 
       // Commit the widget sources (flat repo root = widget root). The
       // tree is a FULL SNAPSHOT (no base_tree): the repo root must be
@@ -496,8 +499,44 @@ class WidgetPublishService {
         : pull.merged
         ? WidgetPublication.stateMerged
         : WidgetPublication.stateClosed;
-    if (state != publication.lastKnownState) {
-      await _ledger.record(publication.copyWith(lastKnownState: state));
+
+    // Reviewer feedback snapshot (AC7): the latest comments ride the same
+    // refresh as the state so the publications view needs one action per
+    // update. Capped at the newest [_maxStoredComments] to bound the
+    // ledger file; bodies stay plain text (display-only data).
+    var comments = publication.comments;
+    if (pull != null) {
+      try {
+        final fetched = await client.listPullComments(
+          GithubApiClient.catalogOwner,
+          GithubApiClient.catalogRepo,
+          prNumber,
+        );
+        comments = [
+          for (final c
+              in fetched.length > _maxStoredComments
+                  ? fetched.sublist(fetched.length - _maxStoredComments)
+                  : fetched)
+            WidgetPublicationComment(
+              author: c.author,
+              body: c.body,
+              createdAt: c.createdAt,
+              isReview: c.isReview,
+            ),
+        ];
+      } on Object {
+        // State still refreshes when comments are unreachable (a partial
+        // degrade beats a failed refresh).
+      }
+    }
+
+    // A reachable PR always refreshes the record (state + comment
+    // snapshot — the fetch already happened); an unreachable one only
+    // downgrades the stored state.
+    if (pull != null || state != publication.lastKnownState) {
+      await _ledger.record(
+        publication.copyWith(lastKnownState: state, comments: comments),
+      );
     }
     return widgetPublicationStateOf(state);
   }

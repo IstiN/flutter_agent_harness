@@ -91,8 +91,8 @@ TaskExecutor _executor({
 }) {
   return TaskExecutor(
     childTools: const [],
-    streamFunction: _noopStream,
-    model: _model,
+    streamFunction: () => _noopStream,
+    model: () => _model,
     registry: TaskAgentRegistry(const []),
     semaphore: Semaphore(1),
     store: AgentOutputStore(),

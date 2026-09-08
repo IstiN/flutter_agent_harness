@@ -39,13 +39,23 @@ abstract interface class TuiStyle {
 /// without a real terminal. Production leaves both null.
 final class TuiProgramHooks {
   /// Creates the hooks; both fields null means "real terminal" (default).
-  const TuiProgramHooks({this.input, this.output});
+  ///
+  /// [width]/[height] pin the terminal size (headless runs default to the
+  /// 80x24 fallback; pass a realistic size to bench/test layout-heavy
+  /// paths). Null keeps the real terminal probe.
+  const TuiProgramHooks({this.input, this.output, this.width, this.height});
 
   /// Raw terminal input bytes (key presses), replacing stdin.
   final Stream<List<int>>? input;
 
   /// Receives the rendered frame bytes (wrapped into an IOSink by the host).
   final StreamConsumer<List<int>>? output;
+
+  /// Pinned terminal width in columns; null = real terminal.
+  final int? width;
+
+  /// Pinned terminal height in rows; null = real terminal.
+  final int? height;
 }
 
 /// A raw-mode terminal REPL with an inline slash-command menu and model picker.

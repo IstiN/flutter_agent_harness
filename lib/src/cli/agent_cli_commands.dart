@@ -28,6 +28,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/agents': (cli, rest) async => cli.handleAgentsCommand(rest),
   '/browser': (cli, rest) async => cli._browserSlash(rest),
   '/a2a': (cli, rest) async => cli._printA2aStatus(),
+  '/terminal-setup': (cli, rest) async => cli._printTerminalSetup(),
   '/ext': (cli, rest) async => cli._extSlash(rest),
 };
 
@@ -99,6 +100,16 @@ extension SlashCommandDispatch on AgentCli {
   /// `/a2a` — Phase 5a status: per-server connecting/connected/failed.
   void _printA2aStatus() {
     for (final line in formatA2aStatusLines(_a2aManager)) {
+      io.writeln(line);
+    }
+  }
+
+  /// `/terminal-setup` — per-terminal Shift+Enter newline guidance
+  /// (issue #36): what already works, what needs a one-line terminal
+  /// config, and the fallback keys that work everywhere.
+  void _printTerminalSetup() {
+    final env = config.envVarValue;
+    for (final line in terminalSetupLines(env ?? (name) => null)) {
       io.writeln(line);
     }
   }
