@@ -2983,7 +2983,12 @@
 - fix(ui): sharp chevron tip in the web splash and favicon
 - feat(browser_ext): durable transcript replay — history survives SW restarts and session_open
 
-## Unreleased
+## 0.1.327
+
+- feat(29): config service + fa config verbs + agent config tool (S3) (#70)
+- fix(flutter_app): drawer keeps archived sessions after a relay session_open (#72)
+- build(browser_ext): mark the on-device stub rejection handled (#69)
+- fix(flutter_app): render replay rows whose nested maps come from dartify (#71)
 
 ## Unreleased
 
@@ -3000,5 +3005,7 @@
   are deliverable through `agent_message`. Docs: `docs/dap.md` §12.
   Discovery/presence states (`busy`) and the A2A gateway remain for
   phases 2-3.
+
+## Unreleased
 
 ## Unreleased
