@@ -2488,7 +2488,7 @@ final class FaTuiController {
       model = model.update(msg).$1 as FaTuiModel;
     }
     _pending.clear();
-    final savedTermios = await _disableTerminalFlowControl();
+    final savedTermios = await _sanitizeTermiosInput();
     try {
       await _program.run(model);
     } finally {
@@ -2496,17 +2496,19 @@ final class FaTuiController {
     }
   }
 
-  /// dart_tui's raw mode flips only Dart's echo/line flags; termios IXON
-  /// (software flow control) stays on, so on terminals without the Kitty
-  /// keyboard protocol Ctrl+S is the tty driver's VSTOP byte: the tty
-  /// swallows the keypress and suspends output (XOFF) — the UI freezes while
-  /// the app stays alive, and the steer never fires. Disable flow control
+  /// dart_tui's raw mode flips only Dart's echo/line flags (termios
+  /// ICANON/ECHO). Two input-processing flags stay on and corrupt raw
+  /// keystrokes: IXON (software flow control — Ctrl+S is the tty driver's
+  /// VSTOP byte: the keypress is swallowed and output suspends) and ICRNL
+  /// (CR→LF input translation — a host delivering Shift+Enter as the legacy
+  /// ESC CR wire, e.g. an IDE embedded terminal, gets it rewritten to
+  /// ESC LF before fa reads it, killing the alt+enter decode). Clear both
   /// for the TUI's lifetime; returns the saved termios string for
   /// [_restoreTermios], or null when there is no tty to fix.
-  static Future<String?> _disableTerminalFlowControl() async {
+  static Future<String?> _sanitizeTermiosInput() async {
     if (Platform.isWindows) return null;
     if (!stdin.hasTerminal) return null;
-    return sttyDisableFlowControl(
+    return sttySanitizeInput(
       sttyDeviceFlag(),
       runner: (args) => Process.run('stty', args),
     );
@@ -2515,18 +2517,25 @@ final class FaTuiController {
   /// The BSD/GNU device flag for `stty` (`-f` on macOS, `-F` elsewhere).
   static String sttyDeviceFlag() => Platform.isMacOS ? '-f' : '-F';
 
-  /// Disables terminal flow control via `stty` and returns the saved termios
+  /// Clears the TUI-hostile termios input flags (IXON/IXOFF flow control,
+  /// ICRNL CR→LF translation) via `stty` and returns the saved termios
   /// string. [runner] is injected so tests can avoid real subprocesses.
   ///
   /// Public (package-visible) only for testing; do not call directly.
-  static Future<String?> sttyDisableFlowControl(
+  static Future<String?> sttySanitizeInput(
     String deviceFlag, {
     required Future<ProcessResult> Function(List<String> args) runner,
   }) async {
     try {
       final saved = await runner([deviceFlag, '/dev/tty', '-g']);
       if (saved.exitCode != 0) return null;
-      final cleared = await runner([deviceFlag, '/dev/tty', '-ixon', '-ixoff']);
+      final cleared = await runner([
+        deviceFlag,
+        '/dev/tty',
+        '-ixon',
+        '-ixoff',
+        '-icrnl',
+      ]);
       if (cleared.exitCode != 0) return null;
       return (saved.stdout as String).trim();
     } on ProcessException {
