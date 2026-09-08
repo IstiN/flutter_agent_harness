@@ -1288,6 +1288,13 @@ class AgentService extends ChangeNotifier
   /// cloned from it (see [clone]). `null` when the service was built from a
   /// pre-constructed [Agent] (tests).
   AgentConfig? get configForClone => _config;
+
+  /// "New session" support for services whose session does NOT live in
+  /// this process: the extension relay's session is owned by the service
+  /// worker, so cloning a local config is impossible (and `configForClone`
+  /// is null). When non-null, the UI's new-session flow calls this instead
+  /// of manager.createSession(clone). `null` on local services.
+  Future<void> Function()? get newSessionAction => null;
   final AgentConfig? _config;
 
   /// The execution environment the agent's tools (and session storage) run

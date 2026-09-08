@@ -38,6 +38,7 @@ import 'fetch_client.dart';
 import 'dap/dap_frames.dart';
 import 'dap/dap_integration.dart';
 import 'providers.dart';
+import 'session_reset.dart';
 import 'tool_gate.dart';
 import 'ui_protocol.dart';
 import 'ui_host_adapter.dart';
@@ -389,8 +390,8 @@ final class AgentHost implements UiHostBackend {
     return resolveStreamFn(provider);
   }
 
-  Future<JsonlSessionStorage> _openSession() async {
-    if ((await _env.exists(_sessionPath)).valueOrNull == true) {
+  Future<JsonlSessionStorage> _openSession({bool fresh = false}) async {
+    if (!fresh && (await _env.exists(_sessionPath)).valueOrNull == true) {
       return JsonlSessionStorage.open(_env, _sessionPath);
     }
     return JsonlSessionStorage.create(
@@ -421,6 +422,30 @@ final class AgentHost implements UiHostBackend {
   @override
   void cancelTurn() {
     if (_running) _agent.abort();
+  }
+
+  /// `session_new` (panel "New session"): archive the live JSONL via
+  /// [archiveLiveSession] (failure aborts the reset — overwriting the
+  /// live file after a failed archive would destroy the only copy), then
+  /// start a fresh session IN PLACE — same registry, approvals, stream
+  /// function and provider; only the transcript resets. Refused while a
+  /// turn runs: killing a live run mid-flight is worse than a busy error.
+  @override
+  Future<void> newSession() async {
+    if (!_booted) throw StateError('not booted');
+    if (_running) throw StateError('busy: finish the current turn first');
+    final oldId = sessionId;
+    if (oldId.isNotEmpty) {
+      await archiveLiveSession(
+        fs: _env,
+        sessionPath: _sessionPath,
+        sessionId: oldId,
+      );
+    }
+    _session = Session(await _openSession(fresh: true));
+    _persisted.clear();
+    _agent.state.messages = const [];
+    _emitStatus();
   }
 
   /// The live JSONL session id from the header (parsed at open — no disk

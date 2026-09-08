@@ -224,6 +224,28 @@ void main() {
         expect(transport.state, const TransportAttached());
       },
     );
+    test('newSession dispatches only while attached', () async {
+      final channel = FakeChannel();
+      final transport = WorkerRelayTransport(portFactory: () => channel);
+      transport.connect();
+      await pump();
+      channel.receive(_ack());
+      channel.receive(const AttachedMsg(sessionId: 's1', replay: []));
+      await pump();
+      transport.newSession();
+      await pump();
+      expect(channel.sentKinds, ['hello', 'attach', 'session_new']);
+      // The AttachedMsg that answers adopts the fresh id (SW-authoritative).
+      channel.receive(const AttachedMsg(sessionId: 'fresh', replay: []));
+      await pump();
+      expect(transport.sessionId, 'fresh');
+      // Not ready (reconnecting): ignored, not queued.
+      channel.close();
+      await pump();
+      transport.newSession();
+      await pump();
+      expect(channel.sentKinds, ['hello', 'attach', 'session_new']);
+    });
     test('steer/cancel while reconnecting are ignored, not queued', () async {
       final channels = <FakeChannel>[];
       final transport = WorkerRelayTransport(

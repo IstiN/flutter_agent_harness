@@ -119,6 +119,22 @@ final class FakeHostConnector implements UiHostConnector {
 
   @override
   List<Map<String, dynamic>> sessionsList() => sessions;
+
+  var newSessionCalls = 0;
+
+  /// When non-null, [newSession] throws this instead of resetting.
+  Object? newSessionError;
+
+  @override
+  Future<void> newSession() async {
+    newSessionCalls++;
+    final error = newSessionError;
+    if (error != null) throw error;
+    sessions = [
+      {'id': 'fresh', 'title': 'new'},
+    ];
+    sessionId = 'fresh';
+  }
 }
 
 Map<String, dynamic>? _ofKind(FakeChannel c, String kind) {
@@ -561,6 +577,42 @@ void main() {
       server.serve(c);
       c.injectMsg(const SessionsQueryMsg());
       expect(_ofKind(c, 'sessions_result')!['sessions'], host.sessionsList());
+    });
+
+    test(
+      'session_new resets and answers the attach trio on the channel',
+      () async {
+        final host = FakeHostConnector();
+        final server = UiPortServer(host: host);
+        final c = FakeChannel();
+        server.serve(c);
+        c.injectMsg(const SessionNewMsg());
+        await _pump();
+        expect(host.newSessionCalls, 1);
+        // attached (fresh id, empty replay) + tools + status — the same
+        // shapes an attach cycle ends with.
+        final attached = _ofKind(c, 'attached')!;
+        expect(attached['sessionId'], 'fresh');
+        expect(attached['replay'], isEmpty);
+        expect(_ofKind(c, 'tools_state'), isNotNull);
+        final status = _ofKind(c, 'stream');
+        expect(status!['event'], containsPair('type', 'status'));
+      },
+    );
+
+    test('session_new busy/host errors answer a structured error', () async {
+      final host = FakeHostConnector()..newSessionError = 'busy';
+      final server = UiPortServer(host: host);
+      final c = FakeChannel();
+      server.serve(c);
+      c.injectMsg(const SessionNewMsg());
+      await _pump();
+      expect(host.newSessionCalls, 1);
+      final err = _ofKind(c, 'error')!;
+      expect(err['code'], 'session_new');
+      expect(err['message'], 'busy');
+      // No attached: the panel keeps its current session view.
+      expect(_ofKind(c, 'attached'), isNull);
     });
 
     test('settings query and put roundtrip through the connector', () {
