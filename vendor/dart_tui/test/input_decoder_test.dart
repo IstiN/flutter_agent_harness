@@ -426,6 +426,38 @@ void main() {
       d.takeLoneEscapeIfStillPending();
       expect(d.takeLoneEscapeIfStillPending(), isEmpty);
     });
+
+    test('double ESC in one chunk emits one escape, second stays pending', () {
+      // A fast double-press (both bytes in one stdin read) used to decode
+      // as ONE KeyCode.unknown and both presses were lost — the abort Esc
+      // never fired mid-stream (fa issue #46).
+      final d = TerminalInputDecoder();
+      final msgs = d.feed([0x1b, 0x1b]);
+      expect(msgs, hasLength(1));
+      expect((msgs[0] as KeyPressMsg).keyEvent.code, KeyCode.escape);
+      expect(d.hasPendingLoneEscape, isTrue);
+      final second = d.takeLoneEscapeIfStillPending();
+      expect(second, hasLength(1));
+      expect((second[0] as KeyPressMsg).keyEvent.code, KeyCode.escape);
+      expect(d.hasPendingLoneEscape, isFalse);
+    });
+
+    test(
+        'second ESC chunk before the lone-escape timer still yields two '
+        'escapes', () {
+      // Chunk 1 holds a lone ESC; the timer is cancelled when chunk 2
+      // arrives before it fires. The pair must still decode as two
+      // Escape presses (first emitted now, second via the re-armed timer).
+      final d = TerminalInputDecoder();
+      expect(d.feed([0x1b]), isEmpty);
+      final msgs = d.feed([0x1b]);
+      expect(msgs, hasLength(1));
+      expect((msgs[0] as KeyPressMsg).keyEvent.code, KeyCode.escape);
+      expect(d.hasPendingLoneEscape, isTrue);
+      final second = d.takeLoneEscapeIfStillPending();
+      expect(second, hasLength(1));
+      expect((second[0] as KeyPressMsg).keyEvent.code, KeyCode.escape);
+    });
   });
 
   // ── Cursor position report ───────────────────────────────────────────────

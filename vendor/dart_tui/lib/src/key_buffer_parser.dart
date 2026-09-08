@@ -115,6 +115,17 @@ TeaKey? parseKeyFromBuffer(List<int> buffer) {
       buffer.removeRange(0, 2);
       return const TeaKey(code: KeyCode.enter, modifiers: {KeyMod.alt});
     }
+    // Double Escape: two presses landing in one read chunk used to fall
+    // into the `unknown` fallthrough below and BOTH presses were swallowed
+    // — during a streaming run the abort Esc never fired and the TUI looked
+    // frozen (fa issue #46). ESC ESC is not any terminal's sequence for
+    // anything else: consume only the FIRST byte and emit the Escape key;
+    // the remaining byte parses as a lone ESC on the next pass, delivered
+    // by the Program's lone-escape timer.
+    if (b1 == 0x1b) {
+      buffer.removeAt(0);
+      return const TeaKey(code: KeyCode.escape);
+    }
 
     buffer.removeRange(0, 2);
     return const TeaKey(code: KeyCode.unknown);
