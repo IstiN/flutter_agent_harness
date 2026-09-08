@@ -39,6 +39,19 @@ void main() {
     expect(k.keystroke(), 'alt+enter');
     expect(b, isEmpty);
   });
+  test('parseKeyFromBuffer parses ESC+LF as alt+enter (not unknown)', () {
+    // The ESC CR wire after a kernel line discipline with ICRNL on
+    // translated the CR to LF before the app read it (fa issue #77) —
+    // embedded PTY hosts that reset termios under the app, or where stty
+    // is unavailable to clear the flag. Same alt+enter encoding, same
+    // decode; ESC LF has no other standard meaning.
+    final b = <int>[0x1b, 0x0a];
+    final k = parseKeyFromBuffer(b)!;
+    expect(k.code, KeyCode.enter);
+    expect(k.modifiers, contains(KeyMod.alt));
+    expect(k.keystroke(), 'alt+enter');
+    expect(b, isEmpty);
+  });
 
   test('parseKeyFromBuffer returns null until escape sequence complete', () {
     final b = <int>[0x1b];

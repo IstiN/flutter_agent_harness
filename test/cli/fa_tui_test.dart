@@ -1989,12 +1989,12 @@ void main() {
     });
   });
 
-  group('terminal flow control helpers', () {
+  group('terminal input sanitization helpers', () {
     test('sttyDeviceFlag is -f on macOS and -F elsewhere', () {
       expect(FaTuiController.sttyDeviceFlag(), Platform.isMacOS ? '-f' : '-F');
     });
 
-    test('sttyDisableFlowControl returns trimmed saved termios', () async {
+    test('sttySanitizeInput returns trimmed saved termios', () async {
       final calls = <List<String>>[];
       Future<ProcessResult> runner(List<String> args) async {
         calls.add(args);
@@ -2004,7 +2004,7 @@ void main() {
         return ProcessResult(0, 0, '', '');
       }
 
-      final result = await FaTuiController.sttyDisableFlowControl(
+      final result = await FaTuiController.sttySanitizeInput(
         '-F',
         runner: runner,
       );
@@ -2012,22 +2012,22 @@ void main() {
       expect(result, 'saved-string');
       expect(calls, hasLength(2));
       expect(calls.first, ['-F', '/dev/tty', '-g']);
-      expect(calls.last, ['-F', '/dev/tty', '-ixon', '-ixoff']);
+      expect(calls.last, ['-F', '/dev/tty', '-ixon', '-ixoff', '-icrnl']);
     });
 
-    test('sttyDisableFlowControl returns null when saving fails', () async {
+    test('sttySanitizeInput returns null when saving fails', () async {
       Future<ProcessResult> runner(List<String> args) async {
         return ProcessResult(0, 1, '', 'stty error');
       }
 
-      final result = await FaTuiController.sttyDisableFlowControl(
+      final result = await FaTuiController.sttySanitizeInput(
         '-F',
         runner: runner,
       );
       expect(result, isNull);
     });
 
-    test('sttyDisableFlowControl returns null when clearing fails', () async {
+    test('sttySanitizeInput returns null when clearing fails', () async {
       Future<ProcessResult> runner(List<String> args) async {
         if (args.last == '-g') {
           return ProcessResult(0, 0, 'saved', '');
@@ -2035,19 +2035,19 @@ void main() {
         return ProcessResult(0, 1, '', 'stty error');
       }
 
-      final result = await FaTuiController.sttyDisableFlowControl(
+      final result = await FaTuiController.sttySanitizeInput(
         '-F',
         runner: runner,
       );
       expect(result, isNull);
     });
 
-    test('sttyDisableFlowControl returns null on ProcessException', () async {
+    test('sttySanitizeInput returns null on ProcessException', () async {
       Future<ProcessResult> runner(List<String> args) async {
         throw ProcessException('stty', <String>[], 'not found');
       }
 
-      final result = await FaTuiController.sttyDisableFlowControl(
+      final result = await FaTuiController.sttySanitizeInput(
         '-F',
         runner: runner,
       );
