@@ -493,6 +493,9 @@ String renderYamlScalar(String raw) {
 /// - a missing key is inserted at the top of its parent's block;
 /// - a missing top-level section is appended at the end of the file;
 /// - descending into an inline scalar is a [ConfigException] (type clash).
+///
+/// Split into a per-segment scan helper to stay under the repo's CRAP
+/// ratchet (crap4dart threshold 12).
 String upsertYamlPath(String text, List<String> segments, String rendered) {
   final hadTrailingNewline = text.endsWith('\n');
   final lines = text.isEmpty
@@ -502,40 +505,21 @@ String upsertYamlPath(String text, List<String> segments, String rendered) {
         );
   var cursor = 0;
   for (var depth = 0; depth < segments.length; depth++) {
-    final indent = '  ' * depth;
-    final key = segments[depth];
-    final tail = r':(\s.*)?$';
-    final pattern = RegExp(
-      '^${RegExp.escape(indent)}${RegExp.escape(key)}$tail',
-    );
-    var found = -1;
-    for (var i = cursor; i < lines.length; i++) {
-      final line = lines[i];
-      if (_indentOf(line) < depth * 2 && i > cursor) break;
-      if (pattern.hasMatch(line)) {
-        found = i;
-        break;
-      }
-    }
+    final found = _findKeyLine(lines, segments, depth, cursor);
     if (found < 0) {
-      // Insert the remaining chain: at EOF for a new top-level section,
-      // otherwise at the top of the parent's block.
-      final insertAt = depth == 0 ? lines.length : cursor;
-      if (depth == 0 && lines.isNotEmpty && lines.last.trim().isNotEmpty) {
-        lines.add('');
-      }
-      for (var d = depth; d < segments.length; d++) {
-        final isLeaf = d == segments.length - 1;
-        lines.insert(
-          insertAt + (d - depth),
-          '${'  ' * d}${segments[d]}:${isLeaf ? ' $rendered' : ''}',
-        );
-      }
-      return _join(lines, hadTrailingNewline);
+      return _insertChain(
+        lines,
+        segments,
+        depth,
+        cursor,
+        rendered,
+        hadTrailingNewline,
+      );
     }
     if (depth == segments.length - 1) {
+      final indent = '  ' * depth;
       final comment = _trailingComment(lines[found]);
-      lines[found] = '$indent$key: $rendered$comment';
+      lines[found] = '$indent${segments[depth]}: $rendered$comment';
       return _join(lines, hadTrailingNewline);
     }
     final inline = _inlineValue(lines[found]);
@@ -549,6 +533,52 @@ String upsertYamlPath(String text, List<String> segments, String rendered) {
   }
   // Unreachable: the leaf always returns inside the loop.
   throw StateError('upsertYamlPath fell through');
+}
+
+/// The index of the line declaring `segments[depth]` at [cursor]'s block
+/// level, or -1. The scan stops when the indentation backs out of the
+/// parent block.
+int _findKeyLine(
+  List<String> lines,
+  List<String> segments,
+  int depth,
+  int cursor,
+) {
+  final indent = '  ' * depth;
+  final tail = r':(\s.*)?$';
+  final pattern = RegExp(
+    '^${RegExp.escape(indent)}${RegExp.escape(segments[depth])}$tail',
+  );
+  for (var i = cursor; i < lines.length; i++) {
+    if (_indentOf(lines[i]) < depth * 2 && i > cursor) break;
+    if (pattern.hasMatch(lines[i])) return i;
+  }
+  return -1;
+}
+
+/// Inserts the missing `segments[depth..]` chain — at EOF for a new
+/// top-level section, otherwise at the top of the parent's block — and
+/// returns the joined text.
+String _insertChain(
+  List<String> lines,
+  List<String> segments,
+  int depth,
+  int cursor,
+  String rendered,
+  bool hadTrailingNewline,
+) {
+  final insertAt = depth == 0 ? lines.length : cursor;
+  if (depth == 0 && lines.isNotEmpty && lines.last.trim().isNotEmpty) {
+    lines.add('');
+  }
+  for (var d = depth; d < segments.length; d++) {
+    final isLeaf = d == segments.length - 1;
+    lines.insert(
+      insertAt + (d - depth),
+      '${'  ' * d}${segments[d]}:${isLeaf ? ' $rendered' : ''}',
+    );
+  }
+  return _join(lines, hadTrailingNewline);
 }
 
 int _indentOf(String line) {
@@ -596,32 +626,21 @@ String applicationNote(String section) => switch (section) {
 
 /// Collects diagnostics for one config file: syntax errors, unknown keys
 /// (warnings), strict-section schema errors and bad scalars (errors).
+///
+/// Kept as three small functions so each stays under the repo's CRAP
+/// ratchet (crap4dart, threshold 12) — the per-key dispatch is a data map,
+/// not a switch.
 void _collectDiagnostics(
   String text,
   String label,
   List<ConfigDiagnostic> errors,
   List<ConfigDiagnostic> warnings,
 ) {
-  YamlMap? doc;
-  if (text.trim().isNotEmpty) {
-    try {
-      final parsed = loadYaml(text);
-      if (parsed is YamlMap) {
-        doc = parsed;
-      } else {
-        errors.add(ConfigDiagnostic(label, 'config root must be a yaml map'));
-        return;
-      }
-    } on YamlException catch (error) {
-      errors.add(ConfigDiagnostic(label, 'invalid yaml: ${error.message}'));
-      return;
-    }
-  }
+  final doc = _parseOrReport(text, label, errors);
   if (doc == null) return;
   var rolesChecked = false;
   for (final keyNode in doc.keys) {
     final key = '$keyNode';
-    final value = doc[keyNode];
     if (!configTopLevelKeys.contains(key)) {
       warnings.add(
         ConfigDiagnostic(
@@ -632,60 +651,93 @@ void _collectDiagnostics(
       continue;
     }
     try {
-      if (_scalarKeys.contains(key)) {
-        // The yaml package hands back plain String scalars (older versions
-        // wrap them in YamlScalar) - accept both.
-        final scalar = value is YamlScalar ? value.value : value;
-        if (scalar is! String || scalar.isEmpty) {
-          throw ConfigException('must be a non-empty string');
-        }
-      } else if (key == 'allowedTools') {
-        if (value != null && value is! YamlList) {
-          throw ConfigException('must be a list of tool names');
-        }
-      } else if (_rolesGroupKeys.contains(key)) {
-        if (!rolesChecked) {
-          rolesChecked = true;
-          ModelRolesConfig.fromYaml(doc);
-        }
-      } else {
-        switch (key) {
-          case 'memory':
-            MemoryConfig.fromYaml(value);
-          case 'cube':
-            CubeSettings.fromYaml(value);
-          case 'tools':
-            ToolsConfig.fromYaml(value);
-          case 'mcp':
-            McpConfig.fromYaml(value);
-          case 'redact':
-            RedactionConfig.fromYaml(value);
-          case 'models':
-            ModelsConfig.fromYaml(value);
-          case 'customProviders':
-            _validateCustomProviders(value);
-          case 'ttsr':
-            TtsrConfig.fromYaml(value, sourcePath: label);
-          case 'a2a':
-            // ${NAME} tokens resolve against the process environment at
-            // boot; structural validation passes a null env.
-            A2aConfig.fromYaml(value, (_) => null);
-          case 'providerTimeouts':
-            _validateProviderTimeouts(value);
-          case 'skills':
-            _validateSkillsSection(value);
-          case 'prompts':
-            // Deep validation (strict prompt names) lives behind
-            // cli_config.dart's strict parser; here the section must be a
-            // string-valued map.
-            _validateStringMap(value, key);
-        }
-      }
+      rolesChecked = _validateTopLevelEntry(
+        doc,
+        key,
+        doc[keyNode],
+        label,
+        rolesChecked,
+      );
     } on ConfigException catch (error) {
       errors.add(ConfigDiagnostic(label, '$key: ${error.message}'));
     }
   }
 }
+
+/// Parses [text], reporting syntax / root-shape problems into [errors].
+/// Null when no usable document remains (absent file or reported error).
+YamlMap? _parseOrReport(
+  String text,
+  String label,
+  List<ConfigDiagnostic> errors,
+) {
+  if (text.trim().isEmpty) return null;
+  try {
+    final parsed = loadYaml(text);
+    if (parsed is YamlMap) return parsed;
+  } on YamlException catch (error) {
+    errors.add(ConfigDiagnostic(label, 'invalid yaml: ${error.message}'));
+    return null;
+  }
+  errors.add(ConfigDiagnostic(label, 'config root must be a yaml map'));
+  return null;
+}
+
+/// Validates one known top-level [key]; returns the (possibly advanced)
+/// roles-group flag. Throws [ConfigException] on invalid content — the
+/// caller records it as a named error.
+bool _validateTopLevelEntry(
+  YamlMap doc,
+  String key,
+  Object? value,
+  String label,
+  bool rolesChecked,
+) {
+  if (_rolesGroupKeys.contains(key)) {
+    // The group parses together, one pass over the whole document.
+    if (rolesChecked) return true;
+    ModelRolesConfig.fromYaml(doc);
+    return true;
+  }
+  if (_scalarKeys.contains(key)) {
+    // The yaml package hands back plain String scalars (older versions
+    // wrap them in YamlScalar) - accept both.
+    final scalar = value is YamlScalar ? value.value : value;
+    if (scalar is! String || scalar.isEmpty) {
+      throw ConfigException('must be a non-empty string');
+    }
+    return rolesChecked;
+  }
+  if (key == 'allowedTools') {
+    if (value != null && value is! YamlList) {
+      throw ConfigException('must be a list of tool names');
+    }
+    return rolesChecked;
+  }
+  _sectionValidators[key]?.call(value, label);
+  return rolesChecked;
+}
+
+/// Strict-section validators keyed by the top-level key, shared by
+/// `check` and `set` (the "never persist what the next boot would
+/// reject" guarantee). The a2a token env resolves at boot; structural
+/// validation passes a null env.
+final _sectionValidators = <String, void Function(dynamic value, String label)>{
+  'memory': (value, _) => MemoryConfig.fromYaml(value),
+  'cube': (value, _) => CubeSettings.fromYaml(value),
+  'tools': (value, _) => ToolsConfig.fromYaml(value),
+  'mcp': (value, _) => McpConfig.fromYaml(value),
+  'redact': (value, _) => RedactionConfig.fromYaml(value),
+  'models': (value, _) => ModelsConfig.fromYaml(value),
+  'customProviders': (value, _) => _validateCustomProviders(value),
+  'ttsr': (value, label) => TtsrConfig.fromYaml(value, sourcePath: label),
+  'a2a': (value, _) => A2aConfig.fromYaml(value, (_) => null),
+  'providerTimeouts': (value, _) => _validateProviderTimeouts(value),
+  'skills': (value, _) => _validateSkillsSection(value),
+  // Deep validation (strict prompt names) lives behind cli_config.dart's
+  // strict parser; here the section must be a string-valued map.
+  'prompts': (value, _) => _validateStringMap(value, 'prompts'),
+};
 
 void _validateCustomProviders(Object? node) {
   if (node is! YamlList) {

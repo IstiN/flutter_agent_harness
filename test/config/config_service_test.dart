@@ -354,6 +354,142 @@ void main() {
       );
     });
   });
+  group('diagnostic dispatch', () {
+    test('a non-map root is a named error, not a crash', () async {
+      await env.writeFile(_globalConfig, '- just\n- a list\n');
+      final report = await service.check();
+      expect(
+        report.errors.single.message,
+        contains('config root must be a yaml map'),
+      );
+    });
+
+    test('scalar keys must be non-empty strings', () async {
+      await env.writeFile(_globalConfig, 'provider: 123\n');
+      final report = await service.check();
+      expect(
+        report.errors.single.message,
+        contains('provider: must be a non-empty string'),
+      );
+    });
+
+    test('allowedTools must be a list when present', () async {
+      await env.writeFile(_globalConfig, 'allowedTools: web_fetch\n');
+      final report = await service.check();
+      expect(
+        report.errors.single.message,
+        contains('allowedTools: must be a list of tool names'),
+      );
+    });
+
+    test('the roles group parses once and accepts a valid chain', () async {
+      await env.writeFile(
+        _globalConfig,
+        'roles:\n'
+        '  default: [openrouter/anthropic/claude-sonnet-4]\n'
+        'retry:\n'
+        '  retriesPerEntry: 2\n',
+      );
+      final report = await service.check();
+      expect(report.errors, isEmpty);
+    });
+
+    test(
+      'an invalid roles entry fails with the triggering key named',
+      () async {
+        await env.writeFile(
+          _globalConfig,
+          'roles: [not, a, map]\n'
+          'modelOverrides: []\n',
+        );
+        final report = await service.check();
+        // The group parses once, but both group keys report the failure
+        // under their own name.
+        expect(report.errors, hasLength(2));
+        expect(report.errors.first.message, contains('roles:'));
+      },
+    );
+
+    test('every strict section reaches its validator via check', () async {
+      // One valid document touching every strict-section validator, so
+      // the dispatch map routes all of them through `check`.
+      await env.writeFile(
+        _globalConfig,
+        'provider: openai-completions\n'
+        'memory:\n  projectPath: ./memory\n'
+        'cube:\n  enabled: true\n'
+        'tools:\n  web_search: false\n'
+        'mcp:\n  servers: {}\n'
+        'redact:\n  enabled: true\n'
+        'models:\n  custom: {}\n'
+        'customProviders: []\n'
+        'ttsr:\n  rules: []\n'
+        'a2a:\n  servers: {}\n'
+        'providerTimeouts:\n  connectTimeoutMs: 1000\n'
+        'skills:\n  access: ask\n'
+        'prompts:\n  bootstrap: hi\n',
+      );
+      final report = await service.check();
+      expect(
+        report.errors,
+        isEmpty,
+        reason:
+            'every section must parse: '
+            '${report.errors.map((e) => e.message).join('; ')}',
+      );
+    });
+
+    test(
+      'providerTimeouts rejects unknown keys and non-positive ints',
+      () async {
+        await env.writeFile(_globalConfig, 'providerTimeouts:\n  bogus: 1\n');
+        expect(
+          (await service.check()).errors.single.message,
+          contains('unknown "providerTimeouts" key: bogus'),
+        );
+        await env.writeFile(
+          _globalConfig,
+          'providerTimeouts:\n  connectTimeoutMs: 0\n',
+        );
+        expect(
+          (await service.check()).errors.single.message,
+          contains('must be a positive integer'),
+        );
+      },
+    );
+
+    test(
+      'skills rejects bad access values, bad bools and unknown keys',
+      () async {
+        await env.writeFile(_globalConfig, 'skills:\n  access: sometimes\n');
+        expect(
+          (await service.check()).errors.single.message,
+          contains('skills.access must be ask, granted or denied'),
+        );
+        await env.writeFile(
+          _globalConfig,
+          'skills:\n  disableShellExecution: yes-please\n',
+        );
+        expect(
+          (await service.check()).errors.single.message,
+          contains('skills.disableShellExecution must be a boolean'),
+        );
+        await env.writeFile(_globalConfig, 'skills:\n  bogus: 1\n');
+        expect(
+          (await service.check()).errors.single.message,
+          contains('unknown "skills" key: bogus'),
+        );
+      },
+    );
+
+    test('prompts must be a string-valued map', () async {
+      await env.writeFile(_globalConfig, 'prompts:\n  bootstrap: [nope]\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('prompts.bootstrap must be a string'),
+      );
+    });
+  });
 
   group('pins against cli_config.dart', () {
     test('the top-level key set matches what the CLI config reads', () {
