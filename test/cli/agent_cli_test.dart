@@ -176,6 +176,24 @@ void main() {
     expect(names, contains('transcribe_audio'));
   });
 
+  test('builtinTools wiring keeps shellJobs and config registered', () {
+    // Regression: adding the `config:` arg dropped `shellJobs:` from this
+    // call site once — both args must stay wired together (issue #29 S3).
+    final fake = FakeStreamFunction([]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+    final names = cli.agent.state.tools.map((t) => t.name);
+    expect(names, containsAll(['bash_job', 'config']));
+  });
+
   test('streams assistant text live and persists the session', () async {
     final fake = FakeStreamFunction([textTurn('Hello world')]);
     final cli = cliFor(fake.call);

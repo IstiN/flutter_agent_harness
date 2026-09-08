@@ -365,7 +365,74 @@ void main() {
           isA<CliArgsException>().having(
             (e) => e.message,
             'message',
-            contains('unknown argument: extra'),
+            contains('takes no operands'),
+          ),
+        ),
+      );
+    });
+    test('get requires exactly one key', () {
+      for (final args in const [
+        ['config', 'get'],
+        ['config', 'get', 'a', 'b'],
+      ]) {
+        expect(
+          () => parseCliArgs(args),
+          throwsA(
+            isA<CliArgsException>().having(
+              (e) => e.message,
+              'message',
+              contains('fa config get requires exactly one key'),
+            ),
+          ),
+        );
+      }
+    });
+
+    test('set requires a key and a value', () {
+      for (final args in const [
+        ['config', 'set'],
+        ['config', 'set', 'only-key'],
+        ['config', 'set', 'k', 'v', 'extra'],
+      ]) {
+        expect(
+          () => parseCliArgs(args),
+          throwsA(
+            isA<CliArgsException>().having(
+              (e) => e.message,
+              'message',
+              contains('fa config set requires a key and a value'),
+            ),
+          ),
+        );
+      }
+    });
+
+    test('--project/--global only apply to set', () {
+      expect(
+        () => parseCliArgs(const [
+          'config',
+          'get',
+          'memory.projectPath',
+          '--project',
+        ]),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--project/--global only apply to set'),
+          ),
+        ),
+      );
+    });
+
+    test('--out/--passphrase-stdin only apply to export-providers', () {
+      expect(
+        () => parseCliArgs(const ['config', 'check', '--out', 'x.fahx']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--out/--passphrase-stdin only apply to export-providers'),
           ),
         ),
       );

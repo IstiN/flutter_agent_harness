@@ -18,6 +18,7 @@ allowed-tools:
   - edit
   - ls
   - bash
+  - config
 user-invocable: true
 disable-model-invocation: false
 ---
@@ -42,9 +43,9 @@ keys, verify after every edit, and report what changed and when it applies.
    environment. A key value in YAML is a leaked secret.
 3. **Preserve the file.** Edit surgically (the `edit` tool, or `write` only for
    a file you fully own). Keep comments and unrelated keys byte-identical.
-4. **Verify after every edit.** Re-read the section you changed and confirm it
-   parses (see Verification below). A broken file is detected by you, not
-   discovered at next boot.
+4. **Verify after every edit.** Run the `config` tool's `check` op (or
+   `fa config check`) and confirm it passes before declaring success. A
+   broken file must be detected by you, not discovered at next boot.
 5. **Report scope + application.** Every change report states: which file, which
    scope, and whether it applies live or at next boot.
 
@@ -73,30 +74,65 @@ created with a minimal valid file — never leave a half-written YAML behind
 ## Workflow
 
 1. Read the request; identify the topic section below.
-2. Inspect current state: read `~/.fah/config.yaml` and the project
-   `.fah/config.yaml` (missing file = defaults, not an error).
-3. Make the edit (surgical, rule 3).
-4. Verify (rule 4) and report (rule 5), naming the CLI command equivalent that
-   would have made the same change.
+2. Inspect current state: `config` op `get <key>` / `path` (or read the two
+   config files — a missing file means defaults, not an error).
+3. Make the edit: `config` op `set` (preferred — it validates before
+   writing and preserves the rest of the file byte-for-byte). Fall back to
+   a surgical file edit (rule 3) only for what `set` cannot express:
+   removing a key, restructuring a list.
+4. Verify: `config` op `check` (rule 4).
+5. Report (rule 5), naming the CLI command equivalent that would have made
+   the same change.
+
+## The config tool
+
+The primary editing surface on every host — CLI, desktop app, web, iOS —
+because it needs no shell and no `fa` process. One tool, four ops over the
+same core the human CLI verbs wrap:
+
+| op | args | effect |
+|---|---|---|
+| `check` | — | validate both config files with the real parsers; prints errors, warnings, notes and a final `config check: ok` / `config check: failed` |
+| `path` | — | list the config file locations and whether each exists |
+| `get` | `key` | the effective value of a dotted key; project scope wins for `memory`/`cube`/`tools` |
+| `set` | `key`, `value`, `scope`? | surgical single-key write; the edited file is validated BEFORE the write, so an invalid value persists nothing |
+
+`set` answers with the file, scope, old → new value, and whether the change
+applies live or at next boot — echo that in your report (rule 5). `scope`
+defaults by key: `memory`/`cube`/`tools` → the project file (created minimal
+when absent), everything else → the user file; pass `global` or `project`
+to override. Keys come from the topic sections below — the tool rejects
+unknown top-level keys instead of writing them.
+
+Human/script equivalent (thin wrappers over the same service):
+`fa config check`, `fa config path`, `fa config get <dotted.key>`,
+`fa config set <dotted.key> <value> [--project|--global]`, and
+`fa config export-providers [--out <file.fahx>]` (provider-preset export —
+the one verb without a config-file write).
 
 ## Verification
 
-There is no standalone `fa config check` command today. What actually happens
-with a bad edit, and how to verify BEFORE it bites:
+`config` op `check` (or `fa config check`) validates both files with the
+REAL section parsers and prints named diagnostics — this is the mandatory
+final step of every edit:
 
-- **Semantic errors in strict sections** (`mcp:`, `memory:`, `cube:`, `tools:`,
-  `providerTimeouts:`, `skills:`, `roles:`, `ttsr:`, `models.custom`) throw
-  `ConfigException` naming file+key. At next boot this is FATAL:
+- **What check reports as errors** (non-zero exit / `config check: failed`):
+  yaml syntax errors, strict-section schema errors (`mcp:`, `memory:`,
+  `cube:`, `tools:`, `providerTimeouts:`, `skills:`, `roles:`, `ttsr:`,
+  `models.custom`), and bad scalar types — each naming file+section.
+- **Warnings**: unknown top-level keys (the runtime silently ignores them;
+  the check does not — a typo must not survive) and dead project-file keys.
+- **At next boot, semantic errors in strict sections are FATAL**:
   `invalid ~/.fah/config.yaml: <named diagnostic>` — the process refuses to
-  start rather than boot a broken config.
-- **YAML syntax errors are SILENT**: an unparseable user file falls back to
-  defaults (and an unparseable project file silently drops its project
-  sections). Nothing warns — which is why you must re-read and validate the
-  section you touched before declaring success (parse the YAML, check the keys
-  against this document).
+  start rather than boot a broken config. A passing check is what stands
+  between your edit and that.
+- **YAML syntax errors remain silent at RUNTIME** (an unparseable file falls
+  back to defaults) — `check` is the only place they are reported, which is
+  why it is mandatory.
 - **Live re-read surfaces**: in a running REPL, `/tools reload` and
-  `/mcp reload` re-read their sections immediately and print the parse error
-  instead of applying it — use them as the check when a REPL exists.
+  `/mcp reload` re-read their sections immediately and print the parse
+  error instead of applying it — use them as the live check when a REPL
+  exists.
 - Runtime objects keep the last good config when a reload fails (the failed
   section never half-applies), so a loud reload error means "nothing changed".
 
@@ -121,6 +157,11 @@ this skill has rotted — flag it in your report.
 | `/settings` | [Settings hub](#settings-hub) |
 
 <!-- parity: /provider /providers /model /models /model-edit /memory /tools /cube /mcp /redact /skills /approval /allow /mode /code /architect /review /settings -->
+
+The `fa config check|path|get|set` verbs and the `config` tool share their
+config-file equivalent with the topic sections above (see
+[The config tool](#the-config-tool)); the parity test pins every verb
+alongside the slash commands.
 
 ## Provider & keys
 
@@ -369,15 +410,17 @@ docs/dap.md; never hand-edit the DAP files while a hub client is running.
 
 ## Example invocations
 
-- `point project memory at ./memory` → Memory section: write
-  `memory: {projectPath: ./memory}` into `<project>/.fah/config.yaml`
-  (create the file with just that section if missing), verify, report live
+- `point project memory at ./memory` → Memory section: `config` op `set`,
+  key `memory.projectPath`, value `./memory` (project file is the default
+  scope — created minimal if missing), then `check`, then report live
   application.
-- `switch us to provider X` → Provider & keys: set `provider:`/`baseUrl:` in
-  the user file (or add a `customProviders:` entry); report next-boot
-  application and the `/provider` equivalent.
-- `disable web_search for this project` → Tool availability: write
-  `tools: {web_search: false}` into the project file; report live after
-  `/tools reload` semantics (host REPL) or next re-read.
-- `configure cube backend Z` → Cubes: write the `cube:` section (project file
-  for a repo default) and reference the manifest in `.fah/cubes/`.
+- `switch us to provider X` → Provider & keys: `config` op `set` for
+  `provider:` (and `baseUrl:`) in the user file — global scope is the
+  default for these keys; report next-boot application and the `/provider`
+  equivalent.
+- `disable web_search for this project` → Tool availability: `config` op
+  `set`, key `tools.web_search`, value `false` (project scope by default);
+  report live after `/tools reload` semantics (host REPL) or next re-read.
+- `configure cube backend Z` → Cubes: `config` op `set` for the `cube:`
+  keys (project file for a repo default) and reference the manifest in
+  `.fah/cubes/`.
