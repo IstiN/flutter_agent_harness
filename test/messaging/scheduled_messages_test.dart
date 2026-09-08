@@ -258,4 +258,89 @@ void main() {
     final pending = (await env.listDir('$root/_scheduled')).valueOrNull ?? [];
     expect(pending.where((e) => e.kind == FileKind.file), hasLength(1));
   });
+
+  test(
+    'self-addressed records follow the live mailbox after a re-address',
+    () async {
+      // Regression (issue #59): a record pins the self mailbox at schedule
+      // time, but hosts re-address mailboxes (session switch, app restart) —
+      // delivering to the stale recorded address strands the reminder in a
+      // mailbox nobody drains while the tool already reported success.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      var self = 'sid-1/main';
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => self,
+      );
+      await queue.schedule(
+        text: 'watch the PRs',
+        delay: const Duration(milliseconds: 20),
+      );
+      // The host re-addresses its mailbox before the record comes due.
+      self = 'sid-2/main';
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      final mail = await repo.peek('sid-2/main');
+      expect(mail.single.text, contains('[scheduled] watch the PRs'));
+      // Nothing stranded under the stale address.
+      expect(await repo.peek('sid-1/main'), isEmpty);
+    },
+  );
+
+  test(
+    'disposed queue holds delivery; a fresh start delivers the record',
+    () async {
+      // A host that tears a session down (app sheet dispose) must not let its
+      // orphaned timer strand the record in the dead session's mailbox — the
+      // pending file survives and the next start() delivers it to the live one.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      var self = 'sid-1/main';
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => self,
+      );
+      await queue.schedule(
+        text: 'ping later',
+        delay: const Duration(milliseconds: 500),
+      );
+      queue.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      // Held, not delivered.
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      // Restart with a re-addressed mailbox: the record surfaces there.
+      self = 'sid-2/main';
+      final restarted = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => self,
+      );
+      // start() re-arms the not-yet-due record; the queue's own timer
+      // delivers it once due.
+      await restarted.start();
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      expect(
+        (await repo.peek('sid-2/main')).single.text,
+        contains('[scheduled] ping later'),
+      );
+      expect(await repo.peek('sid-1/main'), isEmpty);
+    },
+  );
 }

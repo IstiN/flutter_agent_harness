@@ -102,6 +102,20 @@ final class ScheduledMessageQueue {
     _arm();
   }
 
+  /// Set by [dispose]: an in-flight re-arm must not arm a timer after the
+  /// host tore the queue down (the orphaned timer would deliver into the
+  /// dead session's mailbox — the stranded-reminder bug).
+  bool _disposed = false;
+
+  /// Cancels the armed delivery timer (host teardown). Pending record
+  /// files stay put — they are the source of truth; a later [start]
+  /// (host restart, session switch) re-arms and delivers them.
+  void dispose() {
+    _disposed = true;
+    _timer?.cancel();
+    _timer = null;
+  }
+
   /// One-time repair: pre-fix builds delivered self-scheduled mail into a
   /// literal `<root>/self` mailbox nobody drains. Move those into the real
   /// self mailbox (ids rewritten from 'self') so the reminders resurface.
@@ -185,11 +199,21 @@ final class ScheduledMessageQueue {
           DateTime.now().millisecondsSinceEpoch) {
         continue;
       }
-      final to = record['to'] as String? ?? _self();
+      final recordedTo = record['to'] as String? ?? _self();
+      final from = record['from'] as String? ?? recordedTo;
+      // Self-addressed records ride the LIVE self mailbox: the recorded
+      // address was pinned at schedule time, but hosts re-address mailboxes
+      // (session switch, app restart, service recreate) — the stale address
+      // strands the reminder in a mailbox nobody drains while the tool
+      // already reported success (the lost-schedule bug).
+      final self = _self();
+      final to = (recordedTo == from && self != 'self' && self.isNotEmpty)
+          ? self
+          : recordedTo;
       await _repo().send(
         AgentMessage(
           id: record['id'] as String? ?? newMessageId(),
-          fromId: record['from'] as String? ?? to,
+          fromId: from,
           toId: to,
           text: '[scheduled] ${record['text'] ?? ''}',
           sentAt: DateTime.now().toUtc().toIso8601String(),
@@ -204,13 +228,17 @@ final class ScheduledMessageQueue {
   }
 
   void _arm() {
+    if (_disposed) return;
     _timer?.cancel();
     _timer = null;
     _armAsync();
   }
 
   Future<void> _armAsync() async {
+    if (_disposed) return;
     final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
+    // The scan awaited above; the host may have torn the queue down meanwhile.
+    if (_disposed) return;
     int? nearest;
     for (final entry in entries) {
       if (!entry.path.endsWith('.json')) continue;

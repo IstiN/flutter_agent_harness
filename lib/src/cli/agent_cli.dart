@@ -1132,6 +1132,10 @@ class AgentCli {
     var heartbeatTick = 0;
     return Timer.periodic(const Duration(seconds: 2), (_) {
       unawaited(_reclaimOrphanFabricMail());
+      // Catch-up sweep: records scheduled by a previous process (or a
+      // sibling pane that exited) come due with nobody armed for them —
+      // deliver here so the reminder still surfaces (issue #59).
+      unawaited(_scheduledMessages.deliverDue());
       unawaited(_wakeOnInboxMail());
       if (heartbeatTick++ % 2 == 0) {
         if (presence != null) {

@@ -271,8 +271,15 @@ factual: paths, commands, invariants — no essays.
   activity via the heartbeat hosts touch on their inbox-watch timers) plus
   anything with pending mail — stale mailboxes from finished sessions are
   hidden behind the tool's `all: true` (`.id` markers keep real ids despite
-  dir sanitization; `_scheduled`/dot-dirs are not mailboxes). The
-  `## Agent messaging` prompt section (prompts messaging_section.md, CLI +
+  dir sanitization; `_scheduled`/dot-dirs are not mailboxes).
+  `schedule_message` (issue #59): records under `<messagesRoot>/_scheduled/`;
+  self-addressed records deliver to the host's LIVE mailbox at fire time
+  (the address pinned at schedule time goes stale on session switch/restart
+  and would strand the reminder) — hosts re-arm on every mailbox change
+  (CLI `_syncMailboxPrefix`, app `_setMailboxPrefix`) and sweep due records
+  on their inbox ticks; `dispose()` cancels only the timer, the files stay.
+
+  The `## Agent messaging` prompt section (prompts messaging_section.md, CLI +
   app variants) tells the model its own mailbox address. Turn-boundary
   delivery: `Agent.externalSteeringSource`
   merges inbox drains into the steering poll (main in AgentCli/AgentService

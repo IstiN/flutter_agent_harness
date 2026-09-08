@@ -128,6 +128,10 @@ extension AgentCliMessagingFlow on AgentCli {
     _subagentManager.mailboxPrefix = _session?.cachedId ?? '';
     // The prompt's messaging section carries the live mailbox address.
     _applyPromptComposition();
+    // Re-arm scheduled-message delivery: pending records that came due
+    // while another session was active surface in the now-active mailbox
+    // (start() is an idempotent re-arm + drain).
+    unawaited(_scheduledMessages.start());
     // Presence: a zero-mail instance is discoverable in agent_directory.
     // The session display name rides along so peers can address this
     // mailbox by name (`--session goal_builder` → `goal_builder/main`).
