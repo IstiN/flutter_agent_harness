@@ -53,6 +53,7 @@ AgentService _service() {
 Future<void> _pumpOpener(
   WidgetTester tester, {
   required void Function(ApprovalDecision) onDecision,
+  FaApprovalModeController? modeController,
 }) {
   return tester.pumpWidget(
     MaterialApp(
@@ -60,7 +61,13 @@ Future<void> _pumpOpener(
         body: Builder(
           builder: (context) => ElevatedButton(
             onPressed: () async {
-              onDecision(await showApprovalPrompt(context, _request));
+              onDecision(
+                await showApprovalPrompt(
+                  context,
+                  _request,
+                  modeController: modeController,
+                ),
+              );
             },
             child: const Text('open'),
           ),
@@ -133,6 +140,74 @@ void main() {
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
       expect(result, ApprovalDecision.deny);
+    });
+
+    testWidgets('the yolo checkbox switches the session mode on toggle', (
+      tester,
+    ) async {
+      final service = _service();
+      expect(service.approval.mode, ApprovalMode.write);
+      ApprovalDecision? result;
+      await _pumpOpener(
+        tester,
+        onDecision: (d) => result = d,
+        modeController: service,
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      final checkbox = find.byType(CheckboxListTile);
+      expect(checkbox, findsOneWidget);
+      expect(find.textContaining('YOLO'), findsWidgets);
+
+      // Toggle ON: yolo applies to the session immediately.
+      await tester.tap(checkbox);
+      await tester.pumpAndSettle();
+      expect(service.approval.mode, ApprovalMode.yolo);
+
+      // The current call still gets its explicit decision.
+      await tester.tap(find.text('Allow once'));
+      await tester.pumpAndSettle();
+      expect(result, ApprovalDecision.approveOnce);
+      expect(service.approval.mode, ApprovalMode.yolo);
+    });
+
+    testWidgets('unchecking the yolo checkbox restores the previous mode', (
+      tester,
+    ) async {
+      final service = _service();
+      await _pumpOpener(tester, onDecision: (_) {}, modeController: service);
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      final checkbox = find.byType(CheckboxListTile);
+      await tester.tap(checkbox);
+      await tester.pumpAndSettle();
+      expect(service.approval.mode, ApprovalMode.yolo);
+      await tester.tap(checkbox);
+      await tester.pumpAndSettle();
+      expect(service.approval.mode, ApprovalMode.write);
+    });
+
+    testWidgets('without the checkbox the session mode is untouched', (
+      tester,
+    ) async {
+      final service = _service();
+      await _pumpOpener(tester, onDecision: (_) {}, modeController: service);
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Allow once'));
+      await tester.pumpAndSettle();
+      expect(service.approval.mode, ApprovalMode.write);
+    });
+
+    testWidgets('no modeController — no checkbox, classic dialog', (
+      tester,
+    ) async {
+      await _pumpOpener(tester, onDecision: (_) {});
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.byType(CheckboxListTile), findsNothing);
     });
   });
 

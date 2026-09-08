@@ -307,12 +307,15 @@ final class RelayAgentService extends AgentService {
         if (state is TransportReconnecting) {
           _error = 'reconnecting…';
           notifyListeners();
-        } else {
-          final streaming = state is TransportStreaming;
-          if (streaming != _running) {
-            _running = streaming;
-            notifyListeners();
-          }
+        } else if (state is TransportStreaming && !_running) {
+          // Optimistic turn start (sendPrompt flips the link before the
+          // SW's status mirror lands). Never CLEARED here: link phases
+          // flicker (message_done → attached → tool_result → streaming)
+          // across approval/tool waits inside ONE turn, which killed the
+          // typing indicator mid-turn — the SW's status events are the
+          // turn's ground truth (set/cleared in _onHostEvent).
+          _running = true;
+          notifyListeners();
         }
       case Dropped():
         _running = false;

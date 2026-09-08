@@ -303,6 +303,22 @@ Map<String, ApprovalPolicy> alwaysPromptOverrides() => {
     if (spec.alwaysPrompts) spec.name: ApprovalPolicy.prompt,
 };
 
+/// Reconciles the always-prompt guards with the session mode. `yolo`
+/// means EVERYTHING — inject_js included: its per-tool prompt override
+/// outranks the session mode, so without this a yolo session still
+/// prompted on every inject_js call. Every other mode (including
+/// `unattended`, where an unanswered prompt resolves as deny) keeps the
+/// deliberate always-ask guard. Called at boot and on every reconfigure.
+void applyModePromptOverrides(ApprovalManager approvals, ApprovalMode mode) {
+  for (final name in alwaysPromptOverrides().keys) {
+    if (mode == ApprovalMode.yolo) {
+      approvals.clearOverride(name);
+    } else {
+      approvals.setOverride(name, ApprovalPolicy.prompt);
+    }
+  }
+}
+
 /// Restricted-target rule (E1/E17), the Dart twin of sw/ops.js
 /// restrictedReason: chrome://, extension pages, edge://, about:, the
 /// Chrome Web Store (both the legacy and the chromewebstore host) and the

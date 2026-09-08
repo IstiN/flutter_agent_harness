@@ -23,34 +23,75 @@ abstract interface class FaApprovalModeController implements Listenable {
 ///
 /// Dismissing the dialog (barrier tap, back button) maps to
 /// [ApprovalDecision.deny]: an unanswered prompt must never allow a call.
+///
+/// When [modeController] is provided the dialog offers a "YOLO mode —
+/// allow everything" checkbox: toggling it switches the SESSION approval
+/// mode live (toggle off restores the mode the dialog opened with).
 Future<ApprovalDecision> showApprovalPrompt(
   BuildContext context,
-  ApprovalRequest request,
-) async {
+  ApprovalRequest request, {
+  FaApprovalModeController? modeController,
+}) async {
   final decision = await showDialog<ApprovalDecision>(
     context: context,
-    builder: (_) => ApprovalDialog(request: request),
+    builder: (_) =>
+        ApprovalDialog(request: request, modeController: modeController),
   );
   return decision ?? ApprovalDecision.deny;
 }
 
 /// The three-button tool approval dialog: approve once, always allow the
 /// tool for the session, or deny. Pops with the chosen [ApprovalDecision],
-/// or `null` when dismissed.
-class ApprovalDialog extends StatelessWidget {
-  const ApprovalDialog({super.key, required this.request});
+/// or `null` when dismissed. With a [modeController] it also carries the
+/// session-wide yolo checkbox.
+class ApprovalDialog extends StatefulWidget {
+  const ApprovalDialog({super.key, required this.request, this.modeController});
 
   /// The approval request being decided.
   final ApprovalRequest request;
 
+  /// Session approval-mode controller behind the yolo checkbox; null
+  /// hides the checkbox (the classic three-button dialog).
+  final FaApprovalModeController? modeController;
+
+  @override
+  State<ApprovalDialog> createState() => _ApprovalDialogState();
+}
+
+class _ApprovalDialogState extends State<ApprovalDialog> {
   static const _maxArgumentChars = 800;
+
+  /// The mode the dialog opened with — unchecking yolo restores it.
+  ApprovalMode? _previousMode;
+  bool _yolo = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final controller = widget.modeController;
+    if (controller != null) {
+      _previousMode = controller.approval.mode;
+      _yolo = _previousMode == ApprovalMode.yolo;
+    }
+  }
+
+  void _onYoloChanged(bool? checked) {
+    final controller = widget.modeController;
+    if (controller == null || checked == null) return;
+    setState(() => _yolo = checked);
+    controller.setApprovalMode(
+      checked ? ApprovalMode.yolo : (_previousMode ?? ApprovalMode.alwaysAsk),
+    );
+  }
 
   String _formattedArguments() {
     var encoded = '';
     try {
-      encoded = const JsonEncoder.withIndent('  ').convert(request.arguments);
+      encoded = const JsonEncoder.withIndent(
+        '  ',
+      ).convert(widget.request.arguments);
     } on Object {
-      encoded = request.arguments.toString();
+      encoded = widget.request.arguments.toString();
     }
     if (encoded.length > _maxArgumentChars) {
       encoded = '${encoded.substring(0, _maxArgumentChars)}…';
@@ -61,6 +102,7 @@ class ApprovalDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final request = widget.request;
     return AlertDialog(
       title: Text(
         FaChatStrings.of(context).approvalAllowToolTitle(request.toolName),
@@ -92,6 +134,19 @@ class ApprovalDialog extends StatelessWidget {
                   ),
                 ),
               ),
+              if (widget.modeController != null) ...[
+                const SizedBox(height: 4),
+                CheckboxListTile(
+                  value: _yolo,
+                  onChanged: _onYoloChanged,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    FaChatStrings.of(context).approvalYoloAllowEverything,
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
