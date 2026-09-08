@@ -264,9 +264,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     } else {
       // Post-frame: the in-flight build may still unmount a narrow
       // trajectory page bound to this controller.
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => controller.dispose(),
-      );
+      WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
     }
   }
 
@@ -396,7 +394,7 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   Future<ApprovalDecision> _handleApprovalPrompt(ApprovalRequest request) {
     if (!mounted) return Future.value(ApprovalDecision.deny);
-    return showApprovalPrompt(context, request);
+    return showApprovalPrompt(context, request, modeController: widget.service);
   }
 
   Future<List<AskAnswer>?> _handleAskQuestions(List<AskQuestion> questions) {

@@ -216,6 +216,39 @@ void main() {
     addTearDown(channel.close);
   });
 
+  test('isStreaming rides the SW status, not the link-phase machine', () async {
+    // A turn spans approval/tool waits where NO data flows: message_done
+    // (a tool-call step boundary) flips the link back to attached, and
+    // driving _running from the transport state killed the typing
+    // indicator mid-turn (and re-enabled session actions against a busy
+    // SW). The SW's status events are the turn's ground truth.
+    final (:service, :channel) = await _attached();
+    await service.sendText('turn with tools');
+    await Future<void>.delayed(Duration.zero);
+    expect(service.isStreaming, isTrue); // optimistic send
+    // SW turn-start mirror.
+    channel.fromWorker(
+      const StreamMsg(event: {'type': 'status', 'running': true}),
+    );
+    await Future<void>.delayed(Duration.zero);
+    // Tool-call step boundary: flips the LINK to attached…
+    channel.fromWorker(
+      const MessageDoneMsg(message: {'role': 'assistant', 'text': ''}),
+    );
+    await Future<void>.delayed(Duration.zero);
+    // …but the turn is still alive (approval/tool wait ahead).
+    expect(service.isStreaming, isTrue);
+    expect(service.openSessionAction, isNull);
+    // SW says the turn is over — only NOW the indicator clears.
+    channel.fromWorker(
+      const StreamMsg(event: {'type': 'status', 'running': false}),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(service.isStreaming, isFalse);
+    expect(service.openSessionAction, isNotNull);
+    addTearDown(channel.close);
+  });
+
   test('listSessions returns the SW history over sessions_query', () async {
     final (:service, :channel) = await _attached();
     final future = service.listSessions();
