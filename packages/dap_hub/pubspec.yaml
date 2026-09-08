@@ -1,0 +1,30 @@
+name: dap_hub
+description: >-
+  A self-hosted DAP/1 hub in pure Dart: relays end-to-end-encrypted,
+  pubkey-ACL'd channels (DM and presence included) between agent-harness
+  clients. Zero-knowledge router — the hub never sees plaintext.
+version: 0.1.0
+homepage: https://github.com/IstiN/flutter_agent
+repository: https://github.com/IstiN/flutter_agent/tree/main/packages/dap_hub
+topics:
+  - agents
+  - messaging
+  - e2e-encryption
+  - websocket
+  - hub
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  crypto: ^3.0.6
+  cryptography: ^2.7.0
+
+dev_dependencies:
+  async: ^2.11.0
+  crap4dart: ^0.9.5
+  lints: ^5.0.0
+  test: ^1.24.0
+
+executables:
+  dap_hub:
