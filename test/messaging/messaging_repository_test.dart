@@ -18,7 +18,7 @@ void main() {
       expect(
         entry.toString(),
         'MailboxEntry(sess1/main, name: null, cwd: /work, slug: sess1, '
-        'lastActivity: null)',
+        'presence: null, lastActivity: null, capabilities: [])',
       );
       final named = MailboxEntry(
         id: 'sess1/main',
@@ -44,6 +44,50 @@ void main() {
       expect(entry, same);
       expect(entry.hashCode, same.hashCode);
       expect(entry, isNot(differentCwd));
+    });
+
+    test('presence and capabilities participate in equality', () {
+      const busy = MailboxEntry(id: 'a1', presence: AgentPresence.busy);
+      expect(busy, const MailboxEntry(id: 'a1', presence: AgentPresence.busy));
+      expect(busy, isNot(const MailboxEntry(id: 'a1')));
+      const capable = MailboxEntry(
+        id: 'a1',
+        capabilities: [AgentCapability(name: 'x.y')],
+      );
+      expect(
+        capable,
+        const MailboxEntry(
+          id: 'a1',
+          capabilities: [AgentCapability(name: 'x.y')],
+        ),
+      );
+      expect(capable, isNot(const MailboxEntry(id: 'a1')));
+      // Same-capability content built non-const still compares equal.
+      expect(
+        capable,
+        MailboxEntry(
+          id: 'a1',
+          capabilities: [const AgentCapability(name: 'x.y')],
+        ),
+      );
+    });
+
+    test('AgentCapability JSON round-trips and skips malformed entries', () {
+      const capability = AgentCapability(
+        name: 'yoclip.render',
+        description: 'Render to MP4',
+        payload: 'scene=<id>',
+      );
+      expect(AgentCapability.listFromJson(capability.toJson()), [capability]);
+      expect(AgentCapability.listFromJson(null), isEmpty);
+      expect(
+        AgentCapability.listFromJson([
+          'nope',
+          {'name': ''},
+          {'name': 'ok'},
+        ]),
+        const [AgentCapability(name: 'ok')],
+      );
     });
 
     test('omitted cwd and slug default to null', () {

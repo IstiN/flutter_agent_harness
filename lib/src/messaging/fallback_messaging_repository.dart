@@ -256,10 +256,22 @@ final class FallbackMessagingRepository
   }
 
   @override
-  Future<void> register(String agentId, {String? sessionName}) async {
-    await _fallback.register(agentId, sessionName: sessionName);
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async {
+    await _fallback.register(
+      agentId,
+      sessionName: sessionName,
+      capabilities: capabilities,
+    );
     try {
-      await _primary.register(agentId, sessionName: sessionName);
+      await _primary.register(
+        agentId,
+        sessionName: sessionName,
+        capabilities: capabilities,
+      );
     } on Object {
       // Best-effort: hub presence rides the signed hello, a failed
       // announce must not break session startup.
@@ -267,10 +279,10 @@ final class FallbackMessagingRepository
   }
 
   @override
-  Future<void> touch(String agentId) async {
-    await _fallback.touch(agentId);
+  Future<void> touch(String agentId, {bool busy = false}) async {
+    await _fallback.touch(agentId, busy: busy);
     try {
-      await _primary.touch(agentId);
+      await _primary.touch(agentId, busy: busy);
     } on Object {
       // Best-effort heartbeat.
     }

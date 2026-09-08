@@ -116,15 +116,23 @@ final class HubFabricRepository
   ];
 
   @override
-  Future<void> register(String agentId, {String? sessionName}) async {
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async {
     // Presence rides the signed hello; the hub display name is the DAP
     // identity (stable across restarts), not the per-session fabric name.
+    // Capabilities are not carried by the hub wire yet — the file fabric's
+    // `.capabilities` marker is the discovery source (issue #27 phase 2).
   }
 
   @override
-  Future<void> touch(String agentId) async {
+  Future<void> touch(String agentId, {bool busy = false}) async {
     // Hub liveness is the connection itself; the hub dates peers by their
-    // last authenticated frame (lastSeen), not by client heartbeats.
+    // last authenticated frame (lastSeen), not by client heartbeats. The
+    // busy run-state is local knowledge (file marker) until the hub wire
+    // carries presence states.
   }
 
   @override
@@ -138,6 +146,9 @@ final class HubFabricRepository
           id: agent.agentId,
           name: agent.name,
           lastActivity: agent.lastSeen,
+          // Registration-backed presence: the hub knows who is connected —
+          // no mtime heuristic.
+          presence: agent.online ? AgentPresence.live : AgentPresence.offline,
         ),
     ];
   }

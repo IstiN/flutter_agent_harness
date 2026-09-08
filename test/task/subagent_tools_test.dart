@@ -25,10 +25,14 @@ final class _FakeMessagingRepository implements MessagingRepository {
   }
 
   @override
-  Future<void> register(String agentId, {String? sessionName}) async {}
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async {}
 
   @override
-  Future<void> touch(String agentId) async {}
+  Future<void> touch(String agentId, {bool busy = false}) async {}
 
   @override
   Future<List<AgentMessage>> peek(String agentId) async =>
