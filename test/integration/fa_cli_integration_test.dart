@@ -168,54 +168,66 @@ void main() {
         expect(harness.rawOutput, contains('\x1b[=1;1u'));
         expect(harness.rawOutput, contains('\x1b[>4;2m'));
 
-        Future<void> expectNewline(String rawKey) async {
-          harness.sendText('ab');
-          await harness.waitForOutput(settleMs: 200);
-          harness.sendText(rawKey);
-          await harness.waitForOutput(settleMs: 300);
-          harness.sendText('cd');
-          await harness.waitForOutput(settleMs: 300);
-          final abRow = harness.viewportLines.indexWhere(
-            (l) => l.contains('ab'),
-          );
-          final cdRow = harness.viewportLines.indexWhere(
-            (l) => l.contains('cd'),
-          );
-          expect(
-            abRow,
-            greaterThanOrEqualTo(0),
-            reason: 'input prefix lost on screen for $rawKey',
-          );
-          expect(
-            cdRow,
-            greaterThan(abRow),
-            reason:
-                '"cd" must land on a row BELOW "ab" (newline inserted), '
-                'got rows ab=$abRow cd=$cdRow for $rawKey',
-          );
-          expect(
-            harness.screenText.contains('abcd'),
-            isFalse,
-            reason: 'shift+enter submitted instead of newline for $rawKey',
-          );
-          // Reset the input for the next variant: backspace over 'cd', then
-          // over the newline and 'ab'.
-          for (var i = 0; i < 6; i++) {
-            harness.sendBackspace();
-          }
-          await harness.waitForOutput(settleMs: 150);
-        }
-
         // kitty keyboard protocol: CSI 13;2 u (Enter + shift modifier).
-        await expectNewline('\x1b[13;2u');
+        await expectNewline(harness, '\x1b[13;2u');
         // xterm modifyOtherKeys: CSI 27;2;13 ~ (shift+enter as a ~-key).
-        await expectNewline('\x1b[27;2;13~');
+        await expectNewline(harness, '\x1b[27;2;13~');
         // Legacy ESC CR encoding (terminals without protocol support, e.g.
         // Warp's passthrough) — decoded as alt+enter.
-        await expectNewline('\x1b\r');
+        await expectNewline(harness, '\x1b\r');
         // Raw Ctrl+O control byte (0x0F): the universal legacy wire —
         // a plain control character, so it works in EVERY terminal.
-        await expectNewline('\x0f');
+        await expectNewline(harness, '\x0f');
+      },
+    );
+    test(
+      'shift+enter survives a default-termios PTY (ICRNL on — issue #77)',
+      () async {
+        // Real PTY hosts (IDE embedded terminals, e.g. yoloit) deliver
+        // Shift+Enter as ESC CR, and their default termios has ICRNL on —
+        // the kernel line discipline rewrites the CR to LF before fa reads
+        // it. fa must clear ICRNL at TUI startup (stty -icrnl) so the ESC CR
+        // wire arrives intact; the parser also decodes the translated ESC LF
+        // as alt+enter for hosts where stty is unavailable. The raw:true
+        // harness above can never see this failure class — this suite runs
+        // the same wire matrix against the kernel-default termios.
+        final tempHome = _tempHome();
+        final harness = await FaCliHarness.spawn(
+          extraEnv: {'HOME': tempHome.path},
+          raw: false,
+        );
+        addTearDown(() async {
+          await harness.close();
+          tempHome.deleteSync(recursive: true);
+        });
+        await harness.waitForBoot();
+
+        // The exact yoloit wire: ESC CR, ICRNL rewrites it to ESC LF when
+        // fa failed to clear the flag (AC1).
+        await expectNewline(harness, '\x1b\r');
+        // The translated wire itself (AC2): ESC LF decodes as alt+enter —
+        // the fallback for hosts that reset termios under us or where stty
+        // is unavailable.
+        await expectNewline(harness, '\x1b\n');
+        // No regression under ICRNL-on termios (AC4/AC5): protocol wires and
+        // the Ctrl+O fallback still insert newlines.
+        await expectNewline(harness, '\x1b[13;2u');
+        await expectNewline(harness, '\x1b[27;2;13~');
+        await expectNewline(harness, '\x0f');
+
+        // Plain Enter still SUBMITS under the default-termios PTY (AC4):
+        // /exit closes the REPL — the process must actually go away.
+        // runSlashCommand's pauses keep the menu-close Escape and the
+        // submitting CR in separate reads (together they would decode as
+        // alt+enter — the very wire this test asserts a newline for).
+        await harness.runSlashCommand('/exit');
+        await harness.pty.exitCode.timeout(
+          const Duration(seconds: 20),
+          onTimeout: () => throw TimeoutException(
+            'fa did not exit on plain-CR /exit submit',
+            const Duration(seconds: 20),
+          ),
+        );
       },
     );
 
@@ -526,6 +538,43 @@ void main() {
       });
     });
   });
+}
+
+/// Types `ab`, sends [rawKey], types `cd`, and asserts `cd` landed on a row
+/// BELOW `ab` (a newline was inserted) without submitting the composer.
+/// Backspaces the buffer clean afterwards so variants can share one harness.
+Future<void> expectNewline(FaCliHarness harness, String rawKey) async {
+  harness.sendText('ab');
+  await harness.waitForOutput(settleMs: 200);
+  harness.sendText(rawKey);
+  await harness.waitForOutput(settleMs: 300);
+  harness.sendText('cd');
+  await harness.waitForOutput(settleMs: 300);
+  final abRow = harness.viewportLines.indexWhere((l) => l.contains('ab'));
+  final cdRow = harness.viewportLines.indexWhere((l) => l.contains('cd'));
+  expect(
+    abRow,
+    greaterThanOrEqualTo(0),
+    reason: 'input prefix lost on screen for $rawKey',
+  );
+  expect(
+    cdRow,
+    greaterThan(abRow),
+    reason:
+        '"cd" must land on a row BELOW "ab" (newline inserted), '
+        'got rows ab=$abRow cd=$cdRow for $rawKey',
+  );
+  expect(
+    harness.screenText.contains('abcd'),
+    isFalse,
+    reason: 'shift+enter submitted instead of newline for $rawKey',
+  );
+  // Reset the input for the next variant: backspace over 'cd', then
+  // over the newline and 'ab'.
+  for (var i = 0; i < 6; i++) {
+    harness.sendBackspace();
+  }
+  await harness.waitForOutput(settleMs: 150);
 }
 
 /// Creates a temp HOME with a minimal keyless config (yolo mode so tests
