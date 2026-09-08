@@ -176,6 +176,20 @@ final class ScheduledMessageQueue {
     }
   }
 
+  /// Reads and tolerantly parses one `_scheduled/` record file: null for an
+  /// unreadable file, malformed json, or valid json that is not a Map — one
+  /// corrupt record must never crash a delivery/arming pass (issue #59).
+  Future<Map<String, dynamic>?> _readRecord(String path) async {
+    final text = (await _env.readTextFile(path)).valueOrNull;
+    if (text == null) return null;
+    try {
+      final decoded = jsonDecode(text);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } on FormatException {
+      return null; // torn write — leave for inspection
+    }
+  }
+
   Future<int> _deliverDueInner() async {
     final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
     var delivered = 0;
@@ -187,20 +201,8 @@ final class ScheduledMessageQueue {
       final path = entry.path.contains('/')
           ? entry.path
           : '$_dir/${entry.path}';
-      final text = (await _env.readTextFile(path)).valueOrNull;
-      if (text == null) {
-        continue;
-      }
-      final Map<String, dynamic> record;
-      try {
-        final decoded = jsonDecode(text);
-        if (decoded is! Map<String, dynamic>) {
-          continue; // valid json, wrong shape — not a record
-        }
-        record = decoded;
-      } on FormatException {
-        continue; // torn write — leave for inspection
-      }
+      final record = await _readRecord(path);
+      if (record == null) continue;
       final dueMs = record['dueMs'] as int?;
       if (dueMs == null || dueMs > DateTime.now().millisecondsSinceEpoch) {
         continue; // not a schedule record, or not due yet
@@ -261,17 +263,10 @@ final class ScheduledMessageQueue {
       final path = entry.path.contains('/')
           ? entry.path
           : '$_dir/${entry.path}';
-      final text = (await _env.readTextFile(path)).valueOrNull;
-      if (text == null) continue;
-      try {
-        final decoded = jsonDecode(text);
-        if (decoded is! Map<String, dynamic>) continue; // valid json, wrong shape
-        final due = decoded['dueMs'] as int?;
-        if (due != null && (nearest == null || due < nearest)) {
-          nearest = due;
-        }
-      } on FormatException {
-        continue;
+      final record = await _readRecord(path);
+      final due = record?['dueMs'] as int?;
+      if (due != null && (nearest == null || due < nearest)) {
+        nearest = due;
       }
     }
     return nearest;
