@@ -97,6 +97,13 @@ final class SubagentManager {
   /// session (and thus its id) exists. Empty = single-instance mode.
   String mailboxPrefix = '';
 
+  /// This host's machine name for `name@machine` addressing (issue #27
+  /// phase 2): a `@machine` suffix matching it (case-insensitive) is
+  /// stripped before local resolution; any other machine is phase-3 A2A
+  /// territory and stays unresolved. Null = the host did not report one —
+  /// machine-suffixed addresses then never resolve locally.
+  String? machineName;
+
   /// The fabric mailbox for a local agent id. An id containing `/` is
   /// already an absolute mailbox (cross-instance addressing like
   /// `<sessionId>/main`) and passes through unprefixed.

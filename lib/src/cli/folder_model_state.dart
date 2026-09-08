@@ -101,9 +101,9 @@ Future<FolderModelState?> loadFolderModelState(
   required String sessionsRoot,
   required String cwd,
 }) async {
-  final text = (await env
-      .readTextFile(folderModelStatePath(sessionsRoot: sessionsRoot, cwd: cwd)))
-      .valueOrNull;
+  final text = (await env.readTextFile(
+    folderModelStatePath(sessionsRoot: sessionsRoot, cwd: cwd),
+  )).valueOrNull;
   if (text == null || text.isEmpty) return null;
   try {
     final decoded = jsonDecode(text);

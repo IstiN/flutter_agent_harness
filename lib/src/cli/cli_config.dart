@@ -20,6 +20,7 @@ import '../cube/config/cube_settings.dart';
 import '../providers/provider_common.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
+import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
@@ -75,6 +76,7 @@ final class CliConfig {
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
     this.memory,
+    this.fabric,
     this.cube,
     this.tools,
     this.redact,
@@ -144,6 +146,11 @@ final class CliConfig {
       // The providerTimeouts section (provider watchdog overrides) is strict
       // too.
       providerTimeouts: _parseProviderTimeouts(map['providerTimeouts']),
+      // The fabric section (issue #27 phase 2 discovery announcements) is
+      // strict too.
+      fabric: map['fabric'] == null
+          ? null
+          : FabricConfig.fromYaml(map['fabric']),
       // The skills section (third-party skills access consent + shell
       // execution toggle) is strict too.
       skillsAccess:
@@ -255,6 +262,11 @@ final class CliConfig {
   /// (the `skills.disableShellExecution` yaml key).
   final bool skillsDisableShellExecution;
 
+  /// Optional `fabric:` section — the host's discovery announcements for
+  /// the agent messaging fabric (issue #27 phase 2): capabilities peers
+  /// see in `agent_directory`. Parsed strictly.
+  final FabricConfig? fabric;
+
   /// Optional `memory:` section — long-term memory storage path overrides
   /// (git-backed project memory). Null = the historical `.fah/memory`
   /// layout.
@@ -300,6 +312,8 @@ final class CliConfig {
     if (mcpConfig != null) buffer.write(mcpConfig.toYaml());
     buffer.write(_providerTimeoutsYaml());
     buffer.write(_skillsYaml());
+    final fabricConfig = fabric;
+    if (fabricConfig != null) buffer.write(fabricConfig.toYaml());
     final cubeConfig = cube;
     if (cubeConfig != null) buffer.write(cubeConfig.toYamlFragment());
     final toolsConfig = tools;
