@@ -446,7 +446,7 @@ jobs:
           bin="build/out/bundle/bin/fa"
           [ "${{ matrix.os }}" = "windows" ] && bin="build/out/bundle/bin/fa.exe"
           out=$("$bin" --help)
-          echo "$out" | head -5
+          echo "$out"
           [ -n "$out" ] || { echo "fa --help produced no output"; exit 1; }
 
   # Aggregation job so branch protection can require ONE stable context
