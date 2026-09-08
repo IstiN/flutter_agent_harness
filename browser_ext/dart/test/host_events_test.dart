@@ -9,6 +9,7 @@
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
+import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
@@ -74,6 +75,43 @@ void main() {
     final text = map?['text'] as String;
     expect(text, contains('"tabId":1'));
     expect(text, isNot(contains(png)));
+  });
+
+  test('transcriptReplayOf synthesizes panel events from the transcript', () {
+    final messages = <Message>[
+      UserMessage.text('open example.com'),
+      AssistantMessage(
+        content: const [TextContent(text: 'opening it now')],
+        api: 'openai-completions',
+        provider: 'fake',
+        model: 'fake:test',
+        usage: Usage.zero,
+        stopReason: StopReason.stop,
+        timestamp: DateTime(2026, 9, 8),
+      ),
+      ToolResultMessage(
+        toolCallId: 'c1',
+        toolName: 'browser_navigate',
+        content: const [TextContent(text: '{"ok":true}')],
+        isError: false,
+        timestamp: DateTime(2026, 9, 8),
+      ),
+    ];
+    final events = transcriptReplayOf(messages);
+    expect(events, hasLength(3));
+    // user row
+    expect(events[0]['type'], 'message_done');
+    expect(events[0]['role'], 'user');
+    expect(events[0]['text'], 'open example.com');
+    // assistant row
+    expect(events[1]['type'], 'message_done');
+    expect(events[1]['role'], 'assistant');
+    expect(events[1]['text'], 'opening it now');
+    // tool row
+    expect(events[2]['type'], 'tool_result');
+    expect(events[2]['toolName'], 'browser_navigate');
+    expect(events[2]['isError'], false);
+    expect(events[2]['text'], '{"ok":true}');
   });
 
   test('v1 screenshot bridge: pngBase64 becomes a vision block', () {

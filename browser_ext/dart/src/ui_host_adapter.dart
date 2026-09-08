@@ -29,6 +29,10 @@ abstract interface class UiHostBackend {
   /// `session_open`: restore an archived session as the live one.
   Future<void> openSession(String sessionId);
 
+  /// The loaded transcript as attach-replay event maps (the durable
+  /// backlog the ring cannot provide after an SW restart or session_open).
+  List<Map<String, dynamic>> transcriptReplay();
+
   /// The live tool list with enabled flags (panel Tools section).
   List<UiToolState> toolsList();
 
@@ -145,6 +149,10 @@ final class UiHostAdapter implements UiHostConnector {
     if (host == null) throw StateError('host not booted');
     await host.openSession(sessionId);
   }
+
+  @override
+  List<Map<String, dynamic>> transcriptReplay() =>
+      backend()?.transcriptReplay() ?? const [];
 
   @override
   Future<Map<String, dynamic>> extRequest(

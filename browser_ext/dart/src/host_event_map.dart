@@ -107,3 +107,25 @@ ToolExecutionResult v1OpToolResult(String op, Map<String, dynamic> envelope) {
   }
   return ToolExecutionResult.text(result == null ? 'ok' : jsonEncode(result));
 }
+
+/// The attach-replay backlog synthesized from the loaded transcript. The
+/// replay ring is memory-only — an MV3 service-worker restart or a
+/// session_open empties it, and a freshly attached panel would render an
+/// empty chat against a transcript the SW actually holds. Shapes match
+/// the panel's `_onHostEvent` cases exactly: `message_done` rows (user +
+/// assistant, via [messageToJs]) and `tool_result` rows.
+List<Map<String, dynamic>> transcriptReplayOf(List<Message> messages) => [
+  for (final message in messages)
+    if (message is ToolResultMessage)
+      {
+        'type': 'tool_result',
+        'toolName': message.toolName,
+        'isError': message.isError,
+        'text': [
+          for (final block in message.content)
+            if (block is TextContent) block.text,
+        ].join('\n'),
+      }
+    else
+      {'type': 'message_done', ...messageToJs(message)},
+];
