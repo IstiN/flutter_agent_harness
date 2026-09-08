@@ -86,6 +86,10 @@ class FakeHub {
     await _server?.close(force: true);
   }
 
+  /// Every registered agentId (welcome order) — the standalone e2e runner
+  /// reports roster changes so the spec learns both peers' ids.
+  List<String> get agentIds => _registry.keys.toList();
+
   /// Resolves when the hub has seen [n] signature-verified hellos.
   Future<void> waitForHellos(int n) async {
     if (_hellosSeen >= n) return;
