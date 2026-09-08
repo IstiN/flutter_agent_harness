@@ -67,6 +67,7 @@ export 'src/memory_config.dart';
 export 'src/memory/memory_controller.dart';
 export 'src/memory/memory_tools.dart';
 export 'src/messaging/agent_message.dart';
+export 'src/messaging/fallback_messaging_repository.dart';
 export 'src/messaging/schedule_message_tool.dart';
 export 'src/messaging/scheduled_messages.dart';
 export 'src/messaging/file_messaging_repository.dart';

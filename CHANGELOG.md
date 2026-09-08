@@ -2980,3 +2980,15 @@
 ## Unreleased
 
 ## Unreleased
+
+- feat(27): hub-first agent messaging fabric with file fallback (phase 1) —
+  the CLI composes the DAP hub into the agent messaging fabric
+  (`FallbackMessagingRepository` over `lib/src/messaging/agent_fabric.dart`):
+  hub-resolvable targets (16-hex ids, unambiguous display names, `#channels`)
+  deliver over DAP/1, file inboxes stay the offline fallback with
+  forward-on-reconnect (flushed by the 2s inbox probe), inbound hub mail
+  merges into the main inbox drain only, deduped by id and
+  sender+time+body; recipient guards consult the hub roster so hub peers
+  are deliverable through `agent_message`. Docs: `docs/dap.md` §12.
+  Discovery/presence states (`busy`) and the A2A gateway remain for
+  phases 2-3.

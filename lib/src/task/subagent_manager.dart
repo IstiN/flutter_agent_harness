@@ -11,6 +11,7 @@ library;
 import 'dart:async';
 
 import '../messaging/agent_message.dart';
+import '../messaging/fallback_messaging_repository.dart';
 import '../messaging/messaging_repository.dart';
 import 'subagent.dart';
 
@@ -209,7 +210,7 @@ final class SubagentManager {
   /// children message the parent.
   Future<void> enqueueMessage(String id, SubagentMessage message) async {
     final handle = _handles[id];
-    _guardRecipient(id, handle);
+    await _guardRecipient(id, handle);
     final capped = _capMessage(message);
     if (messaging != null) {
       await _deliverViaFabric(id, handle, capped);
@@ -226,12 +227,15 @@ final class SubagentManager {
   }
 
   /// Recipient validation for [enqueueMessage]: known local handle, the
-  /// [selfId] inbox (fabric only), or an absolute cross-instance mailbox
-  /// (fabric only). Aborted children refuse messages.
-  void _guardRecipient(String id, SubagentHandle? handle) {
-    final absolute = id.contains('/');
+  /// [selfId] inbox (fabric only), an absolute cross-instance mailbox
+  /// (fabric only), or a hub target the routing fabric resolves — hub
+  /// peers (16-hex ids, display names, `#channels`) have no local handle.
+  /// Aborted children refuse messages.
+  Future<void> _guardRecipient(String id, SubagentHandle? handle) async {
     final deliverable =
-        handle != null || (id == selfId || absolute) && messaging != null;
+        handle != null ||
+        (id == selfId || id.contains('/')) && messaging != null ||
+        await _hubResolvable(id);
     if (!deliverable) {
       throw StateError(
         'unknown subagent "$id" — available: ${_handles.keys.join(', ')}',
@@ -240,6 +244,24 @@ final class SubagentManager {
     if (handle?.status == SubagentStatus.aborted) {
       throw StateError('subagent "$id" is aborted and takes no messages');
     }
+  }
+
+  /// Whether [id] resolves on the routing (hub) transport — consulted only
+  /// for ids that are NOT local addresses (no handle, not [selfId], not an
+  /// absolute mailbox): local routing always wins over the hub roster, and
+  /// a bare local id must never leak to the hub prefixed. False while the
+  /// routing transport is down — offline hub mail fails honestly instead
+  /// of dead-dropping into a file inbox nobody polls.
+  Future<bool> _hubResolvable(String id) async {
+    if (_handles.containsKey(id) || id == selfId || id.contains('/')) {
+      return false;
+    }
+    final router = messaging is RoutingMessagingRepository
+        ? messaging as RoutingMessagingRepository
+        : null;
+    return router != null &&
+        router.isConnected &&
+        await router.resolveTarget(id) != null;
   }
 
   /// The body cap: overlong messages are truncated with a marker.
@@ -259,7 +281,10 @@ final class SubagentManager {
     SubagentHandle? handle,
     SubagentMessage message,
   ) async {
-    final mailbox = mailboxOf(id);
+    // A hub-resolvable target keeps its RAW id — the hub roster knows bare
+    // ids and channels, a session prefix would hide them from the
+    // resolver. Everything else gets the namespaced file mailbox.
+    final mailbox = await _hubResolvable(id) ? id : mailboxOf(id);
     final pending = await messaging!.peek(mailbox);
     if (pending.length >= maxPendingMessages) {
       throw StateError(

@@ -122,6 +122,7 @@ import '../memory/compaction_memory_hook.dart';
 import '../memory/harness_llm_provider.dart';
 import '../memory/memory_controller.dart';
 import '../memory_config.dart';
+import '../messaging/agent_fabric.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
 import '../messaging/messaging_repository.dart';
@@ -333,23 +334,20 @@ class AgentCli {
     // `subagent_registry` custom records, so a resumed session rehydrates
     // its agents (and `/sessions`-shared repos make agents visible across
     // instances of the same cwd).
+    // Messaging fabric: file inboxes; hub primary composes over (#27).
+    final (:fabric, :fileFabric, :messagesRoot) = buildAgentFabric(
+      env: _env,
+      sessionRoot: config.sessionRoot,
+      homeDir: config.homeDir,
+      hubFabric: config.hubFabric,
+      mainMailbox: () => _subagentManager.mailboxOf('main'),
+    );
+    _messagesRoot = messagesRoot;
+    _fileFabric = fileFabric;
+    _fabricRepository = fabric;
     _subagentManager = SubagentManager(
       parentSessionId: '',
-      // Messaging fabric: per-agent inboxes under the session root.
-      // SwappableMessagingRepository lets _createSession re-point the
-      // fabric when storage falls back to another root.
-      messaging: _fabricRepository = SwappableMessagingRepository(
-        FileMessagingRepository(
-          env: _env,
-          // Messaging is scoped to the *launch* cwd. Sessions are grouped
-          // by cwd; the fabric is initialized once. Each mailbox is
-          // namespaced by session id.
-          root: _messagesRoot =
-              '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
-          decodeSessionCwd: decodeSessionCwd,
-          homeDir: config.homeDir,
-        ),
-      ),
+      messaging: _fabricRepository,
       selfId: 'main',
       homeDir: config.homeDir,
       wakeProcess: _launchMailboxWake,
@@ -765,9 +763,13 @@ class AgentCli {
 
   late final SubagentManager _subagentManager;
 
-  /// The messaging fabric wrapper — re-pointed when session storage falls
-  /// back to a different root so the mailboxes follow the sessions.
-  late final SwappableMessagingRepository _fabricRepository;
+  /// The FILE fabric layer — re-pointed when session storage falls back to
+  /// a different root so the mailboxes follow the sessions.
+  late final SwappableMessagingRepository _fileFabric;
+
+  /// The shared fabric: the file inboxes, or the hub-primary composite
+  /// when a hub fabric is injected (issue #27).
+  late final MessagingRepository _fabricRepository;
 
   /// The launch-cwd messaging root (also backs scheduled messages).
   late final String _messagesRoot;
@@ -1834,7 +1836,7 @@ class AgentCli {
           // fabric keeps pointing at the failed root: presence/register
           // throws, and an attached app's messages land where this process
           // never looks (the silent-dead-attach bug).
-          _fabricRepository.swap(
+          _fileFabric.swap(
             FileMessagingRepository(
               env: _env,
               root: '$fallbackRoot/${encodeSessionCwd(_env.cwd)}/messages',
