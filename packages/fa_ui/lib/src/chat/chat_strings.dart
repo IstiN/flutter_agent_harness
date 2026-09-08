@@ -60,6 +60,7 @@ abstract class FaChatStrings {
   String get approvalDeny;
   String get approvalAllowOnce;
   String get approvalAlwaysAllow;
+  String get approvalYoloAllowEverything;
   String get approvalModeTitle;
   String get approvalModeAlwaysAsk;
   String get approvalModeWrite;
@@ -166,6 +167,8 @@ class FaChatStringsEn extends FaChatStrings {
   String get approvalAllowOnce => 'Allow once';
   @override
   String get approvalAlwaysAllow => 'Always allow';
+  @override
+  String get approvalYoloAllowEverything => 'YOLO mode — allow everything';
   @override
   String get approvalModeTitle => 'Tool approvals';
   @override
@@ -306,6 +309,8 @@ class FaChatStringsRu extends FaChatStrings {
   String get approvalAllowOnce => 'Разрешить один раз';
   @override
   String get approvalAlwaysAllow => 'Всегда разрешать';
+  @override
+  String get approvalYoloAllowEverything => 'YOLO — разрешать всё';
   @override
   String get approvalModeTitle => 'Разрешения инструментов';
   @override

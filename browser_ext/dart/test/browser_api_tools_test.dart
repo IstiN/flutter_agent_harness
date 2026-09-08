@@ -1377,6 +1377,31 @@ void main() {
       expect(utf8.encode(r.result! as String).length, lessThanOrEqualTo(10));
     });
   });
+
+  group('applyModePromptOverrides', () {
+    test('yolo drops the always-prompt guards; other modes keep them', () {
+      // inject_js's per-tool prompt override outranks the session mode —
+      // so a yolo session still prompted on every inject_js call (user
+      // report: "включил yolo, а он всё равно спрашивает").
+      final approvals = ApprovalManager(
+        mode: ApprovalMode.alwaysAsk,
+        overrides: alwaysPromptOverrides(),
+      );
+      expect(approvals.overrideFor('inject_js'), ApprovalPolicy.prompt);
+
+      applyModePromptOverrides(approvals, ApprovalMode.yolo);
+      expect(approvals.overrideFor('inject_js'), isNull);
+
+      // Back to a guarded mode: the guard is restored.
+      applyModePromptOverrides(approvals, ApprovalMode.alwaysAsk);
+      expect(approvals.overrideFor('inject_js'), ApprovalPolicy.prompt);
+
+      // unattended keeps the guard: no user is present to answer, and a
+      // prompt resolving as deny beats silently running page JS.
+      applyModePromptOverrides(approvals, ApprovalMode.unattended);
+      expect(approvals.overrideFor('inject_js'), ApprovalPolicy.prompt);
+    });
+  });
 }
 
 /// ChromeApi whose executeScript never completes: exercises the real
