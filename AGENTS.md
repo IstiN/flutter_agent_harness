@@ -291,6 +291,15 @@ factual: paths, commands, invariants — no essays.
   UI: `/agents` rows show a `mail:N` pending marker (the CLI
   font has no ✉ glyph), the app's AgentsSection shows `✉N`; observe/detail
   views list the pending inbox.
+  Issue #27 adds the hub-first composition: with `DAP_MASTER_SECRET` set
+  and the hub plugin enabled, `bin/fah.dart` wraps the hub as
+  `HubFabricRepository` (bin/, IO-bound) and routes the fabric through
+  `FallbackMessagingRepository` (lib) — hub-first for hub-resolvable
+  targets, file inboxes as offline fallback, queued mail forwarded on
+  reconnect, merged drains deduped by id. `AgentCliConfig.hubFabric`
+  hosts inject it; the plugin host skips its separate inbox when the
+  fabric owns delivery (one hub-mail consumer). Subagent drains never
+  touch the hub.
 - `lib/src/session/attach/` — attached-session infrastructure (the Fa app
   watching a live `fa` CLI session 1:1 and handing it input): three
   INTERFACES so a later network impl (`fa serve --attach`, remote headless)

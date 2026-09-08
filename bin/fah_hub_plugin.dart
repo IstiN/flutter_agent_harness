@@ -28,16 +28,25 @@ const _pluginName = 'hub';
 final class HubPluginHost implements FahPlugin {
   /// Creates the host around [hubPlugin]. [environment]/[home] override
   /// the process defaults — tests inject them so the `~/.dap` resolution
-  /// and the `DAP_*` env overrides are deterministic.
+  /// and the `DAP_*` env overrides are deterministic. When
+  /// [fabricDeliversMail] is true, the hub-backed messaging repository
+  /// (issue #27) is wired into the fabric and owns hub mail delivery —
+  /// this host skips its separate external inbox so hub frames have
+  /// exactly one consumer (the main inbox drain).
   HubPluginHost(
     hub.HubPlugin hubPlugin, {
     Map<String, String>? environment,
     String? home,
+    this.fabricDeliversMail = false,
   }) : _hub = hubPlugin,
        // ignore: prefer_initializing_formals
        _environment = environment ?? Platform.environment,
        // ignore: prefer_initializing_formals
        _home = home;
+
+  /// Whether the messaging-fabric composite consumes hub mail instead of
+  /// this host's external inbox.
+  final bool fabricDeliversMail;
 
   final hub.HubPlugin _hub;
   final Map<String, String> _environment;
@@ -64,9 +73,14 @@ final class HubPluginHost implements FahPlugin {
       }),
     );
     context.registerSlashCommand('/dap', (args) => _dapSlash(context, args));
-    context.registerExternalInbox(
-      ExternalInbox(drain: _drainHubMail, hasPending: _hasPendingHubMail),
-    );
+    // The inbox stays unconditional EXCEPT when the fabric composite owns
+    // delivery (issue #27): registering both would race one hub frame
+    // between two consumers.
+    if (!fabricDeliversMail) {
+      context.registerExternalInbox(
+        ExternalInbox(drain: _drainHubMail, hasPending: _hasPendingHubMail),
+      );
+    }
     // Issue #19 AC1: register the dap_* tools only when a hub is actually
     // configured. On the zero-config default URL every tool call would
     // dead-end ("no hub running"), so an unconfigured install hands the
