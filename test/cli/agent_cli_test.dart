@@ -279,7 +279,7 @@ void main() {
   });
 
   test(
-    'banner key status tracks the provider kind on custom endpoints',
+    'banner names no foreign env key on custom endpoints (issue #40)',
     () async {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(
@@ -295,9 +295,10 @@ void main() {
 
       final output = io.out.toString();
       expect(output, contains('endpoint: http://127.0.0.1:8932'));
-      // The key lookup is by provider kind (openrouter names), not by the
-      // flipped model provider (openai): no false "no key set" warning.
-      expect(output, contains('key: OPENROUTER_API_KEY'));
+      // The exported OPENROUTER_API_KEY belongs to openrouter.ai — it is
+      // never in play on a custom endpoint (the boot resolver skips it
+      // too), yet local keyless servers still get no warning.
+      expect(output, isNot(contains('key:')));
       expect(output, isNot(contains('no key set')));
     },
   );
@@ -1192,6 +1193,7 @@ void main() {
     ]);
     final cli = cliFor(
       fake.call,
+      model: testOpenAiDefaultEndpointModel,
       providerKind: 'openai',
       envVarIsSet: (name) => name == 'OPENAI_API_KEY',
       envVarValue: (name) => name == 'OPENAI_API_KEY' ? 'env-key' : null,
@@ -1255,6 +1257,7 @@ void main() {
     ]);
     final cli = cliFor(
       fake.call,
+      model: testOpenAiDefaultEndpointModel,
       providerKind: 'openai',
       envVarIsSet: (name) => name == 'OPENAI_API_KEY',
       envVarValue: (name) => name == 'OPENAI_API_KEY' ? 'env-key' : null,
@@ -1292,6 +1295,7 @@ void main() {
     ]);
     final cli = cliFor(
       fake.call,
+      model: testOpenAiDefaultEndpointModel,
       providerKind: 'openai',
       envVarIsSet: (name) => name == 'OPENAI_API_KEY',
       envVarValue: (name) => name == 'OPENAI_API_KEY' ? cache.read(name) : null,
