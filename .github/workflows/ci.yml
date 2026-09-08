@@ -458,10 +458,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: All platforms built and smoked
-        if: needs.binaries-pr.result == 'success'
+        # success = all matrix legs green; skipped = push/schedule event where
+        # the PR-only matrix does not run — the gate must not fail those.
+        if: needs.binaries-pr.result == 'success' || needs.binaries-pr.result == 'skipped'
         run: echo "binaries-pr = ${{ needs.binaries-pr.result }}"
       - name: Fail the gate
-        if: needs.binaries-pr.result != 'success'
+        if: needs.binaries-pr.result != 'success' && needs.binaries-pr.result != 'skipped'
         run: |
           echo "binaries-pr result: ${{ needs.binaries-pr.result }}"
           exit 1
