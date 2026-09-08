@@ -53,6 +53,7 @@ export 'src/context.dart';
 export 'src/cube/cube.dart';
 export 'src/env/execution_env.dart';
 export 'src/a2a/a2a_client.dart';
+export 'src/a2a/a2a_mail_gateway.dart';
 export 'src/a2a/a2a_server.dart';
 export 'src/env/memory_execution_env.dart';
 export 'src/env/secrets_execution_env.dart';
