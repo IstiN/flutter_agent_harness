@@ -135,9 +135,13 @@ if 'ondevice_stub.js' not in t:
         "// Extension CSP: no remote scripts. See the note in index.html —\n"
         "// this mirrors the CDN loaders' failure shape so the Dart side's\n"
         "// awaited litertLmReady promise rejects immediately.\n"
-        "window.litertLmReady = Promise.reject(\n"
+        "const litertLmUnavailable = Promise.reject(\n"
         "  new Error('on-device providers unavailable in the extension (CSP)'),\n"
-        ");\n")
+        ");\n"
+        "// Mark the rejection handled so the console stays clean; awaiters\n"
+        "// still get the rejection (fail fast instead of hanging).\n"
+        "litertLmUnavailable.catch(() => {});\n"
+        "window.litertLmReady = litertLmUnavailable;\n")
     print(f'on-device loaders stripped from the extension panel ({n} tags)')
 PYS
   echo "bundled fa web app (browser_ext/panel/app/)"
