@@ -79,7 +79,7 @@ created with a minimal valid file — never leave a half-written YAML behind
 3. Make the edit: `config` op `set` (preferred — it validates before
    writing and preserves the rest of the file byte-for-byte). Fall back to
    a surgical file edit (rule 3) only for what `set` cannot express:
-   removing a key, restructuring a list.
+   removing a key.
 4. Verify: `config` op `check` (rule 4).
 5. Report (rule 5), naming the CLI command equivalent that would have made
    the same change.
@@ -103,6 +103,14 @@ defaults by key: `memory`/`cube`/`tools` → the project file (created minimal
 when absent), everything else → the user file; pass `global` or `project`
 to override. Keys come from the topic sections below — the tool rejects
 unknown top-level keys instead of writing them.
+`set` also takes LIST-VALUED keys: pass the value as compact JSON (an
+array or object) and it is rendered as a yaml block — `customProviders`
+provider entries are settable this way, e.g. `config` op `set`, key
+`customProviders`, value
+`[{"name":"my-llama","apiType":"openai","baseUrl":"http://localhost:11434/v1","modelId":"llama3"}]`.
+`get` reports list-valued keys as the same compact JSON, so the round
+trip is get → edit the JSON → set. A whole list is replaced; to add one
+entry, get first and re-set the extended list.
 
 Human/script equivalent (thin wrappers over the same service):
 `fa config check`, `fa config path`, `fa config get <dotted.key>`,
@@ -418,6 +426,11 @@ docs/dap.md; never hand-edit the DAP files while a hub client is running.
   `provider:` (and `baseUrl:`) in the user file — global scope is the
   default for these keys; report next-boot application and the `/provider`
   equivalent.
+- `add custom provider Y and switch to it` → Provider & keys: `config` op
+  `get customProviders`, `config` op `set customProviders <extended JSON
+  list>` (see the config-tool section), then `set provider openai-completions`,
+  `set model <entry modelId>`, `set baseUrl <entry baseUrl>`; verify with
+  `check`, report next-boot application and the `/provider` equivalent.
 - `disable web_search for this project` → Tool availability: `config` op
   `set`, key `tools.web_search`, value `false` (project scope by default);
   report live after `/tools reload` semantics (host REPL) or next re-read.
