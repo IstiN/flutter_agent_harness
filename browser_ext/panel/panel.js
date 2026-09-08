@@ -137,6 +137,10 @@ function sendPrompt() {
   const text = $('prompt').value.trim();
   if (!text) return;
   $('prompt').value = '';
+  // A Send-button click leaves DOM focus on the button; after fa's reply the
+  // next typed text goes nowhere (issue #39). Keep the caret in the composer
+  // so a follow-up message never needs a fresh click on the field.
+  $('prompt').focus();
   call({ type: 'agent.send', text });
 }
 $('approve').addEventListener('click', () => {
