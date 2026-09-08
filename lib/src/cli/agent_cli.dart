@@ -207,11 +207,14 @@ class AgentCli {
         env: _env,
         io: _PluginIO(io),
         config: _pluginConfig(plugin.name),
+        pickOption: _pickOption,
+        askLine: _askLine,
       );
       plugin.register(context);
       pluginTools.addAll(context.tools);
       _pluginInboxes.addAll(context.externalInboxes);
       _pluginSlashCommands.addAll(context.slashCommands);
+      _pluginSlashDescriptions.addAll(context.slashCommandDescriptions);
     }
 
     _streamFunction =
@@ -869,6 +872,7 @@ class AgentCli {
   /// cancel or input shutdown.
   Completer<String?>? _pendingPromptAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
+  final Map<String, String> _pluginSlashDescriptions = {};
   final List<ExternalInbox> _pluginInboxes = [];
 
   /// JS-extension wiring state (extensions cannot add fields) — the live
@@ -1522,6 +1526,7 @@ class AgentCli {
     prefix,
     slashCommands: builtinSlashCommands,
     pluginSlashCommands: _pluginSlashCommands,
+    pluginSlashDescriptions: _pluginSlashDescriptions,
     extSlashCommands: _ext.slashCommands,
     templates: _templates,
     skills: _skills,

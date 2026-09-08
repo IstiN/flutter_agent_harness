@@ -11,15 +11,19 @@ List<MenuItem> buildSlashMenuItems(
   String prefix, {
   required Map<String, String> slashCommands,
   required Map<String, SlashCommand> pluginSlashCommands,
+  Map<String, String> pluginSlashDescriptions = const {},
   Map<String, SlashCommand> extSlashCommands = const {},
   required List<PromptTemplate> templates,
   List<Skill> skills = const [],
 }) {
   final lower = prefix.toLowerCase();
+  // Plugin commands shadow the same-named ext commands: one row per name.
+  final extOnly = Map.of(extSlashCommands)
+    ..removeWhere((key, _) => pluginSlashCommands.containsKey(key));
   return [
     ..._builtinMenuItems(slashCommands, lower),
-    ..._pluginMenuItems(pluginSlashCommands, lower),
-    ..._pluginMenuItems(extSlashCommands, lower),
+    ..._pluginMenuItems(pluginSlashCommands, lower, pluginSlashDescriptions),
+    ..._pluginMenuItems(extOnly, lower, const {}),
     ..._templateMenuItems(templates, lower),
     ..._skillMenuItems(skills, lower),
   ];
@@ -44,11 +48,18 @@ List<MenuItem> _builtinMenuItems(
 List<MenuItem> _pluginMenuItems(
   Map<String, SlashCommand> pluginSlashCommands,
   String lower,
+  Map<String, String> descriptions,
 ) {
   final items = <MenuItem>[];
   for (final entry in pluginSlashCommands.entries) {
     if (entry.key.toLowerCase().contains(lower)) {
-      items.add(MenuItem(key: entry.key, label: entry.key));
+      items.add(
+        MenuItem(
+          key: entry.key,
+          label: entry.key,
+          description: descriptions[entry.key] ?? '',
+        ),
+      );
     }
   }
   return items;
