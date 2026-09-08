@@ -12,6 +12,25 @@ import '../messaging/agent_message.dart';
 /// A slash-command handler registered by a plugin.
 typedef SlashCommand = Future<void> Function(List<String> args);
 
+/// One multiple-choice option for [PluginPickOption]: stable key + display
+/// label + dim description.
+typedef PluginMenuOption = (String key, String label, String description);
+
+/// A multiple-choice question rendered by the host (a TUI menu, or a
+/// numbered list in line mode). Resolves to the chosen option key, or null
+/// on cancel.
+typedef PluginPickOption =
+    Future<String?> Function(
+      String title,
+      List<PluginMenuOption> options, {
+      String? initialKey,
+    });
+
+/// A free-form question rendered by the host (masked input when
+/// [secret]). Resolves to the entered text, or null on cancel.
+typedef PluginAskLine =
+    Future<String?> Function(String question, {bool secret});
+
 /// IO surface exposed to plugins for writing to the terminal.
 abstract interface class PluginIO {
   /// Writes [text] without a trailing newline.
@@ -25,7 +44,13 @@ abstract interface class PluginIO {
 /// capabilities to the running agent session.
 final class PluginContext {
   /// Creates a plugin context.
-  PluginContext({required this.env, required this.io, this.config = const {}});
+  PluginContext({
+    required this.env,
+    required this.io,
+    this.config = const {},
+    this.pickOption,
+    this.askLine,
+  });
 
   /// The execution environment backing the current CLI session.
   final ExecutionEnv env;
@@ -36,16 +61,32 @@ final class PluginContext {
   /// Plugin-specific configuration from `.fah/packages.yaml`.
   final Map<String, dynamic> config;
 
+  /// Interactive multiple-choice questions, or null on hosts without an
+  /// interactive UI (headless runs, the app): guided flows must fall back
+  /// to plain text then.
+  final PluginPickOption? pickOption;
+
+  /// Interactive free-form questions (masked for secrets), or null on
+  /// non-interactive hosts.
+  final PluginAskLine? askLine;
+
   final List<AgentTool> _tools = [];
   final Map<String, SlashCommand> _slashCommands = {};
+  final Map<String, String> _slashCommandDescriptions = {};
   final List<ExternalInbox> _externalInboxes = [];
 
   /// Registers an [AgentTool] that will be available to the agent.
   void registerTool(AgentTool tool) => _tools.add(tool);
 
-  /// Registers a `/name` slash command.
-  void registerSlashCommand(String name, SlashCommand handler) {
+  /// Registers a `/name` slash command. [description] is the one-line
+  /// hint the slash menu shows next to the command.
+  void registerSlashCommand(
+    String name,
+    SlashCommand handler, {
+    String? description,
+  }) {
     _slashCommands[name] = handler;
+    if (description != null) _slashCommandDescriptions[name] = description;
   }
 
   /// Registers an external inbox (e.g. a network hub mailbox) whose mail
@@ -60,6 +101,11 @@ final class PluginContext {
   /// Slash commands collected from plugins.
   Map<String, SlashCommand> get slashCommands =>
       Map.unmodifiable(_slashCommands);
+
+  /// Slash-menu hints collected from plugins (only commands registered
+  /// with a `description`).
+  Map<String, String> get slashCommandDescriptions =>
+      Map.unmodifiable(_slashCommandDescriptions);
 
   /// External inboxes collected from plugins (unmodifiable).
   List<ExternalInbox> get externalInboxes =>
