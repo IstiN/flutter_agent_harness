@@ -12,6 +12,7 @@
 ///   `headless_prompt.dart`, exported from `lib/io.dart`).
 library;
 
+import '../config/config_service.dart';
 import '../exceptions.dart';
 import '../redact/redaction_types.dart';
 import '../tools/availability.dart';
@@ -403,12 +404,19 @@ void _validateTrajectoryVerb(String verb, List<String> positionals, int? at) {
 /// resolved from the environment / secure store) to a passphrase-
 /// encrypted `.fahx` file — the fallback tier when the bridge pairing is
 /// not available (issue #34 item 3).
+///
+/// `check` / `path` / `get` / `set` operate on the user + project config
+/// pair directly (issue #29): the headless equivalents of the interactive
+/// settings flows, used by the fa-self-config skill.
 final class ConfigCliCommand {
   /// Creates a [ConfigCliCommand].
   const ConfigCliCommand({
     required this.verb,
     this.out,
     this.passphraseStdin = false,
+    this.key,
+    this.value,
+    this.scope,
   });
 
   /// One of [configVerbs].
@@ -421,14 +429,27 @@ final class ConfigCliCommand {
   /// `--passphrase-stdin`: read the passphrase from one stdin line
   /// instead of the double prompt (headless).
   final bool passphraseStdin;
+
+  /// `fa config get|set <key>` — the dotted config key (`memory.projectPath`).
+  final String? key;
+
+  /// `fa config set <key> <value>` — the raw value text.
+  final String? value;
+
+  /// `--project` / `--global` on `set`: force the target file. Null lets
+  /// the service resolve by cwd (project file wins when present).
+  final ConfigScope? scope;
 }
 
 /// The verbs accepted by `fa config`.
-const configVerbs = {'export-providers'};
+const configVerbs = {'export-providers', 'check', 'path', 'get', 'set'};
 
 const _configUsage =
-    'usage: fa config export-providers [--out <file.fahx>] '
-    '[--passphrase-stdin]';
+    'usage: fa config check\n'
+    '       fa config path\n'
+    '       fa config get <dotted.key>\n'
+    '       fa config set <dotted.key> <value> [--project|--global]\n'
+    '       fa config export-providers [--out <file.fahx>] [--passphrase-stdin]';
 
 /// Parses the `config` subcommand operands (everything after the `config`
 /// word). Unknown verbs and flags are usage errors so a typo never
@@ -449,6 +470,8 @@ CliArgsResult _parseConfigArgs(List<String> args) {
   }
   String? out;
   var passphraseStdin = false;
+  ConfigScope? scope;
+  final positionals = <String>[];
   for (var i = 1; i < args.length; i++) {
     final arg = args[i];
     switch (arg) {
@@ -459,15 +482,50 @@ CliArgsResult _parseConfigArgs(List<String> args) {
         out = args[++i];
       case '--passphrase-stdin':
         passphraseStdin = true;
+      case '--project':
+        scope = ConfigScope.project;
+      case '--global':
+        scope = ConfigScope.global;
       default:
-        throw CliArgsException('unknown argument: $arg\n$_configUsage');
+        if (arg.startsWith('-')) {
+          throw CliArgsException('unknown argument: $arg\n$_configUsage');
+        }
+        positionals.add(arg);
     }
+  }
+  final wantsKey = verb == 'get' || verb == 'set' ? positionals.length : 0;
+  if (verb == 'get' && wantsKey != 1) {
+    throw CliArgsException(
+      'fa config get requires exactly one key\n$_configUsage',
+    );
+  }
+  if (verb == 'set' && wantsKey != 2) {
+    throw CliArgsException(
+      'fa config set requires a key and a value\n$_configUsage',
+    );
+  }
+  if ((verb == 'check' || verb == 'path' || verb == 'export-providers') &&
+      positionals.isNotEmpty) {
+    throw CliArgsException('fa config $verb takes no operands\n$_configUsage');
+  }
+  if (verb != 'export-providers' && (out != null || passphraseStdin)) {
+    throw CliArgsException(
+      '--out/--passphrase-stdin only apply to export-providers\n$_configUsage',
+    );
+  }
+  if (verb != 'set' && scope != null) {
+    throw CliArgsException(
+      '--project/--global only apply to set\n$_configUsage',
+    );
   }
   return CliArgs(
     config: ConfigCliCommand(
       verb: verb,
       out: out,
       passphraseStdin: passphraseStdin,
+      key: positionals.isEmpty ? null : positionals.first,
+      value: positionals.length > 1 ? positionals[1] : null,
+      scope: scope,
     ),
   );
 }

@@ -310,7 +310,7 @@ final class ConfigService {
         'empty value for "$key" — removing a key is a manual file edit',
       );
     }
-    final resolved = await resolveWriteScope(scope);
+    final resolved = await resolveWriteScope(scope, key: key);
     if (resolved == ConfigScope.project &&
         !_projectSections.contains(segments.first)) {
       throw ConfigException(
@@ -357,12 +357,18 @@ final class ConfigService {
     );
   }
 
-  /// Resolves the write scope: an explicit [scope] wins; otherwise the
-  /// project file when it exists in the env cwd, else the user file.
-  Future<ConfigScope> resolveWriteScope(ConfigScope? scope) async {
+  /// Resolves the write scope: an explicit [scope] wins. By default the
+  /// project-capable sections (memory/cube/tools) belong in the project
+  /// file (created when absent); everything else belongs in the user file.
+  Future<ConfigScope> resolveWriteScope(
+    ConfigScope? scope, {
+    String? key,
+  }) async {
     if (scope != null) return scope;
-    final projectExists = await _exists(projectConfigPath);
-    return projectExists ? ConfigScope.project : ConfigScope.global;
+    if (key != null && _projectSections.contains(key.split('.').first)) {
+      return ConfigScope.project;
+    }
+    return ConfigScope.global;
   }
 
   /// The config file locations and whether each exists.

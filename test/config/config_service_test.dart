@@ -297,6 +297,16 @@ void main() {
       },
     );
 
+    test(
+      'project-capable keys default to the project file, creating it (E1)',
+      () async {
+        await env.writeFile(_globalConfig, _validGlobal);
+        final result = await service.set('tools.web_search', 'false');
+        expect(result.scope, 'project');
+        expect(await read(_projectConfig), 'tools:\n  web_search: false\n');
+      },
+    );
+
     test('set then get round-trips across scopes (AC8)', () async {
       await env.writeFile(_globalConfig, _validGlobal);
       await env.writeFile(_projectConfig, _validProject);

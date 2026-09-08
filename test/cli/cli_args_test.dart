@@ -365,7 +365,7 @@ void main() {
           isA<CliArgsException>().having(
             (e) => e.message,
             'message',
-            contains('unknown argument: extra'),
+            contains('takes no operands'),
           ),
         ),
       );
