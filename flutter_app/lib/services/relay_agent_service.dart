@@ -382,7 +382,13 @@ final class RelayAgentService extends AgentService {
     _currentThinking = null;
     for (final entry in replay) {
       final event = entry['event'];
-      if (event is Map<String, dynamic>) _onHostEvent(event, silent: true);
+      // dartify() (the port transport decodes JS objects) yields
+      // Map<Object?, Object?> for NESTED maps — a plain `is
+      // Map<String, dynamic>` check silently dropped EVERY row and the
+      // panel rendered "No messages yet" against a delivered replay.
+      if (event is Map) {
+        _onHostEvent(Map<String, dynamic>.from(event), silent: true);
+      }
     }
     notifyListeners();
   }
