@@ -1,8 +1,8 @@
 ---
 name: summary_update
-description: Prompt for updating an existing compaction summary with new messages. Ported verbatim from pi UPDATE_SUMMARIZATION_PROMPT.
+description: Prompt for folding new messages into an existing compaction checkpoint. Forked from pi's UPDATE_SUMMARIZATION_PROMPT; body wording diverges deliberately (no s-word framing).
 ---
-The messages above are NEW conversation messages to fold into the existing checkpoint provided in <previous-summary> tags.
+The messages above are NEW conversation messages to fold into the existing checkpoint provided in <previous-checkpoint> tags.
 
 Update the existing structured checkpoint with new information. RULES:
 - PRESERVE all existing information from the previous checkpoint

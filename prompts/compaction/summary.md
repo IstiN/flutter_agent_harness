@@ -1,6 +1,6 @@
 ---
 name: summary
-description: Structured checkpoint prompt for a first-time compaction summary. Ported verbatim from pi SUMMARIZATION_PROMPT.
+description: Lossless context-checkpoint prompt for a first-time compaction. Forked from pi's SUMMARIZATION_PROMPT; body wording diverges deliberately (no s-word framing).
 ---
 The messages above are a conversation to hand off. Write a complete context checkpoint for the agent that continues this work. Preserve EVERY fact, path, error message, and open task — the continuation has no access to what you omit. This is a lossless handoff, not a digest.
 

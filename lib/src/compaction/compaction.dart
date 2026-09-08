@@ -387,7 +387,7 @@ List<String> detectUserRequestCandidates(
 }
 
 /// Renders the `USER REQUEST CANDIDATES` block appended to the summarizer
-/// input (after the conversation, before `<previous-summary>`), or `null`
+/// input (after the conversation, before `<previous-checkpoint>`), or `null`
 /// when there are no candidates — the section is then the LLM's to fill
 /// with "(none)".
 String? userRequestCandidatesBlock(
@@ -791,7 +791,7 @@ Future<String> _runSummarization({
 /// Generate (or update) a conversation summary for compaction.
 ///
 /// Ported from pi's `generateSummary`: serializes [messages] into
-/// `<conversation>` tags, optionally appends `<previous-summary>` for
+/// `<conversation>` tags, optionally appends `<previous-checkpoint>` for
 /// iterative updates, and ends with the fixed structured prompt (plus
 /// `Additional focus:` when [customInstructions] is given). Throws
 /// [CompactionException] on failure — callers must treat compaction as
@@ -824,7 +824,7 @@ Future<String> generateSummary(
   }
   if (previousSummary != null) {
     prompt.write(
-      '<previous-summary>\n$previousSummary\n</previous-summary>\n\n',
+      '<previous-checkpoint>\n$previousSummary\n</previous-checkpoint>\n\n',
     );
   }
   prompt.write(basePrompt);

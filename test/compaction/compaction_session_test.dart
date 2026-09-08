@@ -166,7 +166,7 @@ void main() {
       expect(second!.summary, startsWith('SECOND'));
 
       // The second prompt updates the first summary (pi iterative mode).
-      expect(fake.prompts[1], contains('<previous-summary>'));
+      expect(fake.prompts[1], contains('<previous-checkpoint>'));
       expect(fake.prompts[1], contains('FIRST'));
 
       // Only the latest compaction projects into the context.

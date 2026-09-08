@@ -48,7 +48,7 @@ const _updateRewrites = [
     'The messages above are NEW conversation messages to incorporate into '
         'the existing summary provided in <previous-summary> tags.\n',
     'The messages above are NEW conversation messages to fold into the '
-        'existing checkpoint provided in <previous-summary> tags.\n',
+        'existing checkpoint provided in <previous-checkpoint> tags.\n',
   ],
   [
     'Update the existing structured summary with new information. RULES:',
@@ -144,7 +144,7 @@ class _RuleHonoringSummarizer {
 
   Future<SummarizationResult> call(SummarizationRequest request) async {
     prompts.add(request.prompt);
-    final previous = _tagContent(request.prompt, 'previous-summary');
+    final previous = _tagContent(request.prompt, 'previous-checkpoint');
     return SummarizationResult.success(
       previous.isEmpty
           ? _firstSummary(request.prompt)
@@ -388,15 +388,14 @@ void main() {
   });
 
   group('UT-wording — no "summary" license in the prompt text (AC8)', () {
-    test('both prompt bodies are summary-free and assert lossless handoff', () {
+    test('all compaction prompt bodies are summary-free and assert lossless '
+        'handoff', () {
       final summaryBody = _promptBody('prompts/compaction/summary.md');
       final updateBody = _promptBody('prompts/compaction/summary_update.md');
-      for (final body in [summaryBody, updateBody]) {
-        // The <previous-summary> tag is wire protocol (record id), not
-        // summarizer-facing instruction text.
-        final text = body.replaceAll('<previous-summary>', '');
+      final turnPrefixBody = _promptBody('prompts/compaction/turn_prefix.md');
+      for (final body in [summaryBody, updateBody, turnPrefixBody]) {
         expect(
-          RegExp('summar', caseSensitive: false).allMatches(text),
+          RegExp('summar', caseSensitive: false).allMatches(body),
           isEmpty,
           reason: '"summary/summarize" is a license to drop facts',
         );

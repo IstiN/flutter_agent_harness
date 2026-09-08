@@ -398,7 +398,7 @@ void main() {
     });
 
     test('update prompt references the previous summary tags', () {
-      expect(updateSummarizationPrompt, contains('<previous-summary>'));
+      expect(updateSummarizationPrompt, contains('<previous-checkpoint>'));
       expect(
         updateSummarizationPrompt,
         contains('PRESERVE all existing information'),
