@@ -377,8 +377,6 @@ class AgentCli {
         return latest;
       },
     );
-    // `name@machine` addressing (issue #27 phase 2): the host's machine
-    // name decides which `@machine` suffixes resolve locally.
     _subagentManager.machineName = config.machineName;
     // Phase 5a: A2A remote agents from the `a2a:` config section. Connects
     // lazily per server (never blocks boot).
