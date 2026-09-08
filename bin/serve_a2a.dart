@@ -12,18 +12,23 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Starts an A2A HTTP server on [port] (localhost only) and blocks until
 /// interrupted. [runner] processes each user message through the local agent.
+/// [mailSink] accepts cross-machine fabric mail (issue #27 phase 3):
+/// envelope-carrying `message/send` requests deposit into the local inbox
+/// instead of running a turn.
 Future<void> runA2aServer({
   required A2aAgentRunner runner,
   required String agentName,
   required String agentDescription,
   int port = 8300,
   String? token,
+  A2aMailSink? mailSink,
 }) async {
   final handler = A2aRequestHandler(
     runner: runner,
     agentName: agentName,
     agentDescription: agentDescription,
     token: token,
+    mailSink: mailSink,
   );
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
   stdout.writeln('a2a server listening on http://127.0.0.1:$port');

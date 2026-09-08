@@ -115,10 +115,10 @@ AgentTool _agentDirectoryTool(SubagentManager manager) {
         'hidden — pass all: true to list those too (that also shows FULL '
         'mailbox ids; the default view truncates them to save tokens). '
         'Address a mailbox by its session name via agent_message '
-        '("goal_builder", "goal_builder/main", or "name@machine" when you '
-        'know the peer\'s machine name; other machines are phase-3 A2A '
-        'territory); asleep targets are woken with a headless run '
-        'automatically.',
+        '("goal_builder", "goal_builder/main", or "name@machine" — a peer '
+        'on another machine is reachable through the A2A gateway when an '
+        'a2a.servers entry exists for it); asleep targets are woken with '
+        'a headless run automatically.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -361,13 +361,16 @@ AgentTool _agentMessageTool(
     name: 'agent_message',
     description:
         'Send a message to another agent: a SIBLING subagent id, "main" '
-        'for the parent orchestrator (for a final answer prefer reply), or '
+        'for the parent orchestrator (for a final answer prefer reply), '
         'an absolute mailbox "<sessionId>/main" to reach another Fa '
-        'instance sharing this session repo. A session display NAME from '
-        'agent_directory works too: "goal_builder" or "goal_builder/main" '
-        'resolve to that session\'s live mailbox. The recipient sees the '
-        'message in its inbox on its next turn; completed siblings are '
-        'resumed. Unknown ids and full queues are rejected.',
+        'instance sharing this session repo, or "name@machine" to reach a '
+        'session on another machine (delivered through the A2A gateway; '
+        'the remote machine must be configured under a2a.servers). A '
+        'session display NAME from agent_directory works too: '
+        '"goal_builder" or "goal_builder/main" resolve to that session\'s '
+        'live mailbox. The recipient sees the message in its inbox on its '
+        'next turn; completed siblings are resumed. Unknown ids and full '
+        'queues are rejected.',
     parameters: {
       'type': 'object',
       'properties': {
@@ -375,7 +378,8 @@ AgentTool _agentMessageTool(
           'type': 'string',
           'description':
               'The sibling subagent id, "main", an absolute mailbox '
-              '"<sessionId>/main", or a session name from agent_directory.',
+              '"<sessionId>/main", a session name from agent_directory, '
+              'or "name@machine" for a cross-machine peer (A2A gateway).',
         },
         'message': {
           'type': 'string',
@@ -425,7 +429,9 @@ AgentTool _agentMessageTool(
         return ToolExecutionResult.text('error: $error');
       }
       var note = '';
-      if (target.contains('/')) {
+      if (target.contains('@')) {
+        note = ' Cross-machine delivery rode the A2A gateway.';
+      } else if (target.contains('/')) {
         note = await _asleepTargetNote(manager, target, args['wake'] != false);
       }
       return ToolExecutionResult.text('message queued for "$to".$note');
@@ -562,8 +568,10 @@ String _listMailboxes(List<MailboxEntry> matches) => matches
     .join('\n');
 
 /// Strips a `name@machine` suffix that names this host. Returns the bare
-/// name, or the address unchanged plus an error text for invalid and
-/// foreign-machine suffixes (cross-machine delivery is phase-3 A2A).
+/// name for local delivery, the address unchanged (routed through the A2A
+/// gateway at delivery time) for a foreign machine when the gateway is
+/// wired, and an error text for invalid forms and for foreign machines on
+/// hosts without a gateway.
 (String, String?) _stripLocalMachineSuffix(SubagentManager manager, String to) {
   if (!to.contains('@')) return (to, null);
   final at = to.indexOf('@');
@@ -573,11 +581,14 @@ String _listMailboxes(List<MailboxEntry> matches) => matches
     return (to, 'invalid address "$to" — expected name@machine');
   }
   if (local == null || machine != local) {
-    return (
-      to,
-      '"$to" names another machine — cross-machine delivery arrives with '
-          'the A2A gateway (issue #27 phase 3)',
-    );
+    if (manager.a2aGateway == null) {
+      return (
+        to,
+        '"$to" names another machine and this host has no A2A gateway — '
+            'cross-machine delivery needs an a2a.servers entry for it',
+      );
+    }
+    return (to, null);
   }
   return (to.substring(0, at).trim(), null);
 }

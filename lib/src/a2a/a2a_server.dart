@@ -10,13 +10,17 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'a2a_client.dart';
+import 'a2a_mail_gateway.dart';
 
 /// Injected agent runner: processes a user message and returns the response.
 typedef A2aAgentRunner = Future<String> Function(String userMessage);
 
 /// A transport-agnostic A2A request handler. Each incoming JSON-RPC request
 /// is dispatched to [runner]; the task state is tracked in-memory keyed by
-/// task id.
+/// task id. When [mailSink] is set, `message/send` requests carrying the
+/// [faMailMetadataKey] metadata are fabric mail (issue #27 phase 3): the
+/// envelope is deposited via the sink and the task completes with the ack —
+/// the runner is never invoked.
 final class A2aRequestHandler {
   A2aRequestHandler({
     required this.runner,
@@ -24,6 +28,7 @@ final class A2aRequestHandler {
     required this.agentDescription,
     this.skills = const [],
     this.token,
+    this.mailSink,
   });
 
   final A2aAgentRunner runner;
@@ -31,6 +36,11 @@ final class A2aRequestHandler {
   final String agentDescription;
   final List<AgentSkill> skills;
   final String? token;
+
+  /// Inbound fabric-mail deposit (issue #27 phase 3). Null = the endpoint
+  /// does not accept fabric mail; envelope-carrying sends then fail the
+  /// task honestly.
+  final A2aMailSink? mailSink;
 
   final _tasks = <String, A2aTask>{};
   var _idCounter = 0;
@@ -98,6 +108,12 @@ final class A2aRequestHandler {
         .map((p) => p.text!)
         .join('\n');
     if (text.isEmpty) throw A2aException('empty message');
+    // Fabric mail (issue #27 phase 3): an envelope in the message metadata
+    // deposits into the local inbox instead of running a turn.
+    final envelope = A2aMailEnvelope.fromMetadata(
+      (msg['metadata'] as Map?)?.cast<String, dynamic>(),
+    );
+    if (envelope != null) return _handleMail(envelope);
 
     final taskId = 'task-${++_idCounter}';
     final task = A2aTask(
@@ -133,6 +149,48 @@ final class A2aRequestHandler {
       );
     }
 
+    return _taskJson(task);
+  }
+
+  /// Deposits a fabric-mail envelope via [mailSink] and completes the task
+  /// with the ack (or fails it honestly when no sink is mounted or the
+  /// deposit throws).
+  Future<Map<String, dynamic>> _handleMail(A2aMailEnvelope envelope) async {
+    final taskId = 'task-${++_idCounter}';
+    final task = A2aTask(
+      id: taskId,
+      state: A2aTaskState.working,
+      messages: [
+        A2aMessage(
+          role: 'user',
+          parts: [A2aPart(text: envelope.text)],
+        ),
+      ],
+    );
+    _tasks[taskId] = task;
+    final sink = mailSink;
+    try {
+      if (sink == null) {
+        throw StateError('this A2A endpoint does not accept fabric mail');
+      }
+      final ack = await sink(envelope);
+      task.state = A2aTaskState.completed;
+      task.messages.add(
+        A2aMessage(
+          role: 'agent',
+          parts: [A2aPart(text: ack)],
+        ),
+      );
+      task.artifacts.add(A2aArtifact(parts: [A2aPart(text: ack)]));
+    } on Object catch (e) {
+      task.state = A2aTaskState.failed;
+      task.messages.add(
+        A2aMessage(
+          role: 'agent',
+          parts: [A2aPart(text: 'error: $e')],
+        ),
+      );
+    }
     return _taskJson(task);
   }
 
