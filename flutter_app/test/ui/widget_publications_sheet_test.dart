@@ -180,4 +180,84 @@ void main() {
     await tester.pumpAndSettle();
     expect(service.calls, 1);
   });
+
+  testWidgets('poll timer pauses while the app is backgrounded', (
+    tester,
+  ) async {
+    final service = _FakePublishService();
+    final ledger = WidgetPublicationStore.inMemory();
+    await ledger.record(_publication());
+    await _pump(
+      tester,
+      WidgetPublicationsSheet(
+        ledger: ledger,
+        service: service,
+        pollInterval: const Duration(minutes: 5),
+      ),
+    );
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(minutes: 5));
+    expect(service.calls, 0);
+
+    // Resuming fires one refresh and restarts the cadence.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(service.calls, 1);
+    await tester.pump(const Duration(minutes: 5));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(service.calls, 2);
+  });
+
+  testWidgets('failed cycles stretch the cadence, success resets it', (
+    tester,
+  ) async {
+    // One mutable fake: the SAME instance runs failing cycles into the
+    // backoff and then a reaching cycle that resets it.
+    final service = _FakePublishService(fail: true);
+    final ledger = WidgetPublicationStore.inMemory();
+    await ledger.record(_publication());
+    await _pump(
+      tester,
+      WidgetPublicationsSheet(
+        ledger: ledger,
+        service: service,
+        pollInterval: const Duration(minutes: 5),
+      ),
+    );
+
+    Future<void> tick() async {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // Cycle 1 fails at 5 min → next cadence 2x (10 min).
+    await tester.pump(const Duration(minutes: 5));
+    await tick();
+    expect(service.calls, 1);
+    await tester.pump(const Duration(minutes: 5));
+    await tick();
+    expect(service.calls, 1);
+    // Cycle 2 fails at 10 min → next cadence 4x (20 min).
+    await tester.pump(const Duration(minutes: 5));
+    await tick();
+    expect(service.calls, 2);
+    await tester.pump(const Duration(minutes: 10));
+    await tick();
+    expect(service.calls, 2);
+    // Cycle 3 fails at 20 min → next cadence 8x (40 min, cap).
+    await tester.pump(const Duration(minutes: 10));
+    await tick();
+    expect(service.calls, 3);
+    await tester.pump(const Duration(minutes: 20));
+    await tick();
+    expect(service.calls, 3);
+    // Cycle 4 succeeds at 40 min → cadence resets to 1x.
+    service.fail = false;
+    await tester.pump(const Duration(minutes: 20));
+    await tick();
+    expect(service.calls, 4);
+    await tester.pump(const Duration(minutes: 5));
+    await tick();
+    expect(service.calls, 5);
+  });
 }
