@@ -2990,7 +2990,12 @@
 - build(browser_ext): mark the on-device stub rejection handled (#69)
 - fix(flutter_app): render replay rows whose nested maps come from dartify (#71)
 
-## Unreleased
+## 0.1.328
+
+- feat(35): out-of-view status polling + real-GitHub E2E (E2E-1) and AC12 check (#75)
+- feat(27): discovery surface in agent_directory - presence, capabilities, name@machine (phase 2) (#68)
+- feat(35): timed status polling + offline hint in My publications (#67)
+- fix: relay turn-state indicator, yolo-everything, yolo checkbox in the approval dialog (#73)
 
 ## Unreleased
 
@@ -3005,6 +3010,8 @@
   are deliverable through `agent_message`. Docs: `docs/dap.md` §12.
   Discovery/presence states (`busy`) and the A2A gateway remain for
   phases 2-3.
+
+## Unreleased
 
 ## Unreleased
 
