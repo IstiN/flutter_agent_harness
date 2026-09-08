@@ -337,7 +337,11 @@ final class ConfigService {
     }
     final text = await _readTextOrNull(file) ?? '';
     final oldDisplay = _lookupDisplay(text, segments) ?? '(absent)';
-    final edited = upsertYamlPath(text, segments, renderYamlScalar(value));
+    // A JSON array/object value renders as a yaml block (list-valued keys
+    // — `customProviders`, the `roles:` chains, `redact:` lists); any
+    // other value is the single scalar line `upsertYamlPath` always wrote.
+    final leafLines = _leafLines(value, depth: segments.length - 1);
+    final edited = upsertYamlPath(text, segments, leafLines);
     // New or previously newline-less files still end with a newline.
     final normalized = edited.isEmpty || edited.endsWith('\n')
         ? edited
@@ -494,18 +498,25 @@ String renderYamlScalar(String raw) {
   return plainSafe.hasMatch(raw) || uri.hasMatch(raw) ? raw : jsonEncode(raw);
 }
 
-/// Edits [text] so the dotted [segments] path carries [rendered], keeping
-/// every unrelated line (including comments) byte-identical:
+/// Edits [text] so the dotted [segments] path carries [leafLines] (one
+/// scalar line, or a multi-line yaml block), keeping every unrelated line
+/// (including comments) byte-identical:
 ///
 /// - an existing scalar line is rewritten in place, preserving a trailing
 ///   ` # comment`;
+/// - an existing block (or scalar replaced by a block) is swapped for
+///   [leafLines], leaving the rest of the parent block untouched;
 /// - a missing key is inserted at the top of its parent's block;
 /// - a missing top-level section is appended at the end of the file;
 /// - descending into an inline scalar is a [ConfigException] (type clash).
 ///
 /// Split into a per-segment scan helper to stay under the repo's CRAP
 /// ratchet (crap4dart threshold 12).
-String upsertYamlPath(String text, List<String> segments, String rendered) {
+String upsertYamlPath(
+  String text,
+  List<String> segments,
+  List<String> leafLines,
+) {
   final hadTrailingNewline = text.endsWith('\n');
   final lines = text.isEmpty
       ? <String>[]
@@ -521,15 +532,19 @@ String upsertYamlPath(String text, List<String> segments, String rendered) {
         segments,
         depth,
         cursor,
-        rendered,
+        leafLines,
         hadTrailingNewline,
       );
     }
     if (depth == segments.length - 1) {
-      final indent = '  ' * depth;
-      final comment = _trailingComment(lines[found]);
-      lines[found] = '$indent${segments[depth]}: $rendered$comment';
-      return _join(lines, hadTrailingNewline);
+      return _replaceLeaf(
+        lines,
+        segments[depth],
+        depth,
+        found,
+        leafLines,
+        hadTrailingNewline,
+      );
     }
     final inline = _inlineValue(lines[found]);
     if (inline != null && inline.isNotEmpty) {
@@ -573,21 +588,150 @@ String _insertChain(
   List<String> segments,
   int depth,
   int cursor,
-  String rendered,
+  List<String> leafLines,
   bool hadTrailingNewline,
 ) {
   final insertAt = depth == 0 ? lines.length : cursor;
   if (depth == 0 && lines.isNotEmpty && lines.last.trim().isNotEmpty) {
     lines.add('');
   }
+  var at = insertAt;
   for (var d = depth; d < segments.length; d++) {
     final isLeaf = d == segments.length - 1;
-    lines.insert(
-      insertAt + (d - depth),
-      '${'  ' * d}${segments[d]}:${isLeaf ? ' $rendered' : ''}',
-    );
+    if (isLeaf && leafLines.length == 1) {
+      lines.insert(at, '${'  ' * d}${segments[d]}: ${leafLines[0]}');
+      break;
+    }
+    lines.insert(at++, '${'  ' * d}${segments[d]}:');
+    if (isLeaf) {
+      for (final line in leafLines) {
+        lines.insert(at++, line);
+      }
+    }
   }
   return _join(lines, hadTrailingNewline);
+}
+
+/// Swaps the leaf key line at [found] for [leafLines]: a single line keeps
+/// the key's trailing comment inline, a block replaces the key's old body
+/// (scalar or nested block) up to the parent's dedent.
+String _replaceLeaf(
+  List<String> lines,
+  String key,
+  int depth,
+  int found,
+  List<String> leafLines,
+  bool hadTrailingNewline,
+) {
+  final indent = '  ' * depth;
+  final comment = _trailingComment(lines[found]);
+  if (leafLines.length == 1) {
+    lines[found] = '$indent$key: ${leafLines[0]}$comment';
+    return _join(lines, hadTrailingNewline);
+  }
+  lines[found] = '$indent$key:$comment';
+  final end = _blockEnd(lines, found, depth);
+  lines.removeRange(found + 1, end);
+  for (var i = 0; i < leafLines.length; i++) {
+    lines.insert(found + 1 + i, leafLines[i]);
+  }
+  return _join(lines, hadTrailingNewline);
+}
+
+/// The index after the last line of the block body under the key line at
+/// [keyLine] (indent [depth]); blank lines inside the block are consumed,
+/// a blank line separating it from the next section is kept.
+int _blockEnd(List<String> lines, int keyLine, int depth) {
+  var end = keyLine + 1;
+  while (end < lines.length) {
+    final line = lines[end];
+    if (_indentOf(line) > depth * 2) {
+      end++;
+      continue;
+    }
+    if (line.trim().isEmpty) {
+      final next = end + 1 < lines.length ? lines[end + 1] : '';
+      if (next.isEmpty || _indentOf(next) > depth * 2) {
+        end++;
+        continue;
+      }
+    }
+    break;
+  }
+  return end;
+}
+
+/// The leaf value lines for a `config set` value: a JSON array/object
+/// renders as a yaml block under the key (list-valued keys —
+/// `customProviders`, the `roles:` chains, `redact:` lists); anything
+/// else stays the single scalar line `renderYamlScalar` always wrote.
+List<String> _leafLines(String value, {required int depth}) {
+  final raw = value.trim();
+  if (!raw.startsWith('[') && !raw.startsWith('{')) {
+    return [renderYamlScalar(value)];
+  }
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(raw);
+  } on FormatException {
+    return [renderYamlScalar(value)];
+  }
+  if (decoded is! List && decoded is! Map) {
+    return [renderYamlScalar(value)];
+  }
+  return _renderBlockLines(decoded, keyIndent: depth * 2);
+}
+
+/// Renders a JSON-decoded [node] as the yaml block lines placed under a
+/// `key:` line indented [keyIndent] spaces (block sequences sit one level
+/// deeper, list-item map keys continue two deeper). An empty list or map
+/// renders as the flow `[]` / `{}` — block style cannot express empty.
+List<String> _renderBlockLines(Object? node, {required int keyIndent}) {
+  final child = ' ' * (keyIndent + 2);
+  if (node is List) {
+    if (node.isEmpty) return const ['[]'];
+    return [for (final element in node) ..._listItemLines(element, child)];
+  }
+  if (node is Map) {
+    if (node.isEmpty) return const ['{}'];
+    return _mapLines(node, child, child);
+  }
+  return [renderYamlScalar('$node')];
+}
+
+/// The lines of one `- ` list item at [indent]; a map item opens on the
+/// dash line, deeper nesting continues below it.
+List<String> _listItemLines(Object? element, String indent) {
+  if (element is List) {
+    // ponytail: lists nested directly in lists render as flow JSON —
+    // valid yaml no config section uses; recurse if one ever does.
+    return ['$indent- ${jsonEncode(element)}'];
+  }
+  if (element is Map) {
+    return element.isEmpty
+        ? ['$indent- {}']
+        : _mapLines(element, '$indent  ', '$indent- ');
+  }
+  return ['$indent- ${renderYamlScalar('$element')}'];
+}
+
+/// A mapping's lines: the first entry carries [firstPrefix] (the `- ` of a
+/// list item), the rest [indent]; map/list values continue one level down.
+List<String> _mapLines(Map node, String indent, String firstPrefix) {
+  final lines = <String>[];
+  var first = true;
+  for (final entry in node.entries) {
+    final prefix = first ? firstPrefix : indent;
+    first = false;
+    final value = entry.value;
+    if (value is List || value is Map) {
+      lines.add('$prefix${entry.key}:');
+      lines.addAll(_renderBlockLines(value, keyIndent: indent.length));
+    } else {
+      lines.add('$prefix${entry.key}: ${renderYamlScalar('$value')}');
+    }
+  }
+  return lines;
 }
 
 int _indentOf(String line) {
