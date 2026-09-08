@@ -61,8 +61,10 @@ typedef TaskSpawnProgressCallback =
 final class TaskExecutor {
   /// Creates a [TaskExecutor]. [childTools] is the parent tool pool children
   /// draw their restricted surface from; [streamFunction]/[model] are the
-  /// parent model wiring children inherit unless their agent type's
-  /// [TaskAgentDefinition.modelRole] resolves through [rolesResolver].
+  /// parent wiring accessors children inherit unless their agent type's
+  /// [TaskAgentDefinition.modelRole] resolves through [rolesResolver]. Both
+  /// resolve at spawn time so a host's live credential (re-auth, provider
+  /// switch) reaches children — see [TaskToolConfig.streamFunction].
   TaskExecutor({
     required this.childTools,
     required this.streamFunction,
@@ -79,11 +81,12 @@ final class TaskExecutor {
   /// The parent tool pool (already minus any host-hidden tools).
   final List<AgentTool> childTools;
 
-  /// Inherited provider adapter (see [StreamFunction]).
-  final StreamFunction streamFunction;
+  /// Inherited provider adapter accessor (see [StreamFunction]); resolved
+  /// per spawn.
+  final StreamFunction Function() streamFunction;
 
-  /// Inherited model.
-  final Model model;
+  /// Inherited model accessor; resolved per spawn.
+  final Model Function() model;
 
   /// Agent-type resolution.
   final TaskAgentRegistry registry;
@@ -522,13 +525,15 @@ final class TaskExecutor {
     TaskAgentDefinition definition,
   ) {
     final rolesResolver = this.rolesResolver;
-    if (rolesResolver == null) return (model: model, stream: streamFunction);
+    if (rolesResolver == null) {
+      return (model: model(), stream: streamFunction());
+    }
     final role = definition.modelRole ?? subagentModelRole;
     final resolved = rolesResolver.resolveRole(role);
     if (resolved != null) {
       return (model: resolved.model, stream: resolved.stream);
     }
-    return (model: model, stream: streamFunction);
+    return (model: model(), stream: streamFunction());
   }
 
   /// The child's system prompt: the definition's prompt plus the shared
@@ -746,7 +751,7 @@ final class TaskExecutor {
       duration: stopwatch.elapsed,
       tokens: 0,
       requests: 0,
-      model: model.id,
+      model: model().id,
       error: error,
     );
   }

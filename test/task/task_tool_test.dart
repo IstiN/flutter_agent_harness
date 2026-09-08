@@ -178,8 +178,8 @@ _Harness _harness({
   final s = stream ?? _ScriptedStream(rules);
   final config = TaskToolConfig(
     childTools: childTools ?? _pool(),
-    streamFunction: s.call,
-    model: _model,
+    streamFunction: () => s.call,
+    model: () => _model,
     rolesResolver: rolesResolver,
     agentTypes: agentTypes,
     maxConcurrent: maxConcurrent,
@@ -278,6 +278,43 @@ void main() {
         containsAll(<String>['One', 'Two', 'Three']),
       );
     });
+
+    test(
+      'children inherit the LIVE parent wiring, not the boot wiring',
+      () async {
+        // Issue #44: the config froze the parent adapter at construction, so
+        // a host that re-authenticates or switches provider mid-session
+        // (`/provider`, an SSO token refresh) spawned workers on the stale
+        // (401) credential while the parent ran on the live one. The wiring
+        // accessors must resolve per spawn.
+        final bootStream = _ScriptedStream();
+        final liveStream = _ScriptedStream([
+          (match: 'delegate it', turns: [_textTurn('delegated')]),
+        ]);
+        var live = bootStream.call;
+        final config = TaskToolConfig(
+          childTools: _pool(),
+          streamFunction: () => live,
+          model: () => _model,
+        );
+        final tool = taskTool(config: config);
+        // The host re-points its wiring AFTER the config was built (the
+        // re-auth step) and BEFORE the first spawn.
+        live = liveStream.call;
+        await tool.execute(
+          {
+            'context': 'ctx',
+            'tasks': [
+              {'task': 'delegate it'},
+            ],
+          },
+          null,
+          null,
+        );
+        expect(liveStream.calls, 1);
+        expect(bootStream.calls, 0);
+      },
+    );
 
     test('shared context lands in every child system prompt', () async {
       final h = _harness();
@@ -414,8 +451,8 @@ void main() {
 
       final config = TaskToolConfig(
         childTools: _pool(),
-        streamFunction: gated,
-        model: _model,
+        streamFunction: () => gated,
+        model: () => _model,
         maxConcurrent: 2,
       );
       final tool = taskTool(config: config);
@@ -547,8 +584,8 @@ void main() {
     TaskExecutor executor(_ScriptedStream stream, AgentOutputStore store) {
       return TaskExecutor(
         childTools: _pool(),
-        streamFunction: stream.call,
-        model: _model,
+        streamFunction: () => stream.call,
+        model: () => _model,
         registry: TaskAgentRegistry(),
         semaphore: Semaphore(0),
         store: store,
@@ -753,8 +790,8 @@ void main() {
 
       final config = TaskToolConfig(
         childTools: _pool(),
-        streamFunction: gated,
-        model: _model,
+        streamFunction: () => gated,
+        model: () => _model,
       );
       return _Harness(taskTool(config: config), config, _ScriptedStream());
     }
@@ -880,8 +917,8 @@ void main() {
 
       final config = TaskToolConfig(
         childTools: _pool(),
-        streamFunction: gated,
-        model: _model,
+        streamFunction: () => gated,
+        model: () => _model,
         defaultBackground: true,
       );
       final tool = taskTool(config: config);
@@ -933,8 +970,8 @@ void main() {
 
       final config = TaskToolConfig(
         childTools: _pool(),
-        streamFunction: cancelAware,
-        model: _model,
+        streamFunction: () => cancelAware,
+        model: () => _model,
         maxConcurrent: maxConcurrent,
       );
       return _Harness(taskTool(config: config), config, _ScriptedStream());
@@ -1316,8 +1353,8 @@ void main() {
       final childStream = _GatedChildStream();
       final config = TaskToolConfig(
         childTools: _pool(),
-        streamFunction: childStream.call,
-        model: _model,
+        streamFunction: () => childStream.call,
+        model: () => _model,
       );
       final tool = taskTool(config: config);
       final yieldSource = CancelTokenSource();
@@ -1393,8 +1430,8 @@ void main() {
       final childStream = _GatedChildStream();
       final config = TaskToolConfig(
         childTools: _pool(),
-        streamFunction: childStream.call,
-        model: _model,
+        streamFunction: () => childStream.call,
+        model: () => _model,
       );
       final spawn = taskTool(config: config);
       final cancelTool = subagentMonitoringTools(
