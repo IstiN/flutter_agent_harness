@@ -4,7 +4,7 @@
 // pattern AgentCli produces — `_style.dim(delta)` per delta through
 // sendOutput), measure how long a typed key takes to appear on screen.
 //
-// Usage: dart run tool/tui_typing_bench.dart [flags]
+// Usage: dart run scripts/tui_typing_bench.dart [flags]
 //   --flood           stream thinking deltas at ~100/s (default off)
 //   --grow-tail       flood WITHOUT newlines: one tail line grows to the
 //                     32KB hard-split cap and keeps re-flowing (the real
@@ -18,7 +18,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
@@ -35,9 +34,6 @@ final class _FrameSink implements StreamConsumer<List<int>> {
     _sub = stream.listen(onChunk, onError: (Object _) {});
     return Future<void>.value();
   }
-
-  @override
-  void addError(Object error, [StackTrace? stackTrace]) {}
 
   @override
   Future<void> close() async {
@@ -93,9 +89,18 @@ void main(List<String> args) async {
 
   Timer? floodTimer;
   if (flood) {
-    // ~100 dim-styled deltas/s, ~48 chars each — the shape of a long
-    // reasoning stream (minutes-long thinking). growTail emits NO newlines
-    // so the last output line grows into the 32KB hard-split regime.
+    // Production shape: a submit echo (rule + input + trailing blank) sits
+    // above the stream before the first delta lands — the flood grows the
+    // LAST line, never line 0. Without this anchor the first-line identity
+    // sentinel forces a rebuild per flush and the numbers stop modeling
+    // the shipped REPL (issue #43 regime).
+    controller.sendOutput('>> user: think hard\n');
+    controller.sendOutput('\n');
+    // ~200 dim-styled deltas/s, ~60 chars each — the cadence of a real
+    // reasoning stream at ~12KB/s (the issue #43 regime: the tail crosses
+    // the 32KB hard-split cap within seconds and keeps re-splitting).
+    // growTail emits NO newlines so the last output line grows into that
+    // regime.
     const words = [
       'analysis',
       'therefore',
@@ -120,9 +125,9 @@ void main(List<String> args) async {
     ];
     var w = 0;
     var charsSinceNewline = 0;
-    floodTimer = Timer.periodic(const Duration(milliseconds: 10), (_) {
+    floodTimer = Timer.periodic(const Duration(milliseconds: 5), (_) {
       final buf = StringBuffer();
-      for (var i = 0; i < 4; i++) {
+      for (var i = 0; i < 8; i++) {
         buf.write('${words[w++ % words.length]} ');
       }
       var text = buf.toString();
@@ -164,12 +169,7 @@ void main(List<String> args) async {
     'fmt: rebuilds=${TranscriptMarkdown.debugFullRebuilds} '
     'resumed=${TranscriptMarkdown.debugResumedPasses} '
     'linesFormatted=${TranscriptMarkdown.debugLinesFormatted} '
-    'tailThrottled=${TranscriptMarkdown.debugTailThrottled} '
-    'rbFails: w=${TranscriptMarkdown.dbgRollbackWidth} '
-    'thr=${TranscriptMarkdown.dbgRollbackThrough} '
-    'bnd=${TranscriptMarkdown.dbgRollbackBoundary} '
-    'first=${TranscriptMarkdown.dbgRollbackFirst} '
-    'prefix=${TranscriptMarkdown.dbgRollbackPrefix}',
+    'tailThrottled=${TranscriptMarkdown.debugTailThrottled}',
   );
   exit(0);
 }

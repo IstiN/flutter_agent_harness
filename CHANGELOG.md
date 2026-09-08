@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+- fix(43): typing during minutes-long thinking streams no longer degrades —
+  the 32KB tail hard-split in `_appendOutput` used to land on
+  `TranscriptMarkdown`'s commit boundary (fresh substring identities
+  defeat both resumability sentinels) and force a full O(transcript)
+  markdown+wrap rebuild, so frame builds grew with the session
+  (real-PTY e2e at 200 reasoning deltas/s: frame-build p99 24.8ms /
+  max 81ms after 60s, keystroke echo p99 59.5ms). The grown-tail
+  rollback now also recognizes the split shape — the boundary line
+  survives as a prefix of the concatenated chunks (`_boundarySurvivesAsChunks`,
+  one O(boundary) string compare per suspected split) — rolls back one
+  source line and re-walks the chunks; replaced content still takes the
+  documented rebuild path. Rebuilds in the flood regime: 0 (bench
+  `scripts/tui_typing_bench.dart --grow-tail`; frame-build p99 5.0ms /
+  max 7.4ms flat). Contracts: split-resume trio in
+  `test/cli/transcript_markdown_perf_test.dart`; perf log:
+  docs/performance-cli-tui.md.
+
 ## 0.1.322
 
 
