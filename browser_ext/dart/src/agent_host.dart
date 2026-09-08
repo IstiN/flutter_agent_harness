@@ -31,7 +31,8 @@ import 'package:http/http.dart' as http;
 import 'active_tab_context.dart';
 import 'approval_flow.dart';
 import 'ext_ops.dart';
-import 'host_event_map.dart' show hostEventOf, messageToJs, v1OpToolResult;
+import 'host_event_map.dart'
+    show hostEventOf, messageToJs, transcriptReplayOf, v1OpToolResult;
 import 'browser_api_tools.dart';
 import 'security/exfil_gate.dart' show OutboundKind, originOf;
 import 'chrome_api.dart';
@@ -486,6 +487,12 @@ final class AgentHost implements UiHostBackend {
     unawaited(_refreshArchives());
     _emitStatus();
   }
+
+  /// Attach backlog for a first attach: the loaded transcript rendered as
+  /// replay events (see [transcriptReplayOf]).
+  @override
+  List<Map<String, dynamic>> transcriptReplay() =>
+      !_booted ? const [] : transcriptReplayOf(_agent.state.messages);
 
   /// The live JSONL session id from the header (parsed at open — no disk
   /// read), or '' before the session exists.

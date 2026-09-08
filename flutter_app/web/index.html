@@ -81,7 +81,13 @@
         </linearGradient>
       </defs>
       <rect width="64" height="64" rx="14" fill="url(#fah-g)"/>
-      <text x="32" y="41" text-anchor="middle" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="23" font-weight="700" fill="#070a10">&gt;_</text>
+      <!-- The brand chevron as a PATH (butt caps + miter joins = sharp
+           tip), same geometry as icon/icon.svg — a font glyph here
+           rendered with rounded stroke terminals. -->
+      <g transform="translate(32.5 32) scale(0.071875) translate(-520 -592)">
+        <path d="M 280 434 L 492 541 L 280 648" fill="none" stroke="#070a10" stroke-width="64" stroke-linecap="butt" stroke-linejoin="miter"/>
+        <rect x="512" y="712" width="248" height="40" fill="#070a10"/>
+      </g>
     </svg>
     <div class="fah-name">Fa</div>
     <div class="fah-bar"></div>

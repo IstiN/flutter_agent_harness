@@ -146,6 +146,13 @@ final class FakeHostConnector implements UiHostConnector {
     ];
     this.sessionId = sessionId;
   }
+
+  var transcript = <Map<String, dynamic>>[
+    {'type': 'message_done', 'role': 'user', 'text': 'hi'},
+  ];
+
+  @override
+  List<Map<String, dynamic>> transcriptReplay() => transcript;
 }
 
 Map<String, dynamic>? _ofKind(FakeChannel c, String kind) {
@@ -432,7 +439,9 @@ void main() {
 
       final c = FakeChannel();
       server.serve(c);
-      c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
+      // Explicit lastEventId: ring catch-up. (null means transcript sync —
+      // see 'first attach replays the transcript backlog'.)
+      c.injectMsg(const AttachMsg(sessionId: null, lastEventId: '0'));
       final att = _ofKind(c, 'attached')!;
       expect(att['sessionId'], 'sess-1');
       expect(att['replay'], [
@@ -484,7 +493,7 @@ void main() {
       server.onHostEvent({'type': 'delta', 'text': 'c'});
       final c = FakeChannel();
       server.serve(c);
-      c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
+      c.injectMsg(const AttachMsg(sessionId: null, lastEventId: '0'));
       expect(_ofKind(c, 'attached')!['replay'], [
         {
           'seq': 2,
@@ -604,7 +613,13 @@ void main() {
         // shapes an attach cycle ends with.
         final attached = _ofKind(c, 'attached')!;
         expect(attached['sessionId'], 'fresh');
-        expect(attached['replay'], isEmpty);
+        // The trio syncs from the durable transcript (empty for a fresh
+        // session in production; the fake carries one static row).
+        expect(attached['replay'], [
+          {
+            'event': {'type': 'message_done', 'role': 'user', 'text': 'hi'},
+          },
+        ]);
         expect(_ofKind(c, 'tools_state'), isNotNull);
         final status = _ofKind(c, 'stream');
         expect(status!['event'], containsPair('type', 'status'));
@@ -641,8 +656,13 @@ void main() {
         final attached = _ofKind(c, 'attached')!;
         expect(attached['sessionId'], 'arch-1');
         expect(_ofKind(c, 'tools_state'), isNotNull);
-        // A later attach with NO lastEventId must NOT replay the old
-        // session's events — the reset cleared the ring.
+        // The restored transcript rides the trio's replay.
+        expect((attached['replay'] as List).last, {
+          'event': {'type': 'message_done', 'role': 'user', 'text': 'hi'},
+        });
+        // A later attach with NO lastEventId must NOT replay the OLD
+        // session's ring events — the reset cleared the ring. What it
+        // DOES replay is the durable transcript backlog.
         c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
         await _pump();
         final replays = c.sent
@@ -650,7 +670,15 @@ void main() {
             .where((m) => m['kind'] == 'attached')
             .map((m) => m['replay'])
             .toList();
-        expect(replays.last, isEmpty);
+        final last = replays.last as List;
+        expect(
+          last
+              .map((e) => (e as Map)['event'])
+              .where(((e) => e['type'] == 'delta')),
+          isEmpty,
+          reason: 'old-session ring events must be gone',
+        );
+        expect(last, isNotEmpty, reason: 'transcript backlog still syncs');
       },
     );
 
@@ -669,6 +697,49 @@ void main() {
         final err = _ofKind(c, 'error');
         expect(err, isNotNull); // malformed decode → structured error
       },
+    );
+
+    test(
+      'first attach replays the transcript backlog; reconnect the ring',
+      () async {
+        final host = FakeHostConnector();
+        final server = UiPortServer(host: host);
+        final c = FakeChannel();
+        server.serve(c);
+        c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+        c.injectMsg(const AttachMsg(sessionId: null, lastEventId: null));
+        await _pump();
+        // The durable transcript, not the (empty) ring.
+        final replays = c.sent
+            .whereType<Map>()
+            .where((m) => m['kind'] == 'attached')
+            .map((m) => m['replay'])
+            .toList();
+        final first = replays.first as List;
+        expect((first.first as Map)['event']['type'], 'message_done');
+        expect((first.first as Map)['event']['text'], 'hi');
+
+        // A reconnect (lastEventId set) keeps ring semantics: host events
+        // land in the ring, the replay carries them wrapped as {'event':…}.
+        server.onHostEvent({'type': 'delta', 'text': 'live'});
+        c.injectMsg(const AttachMsg(sessionId: null, lastEventId: '0'));
+        await _pump();
+        final second =
+            (c.sent
+                        .whereType<Map>()
+                        .where((m) => m['kind'] == 'attached')
+                        .map((m) => m['replay'])
+                        .toList()
+                      ..removeAt(0))
+                    .last
+                as List;
+        expect((second.last as Map)['event'], {
+          'type': 'delta',
+          'text': 'live',
+        });
+        expect(second.length, 1, reason: 'ring only, no transcript backlog');
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
     );
 
     test('settings query and put roundtrip through the connector', () {
