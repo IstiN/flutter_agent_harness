@@ -138,6 +138,7 @@ final class Tab {
     this.active = false,
     this.favIconUrl,
     this.discarded = false,
+    this.status,
   });
 
   final int id;
@@ -152,6 +153,11 @@ final class Tab {
   final String? favIconUrl;
   final bool discarded;
 
+  /// chrome's tab load state: 'loading' | 'complete' | 'unloaded' (null
+  /// when the adapter does not surface it). nav_wait reads it to answer
+  /// immediately when the awaited navigation already finished.
+  final String? status;
+
   Map<String, Object?> toJson() => {
     'id': id,
     'url': url,
@@ -164,6 +170,7 @@ final class Tab {
     'active': active,
     'favIconUrl': favIconUrl,
     'discarded': discarded,
+    if (status != null) 'status': status,
   };
 }
 
@@ -627,7 +634,13 @@ final class ReadingListEntry {
 /// chrome.tabs. `url`/`title` query filters are chrome match patterns
 /// (`*` wildcard; no `*` means exact match).
 abstract interface class TabsApi {
-  Future<Tab> create({String? url, bool? active, int? index, bool? pinned});
+  Future<Tab> create({
+    String? url,
+    String? title,
+    bool? active,
+    int? index,
+    bool? pinned,
+  });
   Future<Tab> get(int id);
   Future<Tab> update(
     int id, {
@@ -875,9 +888,12 @@ abstract interface class CommandsApi {
   Stream<String> get onCommand;
 }
 
-/// chrome.webNavigation — completed navigations (main + sub frames).
+/// chrome.webNavigation — completed navigations (main + sub frames) and
+/// same-document history updates (SPA pushes: onCompleted never fires for
+/// those, onHistoryStateUpdated does).
 abstract interface class WebNavigationApi {
   Stream<NavCompleted> get onCompleted;
+  Stream<NavCompleted> get onHistoryStateUpdated;
 }
 
 /// chrome.system.* — device info records.

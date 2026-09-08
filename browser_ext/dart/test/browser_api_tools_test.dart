@@ -503,6 +503,32 @@ void main() {
       expect((list.single! as Map)['url'], 'https://a.example/page');
     });
 
+    test(
+      'tabs_query: a bare domain is a substring filter, not a pattern',
+      () async {
+        // Models pass 'apple.com' — chrome rejects it as an Invalid url
+        // pattern and the whole call errored. Coerce: no scheme, no '*'
+        // → substring match over the tab list.
+        await chrome.tabs.create(url: 'https://www.apple.com/mac');
+        await chrome.tabs.create(url: 'https://b.example/');
+        final out = await _run(reg, 'tabs_query', {'url': 'apple.com'});
+        final list = jsonDecode(out) as List<Object?>;
+        expect(list, hasLength(1));
+        expect((list.single! as Map)['url'], 'https://www.apple.com/mac');
+      },
+    );
+
+    test(
+      'tabs_query: bare substring title filter works the same way',
+      () async {
+        await chrome.tabs.create(url: 'https://a.example/', title: 'Apple');
+        await chrome.tabs.create(url: 'https://b.example/', title: 'Beta');
+        final out = await _run(reg, 'tabs_query', {'title': 'apple'});
+        final list = jsonDecode(out) as List<Object?>;
+        expect(list, hasLength(1), reason: 'substring, case-insensitive');
+      },
+    );
+
     test('tabs_move', () async {
       final a = await chrome.tabs.create(url: 'https://a.example/');
       final b = await chrome.tabs.create(url: 'https://b.example/');
@@ -766,6 +792,65 @@ void main() {
       await chrome.navCompleted(tabId: t.id, url: 'https://a.example/other');
       await chrome.navCompleted(tabId: t.id, url: 'https://a.example/done');
       expect(await fut, contains('done'));
+    });
+
+    test(
+      'nav_wait: an already-loaded matching tab answers immediately',
+      () async {
+        // tabs_open resolves before the page finishes; by the time nav_wait
+        // subscribes the navigation has often ALREADY fired onCompleted —
+        // waiting for the next one then times out against a loaded page
+        // (seen live: 'timed out waiting for "apple.com"' on apple.com).
+        final t = await chrome.tabs.create(url: 'https://www.apple.com/');
+        final out = await _run(reg, 'nav_wait', {
+          'tabId': t.id,
+          'urlContains': 'apple.com',
+          'timeoutMs': 300,
+        });
+        expect(out, contains('already complete'));
+      },
+    );
+
+    test(
+      'nav_wait: a complete tab with a non-matching URL keeps waiting',
+      () async {
+        final t = await chrome.tabs.create(url: 'https://a.example/');
+        final fut = _run(reg, 'nav_wait', {
+          'tabId': t.id,
+          'urlContains': 'done',
+          'timeoutMs': 200,
+        });
+        expectLater(
+          fut,
+          throwsA(
+            isA<BrowserApiToolException>().having(
+              (e) => e.message,
+              'message',
+              contains('timed out'),
+            ),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        // no event: the snapshot check must NOT swallow the timeout
+      },
+    );
+
+    test('nav_wait resolves on a history-state (SPA) update', () async {
+      // Google's results "page" is a same-document push — onCompleted
+      // never fires; webNavigation.onHistoryStateUpdated does.
+      final t = await chrome.tabs.create(url: 'https://www.google.com/');
+      chrome.setTabStatus(t.id, 'loading');
+      final fut = _run(reg, 'nav_wait', {
+        'tabId': t.id,
+        'urlContains': 'q=fa+ai',
+        'timeoutMs': 1000,
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await chrome.navHistoryUpdated(
+        tabId: t.id,
+        url: 'https://www.google.com/search?q=fa+ai',
+      );
+      expect(await fut, contains('q=fa+ai'));
     });
   });
 
