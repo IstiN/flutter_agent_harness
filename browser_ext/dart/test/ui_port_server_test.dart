@@ -58,6 +58,21 @@ final class FakeHostConnector implements UiHostConnector {
   var cancels = 0;
   final decisions = <(String, bool)>[];
   final puts = <Map<String, dynamic>>[];
+  final extCalls = <(String, Map<String, dynamic>)>[];
+
+  /// When non-null, [extRequest] throws this instead of answering.
+  Object? extError;
+
+  @override
+  Future<Map<String, dynamic>> extRequest(
+    String op,
+    Map<String, dynamic> params,
+  ) async {
+    extCalls.add((op, params));
+    final error = extError;
+    if (error != null) throw error;
+    return {'ok-op': op};
+  }
 
   @override
   String sessionId = 'sess-1';
@@ -164,6 +179,52 @@ void main() {
       reason: 'exactly one pong per ping; keepalive traffic stays quiet',
     );
   });
+
+  test(
+    'ext_request routes to the host op surface and answers with data',
+    () async {
+      final host = FakeHostConnector();
+      final server = UiPortServer(host: host);
+      final c = FakeChannel();
+      server.serve(c);
+      c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+      await _pump();
+      c.injectMsg(
+        const ExtRequestMsg(
+          id: 'x1',
+          op: 'cookies.get_all',
+          params: {'url': 'https://codemie.lab.epam.com/'},
+        ),
+      );
+      await _pump();
+      expect(host.extCalls.single.$1, 'cookies.get_all');
+      final result = _ofKind(c, 'ext_result');
+      expect(result, isNotNull);
+      expect(result!['id'], 'x1');
+      expect(result['ok'], isTrue);
+      expect((result['data'] as Map)['ok-op'], 'cookies.get_all');
+    },
+  );
+
+  test(
+    'ext_request failure becomes a structured ok:false ext_result',
+    () async {
+      final host = FakeHostConnector()..extError = 'unknown ext op: exec';
+      final server = UiPortServer(host: host);
+      final c = FakeChannel();
+      server.serve(c);
+      c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+      await _pump();
+      c.injectMsg(const ExtRequestMsg(id: 'x2', op: 'exec'));
+      await _pump();
+      final result = _ofKind(c, 'ext_result');
+      expect(result, isNotNull);
+      expect(result!['id'], 'x2');
+      expect(result['ok'], isFalse);
+      expect(result['error'], contains('unknown'));
+      expect(result['data'], isNull);
+    },
+  );
 
   test('attach answers tools_state with the host tool list', () async {
     final host = FakeHostConnector();

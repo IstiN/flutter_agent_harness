@@ -40,7 +40,6 @@ void main() {
     expect(persisted['faProvider'], stored);
   });
 
-
   group('originOf (visited-set seeding)', () {
     test('http(s) origins normalize to scheme://host[:port]', () {
       expect(
@@ -226,6 +225,16 @@ final class _FakeBackend implements UiHostBackend {
   final sent = <String>[];
   final decisions = <(String, bool)>[];
   var cancelled = 0;
+  var extRequests = <(String, Map<String, dynamic>)>[];
+
+  @override
+  Future<Map<String, dynamic>> extRequest(
+    String op,
+    Map<String, dynamic> params,
+  ) async {
+    extRequests.add((op, params));
+    return const <String, dynamic>{};
+  }
 
   @override
   void sendUser(String text) => sent.add(text);

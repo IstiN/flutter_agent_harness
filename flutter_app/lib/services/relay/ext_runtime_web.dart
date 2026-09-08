@@ -16,17 +16,32 @@ import 'dart:js_interop';
 
 import 'package:fa_browser_agent/fa_browser_agent.dart';
 
-@JS('chrome.runtime.id')
-external JSString? get _runtimeId;
-
 /// Port name the SW's UI port server serves (`agent_main.dart` drops every
 /// other port) — pinned across packages; agent_main owns the private twin.
 const _uiPortName = 'fa-ui-v2';
+
+/// `window.chrome` — undefined on Firefox/Safari and on Chrome pages where
+/// the injection was disabled; present (but bare) on a normal Chrome page.
+@JS('chrome')
+external _JsChromeNs? get _chromeNs;
+
+extension type _JsChromeNs._(JSObject _) implements JSObject {
+  /// `chrome.runtime` — undefined OUTSIDE an extension context; deep-path
+  /// bindings (`@JS('chrome.runtime.id')`) THROW on that missing segment,
+  /// so every hop is bound separately and stepped through null-safely.
+  external _JsRuntimeNs? get runtime;
+}
+
+extension type _JsRuntimeNs._(JSObject _) implements JSObject {
+  external JSString? get id;
+}
 
 extension type _JsConnectInfo._(JSObject _) implements JSObject {
   external _JsConnectInfo({String? name});
 }
 
+/// `chrome.runtime.connect` — resolved through the stepped bindings above;
+/// only called once [isExtensionHost] has proven both segments exist.
 @JS('chrome.runtime.connect')
 external _JsPort? _connect([_JsConnectInfo? connectInfo]);
 
@@ -42,7 +57,7 @@ extension type _JsEvent._(JSObject _) implements JSObject {
 
 /// Whether this build runs inside the browser extension panel: only an
 /// extension page has a non-null `chrome.runtime.id`.
-bool isExtensionHost() => _runtimeId != null;
+bool isExtensionHost() => _chromeNs?.runtime?.id != null;
 
 /// Opens a `chrome.runtime` port channel, or null when unavailable.
 ///

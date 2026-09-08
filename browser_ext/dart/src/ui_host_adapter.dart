@@ -27,6 +27,14 @@ abstract interface class UiHostBackend {
 
   /// Applies per-tool enabled flags from the panel.
   void toolsPut(List<UiToolState> tools);
+
+  /// One-shot host capability request (`ext_request`: cookies.get_all /
+  /// fetch / tabs.create). Throws on unknown ops and param problems —
+  /// the port server wraps that into a structured ext_result.
+  Future<Map<String, dynamic>> extRequest(
+    String op,
+    Map<String, dynamic> params,
+  );
 }
 
 /// chrome.storage keys the settings flow reads and writes — identical to
@@ -53,8 +61,7 @@ final class UiHostAdapter implements UiHostConnector {
   /// Optional field-level merge applied before a put is stored/persisted
   /// (`faProvider` uses it so a partial panel save cannot wipe stored
   /// values — see settings_merge.dart).
-  final Object? Function(String key, Object? incoming, Object? stored)?
-  merge;
+  final Object? Function(String key, Object? incoming, Object? stored)? merge;
 
   /// In-memory mirror of the stored settings. chrome.storage is async,
   /// the protocol's settingsGet is sync — the wiring seeds this snapshot
@@ -117,6 +124,16 @@ final class UiHostAdapter implements UiHostConnector {
   @override
   List<Map<String, dynamic>> sessionsList() =>
       backend()?.sessionsList() ?? const [];
+
+  @override
+  Future<Map<String, dynamic>> extRequest(
+    String op,
+    Map<String, dynamic> params,
+  ) async {
+    final host = backend();
+    if (host == null) throw 'host not booted';
+    return host.extRequest(op, params);
+  }
 }
 
 /// The [UiHostAdapter.merge] hook for `faProvider`: field-level merge so a
@@ -124,8 +141,8 @@ final class UiHostAdapter implements UiHostConnector {
 /// stored values instead of wiping the provider.
 Object? faProviderMergeHook(String key, Object? incoming, Object? stored) =>
     key == 'faProvider'
-        ? mergeProvider(
-            stored is Map ? Map<Object?, Object?>.from(stored) : null,
-            incoming is Map ? Map<Object?, Object?>.from(incoming) : const {},
-          )
-        : incoming;
+    ? mergeProvider(
+        stored is Map ? Map<Object?, Object?>.from(stored) : null,
+        incoming is Map ? Map<Object?, Object?>.from(incoming) : const {},
+      )
+    : incoming;

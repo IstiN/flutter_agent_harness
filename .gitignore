@@ -121,3 +121,8 @@ browser_ext/panel/app/
 # Local git worktrees from past sessions
 .worktrees/
 
+
+# web boot smoke local prereqs (never commit)
+/node_modules/
+/package.json
+/package-lock.json

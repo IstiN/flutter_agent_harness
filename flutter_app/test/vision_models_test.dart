@@ -37,6 +37,24 @@ void main() {
       }
     });
 
+    test('glm-5 flagships are text-only, the v/flash lines see images', () {
+      // Issue #42: glm-5.3 is text-only on z.ai (400 `messages.content.type
+      // is invalid, allowed values: ['text']`); OpenRouter metadata agrees.
+      const glmTextIds = ['glm-5', 'glm-5.2', 'glm-5.3', 'glm-4.6'];
+      const glmVisionIds = [
+        'glm-4.5v',
+        'glm-4.6v',
+        'glm-5v-turbo',
+        'glm-5.3-flash',
+      ];
+      for (final id in glmTextIds) {
+        expect(modelIdSuggestsVision(id), isFalse, reason: id);
+      }
+      for (final id in glmVisionIds) {
+        expect(modelIdSuggestsVision(id), isTrue, reason: id);
+      }
+    });
+
     test('text-only models are not flagged', () {
       const textIds = [
         '',

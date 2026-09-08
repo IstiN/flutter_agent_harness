@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.1.322
+
+
+- feat(browser_ext): CodeMie cookie sign-in without any API key or SSO
+  dance — the panel now talks to a small `ext_request` op surface on the
+  service worker (`cookies.get_all`, SW-relayed `fetch` with
+  `credentials: 'include'` — MV3 + host permissions mean no CORS and the
+  browser jar rides along — and `tabs.create` for the login page).
+  `codeMieLogin` probes `llm_models`: 200 → cookies alive, model ids
+  prefill, the key field stays empty; 401/403 → the login tab opens and
+  the probe repeats until the jar holds a session. A CodeMie base URL
+  (`isCookieAuthUrl`) streams DIRECT from the SW — never through the
+  bridge relay, which would strip the cookies and 401. New
+  `ext_request`/`ext_result` protocol kinds; every op validates its
+  params and answers a structured result, unknown ops never crash.
+- fix(browser_ext): the exfil gate's ask under yolo now stays silent —
+  the user's contract is that yolo asks for NOTHING (the extension has
+  no bash to carry critical patterns), so only the interactive modes
+  (ask/write) surface the outbound dialog; unattended keeps allowing
+  without asking.
+
+## 0.1.321
+
+
+- fix(browser_ext): cross-origin `tabs_open`/`downloads_start` no longer
+  hard-fail without asking — the exfil gate threw `approval_required`
+  straight at the model, so even yolo could not open a never-visited
+  site (the agent looped on the tool error, "reads the page but can't
+  open apple.com"). Flagged outbound actions now route through the
+  host's approval prompt: one dialog per new ORIGIN (an allow seeds the
+  visited set), deny keeps the tool error, and unattended hosts allow
+  without asking so autonomous runs never stall on the 120s backstop.
+  The ask is an injectable `ExfilApprovalAsk` on the tool surface;
+  unwired surfaces keep the conservative hard error.
+- fix(browser_ext): the approval loop could not be answered or rescued —
+  the extension panel's primary chat surface (the narrow-layout session
+  sheet) never installed an approval handler, so every gated tool call
+  sat out the SW's 120s backstop and was denied with the user never
+  asked: the turn looped "busy", produced no output, and the model kept
+  retrying gated tools. Fixes, three ways:
+  - `FaChatSurfaceHandlers` (fa_ui): a reusable binder installing the
+    approval dialog + ask sheet + secret-request sheet on the active
+    service for as long as a chat surface shows; the session sheet now
+    binds it (moves on session switch, clears exactly its own handlers
+    on dispose, never clobbers a foreign handler).
+  - `ApprovalFlow` (browser_ext/dart, pure + VM-tested): the SW host's
+    pending-approval core extracted from agent_host (same wire events);
+    `resolveAll` completes every pending prompt at once.
+  - live approval-mode changes: `reconfigure` no longer drops the mode
+    behind the busy guard — the mode applies mid-run, and flipping to
+    yolo/unattended resolves pending prompts as allowed (the user's
+    rescue gesture); only provider/mailbox/hub/tool changes still
+    require an idle host.
+
 ## 0.1.313
 
 
@@ -2868,3 +2922,7 @@
 - ci: the Chrome extension builds in the release pipeline and ships as a
   release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
   page gains the download + load-unpacked card.
+
+## Unreleased
+
+## Unreleased

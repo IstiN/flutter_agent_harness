@@ -293,6 +293,13 @@ abstract interface class BridgeLlmRelay {
 /// Model ids starting with `fake:` select the deterministic CI provider.
 bool isFakeModel(String model) => model.startsWith('fake:');
 
+/// Whether [url] points at a CodeMie deployment (the cookie-auth host:
+/// the user's browser jar already carries the session — an API key or a
+/// localhost SSO dance is never needed). Pure so the panel and the SW
+/// agree on the classification.
+bool isCookieAuthUrl(String url) =>
+    Uri.tryParse(url)?.host.contains('codemie') ?? false;
+
 /// Builds the [Model] spec sent with every request (and persisted in
 /// `model_change` session records).
 Model modelForConfig(ProviderConfig config) => Model(
@@ -329,7 +336,12 @@ StreamFunction resolveStreamFn(ProviderConfig config) {
   providerHttpClientFactory = () => FetchClient();
   if (isFakeModel(config.model)) return fakeStream;
   final relay = activeRelay;
-  if (relay != null && config.apiKey.isEmpty) {
+  if (relay != null &&
+      config.apiKey.isEmpty &&
+      // A cookie-auth host streams DIRECT: the SW fetch carries the
+      // browser jar (FetchClient credentials:include) — routing it
+      // through the bridge relay would strip the cookies and 401.
+      !isCookieAuthUrl(config.baseUrl)) {
     return (model, context, {cancelToken}) => relay.relay.stream(
       model,
       context,

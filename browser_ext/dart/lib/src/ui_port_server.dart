@@ -47,6 +47,13 @@ abstract interface class UiHostConnector {
 
   /// Known past sessions (`sessions_query`).
   List<Map<String, dynamic>> sessionsList();
+
+  /// One-shot host capability request (`ext_request`: cookies.get_all /
+  /// fetch / tabs.create) — the same op surface the host backend serves.
+  Future<Map<String, dynamic>> extRequest(
+    String op,
+    Map<String, dynamic> params,
+  );
 }
 
 /// Multiplexes UI channels onto one [UiHostConnector].
@@ -183,10 +190,24 @@ final class UiPortServer {
       case final ToolsPutMsg m:
         host.toolsPut(m.tools);
         _send(channel, ToolsStateMsg(tools: host.toolsList()));
+      case final ExtRequestMsg m:
+        // One-shot capability request: the dispatch may await chrome.*
+        // round-trips, so it runs detached and answers on the SAME
+        // channel with a structured ext_result (never a bare throw).
+        unawaited(_handleExt(channel, m));
       case final PingMsg _:
         _send(channel, const PongMsg());
       default:
         break; // UI-bound kinds echoed back at us: ignore
+    }
+  }
+
+  Future<void> _handleExt(UiPortChannel channel, ExtRequestMsg msg) async {
+    try {
+      final data = await host.extRequest(msg.op, msg.params ?? const {});
+      _send(channel, ExtResultMsg(id: msg.id, ok: true, data: data));
+    } on Object catch (error) {
+      _send(channel, ExtResultMsg(id: msg.id, ok: false, error: '$error'));
     }
   }
 

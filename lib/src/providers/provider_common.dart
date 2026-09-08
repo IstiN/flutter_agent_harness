@@ -101,6 +101,21 @@ List<Message> downgradeUndecodableImages(List<Message> messages) {
   );
 }
 
+/// Replaces EVERY image block with the non-vision placeholders, regardless
+/// of the model's declared modalities. Used when a text-only backend
+/// rejected the request's image parts (issue #42: z.ai glm-5.3 400
+/// `messages.content.type is invalid, allowed values: ['text']`): the
+/// adapter retries once with the images downgraded, so the turn survives
+/// and the model can explain the swap instead of dying with a raw API
+/// error.
+List<Message> downgradeAllImages(List<Message> messages) {
+  return _replaceImages(
+    messages,
+    nonVisionUserImagePlaceholder,
+    nonVisionToolImagePlaceholder,
+  );
+}
+
 /// Whether [messages] contains any [ImageContent] (user messages and tool
 /// results) — guards the undecodable-image retry so image-shaped backend
 /// errors on image-free requests don't trigger a pointless second call.

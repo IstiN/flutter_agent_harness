@@ -25,6 +25,38 @@ void main() {
         expect(modelIdSuggestsVision(id), isFalse, reason: id);
       }
     });
+
+    test(
+      'glm-5 flagships are text-only, only the v/flash lines see images',
+      () {
+        // Issue #42: switching onto glm-5.3 claimed image input, and the next
+        // turn replayed history images as image_url parts — z.ai rejected the
+        // request with `messages.content.type is invalid, allowed values:
+        // ['text']`. OpenRouter metadata agrees: glm-5/5.1/5.2/5.3 are
+        // text-only, glm-5v-turbo and glm-5.3-flash take image input.
+        for (final id in [
+          'glm-5',
+          'glm-5.1',
+          'glm-5.2',
+          'glm-5.3',
+          'glm-5-turbo',
+          'glm-4.6',
+          'glm-4.7',
+        ]) {
+          expect(modelIdSuggestsVision(id), isFalse, reason: id);
+          expect(inputModalitiesFor(id), ['text'], reason: id);
+        }
+        for (final id in [
+          'glm-4v-9b',
+          'zai/glm-4.5v',
+          'glm-4.6v',
+          'glm-5v-turbo',
+          'glm-5.3-flash',
+        ]) {
+          expect(modelIdSuggestsVision(id), isTrue, reason: id);
+        }
+      },
+    );
   });
 
   group('visionMarker', () {
