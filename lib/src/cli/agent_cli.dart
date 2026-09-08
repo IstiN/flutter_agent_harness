@@ -122,8 +122,8 @@ import '../memory/compaction_memory_hook.dart';
 import '../memory/harness_llm_provider.dart';
 import '../memory/memory_controller.dart';
 import '../memory_config.dart';
+import '../messaging/agent_fabric.dart';
 import '../messaging/agent_message.dart';
-import '../messaging/fallback_messaging_repository.dart';
 import '../messaging/file_messaging_repository.dart';
 import '../messaging/messaging_repository.dart';
 import '../messaging/schedule_message_tool.dart';
@@ -334,36 +334,19 @@ class AgentCli {
     // `subagent_registry` custom records, so a resumed session rehydrates
     // its agents (and `/sessions`-shared repos make agents visible across
     // instances of the same cwd).
-    // Messaging fabric: per-agent inboxes under the session root. The
-    // FILE layer sits behind a SwappableMessagingRepository so
-    // _createSession can re-point it when storage falls back to another
-    // root. With a hub-backed primary (issue #27) the hub composes OVER
-    // the swappable file layer — a storage fallback swaps only files.
-    _fileFabric = SwappableMessagingRepository(
-      FileMessagingRepository(
-        env: _env,
-        // Messaging is scoped to the *launch* cwd. Sessions are grouped
-        // by cwd; the fabric is initialized once. Each mailbox is
-        // namespaced by session id.
-        root: _messagesRoot =
-            '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
-        decodeSessionCwd: decodeSessionCwd,
-        homeDir: config.homeDir,
-      ),
+    // Messaging fabric: per-agent inboxes under the session root; a hub
+    // fabric composes over them when injected (issue #27).
+    _messagesRoot =
+        '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages';
+    final (:fabric, :fileFabric) = buildAgentFabric(
+      env: _env,
+      messagesRoot: _messagesRoot,
+      homeDir: config.homeDir,
+      hubFabric: config.hubFabric,
+      mainMailbox: () => _subagentManager.mailboxOf('main'),
     );
-    final hubFabric = config.hubFabric;
-    if (hubFabric == null) {
-      _fabricRepository = _fileFabric;
-    } else {
-      final composite = FallbackMessagingRepository(
-        primary: hubFabric,
-        fallback: _fileFabric,
-      );
-      // Hub mail merges into the MAIN inbox drain only: subagent drains
-      // never touch the hub, so a child cannot steal hub frames.
-      composite.primaryMailbox = () => _subagentManager.mailboxOf('main');
-      _fabricRepository = composite;
-    }
+    _fileFabric = fileFabric;
+    _fabricRepository = fabric;
     _subagentManager = SubagentManager(
       parentSessionId: '',
       messaging: _fabricRepository,
