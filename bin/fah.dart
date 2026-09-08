@@ -42,9 +42,11 @@ import 'package:fa_hub_client/fa_hub_client.dart'
         HubConfig,
         HubPlugin,
         defaultDapConfigFile,
+        envMasterSecret,
         persistDapConfig,
         resolveDapSettings;
 import 'fah_hub_plugin.dart';
+import 'hub_fabric_repository.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 import 'serve_bridge.dart';
@@ -226,10 +228,16 @@ String _resolveApiKey(
 
 /// Built-in plugins available via `--plugin <name>` or `.fah/packages.yaml`.
 /// [hubPlugin] is the process's single hub client instance — the same one
-/// the settings-hub DAP / Hub flow reads its snapshot through.
-FahPlugin? _builtInPlugin(String name, HubPlugin hubPlugin) {
+/// the settings-hub DAP / Hub flow reads its snapshot through. When
+/// [fabricDeliversMail] is set the hub-backed messaging repository owns
+/// hub mail delivery and the plugin host registers no separate inbox.
+FahPlugin? _builtInPlugin(
+  String name,
+  HubPlugin hubPlugin, {
+  required bool fabricDeliversMail,
+}) {
   return switch (name) {
-    'hub' => HubPluginHost(hubPlugin),
+    'hub' => HubPluginHost(hubPlugin, fabricDeliversMail: fabricDeliversMail),
     'inspect_image' => const InspectImagePlugin(),
     'transcribe_audio' => const TranscribeAudioPlugin(),
     _ => null,
@@ -267,8 +275,17 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
 
 /// Resolves the enabled plugins and their `.fah/packages.yaml` config
 /// (the loader lives in `lib/src/plugins/packages_config.dart`). A parse
-/// failure is a hard startup error.
-Future<({List<FahPlugin> plugins, Map<String, dynamic> config})>
+/// failure is a hard startup error. With the hub plugin enabled AND DAP
+/// unlocked (`DAP_MASTER_SECRET` — the plugin's own kill switch), the
+/// returned [HubFabricRepository] becomes the messaging fabric's hub
+/// layer (issue #27) and the plugin host skips its separate inbox.
+Future<
+  ({
+    List<FahPlugin> plugins,
+    Map<String, dynamic> config,
+    HubFabricRepository? hubFabric,
+  })
+>
 _resolvePlugins(CliArgs args, ExecutionEnv env, HubPlugin hubPlugin) async {
   final Map<String, dynamic> config;
   try {
@@ -277,13 +294,21 @@ _resolvePlugins(CliArgs args, ExecutionEnv env, HubPlugin hubPlugin) async {
     _fail(error.message);
   }
   final enabled = resolveEnabledPlugins(args.plugins, config);
+  final hubEnabled =
+      enabled.contains('hub') &&
+      (Platform.environment[envMasterSecret] ?? '').isNotEmpty;
+  final hubFabric = hubEnabled ? HubFabricRepository(hubPlugin) : null;
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
-    final plugin = _builtInPlugin(name, hubPlugin);
+    final plugin = _builtInPlugin(
+      name,
+      hubPlugin,
+      fabricDeliversMail: hubFabric != null,
+    );
     if (plugin == null) _fail('unknown plugin: $name');
     plugins.add(plugin);
   }
-  return (plugins: plugins, config: config);
+  return (plugins: plugins, config: config, hubFabric: hubFabric);
 }
 
 String _defaultSessionRoot() {
@@ -1572,6 +1597,7 @@ Future<void> _runApp(List<String> args) async {
       browserController: bridgeHandle.browserController,
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
+      hubFabric: resolved.hubFabric,
       promptTemplateDirs: promptTemplateDirs,
       initialMode: effective.mode!,
       systemPrompt: flagSystemPrompt,

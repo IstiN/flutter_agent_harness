@@ -2,7 +2,10 @@
 library;
 
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
+import 'package:flutter_agent_harness/src/messaging/agent_message.dart';
+import 'package:flutter_agent_harness/src/messaging/fallback_messaging_repository.dart';
 import 'package:flutter_agent_harness/src/messaging/file_messaging_repository.dart';
+import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
 import 'package:flutter_agent_harness/src/task/subagent.dart';
 import 'package:flutter_agent_harness/src/task/subagent_manager.dart';
 import 'package:test/test.dart';
@@ -284,6 +287,104 @@ void main() {
         await small.enqueueMessage('c9', note('2'));
         expect(() => small.enqueueMessage('c9', note('3')), throwsStateError);
       });
+
+      test(
+        'hub-shaped recipients pass the guard through a routing fabric',
+        () async {
+          final hub = _FakeHub()..resolvable.add('a1b2c3d4e5f60718');
+          final fabric = FallbackMessagingRepository(
+            primary: hub,
+            fallback: repo,
+          );
+          final routed = SubagentManager(
+            parentSessionId: 'p',
+            messaging: fabric,
+          )..mailboxPrefix = 'sess1';
+          await routed.register(
+            id: 'a1',
+            name: 'a1',
+            agentType: 'task',
+            task: '',
+          );
+          // A bare 16-hex hub id has no local handle and no '/' — the guard
+          // consults the fabric's routing capability instead of throwing,
+          // and the mail goes hub-ward UNPREFIXED.
+          await routed.enqueueMessage('a1b2c3d4e5f60718', note('over the hub'));
+          expect(hub.sent.single.toId, 'a1b2c3d4e5f60718');
+        },
+      );
+
+      test(
+        'unresolvable recipients still fail honestly on a live hub',
+        () async {
+          final fabric = FallbackMessagingRepository(
+            primary: _FakeHub(),
+            fallback: repo,
+          );
+          final routed = SubagentManager(
+            parentSessionId: 'p',
+            messaging: fabric,
+          )..mailboxPrefix = 'sess1';
+          expect(
+            () => routed.enqueueMessage('nobody-here', note('typo')),
+            throwsStateError,
+          );
+        },
+      );
+
+      test('local handles and selfId win over the hub roster', () async {
+        final hub = _FakeHub()..resolvable.addAll(['a1', 'main']);
+        final fabric = FallbackMessagingRepository(
+          primary: hub,
+          fallback: repo,
+        );
+        final routed = SubagentManager(parentSessionId: 'p', messaging: fabric)
+          ..mailboxPrefix = 'sess1';
+        await routed.register(
+          id: 'a1',
+          name: 'a1',
+          agentType: 'task',
+          task: '',
+        );
+        await routed.enqueueMessage('a1', note('for the child'));
+        await routed.enqueueMessage('main', note('for the parent', from: 'a1'));
+        expect(hub.sent, isEmpty);
+        expect((await repo.peek('sess1/a1')).single.text, 'for the child');
+        expect((await repo.peek('sess1/main')).single.text, 'for the parent');
+      });
     });
   });
+}
+
+/// Minimal routing hub double for guard/routing tests.
+final class _FakeHub
+    implements MessagingRepository, RoutingMessagingRepository {
+  final sent = <AgentMessage>[];
+  final resolvable = <String>{};
+  bool connected = true;
+
+  @override
+  bool get isConnected => connected;
+
+  @override
+  Future<String?> resolveTarget(String toId) async =>
+      resolvable.contains(toId) ? toId : null;
+
+  @override
+  Future<void> send(AgentMessage message) async => sent.add(message);
+
+  @override
+  Future<void> register(String agentId, {String? sessionName}) async {}
+
+  @override
+  Future<void> touch(String agentId) async {}
+
+  @override
+  Future<List<AgentMessage>> peek(String agentId) async => const [];
+
+  @override
+  Future<List<AgentMessage>> drain(String agentId) async => const [];
+
+  @override
+  Future<List<MailboxEntry>> directory() async => const [];
 }
