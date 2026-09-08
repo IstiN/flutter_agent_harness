@@ -5,6 +5,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show listEquals;
+
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/github_account_store.dart';
 import 'package:fa/services/github_api_client.dart';
@@ -530,10 +532,15 @@ class WidgetPublishService {
       }
     }
 
-    // A reachable PR always refreshes the record (state + comment
-    // snapshot — the fetch already happened); an unreachable one only
-    // downgrades the stored state.
-    if (pull != null || state != publication.lastKnownState) {
+    // Persist only on a real change: state moved, or the comment snapshot
+    // differs. The poller runs on a timer — re-recording an unchanged
+    // publication would rewrite the ledger file and notify listeners
+    // every tick for nothing. An unreachable PR only downgrades the
+    // stored state.
+    final changed =
+        state != publication.lastKnownState ||
+        (pull != null && !listEquals(comments, publication.comments));
+    if (changed) {
       await _ledger.record(
         publication.copyWith(lastKnownState: state, comments: comments),
       );

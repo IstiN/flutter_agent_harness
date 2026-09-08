@@ -49,6 +49,17 @@ final class WidgetPublicationComment {
   /// True for line-level review comments, false for conversation comments.
   final bool isReview;
 
+  @override
+  bool operator ==(Object other) =>
+      other is WidgetPublicationComment &&
+      other.author == author &&
+      other.body == body &&
+      other.createdAt == createdAt &&
+      other.isReview == isReview;
+
+  @override
+  int get hashCode => Object.hash(author, body, createdAt, isReview);
+
   Map<String, Object?> toJson() => {
     'author': author,
     'body': body,

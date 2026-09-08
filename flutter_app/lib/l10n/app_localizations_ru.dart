@@ -1633,6 +1633,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get publicationsRefresh => 'Обновить';
 
   @override
+  String get publicationsOffline =>
+      'Нет сети — показаны последние известные состояния.';
+
+  @override
   String get publicationStateOpen => 'Открыт';
 
   @override

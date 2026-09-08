@@ -1620,6 +1620,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get publicationsRefresh => 'Refresh';
 
   @override
+  String get publicationsOffline => 'Offline — showing last known states.';
+
+  @override
   String get publicationStateOpen => 'Open';
 
   @override
