@@ -236,9 +236,19 @@ final class ScheduledMessageQueue {
 
   Future<void> _armAsync() async {
     if (_disposed) return;
-    final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
+    final nearest = await _nearestDueMs();
     // The scan awaited above; the host may have torn the queue down meanwhile.
-    if (_disposed) return;
+    if (_disposed || nearest == null) return;
+    final wait = nearest - DateTime.now().millisecondsSinceEpoch;
+    _timer = Timer(Duration(milliseconds: wait.clamp(0, 1 << 40)), () async {
+      await _deliverDue();
+      _arm();
+    });
+  }
+
+  /// Scans the pending records for the earliest due time (null: none).
+  Future<int?> _nearestDueMs() async {
+    final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
     int? nearest;
     for (final entry in entries) {
       if (!entry.path.endsWith('.json')) continue;
@@ -256,11 +266,6 @@ final class ScheduledMessageQueue {
         continue;
       }
     }
-    if (nearest == null) return;
-    final wait = nearest - DateTime.now().millisecondsSinceEpoch;
-    _timer = Timer(Duration(milliseconds: wait.clamp(0, 1 << 40)), () async {
-      await _deliverDue();
-      _arm();
-    });
+    return nearest;
   }
 }
