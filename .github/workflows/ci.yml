@@ -385,3 +385,83 @@ jobs:
 
       - name: Bump version, changelog, tag and push
         run: bash scripts/auto_release.sh
+
+  # PR-gate twin of the release `binaries` job: the CLI bundle must compile
+  # on every supported platform and actually run (`fa --help`) BEFORE a PR
+  # can merge. Required check: "Binaries smoke gate" (aggregate below).
+  binaries-pr:
+    name: Binaries (PR)
+    runs-on: ${{ matrix.runner }}
+    needs: quality
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            os: windows
+            arch: x64
+          - runner: macos-latest
+            os: macos
+            arch: arm64
+          - runner: macos-15-intel
+            os: macos
+            arch: x64
+          - runner: ubuntu-latest
+            os: linux
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      - name: Build CLI bundle
+        shell: bash
+        run: |
+          # Same bundle layout as the release job: bundle/bin/fa (+ lib/).
+          dart build cli --target=bin/fah.dart --output=build/out
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            mv build/out/bundle/bin/fah.exe build/out/bundle/bin/fa.exe
+          else
+            mv build/out/bundle/bin/fah build/out/bundle/bin/fa
+            chmod +x build/out/bundle/bin/fa
+          fi
+          echo "$(grep '^version:' pubspec.yaml | awk '{print $2}')" > build/out/bundle/version.txt
+
+      - name: Ad-hoc sign CLI binary (macOS)
+        if: matrix.os == 'macos'
+        shell: bash
+        run: codesign --force --sign - build/out/bundle/bin/fa
+
+      - name: Smoke — the binary runs (fa --help)
+        shell: bash
+        run: |
+          bin="build/out/bundle/bin/fa"
+          [ "${{ matrix.os }}" = "windows" ] && bin="build/out/bundle/bin/fa.exe"
+          out=$("$bin" --help)
+          echo "$out" | head -5
+          [ -n "$out" ] || { echo "fa --help produced no output"; exit 1; }
+
+  # Aggregation job so branch protection can require ONE stable context
+  # ("Binaries smoke gate") instead of five matrix-leg names.
+  binaries-smoke-gate:
+    name: Binaries smoke gate
+    needs: binaries-pr
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All platforms built and smoked
+        if: needs.binaries-pr.result == 'success'
+        run: echo "binaries-pr = ${{ needs.binaries-pr.result }}"
+      - name: Fail the gate
+        if: needs.binaries-pr.result != 'success'
+        run: |
+          echo "binaries-pr result: ${{ needs.binaries-pr.result }}"
+          exit 1
