@@ -451,4 +451,49 @@ void main() {
     );
     await expectGolden(tester, 'widget_publications_sheet');
   });
+
+  testWidgets('My publications sheet — offline hint', (tester) async {
+    final account = await _account(connected: true);
+    final ledger = WidgetPublicationStore.inMemory();
+    await ledger.record(
+      WidgetPublication(
+        widgetId: 'pomodoro',
+        version: '1.0.0',
+        repoFullName: 'octocat/fa-widget-pomodoro',
+        repoCommit: 'a1b2c3d4',
+        step: WidgetPublication.stepPrOpened,
+        submittedAt: DateTime.utc(2026, 2, 1, 12),
+        prNumber: 12,
+        prHtmlUrl: 'https://github.com/IstiN/fa_widgets/pull/12',
+      ),
+    );
+    final env = MemoryExecutionEnv();
+    await _pumpSettingsPage(
+      tester,
+      GithubAccountSection(store: account, ledger: ledger),
+      open: (context) => showWidgetPublicationsSheet(
+        context,
+        ledger: ledger,
+        // A transport that always throws: the refresh cycle cannot reach
+        // a single PR, so the sheet pins the AC8 offline hint over the
+        // last-known state chip.
+        service: WidgetPublishService(
+          env: env,
+          account: account,
+          ledger: ledger,
+          clientFactory: (token) => GithubApiClient(
+            token: token,
+            httpClient: MockClient(
+              (request) => throw http.ClientException('offline'),
+            ),
+          ),
+          clock: () => DateTime.utc(2026, 2, 1, 12),
+          sleep: (_) async {},
+        ),
+      ),
+    );
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pumpAndSettle();
+    await expectGolden(tester, 'widget_publications_sheet_offline');
+  });
 }

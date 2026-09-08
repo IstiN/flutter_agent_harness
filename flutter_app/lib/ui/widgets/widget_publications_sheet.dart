@@ -15,17 +15,27 @@ import 'package:fa/services/widget_publish_service.dart';
 /// submission with its PR state chip, plus a Refresh action that re-reads
 /// the live PR states through [service] (when provided — otherwise the
 /// sheet is a read-only view of each submission's last-known state).
+///
+/// With a [service], the sheet also runs the card's timed status polling:
+/// a refresh every [pollInterval] while the sheet is open and one refresh
+/// when the app resumes to the foreground — no network while the sheet is
+/// closed (boot never blocks on GitHub).
 Future<void> showWidgetPublicationsSheet(
   BuildContext context, {
   required WidgetPublicationStore ledger,
   WidgetPublishService? service,
+  Duration pollInterval = WidgetPublicationsSheet.defaultPollInterval,
 }) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     showDragHandle: true,
-    builder: (_) => WidgetPublicationsSheet(ledger: ledger, service: service),
+    builder: (_) => WidgetPublicationsSheet(
+      ledger: ledger,
+      service: service,
+      pollInterval: pollInterval,
+    ),
   );
 }
 
@@ -35,38 +45,88 @@ class WidgetPublicationsSheet extends StatefulWidget {
     super.key,
     required this.ledger,
     this.service,
+    this.pollInterval = defaultPollInterval,
   });
+
+  /// Cadence of the timed status polling while the sheet is open — the
+  /// card's 5-minute background cadence. Injectable for the same reason
+  /// as the connect sheet's `httpClient`: tests fire the poll with short
+  /// pumps instead of waiting five minutes.
+  static const defaultPollInterval = Duration(minutes: 5);
 
   final WidgetPublicationStore ledger;
 
   /// Status refresher; null renders the read-only last-known projection.
   final WidgetPublishService? service;
 
+  final Duration pollInterval;
+
   @override
   State<WidgetPublicationsSheet> createState() =>
       _WidgetPublicationsSheetState();
 }
 
-class _WidgetPublicationsSheetState extends State<WidgetPublicationsSheet> {
+class _WidgetPublicationsSheetState extends State<WidgetPublicationsSheet>
+    with WidgetsBindingObserver {
   bool _refreshing = false;
+
+  /// True when the latest refresh cycle could not reach a single PR —
+  /// the sheet then says it is showing last-known states (AC8 offline
+  /// degrade) instead of silently stale chips.
+  bool _offline = false;
+
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.service != null) {
+      WidgetsBinding.instance.addObserver(this);
+      _pollTimer = Timer.periodic(widget.pollInterval, (_) => _refresh());
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refresh();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
   Future<void> _refresh() async {
     final service = widget.service;
     if (service == null || _refreshing) return;
     setState(() => _refreshing = true);
+    var reached = 0;
+    var failed = 0;
     try {
       // refreshStatus persists the new state into the ledger (and notifies
       // listeners) itself; a single failure (offline, deleted repo) must
-      // not block the rest.
+      // not block the rest. Records without an open/known PR have nothing
+      // to poll — skipping them keeps reached/failed a measure of real
+      // network attempts (an early return must never mask an offline
+      // cycle, nor fake a reached one).
       for (final publication in widget.ledger.publications) {
+        if (publication.prNumber == null) continue;
         try {
           await service.refreshStatus(publication);
+          reached++;
         } on Object {
-          continue;
+          failed++;
         }
       }
     } finally {
-      if (mounted) setState(() => _refreshing = false);
+      if (mounted) {
+        setState(() {
+          _refreshing = false;
+          _offline = failed > 0 && reached == 0;
+        });
+      }
     }
   }
 
@@ -101,6 +161,28 @@ class _WidgetPublicationsSheetState extends State<WidgetPublicationsSheet> {
                 ),
             ],
           ),
+          if (_offline)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.wifi_off,
+                    size: 14,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      l10n.publicationsOffline,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           const SizedBox(height: 8),
           Flexible(
             child: ListenableBuilder(
@@ -118,11 +200,15 @@ class _WidgetPublicationsSheetState extends State<WidgetPublicationsSheet> {
                     ),
                   );
                 }
-                return ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: publications.length,
-                  itemBuilder: (context, index) =>
-                      _PublicationTile(publication: publications[index]),
+                return RefreshIndicator(
+                  onRefresh: _refresh,
+                  child: ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    shrinkWrap: true,
+                    itemCount: publications.length,
+                    itemBuilder: (context, index) =>
+                        _PublicationTile(publication: publications[index]),
+                  ),
                 );
               },
             ),

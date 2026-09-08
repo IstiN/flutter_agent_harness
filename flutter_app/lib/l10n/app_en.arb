@@ -516,6 +516,7 @@
   "myPublications": "My publications",
   "publicationsEmpty": "Nothing published yet.",
   "publicationsRefresh": "Refresh",
+  "publicationsOffline": "Offline — showing last known states.",
   "publicationStateOpen": "Open",
   "publicationStatePublished": "Published",
   "publicationStateRejected": "Rejected",
