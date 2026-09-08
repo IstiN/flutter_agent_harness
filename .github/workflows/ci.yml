@@ -459,7 +459,7 @@ jobs:
     steps:
       - name: All platforms built and smoked
         if: needs.binaries-pr.result == 'success'
-        run: echo "binaries-pr: ${{ needs.binaries-pr.result }}"
+        run: echo "binaries-pr = ${{ needs.binaries-pr.result }}"
       - name: Fail the gate
         if: needs.binaries-pr.result != 'success'
         run: |
