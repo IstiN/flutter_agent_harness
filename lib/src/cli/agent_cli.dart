@@ -334,17 +334,15 @@ class AgentCli {
     // `subagent_registry` custom records, so a resumed session rehydrates
     // its agents (and `/sessions`-shared repos make agents visible across
     // instances of the same cwd).
-    // Messaging fabric: per-agent inboxes under the session root; a hub
-    // fabric composes over them when injected (issue #27).
-    _messagesRoot =
-        '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages';
-    final (:fabric, :fileFabric) = buildAgentFabric(
+    // Messaging fabric: file inboxes; hub primary composes over (#27).
+    final (:fabric, :fileFabric, :messagesRoot) = buildAgentFabric(
       env: _env,
-      messagesRoot: _messagesRoot,
+      sessionRoot: config.sessionRoot,
       homeDir: config.homeDir,
       hubFabric: config.hubFabric,
       mainMailbox: () => _subagentManager.mailboxOf('main'),
     );
+    _messagesRoot = messagesRoot;
     _fileFabric = fileFabric;
     _fabricRepository = fabric;
     _subagentManager = SubagentManager(
@@ -769,9 +767,8 @@ class AgentCli {
   /// a different root so the mailboxes follow the sessions.
   late final SwappableMessagingRepository _fileFabric;
 
-  /// The messaging fabric the CLI and the subagents share: the file
-  /// inboxes, or the hub-primary composite when a hub fabric is injected
-  /// (issue #27).
+  /// The shared fabric: the file inboxes, or the hub-primary composite
+  /// when a hub fabric is injected (issue #27).
   late final MessagingRepository _fabricRepository;
 
   /// The launch-cwd messaging root (also backs scheduled messages).

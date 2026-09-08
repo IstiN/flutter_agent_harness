@@ -13,39 +13,51 @@ import 'fallback_messaging_repository.dart';
 import 'file_messaging_repository.dart';
 import 'messaging_repository.dart';
 
-/// Builds the agent fabric rooted at [messagesRoot].
+/// Builds the agent fabric under [sessionRoot], scoped to the launch cwd
+/// of [env] (sessions are grouped by cwd; the fabric is initialized once;
+/// each mailbox is namespaced by session id).
 ///
 /// Without [hubFabric] the fabric is the bare file layer. With one, the hub
 /// becomes the primary of a [FallbackMessagingRepository]: hub-resolvable
 /// recipients deliver hub-ward, everything else lands in the files.
 /// [mainMailbox] names the mailbox hub mail merges into — the MAIN inbox
 /// drain only, so subagent drains never touch the hub.
-({MessagingRepository fabric, SwappableMessagingRepository fileFabric})
+({
+  MessagingRepository fabric,
+  SwappableMessagingRepository fileFabric,
+  String messagesRoot,
+})
 buildAgentFabric({
   required ExecutionEnv env,
-  required String messagesRoot,
+  required String sessionRoot,
   required String? homeDir,
   required MessagingRepository? hubFabric,
   required String? Function() mainMailbox,
 }) {
+  final messagesRoot = '$sessionRoot/${encodeSessionCwd(env.cwd)}/messages';
   final fileFabric = SwappableMessagingRepository(
     FileMessagingRepository(
       env: env,
-      // Messaging is scoped to the *launch* cwd. Sessions are grouped by
-      // cwd; the fabric is initialized once. Each mailbox is namespaced by
-      // session id.
       root: messagesRoot,
       decodeSessionCwd: decodeSessionCwd,
       homeDir: homeDir,
     ),
   );
   if (hubFabric == null) {
-    return (fabric: fileFabric, fileFabric: fileFabric);
+    return (
+      fabric: fileFabric,
+      fileFabric: fileFabric,
+      messagesRoot: messagesRoot,
+    );
   }
   final composite = FallbackMessagingRepository(
     primary: hubFabric,
     fallback: fileFabric,
   );
   composite.primaryMailbox = mainMailbox;
-  return (fabric: composite, fileFabric: fileFabric);
+  return (
+    fabric: composite,
+    fileFabric: fileFabric,
+    messagesRoot: messagesRoot,
+  );
 }
