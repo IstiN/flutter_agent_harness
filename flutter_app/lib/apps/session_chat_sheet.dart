@@ -62,6 +62,34 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
 ///   with the panel closed, a slim [FaWorkBar] status row sits above the
 ///   composer.
 ///
+/// The drawer's persisted-tail filter, pure for tests.
+///
+/// Non-relay services (local disk listing): `all` minus the manager's
+/// live ids. Relay services (extension panel, `relayLiveId != null`): the
+/// service worker is the authority on which session is live — it marks
+/// archives with `archived: true` and already excludes the live row, so
+/// trust THAT instead of the manager slots. A slot id lags behind a
+/// session_new/session_open re-point, and filtering by it hides the
+/// freshly archived session (the drawer collapsed to the live row only).
+List<SessionMetadata> drawerPersistedSessions({
+  required List<SessionMetadata> all,
+  required Set<String> liveIds,
+  required String? relayLiveId,
+}) {
+  if (relayLiveId != null) {
+    return [
+      for (final metadata in all)
+        if (metadata.metadata?['archived'] == true &&
+            metadata.id != relayLiveId)
+          metadata,
+    ];
+  }
+  return [
+    for (final metadata in all)
+      if (!liveIds.contains(metadata.id)) metadata,
+  ];
+}
+
 /// Sending a message from the bar opens the panel automatically (the user
 /// just asked something — the answer should be visible).
 class SessionChatSheet extends StatefulWidget {
@@ -271,15 +299,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
     try {
       final all = await service.listSessions();
       final liveIds = _liveSessions.map((s) => s.id).toSet();
-      // A relayed session's manager key lags behind the SW's live id
-      // (session_new/session_open re-point the slot): never list the
-      // currently-open transcript as persisted.
-      final relayLive = service.liveSessionId;
-      if (relayLive != null) liveIds.add(relayLive);
-      final persisted = [
-        for (final metadata in all)
-          if (!liveIds.contains(metadata.id)) metadata,
-      ];
+      final persisted = drawerPersistedSessions(
+        all: all,
+        liveIds: liveIds,
+        relayLiveId: service.liveSessionId,
+      );
       if (mounted) {
         setState(() {
           _persisted = persisted;
