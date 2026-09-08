@@ -1076,6 +1076,58 @@ void main() {
       },
     );
 
+    test(
+      'scheduled message survives a session recreate and lands in the live session (#59)',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/');
+        AgentConfig config() => AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: 'test-key',
+        );
+        // Session A schedules a follow-up...
+        final first = await AgentService.create(
+          config: config(),
+          env: env,
+          streamFunction: _singleTextResponse('ok'),
+        );
+        await first.initialize();
+        final schedule = first.toolsForTest.whereType<AgentTool>().singleWhere(
+          (tool) => tool.name == 'schedule_message',
+        );
+        final result = await schedule.execute(
+          const {'text': 'check new PRs', 'delay': '500ms'},
+          null,
+          null,
+        );
+        expect(
+          result.content.whereType<TextContent>().map((b) => b.text).join(),
+          contains('scheduled'),
+        );
+        final staleMailbox = first.subagentManager!.mailboxOf('main');
+        // ...then the host tears the session down before the timer fires
+        // (app restart / sheet recreate) and a fresh session takes over.
+        first.dispose();
+        final second = await AgentService.create(
+          config: config(),
+          env: env,
+          streamFunction: _singleTextResponse('ok'),
+        );
+        addTearDown(second.dispose);
+        await second.initialize();
+        expect(second.subagentManager!.mailboxOf('main'), isNot(staleMailbox));
+        // The due record is delivered into the LIVE session's mailbox, not
+        // stranded under the stale one nobody drains.
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        expect(await second.subagentManager!.pendingInboxCount('main'), 1);
+        expect(
+          await second.subagentManager!.pendingInboxCount('main'),
+          (await second.subagentManager!.pendingInbox('main')).length,
+        );
+      },
+    );
+
     test('durable memory facts join the composed system prompt', () async {
       final env = MemoryExecutionEnv(cwd: '/');
       // Seed a fact through the same store the service's controller reads
