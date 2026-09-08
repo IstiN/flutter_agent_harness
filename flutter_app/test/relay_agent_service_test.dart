@@ -101,6 +101,48 @@ void main() {
     addTearDown(channel.close);
   });
 
+  test('transcript replay renders user, assistant and tool rows', () async {
+    // The SW synthesizes the durable backlog (see transcriptReplayOf):
+    // history rows land through the same _rebuild path.
+    final (:service, :channel) = await _attached(
+      replay: [
+        {
+          'seq': 1,
+          'event': {
+            'type': 'message_done',
+            'role': 'user',
+            'text': 'open example.com',
+          },
+        },
+        {
+          'seq': 2,
+          'event': {
+            'type': 'message_done',
+            'role': 'assistant',
+            'text': 'opening it now',
+          },
+        },
+        {
+          'seq': 3,
+          'event': {
+            'type': 'tool_result',
+            'toolName': 'browser_navigate',
+            'isError': false,
+            'text': '{"ok":true}',
+          },
+        },
+      ],
+    );
+    expect(service.messages.map((m) => m.role).toList(), [
+      'user',
+      'assistant',
+      'tool',
+    ]);
+    expect(service.messages[2].toolName, 'browser_navigate');
+    expect(service.messages[2].content, '{"ok":true}');
+    addTearDown(channel.close);
+  });
+
   test('sendText sends a prompt and renders the user bubble', () async {
     final (:service, :channel) = await _attached();
     await service.sendText('what do you see?');

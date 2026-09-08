@@ -268,6 +268,9 @@ final class _FakeBackend implements UiHostBackend {
       openedSessions.add(sessionId);
 
   @override
+  List<Map<String, dynamic>> transcriptReplay() => const [];
+
+  @override
   List<UiToolState> toolsList() => const [
     UiToolState(name: 'browser_active_tab', enabled: true),
   ];
