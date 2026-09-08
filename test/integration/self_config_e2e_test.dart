@@ -13,7 +13,6 @@ import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/config/config_service.dart';
-import 'package:flutter_agent_harness/src/exceptions.dart';
 import 'package:test/test.dart';
 
 import '../cli/agent_cli_test_support.dart';
@@ -239,8 +238,8 @@ void main() {
     // load + restore chain picks the custom endpoint up.
     final saved = loadCliConfig(home.path);
     expect(saved.customProviders, hasLength(1));
-    expect(saved.customProviders!.single.name, 'local-mock');
-    expect(saved.customProviders!.single.baseUrl, mockUrl);
+    expect(saved.customProviders.single.name, 'local-mock');
+    expect(saved.customProviders.single.baseUrl, mockUrl);
     final parsed = parseCliArgs(['-p', 'hi']) as CliArgs;
     final effective = resolveEffectiveCliArgs(parsed, saved);
     expect(effective.provider, 'openai-completions');
