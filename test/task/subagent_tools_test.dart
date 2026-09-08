@@ -25,10 +25,14 @@ final class _FakeMessagingRepository implements MessagingRepository {
   }
 
   @override
-  Future<void> register(String agentId, {String? sessionName}) async {}
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async {}
 
   @override
-  Future<void> touch(String agentId) async {}
+  Future<void> touch(String agentId, {bool busy = false}) async {}
 
   @override
   Future<List<AgentMessage>> peek(String agentId) async =>
@@ -633,6 +637,187 @@ void main() {
       final text = (result.content.first as dynamic).text as String;
       expect(text, contains('error'));
       expect(text, contains('no_such_name'));
+      expect(repo._inboxes, isEmpty);
+    });
+  });
+
+  group('presence and machine addressing', () {
+    _FakeMessagingRepository fakeFabric(List<MailboxEntry> entries) =>
+        _FakeMessagingRepository(entries: entries);
+
+    Future<String> directoryText(
+      SubagentManager manager, {
+      bool all = false,
+    }) async {
+      final directory = subagentMonitoringTools(
+        manager: manager,
+      ).firstWhere((t) => t.name == 'agent_directory');
+      final result = await directory.execute(
+        all ? const {'all': true} : const {},
+        null,
+        null,
+      );
+      return (result.content.first as dynamic).text as String;
+    }
+
+    MailboxEntry box(String id, {String? name}) =>
+        MailboxEntry(id: id, name: name, lastActivity: null);
+
+    test('agent_directory renders registration-backed presence', () async {
+      final repo = fakeFabric([
+        MailboxEntry(
+          id: 'a/main',
+          name: 'busyOne',
+          presence: AgentPresence.busy,
+        ),
+        const MailboxEntry(
+          id: 'b/main',
+          name: 'liveOne',
+          presence: AgentPresence.live,
+        ),
+        MailboxEntry(
+          id: 'c/main',
+          name: 'goneOne',
+          presence: AgentPresence.offline,
+          lastActivity: DateTime.now().toUtc().subtract(
+            const Duration(hours: 3),
+          ),
+        ),
+      ]);
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1';
+      final text = await directoryText(m);
+      expect(
+        text,
+        contains(
+          'busyOne (a/main) — 0 pending — busy (run in progress, accepts mail)',
+        ),
+      );
+      expect(text, contains('liveOne (b/main) — 0 pending — live'));
+      // Offline + stale + nothing pending → hidden from the default view
+      // (the second test pins the hide/show rule).
+      final everything = await directoryText(m, all: true);
+      expect(
+        everything,
+        contains('goneOne (c/main) — 0 pending — offline (last active 3h ago)'),
+      );
+    });
+
+    test(
+      'busy stays visible despite a stale heartbeat; offline hides',
+      () async {
+        final stale = DateTime.now().toUtc().subtract(const Duration(days: 3));
+        final repo = fakeFabric([
+          MailboxEntry(
+            id: 'a/main',
+            name: 'staleBusy',
+            presence: AgentPresence.busy,
+            lastActivity: stale,
+          ),
+          MailboxEntry(
+            id: 'b/main',
+            name: 'staleGone',
+            presence: AgentPresence.offline,
+            lastActivity: stale,
+          ),
+        ]);
+        final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+          ..mailboxPrefix = 'sess1';
+        final text = await directoryText(m);
+        expect(text, contains('staleBusy'));
+        expect(text, isNot(contains('staleGone')));
+        final everything = await directoryText(m, all: true);
+        expect(
+          everything,
+          contains('staleGone (b/main) — 0 pending — offline'),
+        );
+      },
+    );
+
+    test('agent_directory renders declared capabilities', () async {
+      final repo = fakeFabric([
+        const MailboxEntry(
+          id: 'a/main',
+          name: 'studio',
+          capabilities: [
+            AgentCapability(
+              name: 'yoclip.render',
+              description: 'Render to MP4',
+              payload: 'scene=<id>',
+            ),
+            AgentCapability(name: 'bare'),
+          ],
+        ),
+      ]);
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1';
+      final text = await directoryText(m);
+      expect(
+        text,
+        contains('· yoclip.render — Render to MP4  [hint: scene=<id>]'),
+      );
+      expect(text, contains('· bare'));
+    });
+
+    test('agent_message strips the local machine suffix', () async {
+      final repo = fakeFabric([box('sess9/main', name: 'goal_builder')]);
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1'
+        ..machineName = 'Workstation';
+      final tool = subagentMonitoringTools(
+        manager: m,
+        currentSubagentId: () => 'a1',
+      ).firstWhere((t) => t.name == 'agent_message');
+      final result = await tool.execute(
+        {'to': 'goal_builder@workstation', 'message': 'hi locally'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      // The confirmation echoes the requested address; delivery landed on
+      // the resolved mailbox below.
+      expect(text, contains('queued for "goal_builder@workstation"'));
+      expect(repo._inboxes['sess9/main'], hasLength(1));
+    });
+
+    test('agent_message rejects another machine suffix', () async {
+      final repo = fakeFabric([box('sess9/main', name: 'goal_builder')]);
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1'
+        ..machineName = 'workstation';
+      final tool = subagentMonitoringTools(
+        manager: m,
+        currentSubagentId: () => 'a1',
+      ).firstWhere((t) => t.name == 'agent_message');
+      final result = await tool.execute(
+        {'to': 'goal_builder@elsewhere', 'message': 'cross machine?'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('error'));
+      expect(text, contains('another machine'));
+      expect(repo._inboxes, isEmpty);
+    });
+
+    test('agent_message rejects malformed machine addresses', () async {
+      final repo = fakeFabric([box('sess9/main', name: 'goal_builder')]);
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1'
+        ..machineName = 'workstation';
+      final tool = subagentMonitoringTools(
+        manager: m,
+        currentSubagentId: () => 'a1',
+      ).firstWhere((t) => t.name == 'agent_message');
+      for (final bad in ['@workstation', 'goal_builder@']) {
+        final result = await tool.execute(
+          {'to': bad, 'message': 'malformed'},
+          null,
+          null,
+        );
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('expected name@machine'), reason: bad);
+      }
       expect(repo._inboxes, isEmpty);
     });
   });

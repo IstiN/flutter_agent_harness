@@ -289,6 +289,78 @@ void main() {
       expect(dir.single.lastActivity, isNotNull);
     });
 
+    test('register publishes capabilities into the directory', () async {
+      const capabilities = [
+        AgentCapability(name: 'yoclip.render', description: 'Render to MP4'),
+        AgentCapability(name: 'yoclip.screenshot', payload: 'scene=<id>'),
+      ];
+      await repo.register(
+        'p1/main',
+        sessionName: 'studio',
+        capabilities: capabilities,
+      );
+      final entry = (await repo.directory()).single;
+      expect(entry.capabilities, capabilities);
+      expect(entry.presence, isNull);
+      // The marker is a JSON list of the capability payloads.
+      final marker = (await env.readTextFile(
+        '$messagesRoot/p1_main/.capabilities',
+      )).valueOrNull;
+      expect(marker, isNotNull);
+      expect(jsonDecode(marker!), [
+        {'name': 'yoclip.render', 'description': 'Render to MP4'},
+        {'name': 'yoclip.screenshot', 'payload': 'scene=<id>'},
+      ]);
+    });
+
+    test('re-registering with no capabilities clears them', () async {
+      await repo.register(
+        'p1/main',
+        capabilities: const [AgentCapability(name: 'x.y')],
+      );
+      expect((await repo.directory()).single.capabilities, [
+        AgentCapability(name: 'x.y'),
+      ]);
+      await repo.register('p1/main');
+      expect((await repo.directory()).single.capabilities, isEmpty);
+    });
+
+    test('touch busy sets presence, fresh marker only', () async {
+      await repo.register('p1/main');
+      await repo.touch('p1/main', busy: true);
+      expect((await repo.directory()).single.presence, AgentPresence.busy);
+      // An idle touch clears the marker.
+      await repo.touch('p1/main');
+      expect((await repo.directory()).single.presence, isNull);
+      // A stale marker (crashed process, never touched again) is ignored.
+      await repo.touch('p1/main', busy: true);
+      final stale = DateTime.now()
+          .subtract(FileMessagingRepository.busyFreshWindow)
+          .subtract(const Duration(seconds: 5));
+      await env.writeFile(
+        '$messagesRoot/p1_main/.presence',
+        'busy ${stale.millisecondsSinceEpoch}',
+      );
+      expect((await repo.directory()).single.presence, isNull);
+    });
+
+    test('malformed presence marker never breaks the directory', () async {
+      await repo.register('p1/main');
+      await env.writeFile('$messagesRoot/p1_main/.presence', 'garbage');
+      expect((await repo.directory()).single.presence, isNull);
+    });
+
+    test('capability marker with a malformed entry tolerates it', () async {
+      await repo.register('p1/main');
+      await env.writeFile(
+        '$messagesRoot/p1_main/.capabilities',
+        '[{"description":"no name"},{"name":"ok.k"},{"name":42}]',
+      );
+      expect((await repo.directory()).single.capabilities, [
+        AgentCapability(name: 'ok.k'),
+      ]);
+    });
+
     test(
       'directory lastActivity is the newest file across inbox and read',
       () async {
