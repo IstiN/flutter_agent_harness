@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.324
+
 - fix(43): typing during minutes-long thinking streams no longer degrades —
   the 32KB tail hard-split in `_appendOutput` used to land on
   `TranscriptMarkdown`'s commit boundary (fresh substring identities
@@ -2966,6 +2967,8 @@
 - ci: the Chrome extension builds in the release pipeline and ships as a
   release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
   page gains the download + load-unpacked card.
+
+## Unreleased
 
 ## Unreleased
 
