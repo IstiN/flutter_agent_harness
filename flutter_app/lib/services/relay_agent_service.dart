@@ -416,12 +416,13 @@ final class RelayAgentService extends AgentService {
           // prefix — rendering it reads as a duplicated bubble). On
           // replay there is no local echo, so the copy is needed there.
           if (silent) {
-            _append(
-              fa_ui.FaChatMessage(
-                role: 'user',
-                content: event['text'] as String? ?? '',
-              ),
-            );
+            // Replay rows carry the SW's per-turn context header; it is
+            // plumbing, not conversation — strip it for display.
+            final raw = event['text'] as String? ?? '';
+            final content = raw.startsWith('[context] ')
+                ? raw.split('\n').skip(1).join('\n')
+                : raw;
+            _append(fa_ui.FaChatMessage(role: 'user', content: content));
           }
         } else {
           _finishAssistant(event);

@@ -159,6 +159,22 @@ test.describe('user journey: two sessions, switch, history intact', () => {
     await page.reload();
     await page.waitForTimeout(4_000);
     await page.screenshot({ path: '/tmp/fa-shots/journey-live.png' });
+
+    // The sessions DRAWER: after the A↔B dance the list must show BOTH
+    // (live B + archived A) — "нет прошлой сессии" regression guard.
+    await attachPort(page);
+    await portMsg(page, 'hello_ack');
+    await portSend(page, { kind: 'sessions_query' });
+    const sq = await portMsg(page, 'sessions_result');
+    const ids = ((sq?.['sessions'] ?? []) as Msg[]).map((r) =>
+      String(r['id']),
+    );
+    // eslint-disable-next-line no-console
+    console.log('SESSION IDS:', JSON.stringify(ids));
+    expect(ids).toContain(sessionA);
+    expect(ids).toContain(sessionB);
+    // No twins: a restored session must be listed once, not live+archive.
+    expect(ids.filter((id) => id === sessionB)).toHaveLength(1);
     // eslint-disable-next-line no-console
     console.log(
       'JOURNEY OK:',
