@@ -72,7 +72,7 @@ final class FaChatSurfaceHandlers {
 
   Future<ApprovalDecision> _handleApprovalPrompt(ApprovalRequest request) {
     if (!_mounted) return Future.value(ApprovalDecision.deny);
-    return showApprovalPrompt(_context, request);
+    return showApprovalPrompt(_context, request, modeController: _service);
   }
 
   Future<List<AskAnswer>?> _handleAsk(List<AskQuestion> questions) {
