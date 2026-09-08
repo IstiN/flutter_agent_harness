@@ -313,6 +313,89 @@ void main() {
       await checkOrThrow(service);
     });
 
+    test('writes a JSON list of provider entries as a yaml block (S4)', () async {
+      await env.writeFile(_globalConfig, _validGlobal);
+      await service.set(
+        'customProviders',
+        '[{"name":"mock","apiType":"openai","baseUrl":"http://127.0.0.1:9/v1",'
+            '"modelId":"m1","keyName":"MOCK_KEY"}]',
+        scope: ConfigScope.global,
+      );
+      final text = await read(_globalConfig);
+      expect(
+        text,
+        contains(
+          'customProviders:\n  - name: mock\n    apiType: openai\n'
+          '    baseUrl: http://127.0.0.1:9/v1\n    modelId: m1\n'
+          '    keyName: MOCK_KEY\n',
+        ),
+      );
+      final result = await service.get('customProviders');
+      // get reports the compact JSON round trip (feed it back into set).
+      expect(
+        result.display,
+        '[{"name":"mock","apiType":"openai","baseUrl":"http://127.0.0.1:9/v1",'
+        '"modelId":"m1","keyName":"MOCK_KEY"}]',
+      );
+      // The pre-write validation ran the REAL customProviders parser.
+      await checkOrThrow(service);
+    });
+
+    test('replaces an existing provider block in place', () async {
+      await env.writeFile(_globalConfig, _validGlobal);
+      const first =
+          '[{"name":"a","apiType":"openai","baseUrl":"http://a/v1","modelId":"ma"}]';
+      const second =
+          '[{"name":"b","apiType":"anthropic","baseUrl":"http://b/v1","modelId":"mb"}]';
+      await service.set('customProviders', first, scope: ConfigScope.global);
+      await service.set('customProviders', second, scope: ConfigScope.global);
+      final text = await read(_globalConfig);
+      expect(text, contains('- name: b'));
+      expect(text, isNot(contains('name: a')));
+      // Unrelated content above and below the block survives untouched.
+      expect(text, contains('provider: openai'));
+      await checkOrThrow(service);
+    });
+
+    test('a block write keeps the key trailing comment and neighbors', () async {
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\n# my providers\ncustomProviders: []\n# tail\n',
+      );
+      await service.set(
+        'customProviders',
+        '[{"name":"x","apiType":"openai","baseUrl":"http://x/v1","modelId":"mx"}]',
+        scope: ConfigScope.global,
+      );
+      final text = await read(_globalConfig);
+      expect(text, contains('# my providers\ncustomProviders:\n'));
+      expect(text, endsWith('# tail\n'));
+      await checkOrThrow(service);
+    });
+
+    test(
+      'rejects a bad provider entry before writing (named diagnostic)',
+      () async {
+        await env.writeFile(_globalConfig, _validGlobal);
+        await expectLater(
+          service.set(
+            'customProviders',
+            '[{"name":"broken"}]',
+            scope: ConfigScope.global,
+          ),
+          throwsConfigException,
+        );
+        expect(await read(_globalConfig), _validGlobal);
+      },
+    );
+
+    test('empty JSON list renders flow [] and appends a fresh block', () async {
+      await env.writeFile(_globalConfig, _validGlobal);
+      await service.set('customProviders', '[]', scope: ConfigScope.global);
+      expect(await read(_globalConfig), contains('customProviders: []\n'));
+      await checkOrThrow(service);
+    });
+
     test('rejects a wrong-typed value before writing anything (E3)', () async {
       await env.writeFile(_projectConfig, _validProject);
       await expectLater(
