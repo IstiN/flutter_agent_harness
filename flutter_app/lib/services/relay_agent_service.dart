@@ -382,7 +382,13 @@ final class RelayAgentService extends AgentService {
     _currentThinking = null;
     for (final entry in replay) {
       final event = entry['event'];
-      if (event is Map<String, dynamic>) _onHostEvent(event, silent: true);
+      // dartify() (the port transport decodes JS objects) yields
+      // Map<Object?, Object?> for NESTED maps — a plain `is
+      // Map<String, dynamic>` check silently dropped EVERY row and the
+      // panel rendered "No messages yet" against a delivered replay.
+      if (event is Map) {
+        _onHostEvent(Map<String, dynamic>.from(event), silent: true);
+      }
     }
     notifyListeners();
   }
@@ -410,12 +416,13 @@ final class RelayAgentService extends AgentService {
           // prefix — rendering it reads as a duplicated bubble). On
           // replay there is no local echo, so the copy is needed there.
           if (silent) {
-            _append(
-              fa_ui.FaChatMessage(
-                role: 'user',
-                content: event['text'] as String? ?? '',
-              ),
-            );
+            // Replay rows carry the SW's per-turn context header; it is
+            // plumbing, not conversation — strip it for display.
+            final raw = event['text'] as String? ?? '';
+            final content = raw.startsWith('[context] ')
+                ? raw.split('\n').skip(1).join('\n')
+                : raw;
+            _append(fa_ui.FaChatMessage(role: 'user', content: content));
           }
         } else {
           _finishAssistant(event);
