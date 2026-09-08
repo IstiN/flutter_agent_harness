@@ -3,7 +3,15 @@
 // fa-ui-v2 protocol on the BUILT panel (app bundle present; the page
 // lands on app/index.html).
 import fs from 'node:fs';
-import { test, expect } from './helpers';
+import path from 'node:path';
+import { repoRoot, test, expect } from './helpers';
+
+// Needs the --with-app build: the bundle lives at browser_ext/panel/app/
+// (gitignored), so lean CI checkouts have no app page to drive. Runs
+// locally and in the FA_E2E_WITH_APP job, skips otherwise.
+const appBundlePresent = fs.existsSync(
+  path.join(repoRoot, 'browser_ext', 'panel', 'app', 'index.html'),
+);
 
 type Msg = Record<string, unknown>;
 
@@ -84,6 +92,10 @@ async function waitAssistantEcho(page: import('@playwright/test').Page) {
 
 test.describe('user journey: two sessions, switch, history intact', () => {
   test('create A → привет, create B → вкладки, switch A↔B', async ({ fa }) => {
+    test.skip(
+      !appBundlePresent,
+      'needs the --with-app build (browser_ext/panel/app/ missing)',
+    );
     test.setTimeout(180_000);
     fs.mkdirSync('/tmp/fa-shots', { recursive: true });
     const page = fa.panel;
