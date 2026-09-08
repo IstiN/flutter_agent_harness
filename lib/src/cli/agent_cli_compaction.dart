@@ -127,9 +127,28 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
     }
   }
 
+  /// Returns a user-facing hint for a compaction failure, pointing at the
+  /// `smol` role config when the summarization model hit a provider limit.
+  /// Moved here from agent_cli.dart (2800-line gate) — used only by the
+  /// hooks' failure reporting.
+  String _compactionFailureHint(Object error) {
+    final text = error.toString();
+    if (text.contains('usage limit') ||
+        text.contains('access_terminated_error') ||
+        text.contains('rate limit') ||
+        text.contains('429')) {
+      return '$error\n\n'
+          'Compaction uses the `smol` role model (see `roles.smol` in '
+          '~/.fah/config.yaml). The current smol model/provider returned '
+          'the error above. Switch it to a model/key with available quota, '
+          'e.g. via `/settings` → Agent models, or edit ~/.fah/config.yaml.';
+    }
+    return text;
+  }
+
   @override
   void onBothRolesFailed(Object lastError) {
-    final hint = cli._compactionFailureHint(lastError);
+    final hint = _compactionFailureHint(lastError);
     cli.io.writeln('compaction both roles failed: $hint');
     cli.io.writeln(
       'compaction both roles failed; the agent cannot make progress '

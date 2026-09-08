@@ -307,4 +307,34 @@ void main() {
           'the loader',
     );
   });
+
+  test('the documented config-tool ops are the ops the tool implements', () {
+    final toolSource = _read('lib/src/config/config_tool.dart');
+    final enumBlock =
+        RegExp(r"'enum': \[([^\]]+)\]").firstMatch(toolSource)?.group(1) ??
+        (throw StateError('op enum not found in config_tool.dart'));
+    final implemented = RegExp(
+      "'([a-z]+)'",
+    ).allMatches(enumBlock).map((m) => m.group(1)!).toSet();
+    // The skill's op table: `| `check` | — | …` rows under "## The config
+    // tool".
+    final section =
+        RegExp(
+          r'## The config tool\n(.*?)\n## ',
+          dotAll: true,
+        ).firstMatch(skill)?.group(1) ??
+        (throw StateError('config tool section missing from SKILL.md'));
+    final documented = RegExp(
+      r'^\| `([a-z]+)` \|',
+      multiLine: true,
+    ).allMatches(section).map((m) => m.group(1)!).toSet();
+    expect(
+      documented,
+      implemented,
+      reason:
+          'the fa-self-config op table and config_tool.dart disagree — '
+          'extra: ${documented.difference(implemented)}, '
+          'missing: ${implemented.difference(documented)}',
+    );
+  });
 }
