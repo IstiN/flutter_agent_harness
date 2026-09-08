@@ -1,17 +1,21 @@
-/// Issue #81 — compaction must never lose open user requests.
+/// Issue #81 (v2) — compaction must never lose open user requests.
 ///
-/// Covers the acceptance criteria:
+/// Acceptance criteria covered (issue numbering):
 /// - AC1 `IT-compaction-*`: an explicit user ask with acceptance criteria
 ///   lands in `## Open User Requests` with date + record pointer.
-/// - AC2/AC3 `IT-decay-*`: an unevidenced open ask survives 5 sequential
-///   summary updates and the "no longer relevant" removal never applies.
-/// - AC4 `IT-guard-*`: the Done-stamp rule pins `(Partial — acceptance
-///   pending)` — a merged PR without evidence never closes an arc.
-/// - AC5 `IT-close-*`: an ask closed with evidence leaves the open list.
-/// - AC6 `UT-budget-*`: the prompt-text delta is capped (≤ 500 chars) and
-///   `turn_prefix.md` stays untouched.
-/// - AC7 `UT-heuristic-*`: the pure candidate detector (markers, RU/EN,
-///   notice/mail exclusion, caps, chronological priority).
+/// - AC2 `IT-steering-*`: a mid-run steering message lands identically to a
+///   turn-initial ask (capture is author-based, not position-based).
+/// - AC3/AC4 `IT-decay-*`: an unevidenced open ask survives 5 sequential
+///   checkpoint updates; "no longer relevant" never removes it.
+/// - AC5 `IT-guard-*`: a merged PR without a run acceptance test leaves the
+///   arc `(Partial — acceptance pending)` and the ask open.
+/// - AC6 `IT-close-*`: an ask closed with cited evidence leaves the open list.
+/// - AC7 `UT-budget-*`: net instruction delta ≤ 500 chars vs pre-card text
+///   net of the mandated "summary"-wording rewrite; `turn_prefix.md` intact.
+/// - AC8 `UT-wording-*`: no "summary"/"summarize" in the two prompt bodies;
+///   lossless-handoff intent asserted.
+/// - AC9 `UT-heuristic-*`: candidate detector (EN/RU markers, notice/mail
+///   exclusion, steering inclusion, full-fidelity content, no caps).
 library;
 
 import 'dart:io';
@@ -19,28 +23,42 @@ import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-/// Pre-card prompt body lengths (the baseline the AC6 budget is measured
-/// against). These are the verbatim pi ports; they only move if the port
-/// itself changes.
-const _baselineSummaryBodyChars = 880;
-const _baselineSummaryUpdateBodyChars = 1258;
+/// Pre-card prompt body lengths (v1 port baselines).
+const _preCardSummaryBodyChars = 880;
+const _preCardSummaryUpdateBodyChars = 1258;
 
-/// The pre-card turn-prefix prompt body — AC6 requires it byte-identical.
-const _turnPrefixBody = '''
-This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
+/// The pre-card first sentence of `summary.md`, and the v2-mandated rewrite
+/// of it (constraint #3 / Architecture #1 — the prescribed lossless-handoff
+/// wording). AC7's budget is measured net of this rewrite, so the test pins
+/// both strings and counts only what the section adds beyond them.
+const _preCardSummaryFirstLine =
+    'The messages above are a conversation to summarize. Create a '
+    'structured context checkpoint summary that another LLM will use to '
+    'continue the work.\n';
+const _mandatedSummaryFirstLine =
+    'The messages above are a conversation to hand off. Write a complete '
+    'context checkpoint for the agent that continues this work. Preserve '
+    'EVERY fact, path, error message, and open task — the continuation has '
+    'no access to what you omit. This is a lossless handoff, not a digest.\n';
 
-Summarize the prefix to provide context for the retained suffix:
-
-## Original Request
-[What did the user ask for in this turn?]
-
-## Early Progress
-- [Key decisions and work done in the prefix]
-
-## Context for Suffix
-- [Information needed to understand the retained recent work]
-
-Be concise. Focus on what's needed to understand the kept suffix.''';
+/// The three "summary"-word swaps constraint #3 mandates in
+/// `summary_update.md` (pre-card line → rewritten line).
+const _updateRewrites = [
+  [
+    'The messages above are NEW conversation messages to incorporate into '
+        'the existing summary provided in <previous-summary> tags.\n',
+    'The messages above are NEW conversation messages to fold into the '
+        'existing checkpoint provided in <previous-summary> tags.\n',
+  ],
+  [
+    'Update the existing structured summary with new information. RULES:',
+    'Update the existing structured checkpoint with new information. RULES:',
+  ],
+  [
+    '- PRESERVE all existing information from the previous summary',
+    '- PRESERVE all existing information from the previous checkpoint',
+  ],
+];
 
 AssistantMessage _assistant(String text) {
   return AssistantMessage(
@@ -216,8 +234,15 @@ class _RuleHonoringSummarizer {
   }
 }
 
+/// Strips the leading `---` frontmatter, returning the prompt body.
+String _promptBody(String path) {
+  final text = File(path).readAsStringSync();
+  final match = RegExp(r'^---\n[\s\S]*?\n---\n([\s\S]*)$').firstMatch(text);
+  return match == null ? text : match.group(1)!;
+}
+
 void main() {
-  group('UT-heuristic — open request candidate detection', () {
+  group('UT-heuristic — candidate capture (AC9)', () {
     test('detects an English imperative ask with date pointer', () {
       final lines = detectUserRequestCandidates([
         _ask(timestamp: DateTime.utc(2026, 9, 2, 12)),
@@ -238,9 +263,22 @@ void main() {
       expect(lines.single, contains('сделай покрытие тестами'));
     });
 
-    test('ignores non-ask chatter', () {
+    test('detects a запомни-style ask', () {
+      final lines = detectUserRequestCandidates([
+        UserMessage.text(
+          'запомни: деплой только через тег',
+          timestamp: DateTime.utc(2026, 9, 3),
+        ),
+      ]);
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('запомни: деплой'));
+    });
+
+    test('ignores non-ask chatter and pure status/nudge steering', () {
       final lines = detectUserRequestCandidates([
         UserMessage.text('hello, how is it going?'),
+        UserMessage.text('как дела?'),
+        UserMessage.text('продолжай'),
       ]);
       expect(lines, isEmpty);
     });
@@ -280,34 +318,24 @@ void main() {
       expect(lines, isEmpty);
     });
 
-    test('caps at 10 candidates, keeping the OLDEST asks', () {
+    test('content is full fidelity: long asks are neither capped nor '
+        'truncated (owner v2 ruling)', () {
       final messages = <Message>[
-        for (var i = 0; i < 12; i++)
+        for (var i = 0; i < 22; i++)
           UserMessage.text(
-            'fix issue number $i',
-            timestamp: DateTime.utc(2026, 9, 1, i),
+            'fix issue number $i — full acceptance: ${'detail ' * 40}$i',
+            timestamp: DateTime.utc(2026, 9, 1, i % 24, i),
           ),
       ];
       final lines = detectUserRequestCandidates(messages);
-      expect(lines, hasLength(userRequestMaxCandidates));
-      expect(lines.first, contains('fix issue number 0'));
-      expect(lines.last, contains('fix issue number 9'));
-    });
-
-    test('caps the whole block at 2000 chars', () {
-      final messages = <Message>[
-        for (var i = 0; i < 10; i++) UserMessage.text('build ${'x' * 400} $i'),
-      ];
-      final block = userRequestCandidatesBlock(messages);
-      expect(block, isNotNull);
-      expect(block!.length, lessThanOrEqualTo(userRequestBlockMaxChars));
-    });
-
-    test('truncates each line to 200 chars', () {
-      final lines = detectUserRequestCandidates([
-        UserMessage.text('fix ${'y' * 500}'),
-      ]);
-      expect(lines.single.length, lessThanOrEqualTo(240));
+      expect(lines, hasLength(22), reason: 'E2: every ask is listed');
+      expect(lines.first, contains('issue number 0'));
+      expect(lines.last, contains('issue number 21'));
+      expect(
+        lines.first.length,
+        greaterThanOrEqualTo(220),
+        reason: 'no 200-char truncation',
+      );
     });
 
     test('record ids land in the pointer when provided', () {
@@ -327,27 +355,58 @@ void main() {
     });
   });
 
-  group('UT-budget — prompt text budget (AC6)', () {
-    String body(String path) =>
-        parseFrontmatter(File(path).readAsStringSync()).body;
+  group('UT-budget — prompt text budget (AC7)', () {
+    test('net instruction delta stays within 500 chars (net of the '
+        'mandated wording rewrite)', () {
+      final summaryBody = _promptBody('prompts/compaction/summary.md');
+      final updateBody = _promptBody('prompts/compaction/summary_update.md');
+      expect(summaryBody, startsWith(_mandatedSummaryFirstLine));
 
-    test('summary.md + summary_update.md delta stays within 500 chars', () {
-      final summaryBody = body('prompts/compaction/summary.md');
-      final updateBody = body('prompts/compaction/summary_update.md');
+      // Baseline: pre-card text with constraint-#3 wording applied (the
+      // rewrite is mandated, so only what the card adds beyond it counts).
+      final baselineSummary =
+          _preCardSummaryBodyChars +
+          (_mandatedSummaryFirstLine.length - _preCardSummaryFirstLine.length);
+      var baselineUpdate = _preCardSummaryUpdateBodyChars;
+      for (final pair in _updateRewrites) {
+        baselineUpdate += pair[1].length - pair[0].length;
+      }
       final delta =
-          (summaryBody.length - _baselineSummaryBodyChars) +
-          (updateBody.length - _baselineSummaryUpdateBodyChars);
+          (summaryBody.length - baselineSummary) +
+          (updateBody.length - baselineUpdate);
       expect(delta, lessThanOrEqualTo(500));
       expect(summaryBody, contains('## Open User Requests'));
       expect(updateBody, contains('## Open User Requests'));
     });
 
     test('turn_prefix.md is unchanged', () {
-      expect(turnPrefixSummarizationPrompt, _turnPrefixBody);
+      expect(
+        turnPrefixSummarizationPrompt,
+        _promptBody('prompts/compaction/turn_prefix.md').trimRight(),
+      );
     });
   });
 
-  group('IT-compaction — the ask lands in the summary (AC1)', () {
+  group('UT-wording — no "summary" license in the prompt text (AC8)', () {
+    test('both prompt bodies are summary-free and assert lossless handoff', () {
+      final summaryBody = _promptBody('prompts/compaction/summary.md');
+      final updateBody = _promptBody('prompts/compaction/summary_update.md');
+      for (final body in [summaryBody, updateBody]) {
+        // The <previous-summary> tag is wire protocol (record id), not
+        // summarizer-facing instruction text.
+        final text = body.replaceAll('<previous-summary>', '');
+        expect(
+          RegExp('summar', caseSensitive: false).allMatches(text),
+          isEmpty,
+          reason: '"summary/summarize" is a license to drop facts',
+        );
+      }
+      expect(summaryBody, contains('lossless handoff'));
+      expect(summaryBody, contains('Preserve EVERY fact'));
+    });
+  });
+
+  group('IT-compaction — the ask lands in the checkpoint (AC1)', () {
     test(
       'generateSummary appends the candidates block and section prompt',
       () async {
@@ -431,7 +490,25 @@ void main() {
     );
   });
 
-  group('IT-decay — open asks survive summary-of-summary (AC2/AC3)', () {
+  group('IT-steering — mid-run steering is a first-class ask (AC2)', () {
+    test('a steering message lands identically to the initial ask', () async {
+      final summarizer = _RuleHonoringSummarizer();
+      const steering = 'сделай также покрытие этой менюшки тестами';
+      final summary = await generateSummary([
+        _ask(),
+        _assistant('on it'),
+        UserMessage.text(steering, timestamp: DateTime.utc(2026, 9, 2, 13)),
+      ], summarize: summarizer.call);
+      final candidates = _candidateLines(summarizer.prompts.single);
+      expect(candidates, hasLength(2));
+      expect(candidates.last, contains(steering));
+      final open = _openSection(summary)!;
+      expect(open, contains('- [ ] Build the browser extension'));
+      expect(open, contains('- [ ] $steering'));
+    });
+  });
+
+  group('IT-decay — open asks survive checkpoint-of-checkpoint (AC3/AC4)', () {
     test('an unevidenced ask survives 5 sequential updates verbatim', () async {
       final summarizer = _RuleHonoringSummarizer();
       final askText =
@@ -458,7 +535,7 @@ void main() {
     });
 
     test('unresolved asks stay listed when new messages do not close them '
-        '(AC3)', () async {
+        '(AC4)', () async {
       final summarizer = _RuleHonoringSummarizer();
       var summary = await generateSummary([_ask()], summarize: summarizer.call);
       summary = await generateSummary(
@@ -472,7 +549,7 @@ void main() {
     });
   });
 
-  group('IT-guard — the Done-stamp rule (AC4)', () {
+  group('IT-guard — the Done-stamp rule (AC5)', () {
     test(
       'a merged PR without a run acceptance test is Partial, not Done',
       () async {
@@ -481,11 +558,11 @@ void main() {
           _ask(),
         ], summarize: summarizer.call);
         summary = await generateSummary(
-          [_assistant('PR #42 merged into main 🎉')],
+          [_assistant('PR #42 merged into main')],
           summarize: summarizer.call,
           previousSummary: summary,
         );
-        // The rule itself is pinned in both prompts.
+        // The rule itself is pinned in the prompt text.
         expect(summarizer.prompts.last, contains('acceptance pending'));
         expect(summary, contains('(Partial — acceptance pending)'));
         expect(summary, isNot(contains('(Done)')));
@@ -495,7 +572,7 @@ void main() {
     );
   });
 
-  group('IT-close — closing with evidence (AC5)', () {
+  group('IT-close — closing with evidence (AC6)', () {
     test(
       'an ask with cited evidence moves to Done and leaves the open list',
       () async {

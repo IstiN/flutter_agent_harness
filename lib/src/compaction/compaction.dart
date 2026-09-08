@@ -312,15 +312,9 @@ String formatFileOperations(
 // Open user request candidates (issue #81)
 // ---------------------------------------------------------------------------
 
-/// Cap on candidate lines in the `USER REQUEST CANDIDATES` block — mirrors
-/// the `max 10` cap of the `## Open User Requests` summary section.
-const userRequestMaxCandidates = 10;
-
-/// Max chars per candidate line (the user's own words, truncated).
-const userRequestLineMaxChars = 200;
-
-/// Max chars of the whole candidates block appended to the summarizer input.
-const userRequestBlockMaxChars = 2000;
+/// Candidate lines carry the user's own words at full fidelity — checkpoint
+/// content is uncapped by owner ruling (issue #81 v2, constraint 1); only
+/// the prompt-file instruction text is budgeted.
 
 final _systemNoticePattern = RegExp('<system-notice>');
 
@@ -341,7 +335,7 @@ final _requestMarkerPattern = RegExp(
   r'\b(?:build|fix|add|create|implement|write|make|update|refactor|remove|'
   r'delete|run|check|test|cover|support|deploy|migrate|port|ship|change)\w*'
   r'|(?:сдела|добав|покро|исправ|провер|реализу|обнов|удал|созда|передела|'
-  r'напиши|напишите|настро|перепиши|дорабо)\S*',
+  r'напиши|напишите|настро|перепиши|дорабо|запомн)\S*',
   caseSensitive: false,
 );
 
@@ -387,11 +381,7 @@ List<String> detectUserRequestCandidates(
         ? recordIds[i]
         : null;
     final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    final body = flat.length <= userRequestLineMaxChars
-        ? flat
-        : flat.substring(0, userRequestLineMaxChars);
-    lines.add('- [${_userRequestPointer(id, message.timestamp)}] $body');
-    if (lines.length == userRequestMaxCandidates) break;
+    lines.add('- [${_userRequestPointer(id, message.timestamp)}] $flat');
   }
   return lines;
 }
@@ -410,17 +400,10 @@ String? userRequestCandidatesBlock(
       'USER REQUEST CANDIDATES (user-role asks with imperative markers, '
       'oldest first — fill `## Open User Requests` from these):';
   final buffer = StringBuffer(header);
-  var total = header.length;
   for (final line in lines) {
-    // A single oversized line still ships; the block never grows past the
-    // cap otherwise.
-    if (total > 0 && total + line.length + 1 > userRequestBlockMaxChars) {
-      break;
-    }
     buffer
       ..writeln()
       ..write(line);
-    total += line.length + 1;
   }
   return buffer.toString();
 }
