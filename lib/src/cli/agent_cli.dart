@@ -379,6 +379,7 @@ class AgentCli {
         return latest;
       },
     );
+    _subagentManager.machineName = config.machineName;
     // Phase 5a: A2A remote agents from the `a2a:` config section. Connects
     // lazily per server (never blocks boot).
     _a2aManager = A2aManager(config.a2aConfig);

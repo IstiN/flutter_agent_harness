@@ -84,10 +84,7 @@ extension _AiinProviderCommands on AgentCli {
 
   /// Asks for an existing key. Null = cancelled / empty answer.
   Future<(String, String?)?> _aiinAcquirePastedKey() async {
-    final answer = await _askLine(
-      'AIIN API key (sk-aiin-…): ',
-      secret: true,
-    );
+    final answer = await _askLine('AIIN API key (sk-aiin-…): ', secret: true);
     final trimmed = answer?.trim() ?? '';
     if (trimmed.isEmpty) {
       io.writeln('AIIN setup cancelled');
@@ -137,10 +134,9 @@ extension _AiinProviderCommands on AgentCli {
       aiinDefaultOAuthProvider,
       ...providers.where((p) => p != aiinDefaultOAuthProvider),
     ];
-    return _pickOption(
-      'AIIN sign-in provider',
-      [for (final p in providers) (p, p, 'account sign-in via aiin.by')],
-    );
+    return _pickOption('AIIN sign-in provider', [
+      for (final p in providers) (p, p, 'account sign-in via aiin.by'),
+    ]);
   }
 
   /// Applies a connected AIIN credential: model pick from the live

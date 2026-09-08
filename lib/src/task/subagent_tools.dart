@@ -104,17 +104,21 @@ AgentTool _agentDirectoryTool(SubagentManager manager) {
     name: 'agent_directory',
     description:
         'List the agent mailboxes in the messaging fabric that are worth '
-        'talking to: LIVE mailboxes (recent activity), any mailbox holding '
-        'pending mail, your subagents, and your own address (marked). '
-        'Each entry shows its session display NAME when known, a short '
-        'mailbox id, the pending message count, the last-activity time '
-        '("active 2m ago" / "last active 3h ago (asleep)") and the working '
-        'directory (home shortened to ~). Stale mailboxes are hidden — '
-        'pass all: true to list those too (that also shows FULL mailbox '
-        'ids; the default view truncates them to save tokens). Address a '
-        'mailbox by its session name via agent_message ("goal_builder" or '
-        '"goal_builder/main"); asleep targets are woken with a headless '
-        'run automatically.',
+        'talking to: LIVE mailboxes (registration-backed presence or '
+        'recent activity), any mailbox holding pending mail, your '
+        'subagents, and your own address (marked). Each entry shows its '
+        'session display NAME when known, a short mailbox id, the pending '
+        'message count, presence ("live" / "busy (run in progress, '
+        'accepts mail)" / "offline"), the last-activity time for offline '
+        'entries, and the working directory (home shortened to ~). '
+        'Declared capabilities render as sub-lines. Stale mailboxes are '
+        'hidden — pass all: true to list those too (that also shows FULL '
+        'mailbox ids; the default view truncates them to save tokens). '
+        'Address a mailbox by its session name via agent_message '
+        '("goal_builder", "goal_builder/main", or "name@machine" when you '
+        'know the peer\'s machine name; other machines are phase-3 A2A '
+        'territory); asleep targets are woken with a headless run '
+        'automatically.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -202,10 +206,17 @@ Future<String?> _directoryLine(
 }) async {
   final pending = await fabric.peek(entry.id);
   // A mailbox with unread mail is never hidden, whatever its age.
+  // Registration-backed presence (issue #27 phase 2) counts busy as live
+  // too — an agent mid tool-call has no fresh heartbeat but accepts mail.
+  // Null presence (file-fabric entries) keeps the mtime heuristic.
   final live =
       pending.isNotEmpty ||
       entry.id == self ||
-      MailboxEntry.isLive(entry.lastActivity);
+      switch (entry.presence) {
+        AgentPresence.busy || AgentPresence.live => true,
+        AgentPresence.offline => false,
+        null => MailboxEntry.isLive(entry.lastActivity),
+      };
   if (!live && !includeStale) return null;
   // Compact ids by default: 36-char uuids burn tokens on every listing.
   // `all: true` shows full ids for copy-paste addressing.
@@ -214,9 +225,20 @@ Future<String?> _directoryLine(
     '  ${entry.name != null ? '${entry.name} ($idForm)' : idForm}',
   );
   line.write(' — ${pending.length} pending');
-  line.write(_activitySuffix(entry.lastActivity));
+  line.write(_presenceSuffix(entry));
   if (entry.cwd case final cwd?) line.write('  [${_shortCwd(cwd, homeDir)}]');
   if (entry.id == self) line.write('  ← you');
+  for (final capability in entry.capabilities) {
+    line
+      ..writeln()
+      ..write('    · ${capability.name}');
+    if (capability.description != null) {
+      line.write(' — ${capability.description}');
+    }
+    if (capability.payload != null) {
+      line.write('  [hint: ${capability.payload}]');
+    }
+  }
   return line.toString();
 }
 
@@ -244,6 +266,26 @@ String _activitySuffix(DateTime? lastActivity, {DateTime? now}) {
   return asleep
       ? ' — last active $rel ago (asleep)'
       : ' — active ${delta.inSeconds < 90 ? 'just now' : '$rel ago'}';
+}
+
+/// Presence mark for a directory entry. Registration-backed presence
+/// (issue #27 phase 2 — hub roster) wins; null presence (file-fabric
+/// entries) falls back to the mtime heuristic in [_activitySuffix].
+String _presenceSuffix(MailboxEntry entry, {DateTime? now}) {
+  switch (entry.presence) {
+    case AgentPresence.busy:
+      return ' — busy (run in progress, accepts mail)';
+    case AgentPresence.live:
+      return ' — live';
+    case AgentPresence.offline:
+      final last = entry.lastActivity;
+      if (last == null) return ' — offline';
+      var delta = (now ?? DateTime.now()).difference(last);
+      if (delta.isNegative) delta = Duration.zero;
+      return ' — offline (last active ${_relativeDelta(delta)} ago)';
+    case null:
+      return _activitySuffix(entry.lastActivity, now: now);
+  }
 }
 
 /// Compacts a duration to `2m` / `3h` / `4d` form.
@@ -464,12 +506,7 @@ List<MailboxEntry> _nameMatches(List<MailboxEntry> entries, String to) {
   ];
   if (matches.length == 1) return (matches.single.id, null);
   if (matches.length <= 1) return (null, null);
-  final listing = matches
-      .map(
-        (entry) =>
-            '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
-      )
-      .join('\n');
+  final listing = _listMailboxes(matches);
   return (
     null,
     '"$to" is an ambiguous id prefix — pick an exact mailbox:\n$listing',
@@ -488,6 +525,9 @@ Future<(String, String?)> _resolveFabricAddress(
 ) async {
   final fabric = manager.messaging;
   if (fabric == null) return (to, null);
+  final (stripped, suffixError) = _stripLocalMachineSuffix(manager, to);
+  if (suffixError != null) return (stripped, suffixError);
+  to = stripped;
   if (to == manager.selfId || manager[to] != null) return (to, null);
   final entries = await fabric.directory();
   if (entries.any((entry) => entry.id == to)) return (to, null);
@@ -505,18 +545,41 @@ Future<(String, String?)> _resolveFabricAddress(
   }
   if (matches.isEmpty) return (to, null);
   if (matches.length > 1) {
-    final listing = matches
-        .map(
-          (entry) =>
-              '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
-        )
-        .join('\n');
     return (
       to,
-      'session name "$to" is ambiguous — pick an exact mailbox:\n$listing',
+      'session name "$to" is ambiguous — '
+          'pick an exact mailbox:\n${_listMailboxes(matches)}',
     );
   }
   return (matches.single.id, null);
+}
+
+/// Formats ambiguous-match candidates for error text.
+String _listMailboxes(List<MailboxEntry> matches) => matches
+    .map(
+      (entry) => '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
+    )
+    .join('\n');
+
+/// Strips a `name@machine` suffix that names this host. Returns the bare
+/// name, or the address unchanged plus an error text for invalid and
+/// foreign-machine suffixes (cross-machine delivery is phase-3 A2A).
+(String, String?) _stripLocalMachineSuffix(SubagentManager manager, String to) {
+  if (!to.contains('@')) return (to, null);
+  final at = to.indexOf('@');
+  final machine = to.substring(at + 1).trim().toLowerCase();
+  final local = manager.machineName?.trim().toLowerCase();
+  if (machine.isEmpty || to.substring(0, at).trim().isEmpty) {
+    return (to, 'invalid address "$to" — expected name@machine');
+  }
+  if (local == null || machine != local) {
+    return (
+      to,
+      '"$to" names another machine — cross-machine delivery arrives with '
+          'the A2A gateway (issue #27 phase 3)',
+    );
+  }
+  return (to.substring(0, at).trim(), null);
 }
 
 /// `task_status` — query one or all retained subagents.

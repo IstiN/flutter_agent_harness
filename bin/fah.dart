@@ -349,6 +349,18 @@ String _homeDir() {
   return home;
 }
 
+/// This host's machine name for `name@machine` addressing (issue #27
+/// phase 2). Null when the platform cannot name the host — suffixed
+/// addresses then never resolve locally.
+String? _localMachineName() {
+  try {
+    final name = Platform.localHostname.trim();
+    return name.isEmpty ? null : name;
+  } on Object {
+    return null;
+  }
+}
+
 /// The runtime `FA_PROVIDERS` env override, applied at startup (the
 /// dart-define always wins over it; see [providerEnabledInBuild]).
 void _applyProviderFilterEnv() {
@@ -1614,6 +1626,11 @@ Future<void> _runApp(List<String> args) async {
       plugins: resolved.plugins,
       pluginConfig: resolved.config,
       hubFabric: resolved.hubFabric,
+      // Fabric discovery (issue #27 phase 2): capabilities from the
+      // `fabric:` config section; the OS hostname enables `name@machine`
+      // addressing (null when the platform cannot name the host).
+      agentCapabilities: saved.fabric?.capabilities ?? const [],
+      machineName: _localMachineName(),
       promptTemplateDirs: promptTemplateDirs,
       initialMode: effective.mode!,
       systemPrompt: flagSystemPrompt,

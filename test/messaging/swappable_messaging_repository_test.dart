@@ -8,11 +8,15 @@ final class _RecordingRepo implements MessagingRepository {
   final touched = <String>[];
 
   @override
-  Future<void> register(String agentId, {String? sessionName}) async =>
-      registered.add(agentId);
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async => registered.add(agentId);
 
   @override
-  Future<void> touch(String agentId) async => touched.add(agentId);
+  Future<void> touch(String agentId, {bool busy = false}) async =>
+      touched.add(agentId);
 
   @override
   Future<void> send(AgentMessage message) async => sent.add(message);

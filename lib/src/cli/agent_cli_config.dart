@@ -90,6 +90,8 @@ final class AgentCliConfig {
     this.browserBridgeHandle,
     this.browserController,
     this.hubFabric,
+    this.agentCapabilities = const [],
+    this.machineName,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -537,4 +539,16 @@ final class AgentCliConfig {
   /// implementation is IO-bound (DAP WebSocket) and lives bin-side — hosts
   /// inject it here. Null (default) keeps the pure file fabric.
   final MessagingRepository? hubFabric;
+
+  /// Capabilities this host announces in the fabric directory (issue #27
+  /// phase 2) — from the `fabric.capabilities` config section. Rendered as
+  /// sub-lines of this instance's `agent_directory` entry so peers can
+  /// discover what this agent can do.
+  final List<AgentCapability> agentCapabilities;
+
+  /// This host's machine name for `name@machine` addressing (issue #27
+  /// phase 2): a `@machine` suffix matching it is stripped before local
+  /// resolution; other machines are phase-3 A2A territory. Null when the
+  /// hostname is unavailable.
+  final String? machineName;
 }
