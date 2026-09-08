@@ -577,6 +577,27 @@ void main() {
     expect(model.view().content, isNot(contains('Working…')));
   });
 
+  test('a busy row under an open host picker waits, not "works"', () {
+    var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+    model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+    model =
+        model
+                .update(
+                  OpenPickerMsg('wizard:x', 'Pick one', const [
+                    MenuItem(key: 'a', label: 'A'),
+                  ]),
+                )
+                .$1
+            as FaTuiModel;
+    final frame = model.view().content;
+    // The run is blocked on the user's choice — a spinning "Working… Ns"
+    // next to a menu reads like a hang.
+    expect(frame, isNot(contains('Working…')));
+    expect(frame, contains('waiting for your selection…'));
+    model = model.update(BusyMsg(false)).$1 as FaTuiModel;
+    expect(model.view().content, isNot(contains('waiting for your selection…')));
+  });
+
   test(
     'generic picker opens with a title and resolves via onPickerSelected',
     () async {
