@@ -102,6 +102,20 @@ final class ScheduledMessageQueue {
     _arm();
   }
 
+  /// Set by [dispose]: an in-flight re-arm must not arm a timer after the
+  /// host tore the queue down (the orphaned timer would deliver into the
+  /// dead session's mailbox — the stranded-reminder bug).
+  bool _disposed = false;
+
+  /// Cancels the armed delivery timer (host teardown). Pending record
+  /// files stay put — they are the source of truth; a later [start]
+  /// (host restart, session switch) re-arms and delivers them.
+  void dispose() {
+    _disposed = true;
+    _timer?.cancel();
+    _timer = null;
+  }
+
   /// One-time repair: pre-fix builds delivered self-scheduled mail into a
   /// literal `<root>/self` mailbox nobody drains. Move those into the real
   /// self mailbox (ids rewritten from 'self') so the reminders resurface.
@@ -121,7 +135,9 @@ final class ScheduledMessageQueue {
       if (text == null) continue;
       final Map<String, dynamic> json;
       try {
-        json = jsonDecode(text) as Map<String, dynamic>;
+        final decoded = jsonDecode(text);
+        if (decoded is! Map<String, dynamic>) continue; // wrong shape
+        json = decoded;
       } on FormatException {
         continue;
       }
@@ -160,6 +176,20 @@ final class ScheduledMessageQueue {
     }
   }
 
+  /// Reads and tolerantly parses one `_scheduled/` record file: null for an
+  /// unreadable file, malformed json, or valid json that is not a Map — one
+  /// corrupt record must never crash a delivery/arming pass (issue #59).
+  Future<Map<String, dynamic>?> _readRecord(String path) async {
+    final text = (await _env.readTextFile(path)).valueOrNull;
+    if (text == null) return null;
+    try {
+      final decoded = jsonDecode(text);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } on FormatException {
+      return null; // torn write — leave for inspection
+    }
+  }
+
   Future<int> _deliverDueInner() async {
     final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
     var delivered = 0;
@@ -171,25 +201,27 @@ final class ScheduledMessageQueue {
       final path = entry.path.contains('/')
           ? entry.path
           : '$_dir/${entry.path}';
-      final text = (await _env.readTextFile(path)).valueOrNull;
-      if (text == null) {
-        continue;
+      final record = await _readRecord(path);
+      if (record == null) continue;
+      final dueMs = record['dueMs'] as int?;
+      if (dueMs == null || dueMs > DateTime.now().millisecondsSinceEpoch) {
+        continue; // not a schedule record, or not due yet
       }
-      final Map<String, dynamic> record;
-      try {
-        record = jsonDecode(text) as Map<String, dynamic>;
-      } on FormatException {
-        continue; // torn write — leave for inspection
-      }
-      if ((record['dueMs'] as int? ?? 0) >
-          DateTime.now().millisecondsSinceEpoch) {
-        continue;
-      }
-      final to = record['to'] as String? ?? _self();
+      final recordedTo = record['to'] as String? ?? _self();
+      final from = record['from'] as String? ?? recordedTo;
+      // Self-addressed records ride the LIVE self mailbox: the recorded
+      // address was pinned at schedule time, but hosts re-address mailboxes
+      // (session switch, app restart, service recreate) — the stale address
+      // strands the reminder in a mailbox nobody drains while the tool
+      // already reported success (the lost-schedule bug).
+      final self = _self();
+      final to = (recordedTo == from && self != 'self' && self.isNotEmpty)
+          ? self
+          : recordedTo;
       await _repo().send(
         AgentMessage(
           id: record['id'] as String? ?? newMessageId(),
-          fromId: record['from'] as String? ?? to,
+          fromId: from,
           toId: to,
           text: '[scheduled] ${record['text'] ?? ''}',
           sentAt: DateTime.now().toUtc().toIso8601String(),
@@ -204,12 +236,26 @@ final class ScheduledMessageQueue {
   }
 
   void _arm() {
+    if (_disposed) return;
     _timer?.cancel();
     _timer = null;
     _armAsync();
   }
 
   Future<void> _armAsync() async {
+    if (_disposed) return;
+    final nearest = await _nearestDueMs();
+    // The scan awaited above; the host may have torn the queue down meanwhile.
+    if (_disposed || nearest == null) return;
+    final wait = nearest - DateTime.now().millisecondsSinceEpoch;
+    _timer = Timer(Duration(milliseconds: wait.clamp(0, 1 << 40)), () async {
+      await _deliverDue();
+      _arm();
+    });
+  }
+
+  /// Scans the pending records for the earliest due time (null: none).
+  Future<int?> _nearestDueMs() async {
     final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
     int? nearest;
     for (final entry in entries) {
@@ -217,22 +263,12 @@ final class ScheduledMessageQueue {
       final path = entry.path.contains('/')
           ? entry.path
           : '$_dir/${entry.path}';
-      final text = (await _env.readTextFile(path)).valueOrNull;
-      if (text == null) continue;
-      try {
-        final due = (jsonDecode(text) as Map<String, dynamic>)['dueMs'] as int?;
-        if (due != null && (nearest == null || due < nearest)) {
-          nearest = due;
-        }
-      } on FormatException {
-        continue;
+      final record = await _readRecord(path);
+      final due = record?['dueMs'] as int?;
+      if (due != null && (nearest == null || due < nearest)) {
+        nearest = due;
       }
     }
-    if (nearest == null) return;
-    final wait = nearest - DateTime.now().millisecondsSinceEpoch;
-    _timer = Timer(Duration(milliseconds: wait.clamp(0, 1 << 40)), () async {
-      await _deliverDue();
-      _arm();
-    });
+    return nearest;
   }
 }
