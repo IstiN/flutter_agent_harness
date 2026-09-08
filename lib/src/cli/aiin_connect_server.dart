@@ -35,8 +35,7 @@ final class AiinCallback {
   final String? errorDescription;
 
   /// Whether the redirect carries a usable authorization code.
-  bool get succeeded =>
-      code != null && code!.isNotEmpty && error == null;
+  bool get succeeded => code != null && code!.isNotEmpty && error == null;
 }
 
 /// Loopback HTTP server catching the AIIN OAuth proxy redirect.
@@ -62,8 +61,7 @@ final class AiinCallbackServer {
     return callbackUrl!;
   }
 
-  Future<AiinCallback?> waitForCallback() =>
-      _result?.future ?? Future.value();
+  Future<AiinCallback?> waitForCallback() => _result?.future ?? Future.value();
 
   Future<void> _handle(HttpRequest request) async {
     if (request.method != 'GET' || request.uri.path != '/callback') {

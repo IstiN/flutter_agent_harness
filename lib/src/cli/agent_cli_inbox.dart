@@ -153,6 +153,7 @@ extension AgentCliMessagingFlow on AgentCli {
     await fabric.register(
       _subagentManager.mailboxOf(_subagentManager.selfId),
       sessionName: (trimmed == null || trimmed.isEmpty) ? null : trimmed,
+      capabilities: config.agentCapabilities,
     );
   }
 
@@ -162,7 +163,12 @@ extension AgentCliMessagingFlow on AgentCli {
     final fabric = _subagentManager.messaging;
     if (fabric == null) return;
     unawaited(
-      fabric.touch(_subagentManager.mailboxOf(_subagentManager.selfId)),
+      fabric.touch(
+        _subagentManager.mailboxOf(_subagentManager.selfId),
+        // Mid-run the agent is busy: a directory mark distinct from the
+        // idle live heartbeat (issue #27 phase 2).
+        busy: isBusy,
+      ),
     );
   }
 

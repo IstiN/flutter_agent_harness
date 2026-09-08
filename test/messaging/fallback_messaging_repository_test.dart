@@ -9,7 +9,9 @@ final class _ScriptedRepo
   final sent = <AgentMessage>[];
   final inboxes = <String, List<AgentMessage>>{};
   final registered = <String>[];
+  final announcedCapabilities = <String, List<AgentCapability>>{};
   final touched = <String>[];
+  final busyTouched = <String>[];
   final entries = <MailboxEntry>[];
 
   /// Recipients [resolveTarget] answers for (the hub roster).
@@ -41,13 +43,21 @@ final class _ScriptedRepo
   }
 
   @override
-  Future<void> register(String agentId, {String? sessionName}) async {
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async {
     registered.add(agentId);
+    if (capabilities.isNotEmpty) {
+      announcedCapabilities[agentId] = capabilities;
+    }
   }
 
   @override
-  Future<void> touch(String agentId) async {
+  Future<void> touch(String agentId, {bool busy = false}) async {
     touched.add(agentId);
+    if (busy) busyTouched.add(agentId);
   }
 
   @override
@@ -252,6 +262,22 @@ void main() {
     expect(files.registered, ['main']);
     expect(hub.touched, ['main']);
     expect(files.touched, ['main']);
+  });
+
+  test('presence state and capabilities forward to both transports', () async {
+    const capabilities = [
+      AgentCapability(name: 'yoclip.render', description: 'Render to MP4'),
+    ];
+    await fabric.register(
+      'main',
+      sessionName: 'goal_builder',
+      capabilities: capabilities,
+    );
+    await fabric.touch('main', busy: true);
+    expect(hub.announcedCapabilities['main'], capabilities);
+    expect(files.announcedCapabilities['main'], capabilities);
+    expect(hub.busyTouched, ['main']);
+    expect(files.busyTouched, ['main']);
   });
 
   test('directory merges both views; file entries win on collision', () async {

@@ -51,7 +51,11 @@ final class FileMessagingRepository implements MessagingRepository {
   String _readDir(String agentId) => '$_root/${sanitizeAgentId(agentId)}/read';
 
   @override
-  Future<void> register(String agentId, {String? sessionName}) async {
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) async {
     try {
       final agentDir = '$_root/${sanitizeAgentId(agentId)}';
       (await _env.createDir('$agentDir/inbox')).getOrThrow();
@@ -72,6 +76,8 @@ final class FileMessagingRepository implements MessagingRepository {
           (await _env.writeFile(nameMarker, name)).getOrThrow();
         }
       }
+      await _writeCapabilities(agentDir, capabilities);
+      await _clearBusyMarker(agentDir);
       await _recordRegistry(agentId, name: name);
     } on Object {
       // Best-effort registration; a failure must not break process startup.
@@ -79,7 +85,7 @@ final class FileMessagingRepository implements MessagingRepository {
   }
 
   @override
-  Future<void> touch(String agentId) async {
+  Future<void> touch(String agentId, {bool busy = false}) async {
     try {
       final agentDir = '$_root/${sanitizeAgentId(agentId)}';
       (await _env.createDir(agentDir, recursive: true)).getOrThrow();
@@ -87,6 +93,11 @@ final class FileMessagingRepository implements MessagingRepository {
       final marker = '$agentDir/.id';
       if ((await _env.exists(marker)).valueOrNull != true) {
         (await _env.writeFile(marker, agentId)).getOrThrow();
+      }
+      if (busy) {
+        await _writeBusyMarker(agentDir);
+      } else {
+        await _clearBusyMarker(agentDir);
       }
     } on Object {
       // Best-effort heartbeat; a failure must not break the caller's loop.
@@ -100,6 +111,80 @@ final class FileMessagingRepository implements MessagingRepository {
       '$agentDir/.heartbeat',
       DateTime.now().millisecondsSinceEpoch.toString(),
     )).getOrThrow();
+  }
+
+  /// The `.presence` busy marker: `busy <epochMs>` while the host reports
+  /// a run in progress, removed otherwise. [directory] trusts it only
+  /// within [busyFreshWindow] — a process that died mid-run must not look
+  /// busy forever (the next touch of any state clears the stale marker).
+  static const busyFreshWindow = Duration(seconds: 60);
+
+  Future<void> _writeBusyMarker(String agentDir) async {
+    (await _env.writeFile(
+      '$agentDir/.presence',
+      'busy ${DateTime.now().millisecondsSinceEpoch}',
+    )).getOrThrow();
+  }
+
+  Future<void> _clearBusyMarker(String agentDir) async {
+    final marker = '$agentDir/.presence';
+    if ((await _env.exists(marker)).valueOrNull == true) {
+      (await _env.remove(marker, force: true)).getOrThrow();
+    }
+  }
+
+  /// The `.capabilities` discovery marker: a JSON list of
+  /// [AgentCapability] payloads. An empty list removes a stale marker so a
+  /// host that re-registers without capabilities stops advertising them.
+  Future<void> _writeCapabilities(
+    String agentDir,
+    List<AgentCapability> capabilities,
+  ) async {
+    final marker = '$agentDir/.capabilities';
+    if (capabilities.isEmpty) {
+      if ((await _env.exists(marker)).valueOrNull == true) {
+        (await _env.remove(marker, force: true)).getOrThrow();
+      }
+      return;
+    }
+    (await _env.writeFile(
+      marker,
+      jsonEncode([
+        for (final capability in capabilities) capability.toJson().single,
+      ]),
+    )).getOrThrow();
+  }
+
+  /// [AgentPresence.busy] when a fresh busy marker exists, null otherwise
+  /// (absent, malformed, or past [busyFreshWindow] — the activity
+  /// heuristics decide).
+  Future<AgentPresence?> _busyPresence(String mailboxDir) async {
+    final text = (await _env.readTextFile(
+      '$mailboxDir/.presence',
+    )).valueOrNull?.trim();
+    if (text == null) return null;
+    final parts = text.split(' ');
+    if (parts.length != 2 || parts.first != 'busy') return null;
+    final markedAtMs = int.tryParse(parts[1]);
+    if (markedAtMs == null) return null;
+    final age = DateTime.now().difference(
+      DateTime.fromMillisecondsSinceEpoch(markedAtMs),
+    );
+    return age.isNegative || age <= busyFreshWindow ? AgentPresence.busy : null;
+  }
+
+  /// The announced capabilities from the `.capabilities` marker; empty
+  /// when absent or unreadable.
+  Future<List<AgentCapability>> _capabilities(String mailboxDir) async {
+    final text = (await _env.readTextFile(
+      '$mailboxDir/.capabilities',
+    )).valueOrNull;
+    if (text == null || text.isEmpty) return const [];
+    try {
+      return AgentCapability.listFromJson(jsonDecode(text));
+    } on FormatException {
+      return const [];
+    }
   }
 
   @override
@@ -240,6 +325,8 @@ final class FileMessagingRepository implements MessagingRepository {
             slug: _peerSlug(slugDir),
             cwd: cwd,
             lastActivity: await _lastActivity(mbDir.path),
+            presence: await _busyPresence(mbDir.path),
+            capabilities: await _capabilities(mbDir.path),
           ),
         );
       }
@@ -440,11 +527,19 @@ final class SwappableMessagingRepository implements MessagingRepository {
   void swap(MessagingRepository repo) => _inner = repo;
 
   @override
-  Future<void> register(String agentId, {String? sessionName}) =>
-      _inner.register(agentId, sessionName: sessionName);
+  Future<void> register(
+    String agentId, {
+    String? sessionName,
+    List<AgentCapability> capabilities = const [],
+  }) => _inner.register(
+    agentId,
+    sessionName: sessionName,
+    capabilities: capabilities,
+  );
 
   @override
-  Future<void> touch(String agentId) => _inner.touch(agentId);
+  Future<void> touch(String agentId, {bool busy = false}) =>
+      _inner.touch(agentId, busy: busy);
 
   @override
   Future<void> send(AgentMessage message) => _inner.send(message);

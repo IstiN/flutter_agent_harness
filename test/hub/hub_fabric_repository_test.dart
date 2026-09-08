@@ -116,6 +116,14 @@ void main() {
     final ids = entries.map((e) => e.id);
     expect(ids, containsAll([sender.agentId, plugin.agentId]));
     expect(entries.firstWhere((e) => e.id == sender.agentId).id, isNotNull);
+    // Registration-backed presence: every connected roster peer is live —
+    // no mtime heuristic.
+    expect(entries.map((e) => e.presence), everyElement(AgentPresence.live));
+    // Hub roster entries carry no capabilities (not on the wire yet).
+    expect(
+      entries.firstWhere((e) => e.id == sender.agentId).capabilities,
+      isEmpty,
+    );
   }, timeout: timeout);
 
   test('the adapter serves exactly one inbox — the hub identity\'s; the '
