@@ -469,3 +469,16 @@ post/decrypt `#general`.
 approval gate. Inbound hub mail is drained into the agent loop at every
 turn boundary via the external-inbox seam — `hub_plugin.dart`
 `externalSteeringSource`.)
+
+## 12. Fabric integration (issue #27, phase 1)
+
+With DAP unlocked (`DAP_MASTER_SECRET` set) and the hub plugin enabled,
+the CLI composes the hub INTO the agent messaging fabric
+(`FallbackMessagingRepository`): hub-resolvable targets are delivered
+over DAP/1 first, the file inboxes stay the offline fallback — mail sent
+while disconnected queues in the file layer and is forwarded on
+reconnect; inbound hub mail merges into the main inbox drain (deduped by
+message id). The plugin host's separate external inbox is skipped when
+the fabric owns delivery, so hub frames have exactly one consumer.
+Embedded hosts opt in through `AgentCliConfig.hubFabric`; subagent
+drains never touch the hub.

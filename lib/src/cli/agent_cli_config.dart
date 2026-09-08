@@ -89,6 +89,7 @@ final class AgentCliConfig {
     this.osName,
     this.browserBridgeHandle,
     this.browserController,
+    this.hubFabric,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -528,4 +529,12 @@ final class AgentCliConfig {
   /// Master switch for JS extensions. Effective only together with a
   /// non-null [extRuntimeFactory] — both must be on for extensions to load.
   final bool jsExtensionsEnabled;
+
+  /// Hub-backed primary for the agent messaging fabric (issue #27 phase 1).
+  /// When set, the fabric routes hub-resolvable recipients through it and
+  /// falls back to the file inboxes (offline queue + forward on reconnect);
+  /// the hub identity's mail merges into the main inbox drain. The
+  /// implementation is IO-bound (DAP WebSocket) and lives bin-side — hosts
+  /// inject it here. Null (default) keeps the pure file fabric.
+  final MessagingRepository? hubFabric;
 }

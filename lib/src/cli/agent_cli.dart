@@ -123,6 +123,7 @@ import '../memory/harness_llm_provider.dart';
 import '../memory/memory_controller.dart';
 import '../memory_config.dart';
 import '../messaging/agent_message.dart';
+import '../messaging/fallback_messaging_repository.dart';
 import '../messaging/file_messaging_repository.dart';
 import '../messaging/messaging_repository.dart';
 import '../messaging/schedule_message_tool.dart';
@@ -333,23 +334,39 @@ class AgentCli {
     // `subagent_registry` custom records, so a resumed session rehydrates
     // its agents (and `/sessions`-shared repos make agents visible across
     // instances of the same cwd).
+    // Messaging fabric: per-agent inboxes under the session root. The
+    // FILE layer sits behind a SwappableMessagingRepository so
+    // _createSession can re-point it when storage falls back to another
+    // root. With a hub-backed primary (issue #27) the hub composes OVER
+    // the swappable file layer — a storage fallback swaps only files.
+    _fileFabric = SwappableMessagingRepository(
+      FileMessagingRepository(
+        env: _env,
+        // Messaging is scoped to the *launch* cwd. Sessions are grouped
+        // by cwd; the fabric is initialized once. Each mailbox is
+        // namespaced by session id.
+        root: _messagesRoot =
+            '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
+        decodeSessionCwd: decodeSessionCwd,
+        homeDir: config.homeDir,
+      ),
+    );
+    final hubFabric = config.hubFabric;
+    if (hubFabric == null) {
+      _fabricRepository = _fileFabric;
+    } else {
+      final composite = FallbackMessagingRepository(
+        primary: hubFabric,
+        fallback: _fileFabric,
+      );
+      // Hub mail merges into the MAIN inbox drain only: subagent drains
+      // never touch the hub, so a child cannot steal hub frames.
+      composite.primaryMailbox = () => _subagentManager.mailboxOf('main');
+      _fabricRepository = composite;
+    }
     _subagentManager = SubagentManager(
       parentSessionId: '',
-      // Messaging fabric: per-agent inboxes under the session root.
-      // SwappableMessagingRepository lets _createSession re-point the
-      // fabric when storage falls back to another root.
-      messaging: _fabricRepository = SwappableMessagingRepository(
-        FileMessagingRepository(
-          env: _env,
-          // Messaging is scoped to the *launch* cwd. Sessions are grouped
-          // by cwd; the fabric is initialized once. Each mailbox is
-          // namespaced by session id.
-          root: _messagesRoot =
-              '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages',
-          decodeSessionCwd: decodeSessionCwd,
-          homeDir: config.homeDir,
-        ),
-      ),
+      messaging: _fabricRepository,
       selfId: 'main',
       homeDir: config.homeDir,
       wakeProcess: _launchMailboxWake,
@@ -765,9 +782,14 @@ class AgentCli {
 
   late final SubagentManager _subagentManager;
 
-  /// The messaging fabric wrapper — re-pointed when session storage falls
-  /// back to a different root so the mailboxes follow the sessions.
-  late final SwappableMessagingRepository _fabricRepository;
+  /// The FILE fabric layer — re-pointed when session storage falls back to
+  /// a different root so the mailboxes follow the sessions.
+  late final SwappableMessagingRepository _fileFabric;
+
+  /// The messaging fabric the CLI and the subagents share: the file
+  /// inboxes, or the hub-primary composite when a hub fabric is injected
+  /// (issue #27).
+  late final MessagingRepository _fabricRepository;
 
   /// The launch-cwd messaging root (also backs scheduled messages).
   late final String _messagesRoot;
@@ -1834,7 +1856,7 @@ class AgentCli {
           // fabric keeps pointing at the failed root: presence/register
           // throws, and an attached app's messages land where this process
           // never looks (the silent-dead-attach bug).
-          _fabricRepository.swap(
+          _fileFabric.swap(
             FileMessagingRepository(
               env: _env,
               root: '$fallbackRoot/${encodeSessionCwd(_env.cwd)}/messages',
