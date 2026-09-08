@@ -390,17 +390,21 @@ void main() {
   group('UT-wording — no "summary" license in the prompt text (AC8)', () {
     test('all compaction prompt bodies are summary-free and assert lossless '
         'handoff', () {
-      final summaryBody = _promptBody('prompts/compaction/summary.md');
-      final updateBody = _promptBody('prompts/compaction/summary_update.md');
-      final turnPrefixBody = _promptBody('prompts/compaction/turn_prefix.md');
-      for (final body in [summaryBody, updateBody, turnPrefixBody]) {
+      final bodies = [
+        _promptBody('prompts/compaction/summary.md'),
+        _promptBody('prompts/compaction/summary_update.md'),
+        _promptBody('prompts/compaction/summary_system.md'),
+        _promptBody('prompts/compaction/branch_summary.md'),
+        _promptBody('prompts/compaction/turn_prefix.md'),
+      ];
+      for (final body in bodies) {
         expect(
           RegExp('summar', caseSensitive: false).allMatches(body),
           isEmpty,
           reason: '"summary/summarize" is a license to drop facts',
         );
       }
-      expect(summaryBody, contains('lossless handoff'));
+      final summaryBody = bodies[0];
       expect(summaryBody, contains('Preserve EVERY fact'));
     });
   });

@@ -367,7 +367,7 @@ void main() {
     test('system prompt forbids continuing the conversation', () {
       expect(
         summarizationSystemPrompt,
-        startsWith('You are a context summarization assistant.'),
+        startsWith('You are a context checkpoint assistant.'),
       );
       expect(
         summarizationSystemPrompt,

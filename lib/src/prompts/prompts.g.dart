@@ -10,7 +10,7 @@ library;
 ///
 /// Source: `prompts/compaction/summary_system.md`.
 const summarizationSystemPrompt =
-    'You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.';
+    'You are a context checkpoint assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured checkpoint following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured checkpoint.';
 
 /// Lossless context-checkpoint prompt for a first-time compaction. Forked from
 /// pi's SUMMARIZATION_PROMPT; body wording diverges deliberately (no s-word
@@ -42,7 +42,7 @@ const turnPrefixSummarizationPrompt =
 ///
 /// Source: `prompts/compaction/branch_summary.md`.
 const branchSummaryPrompt =
-    'You MUST create a structured summary of the conversation branch for context when returning.\n\nYou MUST use EXACT format:\n\n## Goal\n\n[What is the user trying to accomplish in this branch?]\n\n## Constraints & Preferences\n- [Constraints, preferences, requirements mentioned]\n- [(none) if none mentioned]\n\n## Progress\n\n### Done\n- [x] [Completed tasks/changes]\n\n### In Progress\n- [ ] [Work started but not finished]\n\n### Blocked\n- [Issues preventing progress]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale]\n\n## Next Steps\n1. [What should happen next to continue]\n\nSections MUST be kept concise. You MUST preserve exact file paths, function names, error messages.';
+    'You MUST create a structured checkpoint of the conversation branch for context when returning.\n\nYou MUST use EXACT format:\n\n## Goal\n\n[What is the user trying to accomplish in this branch?]\n\n## Constraints & Preferences\n- [Constraints, preferences, requirements mentioned]\n- [(none) if none mentioned]\n\n## Progress\n\n### Done\n- [x] [Completed tasks/changes]\n\n### In Progress\n- [ ] [Work started but not finished]\n\n### Blocked\n- [Issues preventing progress]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale]\n\n## Next Steps\n1. [What should happen next to continue]\n\nSections stay tight but complete. You MUST preserve exact file paths, function names, error messages.';
 
 /// Fixed preamble prepended to LLM-generated branch summaries so the model
 /// knows the text describes an abandoned conversation branch, ported verbatim
