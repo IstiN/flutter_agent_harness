@@ -424,10 +424,19 @@ final class ConfigService {
     }
   }
 
+  /// A syntactically broken document parses as null — callers degrade
+  /// cleanly (check reports the syntax error via [_collectDiagnostics]; get
+  /// answers "not set"; set refuses to persist). Never let the raw
+  /// [YamlException] escape: a config-repair surface must survive exactly
+  /// this input.
   static YamlMap? _tryParse(String text) {
     if (text.trim().isEmpty) return null;
-    final doc = loadYaml(text);
-    return doc is YamlMap ? doc : null;
+    try {
+      final doc = loadYaml(text);
+      return doc is YamlMap ? doc : null;
+    } on YamlException {
+      return null;
+    }
   }
 
   /// Parses [key] into non-empty dotted segments.
@@ -721,7 +730,9 @@ bool _validateTopLevelEntry(
 /// Strict-section validators keyed by the top-level key, shared by
 /// `check` and `set` (the "never persist what the next boot would
 /// reject" guarantee). The a2a token env resolves at boot; structural
-/// validation passes a null env.
+/// validation keeps `${NAME}` tokens literal — the permissive resolver
+/// hands back the raw token, so an unset variable is a boot problem,
+/// not a schema error.
 final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'memory': (value, _) => MemoryConfig.fromYaml(value),
   'cube': (value, _) => CubeSettings.fromYaml(value),
@@ -731,7 +742,7 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'models': (value, _) => ModelsConfig.fromYaml(value),
   'customProviders': (value, _) => _validateCustomProviders(value),
   'ttsr': (value, label) => TtsrConfig.fromYaml(value, sourcePath: label),
-  'a2a': (value, _) => A2aConfig.fromYaml(value, (_) => null),
+  'a2a': (value, _) => A2aConfig.fromYaml(value, (name) => '\${$name}'),
   'providerTimeouts': (value, _) => _validateProviderTimeouts(value),
   'skills': (value, _) => _validateSkillsSection(value),
   // Deep validation (strict prompt names) lives behind cli_config.dart's

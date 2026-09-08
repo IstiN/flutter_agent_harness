@@ -277,6 +277,7 @@ class AgentCli {
         sqlite: config.sqliteEngine,
         lsp: config.lspConfig,
         mcp: _mcp.manager,
+        shellJobs: _shellJobs,
         config: ConfigService(env: decoratedEnv, homeDir: config.homeDir),
       ),
       ...memoryTools(

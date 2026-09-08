@@ -158,6 +158,62 @@ void main() {
         contains('access'),
       );
     });
+
+    test('a2a env tokens pass the structural check', () async {
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\n'
+        'a2a:\n'
+        '  servers:\n'
+        '    translator:\n'
+        '      url: https://agents.example.com/translator\n'
+        r'      token: ${A2A_TRANSLATOR_KEY}'
+        '\n',
+      );
+      final report = await checkOrThrow(service);
+      expect(report.warnings, isEmpty);
+    });
+
+    test('set passes on a file carrying a2a env tokens', () async {
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\n'
+        'a2a:\n'
+        '  servers:\n'
+        '    translator:\n'
+        '      url: https://agents.example.com/translator\n'
+        r'      token: ${A2A_TRANSLATOR_KEY}'
+        '\n',
+      );
+      final result = await service.set('approvalMode', 'yolo');
+      expect(result.newDisplay, 'yolo');
+      expect(
+        read(_globalConfig),
+        completion(contains(r'${A2A_TRANSLATOR_KEY}')),
+      );
+    });
+  });
+
+  group('broken files degrade cleanly (never a raw YamlException)', () {
+    test('check reports invalid yaml on the project file', () async {
+      await env.writeFile(_projectConfig, 'memory: [unclosed\n');
+      final report = await service.check();
+      expect(
+        report.errors.map((e) => e.toString()).join('\n'),
+        allOf(contains(_projectConfig), contains('invalid yaml')),
+      );
+    });
+
+    test('get answers "not set" on a broken file', () async {
+      await env.writeFile(_globalConfig, 'memory: [unclosed\n');
+      expect((await service.get('memory.projectPath')).found, isFalse);
+    });
+
+    test('set refuses to persist onto a broken file', () async {
+      await env.writeFile(_globalConfig, 'model: [unclosed\n');
+      await expectLater(service.set('provider', 'zai'), throwsConfigException);
+      expect(read(_globalConfig), completion(contains('[unclosed')));
+    });
   });
 
   group('get', () {
