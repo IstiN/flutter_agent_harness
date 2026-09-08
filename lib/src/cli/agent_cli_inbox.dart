@@ -219,6 +219,10 @@ extension AgentCliMessagingFlow on AgentCli {
         root: _messagesRoot,
         agentId: _subagentManager.mailboxOf(_subagentManager.selfId),
       );
+      // Catch-up sweep: records scheduled by a previous process (or a
+      // sibling pane that exited) come due with nobody armed for them —
+      // deliver here so the reminder still surfaces (issue #59).
+      await _scheduledMessages.deliverDue();
     } on Object {
       // Never let fabric hygiene break the watcher tick.
     }
