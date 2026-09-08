@@ -21,6 +21,8 @@ List<ProgramOption> _programHookOptions(TuiProgramHooks? hooks) {
   return [
     if (hooks.input != null) withInput(hooks.input),
     if (hooks.output != null) withOutput(IOSink(hooks.output!)),
+    if (hooks.width != null && hooks.height != null)
+      withWindowSize(hooks.width!, hooks.height!),
     withoutSignalHandler(),
   ];
 }

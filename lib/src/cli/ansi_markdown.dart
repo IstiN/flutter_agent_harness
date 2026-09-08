@@ -879,14 +879,21 @@ final class TranscriptMarkdown {
   /// it (the typing-lag-while-streaming bug). A strictly prefix-extended
   /// tail can instead roll the durable caches back ONE source line and
   /// resume: only that line re-formats and re-wraps.
+  ///
+  /// The same holds when the caller hard-split that growing tail into
+  /// chunk lines (fa_tui caps the tail at 32KB by re-splitting it into
+  /// 16KB chunks — fresh substring identities on every split): the
+  /// chunks concatenate back to a prefix-extension of the boundary line,
+  /// so the region is still faithful growth. Rolling back the FIRST
+  /// chunk re-walks the rest as fresh lines; without this the split
+  /// re-triggered a full rebuild every ~16KB of streamed thinking.
   bool _rollbackGrownTail(List<String> src) {
     if (width != _fmt.width) return false;
     if (_through <= 0 || src.length < _through) return false;
     final boundary = _boundaryLast;
     if (boundary == null || _boundaryFirst == null) return false;
     if (src.isEmpty || !identical(src.first, _boundaryFirst)) return false;
-    final grown = src[_through - 1];
-    if (grown.length <= boundary.length || !grown.startsWith(boundary)) {
+    if (!_tailIsFaithfulGrowth(src, boundary)) {
       return false; // replaced, not grown — keep the documented safe path
     }
     final edge = _through - 1;
@@ -906,6 +913,33 @@ final class TranscriptMarkdown {
     _boundaryLast = edge > 0 ? src[edge - 1] : null;
     _savedFence = _fenceBeforeBoundaryLine;
     return true;
+  }
+
+  /// True when the boundary line was hard-split into the chunk lines
+  /// src[_through-1..): the chunks concatenate back to a prefix-extension
+  /// of it, so the tail region is still faithful growth of the committed
+  /// content. One O(boundary) string compare per suspected split —
+  /// rebuilds cost O(transcript), this must stay cheap to answer.
+  bool _boundarySurvivesAsChunks(List<String> src, String boundary) {
+    final concat = StringBuffer();
+    for (var i = _through - 1; i < src.length; i++) {
+      concat.write(src[i]);
+      if (concat.length >= boundary.length) break;
+    }
+    return concat.toString().startsWith(boundary);
+  }
+
+  /// True when src[_through-1..) is still the committed boundary line
+  /// faithfully growing: either extended in place (a longer string that
+  /// starts with it) or hard-split into chunk lines whose concatenation
+  /// prefix-extends it (fa_tui's 32KB tail cap). Any other shape means
+  /// the caller replaced content — that stays on the rebuild path.
+  bool _tailIsFaithfulGrowth(List<String> src, String boundary) {
+    final grown = src[_through - 1];
+    if (grown.length > boundary.length) return grown.startsWith(boundary);
+    if (grown.length == boundary.length) return false;
+    if (!boundary.startsWith(grown)) return false;
+    return _boundarySurvivesAsChunks(src, boundary);
   }
 
   /// Consume-walk over src[from..) seeded with the frozen boundary state.

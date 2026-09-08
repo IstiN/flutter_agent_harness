@@ -106,6 +106,37 @@ byte-exact, then resumes incrementally.
 ## Change log
 
 - branch opened with baseline bench + this doc (no behavior change yet).
+- issue #43: the 32KB tail hard-split now resumes instead of rebuilding
+  (see the section below).
+
+## Issue #43 — typing during thinking streams: the 32KB tail hard-split
+
+A minutes-long no-newline thinking stream crosses
+`fa_tui._appendOutput`'s 32KB tail cap, which re-splits the tail into
+16KB chunk lines — fresh substring identities every time. When a split
+landed while the commit boundary sat ON the growing tail (the
+just-committed phase of the flush cycle), both identity sentinels missed
+and that sync took the full O(transcript) rebuild. The cost grows with
+the session, so minutes-long thinking degraded typing progressively:
+real-PTY e2e at 200 reasoning deltas/s, 60s in (≈1.4MB transcript):
+frame-build p99 24.8ms, max 81ms; keystroke echo p99 59.5ms, max 100ms.
+
+Fix (`TranscriptMarkdown._rollbackGrownTail`): the rollback also
+recognizes the split shape — the boundary line survives as a prefix of
+the concatenated chunks (one O(boundary) string compare per suspected
+split, `_boundarySurvivesAsChunks`) — rolls back ONE source line and
+re-walks the chunks. Replaced (non-faithful) content still takes the
+documented rebuild path.
+
+Measured after: rebuilds in the flood regime 0 across all runs
+(before: phase-race, 0–5 per 30s in-process bench); frame-build
+p99 5.0ms / max 7.4ms flat over 60s; echo p99 43.6ms, max 57.3ms
+(residual tail is event-loop/GC noise from the flood itself, bounded,
+not growing with transcript size). Bench:
+`dart run scripts/tui_typing_bench.dart --grow-tail` (in-process rebuild
+counters; seeds the submit-echo lines so the flood grows the LAST line
+like the shipped REPL). Contracts: the split-resume trio in
+`test/cli/transcript_markdown_perf_test.dart`.
 
 ## Table rendering — adversarial TDD round (post-optimization)
 
