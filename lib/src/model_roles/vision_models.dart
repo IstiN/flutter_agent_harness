@@ -58,7 +58,16 @@ const _visionMarkers = <String>[
   'mini-cpm-v',
   'glm-4v',
   'glm-4.5v',
-  'glm-5',
+  'glm-4.6v',
+  // GLM-5: only the `...v` lines take image input — plain glm-5/5.1/5.2/
+  // 5.3 (and -flash) are text-only on z.ai and OpenRouter metadata alike
+  // (issue #42: z.ai 400 `messages.content.type is invalid, allowed
+  // values: ['text']` after a /model switch onto glm-5.3).
+  'glm-5v',
+  // The -flash lite line stays multimodal while the flagship is text-only
+  // (OpenRouter input_modalities: glm-5.3-flash ['text','image','video'] vs
+  // glm-5.3 ['text']).
+  'glm-5.3-flash',
   'internvl',
   'cogvlm',
   'phi-3.5-vision',

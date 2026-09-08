@@ -232,16 +232,40 @@ final class _OpenAICompletionsSession {
   int _contentIndex(StreamingBlock block) => blocks.indexOf(block);
 
   /// Request setup → SSE consumption → finish/usage handling.
+  ///
+  /// A 400 that rejects the request's image parts from a text-only endpoint
+  /// (issue #42: z.ai glm-5.3 `messages.content.type is invalid, allowed
+  /// values: ['text']`) is retried ONCE with every image downgraded to its
+  /// placeholder — the turn survives and the model can explain the swap
+  /// instead of dying with a raw API error.
   Future<void> run() async {
-    final response = await _startRequest();
+    http.StreamedResponse response;
+    try {
+      response = await _startRequest();
+    } on ProviderHttpError catch (error) {
+      if (!_isImageContentRejection(error) ||
+          !messagesContainImages(context.messages)) {
+        rethrow;
+      }
+      response = await _startRequest(
+        messages: downgradeAllImages(context.messages),
+      );
+    }
     await _consumeSse(response);
     _finish();
   }
 
-  Future<http.StreamedResponse> _startRequest() async {
+  Future<http.StreamedResponse> _startRequest({List<Message>? messages}) async {
     final compat = _getCompat(model);
+    final retryContext = messages == null
+        ? context
+        : Context(
+            systemPrompt: context.systemPrompt,
+            messages: messages,
+            tools: context.tools,
+          );
     final params = await applyPayloadHook(
-      _buildParams(model, context, options, compat),
+      _buildParams(model, retryContext, options, compat),
       model,
       options?.onPayload,
     );
@@ -847,6 +871,23 @@ bool _isDialModel(Model model) {
 bool _isGoogleModel(Model model) {
   return model.provider == 'google' ||
       model.baseUrl.contains('generativelanguage.googleapis.com');
+}
+
+/// Matches a 400 whose body rejects the request's content-block types —
+/// the text-only-endpoint shape (issue #42, z.ai glm-5.3:
+/// `messages.content.type is invalid, allowed values: ['text']`; other
+/// gateways phrase it `invalid content type` or `image_url is not
+/// supported`). Only ever consulted alongside `messagesContainImages`, so
+/// image-free requests can never trip the retry.
+final _imageContentRejection = RegExp(
+  'content[._ -]?type[^\\n]{0,80}(invalid|allowed|not supported)'
+  '|(invalid|not supported|unsupported)[^\\n]{0,40}content[._ -]?type'
+  '|image_url[^\\n]{0,40}(not supported|invalid|unsupported)',
+  caseSensitive: false,
+);
+
+bool _isImageContentRejection(ProviderHttpError error) {
+  return error.statusCode == 400 && _imageContentRejection.hasMatch(error.body);
 }
 
 _ResolvedCompat _getCompat(Model model) {

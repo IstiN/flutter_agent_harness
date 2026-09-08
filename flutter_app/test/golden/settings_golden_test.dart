@@ -198,8 +198,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Key/model/url fields, the vision checkbox (auto-checked: the default
-      // OpenRouter model id suggests vision), and the hosted key note.
+      // Key/model/url fields, the vision checkbox (UNchecked: the default
+      // OpenRouter model id z-ai/glm-5.2 is text-only — issue #42), and the
+      // hosted key note.
       await expectGolden(tester, 'settings_hosted');
     });
 
