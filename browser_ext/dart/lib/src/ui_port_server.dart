@@ -58,6 +58,10 @@ abstract interface class UiHostConnector {
   /// is restored. Same busy/booted rules as [newSession].
   Future<void> openSession(String sessionId);
 
+  /// The loaded transcript as replay events — the durable backlog for a
+  /// first attach (the in-memory ring only covers events since boot).
+  List<Map<String, dynamic>> transcriptReplay();
+
   /// One-shot host capability request (`ext_request`: cookies.get_all /
   /// fetch / tabs.create) — the same op surface the host backend serves.
   Future<Map<String, dynamic>> extRequest(
@@ -169,13 +173,16 @@ final class UiPortServer {
       case final HelloMsg m:
         _hello(channel, m);
       case final AttachMsg m:
-        _send(
-          channel,
-          AttachedMsg(
-            sessionId: host.sessionId,
-            replay: _replay(m.lastEventId),
-          ),
-        );
+        // A first attach (no lastEventId) syncs from the durable
+        // transcript — the in-memory ring only covers events since the SW
+        // booted, and a restart or session_open empties it. A reconnect
+        // (lastEventId set) keeps the ring catch-up it always had.
+        final backlog = m.lastEventId == null
+            ? [
+                for (final event in host.transcriptReplay()) {'event': event},
+              ]
+            : _replay(m.lastEventId);
+        _send(channel, AttachedMsg(sessionId: host.sessionId, replay: backlog));
         // The panel renders the SW's Tools section from this — always
         // current as of the attach it belongs to.
         _send(channel, ToolsStateMsg(tools: host.toolsList()));
@@ -211,7 +218,12 @@ final class UiPortServer {
         _ring.clear();
         _send(
           channel,
-          AttachedMsg(sessionId: host.sessionId, replay: const []),
+          AttachedMsg(
+            sessionId: host.sessionId,
+            replay: [
+              for (final event in host.transcriptReplay()) {'event': event},
+            ],
+          ),
         );
         _send(channel, ToolsStateMsg(tools: host.toolsList()));
         _send(channel, StreamMsg(event: {'type': 'status', ...host.state()}));
@@ -225,7 +237,12 @@ final class UiPortServer {
         _ring.clear();
         _send(
           channel,
-          AttachedMsg(sessionId: host.sessionId, replay: const []),
+          AttachedMsg(
+            sessionId: host.sessionId,
+            replay: [
+              for (final event in host.transcriptReplay()) {'event': event},
+            ],
+          ),
         );
         _send(channel, ToolsStateMsg(tools: host.toolsList()));
         _send(channel, StreamMsg(event: {'type': 'status', ...host.state()}));

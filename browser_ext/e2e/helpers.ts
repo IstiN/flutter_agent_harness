@@ -307,22 +307,46 @@ export class FaHarness {
    * First matching agent event at index > `after`, polling until it lands.
    * `after` (an eventCount snapshot minus one) keeps sequential turns in
    * one test from re-matching the previous turn's events.
+   *
+   * MV3 wrinkle: the SW can idle out MID-WAIT (~30s with no events), and
+   * the revived worker comes back WITHOUT the `__faEvents` collector (it
+   * lives on the old SW's globalThis) — the poll would then watch a dead
+   * buffer until timeout. Two guards: (1) keep the SW awake while the
+   * poll runs (a periodic swEval both wakes and resets the idle timer);
+   * (2) re-arm the collector when a revival dropped it. Events that fired
+   * BEFORE a revive are unrecoverable — the turn this wait targets is
+   * always sent after the wait starts, so re-arming covers the real case.
    */
   async waitEvent(
     pred: (event: FaEvent) => boolean,
     timeout = 45_000,
     after = -1,
   ): Promise<FaEvent> {
-    let found: FaEvent | undefined;
-    await expect
-      .poll(async () => {
-        const events = await this.events();
-        const idx = events.findIndex((e, i) => i > after && pred(e));
-        found = idx >= 0 ? events[idx] : undefined;
-        return found ?? null;
-      }, { timeout })
-      .not.toBeNull();
-    return found!;
+    const keepalive = setInterval(() => {
+      void this.swEval(() => 1).catch(() => {});
+    }, 10_000);
+    try {
+      let found: FaEvent | undefined;
+      await expect
+        .poll(async () => {
+          await this.swEval(() => {
+            const w = globalThis as unknown as SwGlobals;
+            if (!w.__faEvents) {
+              w.__faEvents = [];
+              w.faAgent.onEvent((event) => w.__faEvents?.push(event));
+            }
+            return true;
+          });
+          const events = await this.events();
+          const idx = events.findIndex((e, i) => i > after && pred(e));
+          found = idx >= 0 ? events[idx] : undefined;
+          return found ?? null;
+        }, { timeout })
+        .not.toBeNull();
+      return found!;
+    } finally {
+      clearInterval(keepalive);
+    }
   }
 
   sendUser(text: string): Promise<void> {

@@ -55,6 +55,10 @@ const _uiPortName = 'fa-ui-v2';
 const _maxVisitedOrigins = 500;
 
 AgentHost? _host;
+
+/// The most recent EXPLICIT boot config (faAgent.boot with keys set, the
+/// panel/tests path) — storage-snapshot reconfigures never override it.
+HostConfig? _lastExplicitConfig;
 Future<AgentHost?> _hostBoot = Future.value(null);
 JSFunction? _eventCb;
 final _deltaBuffer = StringBuffer();
@@ -187,6 +191,31 @@ Future<JSAny?> _bootMerged(JSAny? config) async {
   final map = config == null
       ? const <Object?, Object?>{}
       : (config as JSObject).dartify() as Map<Object?, Object?>;
+  // EXPLICIT boot keys persist to chrome.storage. The SW's auto-boot
+  // (main(), storage snapshot) races explicit boots — panel/tests — and
+  // _ensureHost is last-writer-wins: when the auto-boot's stale snapshot
+  // lands AFTER an explicit boot, it silently reverts it (observed as the
+  // e2e's unattended approval mode flipping back to always-ask, leaving a
+  // write-tier tool stuck on an approval no headless run can answer).
+  // Persisting the explicit keys makes every config path — however
+  // ordered — converge on the explicit values instead.
+  const bootKeyToStorage = {
+    'approvalMode': 'faApproval',
+    'provider': 'faProvider',
+    'providers': 'faProviders',
+    'dap': 'faDap',
+    'browserTools': 'faBrowserTools',
+  };
+  for (final entry in bootKeyToStorage.entries) {
+    if (map.containsKey(entry.key)) {
+      final value = map[entry.key];
+      if (value != null) {
+        // Awaited: a concurrent auto-boot reading storage after this must
+        // see the explicit values, not the pre-boot snapshot.
+        await _persistSetting(entry.value, value);
+      }
+    }
+  }
   _ensureHost(
     _configFrom(
       provider: map.containsKey('provider')
@@ -203,6 +232,7 @@ Future<JSAny?> _bootMerged(JSAny? config) async {
           ? map['browserTools']
           : stored['faBrowserTools'],
     ),
+    explicit: true,
   );
   return {'ok': true}.jsify();
 }
@@ -316,7 +346,11 @@ JSAny? _v2StateImpl() => {
 
 // -- Host lifecycle ------------------------------------------------------------------
 
-void _ensureHost(HostConfig config) {
+void _ensureHost(HostConfig config, {bool explicit = false}) {
+  if (explicit) _lastExplicitConfig = config;
+  // A storage-snapshot (auto-boot) reconfigure must never revert an
+  // explicit boot that landed while it was starting up — explicit wins.
+  final effective = explicit ? config : (_lastExplicitConfig ?? config);
   final existing = _host;
   if (existing == null) {
     // A boot may already be in flight (main()'s auto-boot reading storage);
@@ -328,14 +362,14 @@ void _ensureHost(HostConfig config) {
         .then((host) async {
           final live = host ?? _host;
           if (live != null) {
-            live.reconfigure(config);
+            live.reconfigure(effective);
             return live;
           }
           final chromeApi = _chromeApi;
           return AgentHost.boot(
             sink: _emit,
             ops: _callOp,
-            config: config,
+            config: effective,
             chrome: chromeApi,
             // The LIVE set: the gate reads it at call time, and
             // webNavigation keeps it warm after boot.
@@ -344,7 +378,7 @@ void _ensureHost(HostConfig config) {
         })
         .then((host) => _host = host);
   } else {
-    existing.reconfigure(config);
+    existing.reconfigure(effective);
   }
 }
 
