@@ -284,6 +284,7 @@ class AgentService extends ChangeNotifier
     const bundled = {
       'js-apps': 'assets/skills/js-apps/SKILL.md',
       'create-goal': 'assets/skills/create-goal/SKILL.md',
+      'fa-self-config': 'assets/skills/fa-self-config/SKILL.md',
     };
     for (final entry in bundled.entries) {
       try {
