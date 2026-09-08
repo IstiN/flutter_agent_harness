@@ -2899,7 +2899,8 @@
 - fix(browser_ext): status snapshots must not flip the transport to streaming
 - fix(browser_ext): the panel relay never connected — port name + envelope mismatch
 
-## Unreleased
+## 0.1.323
+
 
 - fix(browser_ext): page/app screenshots reach the model as vision image
   blocks — `page_screenshot`/`app_screenshot` and the v1 `screenshot` op
@@ -2922,6 +2923,8 @@
 - ci: the Chrome extension builds in the release pipeline and ships as a
   release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
   page gains the download + load-unpacked card.
+
+## Unreleased
 
 ## Unreleased
 
