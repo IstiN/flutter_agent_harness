@@ -296,6 +296,48 @@ void main() {
   );
 
   test(
+    'junk records in _scheduled never disarm or phantom-deliver (skip branches)',
+    () async {
+      // The scans must tolerate every corrupt shape alongside a valid
+      // record: non-json names, malformed json, valid-json-wrong-shape,
+      // and records without dueMs (which must NOT deliver as due=0).
+      final env = MemoryExecutionEnv(cwd: '/work');
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'main',
+      );
+      await repo.register('main');
+      await queue.schedule(
+        text: 'real one',
+        delay: const Duration(milliseconds: 30),
+      );
+      // Seed the junk next to the valid record.
+      (await env.writeFile('$root/_scheduled/notes.txt', 'not json'))
+          .getOrThrow();
+      (await env.writeFile('$root/_scheduled/broken.json', '{nope'))
+          .getOrThrow();
+      (await env.writeFile('$root/_scheduled/nodue.json', '{"text": "x"}'))
+          .getOrThrow();
+      (await env.writeFile('$root/_scheduled/list.json', '[1,2]'))
+          .getOrThrow();
+      await queue.deliverDue(); // scans across the junk
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      final mail = await repo.peek('main');
+      expect(mail, hasLength(1));
+      expect(mail.single.text, contains('[scheduled] real one'));
+    },
+  );
+
+  test(
     'disposed queue holds delivery; a fresh start delivers the record',
     () async {
       // A host that tears a session down (app sheet dispose) must not let its

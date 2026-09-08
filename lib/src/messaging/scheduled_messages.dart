@@ -135,7 +135,9 @@ final class ScheduledMessageQueue {
       if (text == null) continue;
       final Map<String, dynamic> json;
       try {
-        json = jsonDecode(text) as Map<String, dynamic>;
+        final decoded = jsonDecode(text);
+        if (decoded is! Map<String, dynamic>) continue; // wrong shape
+        json = decoded;
       } on FormatException {
         continue;
       }
@@ -191,13 +193,17 @@ final class ScheduledMessageQueue {
       }
       final Map<String, dynamic> record;
       try {
-        record = jsonDecode(text) as Map<String, dynamic>;
+        final decoded = jsonDecode(text);
+        if (decoded is! Map<String, dynamic>) {
+          continue; // valid json, wrong shape — not a record
+        }
+        record = decoded;
       } on FormatException {
         continue; // torn write — leave for inspection
       }
-      if ((record['dueMs'] as int? ?? 0) >
-          DateTime.now().millisecondsSinceEpoch) {
-        continue;
+      final dueMs = record['dueMs'] as int?;
+      if (dueMs == null || dueMs > DateTime.now().millisecondsSinceEpoch) {
+        continue; // not a schedule record, or not due yet
       }
       final recordedTo = record['to'] as String? ?? _self();
       final from = record['from'] as String? ?? recordedTo;
@@ -258,7 +264,9 @@ final class ScheduledMessageQueue {
       final text = (await _env.readTextFile(path)).valueOrNull;
       if (text == null) continue;
       try {
-        final due = (jsonDecode(text) as Map<String, dynamic>)['dueMs'] as int?;
+        final decoded = jsonDecode(text);
+        if (decoded is! Map<String, dynamic>) continue; // valid json, wrong shape
+        final due = decoded['dueMs'] as int?;
         if (due != null && (nearest == null || due < nearest)) {
           nearest = due;
         }
