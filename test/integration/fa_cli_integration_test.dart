@@ -213,8 +213,31 @@ void main() {
         // Legacy ESC CR encoding (terminals without protocol support, e.g.
         // Warp's passthrough) — decoded as alt+enter.
         await expectNewline('\x1b\r');
+        // Raw Ctrl+O control byte (0x0F): the universal legacy wire —
+        // a plain control character, so it works in EVERY terminal.
+        await expectNewline('\x0f');
       },
     );
+
+    test('/terminal-setup prints per-terminal Shift+Enter guidance', () async {
+      // The command rides the info-command dispatch table; this drives the
+      // REAL binary to prove the whole path (dispatch → renderer → output).
+      final tempHome = _tempHome();
+      final harness = await FaCliHarness.spawn(
+        extraEnv: {'HOME': tempHome.path},
+      );
+      addTearDown(() async {
+        await harness.close();
+        tempHome.deleteSync(recursive: true);
+      });
+      await harness.waitForBoot();
+
+      await harness.runSlashCommand('/terminal-setup');
+      await harness.waitForText(
+        'Ctrl+O inserts a newline',
+        timeout: const Duration(seconds: 20),
+      );
+    });
 
     test(
       'double Esc during thinking streaming aborts the run (issue #46)',

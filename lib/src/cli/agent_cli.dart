@@ -144,6 +144,7 @@ import 'ask_menu.dart';
 import 'slash_menu.dart';
 import 'task_list.dart';
 import 'text_format.dart';
+import 'terminal_setup.dart';
 import 'tui_helpers.dart';
 import 'tui_prompt.dart';
 import 'tui_replay.dart';
