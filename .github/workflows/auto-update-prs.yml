@@ -1,0 +1,68 @@
+# Ported from dm.ai (.github/workflows/auto-update-prs.yml): after every push
+# to main, update the branch of every open non-draft PR that is mergeable and
+# behind main — the auto-actualization half of the dark-factory merge loop
+# (the auto-merge half lives in merge-trigger.yml).
+#
+# Uses PAT_TOKEN rather than GITHUB_TOKEN because pushes made with the
+# workflow's own GITHUB_TOKEN do not trigger downstream PR CI, so the fresh
+# checks merge-trigger relies on would never run. Until a PAT_TOKEN secret is
+# added to this repo it falls back to github.token: branches still update,
+# but PR checks will not re-run automatically.
+#
+#   gh workflow run auto-update-prs.yml   # manual top-up
+
+name: Auto-update open PRs when main changes
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+concurrency:
+  group: auto-update-prs
+  cancel-in-progress: true
+
+jobs:
+  update-prs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Update open PRs that are behind main
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN || github.token }}
+        run: |
+          # After a push to main, GitHub invalidates cached mergeability for all
+          # open PRs and recomputes asynchronously — returning "UNKNOWN" until
+          # ready. Retry until no PRs are stuck in UNKNOWN (up to ~90s) so the
+          # MERGEABLE filter doesn't miss them.
+          for attempt in $(seq 1 6); do
+            unknown=$(gh pr list --repo ${{ github.repository }} --state open --base main \
+              --json number,mergeable \
+              --jq '[.[] | select(.mergeable == "UNKNOWN")] | length')
+            echo "Attempt $attempt: $unknown PR(s) still in UNKNOWN mergeability state"
+            [ "$unknown" -eq 0 ] && break
+            sleep 15
+          done
+
+          prs=$(gh pr list --repo ${{ github.repository }} --state open --base main \
+            --json number,mergeable,isDraft,mergeStateStatus \
+            --jq '.[]
+                   | select(.isDraft == false)
+                   | select(.mergeable == "MERGEABLE")
+                   | select(.mergeStateStatus != "DIRTY")
+                   | .number')
+
+          if [ -z "$prs" ]; then
+            echo "No candidate PRs found."
+            exit 0
+          fi
+
+          for pr in $prs; do
+            echo "Attempting to update PR #$pr..."
+            gh pr update-branch "$pr" --repo ${{ github.repository }} \
+              || echo "PR #$pr skipped (already up to date or conflict)"
+          done
