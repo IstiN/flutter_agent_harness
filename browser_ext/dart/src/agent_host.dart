@@ -516,7 +516,10 @@ final class AgentHost implements UiHostBackend {
           'createdAt': _session!.cachedMetadata!.createdAt.toIso8601String(),
         'cwd': _env.cwd,
       },
-      ...?_archivesCache,
+      // A restored session keeps its archive copy on disk; the live row
+      // already represents it — drop the twin or the drawer lists the
+      // same session twice.
+      ...?_archivesCache?.where((row) => row['id'] != live),
     ];
   }
 

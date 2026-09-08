@@ -101,6 +101,27 @@ void main() {
     addTearDown(channel.close);
   });
 
+  test('replay rows with dartify-style nested maps still render', () async {
+    // The port transport decodes JS objects via dartify(): the OUTER map
+    // is converted by the protocol decoder, but NESTED maps keep the
+    // Map<Object?, Object?> type. _rebuild must not drop such rows (this
+    // bug rendered "No messages yet" against a delivered replay).
+    final eventA = <Object?, Object?>{
+      'type': 'message_done',
+      'role': 'user',
+      'text': 'dartify user row',
+    };
+    final (:service, :channel) = await _attached(
+      replay: [
+        {'seq': 1, 'event': eventA},
+      ],
+    );
+    expect(service.messages, hasLength(1));
+    expect(service.messages.single.role, 'user');
+    expect(service.messages.single.content, 'dartify user row');
+    addTearDown(channel.close);
+  });
+
   test('transcript replay renders user, assistant and tool rows', () async {
     // The SW synthesizes the durable backlog (see transcriptReplayOf):
     // history rows land through the same _rebuild path.
