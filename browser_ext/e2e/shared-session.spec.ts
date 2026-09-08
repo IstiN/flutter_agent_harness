@@ -129,8 +129,16 @@ test.describe('shared session over fa-ui-v2 ports', () => {
     expect(done1).toBeTruthy();
     expect(done2).toBeTruthy();
 
-    // Replay parity: a fresh attach on tab 2 replays the turn that ran while
-    // it was already open (events newer than lastEventId — null = full tail).
+    // Replay parity: a fresh attach on tab 2 replays the turn that ran
+    // while it was open (null lastEventId = the durable transcript, which
+    // now holds the completed turn). The MV3 SW may have idled out during
+    // the waits above — a dead port swallows postMessage silently — so
+    // wake it and re-open the port first. Bonus coverage: the replay then
+    // comes from the REVIVED host's restored transcript, proving history
+    // survives a service-worker restart.
+    await fa.swEval(() => 1);
+    await attachPort(tab2);
+    await portMsg(tab2, (m) => m.kind === 'hello_ack');
     await portSend(tab2, {
       kind: 'attach',
       sessionId: attached2.sessionId ?? null,
