@@ -513,6 +513,7 @@
   "myPublications": "Мои публикации",
   "publicationsEmpty": "Пока ничего не опубликовано.",
   "publicationsRefresh": "Обновить",
+  "publicationsOffline": "Нет сети — показаны последние известные состояния.",
   "publicationStateOpen": "Открыт",
   "publicationStatePublished": "Опубликован",
   "publicationStateRejected": "Отклонён",
