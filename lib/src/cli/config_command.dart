@@ -47,16 +47,7 @@ Future<int> runConfigServiceCommand(
 
 Future<int> _check(ConfigService service, CliIO io) async {
   final report = await service.check();
-  for (final error in report.errors) {
-    io.writeln('error: $error');
-  }
-  for (final warning in report.warnings) {
-    io.writeln('warning: $warning');
-  }
-  for (final note in report.notes) {
-    io.writeln('note: $note');
-  }
-  io.writeln(report.ok ? 'config check: ok' : 'config check: failed');
+  io.write(renderConfigCheckReport(report));
   return report.ok ? 0 : 1;
 }
 

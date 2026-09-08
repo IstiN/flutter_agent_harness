@@ -47,6 +47,8 @@ import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../approval/bash_interceptor.dart';
 import '../cancel_token.dart';
+import '../config/config_tool.dart';
+import '../config/config_service.dart';
 import '../env/execution_env.dart';
 import '../hashline/hashline.dart';
 import '../lsp/lsp_tool.dart';
@@ -107,6 +109,11 @@ const _bashRetryBackoff = Duration(seconds: 1);
 /// factory lives in `lib/io.dart`; web/stub construction leaves the tool
 /// out.
 ///
+/// When [config] is provided, the `config` tool is registered (the
+/// `check|path|get|set` ops over [ConfigService] — issue #29 S3). Hosts
+/// without a config service (tests of individual tools, minimal embeds)
+/// leave it out.
+///
 /// When [mcp] is provided, the tools of currently CONNECTED MCP servers are
 /// included (as `mcp__<server>__<tool>`); servers connect in the background
 /// after startup, so the host must additionally listen to
@@ -117,6 +124,7 @@ List<AgentTool> builtinTools(
   ExecutionEnv env, {
   HashlineSnapshotStore? snapshots,
   WebSearchConfig? webSearch,
+  ConfigService? config,
   Model? Function()? model,
   SqliteEngine? sqlite,
   LspToolConfig? lsp,
@@ -136,6 +144,7 @@ List<AgentTool> builtinTools(
       webSearchTool(config: webSearch),
       webFetchTool(config: webSearch),
     ],
+    if (config != null) configTool(config),
     ...?mcp?.tools,
   ];
 }

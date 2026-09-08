@@ -27,7 +27,7 @@ const _knownToolIds = {
   'ls',
   'bash',
   'web_search',
-  'web_fetch',
+  'config',
   'lsp',
   'task',
   'ask',

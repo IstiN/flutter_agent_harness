@@ -107,6 +107,13 @@ final class ConfigCheckReport {
   bool get ok => errors.isEmpty;
 }
 
+/// Renders a [ConfigCheckReport] as the canonical multi-line text both
+/// surfaces print: `fa config check` (exit code 1 on failure) and the
+/// `config` agent tool's `check` op — one rendering, never two.
+String renderConfigCheckReport(ConfigCheckReport report) {
+  return '${[for (final error in report.errors) 'error: $error', for (final warning in report.warnings) 'warning: $warning', for (final note in report.notes) 'note: $note', report.ok ? 'config check: ok' : 'config check: failed'].join('\n')}\n';
+}
+
 /// Result of [ConfigService.get].
 final class ConfigGetResult {
   const ConfigGetResult({
