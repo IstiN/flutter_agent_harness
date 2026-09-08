@@ -26,6 +26,9 @@ abstract interface class UiHostBackend {
   /// place. Throws when not booted or while a turn runs (busy).
   Future<void> newSession();
 
+  /// `session_open`: restore an archived session as the live one.
+  Future<void> openSession(String sessionId);
+
   /// The live tool list with enabled flags (panel Tools section).
   List<UiToolState> toolsList();
 
@@ -134,6 +137,13 @@ final class UiHostAdapter implements UiHostConnector {
     final host = backend();
     if (host == null) throw StateError('host not booted');
     await host.newSession();
+  }
+
+  @override
+  Future<void> openSession(String sessionId) async {
+    final host = backend();
+    if (host == null) throw StateError('host not booted');
+    await host.openSession(sessionId);
   }
 
   @override

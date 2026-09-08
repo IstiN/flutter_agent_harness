@@ -239,12 +239,23 @@ void main() {
       channel.receive(const AttachedMsg(sessionId: 'fresh', replay: []));
       await pump();
       expect(transport.sessionId, 'fresh');
+      // openSession dispatches the id while attached.
+      transport.openSession('arch-9');
+      await pump();
+      expect(channel.sentKinds.last, 'session_open');
+      expect(channel.sent.last['sessionId'], 'arch-9');
       // Not ready (reconnecting): ignored, not queued.
       channel.close();
       await pump();
       transport.newSession();
+      transport.openSession('arch-10');
       await pump();
-      expect(channel.sentKinds, ['hello', 'attach', 'session_new']);
+      expect(channel.sentKinds, [
+        'hello',
+        'attach',
+        'session_new',
+        'session_open',
+      ]);
     });
     test('steer/cancel while reconnecting are ignored, not queued', () async {
       final channels = <FakeChannel>[];

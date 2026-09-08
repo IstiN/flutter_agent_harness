@@ -1289,12 +1289,19 @@ class AgentService extends ChangeNotifier
   /// pre-constructed [Agent] (tests).
   AgentConfig? get configForClone => _config;
 
-  /// "New session" support for services whose session does NOT live in
-  /// this process: the extension relay's session is owned by the service
-  /// worker, so cloning a local config is impossible (and `configForClone`
-  /// is null). When non-null, the UI's new-session flow calls this instead
-  /// of manager.createSession(clone). `null` on local services.
+  /// New-session support for services whose session does NOT live in this
+  /// process (the relay's session is owned by the extension SW; cloning a
+  /// local config is impossible there). When non-null, the UI's
+  /// new-session flow calls this instead of manager.createSession(clone).
   Future<void> Function()? get newSessionAction => null;
+
+  /// Open-past-session for relayed services (`null` locally): the UI asks
+  /// the SW to restore the archive; the attach trio rebuilds the view.
+  Future<void> Function(String sessionId)? get openSessionAction => null;
+
+  /// The relayed session id currently attached to (the manager's entry
+  /// key can lag it). `null` on local services.
+  String? get liveSessionId => null;
   final AgentConfig? _config;
 
   /// The execution environment the agent's tools (and session storage) run
@@ -2218,8 +2225,8 @@ class AgentService extends ChangeNotifier
     );
   }
 
-  /// Lists persisted sessions, newest first (across all provider dirs under
-  /// [sessionsRoot]). Cheap: reads only the JSONL headers.
+  /// Lists persisted sessions, newest first (across all provider dirs
+  /// under [sessionsRoot]). Cheap: reads only the JSONL headers.
   Future<List<SessionMetadata>> listSessions() async {
     try {
       final roots = allSessionRoots(sessionsRoot);

@@ -271,6 +271,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
     try {
       final all = await service.listSessions();
       final liveIds = _liveSessions.map((s) => s.id).toSet();
+      // A relayed session's manager key lags behind the SW's live id
+      // (session_new/session_open re-point the slot): never list the
+      // currently-open transcript as persisted.
+      final relayLive = service.liveSessionId;
+      if (relayLive != null) liveIds.add(relayLive);
       final persisted = [
         for (final metadata in all)
           if (!liveIds.contains(metadata.id)) metadata,
@@ -457,6 +462,14 @@ class SessionChatSheetState extends State<SessionChatSheet>
     try {
       final active = _activeService;
       if (active == null) return;
+      // Relay sessions (extension panel): the archive lives in the SW's
+      // storage — ask it to restore the session instead of building a
+      // local service that cannot read it.
+      final relayOpen = active.openSessionAction;
+      if (relayOpen != null) {
+        await relayOpen(metadata.id);
+        return;
+      }
       await widget.manager.openSession(
         metadata,
         config:

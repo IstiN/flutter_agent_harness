@@ -202,6 +202,12 @@ abstract class FaTransport {
     if (isReady) dispatch(const SessionNewMsg());
   }
 
+  /// Opens a past session on the peer (`session_open`) — same answer
+  /// contract as [newSession], with the archive's transcript restored.
+  void openSession(String sessionId) {
+    if (isReady) dispatch(SessionOpenMsg(sessionId: sessionId));
+  }
+
   /// Remembers [id] as the session to attach to. Persisted by the caller.
   void setSessionId(String? id) {
     _sessionId = id;
