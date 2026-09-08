@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.322
+
 
 - feat(browser_ext): CodeMie cookie sign-in without any API key or SSO
   dance — the panel now talks to a small `ext_request` op surface on the
@@ -2921,5 +2922,7 @@
 - ci: the Chrome extension builds in the release pipeline and ships as a
   release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
   page gains the download + load-unpacked card.
+
+## Unreleased
 
 ## Unreleased
