@@ -2973,7 +2973,15 @@
 - feat(browser_ext): session history in the extension panel — list + open SW archives (#64)
 - fix(ci): binary smoke SIGPIPE + smoke gate passes skipped matrix on push/schedule (#63)
 
-## Unreleased
+## 0.1.326
+
+- fix(59): schedule_message records survive host reconfigures and always surface (#65)
+- fix(browser_ext): explicit boots win over the auto-boot storage snapshot
+- feat(27): hub-first agent messaging fabric with file fallback (phase 1) (#58)
+- build(browser_ext): strip on-device CDN loaders from the panel bundle
+- fix(browser_ext): explicit boot keys persist — auto-boot no longer reverts them
+- fix(ui): sharp chevron tip in the web splash and favicon
+- feat(browser_ext): durable transcript replay — history survives SW restarts and session_open
 
 ## Unreleased
 
@@ -2992,3 +3000,5 @@
   are deliverable through `agent_message`. Docs: `docs/dap.md` §12.
   Discovery/presence states (`busy`) and the A2A gateway remain for
   phases 2-3.
+
+## Unreleased
