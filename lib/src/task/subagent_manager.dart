@@ -10,6 +10,8 @@ library;
 
 import 'dart:async';
 
+import '../a2a/a2a_client.dart';
+import '../a2a/a2a_mail_gateway.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/fallback_messaging_repository.dart';
 import '../messaging/messaging_repository.dart';
@@ -103,6 +105,12 @@ final class SubagentManager {
   /// territory and stays unresolved. Null = the host did not report one —
   /// machine-suffixed addresses then never resolve locally.
   String? machineName;
+
+  /// The A2A boundary gateway (issue #27 phase 3): when set, a
+  /// `name@machine` address naming ANOTHER machine delivers through the
+  /// `a2a:` config's server for that machine. Null = foreign machines
+  /// stay unresolved (the phase-2 honest error).
+  A2aMailGateway? a2aGateway;
 
   /// The fabric mailbox for a local agent id. An id containing `/` is
   /// already an absolute mailbox (cross-instance addressing like
@@ -219,6 +227,11 @@ final class SubagentManager {
     final handle = _handles[id];
     await _guardRecipient(id, handle);
     final capped = _capMessage(message);
+    final gateway = a2aGateway;
+    if (gateway != null && id.contains('@')) {
+      await _deliverViaA2a(gateway, id, capped);
+      return;
+    }
     if (messaging != null) {
       await _deliverViaFabric(id, handle, capped);
       return;
@@ -233,15 +246,41 @@ final class SubagentManager {
     _touchWithMessage(handle, capped);
   }
 
+  /// Cross-machine delivery (issue #27 phase 3): the address rides the A2A
+  /// boundary gateway. Wire failures surface as [StateError] so the tool
+  /// reports them like any other undeliverable target.
+  Future<void> _deliverViaA2a(
+    A2aMailGateway gateway,
+    String id,
+    SubagentMessage message,
+  ) async {
+    try {
+      await gateway.deliver(
+        AgentMessage(
+          id: newMessageId(),
+          fromId: mailboxOf(message.fromId),
+          toId: id,
+          text: message.text,
+          sentAt: message.sentAt,
+          hops: message.hops,
+        ),
+      );
+    } on A2aException catch (error) {
+      throw StateError('a2a delivery to "$id" failed: ${error.message}');
+    }
+  }
+
   /// Recipient validation for [enqueueMessage]: known local handle, the
   /// [selfId] inbox (fabric only), an absolute cross-instance mailbox
-  /// (fabric only), or a hub target the routing fabric resolves — hub
-  /// peers (16-hex ids, display names, `#channels`) have no local handle.
-  /// Aborted children refuse messages.
+  /// (fabric only), a foreign `name@machine` address when the A2A gateway
+  /// is wired (issue #27 phase 3), or a hub target the routing fabric
+  /// resolves — hub peers (16-hex ids, display names, `#channels`) have no
+  /// local handle. Aborted children refuse messages.
   Future<void> _guardRecipient(String id, SubagentHandle? handle) async {
     final deliverable =
         handle != null ||
         (id == selfId || id.contains('/')) && messaging != null ||
+        id.contains('@') && a2aGateway != null ||
         await _hubResolvable(id);
     if (!deliverable) {
       throw StateError(
