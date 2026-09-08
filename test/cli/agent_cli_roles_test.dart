@@ -291,7 +291,10 @@ void main() {
 
     // The summary call went to the smol model, not the default chain.
     expect(factory.calls, ['claude-a', 'claude-smol']);
-    expect(factory.contexts.last.systemPrompt, contains('summar'));
+    expect(
+      factory.contexts.last.systemPrompt,
+      contains('context checkpoint assistant'),
+    );
   });
 
   test('a resolver without a default role keeps the legacy wiring', () async {
