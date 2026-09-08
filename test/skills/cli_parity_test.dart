@@ -69,6 +69,7 @@ const _settingsCommands = <String, String>{
 const _nonSettingsCommands = <String, String>{
   '/exit': 'quits the REPL',
   '/help': 'prints help',
+  '/terminal-setup': 'prints per-terminal Shift+Enter guidance',
   '/stats': 'read-only token/cost totals',
   '/tasks': 'lists/cancels background jobs',
   '/reset': 'starts a new session (no persisted setting)',
