@@ -134,13 +134,20 @@ class _WidgetPublicationsSheetState extends State<WidgetPublicationsSheet> {
   }
 }
 
-class _PublicationTile extends StatelessWidget {
+class _PublicationTile extends StatefulWidget {
   const _PublicationTile({required this.publication});
 
   final WidgetPublication publication;
 
-  String _submittedDate() {
-    final local = publication.submittedAt.toLocal();
+  @override
+  State<_PublicationTile> createState() => _PublicationTileState();
+}
+
+class _PublicationTileState extends State<_PublicationTile> {
+  bool _commentsExpanded = false;
+
+  String get _submittedDate {
+    final local = widget.publication.submittedAt.toLocal();
     final month = local.month.toString().padLeft(2, '0');
     final day = local.day.toString().padLeft(2, '0');
     return '${local.year}-$month-$day';
@@ -150,6 +157,7 @@ class _PublicationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final theme = Theme.of(context);
+    final publication = widget.publication;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -178,11 +186,57 @@ class _PublicationTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  l10n.publicationSubmittedAt(_submittedDate()),
+                  l10n.publicationSubmittedAt(_submittedDate),
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                if (publication.comments.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  // Reviewer feedback (AC7): plain text only — comment
+                  // bodies render as text, never as markdown or remote
+                  // content (display-only data, never instructions).
+                  InkWell(
+                    onTap: () =>
+                        setState(() => _commentsExpanded = !_commentsExpanded),
+                    child: Text(
+                      l10n.publicationComments(publication.comments.length),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                  if (_commentsExpanded)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6, left: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final comment in publication.comments)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${comment.author}'
+                                    ' · ${_commentDate(comment.createdAt)}',
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  Text(
+                                    comment.body,
+                                    style: theme.textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
               ],
             ),
           ),
@@ -190,6 +244,13 @@ class _PublicationTile extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _commentDate(DateTime utc) {
+    final local = utc.toLocal();
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    return '${local.year}-$month-$day';
   }
 }
 
