@@ -25,6 +25,9 @@ final _skillPath = '$_repoRoot/.fah/skills/fa-self-config/SKILL.md';
 final _dispatchSource = File(
   '$_repoRoot/lib/src/cli/agent_cli_commands.dart',
 ).readAsStringSync();
+final _configArgsSource = File(
+  '$_repoRoot/lib/src/cli/cli_args.dart',
+).readAsStringSync();
 
 /// Slash commands that appear in the dispatch source (the real routing
 /// tables: the `_infoCommandHandlers` map literal and the `case '/…'`
@@ -180,4 +183,40 @@ void main() {
           'are not classified settings commands',
     );
   });
+
+  /// The `fa config` verbs, parsed from the real `configVerbs` const — a new
+  /// verb fails this test until the skill documents it, and a documented verb
+  /// that vanishes from the CLI fails it the other way (issue #29 S3).
+  test(
+    'every fa config verb is documented in the skill (no phantom verbs)',
+    () {
+      final setLiteral =
+          RegExp(
+            r'const configVerbs = \{([^}]*)\}',
+          ).firstMatch(_configArgsSource)?.group(1) ??
+          (throw StateError('configVerbs not found in cli_args.dart'));
+      final verbs = RegExp(
+        "'([a-z-]+)'",
+      ).allMatches(setLiteral).map((m) => m.group(1)!).toSet();
+      final documented = RegExp(
+        'fa config ([a-z][a-z-]*)',
+      ).allMatches(skillBody).map((m) => m.group(1)!).toSet();
+      expect(
+        verbs.difference(documented),
+        isEmpty,
+        reason:
+            'fa config gained verb(s) ${verbs.difference(documented)} — '
+            'document them in fa-self-config/SKILL.md (the config-tool section '
+            'lists each `fa config <verb>` wrapper)',
+      );
+      expect(
+        documented.difference(verbs),
+        isEmpty,
+        reason:
+            'fa-self-config/SKILL.md documents `fa config '
+            '${documented.difference(verbs)}` which cli_args.dart configVerbs '
+            'does not have — a verb was renamed or removed; update the skill',
+      );
+    },
+  );
 }

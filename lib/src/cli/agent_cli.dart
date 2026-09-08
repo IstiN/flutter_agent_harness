@@ -98,6 +98,7 @@ import '../secrets/secure_key_store.dart';
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session/attach/session_presence.dart';
+import '../config/config_service.dart';
 import 'cli_config.dart';
 import 'custom_providers.dart';
 import 'folder_model_state.dart';
@@ -277,6 +278,7 @@ class AgentCli {
         lsp: config.lspConfig,
         mcp: _mcp.manager,
         shellJobs: _shellJobs,
+        config: ConfigService(env: decoratedEnv, homeDir: config.homeDir),
       ),
       ...memoryTools(
         _memory,
@@ -2756,23 +2758,6 @@ class AgentCli {
     } catch (_) {
       // Diagnostics must never break the CLI.
     }
-  }
-
-  /// Returns a user-facing hint for a compaction failure, pointing at the
-  /// `smol` role config when the summarization model hit a provider limit.
-  String _compactionFailureHint(Object error) {
-    final text = error.toString();
-    if (text.contains('usage limit') ||
-        text.contains('access_terminated_error') ||
-        text.contains('rate limit') ||
-        text.contains('429')) {
-      return '$error\n\n'
-          'Compaction uses the `smol` role model (see `roles.smol` in '
-          '~/.fah/config.yaml). The current smol model/provider returned '
-          'the error above. Switch it to a model/key with available quota, '
-          'e.g. via `/settings` → Agent models, or edit ~/.fah/config.yaml.';
-    }
-    return text;
   }
 
   /// Whether a guided flow is between prompts.

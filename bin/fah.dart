@@ -30,8 +30,9 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
-import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
+import 'package:flutter_agent_harness/src/cli/config_command.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
+import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
 // The ONLY place the core CLI imports the hub client package: downstream
@@ -1105,6 +1106,22 @@ Future<void> _runApp(List<String> args) async {
     positionals: parsed.positionals,
   );
 
+  // `fa config check|path|get|set` runs BEFORE loadCliConfig: check must
+  // be able to diagnose exactly the broken config that would abort boot
+  // (issue #29). homeDir may be null — the service reports the global
+  // scope honestly.
+  final earlyConfigCmd = parsed.config;
+  if (earlyConfigCmd != null && earlyConfigCmd.verb != 'export-providers') {
+    exit(
+      await runConfigServiceCommand(
+        earlyConfigCmd,
+        io: _TerminalCliIO(headless: true),
+        env: LocalExecutionEnv(cwd: Directory.current.path),
+        homeDir: homeDirectory(),
+      ),
+    );
+  }
+
   final home = homeDirectory();
   if (home == null || home.isEmpty) {
     _fail('cannot resolve home directory; pass --session-root');
@@ -1119,9 +1136,8 @@ Future<void> _runApp(List<String> args) async {
   // read by the adapters' connect/idle watchdogs on every request.
   providerTimeoutsOverride = saved.providerTimeouts;
 
-  // `fa config <verb>` — headless config management (e.g.
-  // export-providers), intercepted before prompt resolution. A throwaway
-  // key cache: the process exits when the verb returns.
+  // `fa config export-providers` — needs the loaded config (saved
+  // providers + key names); check|path|get|set already ran above.
   final configCmd = parsed.config;
   if (configCmd != null) {
     final exportKeys = SecureKeyCache(platformSecureKeyStore());
