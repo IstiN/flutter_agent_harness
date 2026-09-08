@@ -18,6 +18,20 @@
   `test/cli/transcript_markdown_perf_test.dart`; perf log:
   docs/performance-cli-tui.md.
 
+- feat(skills): the `fa-self-config` skill (issue #29, phase 1) — fa
+  configures itself by editing the config files the CLI settings commands
+  write, with a test-enforced parity guard: every settings-affecting CLI
+  command (`/provider`, `/models`, `/model`, `/model-edit`, `/memory`,
+  `/tools`, `/cube`, `/mcp`, `/redact`, `/skills`, `/approval`, `/allow`,
+  `/mode` family, `/settings`) must stay documented in the skill with its
+  config-file equivalent, and a new settings command fails CI until it is
+  classified and documented. The skill encodes precedence (project
+  `memory:`/`cube:`/`tools:` win over the user file), strict vs tolerant
+  parse behavior, live vs next-boot application, and the
+  never-inline-API-keys rule; an accuracy test pins every documented key
+  against the real parsers (`CliConfig`/`MemoryConfig`/`ToolsConfig`/
+  `McpConfig`/roles) so no phantom keys or stale names can ship.
+
 ## 0.1.322
 
 
