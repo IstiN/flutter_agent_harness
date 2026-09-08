@@ -335,6 +335,22 @@ final class SessionNewMsg extends UiProtocolMessage {
   Map<String, dynamic> encode() => {'kind': kind};
 }
 
+/// UI → SW: open a past session (an archived JSONL) as the live one —
+/// the current live session is archived first, the archive's transcript
+/// is restored, and the standard attach trio answers so the panel
+/// re-syncs onto the opened session.
+final class SessionOpenMsg extends UiProtocolMessage {
+  const SessionOpenMsg({required this.sessionId});
+
+  final String sessionId;
+
+  @override
+  String get kind => 'session_open';
+
+  @override
+  Map<String, dynamic> encode() => {'kind': kind, 'sessionId': sessionId};
+}
+
 /// UI → SW: read settings.
 final class SettingsQueryMsg extends UiProtocolMessage {
   const SettingsQueryMsg();
@@ -662,6 +678,8 @@ UiProtocolMessage _decode(Map<String, dynamic> json) {
         return SessionsResultMsg(sessions: _reqMapList(json, 'sessions'));
       case 'session_new':
         return const SessionNewMsg();
+      case 'session_open':
+        return SessionOpenMsg(sessionId: _reqStr(json, 'sessionId'));
       case 'settings_query':
         return const SettingsQueryMsg();
       case 'settings_put':
