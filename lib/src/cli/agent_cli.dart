@@ -39,6 +39,7 @@ import '../agent/auto_compactor.dart';
 import '../providers/models_for_endpoint.dart';
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart';
+import '../a2a/a2a_mail_gateway.dart';
 import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import 'agent_tree.dart';
@@ -383,6 +384,12 @@ class AgentCli {
     // Phase 5a: A2A remote agents from the `a2a:` config section. Connects
     // lazily per server (never blocks boot).
     _a2aManager = A2aManager(config.a2aConfig);
+    // Issue #27 phase 3: cross-machine `agent_message` rides the A2A
+    // boundary gateway (the `a2a:` config's server per machine).
+    _subagentManager.a2aGateway = A2aMailGateway(
+      manager: _a2aManager,
+      machineName: config.machineName,
+    );
     // Discover agent types from the agent roots (.fah/.agents/.claude/.github/
     // .codex) — fire-and-forget; the registry starts with built-ins and merges
     // discovered types when they arrive. Third-party roots ride the same

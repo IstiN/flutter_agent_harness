@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- feat(27): A2A boundary gateway (issue #27 phase 3) — cross-machine
+  `agent_message` rides A2A: `name@machine` addresses resolve the machine
+  against the `a2a:` config section and deliver as `message/send` with a
+  `faMail` metadata envelope (`A2aMailGateway`, lib/src/a2a/
+  a2a_mail_gateway.dart); failed remote tasks error instead of dead-
+  dropping, unconfigured machines fail with the exact config hint. Inbound:
+  `fa serve --a2a` now accepts envelope-carrying sends and deposits them
+  into the project's file inboxes (by mailbox id or session display name)
+  instead of running an agent turn. The hub remains the intra-machine
+  transport; hosts still carry no transport code.
+
 ## 0.1.324
 
 - fix(43): typing during minutes-long thinking streams no longer degrades —

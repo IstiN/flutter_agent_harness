@@ -1,6 +1,9 @@
 @TestOn('vm')
 library;
 
+import 'package:flutter_agent_harness/src/a2a/a2a_client.dart';
+import 'package:flutter_agent_harness/src/a2a/a2a_mail_gateway.dart';
+import 'package:flutter_agent_harness/src/a2a/a2a_manager.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/messaging/agent_message.dart';
 import 'package:flutter_agent_harness/src/messaging/file_messaging_repository.dart';
@@ -820,6 +823,77 @@ void main() {
       }
       expect(repo._inboxes, isEmpty);
     });
+
+    test(
+      'agent_message routes a foreign machine via the A2A gateway',
+      () async {
+        final repo = fakeFabric([box('sess9/main', name: 'goal_builder')]);
+        final gateway = _RecordingGateway();
+        final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+          ..mailboxPrefix = 'sess1'
+          ..machineName = 'workstation'
+          ..a2aGateway = gateway;
+        final tool = subagentMonitoringTools(
+          manager: m,
+          currentSubagentId: () => 'a1',
+        ).firstWhere((t) => t.name == 'agent_message');
+        final result = await tool.execute(
+          {'to': 'goal_builder@renderbox', 'message': 'cross machine hi'},
+          null,
+          null,
+        );
+        final text = (result.content.first as dynamic).text as String;
+        expect(text, contains('queued for "goal_builder@renderbox"'));
+        expect(text, contains('A2A gateway'));
+        expect(gateway.delivered, hasLength(1));
+        final message = gateway.delivered.single;
+        expect(message.toId, 'goal_builder@renderbox');
+        expect(message.fromId, 'sess1/a1');
+        expect(message.text, 'cross machine hi');
+        // Nothing landed in any local inbox.
+        expect(repo._inboxes, isEmpty);
+      },
+    );
+
+    test('a gateway wire failure surfaces as an honest error', () async {
+      final repo = fakeFabric([box('sess9/main', name: 'goal_builder')]);
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1'
+        ..machineName = 'workstation'
+        ..a2aGateway = _RecordingGateway(fail: true);
+      final tool = subagentMonitoringTools(
+        manager: m,
+        currentSubagentId: () => 'a1',
+      ).firstWhere((t) => t.name == 'agent_message');
+      final result = await tool.execute(
+        {'to': 'goal_builder@elsewhere', 'message': 'cross machine?'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('error'));
+      expect(text, contains('a2a delivery to "goal_builder@elsewhere" failed'));
+    });
+
+    test('without a gateway a foreign machine still errors', () async {
+      final repo = fakeFabric([box('sess9/main', name: 'goal_builder')]);
+      final m = SubagentManager(parentSessionId: 'p', messaging: repo)
+        ..mailboxPrefix = 'sess1'
+        ..machineName = 'workstation';
+      final tool = subagentMonitoringTools(
+        manager: m,
+        currentSubagentId: () => 'a1',
+      ).firstWhere((t) => t.name == 'agent_message');
+      final result = await tool.execute(
+        {'to': 'goal_builder@elsewhere', 'message': 'cross machine?'},
+        null,
+        null,
+      );
+      final text = (result.content.first as dynamic).text as String;
+      expect(text, contains('error'));
+      expect(text, contains('a2a.servers'));
+      expect(repo._inboxes, isEmpty);
+    });
   });
 
   group('agent_directory: compact ids, activity, subagent clarity', () {
@@ -1107,4 +1181,29 @@ void main() {
       );
     });
   });
+}
+
+/// Records cross-machine deliveries without touching the wire.
+final class _RecordingGateway implements A2aMailGateway {
+  _RecordingGateway({this.fail = false});
+
+  final bool fail;
+  final delivered = <AgentMessage>[];
+
+  @override
+  A2aManager get manager => throw UnimplementedError();
+
+  @override
+  String? get machineName => null;
+
+  @override
+  Future<void> deliver(AgentMessage message) async {
+    if (fail) {
+      throw const A2aException(
+        'no a2a server for machine "elsewhere" — add an '
+        'a2a.servers.elsewhere entry (url) to ~/.fah/config.yaml',
+      );
+    }
+    delivered.add(message);
+  }
 }

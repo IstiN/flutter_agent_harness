@@ -4,6 +4,7 @@ library;
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/src/a2a/a2a_client.dart';
+import 'package:flutter_agent_harness/src/a2a/a2a_mail_gateway.dart';
 import 'package:flutter_agent_harness/src/a2a/a2a_server.dart';
 import 'package:test/test.dart';
 
@@ -184,6 +185,129 @@ void main() {
       );
       final decoded = jsonDecode(response) as Map<String, dynamic>;
       expect(decoded['result'], isNotNull);
+    });
+
+    test('fabric mail deposits via the sink, never the runner', () async {
+      final envelopes = <A2aMailEnvelope>[];
+      final handler = A2aRequestHandler(
+        runner: (_) async => throw StateError('runner must not run'),
+        agentName: 'a',
+        agentDescription: 'd',
+        mailSink: (envelope) async {
+          envelopes.add(envelope);
+          return 'delivered to ${envelope.to} inbox';
+        },
+      );
+      final response = await handler.handle(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'message/send',
+          'id': 1,
+          'params': {
+            'message': {
+              'role': 'user',
+              'parts': [
+                {'type': 'text', 'text': 'hi from renderbox'},
+              ],
+              'metadata': {
+                'faMail': {
+                  'id': 'm1',
+                  'from': 'other/main@renderbox',
+                  'to': 'goal_builder',
+                  'text': 'hi from renderbox',
+                  'sentAt': '2026-09-08T10:00:00.000Z',
+                  'hops': 2,
+                },
+              },
+            },
+          },
+        }),
+      );
+      final decoded = jsonDecode(response) as Map<String, dynamic>;
+      expect(envelopes, hasLength(1));
+      expect(envelopes.single.to, 'goal_builder');
+      expect(decoded['result']['status']['state'], 'completed');
+      expect(
+        decoded['result']['artifacts'][0]['parts'][0]['text'],
+        'delivered to goal_builder inbox',
+      );
+    });
+
+    test('a failing sink fails the task with the error', () async {
+      final handler = A2aRequestHandler(
+        runner: (_) async => 'ok',
+        agentName: 'a',
+        agentDescription: 'd',
+        mailSink: (_) async => throw StateError('unknown mailbox "nobody"'),
+      );
+      final response = await handler.handle(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'message/send',
+          'id': 1,
+          'params': {
+            'message': {
+              'role': 'user',
+              'parts': [
+                {'type': 'text', 'text': 'hi'},
+              ],
+              'metadata': {
+                'faMail': {
+                  'id': 'm1',
+                  'from': 'x',
+                  'to': 'nobody',
+                  'text': 'hi',
+                  'sentAt': '',
+                },
+              },
+            },
+          },
+        }),
+      );
+      final decoded = jsonDecode(response) as Map<String, dynamic>;
+      expect(decoded['result']['status']['state'], 'failed');
+      expect(
+        decoded['result']['messages'][1]['parts'][0]['text'],
+        contains('unknown mailbox "nobody"'),
+      );
+    });
+
+    test('fabric mail without a sink fails honestly', () async {
+      final handler = A2aRequestHandler(
+        runner: (_) async => 'ok',
+        agentName: 'a',
+        agentDescription: 'd',
+      );
+      final response = await handler.handle(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'message/send',
+          'id': 1,
+          'params': {
+            'message': {
+              'role': 'user',
+              'parts': [
+                {'type': 'text', 'text': 'hi'},
+              ],
+              'metadata': {
+                'faMail': {
+                  'id': 'm1',
+                  'from': 'x',
+                  'to': 'goal_builder',
+                  'text': 'hi',
+                  'sentAt': '',
+                },
+              },
+            },
+          },
+        }),
+      );
+      final decoded = jsonDecode(response) as Map<String, dynamic>;
+      expect(decoded['result']['status']['state'], 'failed');
+      expect(
+        decoded['result']['messages'][1]['parts'][0]['text'],
+        contains('does not accept fabric mail'),
+      );
     });
   });
 }
