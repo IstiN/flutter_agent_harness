@@ -48,6 +48,11 @@ abstract interface class UiHostConnector {
   /// Known past sessions (`sessions_query`).
   List<Map<String, dynamic>> sessionsList();
 
+  /// Resets the live session (`session_new`): archives the current JSONL
+  /// and starts a fresh one — same provider/approvals/tools, empty
+  /// transcript. Answers busy with an error event while a turn runs.
+  Future<void> newSession();
+
   /// One-shot host capability request (`ext_request`: cookies.get_all /
   /// fetch / tabs.create) — the same op surface the host backend serves.
   Future<Map<String, dynamic>> extRequest(
@@ -143,7 +148,10 @@ final class UiPortServer {
         _ => StreamMsg(event: event),
       };
 
-  void _handle(UiPortChannel channel, Map<String, dynamic> json) {
+  /// Inbound dispatch. Synchronous up to the switch (ordering for the
+  /// await-free kinds is preserved — Dart async bodies run to the first
+  /// await without yielding); only `session_new` awaits the host reset.
+  Future<void> _handle(UiPortChannel channel, Map<String, dynamic> json) async {
     if (json['kind'] == 'error') return; // peer surfaced a failure: ignore
     final msg = UiProtocolMessage.decode(json);
     if (msg is ErrorMsg) {
@@ -182,6 +190,23 @@ final class UiPortServer {
         host.decide(m.id, m.decision == 'allow');
       case final SessionsQueryMsg _:
         _send(channel, SessionsResultMsg(sessions: host.sessionsList()));
+      case final SessionNewMsg _:
+        // Reset + re-sync: the attach trio lands on the SAME channel so
+        // the requesting panel adopts the fresh session id and cleared
+        // replay immediately (other channels see it through their own
+        // attach cycle).
+        try {
+          await host.newSession();
+        } on Object catch (error) {
+          _send(channel, ErrorMsg(code: 'session_new', message: '$error'));
+          break;
+        }
+        _send(
+          channel,
+          AttachedMsg(sessionId: host.sessionId, replay: const []),
+        );
+        _send(channel, ToolsStateMsg(tools: host.toolsList()));
+        _send(channel, StreamMsg(event: {'type': 'status', ...host.state()}));
       case final SettingsQueryMsg _:
         _send(channel, SettingsResultMsg(settings: host.settingsGet()));
       case final SettingsPutMsg m:

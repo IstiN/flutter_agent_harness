@@ -321,6 +321,20 @@ final class SessionsResultMsg extends UiProtocolMessage {
   Map<String, dynamic> encode() => {'kind': kind, 'sessions': sessions};
 }
 
+/// UI → SW: reset the live session — archive its JSONL, start a fresh one
+/// (new id, empty transcript, same provider/approvals/tools). The SW
+/// answers with the standard attach trio (AttachedMsg + ToolsStateMsg +
+/// status) so the panel re-syncs exactly like on (re)attach.
+final class SessionNewMsg extends UiProtocolMessage {
+  const SessionNewMsg();
+
+  @override
+  String get kind => 'session_new';
+
+  @override
+  Map<String, dynamic> encode() => {'kind': kind};
+}
+
 /// UI → SW: read settings.
 final class SettingsQueryMsg extends UiProtocolMessage {
   const SettingsQueryMsg();
@@ -646,6 +660,8 @@ UiProtocolMessage _decode(Map<String, dynamic> json) {
         return const SessionsQueryMsg();
       case 'sessions_result':
         return SessionsResultMsg(sessions: _reqMapList(json, 'sessions'));
+      case 'session_new':
+        return const SessionNewMsg();
       case 'settings_query':
         return const SettingsQueryMsg();
       case 'settings_put':

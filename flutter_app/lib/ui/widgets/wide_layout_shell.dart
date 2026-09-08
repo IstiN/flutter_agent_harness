@@ -581,6 +581,13 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     final active = widget.manager.active;
     if (active == null) return;
     final service = active.service;
+    // Relay sessions (extension panel) live in the service worker: reset
+    // there instead of cloning a local config.
+    final relayReset = service.newSessionAction;
+    if (relayReset != null) {
+      await relayReset();
+      return;
+    }
     final config = service.configForClone;
     if (config == null) return;
     final l10n = context.l10n;

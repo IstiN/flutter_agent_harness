@@ -85,6 +85,18 @@ final class RelayAgentService extends AgentService {
   @override
   List<String> get pendingSteerTexts => const [];
 
+  /// Panel "New session": the SW archives its live session and starts a
+  /// fresh one (`session_new`); the attach trio that answers clears this
+  /// side through the normal [AttachedMsg] rebuild (new session id, empty
+  /// transcript). A no-op while a turn runs — the SW refuses busy, and
+  /// clearing optimistically would blank a transcript that still exists.
+  @override
+  Future<void> Function()? get newSessionAction => _running
+      ? null
+      : () async {
+          _transport.newSession();
+        };
+
   @override
   Future<void> sendText(String text) async {
     _error = null;

@@ -22,6 +22,10 @@ abstract interface class UiHostBackend {
   String get sessionId;
   List<Map<String, dynamic>> sessionsList();
 
+  /// `session_new`: archive the live JSONL and start a fresh session in
+  /// place. Throws when not booted or while a turn runs (busy).
+  Future<void> newSession();
+
   /// The live tool list with enabled flags (panel Tools section).
   List<UiToolState> toolsList();
 
@@ -124,6 +128,13 @@ final class UiHostAdapter implements UiHostConnector {
   @override
   List<Map<String, dynamic>> sessionsList() =>
       backend()?.sessionsList() ?? const [];
+
+  @override
+  Future<void> newSession() async {
+    final host = backend();
+    if (host == null) throw StateError('host not booted');
+    await host.newSession();
+  }
 
   @override
   Future<Map<String, dynamic>> extRequest(

@@ -256,6 +256,11 @@ final class _FakeBackend implements UiHostBackend {
     {'id': 'sess-1', 'messages': 3, 'running': false},
   ];
 
+  var newSessionCalls = 0;
+
+  @override
+  Future<void> newSession() async => newSessionCalls++;
+
   @override
   List<UiToolState> toolsList() => const [
     UiToolState(name: 'browser_active_tab', enabled: true),
