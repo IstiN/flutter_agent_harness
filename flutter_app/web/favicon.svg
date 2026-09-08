@@ -7,5 +7,9 @@
   </defs>
   <rect width="64" height="64" rx="14" fill="#0b0f16"/>
   <rect x="1" y="1" width="62" height="62" rx="13" fill="none" stroke="#1c2637" stroke-width="2"/>
-  <text x="32" y="42" text-anchor="middle" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="26" font-weight="700" fill="url(#g)">&gt;_</text>
+  <!-- Brand chevron as a path (sharp butt/miter tip), not a font glyph. -->
+  <g transform="translate(32.5 32) scale(0.071875) translate(-520 -592)">
+    <path d="M 280 434 L 492 541 L 280 648" fill="none" stroke="url(#g)" stroke-width="64" stroke-linecap="butt" stroke-linejoin="miter"/>
+    <rect x="512" y="712" width="248" height="40" fill="url(#g)"/>
+  </g>
 </svg>
