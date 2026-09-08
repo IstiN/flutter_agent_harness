@@ -1570,7 +1570,7 @@ class AgentService extends ChangeNotifier
     if (_session == null && _sessionId == null) {
       final id = createSessionId();
       _sessionId = id;
-      _subagentManager?.mailboxPrefix = id;
+      _setMailboxPrefix(id);
     }
     // Compose the system prompt eagerly — messaging address defaults to the
     // host's local id (`main`) until the session materialises (so a brand
@@ -1619,7 +1619,7 @@ class AgentService extends ChangeNotifier
     _sessionId = sessionMetadata.id;
     _sessionFile = sessionMetadata.path;
     _sessionCwd = sessionMetadata.cwd;
-    _subagentManager?.mailboxPrefix = sessionMetadata.id;
+    _setMailboxPrefix(sessionMetadata.id);
     // Follow external appends (a running fa CLI on the same session).
     _startSessionWatch();
     // The messaging section now carries the real mailbox address.
@@ -1673,12 +1673,27 @@ class AgentService extends ChangeNotifier
       'reads (offset/limit or :A-B selectors) instead.\n'
       '</system-notice>';
 
+  /// Re-addresses the instance's mailboxes and re-arms scheduled-message
+  /// delivery: records that came due under a previous session's mailbox
+  /// surface in the now-active one (start() is an idempotent re-arm +
+  /// drain) instead of stranding in a mailbox nobody drains.
+  void _setMailboxPrefix(String id) {
+    _subagentManager?.mailboxPrefix = id;
+    // Lightweight test services (pre-constructed agent) have no fabric.
+    if (_subagentManager == null) return;
+    unawaited(_scheduledMessages.start());
+  }
+
   void _startInboxWatcher() {
     if (!enableInboxWatcher) return;
     _inboxWatchTimer ??= Timer.periodic(const Duration(seconds: 3), (_) {
       // Every other tick (≈6s): refresh the messaging-fabric heartbeat so
       // agent_directory reports this instance as live between mails.
       if (_fabricHeartbeatTick++ % 2 == 0) _touchFabricHeartbeat();
+      // Catch-up sweep: a record whose owning service died before its
+      // timer fired (app restart, sheet dispose) is delivered here into
+      // the live mailboxes so the reminder still surfaces (issue #59).
+      unawaited(_scheduledMessages.deliverDue());
       unawaited(_wakeOnInboxMail());
     });
   }
@@ -2077,6 +2092,7 @@ class AgentService extends ChangeNotifier
     // watchdog would otherwise outlive the host by minutes (and wedge
     // widget tests' fake_async invariants on a pending timer).
     _agent.abort();
+    if (_subagentManager != null) _scheduledMessages.dispose();
     _inboxWatchTimer?.cancel();
     _idleWatchdog?.cancel();
     _liveActivityEndTimer?.cancel();
@@ -2265,7 +2281,7 @@ class AgentService extends ChangeNotifier
     _sessionId = metadata.id;
     _sessionFile = metadata.path;
     _sessionCwd = metadata.cwd;
-    _subagentManager?.mailboxPrefix = metadata.id;
+    _setMailboxPrefix(metadata.id);
     // Follow external appends (a running fa CLI on the same session).
     _startSessionWatch();
     // The ledger re-projects the active branch (records carry richer
