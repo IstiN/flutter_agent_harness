@@ -39,35 +39,36 @@ final class FabricConfig {
     if (caps is! YamlList) {
       throw ConfigException('fabric.capabilities must be a list, got: $caps');
     }
-    final parsed = <AgentCapability>[];
-    for (final entry in caps) {
-      if (entry is! YamlMap) {
-        throw ConfigException(
-          'fabric.capabilities entries must be maps, got: $entry',
-        );
-      }
-      for (final key in entry.keys) {
-        if (key != 'name' && key != 'description' && key != 'payload') {
-          throw ConfigException('unknown "fabric.capabilities" key: $key');
-        }
-      }
-      final name = '${entry['name'] ?? ''}'.trim();
-      if (name.isEmpty) {
-        throw ConfigException(
-          'fabric.capabilities entries need a non-empty "name"',
-        );
-      }
-      parsed.add(
-        AgentCapability(
-          name: name,
-          description: entry['description'] == null
-              ? null
-              : '${entry['description']}',
-          payload: entry['payload'] == null ? null : '${entry['payload']}',
-        ),
+    return FabricConfig(
+      capabilities: [for (final entry in caps) _parseCapability(entry)],
+    );
+  }
+
+  /// Parses one `fabric.capabilities` entry.
+  static AgentCapability _parseCapability(Object? entry) {
+    if (entry is! YamlMap) {
+      throw ConfigException(
+        'fabric.capabilities entries must be maps, got: $entry',
       );
     }
-    return FabricConfig(capabilities: parsed);
+    for (final key in entry.keys) {
+      if (key != 'name' && key != 'description' && key != 'payload') {
+        throw ConfigException('unknown "fabric.capabilities" key: $key');
+      }
+    }
+    final name = '${entry['name'] ?? ''}'.trim();
+    if (name.isEmpty) {
+      throw ConfigException(
+        'fabric.capabilities entries need a non-empty "name"',
+      );
+    }
+    return AgentCapability(
+      name: name,
+      description: entry['description'] == null
+          ? null
+          : '${entry['description']}',
+      payload: entry['payload'] == null ? null : '${entry['payload']}',
+    );
   }
 
   /// The `fabric:` yaml fragment; only emitted when capabilities exist so

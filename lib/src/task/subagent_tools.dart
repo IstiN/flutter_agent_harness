@@ -506,12 +506,7 @@ List<MailboxEntry> _nameMatches(List<MailboxEntry> entries, String to) {
   ];
   if (matches.length == 1) return (matches.single.id, null);
   if (matches.length <= 1) return (null, null);
-  final listing = matches
-      .map(
-        (entry) =>
-            '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
-      )
-      .join('\n');
+  final listing = _listMailboxes(matches);
   return (
     null,
     '"$to" is an ambiguous id prefix — pick an exact mailbox:\n$listing',
@@ -530,26 +525,9 @@ Future<(String, String?)> _resolveFabricAddress(
 ) async {
   final fabric = manager.messaging;
   if (fabric == null) return (to, null);
-  // `name@machine` (issue #27 phase 2): a suffix naming THIS host is
-  // stripped before local resolution; any other machine is phase-3 A2A
-  // territory and stays unresolved here. No reported machine name →
-  // suffixed forms never resolve locally.
-  if (to.contains('@')) {
-    final at = to.indexOf('@');
-    final machine = to.substring(at + 1).trim().toLowerCase();
-    final local = manager.machineName?.trim().toLowerCase();
-    if (machine.isEmpty || to.substring(0, at).trim().isEmpty) {
-      return (to, 'invalid address "$to" — expected name@machine');
-    }
-    if (local == null || machine != local) {
-      return (
-        to,
-        '"$to" names another machine — cross-machine delivery arrives with '
-            'the A2A gateway (issue #27 phase 3)',
-      );
-    }
-    to = to.substring(0, at).trim();
-  }
+  final (stripped, suffixError) = _stripLocalMachineSuffix(manager, to);
+  if (suffixError != null) return (stripped, suffixError);
+  to = stripped;
   if (to == manager.selfId || manager[to] != null) return (to, null);
   final entries = await fabric.directory();
   if (entries.any((entry) => entry.id == to)) return (to, null);
@@ -567,18 +545,41 @@ Future<(String, String?)> _resolveFabricAddress(
   }
   if (matches.isEmpty) return (to, null);
   if (matches.length > 1) {
-    final listing = matches
-        .map(
-          (entry) =>
-              '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
-        )
-        .join('\n');
     return (
       to,
-      'session name "$to" is ambiguous — pick an exact mailbox:\n$listing',
+      'session name "$to" is ambiguous — '
+          'pick an exact mailbox:\n${_listMailboxes(matches)}',
     );
   }
   return (matches.single.id, null);
+}
+
+/// Formats ambiguous-match candidates for error text.
+String _listMailboxes(List<MailboxEntry> matches) => matches
+    .map(
+      (entry) => '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
+    )
+    .join('\n');
+
+/// Strips a `name@machine` suffix that names this host. Returns the bare
+/// name, or the address unchanged plus an error text for invalid and
+/// foreign-machine suffixes (cross-machine delivery is phase-3 A2A).
+(String, String?) _stripLocalMachineSuffix(SubagentManager manager, String to) {
+  if (!to.contains('@')) return (to, null);
+  final at = to.indexOf('@');
+  final machine = to.substring(at + 1).trim().toLowerCase();
+  final local = manager.machineName?.trim().toLowerCase();
+  if (machine.isEmpty || to.substring(0, at).trim().isEmpty) {
+    return (to, 'invalid address "$to" — expected name@machine');
+  }
+  if (local == null || machine != local) {
+    return (
+      to,
+      '"$to" names another machine — cross-machine delivery arrives with '
+          'the A2A gateway (issue #27 phase 3)',
+    );
+  }
+  return (to.substring(0, at).trim(), null);
 }
 
 /// `task_status` — query one or all retained subagents.
