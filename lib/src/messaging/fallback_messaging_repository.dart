@@ -4,13 +4,13 @@
 /// existing [MessagingRepository] contract — the agent-loop seams
 /// (`externalSteeringSource`, idle wake, `mailboxPrefix`) are untouched.
 ///
-/// Routing:
 /// * `send` asks the primary whether it can deliver the recipient
 ///   ([RoutingMessagingRepository.resolveTarget]); a hub-shaped recipient
 ///   goes hub-ward, everything else (and every hub failure) lands in the
 ///   file fabric exactly as before. While the hub is down, file-bound mail
 ///   is tracked and FORWARDED on the next connected call (at-least-once;
-///   recipients dedupe by message id).
+///   the inbox probe and every send trigger the flush, so a reconnect
+///   drains the queue within one probe tick).
 /// * `peek`/`drain` merge the primary's inbox into [primaryMailbox]'s drain
 ///   only — the one fabric mailbox the hub identity owns. Subagent drains
 ///   never touch the hub, so a child cannot steal hub mail.
@@ -39,7 +39,8 @@ abstract interface class RoutingMessagingRepository {
 /// A [MessagingRepository] composing a primary (hub) transport with a
 /// fallback (file) fabric. See the library docs for the routing rules.
 // ignore_for_file: prefer_initializing_formals
-final class FallbackMessagingRepository implements MessagingRepository {
+final class FallbackMessagingRepository
+    implements MessagingRepository, RoutingMessagingRepository {
   FallbackMessagingRepository({
     required MessagingRepository primary,
     required MessagingRepository fallback,
@@ -63,6 +64,15 @@ final class FallbackMessagingRepository implements MessagingRepository {
       _primary is RoutingMessagingRepository
       ? _primary as RoutingMessagingRepository
       : null;
+
+  /// The composite routes as its primary routes: connected only when the
+  /// hub is, resolvable only for hub roster targets (or channels). This is
+  /// what lets recipient guards consult the fabric without knowing DAP.
+  @override
+  bool get isConnected => _router?.isConnected ?? false;
+
+  @override
+  Future<String?> resolveTarget(String toId) => _safeResolve(toId);
 
   @override
   Future<void> send(AgentMessage message) async {
@@ -114,17 +124,22 @@ final class FallbackMessagingRepository implements MessagingRepository {
       .add(message.id);
 
   /// Forwards file-queued hub mail on a live primary. Cheap no-op when
-  /// nothing is tracked or the hub is down; called opportunistically from
-  /// every send — the CLI's 2s inbox probe makes the post-reconnect flush
-  /// immediate without any timer or stream wiring.
+  /// nothing is tracked or the hub is down — and while the hub is down
+  /// NOTHING is untracked: a disconnected resolve cannot tell "not a hub
+  /// peer" from "not connected yet", so the queue survives until a
+  /// connected call forwards it. Called opportunistically from every send
+  /// and from `peek`/`drain` — the CLI's 2s inbox probe makes the
+  /// post-reconnect flush immediate without any timer or stream wiring.
   Future<void> _flushQueued() async {
+    final router = _router;
     if (_pendingForward.isEmpty) return;
+    if (router == null || !router.isConnected) return;
     for (final entry in _pendingForward.entries.toList()) {
       final recipient = entry.key;
       final target = await _safeResolve(recipient);
       if (target == null) {
-        // Not a hub peer (or still disconnected): the file fabric owns this
-        // mail — stop tracking, never forward it.
+        // Connected, and the roster does not know this recipient: the file
+        // fabric owns this mail — stop tracking, never forward it.
         _pendingForward.remove(recipient);
         continue;
       }
@@ -154,7 +169,8 @@ final class FallbackMessagingRepository implements MessagingRepository {
   /// file-polling peer never sees the mail twice. Drain-and-rewrite: the
   /// message id is the file name, so survivors come back unchanged and in
   /// order. A crash between hub-send and removal duplicates the message —
-  /// recipients dedupe by id (at-least-once).
+  /// the drain merge dedupes (by id, and by sender+time+body for the hub's
+  /// re-wrapped frames), so the peer sees it once (at-least-once).
   Future<void> _removeFromFileInbox(
     String recipient,
     Set<String> forwardedIds,
@@ -184,6 +200,7 @@ final class FallbackMessagingRepository implements MessagingRepository {
 
   @override
   Future<List<AgentMessage>> peek(String agentId) async {
+    await _flushQueued();
     final fileMessages = await _safePeek(agentId);
     if (!_isPrimaryMailbox(agentId)) return fileMessages;
     final hubMessages = await _safeInbox(agentId, consume: false);
@@ -192,6 +209,7 @@ final class FallbackMessagingRepository implements MessagingRepository {
 
   @override
   Future<List<AgentMessage>> drain(String agentId) async {
+    await _flushQueued();
     final fileMessages = await _fallback.drain(agentId);
     if (!_isPrimaryMailbox(agentId)) return fileMessages;
     final hubMessages = await _safeInbox(agentId, consume: true);
@@ -213,16 +231,24 @@ final class FallbackMessagingRepository implements MessagingRepository {
     }
   }
 
-  /// Oldest-first merge of both transports' inboxes, deduped by message id
-  /// (at-least-once forwarding can deliver a message twice).
+  /// Oldest-first merge of both transports' inboxes. Dedup on two keys:
+  /// the message id (stable across retried deliveries), and — because the
+  /// hub wire assigns each frame a FRESH id per delivery — the
+  /// sender+timestamp+body tuple, so a re-wrapped or redelivered hub frame
+  /// still collapses onto its stable-id copy (at-least-once forwarding).
   List<AgentMessage> _merge(
     List<AgentMessage> hubMessages,
     List<AgentMessage> fileMessages,
   ) {
     final seen = <String>{};
+    final seenBodies = <String>{};
     return [
       for (final message in [...hubMessages, ...fileMessages])
-        if (seen.add(message.id)) message,
+        if (seen.add(message.id) &&
+            seenBodies.add(
+              '${message.fromId}|${message.sentAt}|${message.text}',
+            ))
+          message,
     ]..sort((a, b) {
       final byTime = a.sentAt.compareTo(b.sentAt);
       return byTime != 0 ? byTime : a.id.compareTo(b.id);

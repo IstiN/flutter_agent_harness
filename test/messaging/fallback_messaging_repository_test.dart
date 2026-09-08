@@ -190,6 +190,52 @@ void main() {
     expect(drained.single.id, 'd1');
   });
 
+  test('a hub send failure queued while the hub DROPS stays pending', () async {
+    hub.resolvable.add('hub-peer');
+    hub.failSends = true;
+    await fabric.send(_msg('m1')); // queued while connected (sends fail)
+    expect(files.inboxes['hub-peer'], hasLength(1));
+
+    // The hub goes down before the flush: a disconnected resolve cannot
+    // distinguish "not a hub peer" from "not connected yet" — nothing may
+    // be untracked.
+    hub.connected = false;
+    hub.failSends = false;
+    await fabric.send(_msg('m2', to: 'file-peer'));
+    expect(hub.sent, isEmpty);
+
+    // Reconnect: the first PROBE (peek — the CLI's 2s inbox poll) flushes
+    // the queue without waiting for the next send.
+    hub.connected = true;
+    await fabric.peek('main');
+    expect(hub.sent.map((m) => m.id), ['m1']);
+    expect(files.inboxes['hub-peer'], isNull);
+  });
+
+  test(
+    're-wrapped hub frames dedupe on sender+time+body, not just id',
+    () async {
+      files.receive('main', _msg('d1', from: 'p1'));
+      // The same logical message with the fresh frame id the wire assigns
+      // per delivery: identical sender, timestamp and body, different id.
+      hub.receive(
+        'main',
+        AgentMessage(
+          id: 'fresh-frame-id',
+          fromId: 'p1',
+          toId: 'main',
+          text: 'body of d1',
+          sentAt: '2026-01-01T00:00:01.000Z',
+        ),
+      );
+      final drained = await fabric.drain('main');
+      expect(drained, hasLength(1));
+      // The merge is hub-first, so the wire copy's id survives — the point
+      // is ONE delivery, not which id wins.
+      expect(drained.single.id, 'fresh-frame-id');
+    },
+  );
+
   test('peek reads both transports without consuming', () async {
     hub.receive('main', _msg('h1'));
     files.receive('main', _msg('f1'));

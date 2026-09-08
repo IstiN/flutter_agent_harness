@@ -474,11 +474,20 @@ turn boundary via the external-inbox seam — `hub_plugin.dart`
 
 With DAP unlocked (`DAP_MASTER_SECRET` set) and the hub plugin enabled,
 the CLI composes the hub INTO the agent messaging fabric
-(`FallbackMessagingRepository`): hub-resolvable targets are delivered
-over DAP/1 first, the file inboxes stay the offline fallback — mail sent
-while disconnected queues in the file layer and is forwarded on
-reconnect; inbound hub mail merges into the main inbox drain (deduped by
-message id). The plugin host's separate external inbox is skipped when
-the fabric owns delivery, so hub frames have exactly one consumer.
+(`FallbackMessagingRepository`): hub-resolvable targets (16-hex peer
+ids, unambiguous display names, `#channels` — the same resolution
+`agent_message` uses) are delivered over DAP/1 first, the file inboxes
+stay the offline fallback. Mail sent while the hub path is unavailable
+queues in the file layer and is forwarded on the next connected call —
+the CLI's 2s inbox probe triggers the flush, so a reconnect drains the
+queue within one tick; inbound hub mail merges into the main inbox drain
+(deduped by message id, and by sender+time+body for the wire's
+re-wrapped frames). The plugin host's separate external inbox is skipped
+when the fabric owns delivery, so hub frames have exactly one consumer.
 Embedded hosts opt in through `AgentCliConfig.hubFabric`; subagent
 drains never touch the hub.
+
+Phase-1 scope notes: presence is online/offline only — a `busy` state
+(and richer discovery states) is phase 2. The DAP secret is stored in
+plaintext in `~/.dap/config.json` by `fa_hub_client`; Keychain-backed
+storage is not wired yet (pre-existing, not introduced here).
