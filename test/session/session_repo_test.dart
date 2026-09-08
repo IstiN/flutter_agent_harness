@@ -295,4 +295,71 @@ void main() {
       },
     );
   });
+
+  group('sortSessionsCurrentFolderFirst', () {
+    // Base instant + n minutes, for readable timestamps.
+    SessionMetadata meta(String id, String cwd, int createdMin, int activeMin) {
+      final base = DateTime.utc(2026, 1, 1);
+      return SessionMetadata(
+        id: id,
+        createdAt: base.add(Duration(minutes: createdMin)),
+        cwd: cwd,
+        path: '/sessions/$id.jsonl',
+        lastUpdatedAt: base.add(Duration(minutes: activeMin)),
+      );
+    }
+
+    test(
+      'current folder first, then other folders, each group newest first',
+      () {
+        final sessions = [
+          meta('here-old', '/work', 1, 10),
+          meta('there-new', '/other', 2, 60),
+          meta('there-old', '/other', 3, 20),
+          meta('here-new', '/work', 4, 30),
+        ];
+        expect(
+          sortSessionsCurrentFolderFirst(sessions, '/work').map((m) => m.id),
+          ['here-new', 'here-old', 'there-new', 'there-old'],
+        );
+      },
+    );
+
+    test('falls back to createdAt when a session has no activity stamp', () {
+      final base = DateTime.utc(2026, 1, 1);
+      final sessions = [
+        SessionMetadata(
+          id: 'a',
+          createdAt: base,
+          cwd: '/work',
+          path: '/sessions/a.jsonl',
+        ),
+        SessionMetadata(
+          id: 'b',
+          createdAt: base.add(const Duration(minutes: 1)),
+          cwd: '/other',
+          path: '/sessions/b.jsonl',
+        ),
+      ];
+      expect(
+        sortSessionsCurrentFolderFirst(sessions, '/work').map((m) => m.id),
+        ['a', 'b'],
+      );
+    });
+
+    test('no current cwd keeps the plain activity order', () {
+      final sessions = [
+        meta('here-old', '/work', 1, 10),
+        meta('there-new', '/other', 2, 60),
+      ];
+      expect(sortSessionsCurrentFolderFirst(sessions, null).map((m) => m.id), [
+        'there-new',
+        'here-old',
+      ]);
+      expect(sortSessionsCurrentFolderFirst(sessions, '').map((m) => m.id), [
+        'there-new',
+        'here-old',
+      ]);
+    });
+  });
 }
