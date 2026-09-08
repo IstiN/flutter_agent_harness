@@ -72,7 +72,13 @@ final class HubPluginHost implements FahPlugin {
         context.io.writeln('[hub] connect failed: $e');
       }),
     );
-    context.registerSlashCommand('/dap', (args) => _dapSlash(context, args));
+    context.registerSlashCommand(
+      '/dap',
+      (args) => _dapSlash(context, args),
+      description:
+          'DAP hub — end-to-end-encrypted messaging between agents '
+          '(status / connect / secret)',
+    );
     // The inbox stays unconditional EXCEPT when the fabric composite owns
     // delivery (issue #27): registering both would race one hub frame
     // between two consumers.
@@ -117,18 +123,20 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
-  /// `/dap` — no args: connection status; `/dap <host> [name] [channel]`:
-  /// move the live connection to another hub.
+  /// `/dap` — no args: the guided menu when the host is interactive
+  /// (status / connect / master secret / about), a one-line status
+  /// otherwise; `/dap <host> [name] [channel]`: move the live connection
+  /// to another hub.
   Future<void> _dapSlash(PluginContext context, List<String> args) async {
     final positional = args.where((arg) => arg.isNotEmpty).toList();
+    final pick = context.pickOption;
+    if (positional.isEmpty && pick != null) {
+      await _dapMenu(context, pick);
+      return;
+    }
     try {
       if (positional.isEmpty) {
-        final status = await _hub.status();
-        context.io.writeln(
-          'hub ${status.connected ? 'connected' : 'disconnected'} — '
-          'agentId: ${status.agentId ?? '-'}, name: ${status.name ?? '-'}, '
-          'url: ${status.url ?? '-'}',
-        );
+        await _printStatus(context);
         return;
       }
       final connection = await _hub.connectTo(
@@ -144,6 +152,154 @@ final class HubPluginHost implements FahPlugin {
       context.io.writeln('[hub] $error');
     }
   }
+
+  /// Whether the plugin's kill switch is set (mirrors the hub plugin's
+  /// own check, without throwing).
+  bool get _dapEnabled => (_environment[hub.envMasterSecret] ?? '').isNotEmpty;
+
+  /// The one-line status, friendly when DAP is disabled.
+  Future<void> _printStatus(PluginContext context) async {
+    if (!_dapEnabled) {
+      context.io.writeln(
+        'DAP disabled — no master secret. '
+        'Run /dap and choose "Set master secret…", or export '
+        'DAP_MASTER_SECRET before launching.',
+      );
+      return;
+    }
+    final status = await _hub.status();
+    context.io.writeln(
+      'hub ${status.connected ? 'connected' : 'disconnected'} — '
+      'agentId: ${status.agentId ?? '-'}, name: ${status.name ?? '-'}, '
+      'url: ${status.url ?? '-'}',
+    );
+  }
+
+  /// The guided `/dap` menu: every entry explains itself; inputs are
+  /// interactive (masked for the secret).
+  Future<void> _dapMenu(PluginContext context, PluginPickOption pick) async {
+    final choice = await pick(
+      'DAP — Distributed Agents Platform: end-to-end-encrypted '
+      'messaging between agents over a local hub',
+      [
+        (
+          'status',
+          'Connection status',
+          'agent id, display name, hub url, joined channels',
+        ),
+        (
+          'connect',
+          'Connect to a hub…',
+          'enter a host, optional display name and channel',
+        ),
+        (
+          'secret',
+          'Set master secret…',
+          'masked input — enables DAP for this session',
+        ),
+        (
+          'about',
+          'What is DAP?',
+          'a short explainer of the hub, channels and secrets',
+        ),
+      ],
+    );
+    switch (choice) {
+      case 'status':
+        await _printStatus(context);
+      case 'connect':
+        await _menuConnect(context);
+      case 'secret':
+        await _menuSetSecret(context);
+      case 'about':
+        context.io.writeln(_aboutText);
+      case null:
+        break; // cancelled — stay quiet
+    }
+  }
+
+  /// Connect…: interactive host (+ optional name / channel) prompts.
+  Future<void> _menuConnect(PluginContext context) async {
+    if (!_dapEnabled) {
+      context.io.writeln(
+        'DAP needs a master secret first — pick '
+        '"Set master secret…" in the /dap menu.',
+      );
+      return;
+    }
+    final ask = context.askLine;
+    if (ask == null) return;
+    // Beat the boot race: the plugin connects in the background at
+    // register time, so an immediate /dap connect can land before the
+    // repository exists. start() is a no-op once started; a dead initial
+    // hub must not wedge the menu, hence the timeout — the connect below
+    // reports the real error either way.
+    try {
+      await _hub.start().timeout(const Duration(seconds: 8));
+    } on Object {
+      // The connect below reports the real error.
+    }
+    final hostInput = await ask('hub host (host:port or ws(s):// URL): ');
+    if (hostInput == null || hostInput.trim().isEmpty) return;
+    final name = await ask('display name (empty = default): ');
+    final channel = await ask('channel (empty = default room): ');
+    try {
+      final connection = await _hub.connectTo(
+        hostInput.trim(),
+        name: name == null || name.isEmpty ? null : name,
+        channel: channel == null || channel.isEmpty ? null : channel,
+      );
+      context.io.writeln(
+        'connected to ${connection.url} as ${connection.agentId} — '
+        'channels: ${connection.channels.join(', ')}',
+      );
+    } on Object catch (error) {
+      context.io.writeln('[hub] $error');
+    }
+  }
+
+  /// Set master secret: masked input, session-only enable, then
+  /// the zero-config start (default hub) so the agent comes online.
+  Future<void> _menuSetSecret(PluginContext context) async {
+    final ask = context.askLine;
+    if (ask == null) return;
+    final secret = await ask(
+      'DAP master secret (session only): ',
+      secret: true,
+    );
+    if (secret == null || secret.isEmpty) return;
+    try {
+      _environment[hub.envMasterSecret] = secret;
+    } on Object {
+      context.io.writeln(
+        '[hub] this host\'s environment is read-only — export '
+        'DAP_MASTER_SECRET before launching instead',
+      );
+      return;
+    }
+    context.io.writeln(
+      'master secret set for this session — '
+      'export DAP_MASTER_SECRET to make it permanent',
+    );
+    try {
+      await _hub.start();
+      await _printStatus(context);
+    } on Object catch (error) {
+      context.io.writeln('[hub] secret set; connect failed: $error');
+    }
+  }
+
+  /// The `/dap → about` explainer.
+  static const _aboutText =
+      'DAP (Distributed Agents Platform) is a local message hub for '
+      'agents: a zero-knowledge relay (usually ws://127.0.0.1:8787/ws) '
+      'that routes end-to-end-encrypted channels and direct messages '
+      'between agent harnesses — the hub never sees plaintext.\n'
+      'Enable it by setting a master secret: export DAP_MASTER_SECRET '
+      'before launching, or choose "Set master secret…" in this '
+      'menu (session only). Once connected, /dap shows the connection, '
+      '/dap <host> moves it, and the dap_* tools let the agent see '
+      'peers, DM them, and manage channel invites.';
 
   /// Hub mail → real steering messages. The package drain closure already
   /// swallows transport errors (empty list); the guard here only covers
