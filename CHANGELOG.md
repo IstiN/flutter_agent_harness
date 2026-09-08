@@ -2997,7 +2997,8 @@
 - feat(35): timed status polling + offline hint in My publications (#67)
 - fix: relay turn-state indicator, yolo-everything, yolo checkbox in the approval dialog (#73)
 
-## Unreleased
+## 0.1.329
+
 
 - feat(27): hub-first agent messaging fabric with file fallback (phase 1) —
   the CLI composes the DAP hub into the agent messaging fabric
@@ -3010,6 +3011,8 @@
   are deliverable through `agent_message`. Docs: `docs/dap.md` §12.
   Discovery/presence states (`busy`) and the A2A gateway remain for
   phases 2-3.
+
+## Unreleased
 
 ## Unreleased
 
