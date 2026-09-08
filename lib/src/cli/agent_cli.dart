@@ -205,7 +205,11 @@ class AgentCli {
     for (final plugin in config.plugins) {
       final context = PluginContext(
         env: _env,
-        io: _PluginIO(io),
+        // this.io — the TUI-wrapped field, NOT the raw constructor
+        // parameter: plugin output must route through the TUI transcript
+        // (raw writes race the frame renderer and leave stray text on
+        // screen).
+        io: _PluginIO(this.io),
         config: _pluginConfig(plugin.name),
         pickOption: _pickOption,
         askLine: _askLine,

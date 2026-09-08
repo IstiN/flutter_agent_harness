@@ -91,44 +91,59 @@ void main() {
       );
       expect(harness.screenText, contains('DAP_MASTER_SECRET'));
 
-      await harness.runSlashCommand('/exit');
-      await harness.waitForOutput();
-    });
-
-    test('status without a master secret is a friendly hint, not Bad state',
-        () async {
-      final tempHome = _tempHome();
-      final harness = await FaCliHarness.spawn(
-        extraEnv: {'HOME': tempHome.path},
-        args: ['--plugin', 'hub'],
-        columns: 120,
-        rows: 30,
-      );
-      addTearDown(() async {
-        await harness.close();
-        tempHome.deleteSync(recursive: true);
-      });
-      await harness.waitForBoot();
-
-      await harness.runSlashCommand('/dap');
-      await harness.waitForText(
-        'Connection status',
-        timeout: const Duration(seconds: 20),
-      );
-      // First item is selected by default.
-      harness.sendEnter();
-      await harness.waitForText(
-        'DAP disabled — no master secret',
-        timeout: const Duration(seconds: 20),
-      );
-      expect(harness.screenText, isNot(contains('Bad state')));
+      // Regression: plugin output must land in the TRANSCRIPT, above the
+      // input frame — a raw-io bypass left it in the composer zone (and a
+      // typed character would splice into it mid-text).
+      final lines = harness.viewportLines;
+      final statusRow = lines.lastIndexWhere((l) => l.contains('turn 0'));
+      expect(statusRow, greaterThan(0));
+      final inputFrameRow = lines
+          .sublist(0, statusRow)
+          .lastIndexWhere((l) => l.trim().startsWith('─'));
+      expect(inputFrameRow, greaterThan(0));
+      final aboutRow = lines.indexWhere((l) => l.contains('zero-knowledge'));
+      expect(aboutRow, greaterThan(0));
+      expect(aboutRow, lessThan(inputFrameRow));
 
       await harness.runSlashCommand('/exit');
       await harness.waitForOutput();
     });
 
-    test('set master secret: masked input, then connects to the hub',
-        () async {
+    test(
+      'status without a master secret is a friendly hint, not Bad state',
+      () async {
+        final tempHome = _tempHome();
+        final harness = await FaCliHarness.spawn(
+          extraEnv: {'HOME': tempHome.path},
+          args: ['--plugin', 'hub'],
+          columns: 120,
+          rows: 30,
+        );
+        addTearDown(() async {
+          await harness.close();
+          tempHome.deleteSync(recursive: true);
+        });
+        await harness.waitForBoot();
+
+        await harness.runSlashCommand('/dap');
+        await harness.waitForText(
+          'Connection status',
+          timeout: const Duration(seconds: 20),
+        );
+        // First item is selected by default.
+        harness.sendEnter();
+        await harness.waitForText(
+          'DAP disabled — no master secret',
+          timeout: const Duration(seconds: 20),
+        );
+        expect(harness.screenText, isNot(contains('Bad state')));
+
+        await harness.runSlashCommand('/exit');
+        await harness.waitForOutput();
+      },
+    );
+
+    test('set master secret: masked input, then connects to the hub', () async {
       final fakeHub = FakeHub();
       await fakeHub.start();
       addTearDown(fakeHub.stop);
