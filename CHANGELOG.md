@@ -21,6 +21,17 @@
 ## 0.1.322
 
 
+- feat(flutter_app): CodeMie sign-in works inside the browser extension —
+  no webview, no localhost callback, no API key. The app page detects the
+  extension host (`chrome.runtime.id`), opens the login page in a NORMAL
+  browser tab (IdPs forbid framing; MV3 has no webview), and polls the
+  models endpoint with `credentials: 'include'` until the shared cookie
+  jar holds a session. The redirect-interception dance (localhost
+  callback server) stays a desktop/mobile-only concern; the saved
+  provider keeps an EMPTY key — the service worker's streaming fetch
+  carries the jar. Poll/parse core is pure and tested
+  (`codemie_extension_signin.dart`); `extOpenTab`/`extFetchString`
+  bindings live beside the existing `chrome.runtime` interop.
 - feat(browser_ext): CodeMie cookie sign-in without any API key or SSO
   dance — the panel now talks to a small `ext_request` op surface on the
   service worker (`cookies.get_all`, SW-relayed `fetch` with

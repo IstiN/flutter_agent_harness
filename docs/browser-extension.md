@@ -123,6 +123,12 @@ The SW routes a CodeMie base URL (`isCookieAuthUrl`) DIRECT to the
 openai-like adapter — never through the bridge relay, which would strip
 the cookies and 401.
 
+The extension-hosted **fa app** signs in the same way: its CodeMie flow
+detects the extension host, opens the login tab, and polls the same
+endpoint via `extFetchString` (`credentials: 'include'`) — no webview,
+no localhost callback, no key. Desktop/mobile keep the SSO-redirect
+flow; the plain web build (no `chrome.runtime.id`) still refuses.
+
 ### UI↔SW split invariants
 
 - **The UI holds no keys and makes zero provider fetches** in extension
