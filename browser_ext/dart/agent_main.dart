@@ -55,6 +55,10 @@ const _uiPortName = 'fa-ui-v2';
 const _maxVisitedOrigins = 500;
 
 AgentHost? _host;
+
+/// The most recent EXPLICIT boot config (faAgent.boot with keys set, the
+/// panel/tests path) — storage-snapshot reconfigures never override it.
+HostConfig? _lastExplicitConfig;
 Future<AgentHost?> _hostBoot = Future.value(null);
 JSFunction? _eventCb;
 final _deltaBuffer = StringBuffer();
@@ -206,7 +210,9 @@ Future<JSAny?> _bootMerged(JSAny? config) async {
     if (map.containsKey(entry.key)) {
       final value = map[entry.key];
       if (value != null) {
-        unawaited(_persistSetting(entry.value, value));
+        // Awaited: a concurrent auto-boot reading storage after this must
+        // see the explicit values, not the pre-boot snapshot.
+        await _persistSetting(entry.value, value);
       }
     }
   }
@@ -226,6 +232,7 @@ Future<JSAny?> _bootMerged(JSAny? config) async {
           ? map['browserTools']
           : stored['faBrowserTools'],
     ),
+    explicit: true,
   );
   return {'ok': true}.jsify();
 }
@@ -339,7 +346,11 @@ JSAny? _v2StateImpl() => {
 
 // -- Host lifecycle ------------------------------------------------------------------
 
-void _ensureHost(HostConfig config) {
+void _ensureHost(HostConfig config, {bool explicit = false}) {
+  if (explicit) _lastExplicitConfig = config;
+  // A storage-snapshot (auto-boot) reconfigure must never revert an
+  // explicit boot that landed while it was starting up — explicit wins.
+  final effective = explicit ? config : (_lastExplicitConfig ?? config);
   final existing = _host;
   if (existing == null) {
     // A boot may already be in flight (main()'s auto-boot reading storage);
@@ -351,14 +362,14 @@ void _ensureHost(HostConfig config) {
         .then((host) async {
           final live = host ?? _host;
           if (live != null) {
-            live.reconfigure(config);
+            live.reconfigure(effective);
             return live;
           }
           final chromeApi = _chromeApi;
           return AgentHost.boot(
             sink: _emit,
             ops: _callOp,
-            config: config,
+            config: effective,
             chrome: chromeApi,
             // The LIVE set: the gate reads it at call time, and
             // webNavigation keeps it warm after boot.
@@ -367,7 +378,7 @@ void _ensureHost(HostConfig config) {
         })
         .then((host) => _host = host);
   } else {
-    existing.reconfigure(config);
+    existing.reconfigure(effective);
   }
 }
 
