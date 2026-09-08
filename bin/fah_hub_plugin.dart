@@ -168,8 +168,18 @@ final class HubPluginHost implements FahPlugin {
       return;
     }
     final status = await _hub.status();
+    if (!status.connected) {
+      // A disconnected status still carries the configured url (often a
+      // stale loopback port from an old session) — say what to do next
+      // instead of leaving the user staring at a dead address.
+      context.io.writeln(
+        'hub disconnected${status.url != null ? ' — ${status.url}' : ''}\n'
+        'Start a hub, then pick "Connect to a hub…" in /dap to dial it.',
+      );
+      return;
+    }
     context.io.writeln(
-      'hub ${status.connected ? 'connected' : 'disconnected'} — '
+      'hub connected — '
       'agentId: ${status.agentId ?? '-'}, name: ${status.name ?? '-'}, '
       'url: ${status.url ?? '-'}',
     );
@@ -239,13 +249,29 @@ final class HubPluginHost implements FahPlugin {
     } on Object {
       // The connect below reports the real error.
     }
-    final hostInput = await ask('hub host (host:port or ws(s):// URL): ');
-    if (hostInput == null || hostInput.trim().isEmpty) return;
-    final name = await ask('display name (empty = default): ');
-    final channel = await ask('channel (empty = default room): ');
+    // Pre-fill the current hub url (the `(empty = …)` convention makes the
+    // TUI prompt show it as the default): reconnecting to the configured
+    // hub is an Enter away, and a stale port is easy to edit in place.
+    final currentUrl = (await _hub.status()).url;
+    final hostInput = await ask(
+      currentUrl != null
+          ? 'hub host (empty = $currentUrl): '
+          : 'hub host (host:port or ws(s):// URL): ',
+    );
+    if (hostInput == null) return; // cancelled
+    // The guided-flow convention: an empty answer keeps the default (the
+    // TUI pre-fills it; line mode treats empty as "keep" too — Esc/Ctrl-C
+    // is the cancel path, not an empty line).
+    final host = hostInput.trim().isEmpty ? currentUrl : hostInput.trim();
+    if (host == null || host.isEmpty) return;
+    // NB: the `(empty = X)` phrasing is the guided-flow DEFAULT convention
+    // — an empty submit resolves to X literally, so "leave empty for …"
+    // must not use that shape or Enter would set the name to "default".
+    final name = await ask('display name (leave empty for the default): ');
+    final channel = await ask('channel (leave empty for the default room): ');
     try {
       final connection = await _hub.connectTo(
-        hostInput.trim(),
+        host,
         name: name == null || name.isEmpty ? null : name,
         channel: channel == null || channel.isEmpty ? null : channel,
       );
