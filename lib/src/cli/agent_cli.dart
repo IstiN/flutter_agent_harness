@@ -144,6 +144,7 @@ import 'ask_menu.dart';
 import 'slash_menu.dart';
 import 'task_list.dart';
 import 'text_format.dart';
+import 'terminal_setup.dart';
 import 'tui_helpers.dart';
 import 'tui_prompt.dart';
 import 'tui_replay.dart';
@@ -397,8 +398,12 @@ class AgentCli {
     );
     _taskConfig = TaskToolConfig(
       childTools: coreTools,
-      streamFunction: _streamFunction,
-      model: config.model,
+      // Live accessors, resolved per spawn: a runtime `/provider`/`/model`
+      // switch (or a token refresh) re-points `_streamFunction`/the agent
+      // model, and children spawned afterwards must inherit the LIVE
+      // credential — the boot wiring here would send the stale key (401).
+      streamFunction: () => _agent.streamFunction,
+      model: () => _agent.state.model,
       rolesResolver: config.modelRolesResolver,
       subagentManager: _subagentManager,
       a2aManager: _a2aManager,

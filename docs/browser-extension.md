@@ -71,7 +71,7 @@ the layers that matter):
 
 Extension-internal messaging over a `chrome.runtime` Port — no network.
 Wire version 2 (oldest negotiable: 1); `hello`/`hello_ack` negotiate
-before any other traffic. 17 message kinds:
+before any other traffic. 23 message kinds:
 
 | Kind | Direction | Fields / notes |
 |---|---|---|
@@ -91,7 +91,43 @@ before any other traffic. 17 message kinds:
 | `settings_query` | UI→SW | read settings |
 | `settings_put` | UI→SW | merge settings into the stored set |
 | `settings_result` | SW→UI | current settings (answer to either settings message) |
+| `tools_state` | SW→UI | the SW agent's tool list with enabled flags |
+| `tools_put` | UI→SW | apply per-tool enabled flags (panel Tools toggles) |
+| `ping` | UI→SW | link keepalive (an open port does not keep the SW alive) |
+| `pong` | SW→UI | keepalive answer |
+| `ext_request` | UI→SW | `id`, `op`, `params` — one-shot host capability (below) |
+| `ext_result` | SW→UI | `id`, `ok`, `data`/`error` — matched by `id` |
 | `error` | both | the ONLY failure channel: `unknown_kind`, `malformed` |
+
+### The ext_request op surface — panel-only host capabilities
+
+The panel is an extension page and may use capabilities a web page
+cannot; the SW serves them as one-shot `ext_request` ops (every op
+validates its params and answers a structured `ext_result`):
+
+- `cookies.get_all` (`url`/`domain`) — a scoped read of the user's LIVE
+  cookie jar. This is how CodeMie signs in: the browser jar IS the
+  credential, no API key and no localhost SSO dance.
+- `fetch` (`url` http(s)-only, `method`, `headers`, `body`) — one HTTP
+  round-trip from the SW. MV3 + `<all_urls>` host permissions mean no
+  CORS and (via `credentials: 'include'` in the SW's fetch client) the
+  cookies ride along — provider endpoints like CodeMie's
+  `/code-assistant-api/v1/llm_models` answer with the user's session.
+- `tabs.create` (`url`) — open the provider's login page for an
+  interactive sign-in.
+
+Panel flow (`codeMieLogin`): probe `llm_models` → `200` = cookies alive
+(model ids surface, the key field stays EMPTY); `401/403` → open the
+login tab and re-probe until the jar holds a session (bounded wait).
+The SW routes a CodeMie base URL (`isCookieAuthUrl`) DIRECT to the
+openai-like adapter — never through the bridge relay, which would strip
+the cookies and 401.
+
+The extension-hosted **fa app** signs in the same way: its CodeMie flow
+detects the extension host, opens the login tab, and polls the same
+endpoint via `extFetchString` (`credentials: 'include'`) — no webview,
+no localhost callback, no key. Desktop/mobile keep the SSO-redirect
+flow; the plain web build (no `chrome.runtime.id`) still refuses.
 
 ### UI↔SW split invariants
 

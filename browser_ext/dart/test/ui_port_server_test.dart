@@ -58,6 +58,21 @@ final class FakeHostConnector implements UiHostConnector {
   var cancels = 0;
   final decisions = <(String, bool)>[];
   final puts = <Map<String, dynamic>>[];
+  final extCalls = <(String, Map<String, dynamic>)>[];
+
+  /// When non-null, [extRequest] throws this instead of answering.
+  Object? extError;
+
+  @override
+  Future<Map<String, dynamic>> extRequest(
+    String op,
+    Map<String, dynamic> params,
+  ) async {
+    extCalls.add((op, params));
+    final error = extError;
+    if (error != null) throw error;
+    return {'ok-op': op};
+  }
 
   @override
   String sessionId = 'sess-1';
@@ -104,6 +119,22 @@ final class FakeHostConnector implements UiHostConnector {
 
   @override
   List<Map<String, dynamic>> sessionsList() => sessions;
+
+  var newSessionCalls = 0;
+
+  /// When non-null, [newSession] throws this instead of resetting.
+  Object? newSessionError;
+
+  @override
+  Future<void> newSession() async {
+    newSessionCalls++;
+    final error = newSessionError;
+    if (error != null) throw error;
+    sessions = [
+      {'id': 'fresh', 'title': 'new'},
+    ];
+    sessionId = 'fresh';
+  }
 }
 
 Map<String, dynamic>? _ofKind(FakeChannel c, String kind) {
@@ -164,6 +195,52 @@ void main() {
       reason: 'exactly one pong per ping; keepalive traffic stays quiet',
     );
   });
+
+  test(
+    'ext_request routes to the host op surface and answers with data',
+    () async {
+      final host = FakeHostConnector();
+      final server = UiPortServer(host: host);
+      final c = FakeChannel();
+      server.serve(c);
+      c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+      await _pump();
+      c.injectMsg(
+        const ExtRequestMsg(
+          id: 'x1',
+          op: 'cookies.get_all',
+          params: {'url': 'https://codemie.lab.epam.com/'},
+        ),
+      );
+      await _pump();
+      expect(host.extCalls.single.$1, 'cookies.get_all');
+      final result = _ofKind(c, 'ext_result');
+      expect(result, isNotNull);
+      expect(result!['id'], 'x1');
+      expect(result['ok'], isTrue);
+      expect((result['data'] as Map)['ok-op'], 'cookies.get_all');
+    },
+  );
+
+  test(
+    'ext_request failure becomes a structured ok:false ext_result',
+    () async {
+      final host = FakeHostConnector()..extError = 'unknown ext op: exec';
+      final server = UiPortServer(host: host);
+      final c = FakeChannel();
+      server.serve(c);
+      c.injectMsg(const HelloMsg(protoVersion: 2, capabilities: []));
+      await _pump();
+      c.injectMsg(const ExtRequestMsg(id: 'x2', op: 'exec'));
+      await _pump();
+      final result = _ofKind(c, 'ext_result');
+      expect(result, isNotNull);
+      expect(result!['id'], 'x2');
+      expect(result['ok'], isFalse);
+      expect(result['error'], contains('unknown'));
+      expect(result['data'], isNull);
+    },
+  );
 
   test('attach answers tools_state with the host tool list', () async {
     final host = FakeHostConnector();
@@ -500,6 +577,42 @@ void main() {
       server.serve(c);
       c.injectMsg(const SessionsQueryMsg());
       expect(_ofKind(c, 'sessions_result')!['sessions'], host.sessionsList());
+    });
+
+    test(
+      'session_new resets and answers the attach trio on the channel',
+      () async {
+        final host = FakeHostConnector();
+        final server = UiPortServer(host: host);
+        final c = FakeChannel();
+        server.serve(c);
+        c.injectMsg(const SessionNewMsg());
+        await _pump();
+        expect(host.newSessionCalls, 1);
+        // attached (fresh id, empty replay) + tools + status — the same
+        // shapes an attach cycle ends with.
+        final attached = _ofKind(c, 'attached')!;
+        expect(attached['sessionId'], 'fresh');
+        expect(attached['replay'], isEmpty);
+        expect(_ofKind(c, 'tools_state'), isNotNull);
+        final status = _ofKind(c, 'stream');
+        expect(status!['event'], containsPair('type', 'status'));
+      },
+    );
+
+    test('session_new busy/host errors answer a structured error', () async {
+      final host = FakeHostConnector()..newSessionError = 'busy';
+      final server = UiPortServer(host: host);
+      final c = FakeChannel();
+      server.serve(c);
+      c.injectMsg(const SessionNewMsg());
+      await _pump();
+      expect(host.newSessionCalls, 1);
+      final err = _ofKind(c, 'error')!;
+      expect(err['code'], 'session_new');
+      expect(err['message'], 'busy');
+      // No attached: the panel keeps its current session view.
+      expect(_ofKind(c, 'attached'), isNull);
     });
 
     test('settings query and put roundtrip through the connector', () {

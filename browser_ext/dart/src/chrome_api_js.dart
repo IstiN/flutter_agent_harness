@@ -228,6 +228,7 @@ Tab _tabOf(Object? raw) {
     active: _b(m['active']),
     favIconUrl: m['favIconUrl'] is String ? m['favIconUrl'] as String : null,
     discarded: _b(m['discarded']),
+    status: m['status'] is String ? m['status'] as String : null,
   );
 }
 
@@ -404,10 +405,21 @@ DisplayInfo _displayInfoOf(Object? raw) {
 
 final class _Tabs implements TabsApi {
   @override
-  Future<Tab> create({String? url, bool? active, int? index, bool? pinned}) =>
-      _invoke('tabs.create', [
-        {'url': ?url, 'active': ?active, 'index': ?index, 'pinned': ?pinned},
-      ]).then(_tabOf);
+  Future<Tab> create({
+    String? url,
+    String? title,
+    bool? active,
+    int? index,
+    bool? pinned,
+  }) => _invoke('tabs.create', [
+    {
+      'url': ?url,
+      'title': ?title,
+      'active': ?active,
+      'index': ?index,
+      'pinned': ?pinned,
+    },
+  ]).then(_tabOf);
 
   @override
   Future<Tab> get(int id) => _invoke('tabs.get', [id]).then(_tabOf);
@@ -1029,14 +1041,28 @@ final class _Notifications implements NotificationsApi {
   }) async {
     if (permission == 'denied') return false; // E20: soft skip, not a throw
     try {
+      // MV3 requires iconUrl for type:'basic' — a missing icon makes the
+      // WHOLE options object invalid ('Some of the required properties are
+      // missing: type, iconUrl, title and message'), which read like a
+      // bug instead of an omitted optional. Default to the extension's
+      // own icon when the caller has none.
+      String? icon = iconUrl;
+      if (icon == null) {
+        try {
+          final (self, fn) = _resolve('runtime.getURL');
+          final raw = _applyFn(
+            fn,
+            self,
+            ['icons/icon-128.png'.toJS].jsify() as JSArray,
+          );
+          icon = raw.isA<JSString>() ? (raw as JSString).toDart : null;
+        } on Object {
+          icon = null; // no icon beats a failed notification
+        }
+      }
       final notifId = await _invoke('notifications.create', [
         id,
-        {
-          'type': 'basic',
-          'title': title,
-          'message': message,
-          'iconUrl': ?iconUrl,
-        },
+        {'type': 'basic', 'title': title, 'message': message, 'iconUrl': ?icon},
       ]);
       return notifId is String ? notifId.isNotEmpty : notifId != null;
     } on ChromeApiException {
@@ -1166,6 +1192,13 @@ final class _WebNavigation implements WebNavigationApi {
   @override
   Stream<NavCompleted> get onCompleted =>
       _eventStream('webNavigation.onCompleted', 1, (details, _, _) {
+        final dart = details?.dartify();
+        return dart == null ? null : _navCompletedOf(dart);
+      });
+
+  @override
+  Stream<NavCompleted> get onHistoryStateUpdated =>
+      _eventStream('webNavigation.onHistoryStateUpdated', 1, (details, _, _) {
         final dart = details?.dartify();
         return dart == null ? null : _navCompletedOf(dart);
       });

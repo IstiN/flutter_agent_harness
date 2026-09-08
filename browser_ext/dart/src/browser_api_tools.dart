@@ -586,8 +586,9 @@ final class BrowserApiToolSurface {
       tool(
         'tabs_query',
         'Lists tabs matching filters (all filters optional; none = every '
-            'tab). url/title are chrome match patterns: `*` is a wildcard, '
-            'no `*` means exact match. Returns JSON tab snapshots.',
+            'tab). url/title take chrome match patterns (`*` wildcard, '
+            'scheme required); a bare domain like "apple.com" is matched '
+            'as a substring instead. Returns JSON tab snapshots.',
         {
           'url': {'type': 'string', 'description': 'match pattern on the URL'},
           'title': {
@@ -612,16 +613,38 @@ final class BrowserApiToolSurface {
           final muted = _optBool(args, 'muted');
           final active = _optBool(args, 'active');
           final currentWindow = _optBool(args, 'currentWindow');
+          // Chrome match patterns need scheme://host/path; models pass
+          // bare domains ('apple.com') which chrome rejects as Invalid
+          // url pattern and the whole call errored. A filter with neither
+          // '*' nor '://' is treated as a case-insensitive SUBSTRING over
+          // the tab list instead of an invalid pattern.
+          bool isPattern(String? f) => f == null || _isMatchPattern(f);
+          final urlAsPattern = isPattern(url);
+          final titleAsPattern = isPattern(title);
+          String? lower(String? v) => v?.toLowerCase();
+          final urlSub = urlAsPattern ? null : lower(url);
+          final titleSub = titleAsPattern ? null : lower(title);
           final tabs = await _chrome.tabs.query(
-            url: url,
-            title: title,
+            url: urlAsPattern ? url : null,
+            title: titleAsPattern ? title : null,
             groupId: groupId,
             pinned: pinned,
             muted: muted,
             active: active,
             currentWindow: currentWindow,
           );
-          return _json([for (final t in tabs) t.toJson()]);
+          final filtered = urlSub == null && titleSub == null
+              ? tabs
+              : tabs
+                    .where(
+                      (t) =>
+                          (urlSub == null ||
+                              t.url.toLowerCase().contains(urlSub)) &&
+                          (titleSub == null ||
+                              t.title.toLowerCase().contains(titleSub)),
+                    )
+                    .toList();
+          return _json([for (final t in filtered) t.toJson()]);
         },
       ),
       tool(
@@ -1476,24 +1499,40 @@ final class BrowserApiToolSurface {
     }
   }
 
-  /// nav_wait: fail fast on a dead tab, then ride webNavigation.onCompleted
-  /// (main frame only) until a match or the budget runs out.
+  /// nav_wait: fail fast on a dead tab, answer immediately when the
+  /// awaited navigation ALREADY finished (tabs_open resolves before the
+  /// page does; a fast page or an about:blank redirect fires onCompleted
+  /// before we ever subscribe — waiting for the next event then times out
+  /// against a loaded page), otherwise ride webNavigation.onCompleted AND
+  /// onHistoryStateUpdated (SPA pushes — Google's results "page" — never
+  /// fire onCompleted) until a match or the budget runs out.
   Future<ToolExecutionResult> _navWait(Map<String, dynamic> args) async {
     final tabId = _reqInt(args, 'tabId');
     final urlContains = _optStr(args, 'urlContains');
     final timeoutMs = _boundedMs(args, 'timeoutMs');
-    await _chrome.tabs.get(tabId); // no_tab before waiting on a ghost
+    final tab = await _chrome.tabs.get(tabId); // no_tab before waiting
+
+    bool matches(String? url) =>
+        urlContains == null || (url ?? '').contains(urlContains);
+
+    if (tab.status == 'complete' && matches(tab.url)) {
+      return ToolExecutionResult.text(
+        'navigation already complete: tab $tabId → ${tab.url}',
+      );
+    }
 
     // Fake and real adapters keep broadcast streams open; firstWhere's
-    // StateError on close cannot fire in practice.
-    final nav = await _chrome.webNavigation.onCompleted
-        .firstWhere(
-          (n) =>
-              n.tabId == tabId &&
-              n.frameId == 0 && // main frame: subframes are not navigations
-              (urlContains == null || n.url.contains(urlContains)),
-        )
-        .timeout(
+    // StateError on close cannot fire in practice. Either event kind
+    // satisfies the wait — the first one wins.
+    bool matchesEvent(NavCompleted n) =>
+        n.tabId == tabId &&
+        n.frameId == 0 && // main frame: subframes are not navigations
+        matches(n.url);
+    final nav =
+        await Future.any<NavCompleted>([
+          _chrome.webNavigation.onCompleted.firstWhere(matchesEvent),
+          _chrome.webNavigation.onHistoryStateUpdated.firstWhere(matchesEvent),
+        ]).timeout(
           Duration(milliseconds: timeoutMs),
           onTimeout: () => throw BrowserApiToolException(
             'timeout',
@@ -1733,6 +1772,13 @@ List<int>? _optIntList(Map<String, dynamic> args, String key) {
 
 List<int> _reqIntList(Map<String, dynamic> args, String key) =>
     _optIntList(args, key) ?? _bad("integer array argument '$key' is required");
+
+/// True when [filter] is a valid-ish chrome match pattern (has a wildcard
+/// or an explicit scheme); anything else — a bare domain like
+/// 'apple.com' — would be rejected by chrome.tabs.query as an Invalid
+/// url pattern, so callers treat it as a substring instead.
+bool _isMatchPattern(String filter) =>
+    filter.contains('*') || filter.contains('://');
 
 /// Timeout budget shared by inject_js / nav_wait: 1..120000 ms.
 int _boundedMs(

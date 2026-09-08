@@ -21,7 +21,6 @@ import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
 /// Stub mirror of fa_tui.dart's busy forensic sink (never fires here).
 void Function(String line)? faTuiBusyDiagnostics;
 
-
 /// Host callbacks supplied by [AgentCli] to the dart_tui REPL. See
 /// `fa_tui.dart` for field docs.
 final class FaTuiCallbacks {
@@ -84,6 +83,8 @@ final class FaTuiController {
   void sendQuit() {}
 
   void sendInputText(String text) {}
+
+  void setInputHistory(List<String> history) {}
 
   void sendBusy(bool busy, {String source = 'run'}) {}
 

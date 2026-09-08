@@ -169,11 +169,15 @@ final class TaskToolConfig {
   final List<AgentTool> childTools;
 
   /// The parent's provider adapter, inherited by children without a
-  /// resolvable model role.
-  final StreamFunction streamFunction;
+  /// resolvable model role. Resolved at SPAWN time, not at construction:
+  /// a host that re-authenticates or switches provider/model mid-session
+  /// (`/provider`, an SSO refresh) re-points its live adapter, and children
+  /// spawned afterwards must inherit the live credential — a wiring frozen
+  /// at boot would send the stale (or empty) key and 401.
+  final StreamFunction Function() streamFunction;
 
-  /// The parent's model, inherited the same way.
-  final Model model;
+  /// The parent's model, inherited the same way (resolved per spawn).
+  final Model Function() model;
 
   /// Optional role resolver; agent types with a
   /// [TaskAgentDefinition.modelRole] (e.g. the built-in `explore` on `smol`)

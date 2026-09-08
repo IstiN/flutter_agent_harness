@@ -7,8 +7,9 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import 'package:fa_llm_mock/fa_llm_mock.dart';
+
 import 'fa_cube_headless_helper.dart';
-import 'mock_llm_server.dart';
 
 void main() {
   group('fa_cube headless integration', () {

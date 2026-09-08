@@ -2,7 +2,7 @@ name: flutter_agent_harness
 description: >-
   Cross-platform AI agent harness for Dart and Flutter: streaming provider
   adapters, agent loop with tools, session persistence, context compaction.
-version: 0.1.321
+version: 0.1.324
 homepage: https://fa1.dev
 repository: https://github.com/IstiN/flutter_agent_harness
 issue_tracker: https://github.com/IstiN/flutter_agent_harness/issues
@@ -50,6 +50,9 @@ dependencies:
 
 dev_dependencies:
   coverage: ^1.15.1
+  # Scripted mock LLM server for integration tests (issue #45).
+  fa_llm_mock:
+    path: packages/fa_llm_mock
   lints: ^6.1.0
   pty2: ^0.5.3
   test: ^1.31.2

@@ -14,3 +14,11 @@ bool isExtensionHost() => false;
 
 /// Opens a `chrome.runtime` port channel, or null when unavailable.
 UiPortChannel? createPortChannel() => null;
+
+/// Opens [url] in a new browser tab — extension pages only; always false
+/// on non-web platforms.
+Future<bool> extOpenTab(String url) async => false;
+
+/// One cookie-authenticated HTTP GET from the extension page — always
+/// null on non-web platforms.
+Future<({int status, String body})?> extFetchString(String url) async => null;

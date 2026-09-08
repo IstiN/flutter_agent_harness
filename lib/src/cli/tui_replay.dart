@@ -198,6 +198,28 @@ String _userReplayText(Object content) {
             .join(' ');
 }
 
+/// The TUI composer's submitted-message history for a restored session:
+/// the plain user-typed messages, oldest first — the same set live submits
+/// record (no slash/bang commands, no system-notice/compaction chrome,
+/// consecutive duplicates collapsed, last 100 kept). Restoring it makes ↑
+/// recall the previous message right after a resume instead of scrolling
+/// the transcript (issue #47).
+List<String> restoredInputHistory(List<Message> messages) {
+  final history = <String>[];
+  for (final message in messages) {
+    if (message is! UserMessage) continue;
+    final text = _userReplayText(message.content);
+    if (text.trim().isEmpty ||
+        text.startsWith('/') ||
+        text.startsWith('!') ||
+        _chromeMarkerLine(text) != null) {
+      continue;
+    }
+    if (history.isEmpty || history.last != text) history.add(text);
+  }
+  return history.length > 100 ? history.sublist(history.length - 100) : history;
+}
+
 /// The assistant message's replay text: text blocks plus `[tool]` markers.
 String _assistantReplayText(List<ContentBlock> content) {
   final texts = content

@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.1.324
+
+- fix(43): typing during minutes-long thinking streams no longer degrades —
+  the 32KB tail hard-split in `_appendOutput` used to land on
+  `TranscriptMarkdown`'s commit boundary (fresh substring identities
+  defeat both resumability sentinels) and force a full O(transcript)
+  markdown+wrap rebuild, so frame builds grew with the session
+  (real-PTY e2e at 200 reasoning deltas/s: frame-build p99 24.8ms /
+  max 81ms after 60s, keystroke echo p99 59.5ms). The grown-tail
+  rollback now also recognizes the split shape — the boundary line
+  survives as a prefix of the concatenated chunks (`_boundarySurvivesAsChunks`,
+  one O(boundary) string compare per suspected split) — rolls back one
+  source line and re-walks the chunks; replaced content still takes the
+  documented rebuild path. Rebuilds in the flood regime: 0 (bench
+  `scripts/tui_typing_bench.dart --grow-tail`; frame-build p99 5.0ms /
+  max 7.4ms flat). Contracts: split-resume trio in
+  `test/cli/transcript_markdown_perf_test.dart`; perf log:
+  docs/performance-cli-tui.md.
+
+- feat(skills): the `fa-self-config` skill (issue #29, phase 1) — fa
+  configures itself by editing the config files the CLI settings commands
+  write, with a test-enforced parity guard: every settings-affecting CLI
+  command (`/provider`, `/models`, `/model`, `/model-edit`, `/memory`,
+  `/tools`, `/cube`, `/mcp`, `/redact`, `/skills`, `/approval`, `/allow`,
+  `/mode` family, `/settings`) must stay documented in the skill with its
+  config-file equivalent, and a new settings command fails CI until it is
+  classified and documented. The skill encodes precedence (project
+  `memory:`/`cube:`/`tools:` win over the user file), strict vs tolerant
+  parse behavior, live vs next-boot application, and the
+  never-inline-API-keys rule; an accuracy test pins every documented key
+  against the real parsers (`CliConfig`/`MemoryConfig`/`ToolsConfig`/
+  `McpConfig`/roles) so no phantom keys or stale names can ship.
+
+## 0.1.322
+
+
+- feat(flutter_app): CodeMie sign-in works inside the browser extension —
+  no webview, no localhost callback, no API key. The app page detects the
+  extension host (`chrome.runtime.id`), opens the login page in a NORMAL
+  browser tab (IdPs forbid framing; MV3 has no webview), and polls the
+  models endpoint with `credentials: 'include'` until the shared cookie
+  jar holds a session. The redirect-interception dance (localhost
+  callback server) stays a desktop/mobile-only concern; the saved
+  provider keeps an EMPTY key — the service worker's streaming fetch
+  carries the jar. Poll/parse core is pure and tested
+  (`codemie_extension_signin.dart`); `extOpenTab`/`extFetchString`
+  bindings live beside the existing `chrome.runtime` interop.
+- feat(browser_ext): CodeMie cookie sign-in without any API key or SSO
+  dance — the panel now talks to a small `ext_request` op surface on the
+  service worker (`cookies.get_all`, SW-relayed `fetch` with
+  `credentials: 'include'` — MV3 + host permissions mean no CORS and the
+  browser jar rides along — and `tabs.create` for the login page).
+  `codeMieLogin` probes `llm_models`: 200 → cookies alive, model ids
+  prefill, the key field stays empty; 401/403 → the login tab opens and
+  the probe repeats until the jar holds a session. A CodeMie base URL
+  (`isCookieAuthUrl`) streams DIRECT from the SW — never through the
+  bridge relay, which would strip the cookies and 401. New
+  `ext_request`/`ext_result` protocol kinds; every op validates its
+  params and answers a structured result, unknown ops never crash.
+- fix(browser_ext): the exfil gate's ask under yolo now stays silent —
+  the user's contract is that yolo asks for NOTHING (the extension has
+  no bash to carry critical patterns), so only the interactive modes
+  (ask/write) surface the outbound dialog; unattended keeps allowing
+  without asking.
+
 ## 0.1.321
 
 
@@ -2878,7 +2943,8 @@
 - fix(browser_ext): status snapshots must not flip the transport to streaming
 - fix(browser_ext): the panel relay never connected — port name + envelope mismatch
 
-## Unreleased
+## 0.1.323
+
 
 - fix(browser_ext): page/app screenshots reach the model as vision image
   blocks — `page_screenshot`/`app_screenshot` and the v1 `screenshot` op
@@ -2901,5 +2967,11 @@
 - ci: the Chrome extension builds in the release pipeline and ships as a
   release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
   page gains the download + load-unpacked card.
+
+## Unreleased
+
+## Unreleased
+
+## Unreleased
 
 ## Unreleased

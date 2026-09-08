@@ -111,6 +111,48 @@ void main() {
     addTearDown(channel.close);
   });
 
+  test(
+    'newSessionAction sends session_new; the attach clears the view',
+    () async {
+      final (:service, :channel) = await _attached(
+        replay: [
+          {
+            'seq': 1,
+            'event': {
+              'type': 'message_done',
+              'role': 'assistant',
+              'text': 'old transcript',
+            },
+          },
+        ],
+      );
+      expect(service.messages, hasLength(1));
+      final reset = service.newSessionAction;
+      expect(reset, isNotNull);
+      await reset!();
+      await Future<void>.delayed(Duration.zero);
+      expect(channel.sentOf('session_new'), isNotNull);
+      // The SW answers with AttachedMsg(sessionId: fresh, replay: []) — the
+      // same rebuild path clears the transcript and adopts the new id.
+      channel.fromWorker(const AttachedMsg(sessionId: 'sw-fresh', replay: []));
+      await Future<void>.delayed(Duration.zero);
+      expect(service.relaySessionId, 'sw-fresh');
+      expect(service.messages, isEmpty);
+      addTearDown(channel.close);
+    },
+  );
+
+  test('newSessionAction is null while a turn runs', () async {
+    final (:service, :channel) = await _attached();
+    await service.sendText('running turn');
+    // sendText flipped the optimistic streaming state (async broadcast
+    // delivery — pump the queue before asserting).
+    await Future<void>.delayed(Duration.zero);
+    expect(service.isStreaming, isTrue);
+    expect(service.newSessionAction, isNull);
+    addTearDown(channel.close);
+  });
+
   test('a live turn steers instead of prompting', () async {
     final (:service, :channel) = await _attached();
     channel.fromWorker(StreamMsg(event: {'type': 'status', 'running': true}));

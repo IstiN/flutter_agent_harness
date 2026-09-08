@@ -24,17 +24,21 @@ import 'package:flutter_agent_harness/src/session/session_storage.dart';
 import 'package:flutter_agent_harness/src/session/session_tree.dart';
 import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
+import 'package:http/http.dart' as http;
 
 import 'active_tab_context.dart';
 import 'approval_flow.dart';
+import 'ext_ops.dart';
 import 'host_event_map.dart' show hostEventOf, messageToJs, v1OpToolResult;
 import 'browser_api_tools.dart';
 import 'security/exfil_gate.dart' show OutboundKind, originOf;
 import 'chrome_api.dart';
 import 'chrome_storage_env.dart';
+import 'fetch_client.dart';
 import 'dap/dap_frames.dart';
 import 'dap/dap_integration.dart';
 import 'providers.dart';
+import 'session_reset.dart';
 import 'tool_gate.dart';
 import 'ui_protocol.dart';
 import 'ui_host_adapter.dart';
@@ -73,6 +77,9 @@ const _systemPrompt =
     'pages, the Web Store) — tab management still works there. Keep small '
     'notes under / through the read/write/edit/ls file tools. There is no '
     'shell. Be terse. '
+    'Tool results are NOT shown to the user and must never be echoed back: '
+    'answer in your own words, quoting only the fragments you actually '
+    'need. '
     'A turn may open with a `[context] active tab:` line naming the page '
     'focused when the turn started (or `restricted page, tools '
     'unavailable`); it is environment context, not part of the request, '
@@ -108,6 +115,10 @@ final class AgentHost implements UiHostBackend {
   /// the registered tools, the per-turn active-tab context injector, and
   /// the second-tier gate (issue #34 AC4d) all read it.
   BrowserApiToolSurface? _browserSurface;
+
+  /// The chrome binding kept for the ext_request op surface (cookies /
+  /// tabs); null on a v1-only boot.
+  ChromeApi? _chromeApi;
 
   /// Second-tier gate state: the enabled-set it reflects and the
   /// serialized re-apply chain keeping overlapping settings and
@@ -178,6 +189,7 @@ final class AgentHost implements UiHostBackend {
         _browserTool(key, value),
     ]);
     if (chrome != null) {
+      _chromeApi = chrome;
       _enabledTools = _enabledOf(config.browserTools);
       _browserSurface = await registerBrowserApiTools(
         _registry,
@@ -378,8 +390,8 @@ final class AgentHost implements UiHostBackend {
     return resolveStreamFn(provider);
   }
 
-  Future<JsonlSessionStorage> _openSession() async {
-    if ((await _env.exists(_sessionPath)).valueOrNull == true) {
+  Future<JsonlSessionStorage> _openSession({bool fresh = false}) async {
+    if (!fresh && (await _env.exists(_sessionPath)).valueOrNull == true) {
       return JsonlSessionStorage.open(_env, _sessionPath);
     }
     return JsonlSessionStorage.create(
@@ -410,6 +422,30 @@ final class AgentHost implements UiHostBackend {
   @override
   void cancelTurn() {
     if (_running) _agent.abort();
+  }
+
+  /// `session_new` (panel "New session"): archive the live JSONL via
+  /// [archiveLiveSession] (failure aborts the reset — overwriting the
+  /// live file after a failed archive would destroy the only copy), then
+  /// start a fresh session IN PLACE — same registry, approvals, stream
+  /// function and provider; only the transcript resets. Refused while a
+  /// turn runs: killing a live run mid-flight is worse than a busy error.
+  @override
+  Future<void> newSession() async {
+    if (!_booted) throw StateError('not booted');
+    if (_running) throw StateError('busy: finish the current turn first');
+    final oldId = sessionId;
+    if (oldId.isNotEmpty) {
+      await archiveLiveSession(
+        fs: _env,
+        sessionPath: _sessionPath,
+        sessionId: oldId,
+      );
+    }
+    _session = Session(await _openSession(fresh: true));
+    _persisted.clear();
+    _agent.state.messages = const [];
+    _emitStatus();
   }
 
   /// The live JSONL session id from the header (parsed at open — no disk
@@ -457,6 +493,31 @@ final class AgentHost implements UiHostBackend {
     // (or a late double-answer, found=false) must never seed it.
     final origin = outcome.origin;
     if (allow && origin != null) _visitedOrigins?.add(origin);
+  }
+
+  /// The `ext_request` op surface (panel-only host capabilities): the
+  /// user's live cookie jar (chrome.cookies), SW-relayed HTTP (MV3 +
+  /// `<all_urls>` = no CORS for provider endpoints) and tab creation.
+  /// Dispatch is pure (ext_ops.dart, VM-tested); this wires it to the
+  /// chrome binding and the fetch client.
+  @override
+  Future<Map<String, dynamic>> extRequest(
+    String op,
+    Map<String, dynamic> params,
+  ) => handleExtOp(_ExtOpsBackend(this), op, params);
+
+  Future<ExtHttpResponse> _extFetch(
+    String url, {
+    String method = 'GET',
+    Map<String, String> headers = const {},
+    String? body,
+  }) async {
+    final client = FetchClient();
+    final request = http.Request(method, Uri.parse(url))
+      ..headers.addAll(headers);
+    if (body != null) request.body = body;
+    final response = await client.send(request).then(http.Response.fromStream);
+    return ExtHttpResponse(status: response.statusCode, body: response.body);
   }
 
   @override
@@ -611,19 +672,19 @@ final class AgentHost implements UiHostBackend {
 
   /// The exfil gate's ask (cross_origin / data_exit outbound actions),
   /// routed through the SAME prompt surface as ordinary approvals — the
-  /// gate used to hard-error without asking anybody, so even yolo could
-  /// not open a never-visited origin and the model looped on the tool
-  /// error. Mirrors the core gate's critical-pattern semantics: the ask
-  /// survives yolo (one dialog per new ORIGIN — an allow seeds the
-  /// visited set), and unattended — the no-user-present mode — allows
-  /// without asking so an autonomous run never stalls on the 120s
-  /// backstop.
+  /// gate used to hard-error without asking anybody, so even the
+  /// interactive modes could not open a never-visited origin and the
+  /// model looped on the tool error. The user's contract for the
+  /// extension: yolo = ZERO prompts (there is no bash there to carry
+  /// critical patterns) — yolo and unattended answer the ask silently;
+  /// only ask/write show the dialog. An allow seeds the visited set, so
+  /// the ask is once per ORIGIN.
   Future<bool> _askOutbound(
     OutboundKind kind,
     String url,
     String explanation,
   ) async {
-    if (_approvals.mode == ApprovalMode.unattended) return true;
+    if (!exfilGateShouldAsk(_approvals.mode)) return true;
     final allow = await _promptApproval(
       ApprovalRequest(
         toolName: kind.name,
@@ -776,4 +837,37 @@ final class _SilentHooks implements AutoCompactorHooks {
   void onDelta(String delta) {}
   @override
   void onAttemptStart(String label, int attempt, Duration budget) {}
+}
+
+/// The ext_request backend over the SW's chrome binding + fetch client.
+final class _ExtOpsBackend implements ExtOpsBackend {
+  _ExtOpsBackend(this._host);
+
+  final AgentHost _host;
+
+  @override
+  Future<List<ExtCookie>> cookiesGetAll({String? url, String? domain}) async {
+    final chrome = _host._chromeApi;
+    if (chrome == null) throw 'no chrome binding (v1-only build)';
+    final cookies = await chrome.cookies.getAll(url: url, domain: domain);
+    return [
+      for (final c in cookies)
+        ExtCookie(name: c.name, value: c.value, domain: c.domain),
+    ];
+  }
+
+  @override
+  Future<ExtHttpResponse> fetchString(
+    String url, {
+    String method = 'GET',
+    Map<String, String> headers = const {},
+    String? body,
+  }) => _host._extFetch(url, method: method, headers: headers, body: body);
+
+  @override
+  Future<void> tabsCreate(String url) async {
+    final chrome = _host._chromeApi;
+    if (chrome == null) throw 'no chrome binding (v1-only build)';
+    await chrome.tabs.create(url: url);
+  }
 }

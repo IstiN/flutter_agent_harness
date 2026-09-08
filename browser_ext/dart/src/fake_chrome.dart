@@ -245,6 +245,9 @@ final class FakeChrome implements ChromeApi {
   final _omniEntered = StreamController<OmniboxInput>.broadcast(sync: true);
   final _commandPressed = StreamController<String>.broadcast(sync: true);
   final _navCompleted = StreamController<NavCompleted>.broadcast(sync: true);
+  final _navHistoryUpdated = StreamController<NavCompleted>.broadcast(
+    sync: true,
+  );
   final _permissionsAdded = StreamController<List<String>>.broadcast(
     sync: true,
   );
@@ -397,6 +400,23 @@ final class FakeChrome implements ChromeApi {
     int frameId = 0,
   }) async {
     _navCompleted.add(NavCompleted(tabId: tabId, url: url, frameId: frameId));
+  }
+
+  /// Flips a tab's chrome load state ('loading' | 'complete' | …) so
+  /// nav_wait's snapshot check can be exercised against both.
+  void setTabStatus(int tabId, String status) {
+    _tabOrThrow(tabId).status = status;
+  }
+
+  /// Emits webNavigation.onHistoryStateUpdated (same-document SPA push).
+  Future<void> navHistoryUpdated({
+    required int tabId,
+    required String url,
+    int frameId = 0,
+  }) async {
+    _navHistoryUpdated.add(
+      NavCompleted(tabId: tabId, url: url, frameId: frameId),
+    );
   }
 
   /// Sets the idle state and emits idle.onStateChanged.
@@ -594,6 +614,7 @@ final class FakeChrome implements ChromeApi {
     active: t.active,
     favIconUrl: t.favIconUrl,
     discarded: t.discarded,
+    status: t.status,
   );
 
   BrowserWindow _snapWin(_WinRec w) => BrowserWindow(
@@ -621,6 +642,7 @@ final class _FakeTabs implements TabsApi {
   @override
   Future<Tab> create({
     String? url,
+    String? title,
     bool? active,
     int? index,
     bool? pinned,
@@ -629,7 +651,7 @@ final class _FakeTabs implements TabsApi {
     final t = _c._newTab(
       url: u,
       // Fake pages have no DOM: the title mirrors the url once navigated.
-      title: url == null ? 'New Tab' : u,
+      title: title ?? (url == null ? 'New Tab' : u),
       index: index,
       active: active ?? true,
       pinned: pinned ?? false,
@@ -1620,6 +1642,10 @@ final class _FakeWebNavigation implements WebNavigationApi {
 
   @override
   Stream<NavCompleted> get onCompleted => _c._navCompleted.stream;
+
+  @override
+  Stream<NavCompleted> get onHistoryStateUpdated =>
+      _c._navHistoryUpdated.stream;
 }
 
 final class _FakeSystem implements SystemApi {
@@ -1777,6 +1803,10 @@ final class _TabRec {
   bool active;
   String? favIconUrl;
   bool discarded = false;
+
+  /// chrome's load state; created tabs are born 'complete' (the fake has
+  /// no load lifecycle), tests flip it with [FakeChrome.setTabStatus].
+  String status = 'complete';
 }
 
 final class _WinRec {

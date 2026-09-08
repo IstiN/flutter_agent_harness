@@ -194,6 +194,14 @@ abstract class FaTransport {
     if (isReady) dispatch(const CancelMsg());
   }
 
+  /// Starts a fresh session on the peer (`session_new`): the SW archives
+  /// its live JSONL and answers with the attach trio — the [AttachedMsg]
+  /// adopts the new session id exactly like a (re)attach. Ignored while
+  /// not attached: resetting a session we cannot see would desync.
+  void newSession() {
+    if (isReady) dispatch(const SessionNewMsg());
+  }
+
   /// Remembers [id] as the session to attach to. Persisted by the caller.
   void setSessionId(String? id) {
     _sessionId = id;

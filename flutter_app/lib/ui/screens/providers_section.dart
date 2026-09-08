@@ -16,6 +16,7 @@ import 'package:fa/services/copilot_connect_flow.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
@@ -222,6 +223,10 @@ List<fa_ui.FaOnDeviceRoute> buildOnDeviceProviderRoutes(
   /// stays discoverable through the "Add provider" picker.
   bool onlyConfigured = false,
 }) {
+  // The extension's CSP blocks the jsdelivr CDN imports these engines
+  // lazy-load (web-llm / transformers.js / litert) — offering the tiles
+  // only produced console errors and dead connect forms.
+  if (isExtensionHost()) return const [];
   final web = isWeb ?? kIsWeb;
   fa_ui.FaOnDeviceRoute route(ProviderPreset preset, String kind) =>
       fa_ui.FaOnDeviceRoute(

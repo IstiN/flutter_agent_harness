@@ -523,6 +523,7 @@
       "date": {}
     }
   },
+  "publicationComments": "{count, plural, =1{1 комментарий}few{{count} комментария}many{{count} комментариев}other{{count} комментария}}",
   "publishWidgetTitle": "Публикация «{name}»",
   "@publishWidgetTitle": {
     "placeholders": {

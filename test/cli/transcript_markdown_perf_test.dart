@@ -386,5 +386,78 @@ void main() {
         reason: 'the whole mixed pattern must stay incremental',
       );
     });
+    test('32KB tail hard-split after commit resumes instead of rebuilding', () {
+      final session = TranscriptMarkdown(width: 70);
+      final base = List.generate(8, (i) => 'seed $i');
+      // A tail the CLI hard-split cap applies to: >32KB streamed WITHOUT a
+      // newline, committed by the previous sync (boundary sits ON it).
+      final tail = 'word ' * 7000; // 35KB
+      final committed = [...base, tail];
+      session.sync(committed);
+      final rebuildsBefore = TranscriptMarkdown.debugFullRebuilds;
+      expect(
+        session.debugThroughForTest,
+        committed.length,
+        reason: 'precondition: the growing tail line was committed',
+      );
+      // fa_tui._appendOutput splits the oversized tail into 16KB chunks —
+      // fresh substring identities, so the identity sentinels both miss.
+      final src = splitTail(base, tail);
+      expect(
+        session.sync(src),
+        AnsiMarkdown(width: 70).formatAll(src),
+        reason: 'split tail must stay byte-exact',
+      );
+      expect(
+        TranscriptMarkdown.debugFullRebuilds,
+        rebuildsBefore,
+        reason:
+            'a hard-split growing tail is faithful growth: '
+            'resume, never rebuild',
+      );
+    });
+
+    test('streaming continues on the last chunk after a split', () {
+      final session = TranscriptMarkdown(width: 70);
+      final base = List.generate(8, (i) => 'seed $i');
+      final tail = 'word ' * 7000; // 35KB — crosses the 32KB cap
+      session.sync([...base, tail]);
+      final rebuildsBefore = TranscriptMarkdown.debugFullRebuilds;
+      var src = splitTail(base, tail);
+      expect(session.sync(src), AnsiMarkdown(width: 70).formatAll(src));
+      // The real flood keeps appending to the LAST chunk between splits.
+      for (var n = 0; n < 5; n++) {
+        src = [...src.sublist(0, src.length - 1), '${src.last}more$n '];
+        expect(session.sync(src), AnsiMarkdown(width: 70).formatAll(src));
+      }
+      expect(
+        TranscriptMarkdown.debugFullRebuilds,
+        rebuildsBefore,
+        reason: 'post-split growth on the last chunk stays incremental',
+      );
+    });
+
+    test('a split that does not reproduce the boundary still rebuilds', () {
+      final session = TranscriptMarkdown(width: 70);
+      final base = List.generate(8, (i) => 'seed $i');
+      session.sync([...base, 'original boundary text']);
+      final rebuildsBefore = TranscriptMarkdown.debugFullRebuilds;
+      // Chunks that do NOT concatenate back to the boundary: replaced
+      // content, not a faithful split — the documented safe path.
+      final src = [...base, 'original', 'al text'];
+      expect(session.sync(src), AnsiMarkdown(width: 70).formatAll(src));
+      expect(TranscriptMarkdown.debugFullRebuilds, rebuildsBefore + 1);
+    });
   });
+}
+
+/// Mirrors fa_tui._appendOutput's 32KB cap: the tail re-split into 16KB
+/// chunk lines, each a fresh substring identity.
+List<String> splitTail(List<String> base, String tail) {
+  const chunkChars = 16 * 1024;
+  return [
+    ...base,
+    for (var i = 0; i < tail.length; i += chunkChars)
+      tail.substring(i, (i + chunkChars).clamp(0, tail.length)),
+  ];
 }

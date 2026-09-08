@@ -30,11 +30,39 @@ extension type _JsChromeNs._(JSObject _) implements JSObject {
   /// bindings (`@JS('chrome.runtime.id')`) THROW on that missing segment,
   /// so every hop is bound separately and stepped through null-safely.
   external _JsRuntimeNs? get runtime;
+
+  /// `chrome.tabs` — present on extension pages (no permission needed for
+  /// [extOpenTab]); null elsewhere, stepped through null-safely.
+  external _JsTabsNs? get tabs;
 }
 
 extension type _JsRuntimeNs._(JSObject _) implements JSObject {
   external JSString? get id;
 }
+
+extension type _JsTabsNs._(JSObject _) implements JSObject {
+  /// MV3: `tabs.create` resolves a Promise of the created tab.
+  external JSPromise<_JsTab?> create(_JsCreateProperties props);
+}
+
+extension type _JsCreateProperties._(JSObject _) implements JSObject {
+  external _JsCreateProperties({String? url});
+}
+
+extension type _JsTab._(JSObject _) implements JSObject {
+  external int? get id;
+}
+
+extension type _JsFetchResponse._(JSObject _) implements JSObject {
+  external int get status;
+  external JSPromise<JSString> text();
+}
+
+/// The page `fetch` — on an extension page with `<all_urls>` host
+/// permissions this is the cookie-authenticated HTTP path (see
+/// [extFetchString]).
+@JS('fetch')
+external JSPromise<_JsFetchResponse> _pageFetch(JSString url, JSObject init);
 
 extension type _JsConnectInfo._(JSObject _) implements JSObject {
   external _JsConnectInfo({String? name});
@@ -58,6 +86,30 @@ extension type _JsEvent._(JSObject _) implements JSObject {
 /// Whether this build runs inside the browser extension panel: only an
 /// extension page has a non-null `chrome.runtime.id`.
 bool isExtensionHost() => _chromeNs?.runtime?.id != null;
+
+/// Opens [url] in a new browser tab. Extension pages only; false outside
+/// an extension context. This is the sign-in surface: a NORMAL tab (IdPs
+/// forbid framing their login pages) whose session lands in the shared
+/// cookie jar.
+Future<bool> extOpenTab(String url) async {
+  final tabs = _chromeNs?.tabs;
+  if (tabs == null) return false;
+  final tab = await tabs.create(_JsCreateProperties(url: url)).toDart;
+  return tab != null;
+}
+
+/// One cookie-authenticated HTTP GET from the extension page: MV3 +
+/// `<all_urls>` host permissions mean no CORS, and `credentials: 'include'`
+/// makes the browser attach the cookie jar (setting a `Cookie` header
+/// itself is a forbidden-header no-op). Returns null outside an extension
+/// context.
+Future<({int status, String body})?> extFetchString(String url) async {
+  if (!isExtensionHost()) return null;
+  final init = ({'credentials': 'include'}).jsify() as JSObject;
+  final response = await _pageFetch(url.toJS, init).toDart;
+  final body = await response.text().toDart;
+  return (status: response.status, body: body.toDart);
+}
 
 /// Opens a `chrome.runtime` port channel, or null when unavailable.
 ///

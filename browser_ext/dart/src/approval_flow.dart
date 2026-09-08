@@ -22,6 +22,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_agent_harness/src/approval/approval.dart'
+    show ApprovalMode;
+
 import 'security/exfil_gate.dart' show originOf;
 
 /// Wire-event sink (the host's `_sink`): one JSON-able map per event.
@@ -138,6 +141,13 @@ final class ApprovalFlow {
     }
   }
 }
+
+/// Whether the exfil gate's ask reaches a human under [mode]. yolo means
+/// ZERO prompts in the extension (there is no `bash` there to carry
+/// critical patterns), and unattended never blocks — both answer the ask
+/// without a dialog; only the interactive modes (ask/write) surface it.
+bool exfilGateShouldAsk(ApprovalMode mode) =>
+    mode == ApprovalMode.alwaysAsk || mode == ApprovalMode.write;
 
 /// Whether a reconfigure needs an idle host. The approval mode is the one
 /// field that applies live (mid-run included) — everything else

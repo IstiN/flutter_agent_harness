@@ -2954,6 +2954,12 @@ abstract class AppLocalizations {
   /// **'Submitted {date}'**
   String publicationSubmittedAt(Object date);
 
+  /// No description provided for @publicationComments.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 comment}other{{count} comments}}'**
+  String publicationComments(num count);
+
   /// No description provided for @publishWidgetTitle.
   ///
   /// In en, this message translates to:

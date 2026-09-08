@@ -127,4 +127,20 @@ void main() {
     final k = parseKeyFromBuffer(b)!;
     expect(k.code, KeyCode.delete);
   });
+
+  test(
+      'parseKeyFromBuffer decodes ESC ESC as escape, keeping the second '
+      'byte for the next pass', () {
+    // Two Escape presses landing in one read chunk used to fall into the
+    // `unknown` fallthrough and BOTH were swallowed — the abort Esc never
+    // fired during a streaming run (fa issue #46). The first byte emits
+    // Escape; the second re-parses as a lone ESC (the Program's
+    // lone-escape timer then delivers it).
+    final b = <int>[0x1b, 0x1b];
+    final k = parseKeyFromBuffer(b)!;
+    expect(k.code, KeyCode.escape);
+    expect(b, [0x1b]);
+    expect(parseKeyFromBuffer(b), isNull);
+    expect(b, [0x1b]);
+  });
 }

@@ -34,6 +34,17 @@ const testCustomEndpointModel = Model(
   maxTokens: 4096,
 );
 
+/// The catalog `openai` DEFAULT endpoint, for the env/legacy key-hint
+/// branches (they fire only on a spec's default endpoint — issue #40).
+const testOpenAiDefaultEndpointModel = Model(
+  id: 'test-model',
+  api: 'test-api',
+  provider: 'openai',
+  baseUrl: 'https://api.openai.com/v1',
+  contextWindow: 100000,
+  maxTokens: 4096,
+);
+
 AssistantMessage testAssistant({
   List<ContentBlock> content = const [],
   StopReason stopReason = StopReason.stop,

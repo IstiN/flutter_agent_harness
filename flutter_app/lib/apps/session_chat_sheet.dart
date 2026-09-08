@@ -477,10 +477,20 @@ class SessionChatSheetState extends State<SessionChatSheet>
   Future<void> _newSession() async {
     final manager = widget.manager;
     final source = manager.active?.service;
+    if (source == null) return;
+    // Relay sessions (extension panel) live in the service worker: a new
+    // session is a SW-side reset, not a second local session — cloning a
+    // config is impossible there (configForClone is null, the old silent
+    // no-op).
+    final relayReset = source.newSessionAction;
+    if (relayReset != null) {
+      await relayReset();
+      return;
+    }
     final config =
-        source?.configForClone ??
+        source.configForClone ??
         manager.sessions.firstOrNull?.service.configForClone;
-    if (source == null || config == null) return;
+    if (config == null) return;
     await manager.createSession(
       config: config,
       serviceFactory: () async => source.clone(),

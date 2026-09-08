@@ -19,7 +19,7 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
-import 'mock_llm_server.dart';
+import 'package:fa_llm_mock/fa_llm_mock.dart';
 
 void main() {
   late Directory tempHome;
