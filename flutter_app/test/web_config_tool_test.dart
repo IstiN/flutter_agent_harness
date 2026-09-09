@@ -139,6 +139,50 @@ void main() {
     env.dispose();
   });
 
+  test(
+    'whole-section sets cannot smuggle stdio servers past the guard',
+    () async {
+      final store = InMemoryFsSnapshotStore();
+      final env = await _restoreWebEnv(store);
+      final service = ConfigService(
+        env: env,
+        homeDir: null,
+        supportsProcesses: false,
+      );
+      // Path depth must not bypass the capability check: a whole-section
+      // write carrying a `command` server is dead config on the web — the
+      // content is inspected, the write refused (issue #29 AC11/E13).
+      await expectLater(
+        service.set('mcp', '{"servers":{"fs":{"command":"npx"}}}'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('not applicable on this host'),
+          ),
+        ),
+      );
+      await expectLater(
+        service.set('mcp.servers', '{"fs":{"args":["-y","@x/server"]}}'),
+        throwsA(isA<ConfigException>()),
+      );
+      // Remote-only content passes the capability guard (then hits the
+      // honest home-less-host refusal for global-only keys).
+      await expectLater(
+        service.set('mcp.servers', '{"web":{"url":"https://mcp.example"}}'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            isNot(contains('not applicable on this host')),
+          ),
+        ),
+      );
+      await env.flush();
+      env.dispose();
+    },
+  );
+
   test('the container env (memory FS) round-trips config', () async {
     // The mobile container shape: an in-memory FS with a cwd, no home.
     final env = MemoryExecutionEnv(cwd: '/sandbox');

@@ -435,25 +435,49 @@ final class ConfigService {
     return ConfigScope.global;
   }
 
-  /// The server id when [segments] names an MCP server path that requires
-  /// host process spawning — a stdio member leaf, or a whole server entry
-  /// whose [candidate] map declares `command` — on a host without process
-  /// spawning. Null when the path resolves fine here. [candidate] is the
-  /// resolved entry on `get`, the decoded JSON value on `set`; a
-  /// remote-only (`url`) entry stays configurable on every host.
+  /// Whether a decoded MCP server [entry] needs host process spawning —
+  /// any `command`/`args` member — versus a remote (`url`) entry, which
+  /// stays configurable on every host.
+  static bool _isStdioEntry(Object? entry) =>
+      entry is Map &&
+      (entry.containsKey('command') || entry.containsKey('args'));
+
+  /// The server id when [segments] names an MCP path that requires host
+  /// process spawning on a host without it: a stdio member leaf, a whole
+  /// server entry whose [candidate] declares `command`/`args`, or — for
+  /// whole-section paths — any stdio entry inside the parsed section
+  /// content. Content, not path depth, decides (issue #29 AC11/E13:
+  /// `config set mcp '{...}'` must not write dead stdio servers on web).
+  /// Null when the path resolves fine here. [candidate] is the resolved
+  /// value on `get`, the decoded JSON value on `set`.
   String? _stdioServerRefusal(List<String> segments, [Object? candidate]) {
     if (supportsProcesses ||
-        segments.length < 3 ||
+        segments.isEmpty ||
         segments.first != 'mcp' ||
-        segments[1] != 'servers') {
+        (segments.length > 1 && segments[1] != 'servers')) {
       return null;
     }
+    // A stdio member leaf is refused by path shape alone — the host
+    // capability does not depend on whether a value exists yet.
     if (segments.length > 3) {
       return _processBoundMembers.contains(segments.last) ? segments[2] : null;
     }
-    return candidate is Map && candidate.containsKey('command')
-        ? segments[2]
-        : null;
+    if (candidate == null) return null;
+    if (segments.length == 3) {
+      return _isStdioEntry(candidate) ? segments[2] : null;
+    }
+    // Whole-section paths (`mcp`, `mcp.servers`): inspect the decoded
+    // CONTENT — path depth alone must not bypass the capability check
+    // (AC11/E13: `config set mcp '{...}'` must not write dead stdio
+    // servers on a web/iOS host).
+    final servers = segments.length == 1 && candidate is Map
+        ? candidate['servers']
+        : candidate;
+    if (servers is! Map) return null;
+    for (final entry in servers.entries) {
+      if (_isStdioEntry(entry.value)) return entry.key.toString();
+    }
+    return null;
   }
 
   /// The named "not applicable on this host" answer for stdio server [id].

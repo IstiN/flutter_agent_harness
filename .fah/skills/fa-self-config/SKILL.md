@@ -428,12 +428,13 @@ a2a:                            # remote Agent2Agent endpoints
   servers:
     peer:
       url: https://peer.example:8080
-      token: plain-secret       # or ${PEER_TOKEN} (resolved from the env)
+      token: ${PEER_TOKEN}      # env-resolved at boot — never a literal secret
 ```
 
 `a2a` servers are remote-only (a `url`, like remote MCP servers), so they
-configure fine on process-less hosts; a `token` referencing an unset env
-variable is refused.
+configure fine on process-less hosts. A `token` is an `${ENV}` reference
+resolved at boot; config `check`/`set` keep the token text literal, so an
+unset variable surfaces when the agent boots, not as a config error.
 
 ## Settings hub
 
