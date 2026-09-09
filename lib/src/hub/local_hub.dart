@@ -15,6 +15,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
 
@@ -157,6 +158,15 @@ class LocalHub {
     String? agentId,
   ) async {
     final op = frame['op'] as String?;
+    // The enroll wire shape is `{"t":"enroll"}` (no `op`) — a client
+    // holding a master secret sends it right after hello. This hub is
+    // open (no enrollment auth), but it must still answer per contract or
+    // the client re-enrolls on every connect and logs a bad_frame
+    // rejection each time.
+    if (frame['t'] == 'enroll') {
+      _reply(ws, {'t': 'enrolled', 'secret': _newEnrollmentSecret()});
+      return agentId;
+    }
     switch (op) {
       case 'hello':
         return _hello(ws, frame);
@@ -367,6 +377,17 @@ class LocalHub {
 
   void _reply(WebSocket ws, Map<String, dynamic> frame) {
     if (ws.readyState == WebSocket.open) ws.add(jsonEncode(frame));
+  }
+
+  /// A ceremonial enrollment secret: this hub is open (no master-secret
+  /// auth), but the client persists whatever it gets and stops
+  /// re-enrolling — so issue a fresh random value per enroll frame.
+  static String _newEnrollmentSecret() {
+    final random = Random.secure();
+    return [
+      for (var i = 0; i < 16; i++)
+        random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ].join();
   }
 }
 

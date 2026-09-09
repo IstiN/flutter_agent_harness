@@ -3,6 +3,7 @@
 @Tags(['integration'])
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/io.dart';
@@ -36,6 +37,19 @@ void main() {
       addTearDown(first.stop);
       final second = LocalHub(port: first.url.port);
       await expectLater(second.start(), throwsA(isA<SocketException>()));
+    });
+
+    test('an enroll frame gets an enrolled reply with a secret', () async {
+      final hub = LocalHub(port: 0);
+      await hub.start();
+      addTearDown(hub.stop);
+
+      final ws = await WebSocket.connect(hub.url.toString());
+      addTearDown(ws.close);
+      ws.add(jsonEncode({'t': 'enroll'}));
+      final reply = jsonDecode(await ws.first as String) as Map;
+      expect(reply['t'], 'enrolled');
+      expect((reply['secret'] as String?) ?? '', hasLength(32));
     });
   });
 }
