@@ -117,7 +117,7 @@ void main() {
           final value = leaf.value;
           final literal = value is String ? value : jsonEncode(_plain(value));
           try {
-            final setResult = await service.set(leaf.key, literal);
+            await service.set(leaf.key, literal);
             final get = await service.get(leaf.key);
             // get() renders the PARSED value (scalars verbatim, lists
             // compact JSON) — compare against the documented value, not
