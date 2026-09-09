@@ -3055,6 +3055,10 @@
 
 - feat(81): open user requests survive compaction summary-of-summary (#82)
 
+## 0.1.333
+
+- feat(dap): /dap start one-step bring-up, fa hub serve, DapHubService for web/extension (#90)
+
 ## Unreleased
 
 ## Unreleased
