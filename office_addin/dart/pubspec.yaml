@@ -1,0 +1,27 @@
+# ponytail: Office taskpane twin of fa_browser_agent — path dep on the
+# harness core (pure Dart, web-safe) plus the extension package's
+# chrome-free provider slice (resolveStreamFn / fake: provider / registry
+# merge) so provider streaming is never forked per host.
+name: fa_office_agent
+description: >-
+  fa agent core compiled into the Office Add-in taskpane (issue #89):
+  Office.js host bridge, outlook.* tools, manifest validation. Built by
+  scripts/build_office_addin.sh with `dart compile js` into
+  office_addin/web/office_agent.js.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+dependencies:
+  flutter_agent_harness:
+    path: ../../
+  fa_browser_agent:
+    path: ../../browser_ext/dart
+  http: ^1.6.0
+  cryptography: ^2.7.0
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.31.2

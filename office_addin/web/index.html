@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fa — Outlook assistant</title>
+<style>
+  :root {
+    --bg: #070a10; --panel: #0d1420; --border: #1c2637;
+    --text: #e8eef7; --dim: #93a1b5; --accent: #5eead4; --warn: #fbbf24;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 14px; line-height: 1.55;
+  }
+  header h1 { font-size: 18px; margin: 0 0 4px; }
+  #fa-status { color: var(--dim); margin: 0 0 12px; }
+  #fa-office-unavailable {
+    display: none; margin: 0 0 12px; padding: 10px 12px;
+    border: 1px solid var(--warn); border-radius: 8px; color: var(--warn);
+    background: rgba(251, 191, 36, 0.08);
+  }
+  #fa-office-unavailable.on { display: block; }
+  #fa-app { width: 100%; height: 60vh; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+  h2 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  #fa-events {
+    margin: 0; padding: 8px 10px; max-height: 30vh; overflow: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--dim); font-size: 12px; white-space: pre-wrap;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header><h1>fa — Outlook assistant</h1></header>
+<p id="fa-status">booting…</p>
+<div id="fa-office-unavailable">host API unavailable — the agent answers without mail tools</div>
+<iframe id="fa-app" src="app/index.html" hidden title="fa app"></iframe>
+<h2>Events</h2>
+<pre id="fa-events"></pre>
+
+<script id="office-js" src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script src="office_agent.js"></script>
+<script>
+(function () {
+  var status = document.getElementById('fa-status');
+  var banner = document.getElementById('fa-office-unavailable');
+  var log = document.getElementById('fa-events');
+
+  function showBanner() {
+    banner.classList.add('on');
+    status.textContent = 'host API unavailable — running without mail tools';
+  }
+  document.getElementById('office-js').addEventListener('error', showBanner);
+
+  // Office.js may load but never signal readiness (sandboxed frames,
+  // blocked CDN after a slow timeout): fall back to a bounded wait.
+  setTimeout(function () {
+    if (!window.Office) showBanner();
+  }, 8000);
+
+  if (window.Office && typeof window.Office.onReady === 'function') {
+    window.Office.onReady(function () {
+      status.textContent = 'ready — Outlook host connected';
+    });
+  }
+
+  // Show the full fa app only when the build bundled it (office_addin/web/
+  // has no app/ dir; build_office_addin.sh --with-app ships one).
+  fetch('app/index.html', { method: 'HEAD' })
+    .then(function (r) { if (r.ok) document.getElementById('fa-app').hidden = false; })
+    .catch(function () {});
+
+  var tries = 0;
+  (function wire() {
+    var agent = window.faOfficeAgent;
+    if (agent && typeof agent.onEvent === 'function') {
+      agent.onEvent(function (event) {
+        var line = typeof event === 'string' ? event : JSON.stringify(event);
+        log.textContent += line + '\n';
+        log.scrollTop = log.scrollHeight;
+      });
+      return;
+    }
+    if (++tries < 20) setTimeout(wire, 250);
+  })();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+# Office add-in (Outlook taskpane) acceptance suite (issue #89): validates
+# the manifest, compiles the embedded agent (dart2js), runs the Dart unit
+# tests, the Node vm-sandbox tests over the compiled office_agent.js, and
+# Playwright (chromium + webkit) against the assembled taskpane page.
+# Path-filtered so unrelated pushes skip it.
+name: Office add-in
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'office_addin/**'
+      - 'scripts/build_office_addin.sh'
+      - '.github/workflows/office-addin.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'office_addin/**'
+      - 'scripts/build_office_addin.sh'
+      - '.github/workflows/office-addin.yml'
+  workflow_dispatch:
+
+jobs:
+  office-addin-suite:
+    name: Office add-in suite
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # office_addin/dart is a separate package (path dep on this root),
+      # so its pub get must follow the root's.
+      - name: dart pub get (root)
+        run: dart pub get
+
+      - name: Dart unit tests (office_addin/dart)
+        run: cd office_addin/dart && dart pub get && dart test
+
+      # Validates the manifest (fails loudly on any issue), compiles the
+      # embedded agent (dart2js) and assembles the site slice — the
+      # artifact under test AND the upload below.
+      - name: Build Office add-in
+        run: bash scripts/build_office_addin.sh
+
+      # Node 22's `node --test` does not glob arguments itself; bash
+      # expands the pattern (or pass the directory).
+      - name: Node unit tests (vm sandbox over office_agent.js)
+        run: node --test office_addin/test/*.test.mjs
+
+      # chromium + webkit: Outlook on the web runs the taskpane in
+      # whichever engine the browser has, so both must boot the page.
+      - name: Playwright e2e (chromium + webkit)
+        run: |
+          cd office_addin/e2e
+          npm ci
+          npx playwright install --with-deps chromium webkit
+          npx playwright test --reporter=line
+
+      - name: Upload assembled add-in
+        uses: actions/upload-artifact@v4
+        with:
+          name: office-addin
+          path: build/pages/root/outlook/
