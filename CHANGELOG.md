@@ -3026,6 +3026,10 @@
   Discovery/presence states (`busy`) and the A2A gateway remain for
   phases 2-3.
 
+## 0.1.331
+
+- feat(83): sort session lists current-folder first, each group newest first (#84)
+
 ## Unreleased
 
 ## Unreleased
