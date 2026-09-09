@@ -141,18 +141,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return { ok: true };
       }
       case 'hub.save': {
-        // faDap {url, name, boundSession?}; empty url = no hub presence.
+        // faDap {url, name, secret?, boundSession?}; empty url = no hub presence.
         // Identity keys are generated + stored inside the Dart agent
         // (faDapKey) on first start. The session binding (boundSession) is
         // edited via hub.bind — saving the connection preserves it.
+        // secret = the hub password; an empty field keeps the stored one.
         const url = String(msg.url ?? '').trim();
         const name = String(msg.name ?? '').trim();
         const prev = (await store.get(['faDap'])).faDap;
         const boundSession = prev && prev.boundSession ? { boundSession: prev.boundSession } : {};
-        if (url) await store.set({ faDap: { url, name, ...boundSession } });
+        const enteredSecret = String(msg.secret ?? '');
+        const keptSecret = prev && typeof prev.secret === 'string' ? prev.secret : '';
+        const next = { url, name, ...boundSession };
+        const effectiveSecret = enteredSecret || keptSecret;
+        if (effectiveSecret) next.secret = effectiveSecret;
+        if (url) await store.set({ faDap: next });
         else await store.remove(['faDap']);
         const cur = await store.get(['faProvider', 'faApproval']);
-        agent?.boot({ provider: cur.faProvider, approvalMode: cur.faApproval, dap: url ? { url, name, ...boundSession } : null });
+        agent?.boot({ provider: cur.faProvider, approvalMode: cur.faApproval, dap: url ? next : null });
         return { ok: true };
       }
       case 'hub.bind': {
@@ -162,6 +168,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         if (!cur || !cur.url) return { ok: false, error: 'no hub connection to bind' };
         const mode = String(msg.mode ?? 'current');
         const next = { url: String(cur.url), name: String(cur.name ?? '') };
+        if (cur.secret) next.secret = cur.secret; // the hub password survives rebinds
         if (mode === 'dedicated' || mode === 'named') {
           next.boundSession = { mode };
           if (msg.sessionId) next.boundSession.sessionId = String(msg.sessionId);

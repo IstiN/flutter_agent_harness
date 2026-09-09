@@ -69,64 +69,76 @@ Future<bool> _probeEngine() async {
   }
 }
 
-Future<void> main() async {
-  final engineAvailable = await _probeEngine();
+/// Probed once in setUpAll (outside a test zone flutter_js's fetch/XHR
+/// bootstrap crashes the loader, so the probe cannot run at load time).
+var _engineAvailable = false;
 
-  group(
-    'FlutterJsExtRuntime (real engine)',
-    () {
-      test('commit round-trip: registrations surface after start', () async {
-        final mainJs = '''
+/// Skips the current test when the host cannot load a real engine.
+void _skipWithoutEngine() {
+  if (!_engineAvailable) {
+    markTestSkipped('flutter_js engine not available on this host');
+  }
+}
+
+Future<void> main() async {
+  // flutter_js loads its JS bridge from assets — the services binding
+  // must exist before the probe touches the asset bundle.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('FlutterJsExtRuntime (real engine)', () {
+    setUpAll(() async {
+      _engineAvailable = await _probeEngine();
+    });
+    test('commit round-trip: registrations surface after start', () async {
+      _skipWithoutEngine();
+      final mainJs = '''
 jsr.ext.registerTool({ name: 'ext_hello', description: 'greets', call: function (args) { return { text: 'hi ' + args.name }; } });
 jsr.ext.onHook('onSessionEnd', function () {});
 ''';
-        final runtime = await _start(mainJs, _nullBridge);
-        try {
-          final commit =
-              await runtime.invoke(ExtJsGlobals.commit, const []) as Map;
-          final tools = (commit['tools'] as List).cast<Map>();
-          expect(tools.single['name'], 'ext_hello');
-          expect(tools.single['handle'], 1);
-          expect(commit['hooks'], hasLength(1));
-          expect(
-            await runtime.invoke(ExtJsGlobals.ping, const []),
-            'flutter-js',
-          );
-        } finally {
-          await runtime.dispose();
-        }
-      });
+      final runtime = await _start(mainJs, _nullBridge);
+      try {
+        final commit =
+            await runtime.invoke(ExtJsGlobals.commit, const []) as Map;
+        final tools = (commit['tools'] as List).cast<Map>();
+        expect(tools.single['name'], 'ext_hello');
+        expect(tools.single['handle'], 1);
+        expect(commit['hooks'], hasLength(1));
+        expect(await runtime.invoke(ExtJsGlobals.ping, const []), 'flutter-js');
+      } finally {
+        await runtime.dispose();
+      }
+    });
 
-      test('invoke round-trip: sync and Promise tool results', () async {
-        final mainJs = '''
+    test('invoke round-trip: sync and Promise tool results', () async {
+      _skipWithoutEngine();
+      final mainJs = '''
 jsr.ext.registerTool({ name: 'sync_tool', call: function (args) { return { text: 'sync:' + args.v }; } });
 jsr.ext.registerTool({ name: 'async_tool', call: function (args) { return new Promise(function (resolve) { resolve({ text: 'async:' + args.v }); }); } });
 ''';
-        final runtime = await _start(mainJs, _nullBridge);
-        try {
-          expect(
-            await runtime.invoke(ExtJsGlobals.invoke, [
-              1,
-              {'v': 'Fa'},
-            ]),
-            {'text': 'sync:Fa'},
-          );
-          expect(
-            await runtime.invoke(ExtJsGlobals.invoke, [
-              2,
-              {'v': 'Fa'},
-            ]),
-            {'text': 'async:Fa'},
-          );
-        } finally {
-          await runtime.dispose();
-        }
-      });
+      final runtime = await _start(mainJs, _nullBridge);
+      try {
+        expect(
+          await runtime.invoke(ExtJsGlobals.invoke, [
+            1,
+            {'v': 'Fa'},
+          ]),
+          {'text': 'sync:Fa'},
+        );
+        expect(
+          await runtime.invoke(ExtJsGlobals.invoke, [
+            2,
+            {'v': 'Fa'},
+          ]),
+          {'text': 'async:Fa'},
+        );
+      } finally {
+        await runtime.dispose();
+      }
+    });
 
-      test(
-        'bridge round-trip: fs.readFile resolves through the host',
-        () async {
-          final mainJs = '''
+    test('bridge round-trip: fs.readFile resolves through the host', () async {
+      _skipWithoutEngine();
+      final mainJs = '''
 jsr.ext.registerTool({
   name: 'read_notes',
   call: function (args) {
@@ -136,70 +148,64 @@ jsr.ext.registerTool({
   }
 });
 ''';
-          Future<Object?> bridges(
-            String method,
-            Map<String, dynamic> args,
-          ) async {
-            if (method == 'fs.readFile') return 'file-body';
-            throw StateError('unexpected bridge: $method');
-          }
+      Future<Object?> bridges(String method, Map<String, dynamic> args) async {
+        if (method == 'fs.readFile') return 'file-body';
+        throw StateError('unexpected bridge: $method');
+      }
 
-          final runtime = await _start(mainJs, bridges);
-          try {
-            expect(
-              await runtime.invoke(ExtJsGlobals.invoke, [
-                1,
-                {'path': 'notes.txt'},
-              ]),
-              {'text': 'notes:file-body'},
-            );
-          } finally {
-            await runtime.dispose();
-          }
-        },
-      );
+      final runtime = await _start(mainJs, bridges);
+      try {
+        expect(
+          await runtime.invoke(ExtJsGlobals.invoke, [
+            1,
+            {'path': 'notes.txt'},
+          ]),
+          {'text': 'notes:file-body'},
+        );
+      } finally {
+        await runtime.dispose();
+      }
+    });
 
-      test('invoke timeout disposes the engine and throws', () async {
-        final mainJs = '''
+    test('invoke timeout disposes the engine and throws', () async {
+      _skipWithoutEngine();
+      final mainJs = '''
 jsr.ext.registerTool({ name: 'hang', call: function () { return new Promise(function () {}); } });
 ''';
-        final runtime = await _start(mainJs, _nullBridge);
-        await expectLater(
-          runtime.invoke(ExtJsGlobals.invoke, [
-            1,
-            const <String, dynamic>{},
-          ], timeout: const Duration(milliseconds: 200)),
-          throwsA(isA<TimeoutException>()),
-        );
-        // The timeout kill-switch released the engine.
-        await expectLater(
-          runtime.invoke(ExtJsGlobals.ping, const []),
-          throwsA(isA<StateError>()),
-        );
-        await runtime.dispose(); // idempotent
-      });
+      final runtime = await _start(mainJs, _nullBridge);
+      await expectLater(
+        runtime.invoke(ExtJsGlobals.invoke, [
+          1,
+          const <String, dynamic>{},
+        ], timeout: const Duration(milliseconds: 200)),
+        throwsA(isA<TimeoutException>()),
+      );
+      // The timeout kill-switch released the engine.
+      await expectLater(
+        runtime.invoke(ExtJsGlobals.ping, const []),
+        throwsA(isA<StateError>()),
+      );
+      await runtime.dispose(); // idempotent
+    });
 
-      test('main.js top-level throw surfaces as a start error', () async {
-        final runtime = FlutterJsExtRuntime();
-        await expectLater(
-          runtime.start(
-            bootstrapJs: _kBootstrapTransportOnly,
-            mainJs: 'throw new Error("boom-main");',
-            bridges: _nullBridge,
+    test('main.js top-level throw surfaces as a start error', () async {
+      _skipWithoutEngine();
+      final runtime = FlutterJsExtRuntime();
+      await expectLater(
+        runtime.start(
+          bootstrapJs: _kBootstrapTransportOnly,
+          mainJs: 'throw new Error("boom-main");',
+          bridges: _nullBridge,
+        ),
+        throwsA(
+          isA<ExtProtocolException>().having(
+            (e) => e.message,
+            'message',
+            contains('boom-main'),
           ),
-          throwsA(
-            isA<ExtProtocolException>().having(
-              (e) => e.message,
-              'message',
-              contains('boom-main'),
-            ),
-          ),
-        );
-        await runtime.dispose();
-      });
-    },
-    skip: engineAvailable
-        ? null
-        : 'flutter_js engine not available on this host',
-  );
+        ),
+      );
+      await runtime.dispose();
+    });
+  });
 }

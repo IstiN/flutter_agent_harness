@@ -77,10 +77,16 @@ final class DapClient {
     required this.name,
     required this.onMail,
     required this.onStatus,
+    this.secret = '',
   });
 
   final DapIdentity identity;
   final String url;
+
+  /// The hub password — appended to the WS URL as the `dap_token` query
+  /// param (browser WebSocket cannot set headers; the hub accepts the
+  /// query form). Empty = open hub. Never logged.
+  final String secret;
 
   /// Display name advertised in the hello (cosmetic, unique per hub).
   final String name;
@@ -194,13 +200,17 @@ final class DapClient {
     return (id, x);
   }
 
+  /// The URL actually dialed: [url] plus the `dap_token` credential when
+  /// a hub password is configured (never logged — [_connect] logs [url]).
+  String get wsUrl => dapWsUrlWithToken(url, secret);
+
   // -- Connection cycle -------------------------------------------------------
 
   void _connect() {
     if (_stopped || _fatal) return;
     final gen = ++_generation;
     print('[dap] ws → $url (attempt ${_attempt + 1})');
-    final ws = _WebSocket(url);
+    final ws = _WebSocket(wsUrl);
     _ws = ws;
     _awaitingWelcome = true;
     if (_attempt == 0) _set(DapPhase.connecting);
@@ -227,8 +237,10 @@ final class DapClient {
       } on Object {
         // Non-CloseEvent close — fall through with an empty reason.
       }
-      print('[dap] ws closed'
-          '${reason.isEmpty ? '' : ' ($reason)'} — retry #$_attempt');
+      print(
+        '[dap] ws closed'
+        '${reason.isEmpty ? '' : ' ($reason)'} — retry #$_attempt',
+      );
       _set(DapPhase.reconnecting, reason: reason);
       _retry?.cancel();
       _retry = Timer(reconnectBackoff(_attempt), _connect);

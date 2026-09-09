@@ -14,11 +14,14 @@
 library;
 
 import 'dart:async';
+import 'dart:convert' show jsonEncode;
 import 'dart:io' show HttpClient, Platform, Process, ProcessStartMode;
 import 'dart:math' show Random;
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart'
+    show defaultHubStateFile, envHubSecret;
 
 /// Plugin name used by `--plugin hub` and `.fah/packages.yaml`.
 const _pluginName = 'hub';
@@ -207,6 +210,44 @@ final class HubPluginHost implements FahPlugin {
         'export DAP_MASTER_SECRET to make it permanent',
       );
     }
+    // Hub password: the one-button bring-up asks once, interactive hosts
+    // only. The answer is persisted into the hub state file — the
+    // detached `fa hub serve` has no terminal, so it reads the password
+    // from there (and later starts never ask again). Empty answer = stay
+    // open and ask again next time.
+    if (context.askLine != null) {
+      final stateFile = defaultHubStateFile(
+        home: _home,
+        environment: _environment,
+      );
+      final configured =
+          (_environment[envHubSecret] ?? '').isNotEmpty ||
+          await stateFile.exists();
+      if (!configured) {
+        final entered = await context.askLine!(
+          'Set a password for the local hub (empty = keep it open):',
+          secret: true,
+        );
+        final password = entered?.trim() ?? '';
+        if (password.isNotEmpty) {
+          try {
+            if (!await stateFile.parent.exists()) {
+              await stateFile.parent.create(recursive: true);
+            }
+            await stateFile.writeAsString(
+              jsonEncode({
+                'masterSecret': password,
+                'clients': <String, String>{},
+              }),
+            );
+            await Process.run('chmod', ['600', stateFile.path]);
+            context.io.writeln('hub password saved to ${stateFile.path}');
+          } on Object catch (error) {
+            context.io.writeln('[hub] could not persist the password: $error');
+          }
+        }
+      }
+    }
     final port = Uri.parse(_localHubUrl).port;
     if (!await _hubHealthProbe(port)) {
       context.io.writeln('starting a local hub on port $port…');
@@ -226,9 +267,7 @@ final class HubPluginHost implements FahPlugin {
         }
       }
       if (!up) {
-        context.io.writeln(
-          '[hub] the local hub did not come up on port $port',
-        );
+        context.io.writeln('[hub] the local hub did not come up on port $port');
         return;
       }
     }
@@ -284,8 +323,11 @@ final class HubPluginHost implements FahPlugin {
     try {
       final client = HttpClient()
         ..connectionTimeout = const Duration(seconds: 1);
-      final response = await (await client.get('127.0.0.1', port, '/healthz'))
-          .close();
+      final response = await (await client.get(
+        '127.0.0.1',
+        port,
+        '/healthz',
+      )).close();
       await response.drain<void>();
       client.close();
       return response.statusCode == 200;
@@ -304,22 +346,12 @@ final class HubPluginHost implements FahPlugin {
     final List<String> arguments;
     if (script.scheme == 'file' && script.path.endsWith('.dart')) {
       executable = Platform.executable;
-      arguments = [
-        script.toFilePath(),
-        'hub',
-        'serve',
-        '--port',
-        '$port',
-      ];
+      arguments = [script.toFilePath(), 'hub', 'serve', '--port', '$port'];
     } else {
       executable = Platform.resolvedExecutable;
       arguments = ['hub', 'serve', '--port', '$port'];
     }
-    await Process.start(
-      executable,
-      arguments,
-      mode: ProcessStartMode.detached,
-    );
+    await Process.start(executable, arguments, mode: ProcessStartMode.detached);
   }
 
   /// Whether the plugin's kill switch is set (mirrors the hub plugin's

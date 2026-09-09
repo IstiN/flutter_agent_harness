@@ -621,4 +621,111 @@ void main() {
       );
     },
   );
+
+  test(
+    'dispose releases ownership of pending self-addressed records (#59+#88)',
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      await repo.register('sid-1/main');
+      final first = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-1/main',
+        ownerPrefix: () => 'sid-1',
+      );
+      await first.start();
+      await first.schedule(
+        text: 'ping later',
+        delay: const Duration(minutes: 5),
+      );
+      // Tearing the session down clears the owner tag so the NEXT
+      // session's queue adopts the record (legacy ownerless path).
+      first.dispose();
+      // The release is fire-and-forget — give it a beat.
+      for (var i = 0; i < 50; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        final entries = await env.listDir('$root/_scheduled');
+        final file = entries.valueOrNull?.firstOrNull;
+        if (file == null) break;
+        final text = await env.readTextFile(
+          file.path.contains('/') ? file.path : '$root/_scheduled/${file.path}',
+        );
+        final owner = jsonDecode(text.valueOrNull ?? '{}')['owner'];
+        if (owner == '') break;
+      }
+      final second = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-2/main',
+        ownerPrefix: () => 'sid-2',
+      );
+      await second.start();
+      // Not due yet (5 minutes) — but the record must be ADOPTABLE: force
+      // delivery by making it due, then a sweep lands it in sid-2's inbox.
+      final dir = '$root/_scheduled';
+      final entry = (await env.listDir(dir)).valueOrNull!.first;
+      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
+      final record =
+          jsonDecode((await env.readTextFile(path)).valueOrNull!)
+              as Map<String, dynamic>;
+      expect(record['owner'], '');
+      record['dueMs'] = DateTime.now().millisecondsSinceEpoch - 1;
+      (await env.writeFile(path, jsonEncode(record))).getOrThrow();
+      await second.deliverDue();
+      final inbox = await repo.peek('sid-2/main');
+      expect(inbox, hasLength(1));
+      second.dispose();
+    },
+  );
+
+  test('dispose never touches foreign-owned records (#88)', () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    const root = '/sessions/--work--/messages';
+    final repo = FileMessagingRepository(
+      env: env,
+      root: root,
+      homeDir: '/home/user',
+      decodeSessionCwd: decodeSessionCwd,
+    );
+    const id = 'foreign-owned';
+    (await env.createDir('$root/_scheduled')).getOrThrow();
+    (await env.writeFile(
+      '$root/_scheduled/$id.json',
+      jsonEncode({
+        'id': id,
+        'dueMs': DateTime.now().millisecondsSinceEpoch + 60000,
+        'to': 'sid-9/main',
+        'from': 'sid-9/main',
+        'text': 'not yours',
+        'owner': 'sid-9',
+      }),
+    )).getOrThrow();
+    final queue = ScheduledMessageQueue(
+      env: env,
+      repo: () => repo,
+      root: () => root,
+      selfMailbox: () => 'sid-2/main',
+      ownerPrefix: () => 'sid-2',
+    );
+    await queue.start();
+    queue.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    final record =
+        jsonDecode(
+              (await env.readTextFile(
+                '$root/_scheduled/$id.json',
+              )).valueOrNull!,
+            )
+            as Map<String, dynamic>;
+    expect(record['owner'], 'sid-9');
+  });
 }

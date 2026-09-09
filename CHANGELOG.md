@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.335
+
+- feat(dap): password-protected local hub — `LocalHub(masterSecret:)`
+  requires a credential on every WS upgrade (`Authorization: Bearer` for
+  native clients, the `dap_token` query param for browser clients that
+  cannot set headers), rejects strangers with `401` + `Connection: close`
+  (keep-alive pools never replay a dead socket), and gates
+  `{"t":"enroll"}` to master-authenticated connections: enrolling issues a
+  per-client secret persisted (agentId → secret, mode 0600) in
+  `~/.dap/hub.json` alongside the password, so hub restarts keep both.
+  `fa hub serve` resolves the password as `--secret` > `DAP_HUB_SECRET` >
+  the state file, and the first interactive start (bare `fa hub serve` or
+  the CLI's one-button `/dap start`) offers to set a password once (empty
+  = stay open, remembered). The browser extension joins a protected hub
+  via a new Hub password field in the panel (faDap.secret, sent as
+  `dap_token`); an empty field keeps the stored password, and `hub.bind`
+  rebinds preserve it. Docs: docs/dap.md §8.1/§8.3.
+- fix(59): scheduled-message ownership release on dispose — tearing a
+  session down now clears the `owner` tag on its pending self-addressed
+  records, so the next session's queue adopts them (the #65 recreate
+  contract) while #88's anti-theft tagging keeps protecting LIVE foreign
+  owners. Fixes the pre-existing flutter_app regression from the #88
+  merge; also repairs the branch's golden gaps (DapHubMark golden +
+  guard registration, resume-refresher exemption, regenerated DAP page
+  snapshots) and the golden-test fake missing the DapHubService binding
+  members.
+
 ## 0.1.331
 
 - fix(86): compaction checkpoint honors the owner review on #82 — the

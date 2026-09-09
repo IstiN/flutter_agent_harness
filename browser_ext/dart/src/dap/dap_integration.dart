@@ -23,6 +23,7 @@ final class DapConfig {
     required this.name,
     required this.loadKeyFile,
     required this.saveKeyFile,
+    this.secret = '',
     this.boundSessionMode = 'current',
     this.boundSessionId,
     this.persistBoundSessionId,
@@ -32,6 +33,12 @@ final class DapConfig {
 
   /// Display name for the hello (cosmetic; ids are how peers address us).
   final String name;
+
+  /// The hub password (faDap.secret), sent as the
+  /// `dap_token` query param on the WS upgrade — browser WebSocket cannot
+  /// set headers, and the loopback hub accepts the query form. Empty =
+  /// open hub.
+  final String secret;
   final Future<String?> Function() loadKeyFile;
   final Future<void> Function(String) saveKeyFile;
 
@@ -51,7 +58,8 @@ final class DapConfig {
 
   /// Stable across reconnects/restarts: same config (url+name) keeps the
   /// live client instead of dropping the connection.
-  bool sameTargetAs(DapConfig other) => url == other.url && name == other.name;
+  bool sameTargetAs(DapConfig other) =>
+      url == other.url && name == other.name && secret == other.secret;
 }
 
 /// Owns the extension's hub presence for one [DapConfig]. Created by
@@ -128,18 +136,23 @@ final class DapIntegration {
   /// starts the client. Quiet on failure — the status reflects it.
   Future<void> start() async {
     try {
-      print('[dap] start: url=${config.url} '
-          'name=${config.name.isEmpty ? '—' : config.name}');
+      print(
+        '[dap] start: url=${config.url} '
+        'name=${config.name.isEmpty ? '—' : config.name}',
+      );
       final stored = await config.loadKeyFile();
       final identity = stored != null
           ? await DapIdentity.fromKeyFile(stored)
           : await _freshIdentity();
-      print('[dap] identity ${stored != null ? 'loaded' : 'generated'}: '
-          '${identity.agentId}');
+      print(
+        '[dap] identity ${stored != null ? 'loaded' : 'generated'}: '
+        '${identity.agentId}',
+      );
       final client = DapClient(
         identity: identity,
         url: config.url,
         name: config.name,
+        secret: config.secret,
         onMail: pushMail,
         onStatus: (status) {
           _status = status.toMap();

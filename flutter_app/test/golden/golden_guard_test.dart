@@ -76,10 +76,15 @@ const _coverage = <String, String>{
       'test/golden/sections_golden_test.dart',
   'lib/ui/widgets/html_preview_stub.dart':
       'test/golden/sections_golden_test.dart',
-  'lib/ui/widgets/widget_publish_sheet.dart': 'test/golden/github_publish_golden_test.dart',
-  'lib/ui/widgets/github_account_section.dart': 'test/golden/github_publish_golden_test.dart',
-  'lib/ui/widgets/widget_publications_sheet.dart': 'test/golden/github_publish_golden_test.dart',
-  'lib/ui/widgets/github_connect_sheet.dart': 'test/golden/github_publish_golden_test.dart',
+  'lib/ui/widgets/widget_publish_sheet.dart':
+      'test/golden/github_publish_golden_test.dart',
+  'lib/ui/widgets/github_account_section.dart':
+      'test/golden/github_publish_golden_test.dart',
+  'lib/ui/widgets/widget_publications_sheet.dart':
+      'test/golden/github_publish_golden_test.dart',
+  'lib/ui/widgets/github_connect_sheet.dart':
+      'test/golden/github_publish_golden_test.dart',
+  'lib/ui/widgets/dap_hub_mark.dart': 'test/golden/widgets_golden_test.dart',
 };
 
 /// Widget files that legitimately cannot be snapshot-tested on the host.
@@ -122,6 +127,10 @@ const _exempt = <String, String>{
       'service flow orchestrator; coordinates SSO + model picker dialogs (no widget of its own)',
   'lib/services/chatgpt_oauth_flow.dart':
       'OAuth flow orchestrator; no widget of its own',
+  'lib/ui/widgets/widget_publication_resume_refresh.dart':
+      'resume-polling lifecycle wrapper (build returns its child — no '
+      'visual of its own); the refresh behavior is covered by '
+      'test/ui/widget_publication_resume_refresh_test.dart',
 };
 
 final _widgetPattern = RegExp(

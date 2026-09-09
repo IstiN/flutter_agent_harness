@@ -657,4 +657,14 @@ class _FakeDapHubService implements DapHubService {
     required String url,
     required String name,
   }) async {}
+
+  @override
+  Future<List<DapBindableSession>> listBindableSessions() async => const [];
+
+  @override
+  Future<void> saveBinding(
+    DapInboundMode mode, {
+    String? sessionId,
+    String? sessionTitle,
+  }) async {}
 }

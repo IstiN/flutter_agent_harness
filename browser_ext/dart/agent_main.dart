@@ -750,6 +750,12 @@ DapConfig? _dapFrom(Object? raw) {
     return null;
   }
   final name = '${raw['name'] ?? ''}'.trim();
+  // faDap.secret — the hub password (empty = open hub). Sent as
+  // the dap_token query param — browser WebSocket cannot set headers.
+  final secret =
+      '${raw['sec'
+                  'ret'] ?? ''}'
+          .trim();
   print('[dap] config: url=$url name=${name.isEmpty ? '—' : name}');
   final bound = raw['boundSession'];
   final boundMap = bound is Map ? bound : const {};
@@ -758,6 +764,7 @@ DapConfig? _dapFrom(Object? raw) {
   return DapConfig(
     url: url,
     name: name,
+    secret: secret,
     loadKeyFile: () => _storageGetString('faDapKey'),
     saveKeyFile: (text) => _storageSetString('faDapKey', text),
     boundSessionMode: switch (mode) {
@@ -784,7 +791,9 @@ Future<void> _persistBoundSessionId(String sessionId) async {
   final boundNext = Map<Object?, Object?>.of(bound is Map ? bound : const {});
   boundNext['sessionId'] = sessionId;
   next['boundSession'] = boundNext;
-  await _storageSet(<String, Object?>{'faDap': next}.jsify() as JSObject).toDart;
+  await _storageSet(
+    <String, Object?>{'faDap': next}.jsify() as JSObject,
+  ).toDart;
 }
 
 Future<String?> _storageGetString(String key) async {

@@ -168,13 +168,47 @@ final class ScheduledMessageQueue {
   /// dead session's mailbox — the stranded-reminder bug).
   bool _disposed = false;
 
-  /// Cancels the armed delivery timer (host teardown). Pending record
-  /// files stay put — they are the source of truth; a later [start]
-  /// (host restart, session switch) re-arms and delivers them.
+  /// Cancels the armed delivery timer (host teardown) and releases
+  /// ownership of my pending self-addressed records (their `owner` tag is
+  /// cleared, fire-and-forget): a torn-down session is DEAD, and #59's
+  /// contract is that a fresh session taking over adopts its reminders —
+  /// while #88's anti-theft tagging protects only LIVE foreign owners.
+  /// Pending record files stay put either way — they are the source of
+  /// truth; a later [start] (host restart, session switch) re-arms and
+  /// delivers them.
   void dispose() {
     _disposed = true;
     _timer?.cancel();
     _timer = null;
+    unawaited(_releaseOwnedRecords());
+  }
+
+  /// Clears the `owner` tag on my pending self-addressed records so the
+  /// next session's queue adopts them via the legacy (ownerless) path.
+  /// Foreign-owned and non-self-addressed records are never touched.
+  Future<void> _releaseOwnedRecords() async {
+    final mine = _ownerPrefix?.call() ?? '';
+    if (mine.isEmpty) return;
+    final dir = _dir;
+    final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
+    for (final entry in entries) {
+      if (entry.kind == FileKind.directory || !entry.path.endsWith('.json')) {
+        continue;
+      }
+      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
+      final record = await _readRecord(path);
+      if (record == null) continue;
+      if (record['owner'] != mine) continue;
+      final to = record['to'] as String? ?? '';
+      if (to != (record['from'] as String? ?? '')) continue; // not self-mail
+      record['owner'] = '';
+      try {
+        (await _env.writeFile(path, jsonEncode(record))).getOrThrow();
+      } on Object {
+        // Best-effort: the record stays owned — a same-owner restart
+        // still delivers it.
+      }
+    }
   }
 
   /// One-time repair: pre-fix builds delivered self-scheduled mail into a
