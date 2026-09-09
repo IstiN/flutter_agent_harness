@@ -87,6 +87,7 @@ final class CliArgs extends CliArgsResult {
     this.cubeName,
     this.cubeConfigPath,
     this.tools,
+    this.logFile,
     this.redact,
     this.trajectory,
     this.config,
@@ -165,6 +166,12 @@ final class CliArgs extends CliArgsResult {
   /// startup config error. Wins over the `FA_TOOLS` env twin; both stack
   /// over the config scopes at resolution.
   final ToolsConfig? tools;
+
+  /// `--log-file <path>`: tee every line the CLI prints (assistant text,
+  /// tool trace, diagnostics) to [path] as it is produced, so a run nested
+  /// inside a parent CLI's output capture leaves a readable, `tail -f`-able
+  /// trace file behind. The file is truncated on start.
+  final String? logFile;
 
   /// The `redact:` section of the saved CLI config (layered secret
   /// redaction); null = absent, defaults apply at pipeline assembly.
@@ -813,6 +820,7 @@ const _valueFlags = <String, _ValueFlag>{
   '-p': ('--prompt', _setPrompt),
   '--prompt': ('--prompt', _setPrompt),
   '--tools': ('--tools', _setTools),
+  '--log-file': ('--log-file', _setLogFile),
 };
 
 void _setModel(_CliArgValues v, String value) => v.model = value;
@@ -850,6 +858,7 @@ void _setTools(_CliArgValues v, String value) {
   }
 }
 
+void _setLogFile(_CliArgValues v, String value) => v.logFile = value;
 void _setPrompt(_CliArgValues v, String value) => v.prompt = value;
 
 /// Accumulates flag values while [parseCliArgs] walks the argument list,
@@ -875,6 +884,7 @@ final class _CliArgValues {
   String? cubeConfigPath;
   ToolsConfig? tools;
   RedactionConfig? redact;
+  String? logFile;
   String? prompt;
   final positionals = <String>[];
 
@@ -914,6 +924,7 @@ final class _CliArgValues {
       cubeConfigPath: cubeConfigPath,
       tools: tools,
       redact: redact,
+      logFile: logFile,
       prompt: prompt,
       positionals: positionals,
     );
