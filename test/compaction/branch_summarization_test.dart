@@ -175,7 +175,7 @@ void main() {
         result.summary,
         startsWith(
           'The user explored a different conversation branch before '
-          'returning here.\nSummary of that exploration:\n',
+          'returning here.\nCheckpoint of that exploration:\n',
         ),
       );
       expect(result.summary, contains('## Goal\n\nFix the cache.'));

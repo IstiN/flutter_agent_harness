@@ -43,4 +43,4 @@ Use this EXACT format:
 ## Critical Context
 - [Preserve important context, add new if needed]
 
-Keep each section concise. Preserve exact file paths, function names, and error messages.
+Keep each section tight but complete. Preserve exact file paths, function names, and error messages.

@@ -37,4 +37,4 @@ Use this EXACT format:
 - [Any data, examples, or references needed to continue]
 - [Or "(none)" if not applicable]
 
-Keep each section concise. Preserve exact file paths, function names, and error messages.
+Keep each section tight but complete. Preserve exact file paths, function names, and error messages.

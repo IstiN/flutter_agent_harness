@@ -11,9 +11,10 @@
 ///   arc `(Partial — acceptance pending)` and the ask open.
 /// - AC6 `IT-close-*`: an ask closed with cited evidence leaves the open list.
 /// - AC7 `UT-budget-*`: net instruction delta ≤ 500 chars vs pre-card text
-///   net of the mandated "summary"-wording rewrite; `turn_prefix.md` intact.
-/// - AC8 `UT-wording-*`: no "summary"/"summarize" in the two prompt bodies;
-///   lossless-handoff intent asserted.
+///   net of the mandated wording rewrite; the `turn_prefix.md` byte-pin is
+///   replaced by a wording test (owner amendment, 2026-09-09).
+/// - AC8 `UT-wording-*`: no "summary"/"concise" cognates in any of the six
+///   compaction prompt bodies; lossless-handoff intent asserted.
 /// - AC9 `UT-heuristic-*`: candidate detector (EN/RU markers, notice/mail
 ///   exclusion, steering inclusion, full-fidelity content, no caps).
 library;
@@ -41,8 +42,9 @@ const _mandatedSummaryFirstLine =
     'EVERY fact, path, error message, and open task — the continuation has '
     'no access to what you omit. This is a lossless handoff, not a digest.\n';
 
-/// The three "summary"-word swaps constraint #3 mandates in
-/// `summary_update.md` (pre-card line → rewritten line).
+/// The mandated wording swaps in `summary_update.md` (pre-card line →
+/// rewritten line) — the s-word swaps from constraint #3 plus the
+/// "concise"-cognate purge the owner extended to the whole family.
 const _updateRewrites = [
   [
     'The messages above are NEW conversation messages to incorporate into '
@@ -58,7 +60,12 @@ const _updateRewrites = [
     '- PRESERVE all existing information from the previous summary',
     '- PRESERVE all existing information from the previous checkpoint',
   ],
+  ['Keep each section concise.', 'Keep each section tight but complete.'],
 ];
+
+/// The same "concise"-cognate purge in `summary.md`'s closing line.
+const _preCardSectionLine = 'Keep each section concise.';
+const _mandatedSectionLine = 'Keep each section tight but complete.';
 
 AssistantMessage _assistant(String text) {
   return AssistantMessage(
@@ -366,7 +373,8 @@ void main() {
       // rewrite is mandated, so only what the card adds beyond it counts).
       final baselineSummary =
           _preCardSummaryBodyChars +
-          (_mandatedSummaryFirstLine.length - _preCardSummaryFirstLine.length);
+          (_mandatedSummaryFirstLine.length - _preCardSummaryFirstLine.length) +
+          (_mandatedSectionLine.length - _preCardSectionLine.length);
       var baselineUpdate = _preCardSummaryUpdateBodyChars;
       for (final pair in _updateRewrites) {
         baselineUpdate += pair[1].length - pair[0].length;
@@ -379,33 +387,40 @@ void main() {
       expect(updateBody, contains('## Open User Requests'));
     });
 
-    test('turn_prefix.md is unchanged', () {
+    test('turn_prefix.md carries the lossless-handoff wording (byte-pin '
+        'replaced by a wording test per the owner amendment)', () {
+      final body = _promptBody('prompts/compaction/turn_prefix.md');
       expect(
-        turnPrefixSummarizationPrompt,
-        _promptBody('prompts/compaction/turn_prefix.md').trimRight(),
+        RegExp('summar|concis', caseSensitive: false).allMatches(body),
+        isEmpty,
+        reason: 'brevity framing is a license to drop facts',
       );
+      expect(body, contains('Preserve every fact'));
+      expect(body, contains('lossless handoff'));
+      // The section structure consumers pin stays put.
+      expect(body, contains('## Original Request'));
     });
   });
 
-  group('UT-wording — no "summary" license in the prompt text (AC8)', () {
-    test('all compaction prompt bodies are summary-free and assert lossless '
-        'handoff', () {
+  group('UT-wording — no "summary"/"concise" cognates (AC8, six files)', () {
+    test('all compaction prompt bodies are cognate-free and assert '
+        'lossless handoff', () {
       final bodies = [
         _promptBody('prompts/compaction/summary.md'),
         _promptBody('prompts/compaction/summary_update.md'),
         _promptBody('prompts/compaction/summary_system.md'),
         _promptBody('prompts/compaction/branch_summary.md'),
+        _promptBody('prompts/compaction/branch_summary_preamble.md'),
         _promptBody('prompts/compaction/turn_prefix.md'),
       ];
       for (final body in bodies) {
         expect(
-          RegExp('summar', caseSensitive: false).allMatches(body),
+          RegExp('summar|concis', caseSensitive: false).allMatches(body),
           isEmpty,
-          reason: '"summary/summarize" is a license to drop facts',
+          reason: '"summary"/"concise" cognates license dropping facts',
         );
       }
-      final summaryBody = bodies[0];
-      expect(summaryBody, contains('Preserve EVERY fact'));
+      expect(bodies[0], contains('Preserve EVERY fact'));
     });
   });
 
