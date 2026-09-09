@@ -3051,6 +3051,10 @@
 
 - feat(83): sort session lists current-folder first, each group newest first (#84)
 
+## 0.1.332
+
+- feat(81): open user requests survive compaction summary-of-summary (#82)
+
 ## Unreleased
 
 ## Unreleased
