@@ -75,12 +75,18 @@ final class ScheduledMessageQueue {
   String get _dir => '${_root()}/_scheduled';
 
   /// The root pending records were last scanned under: a live-root change
-  /// (session-cwd adoption) carries them over before the next scan, or
-  /// repointing the queue strands pre-adoption reminders where nobody looks.
+  /// (session-cwd adoption) carries over what we may consume before the
+  /// next scan.
   String? _lastScanRoot;
 
-  /// The live `_scheduled/` dir, migrating pending records across a root
-  /// change first (best-effort: unreadable sources stay put).
+  /// The live `_scheduled/` dir, migrating records across a root change
+  /// first. Only THIS instance's records ([_owns] — the live prefix is
+  /// already the adopted session's) are carried: dragging foreign records
+  /// across a root change steals them from their owner's sweeps on the old
+  /// root, the move-based form of the issue #59 theft. Unreadable sources
+  /// stay put. Copy-then-remove leaves a crash window that can
+  /// double-deliver — the same window every send+remove sweep here already
+  /// has; the file inbox has no id dedup, accepted at this layer.
   Future<String> _pendingDir() async {
     final root = _root();
     final previous = _lastScanRoot;
@@ -97,6 +103,10 @@ final class ScheduledMessageQueue {
           : '$from/${entry.path}';
       final text = (await _env.readTextFile(path)).valueOrNull;
       if (text == null) continue;
+      final record = _parseRecord(text);
+      if (record == null || !_owns(record['owner'] as String? ?? '')) {
+        continue;
+      }
       final name = path.split('/').last;
       try {
         (await _env.writeFile('$_dir/$name', text)).getOrThrow();
@@ -233,6 +243,10 @@ final class ScheduledMessageQueue {
   Future<Map<String, dynamic>?> _readRecord(String path) async {
     final text = (await _env.readTextFile(path)).valueOrNull;
     if (text == null) return null;
+    return _parseRecord(text);
+  }
+
+  Map<String, dynamic>? _parseRecord(String text) {
     try {
       final decoded = jsonDecode(text);
       return decoded is Map<String, dynamic> ? decoded : null;

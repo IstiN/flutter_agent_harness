@@ -457,12 +457,15 @@ void main() {
   );
 
   test(
-    'pending records follow a session-cwd adoption (root repoint)',
+    'adoption carries only the adopted session\'s records; others stay put',
     () async {
-      // Regression (issue #59 RCA): the queue root pinned the LAUNCH cwd, so
-      // after adopting a session from another folder records landed and stayed
-      // where nobody looked. The live root must be resolved per sweep and
-      // pending records carried over.
+      // Regression (issue #59 RCA): the queue root pinned the LAUNCH cwd,
+      // and the naive fix (move everything on a root change) steals the
+      // OTHER instance's records from the shared old root. Production
+      // reassigns the owner prefix to the ADOPTED session on adoption
+      // (_syncMailboxPrefix), so the migration must carry only records the
+      // adopted session owns; the previous session's reminders stay in
+      // their folder root and deliver when that session is active again.
       final env = MemoryExecutionEnv(cwd: '/work');
       const launchRoot = '/sessions/--work--/messages';
       const adoptedRoot = '/sessions/--other--/messages';
@@ -473,49 +476,82 @@ void main() {
         decodeSessionCwd: decodeSessionCwd,
       );
       var cwd = '/work';
+      var prefix = 'sid-1';
       final queue = ScheduledMessageQueue(
         env: env,
         repo: () => repo,
         root: () => '/sessions/${encodeSessionCwd(cwd)}/messages',
-        selfMailbox: () => 'sid-1/main',
-        ownerPrefix: () => 'sid-1',
+        selfMailbox: () => '$prefix/main',
+        ownerPrefix: () => prefix,
       );
-      final id = await queue.schedule(
+      // The record the OLD session schedules: owned by sid-1 in the work
+      // folder's root.
+      final sid1Id = await queue.schedule(
         text: 'follow me',
         delay: const Duration(minutes: 5),
       );
-      // The host adopts a session from a different project folder.
-      cwd = '/other';
-      await queue.start();
-      // The pending record was carried over to the adopted root, not left
-      // behind in the launch root.
-      final carried = (await env.readTextFile(
-        '$adoptedRoot/_scheduled/$id.json',
-      )).valueOrNull;
-      expect(carried, isNotNull);
-      expect(
-        (await env.readTextFile('$launchRoot/_scheduled/$id.json')).valueOrNull,
-        isNull,
-      );
-      // A post-adoption sweep finds and delivers the carried record.
+      // A record owned by the session ABOUT to be adopted, sitting in the
+      // old root and already due.
+      const adoptedId = 'due-owned-by-sid-2';
       (await env.writeFile(
-        '$adoptedRoot/_scheduled/$id.json',
+        '$launchRoot/_scheduled/$adoptedId.json',
         jsonEncode({
-          ...jsonDecode(carried!) as Map<String, dynamic>,
+          'id': adoptedId,
+          'to': 'sid-2/main',
+          'from': 'sid-2/main',
+          'text': 'carried with the adoption',
+          'owner': 'sid-2',
           'dueMs': DateTime.now().millisecondsSinceEpoch - 1000,
         }),
       )).getOrThrow();
-      await queue.deliverDue();
+      // A due record owned by a third instance on the same root: the
+      // adoption must leave it exactly where its owner sweeps.
+      const foreignId = 'due-owned-by-sid-a';
+      (await env.writeFile(
+        '$launchRoot/_scheduled/$foreignId.json',
+        jsonEncode({
+          'id': foreignId,
+          'to': 'sid-a/main',
+          'from': 'sid-a/main',
+          'text': 'not yours',
+          'owner': 'sid-a',
+          'dueMs': DateTime.now().millisecondsSinceEpoch - 1000,
+        }),
+      )).getOrThrow();
+      // The host adopts sid-2 from a different project folder: the prefix
+      // and the queue root are reassigned together.
+      prefix = 'sid-2';
+      cwd = '/other';
+      await queue.start();
+      // The adopted session's due record was carried to the new root and
+      // delivered into its live mailbox.
       expect(
-        (await repo.peek('sid-1/main')).single.text,
-        contains('[scheduled] follow me'),
+        (await repo.peek('sid-2/main')).single.text,
+        contains('[scheduled] carried with the adoption'),
       );
       expect(
         (await env.readTextFile(
-          '$adoptedRoot/_scheduled/$id.json',
+          '$adoptedRoot/_scheduled/$adoptedId.json',
         )).valueOrNull,
         isNull,
       );
+      // The previous session's reminder stayed in its folder root
+      // (undelivered: sid-1 is not active here).
+      expect(
+        (await env.readTextFile(
+          '$launchRoot/_scheduled/$sid1Id.json',
+        )).valueOrNull,
+        isNotNull,
+      );
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      // The third instance's record was not stolen by the move either.
+      expect(
+        (await env.readTextFile(
+          '$launchRoot/_scheduled/$foreignId.json',
+        )).valueOrNull,
+        isNotNull,
+      );
+      expect(await repo.peek('sid-a/main'), isEmpty);
     },
   );
 

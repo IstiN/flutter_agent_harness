@@ -278,15 +278,18 @@ factual: paths, commands, invariants — no essays.
   and would strand the reminder) — hosts re-arm on every mailbox change
   (CLI `_syncMailboxPrefix`, app `_setMailboxPrefix`) and sweep due records
   on their inbox ticks; `dispose()` cancels only the timer, the files stay.
-  Records carry the scheduling instance's `owner` (mailbox prefix): a
-  sweeper re-addresses a self-addressed record only when the stored owner
-  matches its own prefix — another instance's record is left untouched
-  (shared group-container roots mean an app 3s tick and a CLI 2s tick sweep
-  the same `_scheduled/`; without the gate the first sweeper steals the
-  reminder into ITS mailbox and deletes the file). The queue root resolves
-  LIVE per sweep (CLI `_scheduledMessagesRoot` from `_env.cwd`) and pending
-  records migrate across a root change, so a session-folder adoption carries
-  the reminders along instead of stranding them under the launch cwd.
+ Records carry the scheduling instance's `owner` (mailbox prefix): a
+ sweeper re-addresses a self-addressed record only when the stored owner
+ matches its own prefix, and never deletes another instance's record -
+ foreign-owned records are left where their owner sweeps (also across a
+ root change: only own records migrate to an adopted folder's root).
+ Legacy untagged records drain via the old any-sweeper path; records
+ whose owner session is deleted (`/reset` mints a new id) stay on disk -
+ there is no reaper, cleanup is manual. `agent_fabric` resolves the
+ messages root lazily per sweep (was: pinned to the launch cwd at
+ construction), and pending records migrate across a root change, so a
+ session-folder adoption carries the reminders along instead of
+ stranding them under the launch cwd.
 
 
   The `## Agent messaging` prompt section (prompts messaging_section.md, CLI +
