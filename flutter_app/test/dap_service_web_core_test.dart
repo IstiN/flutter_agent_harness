@@ -31,8 +31,13 @@ void main() {
         sent.add(message);
         if (onMessage != null) return onMessage(message);
         return switch (message['type']) {
+          // The REAL SW shape: the snapshot rides wrapped under 'status'
+          // (sw/main.js: {ok: true, status: snapshot()}).
           'status' => {
-            'agent': {'booted': true, if (hub != null) 'hub': hub},
+            'ok': true,
+            'status': {
+              'agent': {'booted': true, if (hub != null) 'hub': hub},
+            },
           },
           'hub.save' => {'ok': true},
           _ => null,

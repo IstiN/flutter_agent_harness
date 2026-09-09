@@ -123,13 +123,17 @@ final class ExtensionDapHubService implements DapHubService {
     return (url: defaultWebDapUrl, name: null);
   }
 
-  /// The SW's live hub status: `agent.hub` of the `status` snapshot —
-  /// `{phase, agentId?, reason?}` or absent when no hub is configured.
+  /// The SW's live hub status: the `status` handler answers with the
+  /// snapshot WRAPPED — `{ok: true, status: {…, agent: {hub: …}}}` —
+  /// so unwrap the envelope first (a bare map without `status` is
+  /// tolerated for tests/future relays).
   Future<({bool? connected, String? agentId})> _readLive() async {
     try {
       final reply = await _sendMessage({'type': 'status'});
       if (reply is! Map) return (connected: null, agentId: null);
-      final agent = reply['agent'];
+      final wrapped = reply['status'];
+      final envelope = wrapped is Map ? wrapped : reply;
+      final agent = envelope['agent'];
       if (agent is! Map) return (connected: null, agentId: null);
       final hub = agent['hub'];
       if (hub is! Map) return (connected: null, agentId: null);
