@@ -9,9 +9,8 @@
 // explicit `<email-body …>…</email-body>` delimiters with provenance — the
 // same quarantine framing the browser extension applies to page content
 // (fa_browser_agent quarantine.dart). A body that already contains a fence
-// is neutralized first (every `<email-` prefix is rewritten) so an email
-// can never close its own quarantine early and smuggle text out as
-// trusted.
+// is neutralized first (every `<email-body` / `</email-body` prefix is
+// rewritten) so an email can never close its own quarantine early.
 //
 // Pure Dart: no dart:io, no js_interop — VM-testable, dart2js-compileable.
 library;
@@ -19,7 +18,13 @@ library;
 /// Opening prefix of the email quarantine fence.
 const String _openPrefix = '<email-body';
 
-/// Closing fence of the email quarantine block.
+/// Closing prefix of the email quarantine block. Neutralization matches
+/// this PREFIX — not the full fence — so near-miss variants a model can
+/// misread as the close (`</email-body >`, `</email-body\t>`) are
+/// defanged too.
+const String _closePrefix = '</email-body';
+
+/// Closing fence of the email quarantine block (ours, appended verbatim).
 const String _closeFence = '</email-body>';
 
 /// What a smuggled `<email-body` becomes inside quarantined content:
@@ -72,13 +77,15 @@ String _escapeAttr(String value) => value
     .replaceAll('\n', ' ');
 
 /// Neutralizes quarantine fences inside [content]: an email that carries
-/// its own `<email-body` / `</email-body>` markers can neither open a
-/// nested trusted block nor close the real one early.
+/// its own fence markers — in ANY variant — can neither open a nested
+/// trusted block nor close the real one early. Both sides match by
+/// prefix, so `</email-body >` / `</email-body\t>` are as inert as the
+/// exact fence.
 String neutralizeEmailFences(String content) {
   final containsFence =
-      content.contains(_openPrefix) || content.contains(_closeFence);
+      content.contains(_openPrefix) || content.contains(_closePrefix);
   if (!containsFence) return content;
   return content
       .replaceAll(_openPrefix, _neutered)
-      .replaceAll(_closeFence, _neuteredClose);
+      .replaceAll(_closePrefix, _neuteredClose);
 }
