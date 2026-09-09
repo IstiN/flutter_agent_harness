@@ -175,7 +175,7 @@ void main() {
         result.summary,
         startsWith(
           'The user explored a different conversation branch before '
-          'returning here.\nSummary of that exploration:\n',
+          'returning here.\nCheckpoint of that exploration:\n',
         ),
       );
       expect(result.summary, contains('## Goal\n\nFix the cache.'));
@@ -190,7 +190,10 @@ void main() {
       final prompt = summarizer.prompts.single;
       expect(prompt, contains('<conversation>'));
       expect(prompt, contains('[User]: investigate caching'));
-      expect(prompt, contains('structured summary of the conversation branch'));
+      expect(
+        prompt,
+        contains('structured checkpoint of the conversation branch'),
+      );
     });
 
     test('returns "No content to summarize" for empty entries', () async {

@@ -309,6 +309,106 @@ String formatFileOperations(
 }
 
 // ---------------------------------------------------------------------------
+// Open user request candidates (issue #81)
+// ---------------------------------------------------------------------------
+
+/// Candidate lines carry the user's own words at full fidelity — checkpoint
+/// content is uncapped by owner ruling (issue #81 v2, constraint 1); only
+/// the prompt-file instruction text is budgeted.
+
+final _systemNoticePattern = RegExp('<system-notice>');
+
+/// Agent chat delivered as a user message (`from <id>: …`). Mail is data,
+/// never a user instruction (the `[from <id>]` attach-view form IS the
+/// user's own words and stays a candidate).
+final _agentMailPattern = RegExp(r'^from\s+\S+:\s');
+
+/// Branch summaries projected as user messages (see [branchSummaryPrefix]).
+final _branchSummaryPattern = RegExp(
+  r'^The following is a summary of a branch',
+);
+
+/// Imperative/request markers: English word-initial stems plus Russian
+/// prefixes (Dart regexes have no Cyrillic `\b`). Best-effort by design:
+/// misses are acceptable, false positives cost one line each.
+final _requestMarkerPattern = RegExp(
+  r'\b(?:build|fix|add|create|implement|write|make|update|refactor|remove|'
+  r'delete|run|check|test|cover|support|deploy|migrate|port|ship|change)\w*'
+  r'|(?:сдела|добав|покро|исправ|провер|реализу|обнов|удал|созда|передела|'
+  r'напиши|напишите|настро|перепиши|дорабо|запомн)\S*',
+  caseSensitive: false,
+);
+
+/// Flattens a user-message content (plain text or content blocks) to text.
+String _userMessageText(Object content) {
+  if (content is String) return content;
+  return (content as List<Object>)
+      .whereType<TextContent>()
+      .map((block) => block.text)
+      .join(' ');
+}
+
+/// The `asked <date>[, record <id-prefix>]` pointer of a candidate line.
+String _userRequestPointer(String? recordId, DateTime timestamp) {
+  final date = timestamp.toUtc().toIso8601String().substring(0, 10);
+  if (recordId == null || recordId.isEmpty) return 'asked $date';
+  final prefix = recordId.length <= 8 ? recordId : recordId.substring(0, 8);
+  return 'asked $date, record $prefix';
+}
+
+/// Extracts best-effort open-user-request candidate lines from [messages]:
+/// user-role texts carrying an imperative/request marker, oldest first.
+/// Excludes `<system-notice>` envelopes, agent mail, and branch summaries.
+/// [recordIds], when given, runs parallel to [messages] and lands in the
+/// line pointer; null/empty entries fall back to a date-only pointer.
+List<String> detectUserRequestCandidates(
+  List<Message> messages, {
+  List<String?>? recordIds,
+}) {
+  final lines = <String>[];
+  for (var i = 0; i < messages.length; i++) {
+    final message = messages[i];
+    if (message is! UserMessage) continue;
+    final text = _userMessageText(message.content);
+    if (text.isEmpty ||
+        _systemNoticePattern.hasMatch(text) ||
+        _branchSummaryPattern.hasMatch(text) ||
+        _agentMailPattern.hasMatch(text) ||
+        !_requestMarkerPattern.hasMatch(text)) {
+      continue;
+    }
+    final id = (recordIds != null && i < recordIds.length)
+        ? recordIds[i]
+        : null;
+    final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    lines.add('- [${_userRequestPointer(id, message.timestamp)}] $flat');
+  }
+  return lines;
+}
+
+/// Renders the `USER REQUEST CANDIDATES` block appended to the summarizer
+/// input (after the conversation, before `<previous-checkpoint>`), or `null`
+/// when there are no candidates — the section is then the LLM's to fill
+/// with "(none)".
+String? userRequestCandidatesBlock(
+  List<Message> messages, {
+  List<String?>? recordIds,
+}) {
+  final lines = detectUserRequestCandidates(messages, recordIds: recordIds);
+  if (lines.isEmpty) return null;
+  final header =
+      'USER REQUEST CANDIDATES (user-role asks with imperative markers, '
+      'oldest first — fill `## Open User Requests` from these):';
+  final buffer = StringBuffer(header);
+  for (final line in lines) {
+    buffer
+      ..writeln()
+      ..write(line);
+  }
+  return buffer.toString();
+}
+
+// ---------------------------------------------------------------------------
 // Settings and the compaction decision
 // ---------------------------------------------------------------------------
 
@@ -691,7 +791,7 @@ Future<String> _runSummarization({
 /// Generate (or update) a conversation summary for compaction.
 ///
 /// Ported from pi's `generateSummary`: serializes [messages] into
-/// `<conversation>` tags, optionally appends `<previous-summary>` for
+/// `<conversation>` tags, optionally appends `<previous-checkpoint>` for
 /// iterative updates, and ends with the fixed structured prompt (plus
 /// `Additional focus:` when [customInstructions] is given). Throws
 /// [CompactionException] on failure — callers must treat compaction as
@@ -703,6 +803,7 @@ Future<String> generateSummary(
   String? previousSummary,
   CancelToken? cancelToken,
   CompactionPrompts prompts = defaultCompactionPrompts,
+  String? userRequestCandidates,
 }) {
   var basePrompt = previousSummary != null
       ? prompts.summaryUpdate
@@ -714,13 +815,19 @@ Future<String> generateSummary(
     ..write('<conversation>\n')
     ..write(serializeConversation(messages))
     ..write('\n</conversation>\n\n');
+  final candidates =
+      userRequestCandidates ?? userRequestCandidatesBlock(messages);
+  if (candidates != null) {
+    prompt
+      ..write(candidates)
+      ..write('\n\n');
+  }
   if (previousSummary != null) {
     prompt.write(
-      '<previous-summary>\n$previousSummary\n</previous-summary>\n\n',
+      '<previous-checkpoint>\n$previousSummary\n</previous-checkpoint>\n\n',
     );
   }
   prompt.write(basePrompt);
-
   return _runSummarization(
     prompt: prompt.toString(),
     summarize: summarize,
@@ -765,6 +872,7 @@ final class CompactionPreparation {
     this.readFiles = const [],
     this.modifiedFiles = const [],
     this.settings = defaultCompactionSettings,
+    this.summarizableRecordIds = const [],
   });
 
   /// Entry id where retained history starts.
@@ -784,6 +892,11 @@ final class CompactionPreparation {
 
   /// Previous compaction summary used for iterative updates.
   final String? previousSummary;
+
+  /// Session-record id per message of [messagesToSummarize] (parallel list,
+  /// null for synthetic messages) — powers the `record <id>` pointer of the
+  /// open-request candidates.
+  final List<String?> summarizableRecordIds;
 
   /// Files read in the compacted history (accumulated across compactions).
   final List<String> readFiles;
@@ -979,11 +1092,14 @@ final class CompactionManager {
     final historyEnd = cutPoint.isSplitTurn
         ? cutPoint.turnStartIndex
         : cutPoint.firstKeptEntryIndex;
-    final messagesToSummarize = _summarizableMessagesInRange(
-      pathEntries,
-      boundaryStart,
-      historyEnd,
-    );
+    final messagesToSummarize = <Message>[];
+    final summarizableRecordIds = <String?>[];
+    for (var i = boundaryStart; i < historyEnd; i++) {
+      for (final message in _entryToSummarizableMessages(pathEntries[i])) {
+        messagesToSummarize.add(message);
+        summarizableRecordIds.add(pathEntries[i].id);
+      }
+    }
     final turnPrefixMessages = cutPoint.isSplitTurn
         ? _summarizableMessagesInRange(
             pathEntries,
@@ -1005,6 +1121,7 @@ final class CompactionManager {
       readFiles: fileLists.readFiles,
       modifiedFiles: fileLists.modifiedFiles,
       settings: effectiveSettings,
+      summarizableRecordIds: summarizableRecordIds,
     );
   }
 
@@ -1018,6 +1135,10 @@ final class CompactionManager {
     String? customInstructions,
     CancelToken? cancelToken,
   }) async {
+    final userRequests = userRequestCandidatesBlock(
+      preparation.messagesToSummarize,
+      recordIds: preparation.summarizableRecordIds,
+    );
     String summary;
 
     if (preparation.isSplitTurn && preparation.turnPrefixMessages.isNotEmpty) {
@@ -1029,6 +1150,7 @@ final class CompactionManager {
               previousSummary: preparation.previousSummary,
               cancelToken: cancelToken,
               prompts: prompts,
+              userRequestCandidates: userRequests,
             )
           : 'No prior history.';
       final turnPrefix = await _generateTurnPrefixSummary(
@@ -1047,6 +1169,7 @@ final class CompactionManager {
         previousSummary: preparation.previousSummary,
         cancelToken: cancelToken,
         prompts: prompts,
+        userRequestCandidates: userRequests,
       );
     }
 

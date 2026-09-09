@@ -2,7 +2,7 @@
 name: branch_summary
 description: Structured summary instructions for the branch abandoned during session-tree navigation, ported verbatim from oh-my-pi's branch-summary compaction prompt.
 ---
-You MUST create a structured summary of the conversation branch for context when returning.
+You MUST create a structured checkpoint of the conversation branch for context when returning.
 
 You MUST use EXACT format:
 
@@ -31,4 +31,4 @@ You MUST use EXACT format:
 ## Next Steps
 1. [What should happen next to continue]
 
-Sections MUST be kept concise. You MUST preserve exact file paths, function names, error messages.
+Sections stay tight but complete. You MUST preserve exact file paths, function names, error messages.

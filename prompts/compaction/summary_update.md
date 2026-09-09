@@ -1,11 +1,11 @@
 ---
 name: summary_update
-description: Prompt for updating an existing compaction summary with new messages. Ported verbatim from pi UPDATE_SUMMARIZATION_PROMPT.
+description: Prompt for folding new messages into an existing compaction checkpoint. Forked from pi's UPDATE_SUMMARIZATION_PROMPT; body wording diverges deliberately (no s-word framing).
 ---
-The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
+The messages above are NEW conversation messages to fold into the existing checkpoint provided in <previous-checkpoint> tags.
 
-Update the existing structured summary with new information. RULES:
-- PRESERVE all existing information from the previous summary
+Update the existing structured checkpoint with new information. RULES:
+- PRESERVE all existing information from the previous checkpoint
 - ADD new progress, decisions, and context from the new messages
 - UPDATE the Progress section: move items from "In Progress" to "Done" when completed
 - UPDATE "Next Steps" based on what was accomplished
@@ -13,6 +13,10 @@ Update the existing structured summary with new information. RULES:
 - If something is no longer relevant, you may remove it
 
 Use this EXACT format:
+
+## Open User Requests
+- [ ] <keep every open ask>
+  Here "no longer relevant" NEVER removes; ONLY explicit user cancel or Done+evidence. No evidence = "(Partial — acceptance pending)", stays.
 
 ## Goal
 [Preserve existing goals, add new ones if the task expanded]
@@ -39,4 +43,4 @@ Use this EXACT format:
 ## Critical Context
 - [Preserve important context, add new if needed]
 
-Keep each section concise. Preserve exact file paths, function names, and error messages.
+Keep each section tight but complete. Preserve exact file paths, function names, and error messages.
