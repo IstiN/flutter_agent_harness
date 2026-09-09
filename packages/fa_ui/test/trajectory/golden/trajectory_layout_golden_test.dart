@@ -13,6 +13,8 @@
 library;
 
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/foundation.dart'
+    show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -160,4 +162,21 @@ void main() {
       await expectGolden(tester, '$name.png');
     });
   }
+
+  testWidgets('layout/wide_fullscreen_macos_dark', (tester) async {
+    // macOS desktop clears the floating traffic lights above the header;
+    // pin the platform so the baseline locks that clearance in. Reset
+    // before returning — the binding's foundation invariant check runs
+    // before tearDowns.
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final service = FakeChatService();
+      _populate(service.feed);
+      addTearDown(service.feed.dispose);
+      await _pumpScreen(tester, service, goldenSizeDesktop, buildFahTheme());
+      await expectGolden(tester, 'layout/wide_fullscreen_macos_dark.png');
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
 }
