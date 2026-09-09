@@ -309,5 +309,50 @@ void main() {
       final branch = await session.getBranch();
       expect(branch.whereType<BranchSummaryRecord>(), isEmpty);
     });
+    test(
+      'branch-entry boundaries never orphan a tool_result (AC4, #85)',
+      () async {
+        final session = await newSession();
+        final root = await session.appendMessage(UserMessage.text('root task'));
+        final calls = await session.appendMessage(
+          _toolCalls([
+            const ToolCall(id: 'c1', name: 'bash', arguments: {}),
+            const ToolCall(id: 'c2', name: 'read', arguments: {}),
+          ]),
+        );
+        final r1 = await session.appendMessage(_toolResult('c1', 'bash', 'ok'));
+        final r2 = await session.appendMessage(_toolResult('c2', 'read', 'ok'));
+        await session.appendMessage(UserMessage.text('detour follow-up'));
+        final detour = await session.getLeafId();
+
+        // Navigate to every earlier entry of the paired turn (and the leaf):
+        // no boundary may put a tool_result into the rebuilt context without
+        // its call. A mid-turn leaf legitimately leaves an unanswered call —
+        // that shape self-heals at the request boundary (synthetic result).
+        for (final target in [root, calls, r1, r2, detour]) {
+          final summarizer = _FakeSummarizer('left-branch summary');
+          await navigateSessionTree(
+            session,
+            target,
+            summarize: summarizer.call,
+          );
+          final context = await session.buildContextMessages();
+          final violations = validateToolPairing(context);
+          expect(
+            violations.where(
+              (v) => v.kind == ToolPairingViolationKind.orphanedResult,
+            ),
+            isEmpty,
+            reason: 'target $target: $violations',
+          );
+          final repaired = repairToolPairing(context);
+          expect(
+            validateToolPairing(repaired.messages),
+            isEmpty,
+            reason: 'target $target',
+          );
+        }
+      },
+    );
   });
 }
