@@ -124,6 +124,14 @@ const _nestedKeySources = <String, String>{
   'customProviders.[].authMethod': 'lib/src/cli/custom_providers.dart',
   'tools.*': 'lib/src/tools/availability.dart',
   'tools.*.*': 'lib/src/tools/availability.dart',
+  'prompts.*': 'lib/src/cli/cli_config.dart',
+  'ttsr.enabled': 'lib/src/ttsr/ttsr_config.dart',
+  'ttsr.contextMode': 'lib/src/ttsr/ttsr_config.dart',
+  'ttsr.repeatMode': 'lib/src/ttsr/ttsr_config.dart',
+  'a2a.servers': 'lib/src/a2a/a2a_config.dart',
+  'a2a.servers.*': 'lib/src/a2a/a2a_config.dart',
+  'a2a.servers.*.url': 'lib/src/a2a/a2a_config.dart',
+  'a2a.servers.*.token': 'lib/src/a2a/a2a_config.dart',
 };
 
 /// Resolves a walked key path against the pins (`*` = exactly one segment).
@@ -172,7 +180,7 @@ void main() {
     for (final source in _topLevelParserSources) {
       parserKeys.addAll(
         RegExp(
-          "['\\[]([A-Za-z]+)'\\]",
+          "['\\[]([A-Za-z0-9]+)'\\]",
         ).allMatches(_read(source)).map((m) => m.group(1)!),
       );
     }

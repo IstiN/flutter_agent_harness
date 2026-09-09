@@ -413,6 +413,28 @@ mode: code                     # code | architect | review
 CLI equivalent: `/mode <name>` or the `/code`, `/architect`, `/review`
 shortcuts — they switch live AND persist this key.
 
+## Prompts, TTSR & A2A
+
+The remaining user-file sections (all global scope):
+
+```yaml
+prompts:                        # prompt overrides: prompt id → text or @file
+  concise: "Answer in one short paragraph."
+ttsr:                           # tool-schema reduction (TTSR)
+  enabled: true
+  contextMode: keep             # keep | discard
+  repeatMode: after-gap         # after-gap | once
+a2a:                            # remote Agent2Agent endpoints
+  servers:
+    peer:
+      url: https://peer.example:8080
+      token: plain-secret       # or ${PEER_TOKEN} (resolved from the env)
+```
+
+`a2a` servers are remote-only (a `url`, like remote MCP servers), so they
+configure fine on process-less hosts; a `token` referencing an unset env
+variable is refused.
+
 ## Settings hub
 
 <!-- parity: /settings -->

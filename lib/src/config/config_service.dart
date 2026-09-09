@@ -696,6 +696,18 @@ int _findKeyLine(
   return -1;
 }
 
+/// Whether a single [leafLines] entry may ride the `key: value` line.
+/// A rendered block entry (a `- item` sequence line, or a map entry
+/// carrying its own indent) must go under a bare `key:` line — gluing it
+/// inline produced invalid yaml for one-element lists/maps.
+bool _inlineSafeLine(String line) {
+  final trimmed = line.trim();
+  if (trimmed.startsWith('-')) return false;
+  // An indented line is a block map entry; flow-empties stay inline-safe.
+  if (line != trimmed) return false;
+  return true;
+}
+
 /// Inserts the missing `segments[depth..]` chain — at EOF for a new
 /// top-level section, otherwise at the top of the parent's block — and
 /// returns the joined text.
@@ -714,7 +726,7 @@ String _insertChain(
   var at = insertAt;
   for (var d = depth; d < segments.length; d++) {
     final isLeaf = d == segments.length - 1;
-    if (isLeaf && leafLines.length == 1) {
+    if (isLeaf && leafLines.length == 1 && _inlineSafeLine(leafLines[0])) {
       lines.insert(at, '${'  ' * d}${segments[d]}: ${leafLines[0]}');
       break;
     }
@@ -741,7 +753,7 @@ String _replaceLeaf(
 ) {
   final indent = '  ' * depth;
   final comment = _trailingComment(lines[found]);
-  if (leafLines.length == 1) {
+  if (leafLines.length == 1 && _inlineSafeLine(leafLines[0])) {
     lines[found] = '$indent$key: ${leafLines[0]}$comment';
     return _join(lines, hadTrailingNewline);
   }
