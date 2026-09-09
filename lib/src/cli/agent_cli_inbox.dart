@@ -108,6 +108,14 @@ extension AgentCliMessagingFlow on AgentCli {
     return false;
   }
 
+  /// The scheduled-records root resolved LIVE from the current env cwd:
+  /// `_messagesRoot` pins the launch cwd (the fabric mailboxes stay there),
+  /// but session-folder adoption (`_loadSession` repoints `_env.cwd`) must
+  /// move the pending queue with it — a pinned root lands records where the
+  /// post-adoption sweeps never look (issue #59).
+  String get _scheduledMessagesRoot =>
+      '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages';
+
   /// Namespaces this instance's mailboxes with the active session id: two
   /// Fa instances sharing the messaging root never drain each other's
   /// inboxes. Called after every session init/switch.
@@ -115,8 +123,12 @@ extension AgentCliMessagingFlow on AgentCli {
     return ScheduledMessageQueue(
       env: _env,
       repo: () => _fabricRepository,
-      root: () => _messagesRoot,
+      root: () => _scheduledMessagesRoot,
       selfMailbox: () => _subagentManager.mailboxOf('main'),
+      // Ownership tag for schedule records: a sweeper re-addresses a
+      // self-addressed record only when the stored prefix matches this
+      // session — another instance's record stays with its owner (#59).
+      ownerPrefix: () => _subagentManager.mailboxPrefix,
       // Terminal visibility: a dim line when a scheduled message is created
       // and when it fires, so self-reminders are observable without /tasks.
       onScheduled: (text) => io.writeln(_style.dim('[sched] $text')),
