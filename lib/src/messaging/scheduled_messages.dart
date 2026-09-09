@@ -241,6 +241,26 @@ final class ScheduledMessageQueue {
     }
   }
 
+  /// The live mailbox a due record delivers to (null: skip it).
+  ///
+  /// Self-addressed records ride the LIVE self mailbox: the recorded
+  /// address was pinned at schedule time, but hosts re-address mailboxes
+  /// (session switch, app restart, service recreate) — the stale address
+  /// strands the reminder in a mailbox nobody drains while the tool
+  /// already reported success (the lost-schedule bug). The live re-address
+  /// happens only when this instance scheduled the record ([_owns]):
+  /// re-addressing a foreign-owned record here steals the reminder into
+  /// the wrong mailbox and deletes the file (cross-instance self-theft —
+  /// issue #59), so those return null and stay with their owner.
+  String? _deliveryTarget(Map<String, dynamic> record) {
+    final recordedTo = record['to'] as String? ?? _self();
+    final from = record['from'] as String? ?? recordedTo;
+    if (recordedTo != from) return recordedTo;
+    if (!_owns(record['owner'] as String? ?? '')) return null;
+    final self = _self();
+    return (self != 'self' && self.isNotEmpty) ? self : recordedTo;
+  }
+
   Future<int> _deliverDueInner() async {
     final dir = await _pendingDir();
     final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
@@ -257,24 +277,10 @@ final class ScheduledMessageQueue {
       if (dueMs == null || dueMs > DateTime.now().millisecondsSinceEpoch) {
         continue; // not a schedule record, or not due yet
       }
-      final recordedTo = record['to'] as String? ?? _self();
-      final from = record['from'] as String? ?? recordedTo;
-      // Self-addressed records ride the LIVE self mailbox: the recorded
-      // address was pinned at schedule time, but hosts re-address mailboxes
-      // (session switch, app restart, service recreate) — the stale address
-      // strands the reminder in a mailbox nobody drains while the tool
-      // already reported success (the lost-schedule bug).
-      final self = _self();
-      // Ownership gate: re-address to the live self mailbox only when this
-      // instance scheduled the record (_owns). A record owned by another
-      // live instance is left for its owner: re-addressing it here steals
-      // the reminder into the wrong mailbox and deletes the file
-      // (cross-instance self-theft — issue #59).
-      final owner = record['owner'] as String? ?? '';
-      if (recordedTo == from && !_owns(owner)) continue;
-      final to = (recordedTo == from && self != 'self' && self.isNotEmpty)
-          ? self
-          : recordedTo;
+      final from =
+          record['from'] as String? ?? record['to'] as String? ?? _self();
+      final to = _deliveryTarget(record);
+      if (to == null) continue;
       await _repo().send(
         AgentMessage(
           id: record['id'] as String? ?? newMessageId(),
@@ -320,13 +326,11 @@ final class ScheduledMessageQueue {
       if (!entry.path.endsWith('.json')) continue;
       final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
       final record = await _readRecord(path);
-      final due = record?['dueMs'] as int?;
       // Foreign self-addressed records arm no timer here: this instance can
-      // never deliver them, and arming would hot-loop a zero-delay timer
-      // until the owner sweeps the record (issue #59).
-      final to = record?['to'] as String? ?? _self();
-      final from = record?['from'] as String? ?? to;
-      if (to == from && !_owns(record?['owner'] as String? ?? '')) continue;
+      // never deliver them (_deliveryTarget returns null), and arming would
+      // hot-loop a zero-delay timer until the owner sweeps the record.
+      if (record == null || _deliveryTarget(record) == null) continue;
+      final due = record['dueMs'] as int?;
       if (due != null && (nearest == null || due < nearest)) {
         nearest = due;
       }
