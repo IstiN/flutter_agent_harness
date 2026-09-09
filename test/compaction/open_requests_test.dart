@@ -10,13 +10,20 @@
 /// - AC5 `IT-guard-*`: a merged PR without a run acceptance test leaves the
 ///   arc `(Partial — acceptance pending)` and the ask open.
 /// - AC6 `IT-close-*`: an ask closed with cited evidence leaves the open list.
-/// - AC7 `UT-budget-*`: net instruction delta ≤ 500 chars vs pre-card text
-///   net of the mandated wording rewrite; the `turn_prefix.md` byte-pin is
-///   replaced by a wording test (owner amendment, 2026-09-09).
+/// - AC7 `UT-budget-*`: net instruction delta vs pre-card text net of the
+///   mandated wording rewrite — 500 under #81, renegotiated to 700 in the
+///   #86 review (tool-results assessment + restored ADD/UPDATE rules; see
+///   the test comment); the `turn_prefix.md` byte-pin is replaced by a
+///   wording test (owner amendment, 2026-09-09).
 /// - AC8 `UT-wording-*`: no "summary"/"concise" cognates in any of the six
 ///   compaction prompt bodies; lossless-handoff intent asserted.
-/// - AC9 `UT-heuristic-*`: candidate detector (EN/RU markers, notice/mail
-///   exclusion, steering inclusion, full-fidelity content, no caps).
+/// - AC9 `UT-heuristic-*` + issue #86 AC1/AC2: candidate capture is
+///   non-lossy (notice/mail/branch-summary exclusion only; no ask-detection
+///   gate — the summarizer LLM judges openness; full fidelity, no caps).
+/// - Issue #86 AC3 `UT-tool-results-*`/`IT-tool-results-*`: the five
+///   compaction prompts instruct tool-results assessment; an important
+///   output is checkpointed while noise is dropped by an instructed
+///   rule-honoring compressor.
 library;
 
 import 'dart:io';
@@ -384,8 +391,8 @@ void main() {
   });
 
   group('UT-budget — prompt text budget (AC7)', () {
-    test('net instruction delta stays within 500 chars (net of the '
-        'mandated wording rewrite)', () {
+    test('net instruction delta stays within the renegotiated 700 chars '
+        '(net of the mandated wording rewrite)', () {
       final summaryBody = _promptBody('prompts/compaction/summary.md');
       final updateBody = _promptBody('prompts/compaction/summary_update.md');
       expect(summaryBody, startsWith(_mandatedSummaryFirstLine));
@@ -403,7 +410,13 @@ void main() {
       final delta =
           (summaryBody.length - baselineSummary) +
           (updateBody.length - baselineUpdate);
-      expect(delta, lessThanOrEqualTo(500));
+      // The 500 cap (issue #81 AC7) was renegotiated in the #86 review
+      // thread (PR #87, comment 5600706328): issue #86 mandates an
+      // additive tool-results assessment while AC4 kept the 500 pin — the
+      // two cannot both hold without deleting operational ADD/UPDATE rules.
+      // Resolution: rules restored, tool-results wording kept, cap raised
+      // to 700. Owner arbitrates at pr_approved time.
+      expect(delta, lessThanOrEqualTo(700));
       expect(summaryBody, contains('## Open User Requests'));
       expect(updateBody, contains('## Open User Requests'));
     });
@@ -673,13 +686,33 @@ void main() {
       '(#86 AC3)', () {
     test('failing-test output is checkpointed; a success banner is not '
         'required', () async {
-      final fake = _FakeSummarizer([
-        SummarizationResult.success(
+      // A rule-honoring compressor: it selects among the tool results that
+      // are ACTUALLY present in its input, carrying important ones into
+      // Critical Context only when the prompt instructs the assessment.
+      // Both halves of AC3 are exercised: preservation (failing output
+      // reaches the checkpoint) and noise omission (the banner is in the
+      // input and still gets dropped).
+      final prompts = <String>[];
+      Future<SummarizationResult> call(SummarizationRequest request) async {
+        prompts.add(request.prompt);
+        final instructed = request.prompt.contains('important tool results');
+        final kept = <String>[];
+        if (instructed) {
+          for (final part in _tagContent(
+            request.prompt,
+            'conversation',
+          ).split('\n\n')) {
+            if (part.startsWith('[Tool result]: ') && part.contains('FAILED')) {
+              kept.add('- ${part.substring('[Tool result]: '.length)}');
+            }
+          }
+        }
+        return SummarizationResult.success(
           '## Goal\nFix the failing payment tests\n\n## Critical Context\n'
-          '- dart test test/payments: charge declines expired card — '
-          'Expected: false, Actual: true (FAILED)',
-        ),
-      ]);
+          '${kept.isEmpty ? '- (none)' : kept.join('\n')}',
+        );
+      }
+
       final caller = AssistantMessage(
         content: const [
           ToolCall(
@@ -721,13 +754,14 @@ void main() {
         failing,
         _assistant('on it'),
         banner,
-      ], summarize: fake.call);
-      final prompt = fake.prompts.single;
+      ], summarize: call);
       // Ground truth reaches the summarizer unevicted, with instructions…
-      expect(prompt, contains('charge declines expired card'));
-      expect(prompt, contains('important tool results'));
+      expect(prompts.single, contains('important tool results'));
+      expect(prompts.single, contains('charge declines expired card'));
+      expect(prompts.single, contains('All good'));
       // … and the checkpoint keeps the important one; noise is not required.
       expect(summary, contains('charge declines expired card'));
+      expect(summary, contains('FAILED'));
       expect(summary, isNot(contains('All good')));
     });
   });

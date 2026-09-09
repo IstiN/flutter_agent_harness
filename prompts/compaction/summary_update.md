@@ -6,6 +6,8 @@ The messages above are NEW conversation messages to fold into the existing check
 
 Update the existing structured checkpoint with new information. RULES:
 - PRESERVE all existing information from the previous checkpoint
+- ADD new progress, decisions, and context from the new messages
+- UPDATE Progress: move "In Progress" items to "Done" when completed; update "Next Steps"
 - ASSESS tool results: important outputs (test verdicts, command results, error traces) go into the checkpoint; trivial banners may go
 - PRESERVE exact file paths, function names, and error messages
 - If something is no longer relevant, you may remove it
