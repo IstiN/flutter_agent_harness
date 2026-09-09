@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show CliArgsException;
 import 'package:test/test.dart';
 
 void main() {
@@ -32,6 +34,50 @@ void main() {
       expect(
         resolveHeadlessPrompt(prompt: file.path),
         file.path, // the literal text, not the file content
+      );
+    });
+
+    test('--prompt-file content is the prompt verbatim', () {
+      final file = writeFile('prompt.md', 'the assembled 50KB prompt…');
+      expect(
+        resolveHeadlessPrompt(promptFile: file.path),
+        'the assembled 50KB prompt…',
+      );
+    });
+
+    test('--prompt-file content is never further resolved', () {
+      // Content that looks like a path stays text — no second resolution.
+      final file = writeFile('tricky.md', 'notes.md');
+      expect(resolveHeadlessPrompt(promptFile: file.path), 'notes.md');
+    });
+
+    test('a missing --prompt-file is a usage error', () {
+      expect(
+        () => resolveHeadlessPrompt(promptFile: '${tempDir.path}/nope.md'),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('cannot read --prompt-file'),
+          ),
+        ),
+      );
+    });
+
+    test('an unreadable --prompt-file is a usage error', () {
+      final dir = Directory(filePath('a-directory'))..createSync();
+      expect(
+        () => resolveHeadlessPrompt(promptFile: dir.path),
+        throwsA(isA<CliArgsException>()),
+      );
+    });
+
+    test('an undecodable --prompt-file is a usage error', () {
+      final file = File(filePath('binary.md'))
+        ..writeAsBytesSync(const [0xFF, 0xFE, 0x00, 0x9C]);
+      expect(
+        () => resolveHeadlessPrompt(promptFile: file.path),
+        throwsA(isA<CliArgsException>()),
       );
     });
 

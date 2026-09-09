@@ -36,6 +36,8 @@ void main() {
       '--log-file',
       '--prompt',
       '-p',
+      '--prompt-file',
+      '-f',
     ];
     for (final flag in flags) {
       test('mentions flag $flag', () {
