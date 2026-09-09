@@ -1112,10 +1112,43 @@ class AppLocalizationsRu extends AppLocalizations {
       'Переменные DAP_HUB_URL или DAP_AGENT_NAME заданы в окружении — env имеет приоритет над сохранённым подключением.';
 
   @override
-  String get settingsDapHubHint => 'URL хаба, идентификация агента, каналы';
+  String get settingsDapHubHint =>
+      'Агенты Fa находят друг друга и обмениваются сообщениями';
 
   @override
-  String get settingsDapHubTitle => 'DAP-хаб';
+  String get settingsDapHubIntro =>
+      'Хаб — место встречи ваших агентов Fa: CLI, это приложение и браузерное расширение. Подключитесь один раз — и этот агент станет доступен по имени: другие смогут найти его и отправлять ему сообщения.';
+
+  @override
+  String get settingsDapIdentityTitle => 'Как вас видят другие агенты';
+
+  @override
+  String get settingsDapIdentityHint =>
+      'Имя — это адрес для других агентов. ID выводится из ключа этого устройства.';
+
+  @override
+  String get settingsDapInboundTitle => 'Входящие сообщения';
+
+  @override
+  String get settingsDapInboundHint =>
+      'Куда попадают сообщения от других агентов';
+
+  @override
+  String get settingsDapInboundDedicated =>
+      'Отдельная сессия агента (рекомендуется)';
+
+  @override
+  String get settingsDapInboundCurrent => 'Текущая открытая сессия';
+
+  @override
+  String get settingsDapInboundNamed => 'Выбранная вами сессия';
+
+  @override
+  String get settingsDapInboundBadgeTooltip =>
+      'В эту сессию приходят сообщения от других агентов';
+
+  @override
+  String get settingsDapHubTitle => 'Сеть агентов';
 
   @override
   String get settingsDapNameHint => 'alice';

@@ -23,6 +23,9 @@ final class DapConfig {
     required this.name,
     required this.loadKeyFile,
     required this.saveKeyFile,
+    this.boundSessionMode = 'current',
+    this.boundSessionId,
+    this.persistBoundSessionId,
   });
 
   final String url;
@@ -31,6 +34,20 @@ final class DapConfig {
   final String name;
   final Future<String?> Function() loadKeyFile;
   final Future<void> Function(String) saveKeyFile;
+
+  /// Inbound hub-mail routing (`faDap.boundSession.mode`):
+  /// `current` (zero-config — mail lands in the open session),
+  /// `dedicated` (one agent-owned session; created lazily on first mail),
+  /// `named` (a user-picked session id in [boundSessionId]).
+  final String boundSessionMode;
+
+  /// The pinned session for `dedicated` (once created) / `named` modes.
+  final String? boundSessionId;
+
+  /// Persists the lazily created dedicated session id back into the
+  /// config (chrome.storage `faDap.boundSession.sessionId`) so the same
+  /// session keeps receiving mail across SW restarts.
+  final Future<void> Function(String sessionId)? persistBoundSessionId;
 
   /// Stable across reconnects/restarts: same config (url+name) keeps the
   /// live client instead of dropping the connection.

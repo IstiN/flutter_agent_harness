@@ -1102,10 +1102,41 @@ class AppLocalizationsEn extends AppLocalizations {
       'DAP_HUB_URL or DAP_AGENT_NAME is set in the environment — env overrides the saved connection.';
 
   @override
-  String get settingsDapHubHint => 'Hub URL, agent identity, channels';
+  String get settingsDapHubHint => 'Let Fa agents find and message each other';
 
   @override
-  String get settingsDapHubTitle => 'DAP hub';
+  String get settingsDapHubIntro =>
+      'A hub is where your Fa agents meet — the CLI, this app, and the browser extension. Connect once and this agent becomes reachable by name: others can find it and send it messages.';
+
+  @override
+  String get settingsDapIdentityTitle => 'How other agents see you';
+
+  @override
+  String get settingsDapIdentityHint =>
+      'The name is how other agents address you. The id is derived from this device’s key.';
+
+  @override
+  String get settingsDapInboundTitle => 'Incoming messages';
+
+  @override
+  String get settingsDapInboundHint => 'Where messages from other agents land';
+
+  @override
+  String get settingsDapInboundDedicated =>
+      'A dedicated agent session (recommended)';
+
+  @override
+  String get settingsDapInboundCurrent => 'Whichever session is open';
+
+  @override
+  String get settingsDapInboundNamed => 'A session you pick';
+
+  @override
+  String get settingsDapInboundBadgeTooltip =>
+      'This session receives messages from other agents';
+
+  @override
+  String get settingsDapHubTitle => 'Agent network';
 
   @override
   String get settingsDapNameHint => 'alice';

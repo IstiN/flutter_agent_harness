@@ -8,6 +8,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/dap_service.dart';
 import 'package:fa/ui/app_theme.dart';
+import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa_ui/fa_ui.dart' as faui;
 import 'package:flutter/material.dart';
@@ -35,7 +36,7 @@ class DapHubSection extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
-            Icon(Icons.hub_outlined, size: 20, color: colors.dim),
+            const DapHubMark(size: 20),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -82,6 +83,10 @@ class _DapHubPageState extends State<DapHubPage> {
   String? _error;
   var _probing = false;
 
+  /// Named-mode picker options + in-flight binding save.
+  List<DapBindableSession>? _bindableSessions;
+  var _savingBinding = false;
+
   @override
   void initState() {
     super.initState();
@@ -92,9 +97,13 @@ class _DapHubPageState extends State<DapHubPage> {
   Future<void> _reload() async {
     try {
       final snapshot = await _service.load();
+      final sessions = snapshot.supported
+          ? await _service.listBindableSessions()
+          : const <DapBindableSession>[];
       if (mounted) {
         setState(() {
           _snapshot = snapshot;
+          _bindableSessions = sessions;
           _error = null;
         });
       }
@@ -149,6 +158,31 @@ class _DapHubPageState extends State<DapHubPage> {
     await _reload();
   }
 
+  Future<void> _saveBinding(
+    DapInboundMode mode, {
+    String? sessionId,
+    String? sessionTitle,
+  }) async {
+    if (_savingBinding) return;
+    setState(() => _savingBinding = true);
+    AppAnalytics.instance.dapHubAction('bind_${mode.name}');
+    try {
+      await _service.saveBinding(
+        mode,
+        sessionId: sessionId,
+        sessionTitle: sessionTitle,
+      );
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(context.l10n.settingsDapSaveFailed)),
+      );
+    } finally {
+      if (mounted) setState(() => _savingBinding = false);
+    }
+    await _reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     final snapshot = _snapshot;
@@ -156,7 +190,7 @@ class _DapHubPageState extends State<DapHubPage> {
       appBar: faAppBar(title: Text(context.l10n.settingsDapHubTitle)),
       body: snapshot == null
           ? _error != null
-                ? _messageBody(context, Icons.error_outline, _error!)
+                ? _messageBody(context, _error!)
                 : const Center(child: CircularProgressIndicator())
           : snapshot.supported
           ? _connectionBody(context, snapshot)
@@ -173,6 +207,11 @@ class _DapHubPageState extends State<DapHubPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text(
+              context.l10n.settingsDapHubIntro,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+            ),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
@@ -235,6 +274,16 @@ class _DapHubPageState extends State<DapHubPage> {
             const SizedBox(height: 24),
             const Divider(),
             const SizedBox(height: 16),
+            Text(
+              context.l10n.settingsDapIdentityTitle,
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.l10n.settingsDapIdentityHint,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+            ),
+            const SizedBox(height: 12),
             _labeledRow(
               context,
               context.l10n.settingsDapAgentNameLabel,
@@ -246,6 +295,10 @@ class _DapHubPageState extends State<DapHubPage> {
               snapshot.agentId ?? '—',
               mono: true,
             ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 16),
+            ..._inboundSection(context, snapshot),
             const SizedBox(height: 24),
             const Divider(),
             const SizedBox(height: 16),
@@ -280,6 +333,126 @@ class _DapHubPageState extends State<DapHubPage> {
               onPressed: _edit,
               icon: const Icon(Icons.edit_outlined, size: 18),
               label: Text(context.l10n.settingsDapEditConnection),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The inbound-mail routing section: where messages from other agents
+  /// land. Three modes (dedicated session / open session / picked
+  /// session); the named mode unfolds a session picker.
+  List<Widget> _inboundSection(BuildContext context, DapHubSnapshot snapshot) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    final mode = snapshot.inboundMode;
+    final sessions = _bindableSessions ?? const <DapBindableSession>[];
+    return [
+      Text(l10n.settingsDapInboundTitle, style: theme.textTheme.titleSmall),
+      const SizedBox(height: 4),
+      Text(
+        l10n.settingsDapInboundHint,
+        style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+      ),
+      const SizedBox(height: 8),
+      _inboundOption(
+        context,
+        selected: mode == DapInboundMode.dedicated,
+        label: l10n.settingsDapInboundDedicated,
+        detail: mode == DapInboundMode.dedicated
+            ? snapshot.boundSessionTitle
+            : null,
+        onTap: () => _saveBinding(DapInboundMode.dedicated),
+      ),
+      _inboundOption(
+        context,
+        selected: mode == DapInboundMode.currentSession,
+        label: l10n.settingsDapInboundCurrent,
+        onTap: () => _saveBinding(DapInboundMode.currentSession),
+      ),
+      _inboundOption(
+        context,
+        selected: mode == DapInboundMode.named,
+        label: l10n.settingsDapInboundNamed,
+        detail: mode == DapInboundMode.named
+            ? snapshot.boundSessionTitle
+            : null,
+        onTap: sessions.isEmpty
+            ? null
+            : () => _saveBinding(
+                DapInboundMode.named,
+                sessionId: sessions.first.id,
+                sessionTitle: sessions.first.title,
+              ),
+      ),
+      if (mode == DapInboundMode.named && sessions.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        DropdownMenu<String>(
+          initialSelection: sessions
+              .where((entry) => entry.title == snapshot.boundSessionTitle)
+              .firstOrNull
+              ?.id,
+          enabled: !_savingBinding,
+          dropdownMenuEntries: [
+            for (final entry in sessions)
+              DropdownMenuEntry<String>(value: entry.id, label: entry.title),
+          ],
+          onSelected: (id) {
+            final entry = sessions.where((e) => e.id == id).firstOrNull;
+            if (entry == null) return;
+            _saveBinding(
+              DapInboundMode.named,
+              sessionId: entry.id,
+              sessionTitle: entry.title,
+            );
+          },
+        ),
+      ],
+    ];
+  }
+
+  /// One selectable inbound-routing row (radio-style, no deprecated
+  /// RadioListTile groupValue plumbing).
+  Widget _inboundOption(
+    BuildContext context, {
+    required bool selected,
+    required String label,
+    String? detail,
+    VoidCallback? onTap,
+  }) {
+    final colors = FahColors.of(context);
+    final theme = Theme.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: _savingBinding ? null : onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_off,
+              size: 18,
+              color: selected ? theme.colorScheme.primary : colors.dim,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: theme.textTheme.bodyMedium),
+                  if (detail != null)
+                    Text(
+                      detail,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.dim,
+                      ),
+                    ),
+                ],
+              ),
             ),
           ],
         ),
@@ -358,15 +531,12 @@ class _DapHubPageState extends State<DapHubPage> {
 
   /// The platform-honest state: the hub client needs `dart:io` (WebSocket
   /// transport, `~/.dap` files), so on web there is nothing to configure.
-  Widget _unsupportedBody(BuildContext context) => _messageBody(
-    context,
-    Icons.hub_outlined,
-    context.l10n.settingsDapUnsupported,
-  );
+  Widget _unsupportedBody(BuildContext context) =>
+      _messageBody(context, context.l10n.settingsDapUnsupported);
 
   /// A centered icon + message: the not-supported note and the load-error
   /// state share this layout.
-  Widget _messageBody(BuildContext context, IconData icon, String message) {
+  Widget _messageBody(BuildContext context, String message) {
     final colors = FahColors.of(context);
     final theme = Theme.of(context);
     return SafeArea(
@@ -376,7 +546,7 @@ class _DapHubPageState extends State<DapHubPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 40, color: colors.dim),
+              const DapHubMark(size: 40),
               const SizedBox(height: 12),
               Text(
                 message,

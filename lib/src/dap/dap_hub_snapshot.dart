@@ -18,6 +18,8 @@ class DapHubSnapshot {
     this.agentId,
     this.envLocked = false,
     this.connected,
+    this.inboundMode = DapInboundMode.currentSession,
+    this.boundSessionTitle,
   });
 
   /// False where the hub client cannot run (web — the `fah_hub_client`
@@ -47,6 +49,14 @@ class DapHubSnapshot {
   /// `false` = unreachable or rejected.
   final bool? connected;
 
+  /// Where inbound hub mail lands (the host's `boundSession.mode`).
+  /// [DapInboundMode.currentSession] is the zero-config default.
+  final DapInboundMode inboundMode;
+
+  /// Display title of the session inbound mail is bound to (dedicated or
+  /// named modes), when the host resolved one — shown in the settings UI.
+  final String? boundSessionTitle;
+
   /// A copy of this snapshot with the probe outcome set.
   DapHubSnapshot withProbe(bool connected) => DapHubSnapshot(
     supported: supported,
@@ -56,5 +66,17 @@ class DapHubSnapshot {
     agentId: agentId,
     envLocked: envLocked,
     connected: connected,
+    inboundMode: inboundMode,
+    boundSessionTitle: boundSessionTitle,
   );
 }
+
+/// Where a host routes inbound hub mail (the DAP `boundSession.mode`
+/// config value):
+///
+/// * [currentSession] — zero-config: the message lands in whichever
+///   session is open when it arrives;
+/// * [dedicated] — one host-owned agent session receives all hub mail
+///   (created lazily on first inbound message when missing);
+/// * [named] — a user-picked session receives all hub mail.
+enum DapInboundMode { currentSession, dedicated, named }

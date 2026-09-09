@@ -1991,13 +1991,67 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDapHubHint.
   ///
   /// In en, this message translates to:
-  /// **'Hub URL, agent identity, channels'**
+  /// **'Let Fa agents find and message each other'**
   String get settingsDapHubHint;
+
+  /// No description provided for @settingsDapHubIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'A hub is where your Fa agents meet — the CLI, this app, and the browser extension. Connect once and this agent becomes reachable by name: others can find it and send it messages.'**
+  String get settingsDapHubIntro;
+
+  /// No description provided for @settingsDapIdentityTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'How other agents see you'**
+  String get settingsDapIdentityTitle;
+
+  /// No description provided for @settingsDapIdentityHint.
+  ///
+  /// In en, this message translates to:
+  /// **'The name is how other agents address you. The id is derived from this device’s key.'**
+  String get settingsDapIdentityHint;
+
+  /// No description provided for @settingsDapInboundTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming messages'**
+  String get settingsDapInboundTitle;
+
+  /// No description provided for @settingsDapInboundHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Where messages from other agents land'**
+  String get settingsDapInboundHint;
+
+  /// No description provided for @settingsDapInboundDedicated.
+  ///
+  /// In en, this message translates to:
+  /// **'A dedicated agent session (recommended)'**
+  String get settingsDapInboundDedicated;
+
+  /// No description provided for @settingsDapInboundCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'Whichever session is open'**
+  String get settingsDapInboundCurrent;
+
+  /// No description provided for @settingsDapInboundNamed.
+  ///
+  /// In en, this message translates to:
+  /// **'A session you pick'**
+  String get settingsDapInboundNamed;
+
+  /// No description provided for @settingsDapInboundBadgeTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'This session receives messages from other agents'**
+  String get settingsDapInboundBadgeTooltip;
 
   /// No description provided for @settingsDapHubTitle.
   ///
   /// In en, this message translates to:
-  /// **'DAP hub'**
+  /// **'Agent network'**
   String get settingsDapHubTitle;
 
   /// No description provided for @settingsDapNameHint.

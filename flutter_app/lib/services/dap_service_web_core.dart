@@ -58,6 +58,13 @@ final class ExtensionDapHubService implements DapHubService {
   Future<DapHubSnapshot> load() async {
     final config = await _readConfig();
     final live = await _readLive();
+    final bound = config.bound;
+    final mode = switch ('${bound?['mode'] ?? ''}') {
+      'dedicated' => DapInboundMode.dedicated,
+      'named' => DapInboundMode.named,
+      _ => DapInboundMode.currentSession,
+    };
+    final boundTitle = '${bound?['title'] ?? ''}'.trim();
     return DapHubSnapshot(
       supported: true,
       url: config.url,
@@ -67,6 +74,8 @@ final class ExtensionDapHubService implements DapHubService {
       // key store) — the honest list is empty.
       channels: const [],
       connected: live.connected,
+      inboundMode: mode,
+      boundSessionTitle: boundTitle.isEmpty ? null : boundTitle,
     );
   }
 
@@ -100,11 +109,63 @@ final class ExtensionDapHubService implements DapHubService {
     return snapshot.withProbe(live.connected ?? false);
   }
 
+  @override
+  Future<void> saveBinding(
+    DapInboundMode mode, {
+    String? sessionId,
+    String? sessionTitle,
+  }) async {
+    final reply = await _sendMessage({
+      'type': 'hub.bind',
+      'mode': switch (mode) {
+        DapInboundMode.dedicated => 'dedicated',
+        DapInboundMode.named => 'named',
+        DapInboundMode.currentSession => 'current',
+      },
+      if (sessionId != null) 'sessionId': sessionId,
+      if (sessionTitle != null) 'title': sessionTitle,
+    });
+    if (reply is Map && reply['ok'] == false) {
+      throw StateError('hub.bind failed: ${reply['error'] ?? 'unknown'}');
+    }
+  }
+
+  @override
+  Future<List<DapBindableSession>> listBindableSessions() async {
+    try {
+      final reply = await _sendMessage({'type': 'hub.sessions'});
+      if (reply is! Map) return const [];
+      final sessions = reply['sessions'];
+      if (sessions is! List) return const [];
+      return [
+        for (final row in sessions)
+          if (row is Map && '${row['id'] ?? ''}'.isNotEmpty)
+            (
+              id: '${row['id']}',
+              title: _sessionRowTitle(row),
+            ),
+      ];
+    } on Object {
+      return const []; // SW unreachable — the picker just stays empty
+    }
+  }
+
+  /// The SW's session rows carry no title today — label by id prefix,
+  /// marking the live one.
+  static String _sessionRowTitle(Map row) {
+    final id = '${row['id']}';
+    final short = id.length > 8 ? id.substring(0, 8) : id;
+    return row['running'] == true
+        ? 'session $short (active)'
+        : 'session $short';
+  }
+
   // -- internals --------------------------------------------------------------
 
   /// The configured connection (`faDap` in chrome.storage), falling back
-  /// to the zero-config default when never saved.
-  Future<({String url, String? name})> _readConfig() async {
+  /// to the zero-config default when never saved. The `boundSession`
+  /// block rides along: `{mode, sessionId?, title?}`.
+  Future<({String url, String? name, Map? bound})> _readConfig() async {
     try {
       final result = await _storageGet('faDap');
       if (result is Map) {
@@ -113,14 +174,19 @@ final class ExtensionDapHubService implements DapHubService {
           final url = '${raw['url'] ?? ''}'.trim();
           if (url.isNotEmpty) {
             final name = '${raw['name'] ?? ''}'.trim();
-            return (url: url, name: name.isEmpty ? null : name);
+            final bound = raw['boundSession'];
+            return (
+              url: url,
+              name: name.isEmpty ? null : name,
+              bound: bound is Map ? bound : null,
+            );
           }
         }
       }
     } on Object {
       // Storage blocked → fall through to the default.
     }
-    return (url: defaultWebDapUrl, name: null);
+    return (url: defaultWebDapUrl, name: null, bound: null);
   }
 
   /// The SW's live hub status: the `status` handler answers with the

@@ -103,6 +103,7 @@ Future<void> main() async {
   _setProperty(faAgent, 'decide'.toJS, _decideImpl.toJS);
   _setProperty(faAgent, 'onEvent'.toJS, _onEventImpl.toJS);
   _setProperty(faAgent, 'getState'.toJS, _getStateImpl.toJS);
+  _setProperty(faAgent, 'sessionsList'.toJS, _sessionsListImpl.toJS);
   _setProperty(
     faAgent,
     'applyToolVisibility'.toJS,
@@ -273,6 +274,11 @@ void _onEventImpl(JSAny? cb) => _eventCb = cb as JSFunction?;
 
 JSAny? _getStateImpl() =>
     (_host?.getState() ?? <String, dynamic>{'booted': false}).jsify();
+
+/// The session list for the DAP settings picker (hub.sessions): the live
+/// session plus archives, same snapshot the v2 UI sheet polls.
+JSAny? _sessionsListImpl() =>
+    (_host?.sessionsList() ?? const <Map<String, dynamic>>[]).jsify();
 
 // -- faAgentV2 surface (scheduled tasks + wiring snapshot) --------------------------
 
@@ -731,7 +737,8 @@ Map<String, bool> _browserToolsFrom(Object? raw) {
   };
 }
 
-/// faDap storage shape: `{url, name}`. Empty url = no hub presence.
+/// faDap storage shape: `{url, name, boundSession?: {mode, sessionId?}}`.
+/// Empty url = no hub presence.
 DapConfig? _dapFrom(Object? raw) {
   if (raw is! Map) {
     print('[dap] config: faDap absent/not a map — hub presence off');
@@ -744,12 +751,40 @@ DapConfig? _dapFrom(Object? raw) {
   }
   final name = '${raw['name'] ?? ''}'.trim();
   print('[dap] config: url=$url name=${name.isEmpty ? '—' : name}');
+  final bound = raw['boundSession'];
+  final boundMap = bound is Map ? bound : const {};
+  final mode = '${boundMap['mode'] ?? 'current'}'.trim();
+  final boundId = '${boundMap['sessionId'] ?? ''}'.trim();
   return DapConfig(
     url: url,
     name: name,
     loadKeyFile: () => _storageGetString('faDapKey'),
     saveKeyFile: (text) => _storageSetString('faDapKey', text),
+    boundSessionMode: switch (mode) {
+      'dedicated' || 'named' => mode,
+      _ => 'current',
+    },
+    boundSessionId: boundId.isEmpty ? null : boundId,
+    persistBoundSessionId: _persistBoundSessionId,
   );
+}
+
+/// Writes the lazily created dedicated session id back into faDap (merge —
+/// url/name/binding mode stay untouched) so the dedicated session survives
+/// SW restarts.
+Future<void> _persistBoundSessionId(String sessionId) async {
+  final raw = await _storageGet(['faDap'].jsify()).toDart;
+  final stored = raw == null
+      ? <Object?, Object?>{}
+      : (raw as JSObject).dartify() as Map<Object?, Object?>;
+  final dap = stored['faDap'];
+  if (dap is! Map) return;
+  final next = Map<Object?, Object?>.of(dap);
+  final bound = next['boundSession'];
+  final boundNext = Map<Object?, Object?>.of(bound is Map ? bound : const {});
+  boundNext['sessionId'] = sessionId;
+  next['boundSession'] = boundNext;
+  await _storageSet(<String, Object?>{'faDap': next}.jsify() as JSObject).toDart;
 }
 
 Future<String?> _storageGetString(String key) async {

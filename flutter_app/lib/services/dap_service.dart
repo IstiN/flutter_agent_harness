@@ -9,9 +9,12 @@ export 'dap_service_stub.dart'
 // One snapshot type shared with the CLI (package `DapHubSnapshot`); the
 // app-side service interface below stays here.
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show DapHubSnapshot;
+    show DapHubSnapshot, DapInboundMode;
 export 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show DapHubSnapshot;
+    show DapHubSnapshot, DapInboundMode;
+
+/// A session offered by the named-mode inbound-mail picker.
+typedef DapBindableSession = ({String id, String title});
 
 /// Read/write access to the DAP hub connection the app shares with the CLI
 /// agents (`~/.dap/config.json`, identity under `~/.dap/keys/fah/`).
@@ -35,4 +38,17 @@ abstract interface class DapHubService {
   /// unreachable hub resolves to `false` after the probe timeout instead
   /// of hanging on the client's reconnect loop.
   Future<DapHubSnapshot> probe();
+
+  /// Persists the inbound-mail routing (`boundSession` in the shared
+  /// config — `faDap` on the extension, `~/.dap/config.json` on IO):
+  /// [mode], plus the target session for [DapInboundMode.named].
+  Future<void> saveBinding(
+    DapInboundMode mode, {
+    String? sessionId,
+    String? sessionTitle,
+  });
+
+  /// Sessions the named-mode picker offers (live + persisted on this
+  /// host). Empty where the host cannot enumerate sessions.
+  Future<List<DapBindableSession>> listBindableSessions();
 }

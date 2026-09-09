@@ -43,6 +43,7 @@ import 'chrome_storage_env.dart';
 import 'fetch_client.dart';
 import 'dap/dap_frames.dart';
 import 'dap/dap_integration.dart';
+import 'dap/bound_session_routing.dart';
 import 'providers.dart';
 import 'session_reset.dart';
 import 'tool_gate.dart';
@@ -350,7 +351,13 @@ final class AgentHost implements UiHostBackend {
   /// Starts/stops/retargets the hub presence without touching the agent.
   void _applyDapConfig(DapConfig? dap) {
     final current = _dapConfig;
-    if (current != null && dap != null && current.sameTargetAs(dap)) return;
+    if (current != null && dap != null && current.sameTargetAs(dap)) {
+      // Same hub target — keep the live client (no reconnect), but take
+      // the new config object: the session binding rides it and must
+      // apply immediately (mail routing reads _dapConfig).
+      _dapConfig = dap;
+      return;
+    }
     _detachDap();
     if (dap != null) _attachDap(dap);
   }
@@ -595,11 +602,63 @@ final class AgentHost implements UiHostBackend {
   /// mid-run, starts a turn when idle.
   void pushMail(String from, String text) {
     if (!_mailDedupe.first(from, text)) return; // AC18: bridge/DAP duplicate
+    unawaited(_routeMail(from, text));
+  }
+
+  /// Routes one inbound mail: the session binding (faDap.boundSession)
+  /// pins hub mail to a dedicated or user-picked session — when idle, that
+  /// session becomes live BEFORE the turn so the conversation lands where
+  /// the user pointed it. A running turn keeps the classic behavior: the
+  /// mail steers into the active session (switching mid-run is refused).
+  Future<void> _routeMail(String from, String text) async {
+    if (!_running) await _ensureBoundSession();
     if (_running) {
       _mail.add((from: from, text: text));
       return;
     }
-    unawaited(_runTurn('[from $from] $text'));
+    await _runTurn('[from $from] $text');
+  }
+
+  /// Switches to the bound session when the binding asks for it: the
+  /// decision table is pure ([boundSessionAction]); failures degrade to
+  /// the current session — mail must never be lost over routing.
+  Future<void> _ensureBoundSession() async {
+    final config = _dapConfig;
+    if (config == null || !_booted) return;
+    final action = boundSessionAction(
+      mode: config.boundSessionMode,
+      boundId: config.boundSessionId,
+      currentId: sessionId,
+      pristineLive: _agent.state.messages.isEmpty,
+    );
+    switch (action) {
+      case BoundSessionAction.stay:
+        return;
+      case BoundSessionAction.openBound:
+        try {
+          await openSession(config.boundSessionId!);
+        } on Object {
+          // No such archive (cleared, never synced) — in dedicated mode
+          // fall through to minting a fresh dedicated session; in named
+          // mode stay on the current session rather than dropping mail.
+          if (config.boundSessionMode != 'dedicated') return;
+          await _createDedicatedSession(config);
+        }
+      case BoundSessionAction.createDedicated:
+        await _createDedicatedSession(config);
+    }
+  }
+
+  /// Mints (or adopts the pristine live session as) the dedicated agent
+  /// session and persists its id back into faDap so the same session
+  /// keeps receiving mail across SW restarts.
+  Future<void> _createDedicatedSession(DapConfig config) async {
+    try {
+      if (_agent.state.messages.isNotEmpty) await newSession();
+      await config.persistBoundSessionId?.call(sessionId);
+    } on Object {
+      // Busy/unbooted raced in — the current session takes the mail.
+    }
   }
 
   Future<List<Message>> _drainMail() async {

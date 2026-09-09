@@ -29,4 +29,14 @@ final class UnsupportedDapHubService implements DapHubService {
   @override
   Future<void> saveConnection({required String url, required String name}) =>
       throw StateError('DAP hub is not supported on this platform.');
+
+  @override
+  Future<void> saveBinding(
+    DapInboundMode mode, {
+    String? sessionId,
+    String? sessionTitle,
+  }) => throw StateError('DAP hub is not supported on this platform.');
+
+  @override
+  Future<List<DapBindableSession>> listBindableSessions() async => const [];
 }
