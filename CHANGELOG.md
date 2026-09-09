@@ -3068,6 +3068,11 @@
 - fix(59): stop cross-instance theft of scheduled self-reminders (#88)
 - fix(86): compaction — LLM finds asks itself (no hardcode) + tool-results assessment in checkpoint prompts (#87)
 
+## 0.1.335
+
+- test(35): make the AC12 E2E catalog-first (#96)
+- feat(91): add --log-file to tee the live session trace to a file (#95)
+
 ## Unreleased
 
 ## Unreleased
