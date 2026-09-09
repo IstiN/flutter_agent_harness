@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.331
+
+- fix(86): compaction checkpoint honors the owner review on #82 — the
+  hardcoded imperative-verb ask detector (`_requestMarkerPattern`) is gone;
+  every user-role message (initial + steering, any phrasing or language)
+  now reaches the summarizer as a `USER REQUEST CANDIDATES` line and the
+  LLM itself judges which are open asks (only structural non-user content —
+  `<system-notice>` envelopes, agent mail, projected branch summaries — is
+  skipped; `detectUserRequestCandidates` → `userRequestCandidateLines`), so
+  marker-less asks ("можешь глянуть почему тест падает?") can no longer be
+  evicted before the summarizer sees them. The compaction prompts (system,
+  first-time, update, turn-prefix, branch) gain an explicit tool-results
+  assessment: important outputs (test verdicts, command results, error
+  traces, fetched data) are checkpointed with what produced them; trivial
+  banners may be omitted, with the LLM assessing importance. The owner's
+  ≤500-char instruction budget (issue #81 AC7, restated by #86 AC4) holds
+  at net delta 423: the summary_update.md section hints were tightened to
+  make room while every operational rule (PRESERVE/ADD/UPDATE/ASSESS and
+  the open-ask close-out rules) stays intact. Tests: marker-less-ask
+  regression (unit + end-to-end into `## Open User Requests`), non-lossy
+  candidate pin, tool-results wording pin across the five prompts, and a
+  checkpoint behavior test (failing-test output preserved, success banner
+  not required).
+
 ## 0.1.330
 
 
