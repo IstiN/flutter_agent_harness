@@ -965,14 +965,53 @@ void main() {
               ).result)
               as List;
 
+      // A shared context that ALREADY holds `bash_198_2` (plus the fresh
+      // text+call mixed message shape) forces the stamper down its whole
+      // rename chain: bash_198 → _2 (taken) → _3.
+      final seeded = <Message>[
+        _assistant(
+          content: [
+            TextContent(text: 'earlier'),
+            _call('bash_198_2', 'bash'),
+          ],
+          stopReason: StopReason.toolUse,
+        ),
+        result('bash_198_2', 'bash'),
+        ...history1.cast<Message>(),
+      ];
+      final mixedCallTurn = [
+        StartEvent(partial: _assistant()),
+        ToolCallStartEvent(contentIndex: 0, partial: _assistant()),
+        ToolCallEndEvent(
+          contentIndex: 0,
+          toolCall: _call('bash_198', 'bash'),
+          partial: _assistant(
+            content: [
+              TextContent(text: 'working'),
+              _call('bash_198', 'bash'),
+            ],
+            stopReason: StopReason.toolUse,
+          ),
+        ),
+        DoneEvent(
+          reason: StopReason.toolUse,
+          message: _assistant(
+            content: [
+              TextContent(text: 'working'),
+              _call('bash_198', 'bash'),
+            ],
+            stopReason: StopReason.toolUse,
+          ),
+        ),
+      ];
       final second = _FakeStreamFunction([
-        _toolTurn([_call('bash_198', 'bash')]),
+        mixedCallTurn,
         _textTurn('done two'),
       ]);
       final history2 =
           (await agentLoop(
                 prompts: [UserMessage.text('again')],
-                context: Context(messages: List.of(history1.cast<Message>())),
+                context: Context(messages: seeded),
                 config: const AgentLoopConfig(model: _model),
                 streamFunction: second.call,
                 toolExecutor: (_, _, _) async => ToolExecutionResult.text('r2'),
@@ -987,15 +1026,17 @@ void main() {
       ];
       final ids1 = callIds(history1.cast<Message>());
       final ids2 = callIds(history2.cast<Message>());
-      expect(ids1, contains('bash_198'));
-      expect(ids2, contains('bash_198_2'));
+      expect(ids1, ['bash_198']);
+      // The seeded bash_198_2 forces the fresh bash_198 to _3; the run's
+      // own result carries the renamed id (call/result stay paired).
+      expect(ids2, ['bash_198_3']);
       expect(ids1.toSet().intersection(ids2.toSet()), isEmpty);
       // Results follow their (renamed) calls.
       final resultIds2 = [
         for (final m in history2.cast<Message>())
           if (m is ToolResultMessage) m.toolCallId,
       ];
-      expect(resultIds2, contains('bash_198_2'));
+      expect(resultIds2, contains('bash_198_3'));
     });
   });
 
