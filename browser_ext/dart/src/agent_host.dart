@@ -23,6 +23,7 @@ import 'package:flutter_agent_harness/src/compaction/compaction.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/session/session_storage.dart';
+import 'package:flutter_agent_harness/src/session/uuid.dart';
 import 'package:flutter_agent_harness/src/session/session_tree.dart';
 import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
@@ -930,16 +931,12 @@ final class AgentHost implements UiHostBackend {
   }
 }
 
-String _uuid() {
-  var seed = DateTime.now().microsecondsSinceEpoch;
-  var seq = 0;
-  // ponytail: UUID-shaped id; uniqueness only needs to hold within one SW life.
-  String next() => ((seed = seed * 1103515245 + 12345 + ++seq) & 0x7fffffff)
-      .toRadixString(16)
-      .padLeft(8, '0');
-  final a = next(), b = next(), c = next(), d = next(), e = next(), f = next();
-  return '$a-$b-4${c.substring(0, 3)}-a${d.substring(0, 3)}-$e${f.substring(0, 4)}';
-}
+/// Session ids come from the harness's UUIDv7: the old local LCG here
+/// collapsed under dart2js (int is a double; the multiply overflowed 2^53
+/// and zeroed the low bits), so two sessions minted close together could
+/// share an id and one's archive file overwrote the other — sessions
+/// "disappeared" from the picker. uuidv7 is time-ordered and secure-random.
+String _uuid() => uuidv7();
 
 /// Compaction progress sink that reports nothing (headless SW).
 final class _SilentHooks implements AutoCompactorHooks {
