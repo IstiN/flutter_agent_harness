@@ -451,28 +451,36 @@ final class ConfigService {
   /// Null when the path resolves fine here. [candidate] is the resolved
   /// value on `get`, the decoded JSON value on `set`.
   String? _stdioServerRefusal(List<String> segments, [Object? candidate]) {
-    if (supportsProcesses ||
-        segments.isEmpty ||
-        segments.first != 'mcp' ||
-        (segments.length > 1 && segments[1] != 'servers')) {
+    if (supportsProcesses || segments.isEmpty || segments.first != 'mcp') {
       return null;
     }
-    // A stdio member leaf is refused by path shape alone — the host
-    // capability does not depend on whether a value exists yet.
-    if (segments.length > 3) {
-      return _processBoundMembers.contains(segments.last) ? segments[2] : null;
-    }
-    if (candidate == null) return null;
-    if (segments.length == 3) {
-      return _isStdioEntry(candidate) ? segments[2] : null;
-    }
-    // Whole-section paths (`mcp`, `mcp.servers`): inspect the decoded
-    // CONTENT — path depth alone must not bypass the capability check
-    // (AC11/E13: `config set mcp '{...}'` must not write dead stdio
-    // servers on a web/iOS host).
-    final servers = segments.length == 1 && candidate is Map
-        ? candidate['servers']
-        : candidate;
+    return _leafStdioRefusal(segments) ??
+        _entryStdioRefusal(segments, candidate) ??
+        _sectionStdioRefusal(segments, candidate);
+  }
+
+  /// Path-shape rule: a stdio member leaf is refused whether or not a
+  /// value exists — the host capability is value-independent.
+  String? _leafStdioRefusal(List<String> segments) =>
+      segments.length > 3 &&
+          segments[1] == 'servers' &&
+          _processBoundMembers.contains(segments.last)
+      ? segments[2]
+      : null;
+
+  /// Single-entry rule (`mcp.servers.<id>`): refused when the resolved
+  /// entry itself needs process spawning.
+  String? _entryStdioRefusal(List<String> segments, Object? candidate) =>
+      segments.length == 3 && _isStdioEntry(candidate) ? segments[2] : null;
+
+  /// Whole-section rule (`mcp`, `mcp.servers`): the decoded CONTENT is
+  /// inspected — path depth alone must not bypass the capability check
+  /// (AC11/E13: `config set mcp '{...}'` must not write dead stdio
+  /// servers on a web/iOS host). Content without `servers`, or non-map
+  /// content, passes the guard.
+  String? _sectionStdioRefusal(List<String> segments, Object? candidate) {
+    if (segments.length > 2 || candidate is! Map) return null;
+    final servers = segments.length == 1 ? candidate['servers'] : candidate;
     if (servers is! Map) return null;
     for (final entry in servers.entries) {
       if (_isStdioEntry(entry.value)) return entry.key.toString();

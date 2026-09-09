@@ -761,6 +761,63 @@ void main() {
       expect((await webService.get('mcp.servers.fs.command')).found, isFalse);
     });
 
+    test(
+      'whole-section sets cannot smuggle stdio servers past the guard',
+      () async {
+        await webEnv.writeFile(_globalConfig, 'mode: code\n');
+        // Path depth must not bypass the capability check: the CONTENT of
+        // a whole-section write is inspected (issue #29 AC11/E13).
+        await expectLater(
+          webService.set('mcp', '{"servers":{"fs":{"command":"npx"}}}'),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('mcp stdio server "fs" is not applicable'),
+            ),
+          ),
+        );
+        await expectLater(
+          webService.set('mcp.servers', '{"fs":{"args":["-y"]}}'),
+          throwsConfigException,
+        );
+        // Remote-only content passes the capability guard.
+        await capService.set(
+          'mcp.servers',
+          '{"web":{"url":"https://mcp.example"}}',
+        );
+        expect(
+          (await capService.get('mcp.servers.web.url')).display,
+          'https://mcp.example',
+        );
+        // A scalar under mcp, and mcp-section content without servers,
+        // are content the guard does not refuse.
+        await capService.set('mcp.enabled', 'true');
+        expect((await capService.get('mcp.enabled')).display, 'true');
+        // Nothing dead was written by the refused sets.
+        expect(
+          (await webService.get('mcp.servers.fs.command')).notApplicable,
+          stdioNote,
+        );
+      },
+    );
+
+    test('get of a whole section answers not applicable when it carries '
+        'stdio entries', () async {
+      await capEnv.writeFile(
+        _globalConfig,
+        'mcp:\n  servers:\n    fs:\n      command: npx\n',
+      );
+      expect(
+        (await capService.get('mcp.servers')).notApplicable,
+        contains('mcp stdio server "fs"'),
+      );
+      expect(
+        (await capService.get('mcp')).notApplicable,
+        contains('mcp stdio server "fs"'),
+      );
+    });
+
     test('set of a remote server entry succeeds on the same host', () async {
       final result = await capService.set(
         'mcp.servers.web',
