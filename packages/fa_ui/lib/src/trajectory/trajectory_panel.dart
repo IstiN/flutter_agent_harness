@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -117,6 +118,13 @@ class TrajectoryScreen extends StatefulWidget {
 class _TrajectoryScreenState extends State<TrajectoryScreen> {
   final FocusNode _focus = FocusNode();
 
+  /// macOS desktop: the unified titlebar's traffic lights float over
+  /// full-bleed content and SafeArea reports no top inset there, so the
+  /// full-screen surface clears them itself (the same 28px strip the
+  /// macOS window builder overlays for dragging).
+  bool get _isMacOSDesktop =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+
   @override
   void initState() {
     super.initState();
@@ -152,16 +160,20 @@ class _TrajectoryScreenState extends State<TrajectoryScreen> {
     }
     return Scaffold(
       body: SafeArea(
-        child: CallbackShortcuts(
-          bindings: {
-            LogicalKeySet(LogicalKeyboardKey.escape): widget.onClose,
-          },
-          child: Focus(
-            focusNode: _focus,
-            autofocus: true,
-            child: TrajectoryBody(
-              controller: widget.controller,
-              onClose: widget.onClose,
+        child: Padding(
+          // macOS only: traffic lights float over the header otherwise.
+          padding: EdgeInsets.only(top: _isMacOSDesktop ? 28.0 : 0),
+          child: CallbackShortcuts(
+            bindings: {
+              LogicalKeySet(LogicalKeyboardKey.escape): widget.onClose,
+            },
+            child: Focus(
+              focusNode: _focus,
+              autofocus: true,
+              child: TrajectoryBody(
+                controller: widget.controller,
+                onClose: widget.onClose,
+              ),
             ),
           ),
         ),

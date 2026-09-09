@@ -187,15 +187,14 @@ final class TuiPromptState {
         AskPromptSpec s when s.multiSelect => AskInputMode.multiSelect,
         _ => AskInputMode.singleSelect,
       },
-      secretName = switch (spec) {
-        SecretPromptSpec s => s.name,
-        _ => '',
-      },
+      // The suggested name stays a PLACEHOLDER (rendered dimmed): it is
+      // never committed input the user has to erase (issue #97 F1).
+      secretName = '',
       secretValue = '',
-      secretCursor = switch (spec) {
-        SecretPromptSpec _ => -1, // -1 = focus on name field
-        _ => 0,
-      },
+      // Focus starts on the value field so the first keystroke is the
+      // secret, typed into the masked row (issue #97 F2).
+      secretCursor = 0,
+      secretEnterError = '',
       secretValueVisible = false,
       approvalInput = '',
       approvalSelected = 2;
@@ -207,6 +206,11 @@ final class TuiPromptState {
   final String secretName;
   final String secretValue;
   final int secretCursor;
+
+  /// Why the last Enter did not submit ("type the value first", a name
+  /// pattern violation). Set on a blocked Enter, cleared by the next
+  /// state-changing key — Enter never no-ops silently (issue #97 F3).
+  final String secretEnterError;
 
   /// Whether the secret sheet renders the typed value in clear text
   /// (Ctrl+R toggles; hidden is the default).
@@ -235,6 +239,14 @@ final class TuiPromptState {
 
   AskPromptSpec get askSpec => spec as AskPromptSpec;
   SecretPromptSpec get secretSpec => spec as SecretPromptSpec;
+
+  /// The name the grant carries: the user's committed name, or the agent's
+  /// suggestion while the name field is still untouched (empty).
+  String get effectiveSecretName {
+    final committed = secretName;
+    return committed.isEmpty ? secretSpec.name : committed;
+  }
+
   ApprovalPromptSpec get approvalSpec => spec as ApprovalPromptSpec;
   TextPromptSpec get textSpec => spec as TextPromptSpec;
 
@@ -246,6 +258,7 @@ final class TuiPromptState {
     String? secretValue,
     int? secretCursor,
     bool? secretValueVisible,
+    String? secretEnterError,
     String? approvalInput,
     int? approvalSelected,
   }) {
@@ -258,6 +271,7 @@ final class TuiPromptState {
       secretValue: secretValue ?? this.secretValue,
       secretCursor: secretCursor ?? this.secretCursor,
       secretValueVisible: secretValueVisible ?? this.secretValueVisible,
+      secretEnterError: secretEnterError ?? this.secretEnterError,
       approvalInput: approvalInput ?? this.approvalInput,
       approvalSelected: approvalSelected ?? this.approvalSelected,
     );
@@ -272,6 +286,7 @@ final class TuiPromptState {
     required this.secretValue,
     required this.secretCursor,
     this.secretValueVisible = false,
+    this.secretEnterError = '',
     this.approvalInput = '',
     this.approvalSelected = 2,
   });
@@ -655,7 +670,7 @@ final RegExp _secretNamePattern = RegExp(r'^[A-Z][A-Z0-9_]*$');
 
 bool _secretSubmittable(TuiPromptState state) {
   if (state.spec is! SecretPromptSpec) return false;
-  if (!_secretNamePattern.hasMatch(state.secretName)) return false;
+  if (!_secretNamePattern.hasMatch(state.effectiveSecretName)) return false;
   if (state.secretValue.isEmpty) return false;
   return true;
 }
@@ -663,7 +678,8 @@ bool _secretSubmittable(TuiPromptState state) {
 /// Secret prompt: value-cursor arrows → backspace → char → enter → tab →
 /// esc; ↑/↓ are ignored.
 _PromptKeyResult _handleSecretKey(TuiPromptState state, PromptKey key) {
-  return _handleSecretKillKey(state, key) ??
+  final result =
+      _handleSecretKillKey(state, key) ??
       _handleSecretRevealKey(state, key) ??
       _handleSecretArrowKey(state, key) ??
       _handleSecretBackspaceKey(state, key) ??
@@ -672,6 +688,16 @@ _PromptKeyResult _handleSecretKey(TuiPromptState state, PromptKey key) {
       _handleSecretTabKey(state, key) ??
       _handleEscapeKey(state, key) ??
       (state: state, resolved: null);
+  // A blocked Enter's reason goes stale the moment the state moves on.
+  if (key is! PromptEnter &&
+      state.secretEnterError.isNotEmpty &&
+      !identical(result.state, state)) {
+    return (
+      state: result.state.copyWith(secretEnterError: ''),
+      resolved: result.resolved,
+    );
+  }
+  return result;
 }
 
 /// Ctrl+U: name focus clears the suggested name, value focus kills from
@@ -750,39 +776,50 @@ _PromptKeyResult _backspaceSecretName(TuiPromptState state) {
   );
 }
 
-/// A typed char appends to the name on name focus, inserts at the cursor on
-/// value focus. Null when the key belongs to another cluster.
+/// A typed char (or a paste) appends to the name on name focus, inserts at
+/// the cursor on value focus. Null when the key belongs to another cluster.
 _PromptKeyResult? _handleSecretCharKey(TuiPromptState state, PromptKey key) {
-  if (key is! PromptChar) return null;
+  if (key is! PromptChar && key is! PromptPaste) return null;
+  final text = key is PromptChar ? key.text : (key as PromptPaste).text;
   if (state.secretCursor < 0) {
     return (
-      state: state.copyWith(secretName: state.secretName + key.text),
+      state: state.copyWith(secretName: state.secretName + text),
       resolved: null,
     );
   }
   final next =
       state.secretValue.substring(0, state.secretCursor) +
-      key.text +
+      text +
       state.secretValue.substring(state.secretCursor);
   return (
     state: state.copyWith(
       secretValue: next,
-      secretCursor: state.secretCursor + 1,
+      secretCursor: state.secretCursor + text.length,
     ),
     resolved: null,
   );
 }
 
-/// Enter submits the secret once the name matches and the value is
-/// non-empty. Null when the key belongs to another cluster.
+/// Enter submits once the effective name matches and the value is
+/// non-empty; otherwise it records WHY it did not submit — never a silent
+/// no-op (issue #97 F3). Null when the key belongs to another cluster.
 _PromptKeyResult? _handleSecretEnterKey(TuiPromptState state, PromptKey key) {
   if (key is! PromptEnter) return null;
-  if (!_secretSubmittable(state)) return (state: state, resolved: null);
+  if (!_secretSubmittable(state)) {
+    return (
+      state: state.copyWith(
+        secretEnterError: state.secretValue.isEmpty
+            ? 'Type the value first, then press Enter'
+            : 'Name must match ^[A-Z][A-Z0-9_]*\$',
+      ),
+      resolved: null,
+    );
+  }
   return (
     state: state,
     resolved: SecretPromptAnswer(
       RequestSecretResult(
-        name: state.secretName,
+        name: state.effectiveSecretName,
         value: state.secretValue,
         persisted: false,
       ),
@@ -790,14 +827,14 @@ _PromptKeyResult? _handleSecretEnterKey(TuiPromptState state, PromptKey key) {
   );
 }
 
-/// Tab moves from name (-1) to value (0) focus. Null when the key belongs
-/// to another cluster.
+/// Tab toggles focus between the value field and the name field. Null when
+/// the key belongs to another cluster.
 _PromptKeyResult? _handleSecretTabKey(TuiPromptState state, PromptKey key) {
   if (key is! PromptTab) return null;
-  if (state.secretCursor < 0) {
-    return (state: state.copyWith(secretCursor: 0), resolved: null);
-  }
-  return (state: state, resolved: null);
+  return (
+    state: state.copyWith(secretCursor: state.secretCursor < 0 ? 0 : -1),
+    resolved: null,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1246,6 +1283,7 @@ List<String> _textInputRows(TuiPromptState state, int inner) {
 List<String> _secretInputRows(TuiPromptState state, int inner) {
   final rows = <String>[];
   final visible = state.secretValueVisible;
+  final nameFocused = state.secretCursor < 0;
   rows.add(
     _wrapBodyLine(
       _dim(
@@ -1257,15 +1295,35 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
       dim: true,
     ),
   );
-  rows.add(_wrapBodyLine(state.secretName, inner, bold: true));
-  final focusedOnValue = state.secretCursor >= 0;
-  final hint = focusedOnValue
-      ? 'Enter to save · Ctrl+U clears to cursor · Esc to cancel'
-      : 'Start typing the value · Ctrl+U clears the name · Esc to cancel';
+  // F4: the focused row carries the ▸ marker. F1: an untouched name shows
+  // the agent's suggestion as dimmed ghost text, never as committed input.
+  final committedName = state.secretName;
+  final nameRow = committedName.isEmpty
+      ? _dim(state.effectiveSecretName)
+      : committedName;
+  rows.add(
+    _wrapBodyLine(
+      '${nameFocused ? '${_accent('▸')} ' : '  '}$nameRow',
+      inner,
+      bold: committedName.isNotEmpty,
+    ),
+  );
+  final hint = nameFocused
+      ? 'Type to replace it · Tab to the value · Esc cancel'
+      : 'Enter to save · Tab to edit the name · Esc cancel';
   rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
   final display = visible ? state.secretValue : '•' * state.secretValue.length;
-  rows.add(_wrapBodyLine(display, inner, bold: true));
-  if (!_secretNamePattern.hasMatch(state.secretName)) {
+  rows.add(
+    _wrapBodyLine(
+      '${nameFocused ? '  ' : '${_accent('▸')} '}$display',
+      inner,
+      bold: true,
+    ),
+  );
+  final error = state.secretEnterError;
+  if (error.isNotEmpty) {
+    rows.add(_wrapBodyLine(_red(error), inner));
+  } else if (!_secretNamePattern.hasMatch(state.effectiveSecretName)) {
     rows.add(_wrapBodyLine(_red('Name must match ^[A-Z][A-Z0-9_]*\$'), inner));
   }
   return rows;
