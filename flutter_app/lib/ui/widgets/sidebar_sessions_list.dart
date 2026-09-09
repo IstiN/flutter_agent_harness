@@ -2,6 +2,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/session_names_store.dart';
+import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
@@ -30,6 +31,7 @@ class SidebarSessionsList extends StatefulWidget {
     this.sessionInfoNames = const {},
     this.onOpenPersisted,
     this.collapsed = false,
+    this.hubBoundSessionId,
   });
 
   final FlutterSessionManager manager;
@@ -54,6 +56,10 @@ class SidebarSessionsList extends StatefulWidget {
 
   /// When true the list renders as a compact column of session dots.
   final bool collapsed;
+
+  /// The DAP-bound session (inbound hub mail lands here) — its tile shows
+  /// the agent-network badge (DapBindingStore in the shell feeds this).
+  final String? hubBoundSessionId;
 
   @override
   State<SidebarSessionsList> createState() => _SidebarSessionsListState();
@@ -189,6 +195,8 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                           // per-tile cwd label would duplicate it.
                           cwd: null,
                           isActive: widget.manager.active?.id == entry.id,
+                          hubBound: widget.hubBoundSessionId != null &&
+                              widget.hubBoundSessionId == entry.id,
                           onTap: () => _openEntry(entry),
                           onMenu: (anchor) => _showSessionMenu(entry, anchor),
                         ),
@@ -580,6 +588,7 @@ class SessionTile extends StatelessWidget {
     required this.isActive,
     this.cwd,
     this.live = false,
+    this.hubBound = false,
     required this.onTap,
     this.onMenu,
   });
@@ -595,6 +604,10 @@ class SessionTile extends StatelessWidget {
   /// True when a live agent process (a `fa` CLI run) currently owns this
   /// session — a pulsing green dot marks it and the tap attaches to it.
   final bool live;
+
+  /// True when inbound hub mail is routed to this session (DAP settings,
+  /// "Incoming messages") — the agent-network badge marks the tile.
+  final bool hubBound;
   final VoidCallback onTap;
 
   /// Called with the menu button's global rect when the 3-dot menu button
@@ -706,6 +719,14 @@ class SessionTile extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (hubBound)
+                  Tooltip(
+                    message: context.l10n.settingsDapInboundBadgeTooltip,
+                    child: const Padding(
+                      padding: EdgeInsets.only(right: 4),
+                      child: DapHubMark(size: 13),
+                    ),
+                  ),
                 // 3-dot menu button (visible on the active tile or on hover).
                 if (onMenu != null)
                   InkWell(

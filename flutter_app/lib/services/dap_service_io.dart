@@ -72,24 +72,26 @@ final class IoDapHubService implements DapHubService {
           environment.containsKey(HubConfig.envName),
       connected: null,
       inboundMode: binding.$1,
-      boundSessionTitle: binding.$2,
+      boundSessionId: binding.$2,
+      boundSessionTitle: binding.$3,
     );
   }
 
   /// The `boundSession` block of the raw config (`{mode, sessionId?,
   /// title?}`) — readDapConfig returns the full map, so app-only keys
   /// ride along untouched by the package's persist helpers.
-  (DapInboundMode, String?) _readBinding() {
+  (DapInboundMode, String?, String?) _readBinding() {
     final raw = readDapConfig(defaultDapConfigFile(home, environment));
     final bound = raw['boundSession'];
-    if (bound is! Map) return (DapInboundMode.currentSession, null);
+    if (bound is! Map) return (DapInboundMode.currentSession, null, null);
     final mode = switch ('${bound['mode'] ?? ''}') {
       'dedicated' => DapInboundMode.dedicated,
       'named' => DapInboundMode.named,
       _ => DapInboundMode.currentSession,
     };
     final title = '${bound['title'] ?? ''}'.trim();
-    return (mode, title.isEmpty ? null : title);
+    final id = '${bound['sessionId'] ?? ''}'.trim();
+    return (mode, id.isEmpty ? null : id, title.isEmpty ? null : title);
   }
 
   @override

@@ -19,6 +19,7 @@ class DapHubSnapshot {
     this.envLocked = false,
     this.connected,
     this.inboundMode = DapInboundMode.currentSession,
+    this.boundSessionId,
     this.boundSessionTitle,
   });
 
@@ -53,6 +54,10 @@ class DapHubSnapshot {
   /// [DapInboundMode.currentSession] is the zero-config default.
   final DapInboundMode inboundMode;
 
+  /// The session id inbound mail is bound to (dedicated once created /
+  /// named mode), when configured — hosts mark it in the session list.
+  final String? boundSessionId;
+
   /// Display title of the session inbound mail is bound to (dedicated or
   /// named modes), when the host resolved one — shown in the settings UI.
   final String? boundSessionTitle;
@@ -67,6 +72,7 @@ class DapHubSnapshot {
     envLocked: envLocked,
     connected: connected,
     inboundMode: inboundMode,
+    boundSessionId: boundSessionId,
     boundSessionTitle: boundSessionTitle,
   );
 }

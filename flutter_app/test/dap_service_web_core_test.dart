@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/services/dap_service.dart' show DapInboundMode;
 import 'package:fa/services/dap_service_web_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -40,6 +41,14 @@ void main() {
             },
           },
           'hub.save' => {'ok': true},
+          'hub.bind' => {'ok': true},
+          'hub.sessions' => {
+            'ok': true,
+            'sessions': [
+              {'id': 'aaaabbbbccccdddd', 'running': true},
+              {'id': 'eeee00001111', 'running': false},
+            ],
+          },
           _ => null,
         };
       },
@@ -153,5 +162,81 @@ void main() {
     expect(normalizeWebDapHost('ws://hub:8787'), 'ws://hub:8787/ws');
     expect(normalizeWebDapHost('wss://h.example/ws'), 'wss://h.example/ws');
     expect(normalizeWebDapHost('ws://h:1/custom'), 'ws://h:1/custom');
+  });
+
+  group('inbound binding', () {
+    test('load maps faDap.boundSession into the snapshot', () async {
+      final h = harness(
+        storage: const {
+          'faDap': {
+            'url': 'ws://127.0.0.1:9999/ws',
+            'boundSession': {
+              'mode': 'dedicated',
+              'sessionId': 'ded-1',
+              'title': 'BrowserAgent',
+            },
+          },
+        },
+      );
+      final snapshot = await h.service.load();
+      expect(snapshot.inboundMode, DapInboundMode.dedicated);
+      expect(snapshot.boundSessionId, 'ded-1');
+      expect(snapshot.boundSessionTitle, 'BrowserAgent');
+    });
+
+    test('no boundSession → currentSession mode, no id/title', () async {
+      final h = harness();
+      final snapshot = await h.service.load();
+      expect(snapshot.inboundMode, DapInboundMode.currentSession);
+      expect(snapshot.boundSessionId, isNull);
+      expect(snapshot.boundSessionTitle, isNull);
+    });
+
+    test('saveBinding sends hub.bind with mode + session fields', () async {
+      final h = harness();
+      await h.service.saveBinding(
+        DapInboundMode.named,
+        sessionId: 'abc',
+        sessionTitle: 'My session',
+      );
+      final bind = h.sent.singleWhere((m) => m['type'] == 'hub.bind');
+      expect(bind['mode'], 'named');
+      expect(bind['sessionId'], 'abc');
+      expect(bind['title'], 'My session');
+    });
+
+    test('saveBinding current clears the binding (no session fields)',
+        () async {
+      final h = harness();
+      await h.service.saveBinding(DapInboundMode.currentSession);
+      final bind = h.sent.singleWhere((m) => m['type'] == 'hub.bind');
+      expect(bind['mode'], 'current');
+      expect(bind.containsKey('sessionId'), isFalse);
+    });
+
+    test('hub.bind failure throws', () async {
+      final h = harness(
+        onMessage: (m) async =>
+            m['type'] == 'hub.bind' ? {'ok': false, 'error': 'no hub'} : null,
+      );
+      await expectLater(
+        h.service.saveBinding(DapInboundMode.dedicated),
+        throwsStateError,
+      );
+    });
+
+    test('listBindableSessions maps hub.sessions rows', () async {
+      final h = harness();
+      final sessions = await h.service.listBindableSessions();
+      expect(sessions, hasLength(2));
+      expect(sessions.first.id, 'aaaabbbbccccdddd');
+      expect(sessions.first.title, contains('(active)'));
+      expect(sessions.last.title, 'session eeee0000');
+    });
+
+    test('listBindableSessions swallows an unreachable SW', () async {
+      final h = harness(onMessage: (_) async => throw StateError('dead'));
+      expect(await h.service.listBindableSessions(), isEmpty);
+    });
   });
 }

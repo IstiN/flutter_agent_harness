@@ -4,6 +4,7 @@
 
 import 'dart:io';
 
+import 'package:fa/services/dap_service.dart' show DapInboundMode;
 import 'package:fa/services/dap_service_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -70,6 +71,42 @@ void main() {
 
     expect(snapshot.connected, isFalse);
     expect(snapshot.supported, isTrue);
+  });
+
+  group('inbound binding', () {
+    test('saveBinding writes boundSession; load maps it back', () async {
+      final svc = service();
+      await svc.saveConnection(url: 'hub.example.com:8787', name: 'alice');
+      await svc.saveBinding(
+        DapInboundMode.named,
+        sessionId: 'sess-1',
+        sessionTitle: 'My session',
+      );
+      final snapshot = await svc.load();
+      expect(snapshot.inboundMode, DapInboundMode.named);
+      expect(snapshot.boundSessionId, 'sess-1');
+      expect(snapshot.boundSessionTitle, 'My session');
+    });
+
+    test('currentSession mode removes the boundSession block', () async {
+      final svc = service();
+      await svc.saveConnection(url: 'hub.example.com:8787', name: 'alice');
+      await svc.saveBinding(DapInboundMode.dedicated);
+      var snapshot = await svc.load();
+      expect(snapshot.inboundMode, DapInboundMode.dedicated);
+      await svc.saveBinding(DapInboundMode.currentSession);
+      snapshot = await svc.load();
+      expect(snapshot.inboundMode, DapInboundMode.currentSession);
+      expect(snapshot.boundSessionId, isNull);
+      // The connection itself survives binding edits.
+      expect(snapshot.url, 'ws://hub.example.com:8787/ws');
+      expect(snapshot.name, 'alice');
+    });
+
+    test('a missing config reports the zero-config default mode', () async {
+      final snapshot = await service().load();
+      expect(snapshot.inboundMode, DapInboundMode.currentSession);
+    });
   });
 
   test('env-pinned connection is reported as env-locked', () async {

@@ -16,6 +16,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/project_mount_flow.dart';
+import 'package:fa/services/dap_binding_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
@@ -298,15 +299,21 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           children: [
             _buildBrandHeader(colors),
             Expanded(
-              child: SidebarSessionsList(
-                manager: widget.manager,
-                sessionNamesStore: widget.sessionNamesStore ?? _namesStore,
-                collapsed: _sidebarCollapsed,
-                onNewSession: _newSession,
-                onSessionTap: () => setState(() {}),
-                persistedSessions: _persistedSessions,
-                sessionInfoNames: _jsonlNames,
-                onOpenPersisted: _openPersistedSession,
+              child: ListenableBuilder(
+                // The DAP inbound binding badge re-renders the list when
+                // the binding loads/changes (settings page, first load).
+                listenable: DapBindingStore.instance,
+                builder: (context, _) => SidebarSessionsList(
+                  manager: widget.manager,
+                  sessionNamesStore: widget.sessionNamesStore ?? _namesStore,
+                  collapsed: _sidebarCollapsed,
+                  onNewSession: _newSession,
+                  onSessionTap: () => setState(() {}),
+                  persistedSessions: _persistedSessions,
+                  sessionInfoNames: _jsonlNames,
+                  onOpenPersisted: _openPersistedSession,
+                  hubBoundSessionId: DapBindingStore.instance.boundSessionId,
+                ),
               ),
             ),
             Divider(height: 1, thickness: 1, color: colors.border),

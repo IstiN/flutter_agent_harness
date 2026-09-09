@@ -65,6 +65,7 @@ final class ExtensionDapHubService implements DapHubService {
       _ => DapInboundMode.currentSession,
     };
     final boundTitle = '${bound?['title'] ?? ''}'.trim();
+    final boundId = '${bound?['sessionId'] ?? ''}'.trim();
     return DapHubSnapshot(
       supported: true,
       url: config.url,
@@ -75,6 +76,7 @@ final class ExtensionDapHubService implements DapHubService {
       channels: const [],
       connected: live.connected,
       inboundMode: mode,
+      boundSessionId: boundId.isEmpty ? null : boundId,
       boundSessionTitle: boundTitle.isEmpty ? null : boundTitle,
     );
   }

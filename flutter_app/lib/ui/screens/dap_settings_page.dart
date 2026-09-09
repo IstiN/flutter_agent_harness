@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
+import 'package:fa/services/dap_binding_store.dart';
 import 'package:fa/services/dap_service.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
@@ -180,6 +181,7 @@ class _DapHubPageState extends State<DapHubPage> {
     } finally {
       if (mounted) setState(() => _savingBinding = false);
     }
+    unawaited(DapBindingStore.instance.refresh());
     await _reload();
   }
 
