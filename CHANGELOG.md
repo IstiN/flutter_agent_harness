@@ -3062,6 +3062,12 @@
 
 - feat(dap): /dap start one-step bring-up, fa hub serve, DapHubService for web/extension (#90)
 
+## 0.1.334
+
+- feat(29): AC11/AC12 cross-surface config parity (+AC8/AC10 pins) (#92)
+- fix(59): stop cross-instance theft of scheduled self-reminders (#88)
+- fix(86): compaction — LLM finds asks itself (no hardcode) + tool-results assessment in checkpoint prompts (#87)
+
 ## Unreleased
 
 ## Unreleased
