@@ -58,6 +58,59 @@ void main() {
       );
     });
 
+    test('--prompt-file sets the file path', () {
+      final args =
+          parseCliArgs(const ['--prompt-file', '/tmp/prompt.md']) as CliArgs;
+      expect(args.promptFile, '/tmp/prompt.md');
+      expect(args.prompt, isNull);
+      expect(args.isHeadless, isTrue);
+    });
+
+    test('-f is an alias for --prompt-file', () {
+      final args = parseCliArgs(const ['-f', 'notes.txt']) as CliArgs;
+      expect(args.promptFile, 'notes.txt');
+      expect(args.isHeadless, isTrue);
+    });
+
+    test('--prompt-file without a value is an error', () {
+      expect(
+        () => parseCliArgs(const ['--prompt-file']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--prompt-file requires a value'),
+          ),
+        ),
+      );
+    });
+
+    test('--prompt-file combined with -p is an error', () {
+      expect(
+        () => parseCliArgs(const ['--prompt-file', 'a.md', '-p', 'text']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('cannot combine'),
+          ),
+        ),
+      );
+    });
+
+    test('--prompt-file combined with a positional is an error', () {
+      expect(
+        () => parseCliArgs(const ['-f', 'a.md', 'extra']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('cannot combine'),
+          ),
+        ),
+      );
+    });
+
     test('--system-prompt sets the verbatim override', () {
       final args =
           parseCliArgs(const ['--system-prompt', 'You are terse.']) as CliArgs;

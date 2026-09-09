@@ -84,6 +84,7 @@ final class CliArgs extends CliArgsResult {
     this.sessionRoot,
     this.session,
     this.prompt,
+    this.promptFile,
     this.cubeName,
     this.cubeConfigPath,
     this.tools,
@@ -178,8 +179,15 @@ final class CliArgs extends CliArgsResult {
   final RedactionConfig? redact;
 
   /// The `-p`/`--prompt` headless prompt, used verbatim (no file
-  /// resolution). Mutually exclusive with [positionals].
+  /// resolution). Mutually exclusive with [promptFile] and [positionals].
   final String? prompt;
+
+  /// `--prompt-file <path>` (alias `-f`): read the file as UTF-8 text and
+  /// send it verbatim as the headless prompt — never further resolved.
+  /// Mutually exclusive with [prompt] and [positionals]. The path is
+  /// resolved by the executable's IO layer; a missing/unreadable file is a
+  /// usage error ([CliArgsException] from `resolveHeadlessPrompt`).
+  final String? promptFile;
 
   /// Positional arguments: the headless prompt source. Joined with spaces,
   /// or resolved as a file by `resolveHeadlessPrompt` when the first one
@@ -201,14 +209,16 @@ final class CliArgs extends CliArgsResult {
 
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
-  bool get isHeadless => prompt != null || positionals.isNotEmpty;
+  bool get isHeadless =>
+      prompt != null || promptFile != null || positionals.isNotEmpty;
 }
 
 /// Parses the `fah` argument list.
 ///
 /// Throws [CliArgsException] on unknown flags, missing flag values, an
 /// unknown provider, `--system-prompt` combined with `--system-prompt-file`,
-/// or `-p`/`--prompt` combined with positional arguments.
+/// `-p`/`--prompt` combined with positional arguments, or `--prompt-file`
+/// combined with either.
 /// Subcommands intercepted BEFORE prompt parsing — their verb words are
 /// never prompts. Each parser takes the words after the subcommand name.
 const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
@@ -819,6 +829,8 @@ const _valueFlags = <String, _ValueFlag>{
   '--cube-config': ('--cube-config', _setCubeConfigPath),
   '-p': ('--prompt', _setPrompt),
   '--prompt': ('--prompt', _setPrompt),
+  '-f': ('--prompt-file', _setPromptFile),
+  '--prompt-file': ('--prompt-file', _setPromptFile),
   '--tools': ('--tools', _setTools),
   '--log-file': ('--log-file', _setLogFile),
 };
@@ -860,6 +872,7 @@ void _setTools(_CliArgValues v, String value) {
 
 void _setLogFile(_CliArgValues v, String value) => v.logFile = value;
 void _setPrompt(_CliArgValues v, String value) => v.prompt = value;
+void _setPromptFile(_CliArgValues v, String value) => v.promptFile = value;
 
 /// Accumulates flag values while [parseCliArgs] walks the argument list,
 /// then validates the combinations and builds the [CliArgs].
@@ -884,8 +897,9 @@ final class _CliArgValues {
   String? cubeConfigPath;
   ToolsConfig? tools;
   RedactionConfig? redact;
-  String? logFile;
   String? prompt;
+  String? promptFile;
+  String? logFile;
   final positionals = <String>[];
 
   /// Validates flag combinations and builds the resulting [CliArgs].
@@ -901,6 +915,14 @@ final class _CliArgValues {
     if (prompt != null && positionals.isNotEmpty) {
       throw CliArgsException(
         'cannot combine -p/--prompt with positional prompt arguments',
+      );
+    }
+    if (promptFile != null && prompt != null) {
+      throw CliArgsException('cannot combine --prompt-file with -p/--prompt');
+    }
+    if (promptFile != null && positionals.isNotEmpty) {
+      throw CliArgsException(
+        'cannot combine --prompt-file with positional prompt arguments',
       );
     }
     return CliArgs(
@@ -924,6 +946,7 @@ final class _CliArgValues {
       cubeConfigPath: cubeConfigPath,
       tools: tools,
       redact: redact,
+      promptFile: promptFile,
       logFile: logFile,
       prompt: prompt,
       positionals: positionals,

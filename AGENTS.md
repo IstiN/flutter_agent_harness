@@ -400,9 +400,11 @@ factual: paths, commands, invariants — no essays.
   `fa serve --a2a [--port N] [--token T]` mounts this agent as an endpoint
   (`bin/serve_a2a.dart`).
 - `bin/fah.dart` — the `fah`/`fa` CLI. REPL (no args) or headless
-  (`fa "prompt"` / `-p`, mutually exclusive). First positional naming an
-  EXISTING file is the prompt source (`.md`/`.txt` inlined, others attached
-  by reference; `-p` is verbatim). Args parsed in `lib/src/cli/cli_args.dart`
+  (`fa "prompt"` / `-p` / `--prompt-file <path>` (alias `-f`), mutually
+  exclusive). First positional naming an EXISTING file is the prompt source
+  (`.md`/`.txt` inlined, others attached by reference; `-p` is verbatim;
+  `--prompt-file` reads ANY path verbatim, missing/unreadable = usage
+  error exit 64). Args parsed in `lib/src/cli/cli_args.dart`
   (pure Dart). Headless: exit 0/1/130; `CliIO` contract — `write` = primary
   stream, `writeln` = diagnostics (stderr headless). The TUI captures the
   mouse by default (wheel scrolling — the alternate screen has no native

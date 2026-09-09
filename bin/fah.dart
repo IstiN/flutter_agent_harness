@@ -7,6 +7,7 @@
 /// dart run bin/fah.dart [--model <id>] [--provider <kind>] [--base-url <url>]
 ///                       [--cwd <dir>] [--session-root <dir>]
 /// dart run bin/fah.dart [options] "summarize the changelog"   # headless
+/// dart run bin/fah.dart --prompt-file prompt.md               # from file
 /// dart run bin/fah.dart [options] notes.md "summarize this"   # file prompt
 /// ```
 ///
@@ -1131,13 +1132,21 @@ Future<void> _runApp(List<String> args) async {
     _fail('ext bootstrap failed: $error');
   }
 
-  // Headless prompt resolution: -p verbatim; a first positional naming an
-  // existing file inlines text files (.md/.markdown/.txt) or attaches other
-  // files as a path reference; anything else is plain prompt text.
-  final headlessPrompt = resolveHeadlessPrompt(
-    prompt: parsed.prompt,
-    positionals: parsed.positionals,
-  );
+  // Headless prompt resolution: --prompt-file read as UTF-8 verbatim
+  // (missing/unreadable = usage error); -p verbatim; a first positional
+  // naming an existing file inlines text files (.md/.markdown/.txt) or
+  // attaches other files as a path reference; anything else is plain
+  // prompt text.
+  final String? headlessPrompt;
+  try {
+    headlessPrompt = resolveHeadlessPrompt(
+      prompt: parsed.prompt,
+      promptFile: parsed.promptFile,
+      positionals: parsed.positionals,
+    );
+  } on CliArgsException catch (error) {
+    _fail(error.message);
+  }
 
   // `fa config check|path|get|set` runs BEFORE loadCliConfig: check must
   // be able to diagnose exactly the broken config that would abort boot
