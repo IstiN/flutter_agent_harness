@@ -48,7 +48,11 @@ OfficeAgentHost? _host;
 bool _booting = false;
 bool _ready = false;
 String? _note;
-JSFunction? _eventCb;
+
+/// Every registered listener (page UI, debug taps) — registration never
+/// discards, and dispatch fans out so consumers cannot overwrite each
+/// other's subscription.
+final _eventCbs = <JSFunction>[];
 final _deltaBuffer = StringBuffer();
 Timer? _deltaTimer;
 
@@ -155,7 +159,12 @@ Future<JSAny?> _runSelfTest() async {
   return host.selfTest().jsify();
 }
 
-void _onEventImpl(JSAny? cb) => _eventCb = cb as JSFunction?;
+void _onEventImpl(JSAny? cb) {
+  // No isA<JSFunction>() gate: dart2js interop type checks fail for
+  // host-realm callbacks (vm tests, sandboxes) — the old single-slot cast
+  // never checked, and fan-out must not start checking.
+  _eventCbs.add(cb as JSFunction);
+}
 
 JSAny? _getStateImpl() => _getState().jsify();
 
@@ -200,7 +209,9 @@ void _flushDelta() {
 
 void _dispatch(Map<String, dynamic> event) {
   try {
-    _eventCb?.callAsFunction(null, event.jsify());
+    for (final cb in List.of(_eventCbs)) {
+      cb.callAsFunction(null, event.jsify());
+    }
   } on Object {
     // A detached taskpane must never break a run.
   }

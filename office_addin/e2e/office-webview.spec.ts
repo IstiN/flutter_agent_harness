@@ -90,7 +90,7 @@ async function openTaskpane(page: Page): Promise<string[]> {
     route.fulfill({ status: 200, contentType: 'text/javascript', body: '/* mocked by e2e */' }),
   );
   await page.addInitScript(OFFICE_MOCK);
-  await page.goto(INDEX_URL);
+  await page.goto(INDEX_URL + "?t=" + Date.now(), { waitUntil: "load" }); // cache-bust: the webServer sends Last-Modified and Chromium would replay a stale page across runs
   // The Office mock answered — no CDN-failure banner — and the agent
   // auto-booted once the mocked host fired onReady.
   await expect(page.locator('#fa-office-unavailable')).toBeHidden();
@@ -185,5 +185,45 @@ test('taskpane over a mocked Office host: boot, quarantined read, approved inser
   expect(denial.settled, 'the turn completed after the denial').toBe(true);
 
   // The whole run stayed clean on this engine: zero uncaught page errors.
+  expect(pageErrors, pageErrors.join('\n')).toEqual([]);
+});
+
+// The page's OWN chat surface (review blocker 1): the composer drives
+// sendUser, the approval card drives decide, the transcript renders the
+// streamed reply — the deployed page is talkable-to with zero injected
+// scripting beyond the mock.
+test('taskpane composer UI: typed prompt, approval card, streamed transcript', async ({
+  page,
+}: {
+  page: Page;
+}) => {
+  const pageErrors = await openTaskpane(page);
+
+  // Type into the composer and click Send — no page.evaluate scripting of
+  // the agent; the UI is the driver.
+  await page.fill('#fa-input', 'read item');
+  await page.click('#fa-send');
+  const userLine = page.locator('#fa-transcript .fa-msg.user', { hasText: 'read item' });
+  await expect(userLine).toHaveCount(1);
+
+  // The approval_request renders as an Approve/Deny card; clicking Approve
+  // must reach the agent (the read executes).
+  const card = page.locator('#fa-approvals .fa-approval');
+  await expect(card).toHaveCount(1, { timeout: 15_000 });
+  await expect(card).toContainText('outlook.read_current_item');
+  await card.locator('button', { hasText: 'Approve' }).click();
+  await page.waitForFunction(
+    () => window.__events.some((e) => e.type === 'tool_result' && String(e.text).includes('<email-body')),
+    undefined,
+    { timeout: 15_000 },
+  );
+  await expect(card).toHaveCount(0, { timeout: 15_000 });
+
+  // The streamed reply lands in the transcript as assistant text and the
+  // composer re-enables when the turn settles.
+  await expect(
+    page.locator('#fa-transcript .fa-msg.assistant').first(),
+  ).not.toBeEmpty({ timeout: 15_000 });
+  await expect(page.locator('#fa-send')).toBeEnabled({ timeout: 15_000 });
   expect(pageErrors, pageErrors.join('\n')).toEqual([]);
 });

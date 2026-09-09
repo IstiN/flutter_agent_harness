@@ -18,8 +18,12 @@ mobile form factor — for the broadest host coverage (Mailbox 1.8+).
 - `web/` — taskpane page (`index.html`), privacy and support pages. The
   page boots Office.js from the Microsoft CDN; if the host API never
   becomes available it shows a banner and the agent answers without mail
-  tools. The full fa app loads in `app/index.html` only when the build
-  bundled it (`--with-app`).
+  tools. The page IS the chat surface: a composer (Send button or Enter)
+  drives `faOfficeAgent.sendUser`, streamed replies render in the
+  transcript, `approval_request` events become Approve/Deny cards wired
+  to `faOfficeAgent.decide`, and the raw event log stays below for
+  sideload debugging. The full fa app loads in `app/index.html` only when
+  the build bundled it (`--with-app`).
 - `icons/` — taskpane icons (`fa-64.png`, `fa-128.png`).
 
 ## Install (sideload)

@@ -23,10 +23,39 @@
     background: rgba(251, 191, 36, 0.08);
   }
   #fa-office-unavailable.on { display: block; }
-  #fa-app { width: 100%; height: 60vh; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
   h2 { font-size: 13px; margin: 16px 0 6px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  #fa-transcript {
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: 40vh; overflow: auto; padding: 8px 10px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  }
+  #fa-transcript:empty::after { content: 'No messages yet — say something below.'; color: var(--dim); }
+  .fa-msg { white-space: pre-wrap; }
+  .fa-msg.user { color: var(--accent); }
+  .fa-msg.assistant { color: var(--text); }
+  .fa-msg.tool, .fa-msg.error { color: var(--dim); font-size: 12px; }
+  .fa-msg.error { color: var(--warn); }
+  #fa-approvals { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .fa-approval {
+    padding: 8px 10px; border: 1px solid var(--warn); border-radius: 8px;
+    color: var(--warn); font-size: 12px; background: rgba(251, 191, 36, 0.06);
+  }
+  .fa-approval button {
+    margin-right: 6px; padding: 2px 10px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  }
+  #fa-composer { display: flex; gap: 8px; margin-top: 8px; }
+  #fa-input {
+    flex: 1; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  }
+  #fa-send {
+    padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  }
+  #fa-send:disabled { opacity: 0.5; cursor: default; }
   #fa-events {
-    margin: 0; padding: 8px 10px; max-height: 30vh; overflow: auto;
+    margin: 0; padding: 8px 10px; max-height: 20vh; overflow: auto;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     color: var(--dim); font-size: 12px; white-space: pre-wrap;
   }
@@ -37,7 +66,15 @@
 <header><h1>fa — Outlook assistant</h1></header>
 <p id="fa-status">booting…</p>
 <div id="fa-office-unavailable">host API unavailable — the agent answers without mail tools</div>
-<iframe id="fa-app" src="app/index.html" hidden title="fa app"></iframe>
+
+<h2>Chat</h2>
+<div id="fa-transcript"></div>
+<div id="fa-approvals"></div>
+<div id="fa-composer">
+  <input id="fa-input" type="text" placeholder="Ask fa about the open mail item…" autocomplete="off">
+  <button id="fa-send" type="button">Send</button>
+</div>
+
 <h2>Events</h2>
 <pre id="fa-events"></pre>
 
@@ -48,44 +85,140 @@
   var status = document.getElementById('fa-status');
   var banner = document.getElementById('fa-office-unavailable');
   var log = document.getElementById('fa-events');
+  var transcript = document.getElementById('fa-transcript');
+  var approvals = document.getElementById('fa-approvals');
+  var input = document.getElementById('fa-input');
+  var send = document.getElementById('fa-send');
+  var agent = null;
+  var running = false;
+  var currentAssistant = null;
 
-  function showBanner() {
+  function showBanner(note) {
+    if (note) banner.textContent = note;
     banner.classList.add('on');
-    status.textContent = 'host API unavailable — running without mail tools';
+    if (!note) status.textContent = 'host API unavailable — running without mail tools';
   }
-  document.getElementById('office-js').addEventListener('error', showBanner);
+  document.getElementById('office-js').addEventListener('error', function () { showBanner(); });
 
   // Office.js may load but never signal readiness (sandboxed frames,
-  // blocked CDN after a slow timeout): fall back to a bounded wait.
+  // blocked CDN after a slow timeout): fall back to a bounded wait that
+  // also covers the hung-onReady case via the agent's own state note.
   setTimeout(function () {
     if (!window.Office) showBanner();
   }, 8000);
 
-  if (window.Office && typeof window.Office.onReady === 'function') {
-    window.Office.onReady(function () {
-      status.textContent = 'ready — Outlook host connected';
-    });
+  function logLine(event) {
+    var line = typeof event === 'string' ? event : JSON.stringify(event);
+    log.textContent += line + '\n';
+    log.scrollTop = log.scrollHeight;
   }
 
-  // Show the full fa app only when the build bundled it (office_addin/web/
-  // has no app/ dir; build_office_addin.sh --with-app ships one).
-  fetch('app/index.html', { method: 'HEAD' })
-    .then(function (r) { if (r.ok) document.getElementById('fa-app').hidden = false; })
-    .catch(function () {});
+  function addMsg(kind, text) {
+    var el = document.createElement('div');
+    el.className = 'fa-msg ' + kind;
+    el.textContent = text;
+    transcript.appendChild(el);
+    transcript.scrollTop = transcript.scrollHeight;
+    return el;
+  }
 
+  function setRunning(value) {
+    running = value;
+    send.disabled = value || !agent;
+  }
+
+  function renderEvent(event) {
+    logLine(event);
+    var type = event && event.type;
+    if (type === 'status') {
+      setRunning(!!event.running);
+      if (event.note) showBanner(event.note);
+      else if (event.booted) status.textContent = 'ready — fa booted in ' + event.host;
+    } else if (type === 'delta' || type === 'thinking_delta') {
+      if (type === 'delta') {
+        if (!currentAssistant) currentAssistant = addMsg('assistant', '');
+        currentAssistant.textContent += event.text;
+        transcript.scrollTop = transcript.scrollHeight;
+      }
+    } else if (type === 'message_done') {
+      currentAssistant = null;
+    } else if (type === 'tool_result') {
+      addMsg(event.isError ? 'error' : 'tool',
+        'tool ' + event.toolName + (event.isError ? ' FAILED: ' : ': ') + event.text);
+    } else if (type === 'error') {
+      addMsg('error', event.error);
+    } else if (type === 'approval_request') {
+      askApproval(event);
+    } else if (type === 'approval_resolved') {
+      var card = approvals.querySelector('[data-id="' + event.id + '"]');
+      if (card) card.remove();
+    }
+  }
+
+  function askApproval(event) {
+    var card = document.createElement('div');
+    card.className = 'fa-approval';
+    card.setAttribute('data-id', event.id);
+    var label = document.createElement('div');
+    label.textContent = 'fa asks to run ' + event.toolName +
+      ' — ' + (event.reason || 'approval required') + ' | ' + JSON.stringify(event.arguments);
+    var allow = document.createElement('button');
+    allow.type = 'button'; allow.textContent = 'Approve';
+    var deny = document.createElement('button');
+    deny.type = 'button'; deny.textContent = 'Deny';
+    allow.addEventListener('click', function () {
+      card.remove(); // decide() completes the flow silently: no
+                     // approval_resolved rides a direct user decision,
+                     // so the card owns its own dismissal.
+      agent.decide(event.id, true);
+    });
+    deny.addEventListener('click', function () {
+      card.remove();
+      agent.decide(event.id, false);
+    });
+    card.appendChild(label); card.appendChild(allow); card.appendChild(deny);
+    approvals.appendChild(card);
+  }
+
+  function submit() {
+    var text = input.value.trim();
+    if (!text || running || !agent) return;
+    // No listener exists before the agent boots (it discards pre-boot
+    // subscriptions), so a too-early send would vanish unheard — and the
+    // not-ready error event with it.
+    var booted = false;
+    try { booted = !!agent.getState().booted; } catch (e) {}
+    if (!booted) {
+      addMsg('error', 'fa is still booting — try again in a moment.');
+      return;
+    }
+    input.value = '';
+    addMsg('user', text);
+    setRunning(true);
+    agent.sendUser(text);
+  }
+  send.addEventListener('click', submit);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
   var tries = 0;
-  (function wire() {
-    var agent = window.faOfficeAgent;
+  function wire() {
+    agent = window.faOfficeAgent;
     if (agent && typeof agent.onEvent === 'function') {
-      agent.onEvent(function (event) {
-        var line = typeof event === 'string' ? event : JSON.stringify(event);
-        log.textContent += line + '\n';
-        log.scrollTop = log.scrollHeight;
-      });
+      // Listener registration fans out (never discarded), so subscribing
+      // this early is safe: the full event stream (status/delta/
+      // tool_result/approval_*) reaches this UI from the first event.
+      agent.onEvent(renderEvent);
+      setRunning(false);
+      try {
+        var state = agent.getState();
+        if (state && state.note) showBanner(state.note);
+      } catch (e) { /* pre-boot getState is best-effort */ }
       return;
     }
     if (++tries < 20) setTimeout(wire, 250);
-  })();
+  }
+  wire();
 })();
 </script>
 </body>
