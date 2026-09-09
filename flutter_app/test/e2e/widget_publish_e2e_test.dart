@@ -19,9 +19,11 @@
 ///
 /// The token is read from the dart-define only — it is never written to
 /// any file, log, or ledger (the AC9 invariant applies to this test too).
-/// The second test verifies AC12 once the catalog PR is merged: the
-/// rolling-release `catalog.json` must list the widget and the production
-/// CatalogService download path must serve its sources.
+/// The second test verifies AC12: once ANY catalog PR for the widget has
+/// merged, the rolling-release `catalog.json` must list it and the
+/// production CatalogService download path must serve its sources. The
+/// catalog is the source of truth (checked first); a fresh publish is
+/// seeded only when the widget is absent from the catalog.
 @Tags(['integration'])
 library;
 
@@ -94,131 +96,144 @@ Future<(WidgetPublishService, WidgetPublicationStore, Directory)> _setupWorld(
 }
 
 void main() {
-  test('E2E-1: real publish lands a visible catalog PR', () async {
-    if (_token.isEmpty) {
-      // ignore: avoid_print
-      print('SKIPPED: needs --dart-define=FA_E2E_GITHUB_TOKEN=<token>');
-      return;
-    }
-    final client = GithubApiClient(token: _token);
-    final login = (await client.getUser()).login;
-    final (service, ledger, tempDir) = await _setupWorld(login);
-    addTearDown(() => tempDir.delete(recursive: true));
+  test(
+    'E2E-1: real publish lands a visible catalog PR',
+    () async {
+      if (_token.isEmpty) {
+        // ignore: avoid_print
+        print('SKIPPED: needs --dart-define=FA_E2E_GITHUB_TOKEN=<token>');
+        return;
+      }
+      final client = GithubApiClient(token: _token);
+      final login = (await client.getUser()).login;
+      final (service, ledger, tempDir) = await _setupWorld(login);
+      addTearDown(() => tempDir.delete(recursive: true));
 
-    final app = JsAppInfo(
-      id: _widgetId,
-      name: 'E2E Scratch',
-      description: 'Issue #35 E2E-1 verification widget.',
-      icon: '🧪',
-      version: _widgetVersion,
-      declaredPermissions: const AppPermissions(),
-    );
-
-    // The full pipeline: repo → sources → fork → gitlink+overlay → PR.
-    final result = await service.publish(app: app);
-    expect(result.prNumber, greaterThan(0));
-    expect(result.prUrl, contains('github.com/IstiN/fa_widgets/pull/'));
-    expect(result.publication.repoFullName, '$login/fa-widget-$_widgetId');
-    expect(result.publication.step, WidgetPublication.stepPrOpened);
-
-    // AC4 evidence: the user repo exists, is public, carries the
-    // provenance marker, and its main head IS the commit the ledger
-    // recorded (byte-for-byte packaging itself is UT-1's job).
-    final client2 = GithubApiClient(token: _token);
-    final repo = await client2.getRepo(login, 'fa-widget-$_widgetId');
-    expect(repo, isNotNull);
-    expect(repo!.isPrivate, isFalse);
-    expect(repo.description, contains('fa-widget:$_widgetId'));
-    final headSha = await client2.getHeadSha(
-      login,
-      'fa-widget-$_widgetId',
-      'main',
-    );
-    expect(headSha, result.publication.repoCommit);
-
-    // Live status polling against the real API (AC7 transport path).
-    final state = await service.refreshStatus(result.publication);
-    // ignore: avoid_print
-    print(
-      'publish OK: PR #${result.prNumber} state=$state '
-      'reused=${result.reusedPr} ${result.prUrl}',
-    );
-
-    // AC6 against the real API: re-publishing must reuse the open PR,
-    // never open a duplicate.
-    final republish = await service.publish(app: app);
-    expect(republish.prNumber, result.prNumber);
-    expect(republish.reusedPr, isTrue);
-    // ignore: avoid_print
-    print('re-publish OK: reused PR #${republish.prNumber}');
-  }, timeout: const Timeout(Duration(minutes: 5)));
-
-  test('AC12: merged widget reaches the rolling-release catalog', () async {
-    if (_token.isEmpty) {
-      // ignore: avoid_print
-      print('SKIPPED: needs --dart-define=FA_E2E_GITHUB_TOKEN=<token>');
-      return;
-    }
-    final client = GithubApiClient(token: _token);
-    final login = (await client.getUser()).login;
-    final (service, ledger, tempDir) = await _setupWorld(login);
-    addTearDown(() => tempDir.delete(recursive: true));
-
-    final publication = ledger.byWidgetId(_widgetId);
-    if (publication?.prNumber == null) {
-      // Never published on this machine: run the E2E-1 test first (it
-      // seeds the ledger) or accept this run as publish-only.
-      final result = await service.publish(
-        app: JsAppInfo(
-          id: _widgetId,
-          name: 'E2E Scratch',
-          description: 'Issue #35 E2E-1 verification widget.',
-          icon: '🧪',
-          version: _widgetVersion,
-          declaredPermissions: const AppPermissions(),
-        ),
+      final app = JsAppInfo(
+        id: _widgetId,
+        name: 'E2E Scratch',
+        description: 'Issue #35 E2E-1 verification widget.',
+        icon: '🧪',
+        version: _widgetVersion,
+        declaredPermissions: const AppPermissions(),
       );
-      // ignore: avoid_print
-      print('seeded publish: PR #${result.prNumber}');
-    }
-    final record = ledger.byWidgetId(_widgetId)!;
-    final state = await service.refreshStatus(record);
 
-    if (state != WidgetPublicationState.published) {
+      // The full pipeline: repo → sources → fork → gitlink+overlay → PR.
+      final result = await service.publish(app: app);
+      expect(result.prNumber, greaterThan(0));
+      expect(result.prUrl, contains('github.com/IstiN/fa_widgets/pull/'));
+      expect(result.publication.repoFullName, '$login/fa-widget-$_widgetId');
+      expect(result.publication.step, WidgetPublication.stepPrOpened);
+
+      // AC4 evidence: the user repo exists, is public, carries the
+      // provenance marker, and its main head IS the commit the ledger
+      // recorded (byte-for-byte packaging itself is UT-1's job).
+      final client2 = GithubApiClient(token: _token);
+      final repo = await client2.getRepo(login, 'fa-widget-$_widgetId');
+      expect(repo, isNotNull);
+      expect(repo!.isPrivate, isFalse);
+      expect(repo.description, contains('fa-widget:$_widgetId'));
+      final headSha = await client2.getHeadSha(
+        login,
+        'fa-widget-$_widgetId',
+        'main',
+      );
+      expect(headSha, result.publication.repoCommit);
+
+      // Live status polling against the real API (AC7 transport path).
+      final state = await service.refreshStatus(result.publication);
       // ignore: avoid_print
       print(
-        'AC12 PENDING: PR #${record.prNumber} is not merged yet '
-        '(state=$state). Re-run after the maintainer merges — '
-        '${record.prHtmlUrl}',
+        'publish OK: PR #${result.prNumber} state=$state '
+        'reused=${result.reusedPr} ${result.prUrl}',
       );
-      return;
-    }
 
-    // Merged: the rolling release must carry the widget through the
-    // production consumer path (fetch catalog → download sources).
-    final boardEnv = LocalExecutionEnv(
-      cwd: (await Directory.systemTemp.createTemp('fa_e2e_board_')).path,
-    );
-    addTearDown(() async => Directory(boardEnv.cwd).delete(recursive: true));
-    final catalog = CatalogService(boardEnv);
-    final snapshot = await catalog.fetchCatalog(force: true);
-    final entry = snapshot.entries
-        .where((e) => e.id == _widgetId)
-        .toList(growable: false);
-    expect(
-      entry,
-      isNotEmpty,
-      reason:
-          'merged widget missing from the '
-          'rolling-release catalog.json',
-    );
-    final files = await catalog.downloadWidget(entry.single);
-    expect(files.containsKey('manifest.json'), isTrue);
-    // ignore: avoid_print
-    print(
-      'AC12 OK: ${entry.single.id} ${entry.single.version} in the rolling '
-      'release; download served ${files.length} files '
-      '(board auto-update path verified).',
-    );
-  }, timeout: const Timeout(Duration(minutes: 5)));
+      // AC6 against the real API: re-publishing must reuse the open PR,
+      // never open a duplicate.
+      final republish = await service.publish(app: app);
+      expect(republish.prNumber, result.prNumber);
+      expect(republish.reusedPr, isTrue);
+      // ignore: avoid_print
+      print('re-publish OK: reused PR #${republish.prNumber}');
+    },
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
+
+  test(
+    'AC12: merged widget reaches the rolling-release catalog',
+    () async {
+      if (_token.isEmpty) {
+        // ignore: avoid_print
+        print('SKIPPED: needs --dart-define=FA_E2E_GITHUB_TOKEN=<token>');
+        return;
+      }
+      final client = GithubApiClient(token: _token);
+      final login = (await client.getUser()).login;
+
+      // AC12's substance is the CONSUMER path: once ANY catalog PR for the
+      // widget has merged, the rolling-release catalog.json must list it and
+      // the production CatalogService download path must serve its sources.
+      // The catalog is the source of truth — check it FIRST. (Gating on the
+      // run's own freshly-minted PR can never pass: the ledger is per-run,
+      // so every run opens a new PR that is by definition not merged yet.)
+      final boardEnv = LocalExecutionEnv(
+        cwd: (await Directory.systemTemp.createTemp('fa_e2e_board_')).path,
+      );
+      addTearDown(() async => Directory(boardEnv.cwd).delete(recursive: true));
+      final catalog = CatalogService(boardEnv);
+      final snapshot = await catalog.fetchCatalog(force: true);
+      final entry = snapshot.entries
+          .where((e) => e.id == _widgetId)
+          .toList(growable: false);
+
+      if (entry.isEmpty) {
+        // Not in the catalog yet: make sure a catalog PR exists, then report
+        // PENDING (a maintainer merge is the gate) — or FAIL if the pipeline
+        // already considers it published but the catalog disagrees (a real
+        // release-step bug, not a pending state).
+        final (service, ledger, tempDir) = await _setupWorld(login);
+        addTearDown(() => tempDir.delete(recursive: true));
+        if (ledger.byWidgetId(_widgetId)?.prNumber == null) {
+          final result = await service.publish(
+            app: JsAppInfo(
+              id: _widgetId,
+              name: 'E2E Scratch',
+              description: 'Issue #35 E2E-1 verification widget.',
+              icon: '🧪',
+              version: _widgetVersion,
+              declaredPermissions: const AppPermissions(),
+            ),
+          );
+          // ignore: avoid_print
+          print('seeded publish: PR #${result.prNumber}');
+        }
+        final record = ledger.byWidgetId(_widgetId)!;
+        final state = await service.refreshStatus(record);
+        expect(
+          state,
+          isNot(WidgetPublicationState.published),
+          reason:
+              'pipeline reports published but the rolling-release '
+              'catalog.json does not list $_widgetId — the release step is '
+              'broken',
+        );
+        // ignore: avoid_print
+        print(
+          'AC12 PENDING: PR #${record.prNumber} is not merged yet '
+          '(state=$state) and the widget is absent from the catalog. '
+          'Re-run after the maintainer merges — ${record.prHtmlUrl}',
+        );
+        return;
+      }
+      final files = await catalog.downloadWidget(entry.single);
+      expect(files.containsKey('manifest.json'), isTrue);
+      // ignore: avoid_print
+      print(
+        'AC12 OK: ${entry.single.id} ${entry.single.version} in the rolling '
+        'release; download served ${files.length} files '
+        '(board auto-update path verified).',
+      );
+    },
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
 }
