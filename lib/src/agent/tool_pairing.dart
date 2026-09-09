@@ -120,6 +120,7 @@ const _pairingErrorSignatures = [
   'corresponding tool_use block',
   'expected toolresult blocks',
   'tool_call_id is not found',
+  'tool_call_ids did not have response messages',
   'number of function response parts',
 ];
 

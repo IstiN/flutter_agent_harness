@@ -375,6 +375,15 @@ void main() {
         ),
         isTrue,
       );
+      expect(
+        isToolPairingProviderError(
+          "An assistant message with 'tool_calls' must be followed by tool "
+          'messages responding to each '
+          "'tool_call_id'. The following tool_call_ids did not have response "
+          'messages: bash_198',
+        ),
+        isTrue,
+      );
     });
 
     test('matching is case-insensitive', () {
