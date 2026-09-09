@@ -2,7 +2,9 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-export 'dap_service_stub.dart' if (dart.library.io) 'dap_service_io.dart';
+export 'dap_service_stub.dart'
+    if (dart.library.io) 'dap_service_io.dart'
+    if (dart.library.js_interop) 'dap_service_web.dart';
 
 // One snapshot type shared with the CLI (package `DapHubSnapshot`); the
 // app-side service interface below stays here.
@@ -15,7 +17,9 @@ export 'package:flutter_agent_harness/flutter_agent_harness.dart'
 /// agents (`~/.dap/config.json`, identity under `~/.dap/keys/fah/`).
 ///
 /// The platform implementation is picked by the conditional export above:
-/// the real service on IO platforms, a never-supported stub on web.
+/// the `~/.dap` file-backed service on IO platforms, the service-worker
+/// bridge inside the browser extension, and the not-supported stub on a
+/// plain web page.
 abstract interface class DapHubService {
   /// Loads the resolved settings: URL, name, identity (created on first
   /// use, like the CLI), and channels. No network.

@@ -157,3 +157,109 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
     );
   }
 }
+
+/// Auto/manual compaction run methods (moved from agent_cli.dart under the
+/// repo's 2800-line size gate). Same library, so private state is in scope.
+extension AgentCliCompactionRun on AgentCli {
+  /// Runs the auto-compaction when the live transcript crosses the
+  /// threshold. Returns whether a compaction pass actually ran and
+  /// succeeded — the over-window guard's auto-continuation keys off this
+  /// to resume only when the window was really freed.
+  Future<bool> _maybeAutoCompact() async {
+    final session = _session;
+    if (session == null) return false;
+    if (_agent.state.messages.isEmpty) return false;
+    final tokens = estimateContextTokens(_agent.state.messages).tokens;
+    if (!shouldCompact(
+      tokens,
+      _agent.state.model.contextWindow,
+      _effectiveCompactionSettings,
+    )) {
+      return false;
+    }
+    _tuiController?.setBusyPhase('Compacting context…');
+    _logDiagnostic('auto-compact start sid=$_logSid tokens=$tokens');
+    await _runAutoCompact('[auto-compacted]');
+    // Hand the busy row back to the run: a stale 'Compacting context…'
+    // over the streamed turn reads as a compaction hang.
+    _tuiController?.setBusyPhase('');
+    // [_runAutoCompact] reports '[auto-compacted]' only on success; treat
+    // the transcript size as the source of truth for the caller.
+    final after = estimateContextTokens(_agent.state.messages).tokens;
+    return after < tokens;
+  }
+
+  /// `/compact` manual override: same AutoCompactor pipeline as the
+  /// auto-trigger, but unconditional — honours the user's explicit ask
+  /// even when the threshold isn't crossed.
+  Future<void> _runManualCompact() async {
+    final session = _session;
+    if (session == null) return;
+    if (_agent.state.messages.isEmpty) {
+      io.writeln('nothing to compact');
+      return;
+    }
+    _tuiController?.setBusyPhase('Compacting context…');
+    await _runAutoCompact('[compacted]');
+  }
+
+  /// Builds the per-host smol/main summarizers and runs the shared
+  /// [AutoCompactor]. Used by both [_maybeAutoCompact] (gated by
+  /// [shouldCompact]) and [_runManualCompact] (unconditional).
+  Future<void> _runAutoCompact(String label) async {
+    final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
+    final ok = await AutoCompactorFactory(
+      session: _session!,
+      state: _agent.state,
+      window: _agent.state.model.contextWindow,
+      settings: _effectiveCompactionSettings,
+      sources: AutoCompactorSources(
+        smolStream: smol?.stream,
+        smolModel: smol?.model,
+        mainStream: _streamFunction,
+        mainModel: _agent.state.model,
+      ),
+      hooks: _AutoCompactorCliHooks(this),
+      prompts: CompactionPrompts.fromOverrides(config.promptOverrides),
+      memoryExtractionHook: (text) async {
+        final tui = _tuiController;
+        tui?.setBusyPhase('Extracting memory…');
+        // Best-effort and BOUNDED: a wedged smol endpoint used to keep the
+        // phase label up for the whole role-chain retry ladder (minutes
+        // per pass — the "Extracting memory… 1025s" stall). Cancel the
+        // extraction stream after the deadline, hard-cap the wait anyway,
+        // and restore the compaction phase label either way. A timeout
+        // skips extraction for this pass only — never the compaction.
+        final source = CancelTokenSource();
+        final deadline = Timer(AgentCli._memoryExtractionDeadline, source.cancel);
+        try {
+          final hook = compactionMemoryHook(
+            memory: _memory,
+            stream: smol?.stream ?? _streamFunction,
+            model: smol?.model ?? _agent.state.model,
+            cancelToken: source.token,
+          );
+          if (hook != null) {
+            await hook(text).timeout(AgentCli._memoryExtractionHardCap);
+          }
+        } on TimeoutException {
+          _logDiagnostic(
+            'memory extraction skipped: exceeded '
+            '${AgentCli._memoryExtractionHardCap.inSeconds}s hard cap',
+          );
+        } finally {
+          deadline.cancel();
+          tui?.setBusyPhase('Compacting context…');
+        }
+      },
+      force: label == '[compacted]',
+    ).run();
+    _persistedCount = _agent.state.messages.length;
+    if (label == '[compacted]' && ok) {
+      // Manual `/compact` echoes the legacy "compacted" line; the
+      // auto-trigger prints its own per-pass "[auto-compacted]" line via
+      // [_AutoCompactorCliHooks.onPass].
+      io.writeln('$label $_persistedCount messages kept');
+    }
+  }
+}

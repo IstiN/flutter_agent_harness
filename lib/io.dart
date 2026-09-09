@@ -16,6 +16,7 @@ export 'src/cli/openrouter_oauth_server.dart';
 export 'src/cli/prompt_overrides_io.dart';
 export 'src/cli/ext_engine_process.dart';
 export 'src/env/io_execution_env.dart';
+export 'src/hub/local_hub.dart';
 export 'src/lsp/io_lsp_transport.dart';
 export 'src/mcp/io_mcp_transport.dart';
 export 'src/secrets/secure_key_store_io.dart';
