@@ -205,8 +205,11 @@ extension ApprovalCommands on AgentCli {
       SecretPromptSpec(name: name, reason: reason),
     );
     if (result is! SecretPromptAnswer) return null;
-    _runtimeSecrets[name] = result.value.value;
-    config.onSecretGranted?.call(name, result.value.value);
+    // The sheet lets the user edit the suggested name — store and register
+    // under the name the grant actually carries.
+    final grantedName = result.value.name;
+    _runtimeSecrets[grantedName] = result.value.value;
+    config.onSecretGranted?.call(grantedName, result.value.value);
     return result.value;
   }
 

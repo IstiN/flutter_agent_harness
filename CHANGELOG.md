@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.336
+
+- fix(97): TUI secret sheet opens on the VALUE field with the suggested
+  name as a dim placeholder (typing replaces it wholesale, Tab toggles
+  fields, ▸ marks focus), the value renders masked from the first
+  keystroke (Ctrl+R reveals), and a blocked Enter shows the reason inline
+  instead of dying silently. SECURITY ADVISORY: with the sheet as shipped
+  before this fix, a credential typed on name focus rendered UNMASKED in
+  the Name row (visible in scrollback, screen recordings, transcripts) —
+  treat secrets entered through the CLI secret sheet before 0.1.336 as
+  potentially exposed and rotate them.
+
 ## 0.1.331
 
 - fix(86): compaction checkpoint honors the owner review on #82 — the
