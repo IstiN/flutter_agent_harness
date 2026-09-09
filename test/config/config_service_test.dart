@@ -661,4 +661,208 @@ void main() {
       expect(() => CliConfig.fromYaml(good), returnsNormally);
     });
   });
+  group('host capability (AC11)', () {
+    // The real web/iOS-container shape: no home directory (the global scope
+    // is unreachable) and no process spawning.
+    late MemoryExecutionEnv webEnv;
+    late ConfigService webService;
+    // A no-process host that still has a readable user file — pins the
+    // stdio-vs-remote distinction itself.
+    late MemoryExecutionEnv capEnv;
+    late ConfigService capService;
+
+    setUp(() {
+      webEnv = MemoryExecutionEnv(cwd: '/work');
+      webService = ConfigService(
+        env: webEnv,
+        homeDir: null,
+        supportsProcesses: false,
+      );
+      capEnv = MemoryExecutionEnv(cwd: '/work');
+      capService = ConfigService(
+        env: capEnv,
+        homeDir: '/home',
+        supportsProcesses: false,
+      );
+    });
+
+    const stdioNote =
+        'mcp stdio server "fs" is not applicable on this host (no process '
+        'spawning) — configure a remote server via `mcp.servers.fs.url` '
+        'instead';
+
+    test(
+      'get of a stdio member answers not applicable, never dead config',
+      () async {
+        await webEnv.writeFile(
+          _globalConfig,
+          'mcp:\n  servers:\n    fs:\n      command: npx\n',
+        );
+        final result = await webService.get('mcp.servers.fs.command');
+        expect(result.found, isFalse);
+        expect(result.notApplicable, stdioNote);
+        // The sibling args/env members are process-bound too.
+        expect(
+          (await webService.get('mcp.servers.fs.args')).notApplicable,
+          stdioNote,
+        );
+      },
+    );
+
+    test('get of a whole stdio entry answers not applicable', () async {
+      await capEnv.writeFile(
+        _globalConfig,
+        'mcp:\n  servers:\n    fs:\n      command: npx\n      args: [-y]\n',
+      );
+      final result = await capService.get('mcp.servers.fs');
+      expect(result.notApplicable, stdioNote);
+    });
+
+    test('get of a remote server entry resolves normally', () async {
+      await capEnv.writeFile(
+        _globalConfig,
+        'mcp:\n  servers:\n    web:\n      url: https://mcp.example\n',
+      );
+      final result = await capService.get('mcp.servers.web');
+      expect(result.found, isTrue);
+      expect(result.notApplicable, isNull);
+      expect((await capService.get('mcp.servers.web.url')).found, isTrue);
+    });
+
+    test('global-scope writes answer honestly on a home-less host', () async {
+      await expectLater(
+        webService.set('provider', 'openai-completions'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('global scope unavailable on this host'),
+          ),
+        ),
+      );
+    });
+
+    test('set of a stdio entry is refused with the host reason', () async {
+      await webEnv.writeFile(_globalConfig, 'mode: code\n');
+      expect(
+        () => webService.set('mcp.servers.fs.command', 'npx'),
+        throwsA(
+          isA<ConfigException>().having((e) => e.message, 'message', stdioNote),
+        ),
+      );
+      expect(
+        () => webService.set(
+          'mcp.servers.fs',
+          '{"command": "npx", "args": ["-y"]}',
+        ),
+        throwsConfigException,
+      );
+      // Nothing was written.
+      expect((await webService.get('mcp.servers.fs.command')).found, isFalse);
+    });
+
+    test(
+      'whole-section sets cannot smuggle stdio servers past the guard',
+      () async {
+        await webEnv.writeFile(_globalConfig, 'mode: code\n');
+        // Path depth must not bypass the capability check: the CONTENT of
+        // a whole-section write is inspected (issue #29 AC11/E13).
+        await expectLater(
+          webService.set('mcp', '{"servers":{"fs":{"command":"npx"}}}'),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('mcp stdio server "fs" is not applicable'),
+            ),
+          ),
+        );
+        await expectLater(
+          webService.set('mcp.servers', '{"fs":{"args":["-y"]}}'),
+          throwsConfigException,
+        );
+        // Remote-only content passes the capability guard.
+        await capService.set(
+          'mcp.servers',
+          '{"web":{"url":"https://mcp.example"}}',
+        );
+        expect(
+          (await capService.get('mcp.servers.web.url')).display,
+          'https://mcp.example',
+        );
+        // A scalar under mcp, and mcp-section content without servers,
+        // are content the guard does not refuse.
+        await capService.set('mcp.enabled', 'true');
+        expect((await capService.get('mcp.enabled')).display, 'true');
+        // Nothing dead was written by the refused sets.
+        expect(
+          (await webService.get('mcp.servers.fs.command')).notApplicable,
+          stdioNote,
+        );
+      },
+    );
+
+    test('get of a whole section answers not applicable when it carries '
+        'stdio entries', () async {
+      await capEnv.writeFile(
+        _globalConfig,
+        'mcp:\n  servers:\n    fs:\n      command: npx\n',
+      );
+      expect(
+        (await capService.get('mcp.servers')).notApplicable,
+        contains('mcp stdio server "fs"'),
+      );
+      expect(
+        (await capService.get('mcp')).notApplicable,
+        contains('mcp stdio server "fs"'),
+      );
+    });
+
+    test('set of a remote server entry succeeds on the same host', () async {
+      final result = await capService.set(
+        'mcp.servers.web',
+        '{"url": "https://mcp.example", "transport": "streamable-http"}',
+      );
+      expect(result.scope, 'global');
+      expect(
+        (await capService.get('mcp.servers.web.url')).display,
+        'https://mcp.example',
+      );
+    });
+
+    test('check warns about existing stdio entries as dead config', () async {
+      await capEnv.writeFile(
+        _globalConfig,
+        'mcp:\n  servers:\n    fs:\n      command: npx\n',
+      );
+      final report = await capService.check();
+      expect(report.ok, isTrue); // a warning, not an error
+      expect(
+        report.warnings.single.message,
+        contains('mcp stdio server "fs" cannot run on this host'),
+      );
+    });
+    test(
+      'the desktop default still resolves and writes stdio entries',
+      () async {
+        await env.writeFile(
+          _globalConfig,
+          'mcp:\n  servers:\n    fs:\n      command: npx\n',
+        );
+        expect((await service.get('mcp.servers.fs.command')).display, 'npx');
+        final report = await checkOrThrow(service);
+        expect(report.warnings, isEmpty);
+      },
+    );
+
+    test('config tool get renders the not-applicable answer (config_tool_test '
+        'covers the schema; this pins the AC11 wording end to end)', () async {
+      await webEnv.writeFile(
+        _globalConfig,
+        'mcp:\n  servers:\n    fs:\n      command: npx\n',
+      );
+      final result = await webService.get('mcp.servers.fs.args');
+      expect(result.notApplicable, contains('not applicable on this host'));
+    });
+  });
 }

@@ -31,4 +31,4 @@ You MUST use EXACT format:
 ## Next Steps
 1. [What should happen next to continue]
 
-Sections stay tight but complete. You MUST preserve exact file paths, function names, error messages.
+Sections stay tight but complete. You MUST preserve exact file paths, function names, error messages. Important tool results (test verdicts, command outputs, error traces, fetched data) are preserved with what produced them; trivial outputs may go.
