@@ -98,6 +98,18 @@ final class ToolPairingRepairReport {
       'renamed=$renamedIds';
 }
 
+/// Canonical wire form of a tool-call id: the projection every provider
+/// adapter applies before putting an id on the wire — characters outside
+/// `[a-zA-Z0-9_-]` become `_` (Anthropic/Google/OpenAI `_normalizeToolCallId`)
+/// and the result truncates to 40 chars (the strictest limit, OpenAI).
+/// Pairing checks and the uniqueness stamp compare canonical forms, so two
+/// raw ids that collapse into one provider-side id count as duplicates even
+/// when their raw forms differ.
+String canonicalToolCallId(String id) {
+  final sanitized = id.replaceAll(RegExp('[^a-zA-Z0-9_-]'), '_');
+  return sanitized.length <= 40 ? sanitized : sanitized.substring(0, 40);
+}
+
 /// Raw provider error substrings (matched case-insensitively) of the
 /// tool-pairing error family across known gateways: Anthropic direct,
 /// litellm/Bedrock, and OpenAI-compatible. Detection is keyed on the error
@@ -261,33 +273,49 @@ final class _Renames {
   final entries = <({String from, String to})>[];
 }
 
-/// Suffix-uniquifies later occurrences of duplicate tool-call ids.
+/// Uniquifies later occurrences of duplicate tool-call ids, keyed on
+/// canonical wire form: raw ids that collapse into one provider-side id are
+/// wire duplicates even when their raw forms differ. Fresh ids are generated
+/// from the canonical base so the rename cannot re-collide after the
+/// adapter's own sanitize/truncate pass.
 _Renames _renameDuplicates(_CallIndex index, List<Message> messages) {
   final used = <String>{
-    for (final slot in index.slots) slot.call.id,
+    for (final slot in index.slots) canonicalToolCallId(slot.call.id),
     for (final message in messages)
-      if (message is ToolResultMessage) message.toolCallId,
+      if (message is ToolResultMessage) canonicalToolCallId(message.toolCallId),
   };
   final renames = _Renames();
-  for (final entry in index.byId.entries) {
-    for (var k = 1; k < entry.value.length; k++) {
-      final fresh = _freshId(entry.key, used);
+  final byCanonical = <String, List<int>>{};
+  for (var slot = 0; slot < index.slots.length; slot++) {
+    byCanonical
+        .putIfAbsent(canonicalToolCallId(index.slots[slot].call.id), () => [])
+        .add(slot);
+  }
+  for (final group in byCanonical.entries) {
+    for (var k = 1; k < group.value.length; k++) {
+      final slot = group.value[k];
+      final fresh = _freshId(group.key, used);
       used.add(fresh);
-      renames.slotNewIds[entry.value[k]] = fresh;
-      renames.entries.add((from: entry.key, to: fresh));
+      renames.slotNewIds[slot] = fresh;
+      renames.entries.add((from: index.slots[slot].call.id, to: fresh));
     }
   }
   return renames;
 }
 
-/// A fresh id derived from [base] that is not in [used] (`base_2`, `base_3`,
-/// …). Ids are opaque to tools and providers echo them back verbatim.
+/// A fresh canonical wire-form id derived from canonical [base] that is not
+/// in [used] (`base_2`, `base_3`, …). Ids are opaque to tools and providers
+/// echo them back verbatim. The stem stays inside the 40-char wire cap so
+/// the suffix survives the adapters' own cap and the candidate sequence
+/// strictly grows — renaming terminates even when many long ids truncate to
+/// one form.
 String _freshId(String base, Set<String> used) {
+  final stem = base.length > 36 ? base.substring(0, 36) : base;
   var k = 2;
-  var candidate = '${base}_$k';
+  var candidate = '${stem}_$k';
   while (used.contains(candidate)) {
     k++;
-    candidate = '${base}_$k';
+    candidate = '${stem}_$k';
   }
   return candidate;
 }
@@ -450,8 +478,10 @@ String _dropNote(List<ToolResultMessage> orphans) {
 /// The wire-equivalent projection of harness messages: a run of consecutive
 /// tool results merges into one user message of result blocks, adjacent
 /// user-role items (text and result groups) merge into one wire message,
-/// and messages the provider adapters would skip (whitespace user text,
-/// assistant messages with no visible blocks) are dropped.
+/// messages the provider adapters would skip (whitespace user text,
+/// assistant messages with no visible blocks) are dropped, and every
+/// tool-call/result id is projected through [canonicalToolCallId] — what
+/// the adapter puts on the wire is what pairs here.
 List<_WireMessage> _wireView(List<Message> messages) {
   final wire = <_WireMessage>[];
   final userBlocks = <({String? resultId})>[];
@@ -465,25 +495,31 @@ List<_WireMessage> _wireView(List<Message> messages) {
   for (final message in messages) {
     switch (message) {
       case ToolResultMessage():
-        userBlocks.add((resultId: message.toolCallId));
+        userBlocks.add((resultId: canonicalToolCallId(message.toolCallId)));
       case UserMessage():
         if (_userVisible(message)) userBlocks.add((resultId: null));
       case AssistantMessage():
         flushUser();
-        final callIds = [
-          for (final block in message.content)
-            if (block is ToolCall) block.id,
-        ];
-        final hasText = message.content.any(
-          (block) => block is TextContent && block.text.trim().isNotEmpty,
-        );
-        if (callIds.isNotEmpty || hasText) {
-          wire.add(_WireAssistant(callIds));
-        }
+        _collectAssistant(wire, message);
     }
   }
   flushUser();
   return wire;
+}
+
+/// The wire view of one assistant message: its canonical call ids, dropped
+/// entirely when it has no visible content.
+void _collectAssistant(List<_WireMessage> wire, AssistantMessage message) {
+  final callIds = [
+    for (final block in message.content)
+      if (block is ToolCall) canonicalToolCallId(block.id),
+  ];
+  final hasText = message.content.any(
+    (block) => block is TextContent && block.text.trim().isNotEmpty,
+  );
+  if (callIds.isNotEmpty || hasText) {
+    wire.add(_WireAssistant(callIds));
+  }
 }
 
 /// Whether a user message survives the provider adapters' empty-content

@@ -1327,14 +1327,22 @@ _consumeResponseStream(
 ) async {
   AssistantMessage? partialMessage;
   var addedPartial = false;
+  // Ids are stamped as they STREAM, not just at finalization: every
+  // host-visible partial snapshot must carry the ids the finalized message
+  // will — a rename that lands only on MessageEnd leaves the host's
+  // partial snapshots correlating by an id that no longer exists (issue #85).
+  final used = _transcriptToolCallIds(
+    context.messages,
+    context.messages.length,
+  );
 
   await for (final event in response) {
     switch (event) {
       case StartEvent(:final partial):
-        partialMessage = partial;
-        context.messages.add(partial);
+        partialMessage = _stampAgainstUsed(partial, used);
+        context.messages.add(partialMessage);
         addedPartial = true;
-        await emit(MessageStartEvent(partial));
+        await emit(MessageStartEvent(partialMessage));
       case DoneEvent() || ErrorEvent():
         return (
           finished: await _finishStreamed(context, emit, addedPartial, event),
@@ -1343,11 +1351,11 @@ _consumeResponseStream(
         );
       default:
         if (partialMessage != null) {
-          partialMessage = event.partial;
-          context.messages[context.messages.length - 1] = event.partial;
+          partialMessage = _stampAgainstUsed(event.partial, used);
+          context.messages[context.messages.length - 1] = partialMessage;
           await emit(
             MessageUpdateEvent(
-              message: event.partial,
+              message: partialMessage,
               assistantMessageEvent: event,
             ),
           );
@@ -1397,7 +1405,17 @@ AssistantMessage _stampSessionUniqueToolCallIds(
 }) {
   if (!message.content.any((block) => block is ToolCall)) return message;
   final end = context.messages.length - (skipLast ? 1 : 0);
-  final used = _transcriptToolCallIds(context.messages, end);
+  return _stampAgainstUsed(
+    message,
+    _transcriptToolCallIds(context.messages, end),
+  );
+}
+
+/// The rename core of [_stampSessionUniqueToolCallIds] against a
+/// caller-owned [used] set (mutated: every id, original or fresh,
+/// registers). Shared by the final-message pass and the per-partial pass in
+/// [_consumeResponseStream] so both produce the same ids for one stream.
+AssistantMessage _stampAgainstUsed(AssistantMessage message, Set<String> used) {
   var changed = false;
   final content = <ContentBlock>[];
   for (final block in message.content) {

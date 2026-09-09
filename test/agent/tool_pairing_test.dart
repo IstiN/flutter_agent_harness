@@ -383,6 +383,76 @@ void main() {
     });
   });
 
+  group('canonical wire-form ids (PR #93 wire-view)', () {
+    test('canonicalToolCallId mirrors the adapters', () {
+      // Anthropic/Google/OpenAI _normalizeToolCallId: strip-outs become '_'.
+      expect(canonicalToolCallId('call.1'), 'call_1');
+      expect(canonicalToolCallId('call 1'), 'call_1');
+      expect(canonicalToolCallId('call-OK_9'), 'call-OK_9');
+      // 40-char cap (the strictest, OpenAI).
+      expect(canonicalToolCallId('c' * 50), 'c' * 40);
+    });
+
+    test('raw ids that collapse to one wire id validate as duplicates', () {
+      // `call.1` and `call_1` both hit the wire as `call_1`; raw comparison
+      // passed this shape before, yet strict providers orphan the second.
+      final violations = validateToolPairing([
+        _a([_c('call.1', 'bash')]),
+        _r('call.1', 'bash'),
+        _u('next turn'),
+        _a([_c('call_1', 'bash')]),
+        _r('call_1', 'bash'),
+      ]);
+      expect(
+        violations.map((v) => v.kind),
+        containsAll([
+          ToolPairingViolationKind.duplicateCallId,
+          ToolPairingViolationKind.duplicateResult,
+        ]),
+      );
+    });
+
+    test('canonical collisions repair symmetrically to distinct wire ids', () {
+      final messages = [
+        _a([_c('call.1', 'bash')]),
+        _r('call.1', 'bash'),
+        _a([_c('call_1', 'bash')]),
+        _r('call_1', 'bash'),
+      ];
+      final repaired = repairToolPairing(messages);
+      expect(repaired.report.renamedIds, [(from: 'call_1', to: 'call_1_2')]);
+      expect(validateToolPairing(repaired.messages), isEmpty);
+      // On the wire the two results no longer collapse into one id.
+      expect(
+        repaired.messages
+            .whereType<ToolResultMessage>()
+            .map((m) => canonicalToolCallId(m.toolCallId))
+            .toList(),
+        ['call_1', 'call_1_2'],
+      );
+      // The transcript itself keeps its raw ids.
+      expect((messages[1] as ToolResultMessage).toolCallId, 'call.1');
+    });
+
+    test('ids colliding past the 40-char wire cap still rename uniquely', () {
+      final long1 = '${'a' * 45}1'; // wire form: 'a' * 40
+      final long2 = '${'a' * 45}2'; // wire form: 'a' * 40 — same
+      final messages = [
+        _a([_c(long1, 'bash')]),
+        _r(long1, 'bash'),
+        _a([_c(long2, 'bash')]),
+        _r(long2, 'bash'),
+      ];
+      final repaired = repairToolPairing(messages);
+      expect(validateToolPairing(repaired.messages), isEmpty);
+      final wireIds = repaired.messages
+          .whereType<ToolResultMessage>()
+          .map((m) => canonicalToolCallId(m.toolCallId))
+          .toList();
+      expect(wireIds.toSet(), hasLength(2));
+    });
+  });
+
   group('property: every cut of a random transcript repairs to a valid '
       'context (UT-property)', () {
     // Deterministic generator mimicking real sessions: per-run position

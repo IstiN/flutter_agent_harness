@@ -835,10 +835,21 @@ void main() {
       timestamp: DateTime.utc(2026),
     );
 
-    final anthropicWedge =
-        'messages.0.content.1: unexpected tool_use_id found in tool_result '
-        'blocks: bash_198. Each tool_result block must have a corresponding '
-        'tool_use block in the previous message';
+    /// AC3 (deep review PR #93): EACH gateway signature family must drive
+    /// exactly one repair-and-retry through a scripted failing stream —
+    /// matcher-level pinning alone is not enough.
+    const pairingWedges = <String, String>{
+      'anthropic':
+          'messages.0.content.1: unexpected tool_use_id found in tool_result '
+          'blocks: bash_198. Each tool_result block must have a corresponding '
+          'tool_use block in the previous message',
+      'litellm':
+          'litellm.badrequest: Invalid request: expected toolresult '
+          'blocks, but the previous message contains none',
+      'openai':
+          'Invalid parameter: tool_call_id is not found: bash_198. '
+          'Every tool message must follow a tool_calls message',
+    };
 
     AssistantMessage errorTurn(String message) =>
         _assistant(stopReason: StopReason.error, errorMessage: message);
@@ -880,49 +891,49 @@ void main() {
       expect(wedgeContext.messages.map((m) => m.toJson()).toList(), inputJson);
     });
 
-    test('a provider pairing 400 triggers exactly one self-healing repair '
-        'and retry', () async {
-      final wedgeContext = Context(
-        messages: [
-          UserMessage.text('summary of earlier work'),
-          result('bash_198', 'bash'),
-        ],
-      );
-      final fake = _FakeStreamFunction([
-        [
-          DoneEvent(
-            reason: StopReason.error,
-            message: errorTurn(anthropicWedge),
-          ),
-        ],
-        _textTurn('recovered'),
-      ]);
-      final stream = agentLoop(
-        prompts: const [],
-        context: wedgeContext,
-        config: const AgentLoopConfig(model: _model),
-        streamFunction: fake.call,
-        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
-      );
+    pairingWedges.forEach((gateway, wedge) {
+      test('a $gateway pairing 400 triggers exactly one self-healing repair '
+          'and retry', () async {
+        final wedgeContext = Context(
+          messages: [
+            UserMessage.text('summary of earlier work'),
+            result('bash_198', 'bash'),
+          ],
+        );
+        final fake = _FakeStreamFunction([
+          [DoneEvent(reason: StopReason.error, message: errorTurn(wedge))],
+          _textTurn('recovered'),
+        ]);
+        final stream = agentLoop(
+          prompts: const [],
+          context: wedgeContext,
+          config: const AgentLoopConfig(model: _model),
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+        );
 
-      final events = await stream.toList();
-      final messages = await stream.result as List;
-      expect((messages.last as AssistantMessage).stopReason, StopReason.stop);
-      expect(fake.calls, 2);
-      final repairEvents = events.whereType<ToolPairingRepairEvent>().toList();
-      // Detection event (with the raw provider error) + repair event.
-      expect(
-        repairEvents.any((event) => event.providerError == anthropicWedge),
-        isTrue,
-      );
-      // The second request's context is wire-valid.
-      final second = fake.contexts[1];
-      expect(
-        validateToolPairing(
-          second.messages.where((m) => m is! AssistantMessage || true).toList(),
-        ),
-        isEmpty,
-      );
+        final events = await stream.toList();
+        final messages = await stream.result as List;
+        expect((messages.last as AssistantMessage).stopReason, StopReason.stop);
+        expect(fake.calls, 2);
+        final repairEvents = events
+            .whereType<ToolPairingRepairEvent>()
+            .toList();
+        // The detection event carries the raw provider error; the repair
+        // itself is surfaced separately.
+        expect(
+          repairEvents.any((event) => event.providerError == wedge),
+          isTrue,
+        );
+        expect(
+          repairEvents
+              .where((event) => event.providerError == null)
+              .where((event) => event.report.isNotEmpty),
+          isNotEmpty,
+        );
+        // The retry's context is wire-valid.
+        expect(validateToolPairing(fake.contexts[1].messages), isEmpty);
+      });
     });
 
     test(
