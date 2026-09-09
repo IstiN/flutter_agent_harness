@@ -1219,17 +1219,26 @@ Future<AssistantMessage> _streamAssistantResponse(
     }
 
     // The provider stream closed without a terminal event (provider bug).
-    const errorText = 'Provider stream ended without a terminal event';
-    final base =
-        streamed.partial ??
-        _terminalMessage(config.model, StopReason.error, errorText);
     return _finishWithoutStream(
       context,
       emit,
-      base.copyWith(stopReason: StopReason.error, errorMessage: errorText),
+      _streamEndedWithoutTerminal(config, streamed.partial),
       replaceLast: streamed.addedPartial,
     );
   }
+}
+
+/// Builds the synthetic error turn for a provider stream that closed
+/// without any terminal event (provider bug): keep the streamed partial
+/// when one landed, otherwise synthesize an empty error message.
+AssistantMessage _streamEndedWithoutTerminal(
+  AgentLoopConfig config,
+  AssistantMessage? partial,
+) {
+  const errorText = 'Provider stream ended without a terminal event';
+  return (partial ??
+          _terminalMessage(config.model, StopReason.error, errorText))
+      .copyWith(stopReason: StopReason.error, errorMessage: errorText);
 }
 
 /// Applies the request-payload rewrites before a provider call: the
@@ -1387,46 +1396,57 @@ AssistantMessage _stampSessionUniqueToolCallIds(
   required bool skipLast,
 }) {
   if (!message.content.any((block) => block is ToolCall)) return message;
-  final used = <String>{};
   final end = context.messages.length - (skipLast ? 1 : 0);
+  final used = _transcriptToolCallIds(context.messages, end);
+  var changed = false;
+  final content = <ContentBlock>[];
+  for (final block in message.content) {
+    if (block is! ToolCall) {
+      content.add(block);
+      continue;
+    }
+    final renamed = _freshToolCallId(block, used);
+    changed = changed || !identical(renamed, block);
+    content.add(renamed);
+  }
+  return changed ? message.copyWith(content: content) : message;
+}
+
+/// Collects every tool-call id visible in `messages[0, end)`: ids of calls
+/// inside assistant messages and ids of the results answering them.
+Set<String> _transcriptToolCallIds(List<Message> messages, int end) {
+  final used = <String>{};
   for (var i = 0; i < end; i++) {
-    final existing = context.messages[i];
-    switch (existing) {
-      case AssistantMessage():
-        for (final block in existing.content) {
+    switch (messages[i]) {
+      case AssistantMessage(:final content):
+        for (final block in content) {
           if (block is ToolCall) used.add(block.id);
         }
-      case ToolResultMessage():
-        used.add(existing.toolCallId);
+      case ToolResultMessage(:final toolCallId):
+        used.add(toolCallId);
       default:
         break;
     }
   }
-  var changed = false;
-  final content = <ContentBlock>[];
-  for (final block in message.content) {
-    var call = switch (block) {
-      ToolCall() => block,
-      _ => null,
-    };
-    if (call != null && used.contains(call.id)) {
-      var k = 2;
-      var fresh = '${call.id}_$k';
-      while (used.contains(fresh)) {
-        k++;
-        fresh = '${call.id}_$k';
-      }
-      call = call.copyWith(id: fresh);
-      changed = true;
-    }
-    if (call != null) {
-      used.add(call.id);
-      content.add(call);
-    } else {
-      content.add(block);
-    }
+  return used;
+}
+
+/// Returns [call] unchanged (registered in [used]) when its id is free,
+/// otherwise renamed to the first free `<id>_2`, `<id>_3`, … which is then
+/// registered too.
+ToolCall _freshToolCallId(ToolCall call, Set<String> used) {
+  if (!used.contains(call.id)) {
+    used.add(call.id);
+    return call;
   }
-  return changed ? message.copyWith(content: content) : message;
+  var k = 2;
+  var fresh = '${call.id}_$k';
+  while (used.contains(fresh)) {
+    k++;
+    fresh = '${call.id}_$k';
+  }
+  used.add(fresh);
+  return call.copyWith(id: fresh);
 }
 
 /// Appends (or replaces the partial with) [message] and emits its lifecycle

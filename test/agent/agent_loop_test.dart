@@ -1038,6 +1038,109 @@ void main() {
       ];
       expect(resultIds2, contains('bash_198_3'));
     });
+
+    test('a terminal event without a start still stamps and appends the '
+        'message (skipLast=false path)', () async {
+      final first = _FakeStreamFunction([
+        _toolTurn([_call('bash_198', 'bash')]),
+        _textTurn('done'),
+      ]);
+      final history1 =
+          (await agentLoop(
+                prompts: [UserMessage.text('hi')],
+                context: const Context(messages: []),
+                config: const AgentLoopConfig(model: _model),
+                streamFunction: first.call,
+                toolExecutor: (_, _, _) async => ToolExecutionResult.text('r1'),
+              ).result)
+              as List;
+
+      final second = _FakeStreamFunction([
+        // No StartEvent: the partial was never added, so the finished
+        // message lands via add() and the used-id scan covers everything.
+        [
+          DoneEvent(
+            reason: StopReason.toolUse,
+            message: _assistant(
+              content: [_call('bash_198', 'bash')],
+              stopReason: StopReason.toolUse,
+            ),
+          ),
+        ],
+        _textTurn('done two'),
+      ]);
+      final history2 =
+          (await agentLoop(
+                prompts: [UserMessage.text('again')],
+                context: Context(messages: List.of(history1.cast<Message>())),
+                config: const AgentLoopConfig(model: _model),
+                streamFunction: second.call,
+                toolExecutor: (_, _, _) async => ToolExecutionResult.text('r2'),
+              ).result)
+              as List;
+
+      final ids2 = [
+        for (final m in history2.cast<Message>())
+          if (m is AssistantMessage)
+            for (final block in m.content)
+              if (block is ToolCall) block.id,
+      ];
+      expect(ids2, contains('bash_198_2'));
+      expect(
+        history2.cast<Message>().whereType<ToolResultMessage>().map(
+          (r) => r.toolCallId,
+        ),
+        contains('bash_198_2'),
+      );
+    });
+
+    test('an already-cancelled token short-circuits before the provider '
+        'call', () async {
+      final fake = _FakeStreamFunction([_textTurn('never')]);
+      final source = CancelTokenSource();
+      source.cancel('user left');
+      final stream = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: const Context(messages: []),
+        config: const AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+        cancelToken: source.token,
+      );
+
+      await stream.toList();
+      expect(fake.calls, 0);
+      final messages = await stream.result as List;
+      expect(
+        (messages.last as AssistantMessage).stopReason,
+        StopReason.aborted,
+      );
+    });
+
+    test('a stream that closes without a terminal event surfaces an '
+        'error turn', () async {
+      final partial = _assistant(content: [TextContent(text: 'cut')]);
+      final fake = _FakeStreamFunction([
+        [
+          StartEvent(partial: partial),
+          TextStartEvent(contentIndex: 0, partial: partial),
+          TextDeltaEvent(contentIndex: 0, delta: 'cut', partial: partial),
+        ],
+      ]);
+      final messages =
+          (await agentLoop(
+                prompts: [UserMessage.text('hi')],
+                context: const Context(messages: []),
+                config: const AgentLoopConfig(model: _model),
+                streamFunction: fake.call,
+                toolExecutor: (_, _, _) async => ToolExecutionResult.text(''),
+              ).result)
+              as List;
+      expect(fake.calls, 1);
+      final last = messages.last as AssistantMessage;
+      expect(last.stopReason, StopReason.error);
+      expect(last.errorMessage, contains('terminal'));
+    });
   });
 
   group('degenerate empty completions', () {
