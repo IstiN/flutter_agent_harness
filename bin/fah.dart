@@ -47,6 +47,7 @@ import 'package:fa_hub_client/fa_hub_client.dart'
         persistDapConfig,
         resolveDapSettings;
 import 'fah_hub_plugin.dart';
+import 'fah_hub_serve.dart';
 import 'hub_fabric_repository.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
@@ -1050,6 +1051,13 @@ Future<void> _runApp(List<String> args) async {
   // parsing: serve-specific flags are stripped from the parsed args and
   // kept for the late interception below (after model/key resolution).
   final serve = splitServeA2aArgs(args);
+  // `fa hub serve [--port N]` — a local DAP hub, no agent boot
+  // (docs/dap.md §8.1). Intercepted on the raw args BEFORE the serve
+  // marker check below (`hub serve` contains the word "serve" but is a
+  // different command): the words must never reach prompt parsing.
+  if (args.isNotEmpty && args.first == 'hub') {
+    exit(await runHubCommand(args.sublist(1)));
+  }
   final serveMarkerCount =
       (serve.serveA2a ? 1 : 0) + (serve.serveBridge ? 1 : 0);
   if (serveMarkerCount != 1 && args.contains('serve')) {

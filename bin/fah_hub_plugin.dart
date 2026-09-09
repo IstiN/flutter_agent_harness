@@ -14,7 +14,8 @@
 library;
 
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show HttpClient, Platform, Process, ProcessStartMode;
+import 'dart:math' show Random;
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -38,11 +39,17 @@ final class HubPluginHost implements FahPlugin {
     Map<String, String>? environment,
     String? home,
     this.fabricDeliversMail = false,
+    String? localHubUrl,
+    Future<bool> Function(int port)? hubHealthProbe,
+    Future<void> Function(int port)? hubSpawner,
   }) : _hub = hubPlugin,
        // ignore: prefer_initializing_formals
        _environment = environment ?? Platform.environment,
        // ignore: prefer_initializing_formals
-       _home = home;
+       _home = home,
+       _localHubUrl = localHubUrl ?? hub.defaultDapUrl,
+       _hubHealthProbe = hubHealthProbe ?? _defaultHubHealthProbe,
+       _hubSpawner = hubSpawner ?? _defaultHubSpawner;
 
   /// Whether the messaging-fabric composite consumes hub mail instead of
   /// this host's external inbox.
@@ -53,6 +60,16 @@ final class HubPluginHost implements FahPlugin {
 
   /// Home directory override for the `~/.dap/config.json` resolution.
   final String? _home;
+
+  /// The zero-config hub `/dap start` brings up and dials
+  /// (`ws://127.0.0.1:8787/ws` normally; tests point it at an ephemeral
+  /// [LocalHub]).
+  final String _localHubUrl;
+
+  /// `/dap start` seams: is a hub answering on [port] (`/healthz`), and
+  /// launch one. Injected by tests; the defaults use dart:io.
+  final Future<bool> Function(int port) _hubHealthProbe;
+  final Future<void> Function(int port) _hubSpawner;
 
   @override
   String get name => _pluginName;
@@ -77,7 +94,7 @@ final class HubPluginHost implements FahPlugin {
       (args) => _dapSlash(context, args),
       description:
           'DAP hub — end-to-end-encrypted messaging between agents '
-          '(status / connect / secret)',
+          '(start / status / connect / secret)',
     );
     // The inbox stays unconditional EXCEPT when the fabric composite owns
     // delivery (issue #27): registering both would race one hub frame
@@ -113,7 +130,7 @@ final class HubPluginHost implements FahPlugin {
   /// keeps its full error.
   Future<void> _connect(PluginContext context) async {
     try {
-      await _hub.start();
+      await _startHub();
     } on Object catch (error) {
       if (_hub.isDefaultUrl) {
         context.io.writeln('[hub] not configured — set DAP_HUB_URL to enable');
@@ -124,9 +141,10 @@ final class HubPluginHost implements FahPlugin {
   }
 
   /// `/dap` — no args: the guided menu when the host is interactive
-  /// (status / connect / master secret / about), a one-line status
-  /// otherwise; `/dap <host> [name] [channel]`: move the live connection
-  /// to another hub.
+  /// (start / status / connect / master secret / about), a one-line
+  /// status otherwise; `/dap start`: the one-step local bring-up;
+  /// `/dap <host> [name] [channel]`: move the live connection to
+  /// another hub.
   Future<void> _dapSlash(PluginContext context, List<String> args) async {
     final positional = args.where((arg) => arg.isNotEmpty).toList();
     final pick = context.pickOption;
@@ -138,6 +156,22 @@ final class HubPluginHost implements FahPlugin {
       if (positional.isEmpty) {
         await _printStatus(context);
         return;
+      }
+      if (positional.first == 'start') {
+        await _dapStart(context);
+        return;
+      }
+      // Persist first (see _dapStart): a stale dead config makes the
+      // boot-time start() churn against the dead URL, and connectTo
+      // needs the repository up.
+      try {
+        await hub.persistDapConfig(
+          url: positional[0],
+          file: hub.defaultDapConfigFile(_home, _environment),
+        );
+        await _startHub().timeout(const Duration(seconds: 8));
+      } on Object {
+        // The connect below reports the real error.
       }
       final connection = await _hub.connectTo(
         positional[0],
@@ -153,17 +187,178 @@ final class HubPluginHost implements FahPlugin {
     }
   }
 
+  /// `/dap start` — the one-step local bring-up: generates a session
+  /// master secret when none is set, launches a local hub on the
+  /// zero-config port when none answers `/healthz`, then connects
+  /// (persisting the URL, so the next boot is online by itself).
+  Future<void> _dapStart(PluginContext context) async {
+    if (!_dapEnabled) {
+      try {
+        _environment[hub.envMasterSecret] = _generateSessionSecret();
+      } on Object {
+        context.io.writeln(
+          '[hub] this host\'s environment is read-only — export '
+          'DAP_MASTER_SECRET before launching instead',
+        );
+        return;
+      }
+      context.io.writeln(
+        'master secret generated for this session — '
+        'export DAP_MASTER_SECRET to make it permanent',
+      );
+    }
+    final port = Uri.parse(_localHubUrl).port;
+    if (!await _hubHealthProbe(port)) {
+      context.io.writeln('starting a local hub on port $port…');
+      try {
+        await _hubSpawner(port);
+      } on Object catch (error) {
+        context.io.writeln('[hub] could not start a local hub: $error');
+        return;
+      }
+      final deadline = DateTime.now().add(const Duration(seconds: 8));
+      var up = false;
+      while (DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        if (await _hubHealthProbe(port)) {
+          up = true;
+          break;
+        }
+      }
+      if (!up) {
+        context.io.writeln(
+          '[hub] the local hub did not come up on port $port',
+        );
+        return;
+      }
+    }
+    // Point the resolution at the live hub BEFORE start(): with a stale
+    // config (the dead-port case this command exists to fix) start()
+    // would otherwise resolve — and churn against — the dead URL, and
+    // connectTo would dead-end on "plugin not started". connectTo below
+    // persists the same URL again; this write just orders it first.
+    try {
+      await hub.persistDapConfig(
+        url: _localHubUrl,
+        file: hub.defaultDapConfigFile(_home, _environment),
+      );
+    } on Object {
+      // Best-effort — connectTo below persists too.
+    }
+    // Beat the boot race (see _menuConnect): start() is a no-op once the
+    // repository exists. SHORT wait on purpose: an in-flight boot start
+    // against a dead stale hub hangs on its reconnect backoff, and the
+    // retarget in connectTo below is exactly what un-wedges it — waiting
+    // long here would just make /dap start feel stuck.
+    try {
+      await _startHub().timeout(const Duration(seconds: 2));
+    } on TimeoutException {
+      // The in-flight boot start churns against a dead stale hub — the
+      // retarget in connectTo below un-wedges it.
+    } on Object catch (error) {
+      context.io.writeln('[hub] start: $error');
+    }
+    try {
+      final connection = await _hub.connectTo(_localHubUrl);
+      context.io.writeln(
+        'DAP is up — $_localHubUrl, you are ${connection.agentId}'
+        '${connection.name != null ? ' (${connection.name})' : ''} '
+        '— /agents to see peers',
+      );
+    } on Object catch (error) {
+      context.io.writeln('[hub] $error');
+    }
+  }
+
+  /// A random session-only master secret (16 bytes hex).
+  static String _generateSessionSecret() {
+    final random = Random.secure();
+    return [
+      for (var i = 0; i < 16; i++)
+        random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ].join();
+  }
+
+  /// Default `/dap start` probe: GET `http://127.0.0.1:<port>/healthz`.
+  static Future<bool> _defaultHubHealthProbe(int port) async {
+    try {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 1);
+      final response = await (await client.get('127.0.0.1', port, '/healthz'))
+          .close();
+      await response.drain<void>();
+      client.close();
+      return response.statusCode == 200;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Default `/dap start` launcher: a detached `fa hub serve --port N`
+  /// that outlives this CLI (other agents keep their hub when we exit).
+  /// From a source checkout (`dart bin/fah.dart`) the script path is
+  /// respawned through the VM; the installed bundle re-executes itself.
+  static Future<void> _defaultHubSpawner(int port) async {
+    final script = Platform.script;
+    final String executable;
+    final List<String> arguments;
+    if (script.scheme == 'file' && script.path.endsWith('.dart')) {
+      executable = Platform.executable;
+      arguments = [
+        script.toFilePath(),
+        'hub',
+        'serve',
+        '--port',
+        '$port',
+      ];
+    } else {
+      executable = Platform.resolvedExecutable;
+      arguments = ['hub', 'serve', '--port', '$port'];
+    }
+    await Process.start(
+      executable,
+      arguments,
+      mode: ProcessStartMode.detached,
+    );
+  }
+
   /// Whether the plugin's kill switch is set (mirrors the hub plugin's
   /// own check, without throwing).
   bool get _dapEnabled => (_environment[hub.envMasterSecret] ?? '').isNotEmpty;
+
+  /// The in-flight `_hub.start()`, shared between the boot-time background
+  /// connect and the slash commands. The package's start() is NOT
+  /// re-entrant: two concurrent calls race the identity-key generation
+  /// (both write `key.tmp`, one rename wins, the loser's start() throws
+  /// and the repository never exists — "plugin not started" forever).
+  /// Cleared on completion so a failed start (dead hub) can be retried.
+  Future<void>? _starting;
+
+  /// Serialized `_hub.start()`: concurrent callers share one attempt.
+  Future<void> _startHub() {
+    final inFlight = _starting;
+    if (inFlight != null) return inFlight;
+    final future = _hub.start();
+    _starting = future;
+    // The tracked reference consumes the outcome: a caller that timed out
+    // (`start().timeout(8s)`) drops its own subscription, and a later
+    // failure — e.g. `StateError: retargeted` when connectTo moves the
+    // in-flight boot connect — must not surface as an unhandled async
+    // error in the host zone.
+    final tracked = future.whenComplete(() {
+      if (identical(_starting, future)) _starting = null;
+    });
+    unawaited(tracked.then((_) {}, onError: (_) {}));
+    return future;
+  }
 
   /// The one-line status, friendly when DAP is disabled.
   Future<void> _printStatus(PluginContext context) async {
     if (!_dapEnabled) {
       context.io.writeln(
         'DAP disabled — no master secret. '
-        'Run /dap and choose "Set master secret…", or export '
-        'DAP_MASTER_SECRET before launching.',
+        'Run /dap start (it generates one and brings up a local hub), '
+        'or export DAP_MASTER_SECRET before launching.',
       );
       return;
     }
@@ -174,7 +369,7 @@ final class HubPluginHost implements FahPlugin {
       // instead of leaving the user staring at a dead address.
       context.io.writeln(
         'hub disconnected${status.url != null ? ' — ${status.url}' : ''}\n'
-        'Start a hub, then pick "Connect to a hub…" in /dap to dial it.',
+        'Run /dap start — it launches a local hub and connects in one step.',
       );
       return;
     }
@@ -192,6 +387,11 @@ final class HubPluginHost implements FahPlugin {
       'DAP — Distributed Agents Platform: end-to-end-encrypted '
       'messaging between agents over a local hub',
       [
+        (
+          'start',
+          'Start DAP locally (one step)',
+          'generates a session secret if needed, launches a local hub, connects',
+        ),
         (
           'status',
           'Connection status',
@@ -215,6 +415,8 @@ final class HubPluginHost implements FahPlugin {
       ],
     );
     switch (choice) {
+      case 'start':
+        await _dapStart(context);
       case 'status':
         await _printStatus(context);
       case 'connect':
@@ -245,7 +447,7 @@ final class HubPluginHost implements FahPlugin {
     // hub must not wedge the menu, hence the timeout — the connect below
     // reports the real error either way.
     try {
-      await _hub.start().timeout(const Duration(seconds: 8));
+      await _startHub().timeout(const Duration(seconds: 8));
     } on Object {
       // The connect below reports the real error.
     }
@@ -269,6 +471,18 @@ final class HubPluginHost implements FahPlugin {
     // must not use that shape or Enter would set the name to "default".
     final name = await ask('display name (leave empty for the default): ');
     final channel = await ask('channel (leave empty for the default room): ');
+    try {
+      // Persist first (see _dapStart): with a stale dead config the
+      // earlier start() resolved the dead URL — a second start() after
+      // this write resolves the host the user just chose.
+      await hub.persistDapConfig(
+        url: host,
+        file: hub.defaultDapConfigFile(_home, _environment),
+      );
+      await _startHub().timeout(const Duration(seconds: 8));
+    } on Object {
+      // The connect below reports the real error.
+    }
     try {
       final connection = await _hub.connectTo(
         host,
@@ -308,7 +522,7 @@ final class HubPluginHost implements FahPlugin {
       'export DAP_MASTER_SECRET to make it permanent',
     );
     try {
-      await _hub.start();
+      await _startHub();
       await _printStatus(context);
     } on Object catch (error) {
       context.io.writeln('[hub] secret set; connect failed: $error');
