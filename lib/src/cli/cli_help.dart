@@ -80,6 +80,11 @@ OPTIONS
                                run (csv: web_search=off,mcp:fs=on); wins
                                over the FA_TOOLS env var and the config
                                tools: section
+  --log-file <path>            Tee every printed line (assistant text,
+                               tool trace, diagnostics) to <path> as it
+                               is produced — a live, `tail -f`-able
+                               session trace even when a parent CLI
+                               captures stdout; truncated on start
   --help, -h                   Show this help
   --version                    Print the version
 
