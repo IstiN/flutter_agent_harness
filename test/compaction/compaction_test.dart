@@ -261,6 +261,105 @@ void main() {
     });
   });
 
+  group('findCutPoint pairing boundaries (AC4, issue #85)', () {
+    AssistantMessage callOf(String id, int chars) => AssistantMessage(
+      content: [
+        TextContent(text: 'b' * chars),
+        ToolCall(id: id, name: 'bash', arguments: const {}),
+      ],
+      api: 'openai-completions',
+      provider: 'openrouter',
+      model: 'm1',
+      usage: Usage.zero,
+      stopReason: StopReason.toolUse,
+      timestamp: DateTime.utc(2026),
+    );
+
+    ToolResultMessage resultOf(String id, int chars) => ToolResultMessage(
+      toolCallId: id,
+      toolName: 'bash',
+      content: [TextContent(text: 'r' * chars)],
+      isError: false,
+      timestamp: DateTime.utc(2026),
+    );
+
+    /// The post-compaction message view the pipeline builds: summaries
+    /// project to user messages, kept MessageRecords pass through.
+    List<Message> rebuiltAt(List<SessionRecord> entries, int cutIndex) => [
+      UserMessage.text('HISTORY SUMMARY'),
+      for (final entry in entries.sublist(cutIndex))
+        if (entry is MessageRecord) entry.message,
+    ];
+
+    test('across every budget, the kept region never starts at a tool '
+        'result and never orphans one', () {
+      final entries = [
+        _record('u1', _user('u1', 400)),
+        _record('a1', callOf('c1', 400)),
+        _record('r1', resultOf('c1', 400)),
+        _record('u2', _user('u2', 400)),
+        _record('a2', callOf('c2', 400)),
+        _record('r2', resultOf('c2', 400)),
+        _record('u3', _user('u3', 400)),
+        _record('a3', callOf('c3', 400)),
+        _record('r3', resultOf('c3', 400)),
+      ];
+      var checked = 0;
+      for (var budget = 0; budget <= 1300; budget += 25) {
+        final cut = findCutPoint(entries, 0, entries.length, budget);
+        // The kept region never STARTS at a tool result: a cut to a
+        // toolResult record would orphan it by construction.
+        expect(
+          entries[cut.firstKeptEntryIndex].message.role,
+          isNot('toolResult'),
+          reason: 'budget $budget',
+        );
+        // Whatever the boundary, the request boundary can restore wire
+        // validity: an orphaned result (steering cuts) is dropped with a
+        // note, never silently shipped.
+        final rebuilt = rebuiltAt(entries, cut.firstKeptEntryIndex);
+        final repaired = repairToolPairing(rebuilt);
+        expect(
+          validateToolPairing(repaired.messages),
+          isEmpty,
+          reason:
+              'budget $budget: violations before repair = '
+              '${validateToolPairing(rebuilt)}',
+        );
+        checked++;
+      }
+      expect(checked, greaterThan(20));
+    });
+
+    test('a cut that lands on steering text between call and result '
+        'orphans the result — the repair drops it with a note (AC4)', () {
+      final entries = [
+        _record('u1', _user('u1', 400)),
+        _record('a1', callOf('c1', 400)),
+        _record('r1', resultOf('c1', 400)),
+        _record('u2', _user('u2', 400)),
+        _record('a2', callOf('c2', 400)),
+        // 100 (r2) < budget <= 102 (r2 + steer) exhausts exactly here.
+        _record('steer', UserMessage.text('steer!')),
+        _record('r2', resultOf('c2', 400)),
+      ];
+      final cut = findCutPoint(entries, 0, entries.length, 101);
+      expect(entries[cut.firstKeptEntryIndex].id, 'steer');
+
+      final rebuilt = rebuiltAt(entries, cut.firstKeptEntryIndex);
+      final violations = validateToolPairing(rebuilt);
+      expect(violations.single.kind, ToolPairingViolationKind.orphanedResult);
+      expect(violations.single.toolCallId, 'c2');
+
+      final repaired = repairToolPairing(rebuilt);
+      expect(validateToolPairing(repaired.messages), isEmpty);
+      expect(repaired.report.droppedResultIds, ['c2']);
+      // The note replaces the dropped result so the model is not gaslit.
+      final note = repaired.messages.last as UserMessage;
+      expect(note.content, contains('context note'));
+    });
+  });
+
   group('serializeConversation', () {
     test('serializes user, assistant and tool result messages', () {
       final messages = [

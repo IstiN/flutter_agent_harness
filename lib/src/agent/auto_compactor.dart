@@ -30,6 +30,7 @@ import '../session/session_tree.dart' show Session;
 import '../types.dart';
 import 'agent.dart' show AgentState;
 import 'agent_loop.dart' show StreamFunction;
+import 'tool_pairing.dart' show repairToolPairing;
 
 /// Per-pass outcome surfaced through [AutoCompactorHooks.onPass].
 final class AutoCompactorPass {
@@ -365,18 +366,17 @@ final class AutoCompactor {
       }
     }
     if (cut <= 0) return null;
-    // Pairing integrity: a token-boundary cut may land between an assistant
-    // tool call and its result. The kept region would then open with an
-    // orphaned ToolResultMessage, and strict providers reject EVERY
-    // subsequent request ('400: tool_call_id is not found') — the session
-    // is wedged until restart (Kimi production report). Skip leading
-    // results; their calls are already outside the kept region.
-    while (cut < messages.length && messages[cut] is ToolResultMessage) {
-      cut++;
-    }
     final kept = messages.sublist(cut);
     if (kept.isEmpty) return null;
-    return [
+    // Pairing integrity (issue #85): a token-boundary cut can land between
+    // an assistant tool call and its result, leaving an orphaned result at
+    // ANY position of the kept region — the production wedge survived the
+    // old leading-only skip as the second block of a merged wire message
+    // (`messages.0.content.1`). The request-boundary repairer is the single
+    // generalization: drops orphan results (with a visible note),
+    // synthesizes missing results, hoists displaced ones. In-memory only —
+    // the session file keeps every record.
+    final rebuilt = repairToolPairing([
       UserMessage.text(
         '[context trimmed locally: the summarizer endpoint was unavailable, '
         '$cut older message(s) were dropped from the live context at '
@@ -391,7 +391,8 @@ final class AutoCompactor {
           message.copyWith(usage: Usage.zero)
         else
           message,
-    ];
+    ]);
+    return rebuilt.messages;
   }
 
   /// Picks the summarizer for this pass: smol first, main as fallback when

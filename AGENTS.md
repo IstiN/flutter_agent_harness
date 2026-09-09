@@ -46,6 +46,17 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/compaction/branch_summarization.dart` — `generateBranchSummary` +
   `navigateSessionTree` (use instead of `Session.moveTo` for tree
   navigation); summary is a `branch_summary` record on the entered branch.
+- `lib/src/agent/tool_pairing.dart` — context pair-integrity (issue #85):
+  `validateToolPairing` checks the wire-equivalent message sequence (orphan
+  results, unanswered calls, duplicate ids, displaced results after
+  same-role merges); `repairToolPairing` fixes the outbound payload only
+  (drop orphan + note, synthesize interrupted results, hoist steering text
+  after results, uniquify duplicate ids symmetrically on call+result).
+  `agent_loop.dart` repairs before every request and retries once on a
+  pairing-shaped provider 400 (`ToolPairingRepairEvent` is the audit
+  trail); `_finishStreamed` stamps per-run position-counter ids
+  session-unique; `auto_compactor.dart`'s `_localTrimFallback` routes the
+  kept region through the same repairer.
 - `lib/src/trajectory/` — the trajectory ledger core (issue #10): finalized
   session records project into an immutable `TrajectorySnapshot` through
   `TrajectorySnapshotBuilder.append`/`applyEvent` — streamed agent events
