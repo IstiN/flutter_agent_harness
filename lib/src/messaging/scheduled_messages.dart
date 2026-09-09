@@ -23,30 +23,45 @@ final class ScheduledMessageQueue {
     required MessagingRepository Function() repo,
     required String Function() root,
     String Function()? selfMailbox,
+    String Function()? ownerPrefix,
     this.onScheduled,
     this.onFired,
   }) : _env = env,
        _repo = repo,
        _selfMailbox = selfMailbox,
+       _ownerPrefix = ownerPrefix,
        _root = root;
 
   final ExecutionEnv _env;
   final MessagingRepository Function() _repo;
   final String Function() _root;
 
-  /// The scheduling agent's own mailbox (e.g. `&lt;sessionId&gt;/main`). Records
+  /// The scheduling agent's own mailbox (e.g. `<sessionId>/main`). Records
   /// without an explicit `to` default here, and `from` too — a missing
   /// self mailbox stored the literal string 'self', delivering reminders
   /// into a phantom mailbox nobody drains (lost production mail).
   final String Function()? _selfMailbox;
 
-  /// Host-visible notice when a record is scheduled ('in 25m: &lt;text&gt;').
+  /// This instance's mailbox prefix (the session id), captured live. Stored
+  /// on every record as `owner` at schedule time: a sweeper may re-address
+  /// a self-addressed record to its LIVE mailbox only when the stored owner
+  /// matches its own prefix — a differing owner means another live instance
+  /// scheduled it, and the record is left for its owner.
+  final String Function()? _ownerPrefix;
+
+  /// Host-visible notice when a record is scheduled ('in 25m: <text>').
   final void Function(String text)? onScheduled;
 
-  /// Host-visible notice when a record fires ('fired: &lt;text&gt;').
+  /// Host-visible notice when a record fires ('fired: <text>').
   final void Function(String text)? onFired;
 
   String _self() => _selfMailbox?.call() ?? 'self';
+
+  /// Whether this instance may consume a self-addressed record: the stored
+  /// owner prefix is empty (legacy, pre-tagging) or matches this instance's
+  /// live prefix. A differing owner belongs to another live instance.
+  bool _owns(String owner) =>
+      owner.isEmpty || owner == (_ownerPrefix?.call() ?? '');
 
   /// Compact human delay: 90s / 25m / 2h / 1d.
   static String formatDelay(Duration d) {
@@ -58,6 +73,41 @@ final class ScheduledMessageQueue {
   }
 
   String get _dir => '${_root()}/_scheduled';
+
+  /// The root pending records were last scanned under: a live-root change
+  /// (session-cwd adoption) carries them over before the next scan, or
+  /// repointing the queue strands pre-adoption reminders where nobody looks.
+  String? _lastScanRoot;
+
+  /// The live `_scheduled/` dir, migrating pending records across a root
+  /// change first (best-effort: unreadable sources stay put).
+  Future<String> _pendingDir() async {
+    final root = _root();
+    final previous = _lastScanRoot;
+    _lastScanRoot = root;
+    if (previous == null || previous == root) return _dir;
+    final from = '$previous/_scheduled';
+    final entries = (await _env.listDir(from)).valueOrNull ?? const [];
+    for (final entry in entries) {
+      if (entry.kind == FileKind.directory || !entry.path.endsWith('.json')) {
+        continue;
+      }
+      final path = entry.path.contains('/')
+          ? entry.path
+          : '$from/${entry.path}';
+      final text = (await _env.readTextFile(path)).valueOrNull;
+      if (text == null) continue;
+      final name = path.split('/').last;
+      try {
+        (await _env.writeFile('$_dir/$name', text)).getOrThrow();
+      } on Object {
+        continue; // unwritable target — leave in the old root
+      }
+      await _env.remove(path, force: true);
+    }
+    return _dir;
+  }
+
   Timer? _timer;
 
   /// Persists a delayed message and arms the timer. Returns the record id.
@@ -74,6 +124,7 @@ final class ScheduledMessageQueue {
       'to': to ?? _self(),
       'from': from ?? _self(),
       'text': text,
+      'owner': _ownerPrefix?.call() ?? '',
     };
     (await _env.createDir(_dir)).getOrThrow();
     (await _env.writeFile('$_dir/$id.json', jsonEncode(record))).getOrThrow();
@@ -191,16 +242,15 @@ final class ScheduledMessageQueue {
   }
 
   Future<int> _deliverDueInner() async {
-    final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
+    final dir = await _pendingDir();
+    final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
     var delivered = 0;
     for (final entry in entries) {
       if (entry.kind == FileKind.directory || !entry.path.endsWith('.json')) {
         continue;
       }
       // listDir implementations differ on absolute vs bare names.
-      final path = entry.path.contains('/')
-          ? entry.path
-          : '$_dir/${entry.path}';
+      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
       final record = await _readRecord(path);
       if (record == null) continue;
       final dueMs = record['dueMs'] as int?;
@@ -215,6 +265,13 @@ final class ScheduledMessageQueue {
       // strands the reminder in a mailbox nobody drains while the tool
       // already reported success (the lost-schedule bug).
       final self = _self();
+      // Ownership gate: re-address to the live self mailbox only when this
+      // instance scheduled the record (_owns). A record owned by another
+      // live instance is left for its owner: re-addressing it here steals
+      // the reminder into the wrong mailbox and deletes the file
+      // (cross-instance self-theft — issue #59).
+      final owner = record['owner'] as String? ?? '';
+      if (recordedTo == from && !_owns(owner)) continue;
       final to = (recordedTo == from && self != 'self' && self.isNotEmpty)
           ? self
           : recordedTo;
@@ -256,15 +313,20 @@ final class ScheduledMessageQueue {
 
   /// Scans the pending records for the earliest due time (null: none).
   Future<int?> _nearestDueMs() async {
-    final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
+    final dir = await _pendingDir();
+    final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
     int? nearest;
     for (final entry in entries) {
       if (!entry.path.endsWith('.json')) continue;
-      final path = entry.path.contains('/')
-          ? entry.path
-          : '$_dir/${entry.path}';
+      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
       final record = await _readRecord(path);
       final due = record?['dueMs'] as int?;
+      // Foreign self-addressed records arm no timer here: this instance can
+      // never deliver them, and arming would hot-loop a zero-delay timer
+      // until the owner sweeps the record (issue #59).
+      final to = record?['to'] as String? ?? _self();
+      final from = record?['from'] as String? ?? to;
+      if (to == from && !_owns(record?['owner'] as String? ?? '')) continue;
       if (due != null && (nearest == null || due < nearest)) {
         nearest = due;
       }

@@ -437,6 +437,10 @@ class AgentService extends ChangeNotifier
       // itself is already visible in chat as a user message, so no extra
       // UI notice channel here; the CLI prints [sched] lines).
       selfMailbox: () => _subagentManager?.mailboxOf('main') ?? 'main',
+      // Ownership tag for schedule records: a sweeper re-addresses a
+      // self-addressed record only when the stored prefix matches this
+      // session — another instance's record stays with its owner (#59).
+      ownerPrefix: () => _subagentManager?.mailboxPrefix ?? '',
     );
     // Arm the delivery timer; best-effort (an unwritable root keeps the
     // app booting, the tools just report unavailable).
