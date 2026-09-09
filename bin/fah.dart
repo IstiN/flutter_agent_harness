@@ -1452,7 +1452,23 @@ Future<void> _runApp(List<String> args) async {
     ...effective.promptTemplateDirs,
   ];
 
-  final io = _TerminalCliIO(headless: headlessPrompt != null);
+  final terminalIo = _TerminalCliIO(headless: headlessPrompt != null);
+  // --log-file (issue #91): tee the rendered session trace into a file so
+  // a parent CLI's stdout capture cannot swallow it. The sink is a sync
+  // RandomAccessFile — unbuffered, so `tail -f` streams the trace live and
+  // even a SIGINT exit never loses the tail of the log.
+  RandomAccessFile? logTeeFile;
+  CliIO io = terminalIo;
+  if (parsed.logFile case final logPath?) {
+    final RandomAccessFile tee;
+    try {
+      tee = File(logPath).openSync(mode: FileMode.write);
+    } on Object catch (error) {
+      _fail('cannot open --log-file "$logPath": $error');
+    }
+    logTeeFile = tee;
+    io = TeeCliIO(terminalIo, tee.writeStringSync);
+  }
   // The one boot notice for env preconfig (same channel as the raw-mode
 
   // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
@@ -1879,7 +1895,7 @@ Future<void> _runApp(List<String> args) async {
         // (bounded — a stuck provider cannot wedge the exit), let the
         // partial transcript persist, then print the resume hint. Esc
         // inside the TUI stays the abort-without-exit key.
-        io.resetRawMode();
+        terminalIo.resetRawMode();
         stdout.writeln();
         unawaited(
           Future(() async {
@@ -1888,7 +1904,7 @@ Future<void> _runApp(List<String> args) async {
             // inherits mouse reporting and wheel scrolls print escapes.
             await resetTerminalForShell();
             if (wasBusy) {
-              io.fireInterrupt();
+              terminalIo.fireInterrupt();
               await cli.waitForIdle();
             }
             await cli.deleteSessionIfEmpty();
@@ -1910,6 +1926,7 @@ Future<void> _runApp(List<String> args) async {
       code = await cli.runHeadless(headlessPrompt);
     } finally {
       await sigintSub.cancel();
+      logTeeFile?.closeSync();
     }
     exit(code);
   }
@@ -1918,6 +1935,7 @@ Future<void> _runApp(List<String> args) async {
     await cli.run();
   } finally {
     await sigintSub.cancel();
+    logTeeFile?.closeSync();
   }
 
   // dart_tui's shutdown writes the reset sequences (?25h ?1049l ?1002l etc.)
