@@ -26,6 +26,13 @@
   guard registration, resume-refresher exemption, regenerated DAP page
   snapshots) and the golden-test fake missing the DapHubService binding
   members.
+- test(dap): protected-hub e2e — the Playwright dap spec now also runs
+  against a PASSWORD-PROTECTED hub (FakeHub(masterSecret:) +
+  DAP_E2E_HUB_SECRET on the e2e hub server): a stranger boot is 401'd
+  before any hello (client stays reconnecting), the password boot
+  connects, and a CLI enrolled with the same password exchanges DMs with
+  the extension end to end. The shared scripted mock gains resetScript()
+  so every test's CLI gets the dap_dm tool call as call #1.
 
 ## 0.1.331
 

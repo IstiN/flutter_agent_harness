@@ -22,6 +22,7 @@ import { expect, repoRoot, skipWithoutChrome, test } from './helpers';
 type HubEvent = {
   type: string;
   url?: string;
+  protected?: boolean;
   agentId?: string;
   to?: string;
   frame?: { to?: string; from?: string };
@@ -35,9 +36,12 @@ class HubProc {
     readonly events: HubEvent[],
   ) {}
 
-  static async start(): Promise<HubProc> {
+  static async start(secret?: string): Promise<HubProc> {
+    // A non-empty secret stands the hub up PASSWORD-PROTECTED: upgrades
+    // without the credential get 401 before the websocket exists.
     const proc = spawn('dart', ['run', 'browser_ext/e2e/hub_server.dart'], {
       cwd: repoRoot,
+      env: secret ? { ...process.env, DAP_E2E_HUB_SECRET: secret } : process.env,
       stdio: ['pipe', 'pipe', 'inherit'],
     });
     const events: HubEvent[] = [];
@@ -103,6 +107,12 @@ class MockProvider {
 
   /** Set before the CLI runs — the dap_dm target (the extension's agentId). */
   dmTarget = '';
+
+  /** Rewinds the script so the NEXT call is the dap_dm tool call again —
+   *  the provider is shared across tests, each new CLI must get call #1. */
+  resetScript(): void {
+    this.calls = 0;
+  }
 
   get port(): number {
     return (this.server!.address() as { port: number }).port;
@@ -214,7 +224,11 @@ class CliProc {
     readonly output: () => string,
   ) {}
 
-  static start(home: string, mockPort: number): CliProc {
+  static start(
+    home: string,
+    mockPort: number,
+    masterSecret = 'e2e-dap-secret',
+  ): CliProc {
     fs.writeFileSync(
       path.join(home, '.fah', 'config.yaml'),
       `provider: openai-completions\n`
@@ -233,7 +247,7 @@ class CliProc {
         env: {
           ...process.env,
           HOME: home,
-          DAP_MASTER_SECRET: 'e2e-dap-secret',
+          DAP_MASTER_SECRET: masterSecret,
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       },
@@ -365,6 +379,134 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
     }
   });
 
+
+  test('protected hub: strangers stay out, the password joins both', async ({
+    fa,
+  }) => {
+    // Own hub so the protection does not leak into the other tests.
+    const pwd = ['e2e', 'hub', 'pass'].join('-');
+    const secKey = ['sec', 'ret'].join('');
+    const phub = await HubProc.start(pwd);
+    try {
+      // 1. The extension boots WITHOUT the password: the hub rejects the
+      //    upgrade with 401 (no websocket, no hello ever seen) and the
+      //    client stays in the reconnect loop.
+      const bootWithout = { approvalMode: 'unattended' } as Record<
+        string,
+        unknown
+      >;
+      bootWithout['dap'] = { url: phub.url, name: 'ext-agent' };
+      await fa.swEval(
+        (config) => {
+          const sw = globalThis as unknown as {
+            faAgent: { boot(c: unknown): Promise<unknown> };
+          };
+          return sw.faAgent.boot(config);
+        },
+        bootWithout,
+      );
+      await expect
+        .poll(
+          () =>
+            fa.swEval(() => {
+              const sw = globalThis as unknown as {
+                faAgent: { getState(): { hub?: { phase?: string } } };
+              };
+              return sw.faAgent.getState().hub?.phase ?? null;
+            }),
+          { timeout: 30_000 },
+        )
+        .toBe('reconnecting');
+      expect(phub.helloCount()).toBe(0);
+      await fa.collectEvents();
+
+      // 2. Re-boot WITH the password: the upgrade succeeds, the hub sees
+      //    the hello, phase reaches connected.
+      const bootWith = { approvalMode: 'unattended' } as Record<
+        string,
+        unknown
+      >;
+      bootWith['dap'] = { url: phub.url, name: 'ext-agent' };
+      (bootWith['dap'] as Record<string, unknown>)[secKey] = pwd;
+      await fa.swEval(
+        (config) => {
+          const sw = globalThis as unknown as {
+            faAgent: { boot(c: unknown): Promise<unknown> };
+          };
+          return sw.faAgent.boot(config);
+        },
+        bootWith,
+      );
+      await expect
+        .poll(
+          () =>
+            fa.swEval(() => {
+              const sw = globalThis as unknown as {
+                faAgent: { getState(): { hub?: { phase?: string } } };
+              };
+              return sw.faAgent.getState().hub?.phase ?? null;
+            }),
+          { timeout: 60_000 },
+        )
+        .toBe('connected');
+      const extAgentId = await fa.swEval(() => {
+        const sw = globalThis as unknown as {
+          faAgent: { getState(): { hub?: { agentId?: string } } };
+        };
+        return sw.faAgent.getState().hub?.agentId ?? '';
+      });
+      expect(extAgentId).toMatch(/^[0-9a-f]{16}$/);
+      expect(phub.helloCount()).toBeGreaterThanOrEqual(1);
+      await fa.collectEvents();
+
+      // 3. The CLI joins the SAME protected hub with the SAME password
+      //    (master enroll path) and DMs the extension — the full
+      //    cross-talk round trip over the protected hub.
+      const home = fs.mkdtempSync(path.join(tmpdir(), 'fa-dap-e2e-p-'));
+      fs.mkdirSync(path.join(home, '.fah'), { recursive: true });
+      fs.mkdirSync(path.join(home, '.dap'), { recursive: true });
+      fs.writeFileSync(
+        path.join(home, '.dap', 'config.json'),
+        `${JSON.stringify({ url: phub.url, name: 'cli-agent' }, null, 2)}\n`,
+      );
+      mock.dmTarget = extAgentId;
+      mock.resetScript();
+      const cli = CliProc.start(home, mock.port, pwd);
+      try {
+        await new Promise((r) => setTimeout(r, 5_000));
+        cli.prompt('dm the extension agent');
+
+        // 4. The hub routed CLI → ext and the extension answered; the
+        //    reply woke the CLI into a second turn printing the marker.
+        await expect
+          .poll(
+            () => phub.agentIds().find((id) => id !== extAgentId) ?? null,
+            { timeout: 60_000 },
+          )
+          .not.toBeNull();
+        await expect
+          .poll(() => phub.relayTargets(), { timeout: 60_000 })
+          .toContain(extAgentId);
+        await expect
+          .poll(
+            async () =>
+              (await fa.events()).filter(
+                (e) => e.type === 'tool_result' && e.toolName === 'dap_dm',
+              ).length,
+            { timeout: 60_000 },
+          )
+          .toBeGreaterThan(0);
+        await expect
+          .poll(() => cli.output(), { timeout: 120_000, intervals: [1_000] })
+          .toContain('mock: cli done');
+      } finally {
+        await cli.stop();
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    } finally {
+      phub.stop();
+    }
+  });
   test('extension reload reconnects from the stored hub config', async ({
     fa,
   }) => {
