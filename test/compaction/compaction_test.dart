@@ -367,7 +367,7 @@ void main() {
     test('system prompt forbids continuing the conversation', () {
       expect(
         summarizationSystemPrompt,
-        startsWith('You are a context summarization assistant.'),
+        startsWith('You are a context checkpoint assistant.'),
       );
       expect(
         summarizationSystemPrompt,
@@ -398,7 +398,7 @@ void main() {
     });
 
     test('update prompt references the previous summary tags', () {
-      expect(updateSummarizationPrompt, contains('<previous-summary>'));
+      expect(updateSummarizationPrompt, contains('<previous-checkpoint>'));
       expect(
         updateSummarizationPrompt,
         contains('PRESERVE all existing information'),

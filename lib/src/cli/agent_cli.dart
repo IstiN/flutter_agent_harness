@@ -39,6 +39,7 @@ import '../agent/auto_compactor.dart';
 import '../providers/models_for_endpoint.dart';
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart';
+import '../a2a/a2a_mail_gateway.dart';
 import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import 'agent_tree.dart';
@@ -390,6 +391,12 @@ class AgentCli {
     // Phase 5a: A2A remote agents from the `a2a:` config section. Connects
     // lazily per server (never blocks boot).
     _a2aManager = A2aManager(config.a2aConfig);
+    // Issue #27 phase 3: cross-machine `agent_message` rides the A2A
+    // boundary gateway (the `a2a:` config's server per machine).
+    _subagentManager.a2aGateway = A2aMailGateway(
+      manager: _a2aManager,
+      machineName: config.machineName,
+    );
     // Discover agent types from the agent roots (.fah/.agents/.claude/.github/
     // .codex) — fire-and-forget; the registry starts with built-ins and merges
     // discovered types when they arrive. Third-party roots ride the same
@@ -1666,7 +1673,8 @@ class AgentCli {
     try {
       // List every session in the shared root, across all workspaces, so a
       // session created in the Fa app or in another `fa` run is reachable.
-      sessions = await _repo.list();
+      // The current folder's sessions lead the list (issue #83).
+      sessions = sortSessionsCurrentFolderFirst(await _repo.list(), _env.cwd);
     } on Object catch (error) {
       // A failing store must surface as an inline error, never kill the TUI
       // (a Cmd exception in dart_tui terminates the whole program silently).

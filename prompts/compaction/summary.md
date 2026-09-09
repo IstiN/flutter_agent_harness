@@ -1,10 +1,14 @@
 ---
 name: summary
-description: Structured checkpoint prompt for a first-time compaction summary. Ported verbatim from pi SUMMARIZATION_PROMPT.
+description: Lossless context-checkpoint prompt for a first-time compaction. Forked from pi's SUMMARIZATION_PROMPT; body wording diverges deliberately (no s-word framing).
 ---
-The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
+The messages above are a conversation to hand off. Write a complete context checkpoint for the agent that continues this work. Preserve EVERY fact, path, error message, and open task — the continuation has no access to what you omit. This is a lossless handoff, not a digest.
 
 Use this EXACT format:
+
+## Open User Requests
+- [ ] <each user ask — initial or steering — with THEIR acceptance criterion> (asked <date>, record id)
+  List EVERY ask; steering counts in full. Closes ONLY via Done+evidence (test id) or explicit user cancel. No evidence = "(Partial — acceptance pending)", stays. Empty: "(none)".
 
 ## Goal
 [What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
@@ -33,4 +37,4 @@ Use this EXACT format:
 - [Any data, examples, or references needed to continue]
 - [Or "(none)" if not applicable]
 
-Keep each section concise. Preserve exact file paths, function names, and error messages.
+Keep each section tight but complete. Preserve exact file paths, function names, and error messages.

@@ -81,7 +81,7 @@ void main() {
       final prompt = fake.requests.single.prompt;
       expect(
         prompt,
-        contains('<previous-summary>\nOLD SUMMARY\n</previous-summary>'),
+        contains('<previous-checkpoint>\nOLD SUMMARY\n</previous-checkpoint>'),
       );
       expect(prompt, endsWith(updateSummarizationPrompt));
     });
@@ -413,7 +413,7 @@ void main() {
       final manager = CompactionManager(summarize: fake.call);
       await manager.compact(preparationOf(previousSummary: 'EARLIER'));
       expect(fake.requests.single.prompt, contains('EARLIER'));
-      expect(fake.requests.single.prompt, contains('<previous-summary>'));
+      expect(fake.requests.single.prompt, contains('<previous-checkpoint>'));
     });
   });
 

@@ -60,6 +60,10 @@ AgentTool configTool(ConfigService service) {
     name: 'config',
     label: 'config',
     tier: ApprovalTier.write,
+    // A batch of config calls reads and rewrites the same files — run the
+    // batch one call at a time or the read-modify-write cycles interleave
+    // (the e2e suite caught exactly that; issue #29 S4).
+    executionMode: ToolExecutionMode.sequential,
     description:
         'Inspect and edit the fa configuration — the user file '
         '~/.fah/config.yaml and the project .fah/config.yaml — without a '

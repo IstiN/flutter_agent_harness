@@ -1969,6 +1969,74 @@ void main() {
       },
     );
 
+    test(
+      '/sessions lists the current folder first, each group newest first',
+      () async {
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        // Creation order: here-old, there-new, here-new.
+        final hereOld = await repo.create(
+          JsonlSessionCreateOptions(
+            cwd: '/work',
+            id: 'here-old-id',
+            metadata: const {'agent': 'fa'},
+          ),
+        );
+        await hereOld.appendSessionName('here-old');
+        final thereNew = await repo.create(
+          JsonlSessionCreateOptions(
+            cwd: '/other',
+            id: 'there-new-id',
+            metadata: const {'agent': 'fa'},
+          ),
+        );
+        await thereNew.appendSessionName('there-new');
+        final hereNew = await repo.create(
+          JsonlSessionCreateOptions(
+            cwd: '/work',
+            id: 'here-new-id',
+            metadata: const {'agent': 'fa'},
+          ),
+        );
+        await hereNew.appendSessionName('here-new');
+        // Activity order (file mtime): here-new < there-new < here-old —
+        // a pure activity sort would interleave the folders.
+        Future<void> touch(Session session) async {
+          final path = (await session.getMetadata()).path;
+          await env.writeFile(
+            path,
+            (await env.readTextFile(path)).getOrThrow(),
+          );
+        }
+
+        await touch(hereNew);
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        await touch(thereNew);
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        await touch(hereOld);
+
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call);
+        final run = cli.run();
+
+        io.sendLine('/sessions');
+        await waitForIt(
+          () =>
+              io.out.toString().contains('here-old') &&
+              io.out.toString().contains('there-new'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        final output = io.out.toString();
+        final hereOldAt = output.indexOf('here-old');
+        final hereNewAt = output.indexOf('here-new');
+        final thereNewAt = output.indexOf('there-new');
+        // Current folder (/work) sessions first, newest first; then the rest.
+        expect(hereOldAt, lessThan(hereNewAt), reason: output);
+        expect(hereNewAt, lessThan(thereNewAt), reason: output);
+      },
+    );
+
     test('switching to a session from another folder adopts its cwd', () async {
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
       final other = await repo.create(

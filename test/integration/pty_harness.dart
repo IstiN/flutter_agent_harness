@@ -13,9 +13,13 @@
 ///   malformed-tolerant) — there is no byte stream.
 /// - `pty.write(String)` — keystrokes go in as Dart strings with escapes
 ///   (`'\r'`, `'\x1b[A'`).
-/// - `raw: true` puts the slave into raw mode from the start (no canonical
-///   line buffering, no kernel echo, no ISIG), so arrow keys and Ctrl+C
-///   reach the CLI as bytes.
+/// - `raw: true` (the default) puts the slave into raw mode from the start
+///   (no canonical line buffering, no kernel echo, no ISIG), so arrow keys
+///   and Ctrl+C reach the CLI as bytes.
+/// - `raw: false` keeps the kernel DEFAULT termios — ICRNL stays on, so the
+///   line discipline rewrites a master-written CR to LF before the child
+///   reads it. This is what real PTY hosts (IDE embedded terminals) do to
+///   the wire; the newline-wire suite must run under it too (issue #77).
 /// - The child environment inherits ONLY TERM/LANG/LOGNAME/USER/DISPLAY/
 ///   LC_TYPE/HOME/PATH from the parent plus whatever `environment:` adds —
 ///   so `PUB_CACHE` must be passed through explicitly when HOME is
@@ -55,6 +59,7 @@ final class FaCliHarness {
     int columns = 80,
     int rows = 24,
     int? vmServicePort,
+    bool raw = true,
   }) async {
     final env = <String, String>{
       'TERM': 'xterm-256color',
@@ -82,7 +87,7 @@ final class FaCliHarness {
       ],
       workingDirectory: workingDirectory ?? Directory.current.path,
       environment: env,
-      raw: true,
+      raw: raw,
     );
     // The PTY starts at 80x20 (pty2 default); size it to the requested
     // geometry before the CLI finishes booting.

@@ -300,6 +300,17 @@ factual: paths, commands, invariants — no essays.
   hosts inject it; the plugin host skips its separate inbox when the
   fabric owns delivery (one hub-mail consumer). Subagent drains never
   touch the hub.
+  Issue #27 phase 3 adds the A2A boundary gateway: `agent_message` accepts
+  `name@machine` for OTHER machines — `A2aMailGateway` (lib/src/a2a/
+  a2a_mail_gateway.dart) resolves the machine against the `a2a:` config
+  section (the server named like the machine) and sends the mail as an A2A
+  `message/send` with a `faMail` metadata envelope (id/from/to/text/sentAt/
+  hops, sender address stamped `mailbox@machine` for replies); a failed
+  remote task errors instead of dead-dropping. Inbound: `fa serve --a2a`
+  mounts a mail sink — envelope-carrying sends deposit into the project's
+  file inboxes (resolved by mailbox id or session display name) instead of
+  running a turn; endpoints without a sink fail such sends honestly. The
+  hub stays the intra-machine transport; A2A stays the interop boundary.
 - `lib/src/session/attach/` — attached-session infrastructure (the Fa app
   watching a live `fa` CLI session 1:1 and handing it input): three
   INTERFACES so a later network impl (`fa serve --attach`, remote headless)

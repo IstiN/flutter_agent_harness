@@ -274,7 +274,12 @@ final class A2aClient {
   }
 
   /// Sends a message to the agent (non-streaming). Returns the task.
-  Future<A2aTask> sendMessage(String text) async {
+  /// [metadata] rides the message envelope (the A2A wire's standard
+  /// message metadata — the fa-mail gateway marks fabric mail with it).
+  Future<A2aTask> sendMessage(
+    String text, {
+    Map<String, dynamic>? metadata,
+  }) async {
     final response = await _client.post(
       Uri.parse(baseUrl),
       headers: _headers(),
@@ -285,6 +290,7 @@ final class A2aClient {
             'parts': [
               {'type': 'text', 'text': text},
             ],
+            'metadata': ?metadata,
           },
         }),
       ),

@@ -713,6 +713,7 @@ Future<void> _serveA2a({
   required String apiKey,
   required int port,
   required String? token,
+  required A2aMailSink? mailSink,
 }) async {
   await runA2aServer(
     port: port,
@@ -720,6 +721,7 @@ Future<void> _serveA2a({
     agentName: 'fa',
     agentDescription:
         'Fa CLI agent (flutter_agent_harness) — $provider/${model.id}',
+    mailSink: mailSink,
     runner: (userMessage) async {
       final stream = providerStreamFunction(provider, apiKey)(
         model,
@@ -1483,16 +1485,25 @@ Future<void> _runApp(List<String> args) async {
   }
 
   // `fa serve --a2a [--port N] [--token T]` — mount this agent as an A2A
-  // endpoint (Phase 5b). Uses the fully-resolved model/key/provider.
+  // endpoint (Phase 5b). Uses the fully-resolved model/key/provider. The
+  // endpoint also accepts cross-machine fabric mail (issue #27 phase 3):
+  // inbound faMail envelopes deposit into this project's file inboxes.
   if (serve.serveA2a) {
     final port = _serveFlagInt(args, '--port', 8300);
     final token = _serveFlagStr(args, '--token');
+    final projectFabric = _projectMessagingRepository(
+      env: cliEnv,
+      sessionRoot: sessionRoot,
+      homeDir: home,
+    );
     await _serveA2a(
       model: model,
       provider: provider,
       apiKey: apiKey,
       port: port,
       token: token,
+      mailSink: (envelope) =>
+          A2aMailGateway.accept(envelope, fabric: projectFabric),
     );
     exit(0);
   }

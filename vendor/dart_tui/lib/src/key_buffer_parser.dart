@@ -108,10 +108,13 @@ TeaKey? parseKeyFromBuffer(List<int> buffer) {
       buffer.removeRange(0, 2);
       return const TeaKey(code: KeyCode.backspace, modifiers: {KeyMod.alt});
     }
-    // Alt+Enter: ESC CR. Terminals without kitty/modifyOtherKeys support
-    // (e.g. Warp's legacy TUI passthrough) report Shift+Enter this way —
-    // decode it instead of dropping it into `unknown`.
-    if (b1 == 0x0d) {
+    // Alt+Enter: ESC CR (terminals without kitty/modifyOtherKeys support,
+    // e.g. Warp's legacy TUI passthrough) and ESC LF — the same wire after
+    // a kernel line discipline with ICRNL still on translated the CR before
+    // the app read it (fa issue #77; the fallback for hosts that reset
+    // termios under us or where stty is unavailable). Neither byte pair has
+    // any other standard meaning.
+    if (b1 == 0x0d || b1 == 0x0a) {
       buffer.removeRange(0, 2);
       return const TeaKey(code: KeyCode.enter, modifiers: {KeyMod.alt});
     }

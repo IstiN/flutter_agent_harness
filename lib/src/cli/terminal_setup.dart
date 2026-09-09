@@ -117,6 +117,8 @@ List<String> terminalSetupLines(EnvVarLookup env) {
     '',
     'In EVERY terminal, Ctrl+O inserts a newline in the composer right now',
     '(Alt+Enter works wherever the terminal sends ESC+CR). Enter submits.',
+    'fa also clears the tty CR→LF input rewrite, so embedded PTY hosts',
+    '(IDE terminals) that send Shift+Enter as ESC+CR work out of the box.',
   ]);
   return lines;
 }
