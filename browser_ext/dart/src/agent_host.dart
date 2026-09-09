@@ -233,6 +233,11 @@ final class AgentHost implements UiHostBackend {
     attachApproval(_agent, _approvals);
     _agent.subscribe(_onAgentEvent);
     _booted = true;
+    // DAP attach must happen on the boot path too, not only in
+    // reconfigure: after an extension reload the auto-boot reads faDap
+    // from storage, and without this call the hub presence silently never
+    // starts (config parses, no socket, panel shows "Unreachable").
+    _applyDapConfig(config.dap);
     unawaited(_refreshArchives());
     _emitStatus();
   }

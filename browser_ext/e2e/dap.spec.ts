@@ -77,6 +77,12 @@ class HubProc {
       .filter(Boolean);
   }
 
+  /** Accepted hellos so far — a reconnect after an extension reload
+   *  re-hellos (the registry keeps the id, so agentIds would not move). */
+  helloCount(): number {
+    return this.events.filter((e) => e.type === 'hello').length;
+  }
+
   relayTargets(): string[] {
     return this.events
       .filter((e) => e.type === 'relayed')
@@ -357,5 +363,42 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
       await cli.stop();
       fs.rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  test('extension reload reconnects from the stored hub config', async ({
+    fa,
+  }) => {
+    // Regression pin for the cold-boot gap: _applyDapConfig used to run
+    // only in AgentHost.reconfigure, so after a full extension reload the
+    // SW's auto-boot parsed the stored faDap but never opened the socket —
+    // the panel showed "Unreachable" with an empty Network tab. Seed the
+    // config straight into storage (the exact post-reload state), reload
+    // the extension, and require a NEW hello on the hub with no explicit
+    // faAgent.boot call anywhere.
+    // Seed via the SW (awake + stable — the panel page can be mid-boot
+    // navigation right after the harness opens it).
+    await fa.swEval(
+      (dap) =>
+        new Promise<void>((resolve) => {
+          const g = globalThis as unknown as {
+            chrome: {
+              storage: {
+                local: { set(items: unknown, cb: () => void): void };
+              };
+            };
+          };
+          g.chrome.storage.local.set({ faDap: dap }, () => resolve());
+        }),
+      { url: hub.url, name: 'ext-cold' },
+    );
+    const hellosBefore = hub.helloCount();
+    // A REAL browser restart on the same profile: the SW cold-starts, the
+    // auto-boot reads the stored faDap and must connect on its own.
+    // (chrome.runtime.reload() permanently unloads a --load-extension
+    // extension under automation — residency.spec.ts documents the probe.)
+    await fa.restartBrowser();
+    await expect
+      .poll(() => hub.helloCount(), { timeout: 60_000 })
+      .toBeGreaterThan(hellosBefore);
   });
 });

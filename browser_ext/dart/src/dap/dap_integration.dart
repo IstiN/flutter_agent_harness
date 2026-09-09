@@ -111,10 +111,14 @@ final class DapIntegration {
   /// starts the client. Quiet on failure — the status reflects it.
   Future<void> start() async {
     try {
+      print('[dap] start: url=${config.url} '
+          'name=${config.name.isEmpty ? '—' : config.name}');
       final stored = await config.loadKeyFile();
       final identity = stored != null
           ? await DapIdentity.fromKeyFile(stored)
           : await _freshIdentity();
+      print('[dap] identity ${stored != null ? 'loaded' : 'generated'}: '
+          '${identity.agentId}');
       final client = DapClient(
         identity: identity,
         url: config.url,

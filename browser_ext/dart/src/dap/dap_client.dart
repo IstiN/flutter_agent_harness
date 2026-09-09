@@ -199,12 +199,14 @@ final class DapClient {
   void _connect() {
     if (_stopped || _fatal) return;
     final gen = ++_generation;
+    print('[dap] ws → $url (attempt ${_attempt + 1})');
     final ws = _WebSocket(url);
     _ws = ws;
     _awaitingWelcome = true;
     if (_attempt == 0) _set(DapPhase.connecting);
 
     void onOpen() {
+      print('[dap] ws open — sending hello');
       if (gen == _generation) unawaited(_sendHello());
     }
 
@@ -225,6 +227,8 @@ final class DapClient {
       } on Object {
         // Non-CloseEvent close — fall through with an empty reason.
       }
+      print('[dap] ws closed'
+          '${reason.isEmpty ? '' : ' ($reason)'} — retry #$_attempt');
       _set(DapPhase.reconnecting, reason: reason);
       _retry?.cancel();
       _retry = Timer(reconnectBackoff(_attempt), _connect);
@@ -265,6 +269,7 @@ final class DapClient {
         _awaitingWelcome = false;
         _attempt = 0;
         agentId = frame['agentId'] as String? ?? agentId;
+        print('[dap] welcome — online as $agentId');
         _set(DapPhase.connected);
         _send(jsonEncode(flushFrame())); // drain offline mail
       // No auto-join: channels v1 skipped (no channel key store here).
@@ -294,6 +299,7 @@ final class DapClient {
         final code = frame['code'] as String? ?? 'error';
         if (_awaitingWelcome) {
           // Rejected hello is fatal (§3.1): surface it and stop retrying.
+          print('[dap] hub rejected hello: $code — stopped');
           _fatal = true;
           _generation++;
           _ws?.close();

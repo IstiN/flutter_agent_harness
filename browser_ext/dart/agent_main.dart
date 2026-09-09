@@ -733,12 +733,20 @@ Map<String, bool> _browserToolsFrom(Object? raw) {
 
 /// faDap storage shape: `{url, name}`. Empty url = no hub presence.
 DapConfig? _dapFrom(Object? raw) {
-  if (raw is! Map) return null;
+  if (raw is! Map) {
+    print('[dap] config: faDap absent/not a map — hub presence off');
+    return null;
+  }
   final url = '${raw['url'] ?? ''}'.trim();
-  if (url.isEmpty) return null;
+  if (url.isEmpty) {
+    print('[dap] config: empty url — hub presence off');
+    return null;
+  }
+  final name = '${raw['name'] ?? ''}'.trim();
+  print('[dap] config: url=$url name=${name.isEmpty ? '—' : name}');
   return DapConfig(
     url: url,
-    name: '${raw['name'] ?? ''}'.trim(),
+    name: name,
     loadKeyFile: () => _storageGetString('faDapKey'),
     saveKeyFile: (text) => _storageSetString('faDapKey', text),
   );
