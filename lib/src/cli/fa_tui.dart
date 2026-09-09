@@ -2100,29 +2100,7 @@ final class FaTuiModel extends Model {
   /// streams. Queued messages (kimi-cli) render under it, one dim line per
   /// message plus the edit/steer hint, all above the framed input zone.
   void _writeBusyAndQueue(StringBuffer b) {
-    if (busy) {
-      final frame = _spinnerFrames[spinnerFrame % _spinnerFrames.length];
-      final elapsedSeconds = busyStartedAtMs < 0
-          ? 0
-          : ((DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) / 1000)
-                .floor();
-      final label = busyPhase.isEmpty ? 'Working…' : busyPhase;
-      final quietSeconds = busyLastEventMs < 0
-          ? 0
-          : ((DateTime.now().millisecondsSinceEpoch - busyLastEventMs) / 1000)
-                .floor();
-      // Honesty suffixes: WHO armed the row (provenance) and whether the
-      // stretch went quiet (no deltas/keys for minutes — reads as a hang,
-      // now says so instead of pretending steady progress).
-      final provenance = busySource.isEmpty ? '' : ' · $busySource';
-      final quiet = quietSeconds >= 180
-          ? ' · quiet ${quietSeconds ~/ 60}m'
-          : '';
-      b.writeln(
-        '${_accent2Plain(frame)} '
-        '${_dim('$label ${elapsedSeconds}s$quiet$provenance')}',
-      );
-    }
+    if (busy) b.writeln(_busyRowLine());
     if (queue.isNotEmpty) {
       for (final queued in queue) {
         final flat = queued.replaceAll('\n', ' ');
@@ -2134,6 +2112,37 @@ final class FaTuiModel extends Model {
       b.writeln(_dim('↑ to edit · ctrl-s to send immediately'));
     }
     b.writeln(_dim('─' * termWidth));
+  }
+
+  /// The busy indicator line (one row): spinner + label + honesty
+  /// suffixes. Extracted from [_writeBusyAndQueue] to keep both methods'
+  /// CRAP scores under the ratchet.
+  String _busyRowLine() {
+    if (menuOpen && menuModelMode) {
+      // An interactive host picker is open: the run is blocked on the
+      // user's choice, not "working" — a spinner + growing elapsed counter
+      // next to a menu reads like a hang.
+      return _dim('waiting for your selection…');
+    }
+    final frame = _spinnerFrames[spinnerFrame % _spinnerFrames.length];
+    final elapsedSeconds = busyStartedAtMs < 0
+        ? 0
+        : ((DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) / 1000)
+              .floor();
+    final label = busyPhase.isEmpty ? 'Working…' : busyPhase;
+    final quietSeconds = busyLastEventMs < 0
+        ? 0
+        : ((DateTime.now().millisecondsSinceEpoch - busyLastEventMs) / 1000)
+              .floor();
+    // Honesty suffixes: WHO armed the row (provenance) and whether the
+    // stretch went quiet (no deltas/keys for minutes — reads as a hang,
+    // now says so instead of pretending steady progress).
+    final provenance = busySource.isEmpty ? '' : ' · $busySource';
+    final quiet = quietSeconds >= 180
+        ? ' · quiet ${quietSeconds ~/ 60}m'
+        : '';
+    return '${_accent2Plain(frame)} '
+        '${_dim('$label ${elapsedSeconds}s$quiet$provenance')}';
   }
 
   /// The status row, fitted AND padded to the terminal width: a shorter new
