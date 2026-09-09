@@ -161,8 +161,12 @@ extension on AgentCli {
 
   Future<void> _listSessions() async {
     // List every session in the shared root, across workspaces, so sessions
-    // created in the Fa app or in another `fa` run are visible here.
-    final sessions = await _repo.list();
+    // created in the Fa app or in another `fa` run are visible here. The
+    // current folder's sessions lead the list (issue #83).
+    final sessions = sortSessionsCurrentFolderFirst(
+      await _repo.list(),
+      _env.cwd,
+    );
     if (sessions.isEmpty) {
       io.writeln('no sessions');
       return;

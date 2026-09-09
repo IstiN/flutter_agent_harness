@@ -1669,7 +1669,8 @@ class AgentCli {
     try {
       // List every session in the shared root, across all workspaces, so a
       // session created in the Fa app or in another `fa` run is reachable.
-      sessions = await _repo.list();
+      // The current folder's sessions lead the list (issue #83).
+      sessions = sortSessionsCurrentFolderFirst(await _repo.list(), _env.cwd);
     } on Object catch (error) {
       // A failing store must surface as an inline error, never kill the TUI
       // (a Cmd exception in dart_tui terminates the whole program silently).

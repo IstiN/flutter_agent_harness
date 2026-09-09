@@ -110,6 +110,32 @@ String? decodeSessionCwd(String slug) {
 /// Creates a new session id (time-ordered uuidv7).
 String createSessionId() => uuidv7();
 
+/// Sorts by latest activity (file mtime), falling back to creation time so
+/// stable ordering is guaranteed even when mtimes are equal.
+int compareSessionActivity(SessionMetadata a, SessionMetadata b) {
+  final aTime = a.lastUpdatedAt ?? a.createdAt;
+  final bTime = b.lastUpdatedAt ?? b.createdAt;
+  final result = bTime.compareTo(aTime);
+  if (result != 0) return result;
+  return b.createdAt.compareTo(a.createdAt);
+}
+
+/// Orders sessions for display (issue #83): sessions from the [currentCwd]
+/// folder first, then sessions from every other folder; each group
+/// newest-activity first. [JsonlSessionRepo.list] stays plain activity
+/// order so `/resume` keeps its most-recent-anywhere semantics.
+List<SessionMetadata> sortSessionsCurrentFolderFirst(
+  List<SessionMetadata> sessions,
+  String? currentCwd,
+) {
+  final sorted = [...sessions]..sort(compareSessionActivity);
+  if (currentCwd == null || currentCwd.isEmpty) return sorted;
+  return [
+    ...sorted.where((m) => m.cwd == currentCwd),
+    ...sorted.where((m) => m.cwd != currentCwd),
+  ];
+}
+
 /// JSONL session repository on top of a [FileSystem].
 ///
 /// Ported from pi's `JsonlSessionRepo`. Layout: sessions are stored under
@@ -217,18 +243,8 @@ final class JsonlSessionRepo implements SessionRepo {
     if (cwd != null) {
       sessions.retainWhere((m) => m.cwd == cwd);
     }
-    sessions.sort(_compareSessionActivity);
+    sessions.sort(compareSessionActivity);
     return sessions;
-  }
-
-  /// Sort sessions by latest activity (file mtime), falling back to creation
-  /// time so stable ordering is guaranteed even when mtimes are equal.
-  int _compareSessionActivity(SessionMetadata a, SessionMetadata b) {
-    final aTime = a.lastUpdatedAt ?? a.createdAt;
-    final bTime = b.lastUpdatedAt ?? b.createdAt;
-    final result = bTime.compareTo(aTime);
-    if (result != 0) return result;
-    return b.createdAt.compareTo(a.createdAt);
   }
 
   @override
