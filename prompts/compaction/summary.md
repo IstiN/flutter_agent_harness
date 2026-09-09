@@ -7,8 +7,8 @@ The messages above are a conversation to hand off. Write a complete context chec
 Use this EXACT format:
 
 ## Open User Requests
-- [ ] <each user ask — initial or steering — with THEIR acceptance criterion> (asked <date>, record id)
-  List EVERY ask; steering counts in full. Closes ONLY via Done+evidence (test id) or explicit user cancel. No evidence = "(Partial — acceptance pending)", stays. Empty: "(none)".
+- [ ] <open ask> (asked <date>, record id)
+  List EVERY ask with its acceptance criterion; steering counts in full. Closes ONLY via Done+evidence (test id) or explicit user cancel. No evidence = "(Partial — acceptance pending)", stays. Empty: "(none)".
 
 ## Goal
 [What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
@@ -34,7 +34,7 @@ Use this EXACT format:
 1. [Ordered list of what should happen next]
 
 ## Critical Context
-- [Any data, examples, or references needed to continue]
+- [Data, examples, references and important tool results (test verdicts, command outputs, error traces) with what produced them; trivial outputs may go]
 - [Or "(none)" if not applicable]
 
 Keep each section tight but complete. Preserve exact file paths, function names, and error messages.

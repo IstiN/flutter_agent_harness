@@ -60,6 +60,10 @@ Future<int> _path(ConfigService service, CliIO io) async {
 
 Future<int> _get(ConfigService service, CliIO io, String key) async {
   final result = await service.get(key);
+  if (result.notApplicable != null) {
+    io.writeln('not applicable: ${result.notApplicable}');
+    return 1;
+  }
   if (!result.found) {
     io.writeln('not set: $key');
     return 1;

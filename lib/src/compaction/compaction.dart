@@ -328,17 +328,6 @@ final _branchSummaryPattern = RegExp(
   r'^The following is a summary of a branch',
 );
 
-/// Imperative/request markers: English word-initial stems plus Russian
-/// prefixes (Dart regexes have no Cyrillic `\b`). Best-effort by design:
-/// misses are acceptable, false positives cost one line each.
-final _requestMarkerPattern = RegExp(
-  r'\b(?:build|fix|add|create|implement|write|make|update|refactor|remove|'
-  r'delete|run|check|test|cover|support|deploy|migrate|port|ship|change)\w*'
-  r'|(?:сдела|добав|покро|исправ|провер|реализу|обнов|удал|созда|передела|'
-  r'напиши|напишите|настро|перепиши|дорабо|запомн)\S*',
-  caseSensitive: false,
-);
-
 /// Flattens a user-message content (plain text or content blocks) to text.
 String _userMessageText(Object content) {
   if (content is String) return content;
@@ -356,12 +345,14 @@ String _userRequestPointer(String? recordId, DateTime timestamp) {
   return 'asked $date, record $prefix';
 }
 
-/// Extracts best-effort open-user-request candidate lines from [messages]:
-/// user-role texts carrying an imperative/request marker, oldest first.
-/// Excludes `<system-notice>` envelopes, agent mail, and branch summaries.
-/// [recordIds], when given, runs parallel to [messages] and lands in the
-/// line pointer; null/empty entries fall back to a date-only pointer.
-List<String> detectUserRequestCandidates(
+/// Extracts open-user-request candidate lines from [messages]: EVERY
+/// user-role text, oldest first — the summarizer LLM itself judges which
+/// are open asks, so no message is lost to a detection gate (issue #86).
+/// Only structural non-user content is skipped: `<system-notice>`
+/// envelopes, agent mail, and projected branch summaries. [recordIds],
+/// when given, runs parallel to [messages] and lands in the line pointer;
+/// null/empty entries fall back to a date-only pointer.
+List<String> userRequestCandidateLines(
   List<Message> messages, {
   List<String?>? recordIds,
 }) {
@@ -373,8 +364,7 @@ List<String> detectUserRequestCandidates(
     if (text.isEmpty ||
         _systemNoticePattern.hasMatch(text) ||
         _branchSummaryPattern.hasMatch(text) ||
-        _agentMailPattern.hasMatch(text) ||
-        !_requestMarkerPattern.hasMatch(text)) {
+        _agentMailPattern.hasMatch(text)) {
       continue;
     }
     final id = (recordIds != null && i < recordIds.length)
@@ -394,11 +384,12 @@ String? userRequestCandidatesBlock(
   List<Message> messages, {
   List<String?>? recordIds,
 }) {
-  final lines = detectUserRequestCandidates(messages, recordIds: recordIds);
+  final lines = userRequestCandidateLines(messages, recordIds: recordIds);
   if (lines.isEmpty) return null;
   final header =
-      'USER REQUEST CANDIDATES (user-role asks with imperative markers, '
-      'oldest first — fill `## Open User Requests` from these):';
+      'USER REQUEST CANDIDATES (every user-role message, oldest first — '
+      'you judge which are open asks; fill `## Open User Requests` from '
+      'these):';
   final buffer = StringBuffer(header);
   for (final line in lines) {
     buffer

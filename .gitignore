@@ -133,3 +133,6 @@ browser_ext/panel/app/
 /node_modules/
 /package.json
 /package-lock.json
+
+# DAP hub local key material (never commit)
+.dap/

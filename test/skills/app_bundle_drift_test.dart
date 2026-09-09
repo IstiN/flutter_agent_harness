@@ -67,4 +67,36 @@ void main() {
       );
     }
   });
+
+  test('AgentService._seedBundledSkills registers every bundled skill', () {
+    // The audit (issue #29 AC10): the drift guard must pin the SEEDER,
+    // not just the files — a skill added to assets + pubspec but not to
+    // the seeder map would never reach a session. The map lives in the
+    // app source; parse it (a string-literal map, VM-only guard).
+    final source = File(
+      'flutter_app/lib/services/agent_service.dart',
+    ).readAsStringSync();
+    final decl = source.indexOf('static Future<void> _seedBundledSkills');
+    expect(decl, greaterThanOrEqualTo(0), reason: 'seeder missing');
+    final brace = source.indexOf('= {', decl);
+    final mapEnd = source.indexOf('};', brace);
+    expect(brace, greaterThan(decl), reason: 'seeder map open missing');
+    expect(mapEnd, greaterThan(brace), reason: 'seeder map close missing');
+    final seeded = RegExp(r"'([a-zA-Z0-9-]+)':")
+        .allMatches(source.substring(brace, mapEnd))
+        .map((m) => m.group(1)!)
+        .toSet();
+    final bundledNames = bundled
+        .listSync()
+        .whereType<Directory>()
+        .map((d) => d.uri.pathSegments.reversed.toList()[1])
+        .toSet();
+    expect(
+      seeded,
+      containsAll(bundledNames),
+      reason:
+          'bundled skill(s) not registered in AgentService._seedBundledSkills '
+          '- a session would never see them',
+    );
+  });
 }
