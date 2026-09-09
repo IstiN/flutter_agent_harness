@@ -46,7 +46,7 @@ void main() {
   }) {
     final env = environment ?? <String, String>{};
     final host = HubPluginHost(
-      hub.HubPlugin(environment: env),
+      hub.HubPlugin(environment: env, home: tempHome.path),
       environment: env,
       home: tempHome.path,
     );

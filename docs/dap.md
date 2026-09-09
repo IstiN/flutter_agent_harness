@@ -295,30 +295,27 @@ specification of the server contract in this repo is the test-suite hub:
 
 ### 8.1 Running a local hub
 
-`FakeHub` is a complete DAP/1 hub for development. To run one from a
-checkout of this repo, create `tool/hub.dart`:
-
-```dart
-import 'dart:async';
-import '../test/hub/fake_hub.dart';
-
-Future<void> main() async {
-  final hub = FakeHub();
-  await hub.start();
-  print('DAP hub on ${hub.url}');
-  await Completer<void>().future; // run until killed
-}
-```
+The repo ships the reference hub as a first-class command — no checkout
+glue needed:
 
 ```
-dart run tool/hub.dart          # → DAP hub on ws://127.0.0.1:<port>/ws
-DAP_HUB_URL=ws://127.0.0.1:<port>/ws dart run bin/fah.dart
+fa hub serve [--port 8787]   # → DAP hub on ws://127.0.0.1:8787/ws
 ```
 
-Properties to expect (all `FakeHub`-derived): binds loopback only, keeps
-everything in memory — registry, live connections, offline mailboxes,
-the seen-nonce set — so a hub restart loses undelivered offline mail and
-nonce memory. `/healthz` answers `200`.
+It is idempotent (a second start against a live hub is a no-op), binds
+loopback only, and keeps everything in memory — registry, live
+connections, offline mailboxes, the seen-nonce set — so a hub restart
+loses undelivered offline mail and nonce memory. `/healthz` answers
+`200`. The implementation is `LocalHub`
+(`lib/src/hub/local_hub.dart`, reachable via `lib/io.dart`), the same
+class the test suite runs as `FakeHub`.
+
+Inside the CLI the one-step bring-up is **`/dap start`**: it generates
+a session master secret when none is set (export `DAP_MASTER_SECRET` to
+make one permanent), spawns `fa hub serve` detached when nothing
+answers on the zero-config port — the hub outlives the CLI — and
+connects, persisting the URL so the next boot is online by itself. It
+also leads the guided `/dap` menu.
 
 For a shared deployment you need the same semantics behind a real
 socket: bind a public interface (or reverse-proxy to the loopback hub),
