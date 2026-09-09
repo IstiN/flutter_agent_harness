@@ -849,6 +849,10 @@ void main() {
       'openai':
           'Invalid parameter: tool_call_id is not found: bash_198. '
           'Every tool message must follow a tool_calls message',
+      'google':
+          '400 Bad Request: Please ensure that the number of function '
+          'response parts is equal to the number of function call parts of '
+          'the function call turn.',
     };
 
     AssistantMessage errorTurn(String message) =>

@@ -344,7 +344,7 @@ void main() {
   });
 
   group('isToolPairingProviderError (E5 signatures)', () {
-    test('matches the three known gateway families', () {
+    test('matches the four known gateway families', () {
       expect(
         isToolPairingProviderError(
           'messages.0.content.1: unexpected tool_use_id found in tool_result '
@@ -364,6 +364,14 @@ void main() {
         isToolPairingProviderError(
           '400 Bad Request: tool_call_id is not found in the previous '
           'messages',
+        ),
+        isTrue,
+      );
+      expect(
+        isToolPairingProviderError(
+          '400 Bad Request: Please ensure that the number of function '
+          'response parts is equal to the number of function call parts of '
+          'the function call turn.',
         ),
         isTrue,
       );

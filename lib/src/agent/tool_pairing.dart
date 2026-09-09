@@ -112,13 +112,15 @@ String canonicalToolCallId(String id) {
 
 /// Raw provider error substrings (matched case-insensitively) of the
 /// tool-pairing error family across known gateways: Anthropic direct,
-/// litellm/Bedrock, and OpenAI-compatible. Detection is keyed on the error
+/// litellm/Bedrock, OpenAI-compatible, and Google Gemini's
+/// function-response count mismatch. Detection is keyed on the error
 /// SIGNATURE family, never on one provider's exact string (E5).
 const _pairingErrorSignatures = [
   'unexpected tool_use_id',
   'corresponding tool_use block',
   'expected toolresult blocks',
   'tool_call_id is not found',
+  'number of function response parts',
 ];
 
 /// Whether a provider [errorMessage] belongs to the tool-pairing error
