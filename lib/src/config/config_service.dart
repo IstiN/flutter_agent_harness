@@ -79,6 +79,10 @@ const _scalarKeys = {'provider', 'model', 'baseUrl', 'mode', 'approvalMode'};
 /// `ModelRolesConfig.fromYaml` call over the whole document.
 const _rolesGroupKeys = {'roles', 'modelOverrides', 'retry'};
 
+/// The `mcp.servers.<id>` members that require host process spawning —
+/// platform-inapplicable on web/iOS container hosts (issue #29 AC11).
+const _processBoundMembers = {'command', 'args', 'env'};
+
 /// Write scope of a `set`.
 enum ConfigScope { global, project }
 
@@ -122,6 +126,7 @@ final class ConfigGetResult {
     this.display,
     this.scope,
     this.file,
+    this.notApplicable,
   });
 
   /// The requested dotted key.
@@ -139,6 +144,12 @@ final class ConfigGetResult {
 
   /// The file path the value came from.
   final String? file;
+
+  /// Why the key is not applicable on this host (platform-inapplicable
+  /// keys — an MCP stdio server on web/iOS, issue #29 AC11/E13), or null.
+  /// Never silently ignored: `get` renders the reason, `set` refuses the
+  /// write.
+  final String? notApplicable;
 }
 
 /// Result of [ConfigService.set].
@@ -190,14 +201,24 @@ final class ConfigPathInfo {
 final class ConfigService {
   /// Creates the service. [homeDir] may be null on hosts without a home
   /// directory (web) — the global scope answers "not available" instead of
-  /// guessing a path.
-  ConfigService({required this.env, this.homeDir});
+  /// guessing a path. [supportsProcesses] is false on hosts that cannot
+  /// spawn host-side processes (web browser, iOS/Android containers): the
+  /// stdio-server members of `mcp:` then answer "not applicable on this
+  /// host" instead of resolving or writing dead config (issue #29 AC11).
+  ConfigService({
+    required this.env,
+    this.homeDir,
+    this.supportsProcesses = true,
+  });
 
   /// The execution env the service reads and writes through.
   final ExecutionEnv env;
 
   /// The user home directory, or null when the host has none.
   final String? homeDir;
+
+  /// Whether this host can spawn host-side processes (MCP stdio servers).
+  final bool supportsProcesses;
 
   /// The user config file, or null when the host has no home directory.
   String? get globalConfigPath =>
@@ -223,6 +244,7 @@ final class ConfigService {
         report.notes.add('global config absent (defaults apply): $globalPath');
       } else {
         _collectDiagnostics(text, globalPath, report.errors, report.warnings);
+        _collectHostWarnings(_tryParse(text), globalPath, report.warnings);
       }
     }
     final projectText = await _readTextOrNull(projectConfigPath);
@@ -254,6 +276,7 @@ final class ConfigService {
           }
         }
       }
+      _collectHostWarnings(doc, projectConfigPath, report.warnings);
     }
     return report;
   }
@@ -272,10 +295,26 @@ final class ConfigService {
         '${configTopLevelKeys.join(', ')})',
       );
     }
+    final memberRefusal = _stdioServerRefusal(segments);
+    if (memberRefusal != null) {
+      return ConfigGetResult(
+        key: key,
+        found: false,
+        notApplicable: _mcpStdioNote(memberRefusal),
+      );
+    }
     if (_projectSections.contains(top)) {
       final projectDoc = await _readTextOrNull(projectConfigPath) ?? '';
       final projectValue = _walk(_tryParse(projectDoc), segments);
       if (projectValue != null) {
+        final stdio = _stdioServerRefusal(segments, projectValue);
+        if (stdio != null) {
+          return ConfigGetResult(
+            key: key,
+            found: false,
+            notApplicable: _mcpStdioNote(stdio),
+          );
+        }
         return ConfigGetResult(
           key: key,
           found: true,
@@ -290,6 +329,14 @@ final class ConfigService {
         : await _readTextOrNull(globalConfigPath!) ?? '';
     final globalValue = _walk(_tryParse(globalText), segments);
     if (globalValue != null) {
+      final stdio = _stdioServerRefusal(segments, globalValue);
+      if (stdio != null) {
+        return ConfigGetResult(
+          key: key,
+          found: false,
+          notApplicable: _mcpStdioNote(stdio),
+        );
+      }
       return ConfigGetResult(
         key: key,
         found: true,
@@ -316,6 +363,12 @@ final class ConfigService {
       throw ConfigException(
         'empty value for "$key" — removing a key is a manual file edit',
       );
+    }
+    // Platform-inapplicable keys are refused with the host-capability
+    // reason — never written as dead config (issue #29 AC11/E13).
+    final stdio = _stdioServerRefusal(segments, _tryDecodeJson(value));
+    if (stdio != null) {
+      throw ConfigException(_mcpStdioNote(stdio));
     }
     final resolved = await resolveWriteScope(scope, key: key);
     if (resolved == ConfigScope.project &&
@@ -382,6 +435,65 @@ final class ConfigService {
     return ConfigScope.global;
   }
 
+  /// Whether a decoded MCP server [entry] needs host process spawning —
+  /// any `command`/`args` member — versus a remote (`url`) entry, which
+  /// stays configurable on every host.
+  static bool _isStdioEntry(Object? entry) =>
+      entry is Map &&
+      (entry.containsKey('command') || entry.containsKey('args'));
+
+  /// The server id when [segments] names an MCP path that requires host
+  /// process spawning on a host without it: a stdio member leaf, a whole
+  /// server entry whose [candidate] declares `command`/`args`, or — for
+  /// whole-section paths — any stdio entry inside the parsed section
+  /// content. Content, not path depth, decides (issue #29 AC11/E13:
+  /// `config set mcp '{...}'` must not write dead stdio servers on web).
+  /// Null when the path resolves fine here. [candidate] is the resolved
+  /// value on `get`, the decoded JSON value on `set`.
+  String? _stdioServerRefusal(List<String> segments, [Object? candidate]) {
+    if (supportsProcesses || segments.isEmpty || segments.first != 'mcp') {
+      return null;
+    }
+    return _leafStdioRefusal(segments) ??
+        _entryStdioRefusal(segments, candidate) ??
+        _sectionStdioRefusal(segments, candidate);
+  }
+
+  /// Path-shape rule: a stdio member leaf is refused whether or not a
+  /// value exists — the host capability is value-independent.
+  String? _leafStdioRefusal(List<String> segments) =>
+      segments.length > 3 &&
+          segments[1] == 'servers' &&
+          _processBoundMembers.contains(segments.last)
+      ? segments[2]
+      : null;
+
+  /// Single-entry rule (`mcp.servers.<id>`): refused when the resolved
+  /// entry itself needs process spawning.
+  String? _entryStdioRefusal(List<String> segments, Object? candidate) =>
+      segments.length == 3 && _isStdioEntry(candidate) ? segments[2] : null;
+
+  /// Whole-section rule (`mcp`, `mcp.servers`): the decoded CONTENT is
+  /// inspected — path depth alone must not bypass the capability check
+  /// (AC11/E13: `config set mcp '{...}'` must not write dead stdio
+  /// servers on a web/iOS host). Content without `servers`, or non-map
+  /// content, passes the guard.
+  String? _sectionStdioRefusal(List<String> segments, Object? candidate) {
+    if (segments.length > 2 || candidate is! Map) return null;
+    final servers = segments.length == 1 ? candidate['servers'] : candidate;
+    if (servers is! Map) return null;
+    for (final entry in servers.entries) {
+      if (_isStdioEntry(entry.value)) return entry.key.toString();
+    }
+    return null;
+  }
+
+  /// The named "not applicable on this host" answer for stdio server [id].
+  String _mcpStdioNote(String id) =>
+      'mcp stdio server "$id" is not applicable on this host (no process '
+      'spawning) — configure a remote server via `mcp.servers.$id.url` '
+      'instead';
+
   /// The config file locations and whether each exists.
   Future<List<ConfigPathInfo>> paths() async {
     Future<ConfigPathInfo> entry(String label, String path) async =>
@@ -402,6 +514,32 @@ final class ConfigService {
       if (homeDir != null)
         await entry('dap config', '$homeDir/.dap/config.json'),
     ];
+  }
+
+  /// Warnings for config that cannot run on this host (issue #29 AC11):
+  /// MCP stdio servers on a host without process spawning are dead config
+  /// there — reported, never silently ignored.
+  void _collectHostWarnings(
+    YamlMap? doc,
+    String label,
+    List<ConfigDiagnostic> warnings,
+  ) {
+    if (supportsProcesses || doc == null) return;
+    final mcp = doc['mcp'];
+    final servers = mcp is YamlMap ? mcp['servers'] : null;
+    if (servers is! YamlMap) return;
+    for (final entry in servers.entries) {
+      final server = entry.value;
+      if (server is YamlMap && server.containsKey('command')) {
+        warnings.add(
+          ConfigDiagnostic(
+            label,
+            'mcp stdio server "${entry.key}" cannot run on this host (no '
+            'process spawning) — dead config here',
+          ),
+        );
+      }
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -462,6 +600,16 @@ final class ConfigService {
       node = node[segment];
     }
     return node;
+  }
+
+  /// The JSON-decoded [value], or null when it is not valid JSON (a plain
+  /// yaml scalar — the strict-section validators judge those).
+  static Object? _tryDecodeJson(String value) {
+    try {
+      return jsonDecode(value);
+    } on FormatException {
+      return null;
+    }
   }
 
   /// The display form of an existing value at [segments] in [text], or null
@@ -580,6 +728,18 @@ int _findKeyLine(
   return -1;
 }
 
+/// Whether a single [leafLines] entry may ride the `key: value` line.
+/// A rendered block entry (a `- item` sequence line, or a map entry
+/// carrying its own indent) must go under a bare `key:` line — gluing it
+/// inline produced invalid yaml for one-element lists/maps.
+bool _inlineSafeLine(String line) {
+  final trimmed = line.trim();
+  if (trimmed.startsWith('-')) return false;
+  // An indented line is a block map entry; flow-empties stay inline-safe.
+  if (line != trimmed) return false;
+  return true;
+}
+
 /// Inserts the missing `segments[depth..]` chain — at EOF for a new
 /// top-level section, otherwise at the top of the parent's block — and
 /// returns the joined text.
@@ -598,7 +758,7 @@ String _insertChain(
   var at = insertAt;
   for (var d = depth; d < segments.length; d++) {
     final isLeaf = d == segments.length - 1;
-    if (isLeaf && leafLines.length == 1) {
+    if (isLeaf && leafLines.length == 1 && _inlineSafeLine(leafLines[0])) {
       lines.insert(at, '${'  ' * d}${segments[d]}: ${leafLines[0]}');
       break;
     }
@@ -625,7 +785,7 @@ String _replaceLeaf(
 ) {
   final indent = '  ' * depth;
   final comment = _trailingComment(lines[found]);
-  if (leafLines.length == 1) {
+  if (leafLines.length == 1 && _inlineSafeLine(leafLines[0])) {
     lines[found] = '$indent$key: ${leafLines[0]}$comment';
     return _join(lines, hadTrailingNewline);
   }
