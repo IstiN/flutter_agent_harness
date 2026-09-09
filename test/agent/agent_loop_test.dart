@@ -826,7 +826,7 @@ void main() {
     });
   });
 
-  group('repairOrphanedToolCalls', () {
+  group('tool pairing integrity (issue #85)', () {
     ToolResultMessage result(String id, String name) => ToolResultMessage(
       toolCallId: id,
       toolName: name,
@@ -835,90 +835,167 @@ void main() {
       timestamp: DateTime.utc(2026),
     );
 
-    test('returns the same instance when every call is answered', () {
-      final messages = <Message>[
-        UserMessage.text('hi'),
-        _assistant(content: [_call('c1', 'bash')]),
-        result('c1', 'bash'),
-      ];
-      expect(identical(repairOrphanedToolCalls(messages), messages), isTrue);
-    });
+    final anthropicWedge =
+        'messages.0.content.1: unexpected tool_use_id found in tool_result '
+        'blocks: bash_198. Each tool_result block must have a corresponding '
+        'tool_use block in the previous message';
 
-    test('returns the same instance when there are no tool calls', () {
-      final messages = <Message>[
-        UserMessage.text('hi'),
-        _assistant(content: [TextContent(text: 'hello')]),
-      ];
-      expect(identical(repairOrphanedToolCalls(messages), messages), isTrue);
-    });
+    AssistantMessage errorTurn(String message) =>
+        _assistant(stopReason: StopReason.error, errorMessage: message);
 
-    test('injects an interrupted result right after the assistant message', () {
-      final orphan = _assistant(content: [_call('c1', 'bash')]);
-      final messages = <Message>[UserMessage.text('hi'), orphan];
-      final repaired = repairOrphanedToolCalls(messages);
-
-      expect(repaired, hasLength(3));
-      expect(identical(repaired[0], messages[0]), isTrue);
-      expect(identical(repaired[1], orphan), isTrue);
-      final injected = repaired[2];
-      expect(
-        injected,
-        isA<ToolResultMessage>()
-            .having((m) => m.toolCallId, 'toolCallId', 'c1')
-            .having((m) => m.toolName, 'toolName', 'bash')
-            .having((m) => m.isError, 'isError', isTrue),
+    test('a wedged context is repaired pre-request without a provider call '
+        'knowing (UT-repair through the loop)', () async {
+      // Production shape: compaction left a summary + an orphaned result.
+      final wedgeContext = Context(
+        messages: [
+          UserMessage.text('summary of earlier work'),
+          result('bash_198', 'bash'),
+        ],
       );
-      // The input transcript is never modified.
-      expect(messages, hasLength(2));
-    });
-
-    test('injects only the missing results', () {
-      final messages = <Message>[
-        _assistant(content: [_call('c1', 'bash'), _call('c2', 'read')]),
-        result('c2', 'read'),
-      ];
-      final repaired = repairOrphanedToolCalls(messages);
-      expect(repaired, hasLength(3));
-      expect(repaired[1], isA<ToolResultMessage>());
-      expect((repaired[1] as ToolResultMessage).toolCallId, 'c1');
-      expect(identical(repaired[2], messages[1]), isTrue);
-    });
-
-    test('treats a result later in the transcript as answered', () {
-      // A damaged transcript with the result out of place is left alone —
-      // the repair only fills genuinely missing answers (a duplicate tool
-      // message for the same id is a provider error of its own).
-      final messages = <Message>[
-        _assistant(content: [_call('c1', 'bash')]),
-        UserMessage.text('meanwhile'),
-        result('c1', 'bash'),
-      ];
-      expect(identical(repairOrphanedToolCalls(messages), messages), isTrue);
-    });
-
-    test('the loop repairs orphans in the request payload only', () async {
-      final orphan = _assistant(content: [_call('c1', 'bash')]);
-      final contextMessages = <Message>[UserMessage.text('earlier'), orphan];
-      final fake = _FakeStreamFunction([_textTurn('ok')]);
-      await agentLoop(
-        prompts: [UserMessage.text('hi')],
-        context: Context(messages: contextMessages),
+      final inputJson = wedgeContext.messages.map((m) => m.toJson()).toList();
+      final fake = _FakeStreamFunction([_textTurn('recovered')]);
+      final stream = agentLoop(
+        prompts: const [],
+        context: wedgeContext,
         config: const AgentLoopConfig(model: _model),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
-      ).result;
-
-      final sent = fake.contexts.single.messages;
-      final orphanIndex = sent.indexOf(orphan);
-      expect(orphanIndex, isNonNegative);
-      expect(
-        sent[orphanIndex + 1],
-        isA<ToolResultMessage>()
-            .having((m) => m.toolCallId, 'toolCallId', 'c1')
-            .having((m) => m.isError, 'isError', isTrue),
       );
-      // The caller's transcript keeps the orphan (payload-only repair).
-      expect(contextMessages.whereType<ToolResultMessage>(), isEmpty);
+
+      final events = await stream.toList();
+      expect((await stream.result as List).last.stopReason, StopReason.stop);
+      expect(fake.calls, 1);
+      // The provider NEVER saw the orphan.
+      expect(
+        fake.contexts.single.messages.whereType<ToolResultMessage>(),
+        isEmpty,
+      );
+      expect(fake.contexts.single.messages.first, isA<UserMessage>());
+      // The repair is surfaced as an event with the audit trail.
+      final repairEvents = events.whereType<ToolPairingRepairEvent>().toList();
+      expect(repairEvents, hasLength(1));
+      expect(repairEvents.single.providerError, isNull);
+      expect(repairEvents.single.report.droppedResultIds, ['bash_198']);
+      // The transcript itself is never modified.
+      expect(wedgeContext.messages.map((m) => m.toJson()).toList(), inputJson);
+    });
+
+    test('a provider pairing 400 triggers exactly one self-healing repair '
+        'and retry', () async {
+      final wedgeContext = Context(
+        messages: [
+          UserMessage.text('summary of earlier work'),
+          result('bash_198', 'bash'),
+        ],
+      );
+      final fake = _FakeStreamFunction([
+        [
+          DoneEvent(
+            reason: StopReason.error,
+            message: errorTurn(anthropicWedge),
+          ),
+        ],
+        _textTurn('recovered'),
+      ]);
+      final stream = agentLoop(
+        prompts: const [],
+        context: wedgeContext,
+        config: const AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      final events = await stream.toList();
+      final messages = await stream.result as List;
+      expect((messages.last as AssistantMessage).stopReason, StopReason.stop);
+      expect(fake.calls, 2);
+      final repairEvents = events.whereType<ToolPairingRepairEvent>().toList();
+      // Detection event (with the raw provider error) + repair event.
+      expect(
+        repairEvents.any((event) => event.providerError == anthropicWedge),
+        isTrue,
+      );
+      // The second request's context is wire-valid.
+      final second = fake.contexts[1];
+      expect(
+        validateToolPairing(
+          second.messages.where((m) => m is! AssistantMessage || true).toList(),
+        ),
+        isEmpty,
+      );
+    });
+
+    test(
+      'unrelated provider errors do not trigger the pairing retry',
+      () async {
+        final fake = _FakeStreamFunction([
+          [
+            DoneEvent(
+              reason: StopReason.error,
+              message: errorTurn('rate limit exceeded'),
+            ),
+          ],
+        ]);
+        final stream = agentLoop(
+          prompts: [UserMessage.text('hi')],
+          context: const Context(messages: []),
+          config: const AgentLoopConfig(model: _model),
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+        );
+
+        await stream.toList();
+        expect(fake.calls, 1);
+      },
+    );
+
+    test('per-run position-counter ids stay unique across runs sharing a '
+        'context (UT-ids)', () async {
+      final first = _FakeStreamFunction([
+        _toolTurn([_call('bash_198', 'bash')]),
+        _textTurn('done one'),
+      ]);
+      final history1 =
+          (await agentLoop(
+                prompts: [UserMessage.text('hi')],
+                context: const Context(messages: []),
+                config: const AgentLoopConfig(model: _model),
+                streamFunction: first.call,
+                toolExecutor: (_, _, _) async => ToolExecutionResult.text('r1'),
+              ).result)
+              as List;
+
+      final second = _FakeStreamFunction([
+        _toolTurn([_call('bash_198', 'bash')]),
+        _textTurn('done two'),
+      ]);
+      final history2 =
+          (await agentLoop(
+                prompts: [UserMessage.text('again')],
+                context: Context(messages: List.of(history1.cast<Message>())),
+                config: const AgentLoopConfig(model: _model),
+                streamFunction: second.call,
+                toolExecutor: (_, _, _) async => ToolExecutionResult.text('r2'),
+              ).result)
+              as List;
+
+      List<String> callIds(List<Message> messages) => [
+        for (final m in messages)
+          if (m is AssistantMessage)
+            for (final block in m.content)
+              if (block is ToolCall) block.id,
+      ];
+      final ids1 = callIds(history1.cast<Message>());
+      final ids2 = callIds(history2.cast<Message>());
+      expect(ids1, contains('bash_198'));
+      expect(ids2, contains('bash_198_2'));
+      expect(ids1.toSet().intersection(ids2.toSet()), isEmpty);
+      // Results follow their (renamed) calls.
+      final resultIds2 = [
+        for (final m in history2.cast<Message>())
+          if (m is ToolResultMessage) m.toolCallId,
+      ];
+      expect(resultIds2, contains('bash_198_2'));
     });
   });
 
