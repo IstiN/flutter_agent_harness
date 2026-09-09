@@ -79,6 +79,10 @@ const _scalarKeys = {'provider', 'model', 'baseUrl', 'mode', 'approvalMode'};
 /// `ModelRolesConfig.fromYaml` call over the whole document.
 const _rolesGroupKeys = {'roles', 'modelOverrides', 'retry'};
 
+/// The `mcp.servers.<id>` members that require host process spawning —
+/// platform-inapplicable on web/iOS container hosts (issue #29 AC11).
+const _processBoundMembers = {'command', 'args', 'env'};
+
 /// Write scope of a `set`.
 enum ConfigScope { global, project }
 
@@ -122,6 +126,7 @@ final class ConfigGetResult {
     this.display,
     this.scope,
     this.file,
+    this.notApplicable,
   });
 
   /// The requested dotted key.
@@ -139,6 +144,12 @@ final class ConfigGetResult {
 
   /// The file path the value came from.
   final String? file;
+
+  /// Why the key is not applicable on this host (platform-inapplicable
+  /// keys — an MCP stdio server on web/iOS, issue #29 AC11/E13), or null.
+  /// Never silently ignored: `get` renders the reason, `set` refuses the
+  /// write.
+  final String? notApplicable;
 }
 
 /// Result of [ConfigService.set].
@@ -190,14 +201,24 @@ final class ConfigPathInfo {
 final class ConfigService {
   /// Creates the service. [homeDir] may be null on hosts without a home
   /// directory (web) — the global scope answers "not available" instead of
-  /// guessing a path.
-  ConfigService({required this.env, this.homeDir});
+  /// guessing a path. [supportsProcesses] is false on hosts that cannot
+  /// spawn host-side processes (web browser, iOS/Android containers): the
+  /// stdio-server members of `mcp:` then answer "not applicable on this
+  /// host" instead of resolving or writing dead config (issue #29 AC11).
+  ConfigService({
+    required this.env,
+    this.homeDir,
+    this.supportsProcesses = true,
+  });
 
   /// The execution env the service reads and writes through.
   final ExecutionEnv env;
 
   /// The user home directory, or null when the host has none.
   final String? homeDir;
+
+  /// Whether this host can spawn host-side processes (MCP stdio servers).
+  final bool supportsProcesses;
 
   /// The user config file, or null when the host has no home directory.
   String? get globalConfigPath =>
@@ -223,6 +244,7 @@ final class ConfigService {
         report.notes.add('global config absent (defaults apply): $globalPath');
       } else {
         _collectDiagnostics(text, globalPath, report.errors, report.warnings);
+        _collectHostWarnings(_tryParse(text), globalPath, report.warnings);
       }
     }
     final projectText = await _readTextOrNull(projectConfigPath);
@@ -254,6 +276,7 @@ final class ConfigService {
           }
         }
       }
+      _collectHostWarnings(doc, projectConfigPath, report.warnings);
     }
     return report;
   }
@@ -272,10 +295,26 @@ final class ConfigService {
         '${configTopLevelKeys.join(', ')})',
       );
     }
+    final memberRefusal = _stdioServerRefusal(segments);
+    if (memberRefusal != null) {
+      return ConfigGetResult(
+        key: key,
+        found: false,
+        notApplicable: _mcpStdioNote(memberRefusal),
+      );
+    }
     if (_projectSections.contains(top)) {
       final projectDoc = await _readTextOrNull(projectConfigPath) ?? '';
       final projectValue = _walk(_tryParse(projectDoc), segments);
       if (projectValue != null) {
+        final stdio = _stdioServerRefusal(segments, projectValue);
+        if (stdio != null) {
+          return ConfigGetResult(
+            key: key,
+            found: false,
+            notApplicable: _mcpStdioNote(stdio),
+          );
+        }
         return ConfigGetResult(
           key: key,
           found: true,
@@ -290,6 +329,14 @@ final class ConfigService {
         : await _readTextOrNull(globalConfigPath!) ?? '';
     final globalValue = _walk(_tryParse(globalText), segments);
     if (globalValue != null) {
+      final stdio = _stdioServerRefusal(segments, globalValue);
+      if (stdio != null) {
+        return ConfigGetResult(
+          key: key,
+          found: false,
+          notApplicable: _mcpStdioNote(stdio),
+        );
+      }
       return ConfigGetResult(
         key: key,
         found: true,
@@ -316,6 +363,12 @@ final class ConfigService {
       throw ConfigException(
         'empty value for "$key" — removing a key is a manual file edit',
       );
+    }
+    // Platform-inapplicable keys are refused with the host-capability
+    // reason — never written as dead config (issue #29 AC11/E13).
+    final stdio = _stdioServerRefusal(segments, _tryDecodeJson(value));
+    if (stdio != null) {
+      throw ConfigException(_mcpStdioNote(stdio));
     }
     final resolved = await resolveWriteScope(scope, key: key);
     if (resolved == ConfigScope.project &&
@@ -382,6 +435,33 @@ final class ConfigService {
     return ConfigScope.global;
   }
 
+  /// The server id when [segments] names an MCP server path that requires
+  /// host process spawning — a stdio member leaf, or a whole server entry
+  /// whose [candidate] map declares `command` — on a host without process
+  /// spawning. Null when the path resolves fine here. [candidate] is the
+  /// resolved entry on `get`, the decoded JSON value on `set`; a
+  /// remote-only (`url`) entry stays configurable on every host.
+  String? _stdioServerRefusal(List<String> segments, [Object? candidate]) {
+    if (supportsProcesses ||
+        segments.length < 3 ||
+        segments.first != 'mcp' ||
+        segments[1] != 'servers') {
+      return null;
+    }
+    if (segments.length > 3) {
+      return _processBoundMembers.contains(segments.last) ? segments[2] : null;
+    }
+    return candidate is Map && candidate.containsKey('command')
+        ? segments[2]
+        : null;
+  }
+
+  /// The named "not applicable on this host" answer for stdio server [id].
+  String _mcpStdioNote(String id) =>
+      'mcp stdio server "$id" is not applicable on this host (no process '
+      'spawning) — configure a remote server via `mcp.servers.$id.url` '
+      'instead';
+
   /// The config file locations and whether each exists.
   Future<List<ConfigPathInfo>> paths() async {
     Future<ConfigPathInfo> entry(String label, String path) async =>
@@ -402,6 +482,32 @@ final class ConfigService {
       if (homeDir != null)
         await entry('dap config', '$homeDir/.dap/config.json'),
     ];
+  }
+
+  /// Warnings for config that cannot run on this host (issue #29 AC11):
+  /// MCP stdio servers on a host without process spawning are dead config
+  /// there — reported, never silently ignored.
+  void _collectHostWarnings(
+    YamlMap? doc,
+    String label,
+    List<ConfigDiagnostic> warnings,
+  ) {
+    if (supportsProcesses || doc == null) return;
+    final mcp = doc['mcp'];
+    final servers = mcp is YamlMap ? mcp['servers'] : null;
+    if (servers is! YamlMap) return;
+    for (final entry in servers.entries) {
+      final server = entry.value;
+      if (server is YamlMap && server.containsKey('command')) {
+        warnings.add(
+          ConfigDiagnostic(
+            label,
+            'mcp stdio server "${entry.key}" cannot run on this host (no '
+            'process spawning) — dead config here',
+          ),
+        );
+      }
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -462,6 +568,16 @@ final class ConfigService {
       node = node[segment];
     }
     return node;
+  }
+
+  /// The JSON-decoded [value], or null when it is not valid JSON (a plain
+  /// yaml scalar — the strict-section validators judge those).
+  static Object? _tryDecodeJson(String value) {
+    try {
+      return jsonDecode(value);
+    } on FormatException {
+      return null;
+    }
   }
 
   /// The display form of an existing value at [segments] in [text], or null

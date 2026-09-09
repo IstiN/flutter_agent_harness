@@ -88,6 +88,11 @@ const emptyResponsePlaceholder = fa_ui.emptyResponsePlaceholder;
 /// ride along inline for hosted providers.
 typedef StagedAttachment = ({String path, Uint8List bytes, String mimeType});
 
+/// Platforms whose agent runs without host-process spawning: MCP stdio
+/// servers are "not applicable" there (the `config` tool refuses them —
+/// issue #29 AC11); remote (`url`) MCP servers stay configurable.
+const _noProcessPlatforms = {'web', 'android', 'ios'};
+
 /// Wraps an [Agent] for the Flutter chat UI.
 ///
 /// Persists sessions to [sessionsRoot] via [JsonlSessionRepo] and translates
@@ -514,6 +519,16 @@ class AgentService extends ChangeNotifier
         webSearch: isOnDevice ? null : webSearchConfig,
         model: () => _agent.state.model,
         shellJobs: _shellJobs,
+        // Self-configuration on every host (issue #29 S5/AC10/AC11): the
+        // same core the `fa config` CLI verbs wrap, over THIS host's env —
+        // desktop container, browser storage, or mobile sandbox. Hosts
+        // without host-process spawning answer "not applicable" for
+        // stdio-only config keys instead of writing dead config.
+        config: ConfigService(
+          env: toolEnv,
+          homeDir: desktopHomeDir(),
+          supportsProcesses: !_noProcessPlatforms.contains(currentFaPlatform),
+        ),
       ),
       ...memoryTools(
         _memoryController,
