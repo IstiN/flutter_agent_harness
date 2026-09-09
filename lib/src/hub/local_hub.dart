@@ -136,23 +136,7 @@ class LocalHub {
       await for (final Object data in ws) {
         final frame = (jsonDecode(data as String) as Map)
             .cast<String, dynamic>();
-        final op = frame['op'] as String?;
-        switch (op) {
-          case 'hello':
-            agentId = await _hello(ws, frame);
-          case 'whois':
-            _whois(ws, frame);
-          case 'send' when agentId != null:
-            await _send(ws, agentId, frame);
-          case 'join' when agentId != null:
-            _join(ws, agentId, frame);
-          case 'flush' when agentId != null:
-            _flush(ws, agentId);
-          case 'presence_query':
-            _presence(ws, frame);
-          default:
-            _reply(ws, {'op': 'error', 'code': 'bad_frame', 'msg': 'op?$op'});
-        }
+        agentId = await _dispatch(ws, frame, agentId);
       }
     } on Object {
       // socket error — fall through to cleanup
@@ -161,6 +145,35 @@ class LocalHub {
       _conns.remove(agentId);
       if (!_offlineEvents.isClosed) _offlineEvents.add(agentId);
     }
+  }
+
+  /// Routes one decoded frame; returns the (possibly newly established)
+  /// agent id for this connection. Extracted from [_handle] under the
+  /// repo's CRAP ratchet (the switch pushed cyclomatic complexity over
+  /// threshold).
+  Future<String?> _dispatch(
+    WebSocket ws,
+    Map<String, dynamic> frame,
+    String? agentId,
+  ) async {
+    final op = frame['op'] as String?;
+    switch (op) {
+      case 'hello':
+        return _hello(ws, frame);
+      case 'whois':
+        _whois(ws, frame);
+      case 'send' when agentId != null:
+        await _send(ws, agentId, frame);
+      case 'join' when agentId != null:
+        _join(ws, agentId, frame);
+      case 'flush' when agentId != null:
+        _flush(ws, agentId);
+      case 'presence_query':
+        _presence(ws, frame);
+      default:
+        _reply(ws, {'op': 'error', 'code': 'bad_frame', 'msg': 'op?$op'});
+    }
+    return agentId;
   }
 
   Future<String?> _hello(WebSocket ws, Map<String, dynamic> frame) async {
