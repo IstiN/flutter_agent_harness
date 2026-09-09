@@ -3085,6 +3085,10 @@
 - test(35): make the AC12 E2E catalog-first (#96)
 - feat(91): add --log-file to tee the live session trace to a file (#95)
 
+## 0.1.336
+
+- fix(85): context pair-integrity — validate and repair tool pairing at the request boundary (#93)
+
 ## Unreleased
 
 ## Unreleased
