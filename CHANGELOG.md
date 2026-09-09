@@ -14,12 +14,15 @@
   first-time, update, turn-prefix, branch) gain an explicit tool-results
   assessment: important outputs (test verdicts, command results, error
   traces, fetched data) are checkpointed with what produced them; trivial
-  banners may be omitted, with the LLM assessing importance. The
-  ≤500-char instruction budget (issue #81 AC7) holds (net delta 496).
-  Tests: marker-less-ask regression (unit + end-to-end into
-  `## Open User Requests`), non-lossy candidate pin, tool-results wording
-  pin across the five prompts, and a checkpoint behavior test (failing-test
-  output preserved, success banner not required).
+  banners may be omitted, with the LLM assessing importance. The owner's
+  ≤500-char instruction budget (issue #81 AC7, restated by #86 AC4) holds
+  at net delta 423: the summary_update.md section hints were tightened to
+  make room while every operational rule (PRESERVE/ADD/UPDATE/ASSESS and
+  the open-ask close-out rules) stays intact. Tests: marker-less-ask
+  regression (unit + end-to-end into `## Open User Requests`), non-lossy
+  candidate pin, tool-results wording pin across the five prompts, and a
+  checkpoint behavior test (failing-test output preserved, success banner
+  not required).
 
 ## 0.1.330
 

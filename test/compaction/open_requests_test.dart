@@ -10,11 +10,12 @@
 /// - AC5 `IT-guard-*`: a merged PR without a run acceptance test leaves the
 ///   arc `(Partial — acceptance pending)` and the ask open.
 /// - AC6 `IT-close-*`: an ask closed with cited evidence leaves the open list.
-/// - AC7 `UT-budget-*`: net instruction delta vs pre-card text net of the
-///   mandated wording rewrite — 500 under #81, renegotiated to 700 in the
-///   #86 review (tool-results assessment + restored ADD/UPDATE rules; see
-///   the test comment); the `turn_prefix.md` byte-pin is replaced by a
-///   wording test (owner amendment, 2026-09-09).
+/// - AC7 `UT-budget-*`: net instruction delta ≤ 500 chars vs pre-card text
+///   net of the mandated wording rewrite (owner pin, #81 AC7 = #86 AC4);
+///   #86's tool-results wording fits via tightened section hints in
+///   `summary_update.md` — operational rules all intact. The
+///   `turn_prefix.md` byte-pin is replaced by a wording test (owner
+///   amendment, 2026-09-09).
 /// - AC8 `UT-wording-*`: no "summary"/"concise" cognates in any of the six
 ///   compaction prompt bodies; lossless-handoff intent asserted.
 /// - AC9 `UT-heuristic-*` + issue #86 AC1/AC2: candidate capture is
@@ -391,8 +392,8 @@ void main() {
   });
 
   group('UT-budget — prompt text budget (AC7)', () {
-    test('net instruction delta stays within the renegotiated 700 chars '
-        '(net of the mandated wording rewrite)', () {
+    test('net instruction delta stays within 500 chars (net of the '
+        'mandated wording rewrite)', () {
       final summaryBody = _promptBody('prompts/compaction/summary.md');
       final updateBody = _promptBody('prompts/compaction/summary_update.md');
       expect(summaryBody, startsWith(_mandatedSummaryFirstLine));
@@ -410,13 +411,10 @@ void main() {
       final delta =
           (summaryBody.length - baselineSummary) +
           (updateBody.length - baselineUpdate);
-      // The 500 cap (issue #81 AC7) was renegotiated in the #86 review
-      // thread (PR #87, comment 5600706328): issue #86 mandates an
-      // additive tool-results assessment while AC4 kept the 500 pin — the
-      // two cannot both hold without deleting operational ADD/UPDATE rules.
-      // Resolution: rules restored, tool-results wording kept, cap raised
-      // to 700. Owner arbitrates at pr_approved time.
-      expect(delta, lessThanOrEqualTo(700));
+      // ≤500 is the owner's pin (issue #81 AC7, restated by #86 AC4).
+      // #86's tool-results wording fits inside it: the summary_update.md
+      // section hints were tightened (rules themselves all intact).
+      expect(delta, lessThanOrEqualTo(500));
       expect(summaryBody, contains('## Open User Requests'));
       expect(updateBody, contains('## Open User Requests'));
     });
