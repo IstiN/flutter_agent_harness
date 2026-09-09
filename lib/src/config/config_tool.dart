@@ -33,6 +33,9 @@ AgentTool configTool(ConfigService service) {
         }
         if (op == 'get') {
           final result = await service.get(key);
+          if (result.notApplicable != null) {
+            return 'not applicable: ${result.notApplicable}';
+          }
           return result.found
               ? '${result.key} = ${result.display} '
                     '(${result.scope}: ${result.file})'
