@@ -33,6 +33,7 @@ void main() {
       '--cube',
       '--cube-config',
       '--tools',
+      '--log-file',
       '--prompt',
       '-p',
     ];

@@ -23,30 +23,45 @@ final class ScheduledMessageQueue {
     required MessagingRepository Function() repo,
     required String Function() root,
     String Function()? selfMailbox,
+    String Function()? ownerPrefix,
     this.onScheduled,
     this.onFired,
   }) : _env = env,
        _repo = repo,
        _selfMailbox = selfMailbox,
+       _ownerPrefix = ownerPrefix,
        _root = root;
 
   final ExecutionEnv _env;
   final MessagingRepository Function() _repo;
   final String Function() _root;
 
-  /// The scheduling agent's own mailbox (e.g. `&lt;sessionId&gt;/main`). Records
+  /// The scheduling agent's own mailbox (e.g. `<sessionId>/main`). Records
   /// without an explicit `to` default here, and `from` too — a missing
   /// self mailbox stored the literal string 'self', delivering reminders
   /// into a phantom mailbox nobody drains (lost production mail).
   final String Function()? _selfMailbox;
 
-  /// Host-visible notice when a record is scheduled ('in 25m: &lt;text&gt;').
+  /// This instance's mailbox prefix (the session id), captured live. Stored
+  /// on every record as `owner` at schedule time: a sweeper may re-address
+  /// a self-addressed record to its LIVE mailbox only when the stored owner
+  /// matches its own prefix — a differing owner means another live instance
+  /// scheduled it, and the record is left for its owner.
+  final String Function()? _ownerPrefix;
+
+  /// Host-visible notice when a record is scheduled ('in 25m: <text>').
   final void Function(String text)? onScheduled;
 
-  /// Host-visible notice when a record fires ('fired: &lt;text&gt;').
+  /// Host-visible notice when a record fires ('fired: <text>').
   final void Function(String text)? onFired;
 
   String _self() => _selfMailbox?.call() ?? 'self';
+
+  /// Whether this instance may consume a self-addressed record: the stored
+  /// owner prefix is empty (legacy, pre-tagging) or matches this instance's
+  /// live prefix. A differing owner belongs to another live instance.
+  bool _owns(String owner) =>
+      owner.isEmpty || owner == (_ownerPrefix?.call() ?? '');
 
   /// Compact human delay: 90s / 25m / 2h / 1d.
   static String formatDelay(Duration d) {
@@ -58,6 +73,51 @@ final class ScheduledMessageQueue {
   }
 
   String get _dir => '${_root()}/_scheduled';
+
+  /// The root pending records were last scanned under: a live-root change
+  /// (session-cwd adoption) carries over what we may consume before the
+  /// next scan.
+  String? _lastScanRoot;
+
+  /// The live `_scheduled/` dir, migrating records across a root change
+  /// first. Only THIS instance's records ([_owns] — the live prefix is
+  /// already the adopted session's) are carried: dragging foreign records
+  /// across a root change steals them from their owner's sweeps on the old
+  /// root, the move-based form of the issue #59 theft. Unreadable sources
+  /// stay put. Copy-then-remove leaves a crash window that can
+  /// double-deliver — the same window every send+remove sweep here already
+  /// has; the file inbox has no id dedup, accepted at this layer.
+  Future<String> _pendingDir() async {
+    final root = _root();
+    final previous = _lastScanRoot;
+    _lastScanRoot = root;
+    if (previous == null || previous == root) return _dir;
+    final from = '$previous/_scheduled';
+    final entries = (await _env.listDir(from)).valueOrNull ?? const [];
+    for (final entry in entries) {
+      if (entry.kind == FileKind.directory || !entry.path.endsWith('.json')) {
+        continue;
+      }
+      final path = entry.path.contains('/')
+          ? entry.path
+          : '$from/${entry.path}';
+      final text = (await _env.readTextFile(path)).valueOrNull;
+      if (text == null) continue;
+      final record = _parseRecord(text);
+      if (record == null || !_owns(record['owner'] as String? ?? '')) {
+        continue;
+      }
+      final name = path.split('/').last;
+      try {
+        (await _env.writeFile('$_dir/$name', text)).getOrThrow();
+      } on Object {
+        continue; // unwritable target — leave in the old root
+      }
+      await _env.remove(path, force: true);
+    }
+    return _dir;
+  }
+
   Timer? _timer;
 
   /// Persists a delayed message and arms the timer. Returns the record id.
@@ -74,6 +134,7 @@ final class ScheduledMessageQueue {
       'to': to ?? _self(),
       'from': from ?? _self(),
       'text': text,
+      'owner': _ownerPrefix?.call() ?? '',
     };
     (await _env.createDir(_dir)).getOrThrow();
     (await _env.writeFile('$_dir/$id.json', jsonEncode(record))).getOrThrow();
@@ -182,6 +243,10 @@ final class ScheduledMessageQueue {
   Future<Map<String, dynamic>?> _readRecord(String path) async {
     final text = (await _env.readTextFile(path)).valueOrNull;
     if (text == null) return null;
+    return _parseRecord(text);
+  }
+
+  Map<String, dynamic>? _parseRecord(String text) {
     try {
       final decoded = jsonDecode(text);
       return decoded is Map<String, dynamic> ? decoded : null;
@@ -190,34 +255,46 @@ final class ScheduledMessageQueue {
     }
   }
 
+  /// The live mailbox a due record delivers to (null: skip it).
+  ///
+  /// Self-addressed records ride the LIVE self mailbox: the recorded
+  /// address was pinned at schedule time, but hosts re-address mailboxes
+  /// (session switch, app restart, service recreate) — the stale address
+  /// strands the reminder in a mailbox nobody drains while the tool
+  /// already reported success (the lost-schedule bug). The live re-address
+  /// happens only when this instance scheduled the record ([_owns]):
+  /// re-addressing a foreign-owned record here steals the reminder into
+  /// the wrong mailbox and deletes the file (cross-instance self-theft —
+  /// issue #59), so those return null and stay with their owner.
+  String? _deliveryTarget(Map<String, dynamic> record) {
+    final recordedTo = record['to'] as String? ?? _self();
+    final from = record['from'] as String? ?? recordedTo;
+    if (recordedTo != from) return recordedTo;
+    if (!_owns(record['owner'] as String? ?? '')) return null;
+    final self = _self();
+    return (self != 'self' && self.isNotEmpty) ? self : recordedTo;
+  }
+
   Future<int> _deliverDueInner() async {
-    final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
+    final dir = await _pendingDir();
+    final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
     var delivered = 0;
     for (final entry in entries) {
       if (entry.kind == FileKind.directory || !entry.path.endsWith('.json')) {
         continue;
       }
       // listDir implementations differ on absolute vs bare names.
-      final path = entry.path.contains('/')
-          ? entry.path
-          : '$_dir/${entry.path}';
+      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
       final record = await _readRecord(path);
       if (record == null) continue;
       final dueMs = record['dueMs'] as int?;
       if (dueMs == null || dueMs > DateTime.now().millisecondsSinceEpoch) {
         continue; // not a schedule record, or not due yet
       }
-      final recordedTo = record['to'] as String? ?? _self();
-      final from = record['from'] as String? ?? recordedTo;
-      // Self-addressed records ride the LIVE self mailbox: the recorded
-      // address was pinned at schedule time, but hosts re-address mailboxes
-      // (session switch, app restart, service recreate) — the stale address
-      // strands the reminder in a mailbox nobody drains while the tool
-      // already reported success (the lost-schedule bug).
-      final self = _self();
-      final to = (recordedTo == from && self != 'self' && self.isNotEmpty)
-          ? self
-          : recordedTo;
+      final from =
+          record['from'] as String? ?? record['to'] as String? ?? _self();
+      final to = _deliveryTarget(record);
+      if (to == null) continue;
       await _repo().send(
         AgentMessage(
           id: record['id'] as String? ?? newMessageId(),
@@ -256,15 +333,18 @@ final class ScheduledMessageQueue {
 
   /// Scans the pending records for the earliest due time (null: none).
   Future<int?> _nearestDueMs() async {
-    final entries = (await _env.listDir(_dir)).valueOrNull ?? const [];
+    final dir = await _pendingDir();
+    final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
     int? nearest;
     for (final entry in entries) {
       if (!entry.path.endsWith('.json')) continue;
-      final path = entry.path.contains('/')
-          ? entry.path
-          : '$_dir/${entry.path}';
+      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
       final record = await _readRecord(path);
-      final due = record?['dueMs'] as int?;
+      // Foreign self-addressed records arm no timer here: this instance can
+      // never deliver them (_deliveryTarget returns null), and arming would
+      // hot-loop a zero-delay timer until the owner sweeps the record.
+      if (record == null || _deliveryTarget(record) == null) continue;
+      final due = record['dueMs'] as int?;
       if (due != null && (nearest == null || due < nearest)) {
         nearest = due;
       }

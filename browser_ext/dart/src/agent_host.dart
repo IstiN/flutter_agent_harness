@@ -10,6 +10,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_agent_harness/src/config/config_service.dart';
+import 'package:flutter_agent_harness/src/config/config_tool.dart';
 import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/agent/agent.dart';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
@@ -192,6 +194,13 @@ final class AgentHost implements UiHostBackend {
     _mailbox = config.mailbox;
     _registry = ToolRegistry([
       ...builtinTools(_env).where((tool) => tool.name != 'bash'),
+      // AC11 (issue #29): the config tool on the browser-storage surface.
+      // chrome.storage has no home dir and the SW cannot spawn host-side
+      // processes — the service refuses stdio servers with the named
+      // "not applicable on this host" answer instead of writing them.
+      configTool(
+        ConfigService(env: _env, homeDir: null, supportsProcesses: false),
+      ),
       for (final MapEntry(:key, :value) in _browserOps.entries)
         _browserTool(key, value),
     ]);

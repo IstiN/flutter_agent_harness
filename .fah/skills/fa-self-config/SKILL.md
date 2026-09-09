@@ -111,6 +111,14 @@ provider entries are settable this way, e.g. `config` op `set`, key
 `get` reports list-valued keys as the same compact JSON, so the round
 trip is get → edit the JSON → set. A whole list is replaced; to add one
 entry, get first and re-set the extended list.
+`get` of a platform-inapplicable key and `set` of one answer
+`not applicable on this host` with the reason — never write there and
+never suggest a file edit as a workaround. The stdio members of an MCP
+server (`command`/`args`/`env`) need host process spawning: on web and
+iOS/Android containers they are refused; configure a remote server via
+`mcp.servers.<id>.url` instead. On a host with no home directory (web)
+the global scope is refused for every user-file key — only the project
+sections (`memory`/`cube`/`tools`) persist there.
 
 Human/script equivalent (thin wrappers over the same service):
 `fa config check`, `fa config path`, `fa config get <dotted.key>`,
@@ -404,6 +412,29 @@ mode: code                     # code | architect | review
 
 CLI equivalent: `/mode <name>` or the `/code`, `/architect`, `/review`
 shortcuts — they switch live AND persist this key.
+
+## Prompts, TTSR & A2A
+
+The remaining user-file sections (all global scope):
+
+```yaml
+prompts:                        # prompt overrides: prompt id → text or @file
+  concise: "Answer in one short paragraph."
+ttsr:                           # tool-schema reduction (TTSR)
+  enabled: true
+  contextMode: keep             # keep | discard
+  repeatMode: after-gap         # after-gap | once
+a2a:                            # remote Agent2Agent endpoints
+  servers:
+    peer:
+      url: https://peer.example:8080
+      token: ${PEER_TOKEN}      # env-resolved at boot — never a literal secret
+```
+
+`a2a` servers are remote-only (a `url`, like remote MCP servers), so they
+configure fine on process-less hosts. A `token` is an `${ENV}` reference
+resolved at boot; config `check`/`set` keep the token text literal, so an
+unset variable surfaces when the agent boots, not as a config error.
 
 ## Settings hub
 

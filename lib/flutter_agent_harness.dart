@@ -32,6 +32,9 @@ export 'src/cli/browser_bridge_commands.dart';
 export 'src/cli/custom_providers.dart';
 export 'src/cli/env_provider_preconfig.dart';
 export 'src/model_roles/provider_key_resolver.dart';
+export 'src/cli/config_command.dart';
+export 'src/config/config_service.dart';
+export 'src/config/config_tool.dart';
 export 'src/cli/cli_args.dart';
 export 'src/cli/cli_config.dart'
     show
@@ -42,6 +45,7 @@ export 'src/cli/cli_config.dart'
         resolveStartupCubeSource;
 export 'src/cli/cli_help.dart';
 export 'src/cli/folder_model_state.dart';
+export 'src/cli/log_file_tee.dart';
 export 'src/cli/sigint_action.dart';
 export 'src/cli/key_event.dart';
 export 'src/cli/prompt_templates.dart';

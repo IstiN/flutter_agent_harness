@@ -2,6 +2,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -321,14 +322,19 @@ void main() {
         delay: const Duration(milliseconds: 30),
       );
       // Seed the junk next to the valid record.
-      (await env.writeFile('$root/_scheduled/notes.txt', 'not json'))
-          .getOrThrow();
-      (await env.writeFile('$root/_scheduled/broken.json', '{nope'))
-          .getOrThrow();
-      (await env.writeFile('$root/_scheduled/nodue.json', '{"text": "x"}'))
-          .getOrThrow();
-      (await env.writeFile('$root/_scheduled/list.json', '[1,2]'))
-          .getOrThrow();
+      (await env.writeFile(
+        '$root/_scheduled/notes.txt',
+        'not json',
+      )).getOrThrow();
+      (await env.writeFile(
+        '$root/_scheduled/broken.json',
+        '{nope',
+      )).getOrThrow();
+      (await env.writeFile(
+        '$root/_scheduled/nodue.json',
+        '{"text": "x"}',
+      )).getOrThrow();
+      (await env.writeFile('$root/_scheduled/list.json', '[1,2]')).getOrThrow();
       await queue.deliverDue(); // scans across the junk
       await Future<void>.delayed(const Duration(milliseconds: 120));
       final mail = await repo.peek('main');
@@ -383,6 +389,236 @@ void main() {
         contains('[scheduled] ping later'),
       );
       expect(await repo.peek('sid-1/main'), isEmpty);
+    },
+  );
+
+  test(
+    'a sweeper never steals another instance\'s due record (owner prefix)',
+    () async {
+      // Regression (issue #59 RCA): queues sharing one messages root each
+      // sweep _scheduled/ — a sweeper re-addressing every self-addressed
+      // record into ITS live mailbox stole the owner's reminder and deleted
+      // the file. A record owned by another prefix must be left untouched.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      final owner = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-a/main',
+        ownerPrefix: () => 'sid-a',
+      );
+      // Seed a DUE self-addressed record owned by sid-a directly: using
+      // schedule() would arm the owner's own timer and race the sweeper.
+      const id = 'due-foreign-owned';
+      (await env.writeFile(
+        '$root/_scheduled/$id.json',
+        jsonEncode({
+          'id': id,
+          'dueMs': DateTime.now().millisecondsSinceEpoch - 1000,
+          'to': 'sid-a/main',
+          'from': 'sid-a/main',
+          'text': 'watch the PRs',
+          'owner': 'sid-a',
+        }),
+      )).getOrThrow();
+      // Queue B (another session, same shared root) sweeps first.
+      final sweeper = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-b/main',
+        ownerPrefix: () => 'sid-b',
+      );
+      await sweeper.start();
+      // Not delivered into B, not deleted.
+      expect(await repo.peek('sid-b/main'), isEmpty);
+      expect(
+        (await env.readTextFile('$root/_scheduled/$id.json')).valueOrNull,
+        isNotNull,
+      );
+      // The owner still delivers it into its own live mailbox.
+      await owner.deliverDue();
+      expect(
+        (await repo.peek('sid-a/main')).single.text,
+        contains('[scheduled] watch the PRs'),
+      );
+      expect(
+        (await env.readTextFile('$root/_scheduled/$id.json')).valueOrNull,
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'adoption carries only the adopted session\'s records; others stay put',
+    () async {
+      // Regression (issue #59 RCA): the queue root pinned the LAUNCH cwd,
+      // and the naive fix (move everything on a root change) steals the
+      // OTHER instance's records from the shared old root. Production
+      // reassigns the owner prefix to the ADOPTED session on adoption
+      // (_syncMailboxPrefix), so the migration must carry only records the
+      // adopted session owns; the previous session's reminders stay in
+      // their folder root and deliver when that session is active again.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      const launchRoot = '/sessions/--work--/messages';
+      const adoptedRoot = '/sessions/--other--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: launchRoot,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      var cwd = '/work';
+      var prefix = 'sid-1';
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => '/sessions/${encodeSessionCwd(cwd)}/messages',
+        selfMailbox: () => '$prefix/main',
+        ownerPrefix: () => prefix,
+      );
+      // The record the OLD session schedules: owned by sid-1 in the work
+      // folder's root.
+      final sid1Id = await queue.schedule(
+        text: 'follow me',
+        delay: const Duration(minutes: 5),
+      );
+      // A record owned by the session ABOUT to be adopted, sitting in the
+      // old root and already due.
+      const adoptedId = 'due-owned-by-sid-2';
+      (await env.writeFile(
+        '$launchRoot/_scheduled/$adoptedId.json',
+        jsonEncode({
+          'id': adoptedId,
+          'to': 'sid-2/main',
+          'from': 'sid-2/main',
+          'text': 'carried with the adoption',
+          'owner': 'sid-2',
+          'dueMs': DateTime.now().millisecondsSinceEpoch - 1000,
+        }),
+      )).getOrThrow();
+      // A due record owned by a third instance on the same root: the
+      // adoption must leave it exactly where its owner sweeps.
+      const foreignId = 'due-owned-by-sid-a';
+      (await env.writeFile(
+        '$launchRoot/_scheduled/$foreignId.json',
+        jsonEncode({
+          'id': foreignId,
+          'to': 'sid-a/main',
+          'from': 'sid-a/main',
+          'text': 'not yours',
+          'owner': 'sid-a',
+          'dueMs': DateTime.now().millisecondsSinceEpoch - 1000,
+        }),
+      )).getOrThrow();
+      // The host adopts sid-2 from a different project folder: the prefix
+      // and the queue root are reassigned together.
+      prefix = 'sid-2';
+      cwd = '/other';
+      await queue.start();
+      // The adopted session's due record was carried to the new root and
+      // delivered into its live mailbox.
+      expect(
+        (await repo.peek('sid-2/main')).single.text,
+        contains('[scheduled] carried with the adoption'),
+      );
+      expect(
+        (await env.readTextFile(
+          '$adoptedRoot/_scheduled/$adoptedId.json',
+        )).valueOrNull,
+        isNull,
+      );
+      // The previous session's reminder stayed in its folder root
+      // (undelivered: sid-1 is not active here).
+      expect(
+        (await env.readTextFile(
+          '$launchRoot/_scheduled/$sid1Id.json',
+        )).valueOrNull,
+        isNotNull,
+      );
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      // The third instance's record was not stolen by the move either.
+      expect(
+        (await env.readTextFile(
+          '$launchRoot/_scheduled/$foreignId.json',
+        )).valueOrNull,
+        isNotNull,
+      );
+      expect(await repo.peek('sid-a/main'), isEmpty);
+    },
+  );
+
+  test(
+    'restart re-arm delivers to the original owner; foreign prefix waits',
+    () async {
+      // Regression (issue #59 RCA): re-arm from an on-disk record may
+      // re-address to the LIVE mailbox only when the stored owner prefix
+      // matches — a restart of the same session delivers, a different
+      // session's queue leaves the record for its owner.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      // A DUE on-disk record left by session sid-1 (seeded directly so no
+      // armed timer races the sweeps).
+      const id = 'due-owned-by-sid-1';
+      (await env.writeFile(
+        '$root/_scheduled/$id.json',
+        jsonEncode({
+          'id': id,
+          'dueMs': DateTime.now().millisecondsSinceEpoch - 1000,
+          'to': 'sid-1/main',
+          'from': 'sid-1/main',
+          'text': 'ping later',
+          'owner': 'sid-1',
+        }),
+      )).getOrThrow();
+      // A different session's queue re-arms from the same on-disk record:
+      // foreign prefix, so it must neither deliver nor delete.
+      final foreign = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-2/main',
+        ownerPrefix: () => 'sid-2',
+      );
+      await foreign.start();
+      expect(await repo.peek('sid-2/main'), isEmpty);
+      expect(
+        (await env.readTextFile('$root/_scheduled/$id.json')).valueOrNull,
+        isNotNull,
+      );
+      // Restart of the SAME session (matching prefix): the record surfaces
+      // in the original owner's live mailbox.
+      final restarted = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-1/main',
+        ownerPrefix: () => 'sid-1',
+      );
+      await restarted.start();
+      expect(
+        (await repo.peek('sid-1/main')).single.text,
+        contains('[scheduled] ping later'),
+      );
+      expect(await repo.peek('sid-2/main'), isEmpty);
+      // Delivered records are consumed from disk.
+      expect(
+        (await env.readTextFile('$root/_scheduled/$id.json')).valueOrNull,
+        isNull,
+      );
     },
   );
 }

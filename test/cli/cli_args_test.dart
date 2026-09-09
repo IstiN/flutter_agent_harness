@@ -230,6 +230,27 @@ void main() {
       expect(args.cubeName, isNull);
     });
 
+    test('--log-file sets the tee path', () {
+      final args =
+          parseCliArgs(const ['--log-file', 'trace.log', '-p', 'hi'])
+              as CliArgs;
+      expect(args.logFile, 'trace.log');
+      expect(args.isHeadless, isTrue);
+    });
+
+    test('--log-file with a missing value is an error', () {
+      expect(
+        () => parseCliArgs(const ['--log-file']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--log-file requires a value'),
+          ),
+        ),
+      );
+    });
+
     test('--cube with a missing value is an error', () {
       expect(
         () => parseCliArgs(const ['--cube']),
