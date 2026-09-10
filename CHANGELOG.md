@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.339
+## Unreleased
 
 - fix(97): the TUI secret sheet accepts multiline and over-wide pastes
   safely: a pasted NAME drops CR/LF (UPPER_SNAKE can never carry line
