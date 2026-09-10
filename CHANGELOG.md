@@ -3121,6 +3121,12 @@
 
 - fix(107): un-red the tag pipeline — publish validation + LLM integration job (#108)
 
+## 0.1.341
+
+- feat(102): interactive dynamic messages - UI surface (tile, sheet, save-as-app) (#120)
+- fix(121): scope the pub.dev publish token to the publish step only (#123)
+- feat(113): fa1.dev reflects the Chrome extension, Outlook add-in, and full tool surface (#116)
+
 ## Unreleased
 
 ## Unreleased

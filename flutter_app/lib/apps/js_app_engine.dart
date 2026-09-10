@@ -118,6 +118,7 @@ class JsAppEngine {
     this.videoReader,
     this.keysSource,
     this.keyRequestHandler,
+    this.onEmit,
     this.hostLocale = 'en',
     this.initialTheme = const {},
     this._onLog,
@@ -194,6 +195,12 @@ class JsAppEngine {
   /// persists a grant; `null` answers with an actionable error, a `null`
   /// result (user declined) rejects the bridge call.
   final RequestSecretCallback? keyRequestHandler;
+
+  /// Host sink for the shared `emit` fa bridge — dynamic messages wire it to
+  /// the agent back-channel (each emit surfaces as a user message); installed
+  /// apps leave it null and the bridge resolves {emitted: false}.
+  final void Function(String event, Map<String, Object?> payload)? onEmit;
+
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -296,7 +303,7 @@ class JsAppEngine {
       instanceId: instanceId,
       initialTheme: initialTheme,
       initialStorage: storage,
-      hostBootstrapJs: _faBootstrapJsFor(hostLocale),
+      hostBootstrapJs: faBootstrapJsFor(hostLocale),
       onRender: (t) => tree.value = t,
       onSetTitle: (_) {},
       onStorageUpdate: _persistStorage,
@@ -524,8 +531,10 @@ class JsAppEngine {
   // --- jsr.exec + the jsr.fa bridge ------------------------------------------
 
   /// The fa bootstrap with the host locale baked in: `jsr.locale` is set
-  /// before any app code runs (theme pushes only cover `jsr.theme`).
-  static String _faBootstrapJsFor(String locale) {
+  /// before any app code runs (theme pushes only cover `jsr.theme`). Public
+  /// so the bridge-parity test can assert the exact method set every engine —
+  /// installed apps AND dynamic-message widgets — boots with (AC6).
+  static String faBootstrapJsFor(String locale) {
     final safe = locale.replaceAll("'", '');
     return "jsr.locale = '$safe';\n$_faBootstrapJs";
   }
@@ -607,6 +616,12 @@ jsr.fa.keys = {
   get: function(name) { return jsr.fa.call('keys.get', {name: name}); },
   request: function(name, reason) { return jsr.fa.call('keys.request', {name: name, reason: reason}); },
 };
+
+// Widget->host event channel (dynamic messages): fire-and-forget emit of one
+// named event with a JSON payload; the host forwards it to the agent as a
+// user message. Resolves {emitted: true|false} — false when the host has no
+// sink (installed apps).
+jsr.fa.emit = function(event, payload) { return jsr.fa.call('emit', {event: event, payload: payload || {}}); };
 
 // Multi-turn + streaming LLM calls. Stream deltas cannot cross the bridge as
 // a function reference, so the host pushes reserved 'llm.delta' events (see
@@ -884,6 +899,32 @@ Object.defineProperty(jsr, 'onBack', {
       if (method == 'back.close') {
         onCloseRequested?.call();
         _resolve?.call(id, true);
+        return;
+      }
+      // Widget->host event channel (dynamic messages): fire-and-forget emit
+      // of one named event with a JSON payload. NOT permission-gated — the
+      // host sink is injected by the presenter (see [onEmit]); installed
+      // apps have none and the bridge resolves {emitted: false}.
+      if (method == 'emit') {
+        final event = (args['event'] ?? '').toString();
+        if (event.isEmpty) {
+          _resolve?.call(id, {'__error': 'emit requires an event name'});
+          return;
+        }
+        final payload = args['payload'];
+        final sink = onEmit;
+        if (sink != null) {
+          // A throwing host sink must not reject the bridge promise.
+          try {
+            sink(
+              event,
+              payload is Map ? Map<String, Object?>.from(payload) : const {},
+            );
+          } on Object catch (error) {
+            AppLog.i('apps', 'jsr.fa.emit handler failed: $error');
+          }
+        }
+        _resolve?.call(id, {'emitted': sink != null});
         return;
       }
       final prefix = method.split('.').first;

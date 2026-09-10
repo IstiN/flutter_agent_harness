@@ -305,7 +305,9 @@ class _JsAppViewState extends State<JsAppView> {
         permissions: effective,
         llmHandler: widget.llmHandler,
         platformHandler: widget.platformHandler,
-        asrTranscriber: widget.asrTranscriber ?? await _serviceAsrTranscriber(),
+        asrTranscriber:
+            widget.asrTranscriber ??
+            await widget.agentService?.resolveAsrTranscriber(),
         mediaGateway: widget.mediaGateway ?? widget.agentService?.mediaGateway,
         videoReader: widget.videoReader ?? widget.agentService?.videoReader,
         keysSource: widget.agentService?.hostSecrets,
@@ -376,23 +378,6 @@ class _JsAppViewState extends State<JsAppView> {
     final result = await showSecretRequestSheet(context, name, reason);
     if (result == null) return null;
     return service.acceptSecretGrant(result);
-  }
-
-  /// Derives the ASR transcriber through the session's media gateway (the
-  /// media_models.json `transcription` slot, falling back to the active
-  /// provider); null when no ASR-capable (OpenAI-compatible) endpoint is
-  /// configured — the bridge then answers with an actionable error.
-  Future<AsrTranscriber?> _serviceAsrTranscriber() async {
-    final service = widget.agentService;
-    if (service == null) return null;
-    final gateway = service.mediaGateway;
-    if (gateway != null) return whisperTranscriberForGateway(gateway);
-    final config = service.configForClone;
-    return whisperTranscriberFor(
-      providerKind: service.providerKind,
-      baseUrl: config?.baseUrl ?? '',
-      apiKey: config?.apiKey ?? '',
-    );
   }
 
   /// Shows the mini reply sheet when a run ENDS with a new assistant text
