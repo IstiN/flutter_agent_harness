@@ -3133,6 +3133,11 @@
 - fix(109): clear stale TUI ask answers and keep the prompt frame inside the terminal width (#112)
 - chore(114): terminal-bench adapter and runner for fa (#119)
 
+## 0.1.343
+
+- fix(122): run dart pub publish --dry-run in PR quality gates (#128)
+- fix(118): strip Dart core exception prefixes from model-visible tool errors (#127)
+
 ## Unreleased
 
 ## Unreleased
