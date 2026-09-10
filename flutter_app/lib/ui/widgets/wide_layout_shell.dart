@@ -141,12 +141,23 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   /// up with the attach broadcast.
   String? _pendingOpenId;
 
+  /// The ONE selected id every row compares against: the click's pending
+  /// id wins while in flight, then the SW's live id (hosted), then the
+  /// manager's active slot (local). Pending is REPLACEMENT, not additive —
+  /// exactly one row can ever be highlighted.
+  String? get _selectedSessionId {
+    final pending = _pendingOpenId;
+    if (pending != null) return pending;
+    return widget.manager.hostedLiveId.value ?? widget.manager.active?.id;
+  }
+
   void _onManagerChanged() {
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
-    if (_pendingOpenId != null && widget.manager.active?.id == _pendingOpenId) {
-      _pendingOpenId = null; // the broadcast landed — real state took over
+    if (_pendingOpenId != null &&
+        widget.manager.hostedLiveId.value == _pendingOpenId) {
+      _pendingOpenId = null; // the broadcast landed — the live id took over
     }
     if (mounted) setState(() {});
   }
@@ -322,6 +333,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                   onOpenPersisted: _openPersistedSession,
                   hubBoundSessionId: DapBindingStore.instance.boundSessionId,
                   pendingSessionId: _pendingOpenId,
+                  selectedSessionId: _selectedSessionId,
                 ),
               ),
             ),

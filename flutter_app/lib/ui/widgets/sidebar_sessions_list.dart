@@ -33,6 +33,7 @@ class SidebarSessionsList extends StatefulWidget {
     this.collapsed = false,
     this.hubBoundSessionId,
     this.pendingSessionId,
+    this.selectedSessionId,
   });
 
   /// The session the user just asked to open (a `session_open` dispatch is
@@ -41,6 +42,10 @@ class SidebarSessionsList extends StatefulWidget {
   /// always the freshest row, so the dot sat pinned to the first row until
   /// the SW poll refreshed the stamps seconds later).
   final String? pendingSessionId;
+
+  /// The ONE selected id (pending click > hosted live id > manager slot) —
+  /// computed by the host, which owns all three sources.
+  final String? selectedSessionId;
 
   final FlutterSessionManager manager;
   final SessionNamesStore? sessionNamesStore;
@@ -219,9 +224,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                           // The folder basename IS the group header — a
                           // per-tile cwd label would duplicate it.
                           cwd: null,
-                          isActive:
-                              widget.manager.active?.id == entry.id ||
-                              entry.id == widget.pendingSessionId,
+                          isActive: entry.id == widget.selectedSessionId,
                           hubBound:
                               widget.hubBoundSessionId != null &&
                               widget.hubBoundSessionId == entry.id,
@@ -312,7 +315,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                   itemCount: sessions.length,
                   itemBuilder: (context, index) {
                     final session = sessions[index];
-                    final isActive = widget.manager.active?.id == session.id;
+                    final isActive = session.id == widget.selectedSessionId;
                     return Tooltip(
                       message: _titleFor(
                         _SessionEntry(

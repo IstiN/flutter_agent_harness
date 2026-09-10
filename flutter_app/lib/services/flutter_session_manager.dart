@@ -59,6 +59,13 @@ final class FlutterSessionManager extends ChangeNotifier {
   final Map<String, FlutterManagedSession> _sessions = {};
   String? _activeId;
 
+  /// The service worker's live session id on hosted surfaces (the browser
+  /// extension) — THE single source of truth for "which session am I in"
+  /// for every session UI (wide sidebar, narrow drawer). The manager slot
+  /// and per-surface pending hacks all settle against this. Null on local
+  /// surfaces (desktop/mobile), where [activeId] stays authoritative.
+  final ValueNotifier<String?> hostedLiveId = ValueNotifier<String?>(null);
+
   /// File (under [ExecutionEnv.cwd]) remembering the last ACTIVE session id
   /// across restarts — boot resumes the chat the user actually worked in,
   /// not just the newest file (which may be a fresh empty one).

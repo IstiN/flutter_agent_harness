@@ -837,7 +837,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// sliding in from the left under the input bar.
   Widget _buildDrawer(FahColors colors) {
     final l10n = context.l10n;
-    final activeId = widget.manager.activeId;
+    // The hosted live id IS the active session on hosted surfaces — the
+    // manager slot only re-keys a beat later (attach broadcast), so prefer
+    // it: the dot moves the moment the SW confirms the switch.
+    final activeId =
+        widget.manager.hostedLiveId.value ?? widget.manager.activeId;
     final entries =
         <
             ({
@@ -1000,8 +1004,13 @@ class SessionChatSheetState extends State<SessionChatSheet>
                           );
                         }
                         final entry = row.entry!;
+                        // ONE selection rule with the wide sidebar: the
+                        // hosted live id is the truth; the `entry.live`
+                        // requirement only applies to local surfaces.
                         final isActive =
-                            entry.live != null && entry.id == activeId;
+                            entry.id == activeId &&
+                            (entry.live != null ||
+                                widget.manager.hostedLiveId.value != null);
                         final title =
                             _namesStore?.titleFor(entry.id) ??
                             derivedSessionTitle(

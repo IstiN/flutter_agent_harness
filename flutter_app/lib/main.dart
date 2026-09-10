@@ -1217,9 +1217,14 @@ class SetupScreen extends StatelessWidget {
       // key for the tile/active-session bookkeeping. The local session
       // lifecycle below does not apply — the SW owns the JSONL session.
       // A session_new/session_open from ANY surface arrives as an attach
-      // broadcast; re-key the slot so active-dots and labels follow.
-      relay.onLiveSessionIdChanged = (newId) =>
-          manager.rekeyActiveSession(newId);
+      // broadcast; re-key the slot so active-dots and labels follow. The
+      // hostedLiveId notifier is the single selection source every session
+      // UI reads (wide sidebar + narrow drawer) — set it FIRST so the
+      // rebuild triggered by the rekey already sees the new truth.
+      relay.onLiveSessionIdChanged = (newId) {
+        manager.hostedLiveId.value = newId;
+        manager.rekeyActiveSession(newId);
+      };
       manager.addSession(
         relay.relaySessionId.isEmpty ? 'relay' : relay.relaySessionId,
         relay,

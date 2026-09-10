@@ -48,6 +48,13 @@
   drawer filter hid the freshly archived row ("added a session, still
   see one"). The trio now broadcasts to all connected ports, and the
   drawer filter no longer drops archived rows by a possibly-stale id.
+- fix(app): ONE session-selection source for every surface. The wide
+  sidebar and the narrow drawer had divergent active-row logic
+  (manager slot vs SW live id), so a switch lit two rows in the wide
+  sidebar (pending + stale slot) and none moved in the drawer.
+  FlutterSessionManager.hostedLiveId is now the single truth (set on
+  every attach broadcast), pending clicks REPLACE it until it lands,
+  and both surfaces derive their dot from the same effective id.
 - fix(app): the wide sidebar's active dot follows session switches. The
   live session is always the freshest row, so the dot sat pinned to the
   first row and a switch had no immediate feedback. The clicked session
