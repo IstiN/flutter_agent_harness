@@ -20,6 +20,7 @@ import 'agent_tool_availability.dart';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/approval_mode_store.dart';
@@ -68,6 +69,7 @@ import 'package:fa/webllm/webllm_types.dart';
 
 part 'agent_service_compaction.dart';
 part 'agent_service_assistant.dart';
+part 'agent_service_events.dart';
 
 /// A UI-facing chat message.
 /// the adapter skips `Authorization: Bearer` when the key is empty.
@@ -135,6 +137,9 @@ class AgentService extends ChangeNotifier
     _attachRedactor(redactor);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
+    // Chat surfaces (the ✦ dynamic-messages list, inline widget tiles)
+    // must never hit an uninitialized field on this path either.
+    dynamicMessages = _buildDynamicMessages();
     // Pre-constructed-Agent path (tests): the caller owns the registry, so
     // availability still resolves (capabilities from the agent's own tools)
     // but the registry is not re-synced on toggle.
@@ -517,6 +522,10 @@ class AgentService extends ChangeNotifier
     // clean "not supported" note; completions re-enter via sendText (steer
     // mid-run, fresh turn while idle).
     _shellJobs = ShellJobRegistry(env: toolEnv, onSettled: _onShellJobSettled);
+    // Interactive dynamic messages (issue #102): the host machinery behind
+    // the `dynamic_message` tool — session-scoped JS widgets rendered
+    // inline in the transcript with the full installed-app engine surface.
+    dynamicMessages = _buildDynamicMessages();
     final registry = ToolRegistry([
       ...builtinTools(
         toolEnv,
@@ -551,6 +560,13 @@ class AgentService extends ChangeNotifier
       // through the chat screen's bottom sheet; a grant is persisted into
       // the Keys store and made live (see [_handleSecretRequest]).
       requestSecretTool(callback: _handleSecretRequest),
+      // Interactive dynamic messages (issue #102): the agent renders a
+      // session-scoped JS widget as a chat message; the tool resolves when
+      // the host presents it. Hosts without a chat surface never register
+      // a callback, so the tool stays absent there (the CLI).
+      dynamicMessageTool(
+        callback: (request) => dynamicMessages.present(request),
+      ),
       // System-calendar access (macOS/iOS via the `fah/calendar` channel;
       // the tools themselves report a clean note where unsupported).
       if (calendarPlatformSupported) ...[
@@ -856,6 +872,11 @@ class AgentService extends ChangeNotifier
   /// the safe headless default.
   @override
   RequestSecretCallback? secretRequestHandler;
+
+  /// Jump-to-message executor installed by the scrolling chat surface
+  /// (issue #102 AC5: the ✦ sheet scrolls a widget's message into view).
+  @override
+  void Function(String messageId)? scrollToMessageHandler;
 
   /// The live secrets wrapper around [env] ([AgentService.create] path);
   /// `request_secret` grants are injected here so later bash calls see them.
@@ -1214,6 +1235,22 @@ class AgentService extends ChangeNotifier
   /// around a pre-constructed [Agent] (tests).
   VideoReader? get videoReader => _videoReader;
   VideoReader? _videoReader;
+
+  /// Derives the ASR transcriber for jsr bridges (the media_models.json
+  /// `transcription` slot, falling back to the active provider); null when
+  /// no ASR-capable (OpenAI-compatible) endpoint is configured — the bridge
+  /// then answers with an actionable error. Shared by the app view and the
+  /// dynamic-message widgets (issue #102 AC6).
+  Future<AsrTranscriber?> resolveAsrTranscriber() async {
+    final gateway = _mediaGateway;
+    if (gateway != null) return whisperTranscriberForGateway(gateway);
+    final config = _config;
+    return whisperTranscriberFor(
+      providerKind: _providerKind,
+      baseUrl: config?.baseUrl ?? '',
+      apiKey: config?.apiKey ?? '',
+    );
+  }
 
   /// Model id of the active backend (shorthand for the agent's current
   /// model; updated by [reconfigure]).
@@ -1781,6 +1818,37 @@ class AgentService extends ChangeNotifier
     ];
   }
 
+  /// Interactive dynamic messages of this session (issue #102): the host
+  /// machinery behind the `dynamic_message` tool. UI reads it for the
+  /// ✦ list, the inline widget tiles, and save-as-app.
+  late final DynamicMessagesService dynamicMessages;
+
+  DynamicMessagesService _buildDynamicMessages() => DynamicMessagesService(
+    env: env,
+    sendText: sendText,
+    sessionIdOf: () => _sessionId,
+    sessionFileOf: () => _sessionFile,
+    mediaGatewayOf: () => _mediaGateway,
+    videoReaderOf: () => _videoReader,
+    hostSecretsOf: hostSecrets,
+    llmHandlerOf: () => completeOnce,
+    asrTranscriberOf: resolveAsrTranscriber,
+    resolveHostSecretDefault: _requestSecretForWidget,
+  );
+
+  /// The `jsr.fa.keys.request` backend for widget engines without a tile-
+  /// supplied requester: the same secret sheet the `request_secret` tool
+  /// drives, with grants routed through the session's persist+activate
+  /// flow (JsAppView parity).
+  Future<RequestSecretResult?> _requestSecretForWidget(
+    String name,
+    String reason,
+  ) async {
+    final result = await secretRequestHandler?.call(name, reason);
+    if (result == null) return null;
+    return acceptSecretGrant(result);
+  }
+
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending
   /// until the next turn picks it up.
@@ -2120,6 +2188,7 @@ class AgentService extends ChangeNotifier
     fsRevision.dispose();
     externalSessionRevision.dispose();
     _trajectory.dispose();
+    dynamicMessages.dispose();
     super.dispose();
   }
 
@@ -2136,6 +2205,7 @@ class AgentService extends ChangeNotifier
     _sessionFile = null;
     _agent.reset();
     messages.clear();
+    await dynamicMessages.forgetAll();
     error = null;
     _persistedCount = 0;
     _trajectory.reset();
@@ -2361,9 +2431,23 @@ class AgentService extends ChangeNotifier
     _persistedCount = contextMessages.length;
     _currentAssistantMessage = null;
     error = null;
+    // Dynamic messages replay (issue #102): materialise the session's
+    // widget definitions and splice their transcript markers back into
+    // position — the branch walk counts message records, so each marker
+    // lands right after the reply that emitted it.
+    await dynamicMessages.forgetAll();
+    final widgetMarkers = await dynamicMessages.adoptBranch(
+      await session.getBranch(),
+    );
+    final rebuilt = contextMessages.map(_toChatMessage).toList();
+    for (final (index, marker) in widgetMarkers) {
+      final at = index > rebuilt.length ? rebuilt.length : index;
+      rebuilt.insert(at, marker);
+      dynamicMessages.byId(marker.data?.toString() ?? '')?.markerIndex = at;
+    }
     messages
       ..clear()
-      ..addAll(contextMessages.map(_toChatMessage));
+      ..addAll(rebuilt);
     notifyListeners();
   }
 
@@ -2435,188 +2519,9 @@ class AgentService extends ChangeNotifier
     }
   }
 
-  Future<void> _onAgentEvent(AgentEvent event, CancelToken cancelToken) async {
-    // Any event proves the run is alive — rearm the idle watchdog.
-    if (event is! AgentEndEvent) _armIdleWatchdog();
-    _trajectory.applyEvent(event);
-    switch (event) {
-      case AgentStartEvent():
-        isStreaming = true;
-        _currentAssistantMessage = null;
-        _turnStartCount = 0;
-        pendingSteerTexts.clear();
-        notifyListeners();
-      case TurnStartEvent():
-        // Continuation turns (steering injected mid-run) start with a second
-        // TurnStartEvent; clear the pending banner now so it doesn't outlive
-        // the injected user messages.
-        if (_turnStartCount > 0 && pendingSteerTexts.isNotEmpty) {
-          pendingSteerTexts.clear();
-          notifyListeners();
-        }
-        _turnStartCount++;
-      case MessageUpdateEvent(:final assistantMessageEvent):
-        if (assistantMessageEvent is TextDeltaEvent) {
-          _appendAssistantDelta(assistantMessageEvent.delta);
-        } else if (assistantMessageEvent is ThinkingDeltaEvent) {
-          _appendThinkingDelta(assistantMessageEvent.delta);
-        }
-      case MessageEndEvent(:final message):
-        if (message is UserMessage) {
-          // User messages (initial prompts and injected steering) reach the
-          // transcript through the agent loop so ordering matches the context.
-          messages.add(_toChatMessage(message));
-          // If this text was shown as pending while the agent was busy, drop
-          // it from the banner now that it is in the live transcript.
-          final text = _userMessageText(message);
-          if (text != null) pendingSteerTexts.remove(text);
-          notifyListeners();
-        } else if (message is AssistantMessage) {
-          _finalizeAssistant(message);
-        }
-        _persistSoon();
-      case ToolExecutionStartEvent(:final toolName, :final args):
-        // Tool calls can run long (builds, installs) without producing agent
-        // events — the idle watchdog must not fire during them.
-        _activeToolCalls++;
-        messages.add(
-          FahChatMessage(
-            role: 'system',
-            content: '[$toolName] ${_shortArgs(args)}',
-          ),
-        );
-        _pushLiveActivityStatus();
-        notifyListeners();
-      case ToolExecutionEndEvent(
-        :final toolName,
-        :final result,
-        :final isError,
-      ):
-        _activeToolCalls--;
-        _armIdleWatchdog();
-        if (_kMutatingToolNames.contains(toolName)) {
-          // "Hook" for file-watching UI: the agent may have changed files.
-          fsRevision.value++;
-        }
-        _persistSoon();
-        final text = result.content
-            .whereType<TextContent>()
-            .map((b) => b.text)
-            .join('\n');
-        messages.add(
-          FahChatMessage(
-            role: 'tool',
-            content: text,
-            toolName: toolName,
-            isError: isError,
-          ),
-        );
-        _pushLiveActivityStatus();
-        notifyListeners();
-      case ModelRequestEvent(:final detail):
-        _persistModelRequest(detail);
-      case AgentEndEvent():
-        _idleWatchdog?.cancel();
-        isStreaming = false;
-        _currentAssistantMessage = null;
-        notifyListeners();
-        // Session persistence is best effort: a failed append must not
-        // propagate back into the agent's event plumbing (a throwing
-        // listener re-enters the loop's failure path, duplicates the
-        // failure events, and escapes the run as an unhandled error).
-        //
-        // Through the SAME `_persistChain` as `_persistSoon` — a direct
-        // call races the queued passes: both read `_persistedCount == 0`
-        // before either finishes, and every message is appended twice
-        // (duplicate JSONL records, duplicated transcripts on reload).
-        // Session persistence is best effort: a failed append must not
-        // propagate back into the agent's event plumbing (a throwing
-        // listener re-enters the loop's failure path, duplicates the
-        // failure events, and escapes the run as an unhandled error).
-        try {
-          await _persist();
-        } on Object {
-          // The transcript stays in memory; the next run retries the
-          // missed appends (see _persistedCount).
-        }
-        final compacted = await _maybeAutoCompact();
-        // The loop's over-window guard stopped the run: once the
-        // post-run compaction freed the window, continue the interrupted
-        // turn on its own (once per user text) instead of idling with an
-        // error — a live session that hit the guard mid-task (200676/200k
-        // on glm) used to sit dead until a manual "continue".
-        final lastMessage = _agent.state.messages.lastOrNull;
-        if (!_overWindowAutoResumed &&
-            compacted &&
-            lastMessage is AssistantMessage &&
-            isContextWindowExhaustedError(lastMessage.errorMessage)) {
-          _overWindowAutoResumed = true;
-          Future(
-            () => _runWithTimeout(
-              () => _agent.prompt(_overWindowContinuationNotice),
-            ),
-          );
-        }
-        // Steering/follow-up messages queued during the run get their own
-        // run once this lifecycle fully finished — also after a manual
-        // stop, so a queued message never silently dies in the transcript.
-        if (_agent.hasQueuedMessages()) {
-          Future(() => _runWithTimeout(() => _agent.continueRun()));
-        }
-      default:
-    }
-  }
-
-  /// Extracts the textual content of a [UserMessage] for matching against
-  /// [pendingSteerTexts]. Returns `null` for empty or non-text messages.
-  String? _userMessageText(UserMessage message) {
-    final content = message.content;
-    if (content is String) {
-      return content.isEmpty ? null : content;
-    }
-    final text = (content as List<ContentBlock>)
-        .whereType<TextContent>()
-        .map((b) => b.text)
-        .join('\n');
-    return text.isEmpty ? null : text;
-  }
-
-  /// Buffers the outbound-request summary for the next persist pass. The
-  /// pass serializes through the same writer as message appends and flushes
-  /// summaries right before their assistant message, so the CustomRecord
-  /// stays ahead of it on the record chain (the replay walk expects that).
-  void _persistModelRequest(TrajectoryRequestDetail detail) {
-    _pendingRequestSummaries.add(detail);
-  }
-
-  void _appendAssistantDelta(String delta) {
-    var target = _currentAssistantMessage;
-    if (target == null) {
-      target = FahChatMessage(role: 'assistant', content: '');
-      _currentAssistantMessage = target;
-      messages.add(target);
-      // The status line flips to "writing…" — update the Live Activity.
-      _pushLiveActivityStatus();
-    }
-    target.content += delta;
-    notifyListeners();
-  }
-
-  void _appendThinkingDelta(String delta) {
-    var target = _currentThinkingMessage;
-    if (target == null) {
-      target = FahChatMessage(role: 'thinking', content: '');
-      _currentThinkingMessage = target;
-      messages.add(target);
-      // The status line flips to "thinking…" — update the Live Activity.
-      _pushLiveActivityStatus();
-    }
-    target.content += delta;
-    notifyListeners();
-  }
-
-  /// Bridge for the part-file extension members ([AgentServiceAssistant]):
-  /// `notifyListeners` is `@protected`, callable only inside the class.
+  /// Bridge for the part-file extension members ([AgentServiceAssistant],
+  /// [AgentServiceEvents]): `notifyListeners` is `@protected`, callable
+  /// only inside the class.
   void _notify() => notifyListeners();
 
   /// The visible transcript as Markdown (`## You` / `## Fa` / `## tool`
@@ -2691,7 +2596,22 @@ class AgentService extends ChangeNotifier
     // tail; the next assistant step re-attaches them or they stay an
     // inert orphan.
     await _flushRequestSummaries(session);
+    // Presented dynamic messages persist right after the messages that
+    // carried them (the replay walk inserts each marker by counting the
+    // message records ahead of it on the chain).
+    await _flushDynamicWidgets(session);
     _persistedCount = all.length;
+  }
+
+  /// Persists presented dynamic messages as `dynamic_widget` custom
+  /// records (the replay source; see [DynamicMessagesService.adoptBranch]).
+  Future<void> _flushDynamicWidgets(Session session) async {
+    for (final data in dynamicMessages.drainRecordPayloads()) {
+      await session.appendCustomEntry(
+        customType: DynamicMessagesService.recordType,
+        data: data,
+      );
+    }
   }
 
   /// Writes every buffered request summary as a context-omitted

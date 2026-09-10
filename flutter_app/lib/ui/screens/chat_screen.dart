@@ -12,6 +12,9 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/dynamic_messages.dart';
+import 'package:fa/apps/dynamic_messages_sheet.dart';
+import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/js_app_navigation.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
@@ -20,11 +23,16 @@ import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/upload.dart';
+import 'package:fa/services/widget_publication_store.dart';
+import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
+import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/media_player.dart';
+import 'package:fa/ui/widgets/widget_publish_sheet.dart';
 
 // The screen itself lives in the fa_ui package; these symbols stay
 // re-exported so existing imports of this path keep working.
@@ -116,12 +124,14 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     widget.manager.addListener(_onManagerChanged);
     _installAppLauncher();
+    _installDynamicHosts();
   }
 
   @override
   void dispose() {
     widget.manager.removeListener(_onManagerChanged);
     _uninstallAppLauncher();
+    _uninstallDynamicHosts();
     super.dispose();
   }
 
@@ -153,6 +163,83 @@ class _ChatScreenState extends State<ChatScreen> {
     if (active != null && active.service.appLauncher == _launchApp) {
       active.service.appLauncher = null;
     }
+  }
+
+  /// The dynamic-message host hooks are package-level statics resolved at
+  /// render time against [ChatScreen.service] — always the active
+  /// session's service, so session switches need no re-install.
+  void _installDynamicHosts() {
+    fa_ui.FaChatHost.dynamicWidgetTileBuilder =
+        (context, message) => DynamicWidgetTile(
+          service: widget.service.dynamicMessages,
+          message: message,
+          onSaveAsApp: _graduateWidget,
+        );
+    fa_ui.FaChatHost.dynamicMessagesButtonBuilder = (context, chatService) {
+      if (widget.service.dynamicMessages.widgets.isEmpty) return null;
+      return DynamicMessagesButton(
+        service: chatService as AgentService,
+        onSaveAsApp: _graduateWidget,
+      );
+    };
+  }
+
+  void _uninstallDynamicHosts() {
+    fa_ui.FaChatHost.dynamicWidgetTileBuilder = null;
+    fa_ui.FaChatHost.dynamicMessagesButtonBuilder = null;
+  }
+
+  /// One-tap "save as app" (issue #102 AC7): installs the widget under a
+  /// fresh app id (storage COPIED by the service), then opens the
+  /// launcher's publish sheet so the user can optionally share it.
+  Future<void> _graduateWidget(DynamicMessageDefinition definition) async {
+    final service = widget.service;
+    String? appId = await service.dynamicMessages.saveAsApp(
+      definition,
+      definition.title,
+    );
+    for (var suffix = 2; appId == null && suffix <= 9; suffix++) {
+      appId = await service.dynamicMessages.saveAsApp(
+        definition,
+        '${definition.title} $suffix',
+      );
+    }
+    if (!mounted) return;
+    final l10n = context.l10n;
+    if (appId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.dynamicMessagesSaveFailed)),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(l10n.dynamicMessagesSaved(appId))),
+    );
+    final keys = SessionKeysScope.maybeOf(context);
+    final account = sharedGithubAccountStore(
+      keys ?? await SessionKeysStore.load(service.env),
+    );
+    final ledger = await initSharedWidgetPublicationStore(service.env);
+    final publish = WidgetPublishService(
+      env: service.env,
+      account: account,
+      ledger: ledger,
+    );
+    if (!mounted) return;
+    await showWidgetPublishSheet(
+      context,
+      app: JsAppInfo.fromManifest({
+        'id': appId,
+        'name': definition.title,
+        'description': DynamicMessagesService.graduatedDescription(
+          definition.title,
+        ),
+        'version': '1.0.0',
+      }, bundled: false, fallbackId: appId),
+      account: account,
+      service: publish,
+      ledger: ledger,
+    );
   }
 
   /// Opens a JS app for the user (the agent's `open_app` tool): the same
