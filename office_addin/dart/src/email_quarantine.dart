@@ -9,17 +9,31 @@
 // explicit `<email-body …>…</email-body>` delimiters with provenance — the
 // same quarantine framing the browser extension applies to page content
 // (fa_browser_agent quarantine.dart). A body that already contains a fence
-// is neutralized first (every `<email-` prefix is rewritten) so an email
-// can never close its own quarantine early and smuggle text out as
-// trusted.
+// is neutralized first (every `<email-body` / `</email-body` prefix is
+// rewritten) so an email can never close its own quarantine early.
 //
 // Pure Dart: no dart:io, no js_interop — VM-testable, dart2js-compileable.
 library;
 
-/// Opening prefix of the email quarantine fence.
+/// Opening prefix of the email quarantine fence (built verbatim;
+/// neutralization matches it via [_openPrefixRe]).
 const String _openPrefix = '<email-body';
 
-/// Closing fence of the email quarantine block.
+/// Opening-prefix matcher — CASE-INSENSITIVE, so `<EMAIL-BODY …>` cannot
+/// forge a nested trusted block either.
+final RegExp _openPrefixRe = RegExp('<email-body', caseSensitive: false);
+
+/// Closing prefix of the email quarantine block, as a CASE-INSENSITIVE
+/// regex: neutralization matches any prefix variant — `</email-body >`,
+/// `</email-body\t>`, `</EMAIL-BODY>` — so a model can never misread a
+/// near-miss line as the close. Whitespace-SPLIT (`</ email-body>`) and
+/// lookalike-codepoint (`＜/email-body＞`, zero-width) variants stay
+/// accepted residual: the fence is an exact-token contract (same rule as
+/// the extension twin), and rewriting lookalikes would mutate legitimate
+/// content, not just defang fences.
+final RegExp _closePrefixRe = RegExp('</email-body', caseSensitive: false);
+
+/// Closing fence of the email quarantine block (ours, appended verbatim).
 const String _closeFence = '</email-body>';
 
 /// What a smuggled `<email-body` becomes inside quarantined content:
@@ -72,13 +86,14 @@ String _escapeAttr(String value) => value
     .replaceAll('\n', ' ');
 
 /// Neutralizes quarantine fences inside [content]: an email that carries
-/// its own `<email-body` / `</email-body>` markers can neither open a
-/// nested trusted block nor close the real one early.
+/// its own fence markers — in ANY case or near-miss variant — can
+/// neither open a nested trusted block nor close the real one early.
+/// Both sides match by case-insensitive prefix.
 String neutralizeEmailFences(String content) {
   final containsFence =
-      content.contains(_openPrefix) || content.contains(_closeFence);
+      _openPrefixRe.hasMatch(content) || _closePrefixRe.hasMatch(content);
   if (!containsFence) return content;
   return content
-      .replaceAll(_openPrefix, _neutered)
-      .replaceAll(_closeFence, _neuteredClose);
+      .replaceAll(_openPrefixRe, _neutered)
+      .replaceAll(_closePrefixRe, _neuteredClose);
 }
