@@ -141,24 +141,71 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return { ok: true };
       }
       case 'hub.save': {
-        // faDap {url, name, secret?, boundSession?}; empty url = no hub presence.
-        // Identity keys are generated + stored inside the Dart agent
-        // (faDapKey) on first start. The session binding (boundSession) is
-        // edited via hub.bind — saving the connection preserves it.
+        // faDap {url, name, secret?, boundSession?, savedConnections?}; empty
+        // url = no hub presence. Identity keys are generated + stored inside
+        // the Dart agent (faDapKey) on first start. The session binding
+        // (boundSession) is edited via hub.bind — saving the connection
+        // preserves it. savedConnections (the multi-hub bookmark list) is
+        // managed by hub.connections.set / hub.switch — always preserved.
         // secret = the hub password; an empty field keeps the stored one.
         const url = String(msg.url ?? '').trim();
         const name = String(msg.name ?? '').trim();
         const prev = (await store.get(['faDap'])).faDap;
         const boundSession = prev && prev.boundSession ? { boundSession: prev.boundSession } : {};
+        const savedConnections = prev && Array.isArray(prev.savedConnections) ? { savedConnections: prev.savedConnections } : {};
         const enteredSecret = String(msg.secret ?? '');
         const keptSecret = prev && typeof prev.secret === 'string' ? prev.secret : '';
-        const next = { url, name, ...boundSession };
+        const next = { url, name, ...boundSession, ...savedConnections };
         const effectiveSecret = enteredSecret || keptSecret;
         if (effectiveSecret) next.secret = effectiveSecret;
         if (url) await store.set({ faDap: next });
         else await store.remove(['faDap']);
+        console.log('[dap-hub] connection saved:', url || '(cleared)', 'saved list:', (next.savedConnections ?? []).length);
         const cur = await store.get(['faProvider', 'faApproval']);
         agent?.boot({ provider: cur.faProvider, approvalMode: cur.faApproval, dap: url ? next : null });
+        return { ok: true };
+      }
+      case 'hub.connections.set': {
+        // Multi-hub bookmarks: overwrite faDap.savedConnections wholesale
+        // (the page owns list editing). Each entry: {url, name, secret?} —
+        // an entry WITHOUT a secret key means an open hub (secret cleared
+        // on switch); a non-empty secret rides along. Inert for the live
+        // agent — no reboot.
+        const cur = (await store.get(['faDap'])).faDap;
+        if (!cur || !cur.url) return { ok: false, error: 'no hub connection' };
+        const list = (Array.isArray(msg.list) ? msg.list : [])
+          .map((e) => {
+            const entry = { url: String(e?.url ?? '').trim(), name: String(e?.name ?? '').trim() };
+            if (typeof e?.secret === 'string' && e.secret) entry.secret = e.secret;
+            return entry;
+          })
+          .filter((e) => e.url);
+        const next = { ...cur, savedConnections: list };
+        await store.set({ faDap: next });
+        console.log('[dap-hub] saved connections list set:', list.length);
+        return { ok: true, count: list.length };
+      }
+      case 'hub.switch': {
+        // Make a bookmarked connection active: same path as hub.save, but
+        // the secret comes from the entry — an entry without a secret key
+        // is an open hub, so the stored password is CLEARED (keep-secret
+        // semantics would leak the previous hub's password into it).
+        const target = String(msg.url ?? '').trim();
+        const prev = (await store.get(['faDap'])).faDap;
+        const list = prev && Array.isArray(prev.savedConnections) ? prev.savedConnections : [];
+        const entry = list.find((e) => e && e.url === target);
+        if (!entry) return { ok: false, error: 'connection not bookmarked: ' + target };
+        const next = {
+          url: entry.url,
+          name: String(entry.name ?? ''),
+          ...(prev.boundSession ? { boundSession: prev.boundSession } : {}),
+          ...(entry.secret ? { secret: entry.secret } : {}),
+          savedConnections: list,
+        };
+        await store.set({ faDap: next });
+        console.log('[dap-hub] switched active connection →', entry.url);
+        const cur = await store.get(['faProvider', 'faApproval']);
+        agent?.boot({ provider: cur.faProvider, approvalMode: cur.faApproval, dap: next });
         return { ok: true };
       }
       case 'hub.bind': {

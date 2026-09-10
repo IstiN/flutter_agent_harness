@@ -48,6 +48,13 @@
   drawer filter hid the freshly archived row ("added a session, still
   see one"). The trio now broadcasts to all connected ports, and the
   drawer filter no longer drops archived rows by a possibly-stale id.
+- feat(app/extension): multiple hub connections in Agent network. The
+  extension keeps a bookmark list (faDap.savedConnections): Add
+  connection saves a new hub and goes live on it, tapping a bookmark
+  switches the live agent (hub.switch — the entry's own secret applies,
+  an open bookmark clears the stored password), re-saving the active
+  connection preserves the list (hub.connections.set manages it). SW
+  logs: [dap-hub] connection saved / switched / list set.
 - fix(extension): session switches now follow the UI everywhere. The
   manager's active slot kept its boot-time id/stamps after any
   session_new/session_open, so the active dot stayed on a row whose

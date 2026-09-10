@@ -1111,6 +1111,16 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsDapEditConnection => 'Изменить подключение';
 
   @override
+  String get settingsDapSavedTitle => 'Сохранённые подключения';
+
+  @override
+  String get settingsDapSavedHint =>
+      'Закладки хабов. Нажмите, чтобы переключить агента на этот хаб — переключение происходит сразу.';
+
+  @override
+  String get settingsDapRemoveSaved => 'Удалить';
+
+  @override
   String get settingsDapEnvNote =>
       'Переменные DAP_HUB_URL или DAP_AGENT_NAME заданы в окружении — env имеет приоритет над сохранённым подключением.';
 

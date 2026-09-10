@@ -1101,6 +1101,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDapEditConnection => 'Edit connection';
 
   @override
+  String get settingsDapSavedTitle => 'Saved connections';
+
+  @override
+  String get settingsDapSavedHint =>
+      'Bookmarked hubs. Tap one to make it the hub this agent is online on — the switch is live.';
+
+  @override
+  String get settingsDapRemoveSaved => 'Remove';
+
+  @override
   String get settingsDapEnvNote =>
       'DAP_HUB_URL or DAP_AGENT_NAME is set in the environment — env overrides the saved connection.';
 

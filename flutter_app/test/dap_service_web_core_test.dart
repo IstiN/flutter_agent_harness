@@ -2,7 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'package:fa/services/dap_service.dart' show DapInboundMode;
+import 'package:fa/services/dap_service.dart'
+    show DapInboundMode, DapSavedConnection;
 import 'package:fa/services/dap_service_web_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -261,5 +262,73 @@ void main() {
       final h = harness(onMessage: (_) async => throw StateError('dead'));
       expect(await h.service.listBindableSessions(), isEmpty);
     });
+  });
+  // -- multi-hub bookmarks (hub.connections.set / hub.switch) ----------------
+
+  test(
+    'savedConnections parses faDap.savedConnections and skips junk',
+    () async {
+      final h = harness(
+        storage: {
+          'faDap': {
+            'url': 'ws://127.0.0.1:8787/ws',
+            'name': 'Main',
+            'savedConnections': [
+              {'url': 'ws://127.0.0.1:8787/ws', 'name': 'Main'},
+              {'url': 'ws://127.0.0.1:8788/ws', 'name': 'Lab', 'secret': 'pw2'},
+              {'url': '', 'name': 'no url — dropped'},
+              'not a map',
+            ],
+          },
+        },
+      );
+      final saved = await h.service.savedConnections();
+      expect(saved.length, 2);
+      expect(saved[0].url, 'ws://127.0.0.1:8787/ws');
+      expect(saved[1].secret, 'pw2');
+    },
+  );
+
+  test('setSavedConnections sends the sanitized list wholesale', () async {
+    final h = harness(
+      storage: {
+        'faDap': {'url': 'ws://a/ws', 'name': 'A'},
+      },
+    );
+    await h.service.setSavedConnections([
+      const DapSavedConnection(url: 'ws://a/ws', name: 'A'),
+      const DapSavedConnection(url: 'ws://b/ws', name: 'B', secret: 'pw'),
+    ]);
+    expect(h.sent.last['type'], 'hub.connections.set');
+    final list = h.sent.last['list'] as List;
+    expect(list.length, 2);
+    expect((list[1] as Map)['secret'], 'pw');
+    expect((list[0] as Map).containsKey('secret'), isFalse);
+  });
+
+  test('switchConnection sends hub.switch with the target url', () async {
+    final h = harness(
+      storage: {
+        'faDap': {'url': 'ws://a/ws', 'name': 'A'},
+      },
+    );
+    await h.service.switchConnection('ws://b/ws');
+    expect(h.sent.last['type'], 'hub.switch');
+    expect(h.sent.last['url'], 'ws://b/ws');
+  });
+
+  test('switchConnection surfaces the SW refusal', () async {
+    final h = harness(
+      storage: {
+        'faDap': {'url': 'ws://a/ws', 'name': 'A'},
+      },
+      onMessage: (m) => m['type'] == 'hub.switch'
+          ? {'ok': false, 'error': 'not bookmarked'}
+          : null,
+    );
+    await expectLater(
+      h.service.switchConnection('ws://b/ws'),
+      throwsA(isA<StateError>()),
+    );
   });
 }

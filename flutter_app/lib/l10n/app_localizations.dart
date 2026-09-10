@@ -1988,6 +1988,24 @@ abstract class AppLocalizations {
   /// **'Edit connection'**
   String get settingsDapEditConnection;
 
+  /// No description provided for @settingsDapSavedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved connections'**
+  String get settingsDapSavedTitle;
+
+  /// No description provided for @settingsDapSavedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Bookmarked hubs. Tap one to make it the hub this agent is online on — the switch is live.'**
+  String get settingsDapSavedHint;
+
+  /// No description provided for @settingsDapRemoveSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get settingsDapRemoveSaved;
+
   /// No description provided for @settingsDapEnvNote.
   ///
   /// In en, this message translates to:

@@ -154,6 +154,36 @@ final class ExtensionDapHubService implements DapHubService {
     }
   }
 
+  /// The bookmarked hub connections (`faDap.savedConnections`). Extension
+  /// only — the IO service keeps a single `~/.dap` connection today.
+  Future<List<DapSavedConnection>> savedConnections() async {
+    final config = await _readConfig();
+    return config.saved;
+  }
+
+  /// Overwrites the bookmark list wholesale (the page owns list editing).
+  Future<void> setSavedConnections(List<DapSavedConnection> list) async {
+    final reply = await _sendMessage({
+      'type': 'hub.connections.set',
+      'list': [for (final e in list) e.toJson()],
+    });
+    if (reply is Map && reply['ok'] == false) {
+      throw StateError(
+        'hub.connections.set failed: ${reply['error'] ?? 'unknown'}',
+      );
+    }
+  }
+
+  /// Makes a bookmarked connection active: the SW re-points `faDap` at the
+  /// entry (secret comes from the bookmark — an open bookmark clears the
+  /// stored password) and reboots the live agent onto it.
+  Future<void> switchConnection(String url) async {
+    final reply = await _sendMessage({'type': 'hub.switch', 'url': url});
+    if (reply is Map && reply['ok'] == false) {
+      throw StateError('hub.switch failed: ${reply['error'] ?? 'unknown'}');
+    }
+  }
+
   /// The SW's session rows carry no title today — label by id prefix,
   /// marking the live one.
   static String _sessionRowTitle(Map row) {
@@ -168,8 +198,12 @@ final class ExtensionDapHubService implements DapHubService {
 
   /// The configured connection (`faDap` in chrome.storage), falling back
   /// to the zero-config default when never saved. The `boundSession`
-  /// block rides along: `{mode, sessionId?, title?}`.
-  Future<({String url, String? name, Map? bound})> _readConfig() async {
+  /// block rides along: `{mode, sessionId?, title?}`, as do the bookmarked
+  /// connections (`savedConnections`).
+  Future<
+    ({String url, String? name, Map? bound, List<DapSavedConnection> saved})
+  >
+  _readConfig() async {
     try {
       final result = await _storageGet('faDap');
       if (result is Map) {
@@ -179,10 +213,18 @@ final class ExtensionDapHubService implements DapHubService {
           if (url.isNotEmpty) {
             final name = '${raw['name'] ?? ''}'.trim();
             final bound = raw['boundSession'];
+            final savedRaw = raw['savedConnections'];
+            final saved = [
+              if (savedRaw is List)
+                for (final row in savedRaw)
+                  if (row is Map && '${row['url'] ?? ''}'.trim().isNotEmpty)
+                    DapSavedConnection.fromJson(row),
+            ];
             return (
               url: url,
               name: name.isEmpty ? null : name,
               bound: bound is Map ? bound : null,
+              saved: saved,
             );
           }
         }
@@ -190,7 +232,12 @@ final class ExtensionDapHubService implements DapHubService {
     } on Object {
       // Storage blocked → fall through to the default.
     }
-    return (url: defaultWebDapUrl, name: null, bound: null);
+    return (
+      url: defaultWebDapUrl,
+      name: null,
+      bound: null,
+      saved: const <DapSavedConnection>[],
+    );
   }
 
   /// The SW's live hub status: the `status` handler answers with the

@@ -16,6 +16,35 @@ export 'package:flutter_agent_harness/flutter_agent_harness.dart'
 /// A session offered by the named-mode inbound-mail picker.
 typedef DapBindableSession = ({String id, String title});
 
+/// One bookmarked hub connection (`faDap.savedConnections` in the
+/// extension). [secret] is write-only in spirit: an empty string means an
+/// open hub (the password is cleared on switch), a non-empty value rides
+/// along when the bookmark becomes active. The UI never echoes it back.
+class DapSavedConnection {
+  const DapSavedConnection({
+    required this.url,
+    required this.name,
+    this.secret = '',
+  });
+
+  final String url;
+  final String name;
+  final String secret;
+
+  Map<String, Object?> toJson() => {
+    'url': url,
+    'name': name,
+    if (secret.isNotEmpty) 'secret': secret,
+  };
+
+  static DapSavedConnection fromJson(Map<Object?, Object?> raw) =>
+      DapSavedConnection(
+        url: '${raw['url'] ?? ''}'.trim(),
+        name: '${raw['name'] ?? ''}'.trim(),
+        secret: raw['secret'] is String ? raw['secret'] as String : '',
+      );
+}
+
 /// Read/write access to the DAP hub connection the app shares with the CLI
 /// agents (`~/.dap/config.json`, identity under `~/.dap/keys/fah/`).
 ///
