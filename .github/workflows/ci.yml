@@ -38,6 +38,22 @@ jobs:
 
       - run: dart pub get
 
+      # Publish gate at PR time: publish-blocking problems (undeclared lib/
+      # imports, stray PEM-like strings) used to surface only in the tag-time
+      # publish job — the v0.1.331 era: an undeclared package:cryptography
+      # import shipped red on ~26 consecutive tags. --ignore-warnings: the
+      # two known layout warnings (gitignored install_local.sh, docs/
+      # naming) must not redden every PR, while validation ERRORS — "does
+      # not have X in the dependencies section of pubspec.yaml" — still
+      # fail. setup-dart (sdk >= 3.13) registers a publish-scoped PUB_TOKEN
+      # job-wide and pub.dev rejects authenticated metadata reads, so
+      # resolve unauthenticated (same pattern as the publish job);
+      # --dry-run never uploads.
+      - name: Publish dry-run (unauthenticated)
+        run: |
+          dart pub token remove https://pub.dev || true
+          dart pub publish --dry-run --ignore-warnings
+
       # The example Flutter app lives in this repo; without its package
       # config the repo-wide `dart analyze` cannot resolve Flutter imports.
       - name: Example app pub get (for repo-wide analyze)
