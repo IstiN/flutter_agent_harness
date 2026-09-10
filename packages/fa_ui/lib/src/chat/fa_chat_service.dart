@@ -22,9 +22,10 @@ final class FaChatMessage {
     this.imageBytes,
     this.toolName,
     this.isError = false,
+    this.data,
   });
 
-  /// `user` | `assistant` | `tool` | `system`.
+  /// `user` | `assistant` | `tool` | `system` | `widget`.
   final String role;
 
   /// Plain-text (markdown for assistant messages) content. Mutable so
@@ -40,6 +41,10 @@ final class FaChatMessage {
 
   /// Whether this message reports a failure (tool result or provider error).
   final bool isError;
+
+  /// Opaque host payload (dynamic-message widget id); fa_ui never
+  /// interprets it.
+  final Object? data;
 }
 
 /// A file staged in the composer before sending: written into the agent
@@ -107,6 +112,12 @@ abstract interface class FaChatService implements FaApprovalModeController {
   set askHandler(AskCallback? handler);
   RequestSecretCallback? get secretRequestHandler;
   set secretRequestHandler(RequestSecretCallback? handler);
+
+  /// Jump-to-message executor: scrolls the transcript so the message with
+  /// [messageId] is in view. The chat screen installs the handler; null
+  /// outside a scrolling chat surface (tests, embedded previews).
+  void Function(String messageId)? get scrollToMessageHandler;
+  set scrollToMessageHandler(void Function(String messageId)? handler);
 
   /// The approval manager (mode selector in the composer menu).
   @override
