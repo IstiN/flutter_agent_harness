@@ -15,6 +15,7 @@ import 'fa_glyphs.dart';
 import 'markdown_style.dart';
 import 'media_player.dart';
 import 'media_tool_names.dart';
+import 'fa_chat_host.dart';
 
 /// Builds the leading avatar for a transcript message [role] (`user` /
 /// `assistant` / `system` / `tool`); return null for roles without one.
@@ -56,7 +57,7 @@ class ChatMessageTile extends StatelessWidget {
   });
 
   /// The message to render (`user` / `assistant` / `thinking` / `tool` /
-  /// `system`).
+  /// `system` / `widget`).
   final FaChatMessage message;
 
   /// Sandbox image/byte loader shared by the surface (memoized — one per
@@ -95,11 +96,18 @@ class ChatMessageTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Resolution happens inside build: hosts install the builder at
+    // startup, after the first frames may already have been built.
+    final dynamicTile = message.role == 'widget'
+        ? FaChatHost.dynamicWidgetTileBuilder?.call(context, message)
+        : null;
     final tile = switch (message.role) {
+      'widget' when dynamicTile != null => dynamicTile,
       'user' => _textBubble(context, isUser: true),
       'assistant' => _textBubble(context, isUser: false),
       'thinking' => _thinkingTile(context),
-      // 'tool', 'system' and anything else.
+      // 'tool', 'system' and anything else (incl. 'widget' with no host
+      // builder or a null tile).
       _ => _toolOrSystemTile(context),
     };
     if (!compact) return tile;

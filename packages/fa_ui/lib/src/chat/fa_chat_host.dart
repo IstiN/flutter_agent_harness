@@ -6,6 +6,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 
+import 'fa_chat_service.dart';
+
 /// A file picked by the host for attachment (already read into memory).
 typedef FaChatUploadFile = ({String name, Uint8List bytes, String mimeType});
 
@@ -95,4 +97,10 @@ abstract final class FaChatHost {
   /// Builder of the files side panel shown by the toolbar's files button;
   /// null hides the button regardless of [FaChatFeatures.fileBrowser].
   static WidgetBuilder? fileBrowserBuilder;
+
+  /// Renders a live dynamic-message widget for a `widget`-role chat message
+  /// (the host owns the JS engine); null/unset or a null return renders the
+  /// stock system tile instead.
+  static Widget? Function(BuildContext context, FaChatMessage message)?
+  dynamicWidgetTileBuilder;
 }

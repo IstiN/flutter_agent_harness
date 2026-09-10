@@ -20,6 +20,7 @@ import 'agent_tool_availability.dart';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/approval_mode_store.dart';
@@ -517,6 +518,19 @@ class AgentService extends ChangeNotifier
     // clean "not supported" note; completions re-enter via sendText (steer
     // mid-run, fresh turn while idle).
     _shellJobs = ShellJobRegistry(env: toolEnv, onSettled: _onShellJobSettled);
+    // Interactive dynamic messages (issue #102): the host machinery behind
+    // the `dynamic_message` tool — session-scoped JS widgets rendered
+    // inline in the transcript with the full installed-app engine surface.
+    dynamicMessages = DynamicMessagesService(
+      env: env,
+      sendText: sendText,
+      sessionIdOf: () => _sessionId,
+      sessionFileOf: () => _sessionFile,
+      mediaGatewayOf: () => _mediaGateway,
+      videoReaderOf: () => _videoReader,
+      hostSecretsOf: hostSecrets,
+      resolveHostSecretDefault: _requestSecretForWidget,
+    );
     final registry = ToolRegistry([
       ...builtinTools(
         toolEnv,
@@ -551,6 +565,13 @@ class AgentService extends ChangeNotifier
       // through the chat screen's bottom sheet; a grant is persisted into
       // the Keys store and made live (see [_handleSecretRequest]).
       requestSecretTool(callback: _handleSecretRequest),
+      // Interactive dynamic messages (issue #102): the agent renders a
+      // session-scoped JS widget as a chat message; the tool resolves when
+      // the host presents it. Hosts without a chat surface never register
+      // a callback, so the tool stays absent there (the CLI).
+      dynamicMessageTool(
+        callback: (request) => dynamicMessages.present(request),
+      ),
       // System-calendar access (macOS/iOS via the `fah/calendar` channel;
       // the tools themselves report a clean note where unsupported).
       if (calendarPlatformSupported) ...[
@@ -1781,6 +1802,24 @@ class AgentService extends ChangeNotifier
     ];
   }
 
+  /// Interactive dynamic messages of this session (issue #102): the host
+  /// machinery behind the `dynamic_message` tool. UI reads it for the
+  /// ✦ list, the inline widget tiles, and save-as-app.
+  late final DynamicMessagesService dynamicMessages;
+
+  /// The `jsr.fa.keys.request` backend for widget engines without a tile-
+  /// supplied requester: the same secret sheet the `request_secret` tool
+  /// drives, with grants routed through the session's persist+activate
+  /// flow (JsAppView parity).
+  Future<RequestSecretResult?> _requestSecretForWidget(
+    String name,
+    String reason,
+  ) async {
+    final result = await secretRequestHandler?.call(name, reason);
+    if (result == null) return null;
+    return acceptSecretGrant(result);
+  }
+
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending
   /// until the next turn picks it up.
@@ -2120,6 +2159,7 @@ class AgentService extends ChangeNotifier
     fsRevision.dispose();
     externalSessionRevision.dispose();
     _trajectory.dispose();
+    dynamicMessages.dispose();
     super.dispose();
   }
 
@@ -2136,6 +2176,7 @@ class AgentService extends ChangeNotifier
     _sessionFile = null;
     _agent.reset();
     messages.clear();
+    await dynamicMessages.forgetAll();
     error = null;
     _persistedCount = 0;
     _trajectory.reset();
@@ -2361,9 +2402,22 @@ class AgentService extends ChangeNotifier
     _persistedCount = contextMessages.length;
     _currentAssistantMessage = null;
     error = null;
+    // Dynamic messages replay (issue #102): materialise the session's
+    // widget definitions and splice their transcript markers back into
+    // position — the branch walk counts message records, so each marker
+    // lands right after the reply that emitted it.
+    await dynamicMessages.forgetAll();
+    final widgetMarkers = await dynamicMessages
+        .adoptBranch(await session.getBranch());
+    final rebuilt = contextMessages.map(_toChatMessage).toList();
+    for (final (index, marker) in widgetMarkers) {
+      final at = index > rebuilt.length ? rebuilt.length : index;
+      rebuilt.insert(at, marker);
+      dynamicMessages.byId(marker.data?.toString() ?? '')?.markerIndex = at;
+    }
     messages
       ..clear()
-      ..addAll(contextMessages.map(_toChatMessage));
+      ..addAll(rebuilt);
     notifyListeners();
   }
 
@@ -2445,6 +2499,9 @@ class AgentService extends ChangeNotifier
         _currentAssistantMessage = null;
         _turnStartCount = 0;
         pendingSteerTexts.clear();
+        // A fresh run gets a fresh dynamic-message budget (the cap is per
+        // agent turn, host-enforced).
+        dynamicMessages.onRunStart();
         notifyListeners();
       case TurnStartEvent():
         // Continuation turns (steering injected mid-run) start with a second
@@ -2511,6 +2568,20 @@ class AgentService extends ChangeNotifier
             isError: isError,
           ),
         );
+        // A dynamic message presented by this tool call renders directly
+        // under its result tile (presentation order = call order).
+        if (toolName == 'dynamic_message') {
+          final presented = dynamicMessages.takePendingMarker();
+          if (presented != null) {
+            messages.add(
+              FahChatMessage(
+                role: DynamicMessagesService.markerRole,
+                content: presented.title,
+                data: presented.id,
+              ),
+            );
+          }
+        }
         _pushLiveActivityStatus();
         notifyListeners();
       case ModelRequestEvent(:final detail):
@@ -2691,7 +2762,22 @@ class AgentService extends ChangeNotifier
     // tail; the next assistant step re-attaches them or they stay an
     // inert orphan.
     await _flushRequestSummaries(session);
+    // Presented dynamic messages persist right after the messages that
+    // carried them (the replay walk inserts each marker by counting the
+    // message records ahead of it on the chain).
+    await _flushDynamicWidgets(session);
     _persistedCount = all.length;
+  }
+
+  /// Persists presented dynamic messages as `dynamic_widget` custom
+  /// records (the replay source; see [DynamicMessagesService.adoptBranch]).
+  Future<void> _flushDynamicWidgets(Session session) async {
+    for (final data in dynamicMessages.drainRecordPayloads()) {
+      await session.appendCustomEntry(
+        customType: DynamicMessagesService.recordType,
+        data: data,
+      );
+    }
   }
 
   /// Writes every buffered request summary as a context-omitted

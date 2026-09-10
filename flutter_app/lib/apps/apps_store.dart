@@ -291,6 +291,7 @@ class JsAppInfo {
     this.tileWidget,
     this.bundled = false,
     this.platforms,
+    this.dirOverride,
   });
 
   factory JsAppInfo.fromManifest(
@@ -354,8 +355,14 @@ class JsAppInfo {
   /// icon tile on the home grid.
   final JsTileWidgetInfo? tileWidget;
 
-  /// Env-relative path of the app directory (`apps/<id>`).
-  String get dir => 'apps/$id';
+  /// Optional redirect of the app directory outside `apps/` — session-scoped
+  /// dynamic-message widgets store their code and `storage.json` under the
+  /// session folder instead of the shared apps folder; null for normal apps.
+  final String? dirOverride;
+
+  /// Env-relative path of the app directory (`apps/<id>`, or the session
+  /// folder override for dynamic-message widgets — see [dirOverride]).
+  String get dir => dirOverride ?? 'apps/$id';
   String get widgetPath => '$dir/widget.js';
   String get manifestPath => '$dir/manifest.json';
 

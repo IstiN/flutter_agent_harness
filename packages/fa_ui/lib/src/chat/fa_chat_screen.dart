@@ -571,6 +571,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       case 'system':
       case 'tool':
       case 'thinking':
+      case 'widget':
         return Message.custom(
           id: id,
           authorId: chat.role == 'tool' ? 'tool' : 'system',
@@ -580,6 +581,7 @@ class _FaChatScreenState extends State<FaChatScreen>
             'toolName': chat.toolName,
             'content': chat.content,
             'isError': chat.isError,
+            'data': chat.data,
           },
         );
       default:
@@ -720,6 +722,7 @@ class _FaChatScreenState extends State<FaChatScreen>
         content: (metadata['content'] as String?) ?? '',
         toolName: metadata['toolName'] as String?,
         isError: (metadata['isError'] as bool?) ?? false,
+        data: metadata['data'],
       ),
       images: _images,
       avatarBuilder: widget.avatarBuilder,

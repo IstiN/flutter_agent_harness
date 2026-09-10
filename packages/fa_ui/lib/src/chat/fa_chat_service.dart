@@ -22,9 +22,10 @@ final class FaChatMessage {
     this.imageBytes,
     this.toolName,
     this.isError = false,
+    this.data,
   });
 
-  /// `user` | `assistant` | `tool` | `system`.
+  /// `user` | `assistant` | `tool` | `system` | `widget`.
   final String role;
 
   /// Plain-text (markdown for assistant messages) content. Mutable so
@@ -40,6 +41,10 @@ final class FaChatMessage {
 
   /// Whether this message reports a failure (tool result or provider error).
   final bool isError;
+
+  /// Opaque host payload (dynamic-message widget id); fa_ui never
+  /// interprets it.
+  final Object? data;
 }
 
 /// A file staged in the composer before sending: written into the agent
