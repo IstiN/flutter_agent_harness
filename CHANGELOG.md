@@ -3127,6 +3127,12 @@
 - fix(121): scope the pub.dev publish token to the publish step only (#123)
 - feat(113): fa1.dev reflects the Chrome extension, Outlook add-in, and full tool surface (#116)
 
+## 0.1.342
+
+- feat(125): bench.yml — run fa on terminal-bench on a GitHub runner (#126)
+- fix(109): clear stale TUI ask answers and keep the prompt frame inside the terminal width (#112)
+- chore(114): terminal-bench adapter and runner for fa (#119)
+
 ## Unreleased
 
 ## Unreleased
