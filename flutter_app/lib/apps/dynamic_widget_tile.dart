@@ -56,7 +56,11 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
   Widget build(BuildContext context) {
     final definition = _resolve();
     if (definition == null) return const SizedBox.shrink();
-    _scheduleBoot(definition);
+    // A cached boot failure is only cleared by the explicit retry —
+    // otherwise every scroll-driven rebuild re-boots a broken widget.
+    if (!widget.service.bootFailed(definition.id)) {
+      _scheduleBoot(definition);
+    }
     return ListenableBuilder(
       listenable: widget.service,
       builder: (context, _) {
@@ -238,7 +242,13 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
                 IconButton(
                   tooltip: context.l10n.dynamicTileRetry,
                   icon: const Icon(Icons.refresh, size: 20),
-                  onPressed: () => _scheduleBoot(definition),
+                  onPressed: () => unawaited(
+                    widget.service.retryBoot(
+                      definition,
+                      locale: Localizations.localeOf(context).languageCode,
+                      theme: jsThemeMap(context),
+                    ),
+                  ),
                 ),
                 IconButton(
                   tooltip: context.l10n.dynamicTileError,

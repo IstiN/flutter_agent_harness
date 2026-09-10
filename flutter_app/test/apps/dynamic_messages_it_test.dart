@@ -327,4 +327,162 @@ jsr.onEvent(function(actionId, payload) {
       });
     });
   });
+
+  group('replay hardening, caps, graduation', () {
+    testWidgets('a hostile replayed widget id is skipped, never materialised', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        final (dm, _) = service(env);
+        final request = DynamicMessageRequest(
+          title: 'Evil',
+          jsSource: '// pwn',
+        );
+        final markers = await dm.adoptBranch([
+          // A crafted IMPORTED session: the id encodes a traversal out of
+          // `.widgets/` into the installed-apps tree.
+          widgetRecord('../../apps/victim', request),
+          widgetRecord('..%2fescape', request),
+          widgetRecord('/abs/path', request),
+        ]);
+        // Every hostile record is skipped like a foreign/corrupt one —
+        // no markers, no definitions, no filesystem writes anywhere.
+        expect(markers, isEmpty);
+        expect(dm.widgets, isEmpty);
+        expect((await env.exists('apps/victim')).valueOrNull, isFalse);
+        expect(
+          (await env.exists('apps/victim/widget.js')).valueOrNull,
+          isFalse,
+        );
+        expect((await env.exists('.widgets')).valueOrNull, isFalse);
+      });
+    });
+
+    testWidgets('a failed boot frees the half-started engine', (tester) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        final (dm, _) = service(env);
+        final id = await dm.present(
+          DynamicMessageRequest(title: 'Gone', jsSource: '// x'),
+        );
+        // The materialised code vanishes before the boot (corrupted
+        // imported session) — start() throws midway.
+        await env.remove('sessions/.widgets/s1/$id/widget.js');
+        final engine = await dm.ensureEngine(dm.byId(id!)!);
+        expect(engine, isNull);
+        expect(dm.bootFailed(id), isTrue);
+        // The half-started native engine was freed, not leaked.
+        expect(dm.liveEngineCount, 0);
+      });
+    });
+
+    test(
+      'presentation stops at the per-run cap and resets on run start',
+      () async {
+        final env = MemoryExecutionEnv();
+        final (dm, _) = service(env);
+        for (var i = 0; i < DynamicMessagesService.maxPerRun; i++) {
+          final id = await dm.present(
+            DynamicMessageRequest(title: 'w$i', jsSource: ''),
+          );
+          expect(id, isNotNull);
+        }
+        final over = await dm.present(
+          DynamicMessageRequest(title: 'over', jsSource: ''),
+        );
+        expect(over, isNull);
+        dm.onRunStart();
+        final next = await dm.present(
+          DynamicMessageRequest(title: 'next', jsSource: ''),
+        );
+        expect(next, isNotNull);
+      },
+    );
+
+    testWidgets('an oversized event payload is truncated in the back-channel', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        final (dm, sent) = service(env);
+        final big = List.filled(5000, 'x').join();
+        final id = await dm.present(
+          DynamicMessageRequest(
+            title: 'Big',
+            jsSource:
+                '''
+jsr.render({type: 'text', data: 'big'});
+jsr.fa.emit('data', {blob: '$big'});
+''',
+          ),
+        );
+        final engine = await dm.ensureEngine(dm.byId(id!)!);
+        expect(engine, isNotNull);
+        final delivered = await waitFor(() => sent.isNotEmpty);
+        expect(delivered, isTrue);
+        expect(sent.single, startsWith('[widget Big] data '));
+        expect(sent.single, endsWith('…[truncated]'));
+        expect(
+          sent.single.length,
+          lessThanOrEqualTo(DynamicMessagesService.maxEventPayloadChars + 32),
+        );
+        await engine!.dispose();
+      });
+    });
+
+    test(
+      'saveAsApp copies code and storage; a live slug is never overwritten',
+      () async {
+        final env = MemoryExecutionEnv();
+        final (dm, _) = service(env);
+        final id = await dm.present(
+          DynamicMessageRequest(
+            title: 'List',
+            jsSource: '// app',
+            initialState: {
+              'checked': [true, false],
+            },
+          ),
+        );
+        final definition = dm.byId(id!)!;
+        final saved = await dm.saveAsApp(definition, 'shopping list');
+        expect(saved, 'shopping-list');
+        final manifest =
+            jsonDecode(
+                  (await env.readTextFile(
+                    'apps/shopping-list/manifest.json',
+                  )).valueOrNull!,
+                )
+                as Map<String, Object?>;
+        expect(manifest['id'], 'shopping-list');
+        expect(manifest['name'], 'List');
+        expect(
+          (await env.readTextFile('apps/shopping-list/widget.js')).valueOrNull,
+          '// app',
+        );
+        // The widget's CURRENT storage state was copied verbatim.
+        expect(
+          jsonDecode(
+            (await env.readTextFile(
+              'apps/shopping-list/storage.json',
+            )).valueOrNull!,
+          ),
+          {
+            'checked': [true, false],
+          },
+        );
+        // An existing app slug is never overwritten.
+        expect(await dm.saveAsApp(definition, 'shopping list!!'), isNull);
+        expect(
+          jsonDecode(
+            (await env.readTextFile(
+              'apps/shopping-list/manifest.json',
+            )).valueOrNull!,
+          )['id'],
+          'shopping-list',
+        );
+      },
+    );
+  });
 }

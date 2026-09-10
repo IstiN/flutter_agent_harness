@@ -144,6 +144,9 @@ class DynamicMessagesService extends ChangeNotifier {
     if (bootError != null) _bootErrors[definition.id] = bootError;
   }
 
+  @visibleForTesting
+  int get liveEngineCount => _engines.length;
+
   JsAppEngine? engineFor(String id) => _engines[id];
 
   bool bootFailed(String id) => _bootFailed.contains(id);
@@ -211,6 +214,11 @@ class DynamicMessagesService extends ChangeNotifier {
       final request = dynamicMessageRequestFromJson(map);
       if (request == null) continue;
       final id = (map['id'] ?? 'dm-replayed').toString();
+      // The record may come from an IMPORTED session file: a hostile id
+      // must never reach a filesystem path (no separators, no dots —
+      // `../` and absolutes cannot encode). Skipped like any other
+      // foreign/corrupt record.
+      if (!isValidWidgetId(id)) continue;
       try {
         await materialise(sessionId: sessionId, request: request, id: id);
       } on Object {
@@ -254,9 +262,10 @@ class DynamicMessagesService extends ChangeNotifier {
     _booting.add(definition.id);
     _bootFailed.remove(definition.id);
     _bootErrors.remove(definition.id);
+    JsAppEngine? engine;
     try {
       final store = await AppPermissionsStore.load(env);
-      final engine = JsAppEngine(
+      engine = JsAppEngine(
         app: appInfoFor(definition),
         env: env,
         permissions: store.forApp(appInfoFor(definition)).effective(),
@@ -279,11 +288,15 @@ class DynamicMessagesService extends ChangeNotifier {
       _bootFailed.remove(definition.id);
       _bootErrors.remove(definition.id);
       _noUiTimers[definition.id] = Timer(noUiGrace, () {
-        unawaited(_failNoUi(definition, engine));
+        unawaited(_failNoUi(definition, engine!));
       });
       notifyListeners();
       return engine;
     } on Object catch (error) {
+      // A boot that threw midway still owns a half-started native
+      // engine — free it before recording the failure (repeated
+      // failures must not leak engines).
+      await engine?.dispose();
       AppLog.i(
         'apps',
         'dynamic widget start failed: ${definition.id} — $error',
@@ -316,6 +329,27 @@ class DynamicMessagesService extends ChangeNotifier {
         'Widget produced no UI — the script may be invalid or empty.';
     await engine.dispose();
     notifyListeners();
+  }
+
+  /// The error tile's explicit retry: clears the cached boot failure
+  /// (the only path that does — rebuilds never re-boot a failed widget)
+  /// and boots fresh.
+  Future<void> retryBoot(
+    DynamicMessageDefinition definition, {
+    String? locale,
+    Map<String, dynamic>? theme,
+    Future<RequestSecretResult?> Function(String name, String reason)?
+    keyRequestHandler,
+  }) async {
+    _bootFailed.remove(definition.id);
+    _bootErrors.remove(definition.id);
+    notifyListeners();
+    await ensureEngine(
+      definition,
+      locale: locale,
+      theme: theme,
+      keyRequestHandler: keyRequestHandler,
+    );
   }
 
   /// Restarts one widget engine after a permissions change (same rule as
@@ -375,7 +409,11 @@ class DynamicMessagesService extends ChangeNotifier {
     final slug = _slugify(appId);
     if (slug.isEmpty) return null;
     try {
-      if ((await env.exists('apps/$slug/manifest.json')).isOk) return null;
+      // exists() resolves Ok(false) on a fresh tree: the guard is on the
+      // VALUE (an existing app), never on the check itself.
+      if ((await env.exists('apps/$slug/manifest.json')).valueOrNull == true) {
+        return null;
+      }
       (await env.createDir('apps/$slug')).getOrThrow();
       (await env.writeFile(
         'apps/$slug/manifest.json',
@@ -430,14 +468,33 @@ class DynamicMessagesService extends ChangeNotifier {
     return payloads;
   }
 
+  /// Strict widget-id shape. Ids ride filesystem paths
+  /// (`<session dir>/.widgets/<sessionId>/<widgetId>/`), and replayed
+  /// records may arrive from an imported session file — so before ANY
+  /// path use an id must be a bounded separator-free token (no `/`, no
+  /// `.`, no absolutes: traversal cannot encode).
+  static final RegExp _widgetIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,64}$');
+
+  static bool isValidWidgetId(String id) => _widgetIdPattern.hasMatch(id);
+
   /// The storage dir for one widget: next to the session file
   /// (`<session dir>/.widgets/<sessionId>/<widgetId>/`), so the sessions
-  /// tree carries widget state wherever sessions go.
+  /// tree carries widget state wherever sessions go. This is the single
+  /// chokepoint where widget ids become paths — both components are
+  /// validated here.
   static String _widgetDir(
     String sessionFile,
     String sessionId,
     String widgetId,
   ) {
+    if (!isValidWidgetId(widgetId)) {
+      throw ArgumentError.value(widgetId, 'widgetId', 'not a widget id');
+    }
+    if (sessionId.isEmpty ||
+        sessionId.contains('/') ||
+        sessionId.contains('..')) {
+      throw ArgumentError.value(sessionId, 'sessionId', 'not a session id');
+    }
     final slash = sessionFile.lastIndexOf('/');
     final sessionDirPath = slash <= 0 ? '' : sessionFile.substring(0, slash);
     return '$sessionDirPath/.widgets/$sessionId/$widgetId';
