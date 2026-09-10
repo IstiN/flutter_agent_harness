@@ -3049,6 +3049,66 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'One-time code from fa1.dev'**
   String get githubBrowserCodeHint;
+
+  /// Top-bar button listing the session's dynamic messages (issue #102)
+  ///
+  /// In en, this message translates to:
+  /// **'Dynamic messages'**
+  String get dynamicMessagesButtonTooltip;
+
+  /// Title of the dynamic-messages list sheet (issue #102 AC5)
+  ///
+  /// In en, this message translates to:
+  /// **'Dynamic messages'**
+  String get dynamicMessagesSheetTitle;
+
+  /// Badge marking a dynamic message with a running engine (issue #102)
+  ///
+  /// In en, this message translates to:
+  /// **'live'**
+  String get dynamicMessagesLive;
+
+  /// Event back-channel count in the dynamic-messages list (issue #102 AC5)
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 event} other{{count} events}}'**
+  String dynamicMessagesEventCount(int count);
+
+  /// Snack bar after a dynamic message is graduated into an installed app (issue #102 AC7)
+  ///
+  /// In en, this message translates to:
+  /// **'Saved to your apps as “{appId}”'**
+  String dynamicMessagesSaved(String appId);
+
+  /// Snack bar when graduating a dynamic message fails (issue #102 AC7)
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save this dynamic message as an app.'**
+  String get dynamicMessagesSaveFailed;
+
+  /// Tile affordance graduating a dynamic message into an installed app (issue #102 AC7)
+  ///
+  /// In en, this message translates to:
+  /// **'Save as app'**
+  String get dynamicTileSaveAsApp;
+
+  /// Tile affordance opening the app permission dialog for a dynamic message (issue #102)
+  ///
+  /// In en, this message translates to:
+  /// **'Permissions'**
+  String get dynamicTilePermissions;
+
+  /// Title of the expandable error tile for a failed dynamic message (issue #102 AC9)
+  ///
+  /// In en, this message translates to:
+  /// **'Widget error'**
+  String get dynamicTileError;
+
+  /// Retry button on the dynamic-message error tile (issue #102 AC9)
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get dynamicTileRetry;
 }
 
 class _AppLocalizationsDelegate
