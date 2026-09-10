@@ -331,6 +331,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                   persistedSessions: _persistedSessions,
                   sessionInfoNames: _jsonlNames,
                   onOpenPersisted: _openPersistedSession,
+                  onOpenLiveSession: _openLiveSession,
                   hubBoundSessionId: DapBindingStore.instance.boundSessionId,
                   pendingSessionId: _pendingOpenId,
                   selectedSessionId: _selectedSessionId,
@@ -683,6 +684,23 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   }
 
   /// Opens a persisted-only session from the sidebar's history tail. On a
+  /// A tap on an already-live sidebar row. Hosted surfaces re-dispatch
+  /// through the relay (the local slot holds only the boot attach — a
+  /// bare switchTo would be a silent no-op); desktop falls back to it.
+  Future<void> _openLiveSession(String sessionId) async {
+    final active = widget.manager.active;
+    if (active == null) return;
+    final relayOpen = active.service.openSessionAction;
+    if (relayOpen != null) {
+      debugPrint('[fah][shell] open live session $sessionId via relay');
+      setState(() => _pendingOpenId = sessionId);
+      await relayOpen(sessionId);
+      return;
+    }
+    widget.manager.switchTo(sessionId);
+  }
+
+  /// Opens a persisted session row from the sidebar. On a hosted
   /// relay surface (browser extension) the session files live in the
   /// service worker — the open is a `session_open` dispatch there, exactly
   /// like the narrow drawer; cloning locally would fail (the page-side

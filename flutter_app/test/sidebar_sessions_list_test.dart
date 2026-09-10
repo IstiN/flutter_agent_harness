@@ -110,6 +110,7 @@ void main() {
     List<SessionMetadata> persisted = const [],
     Map<String, String> sessionInfoNames = const {},
     ValueChanged<SessionMetadata>? onOpenPersisted,
+    ValueChanged<String>? onOpenLiveSession,
     String? pendingSessionId,
     String? selectedSessionId,
   }) {
@@ -124,6 +125,7 @@ void main() {
           persistedSessions: persisted,
           sessionInfoNames: sessionInfoNames,
           onOpenPersisted: onOpenPersisted,
+          onOpenLiveSession: onOpenLiveSession,
           pendingSessionId: pendingSessionId,
           selectedSessionId: selectedSessionId,
         ),
@@ -239,6 +241,48 @@ void main() {
     expect(opened?.id, old.id);
     // The live session was not switched away.
     expect(manager.activeId, 'live-1');
+  });
+
+  testWidgets('tapping a live row routes through onOpenLiveSession', (
+    tester,
+  ) async {
+    // Hosted surfaces must re-dispatch live-row taps through the relay —
+    // the local slot only holds the boot attach, so manager.switchTo on
+    // such a row is a silent no-op and the transcript never re-attaches.
+    final liveMeta = await persistSession(userText: 'live session');
+    manager.addSession(liveMeta.id, _fakeService(env));
+    final other = await persistSession(userText: 'other');
+    manager.addSession(other.id, _fakeService(env));
+    String? openedLive;
+
+    await tester.pumpWidget(
+      harness(
+        names: SessionNamesStore.inMemory({liveMeta.id: 'Live chat'}),
+        onOpenLiveSession: (id) => openedLive = id,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Live chat'));
+    await tester.pumpAndSettle();
+    expect(openedLive, liveMeta.id);
+  });
+
+  testWidgets('without onOpenLiveSession a live tap falls back to switchTo', (
+    tester,
+  ) async {
+    final liveMeta = await persistSession(userText: 'live session');
+    manager.addSession(liveMeta.id, _fakeService(env));
+
+    await tester.pumpWidget(
+      harness(names: SessionNamesStore.inMemory({liveMeta.id: 'Live chat'})),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Live chat'));
+    await tester.pumpAndSettle();
+    // The local fallback still switches the manager to the tapped row.
+    expect(manager.activeId, liveMeta.id);
   });
 
   testWidgets('a persisted session that is already live is not duplicated', (

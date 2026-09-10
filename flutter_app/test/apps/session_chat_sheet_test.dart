@@ -71,6 +71,24 @@ StreamFunction _hungResponse() {
   return fn;
 }
 
+/// A hosted (relay-like) service: its [openSessionAction] records the
+/// dispatched session ids, like the extension panel's RelayAgentService.
+final class _RelayBackedService extends AgentService {
+  _RelayBackedService(
+    ExecutionEnv env,
+    this.openedIds, {
+    required super.agent,
+    required super.sessionsRoot,
+    super.config,
+  }) : super(env: env);
+
+  final List<String> openedIds;
+
+  @override
+  Future<void> Function(String sessionId)? get openSessionAction =>
+      (id) async => openedIds.add(id);
+}
+
 AgentService _fakeService(ExecutionEnv env, [StreamFunction? streamFunction]) {
   return AgentService(
     agent: Agent(
@@ -241,6 +259,59 @@ void main() {
       // The sessions button turned into the composer's attach button.
       expect(find.byKey(_drawerButtonKey), findsNothing);
       expect(find.byType(FaAttachGlyph), findsOneWidget);
+    });
+
+    testWidgets('a hosted drawer row re-dispatches through the relay '
+        'instead of a silent local switchTo', (tester) async {
+      // Hosted surfaces (extension panel): the local slot only holds the
+      // boot attach — switching the manager locally never re-attaches the
+      // transcript. The row tap must go through openSessionAction.
+      final env = MemoryExecutionEnv();
+      final openedIds = <String>[];
+      final relay = _RelayBackedService(
+        env,
+        openedIds,
+        agent: Agent(
+          model: Model(
+            id: 'test-model',
+            api: 'test-api',
+            provider: 'test',
+            baseUrl: 'https://example.com',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          systemPrompt: 'You are Fa.',
+          streamFunction: _singleTextResponse('ok'),
+          toolRegistry: ToolRegistry(const []),
+        ),
+        sessionsRoot: '/sessions',
+        config: AgentConfig(
+          providerKind: 'test',
+          modelId: 'test-model',
+          baseUrl: 'https://example.com',
+          apiKey: '',
+        ),
+      );
+      addTearDown(relay.dispose);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-a', _fakeService(env))
+        ..addSession('sess-b', relay);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(manager.activeId, 'sess-b');
+
+      await _openPanelViaDrawer(tester, 'sess-a');
+
+      expect(openedIds, ['sess-a']);
+      // The manager itself was not switched — the SW re-attach does that.
+      expect(manager.activeId, 'sess-b');
     });
 
     testWidgets('a persisted session opens lazily from the drawer', (

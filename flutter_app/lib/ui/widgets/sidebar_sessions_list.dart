@@ -30,6 +30,7 @@ class SidebarSessionsList extends StatefulWidget {
     this.persistedSessions = const [],
     this.sessionInfoNames = const {},
     this.onOpenPersisted,
+    this.onOpenLiveSession,
     this.collapsed = false,
     this.hubBoundSessionId,
     this.pendingSessionId,
@@ -66,6 +67,13 @@ class SidebarSessionsList extends StatefulWidget {
 
   /// Opens a persisted-only session from disk (see [persistedSessions]).
   final ValueChanged<SessionMetadata>? onOpenPersisted;
+
+  /// Opens an already-live session by id. Hosted surfaces (extension
+  /// panel / relay shell) MUST dispatch through the relay even for rows
+  /// that have a local slot — [manager.switchTo] on such a row is a
+  /// silent local no-op (the slot only holds the boot attach) and the
+  /// transcript never re-attaches. Null falls back to [switchTo].
+  final ValueChanged<String>? onOpenLiveSession;
 
   /// When true the list renders as a compact column of session dots.
   final bool collapsed;
@@ -236,7 +244,15 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   void _openEntry(_SessionEntry entry) {
     final live = entry.live;
     if (live != null) {
-      widget.manager.switchTo(live.id);
+      // Hosted: the slot is just the boot attach keyholder — re-dispatch
+      // through the host so the transcript actually switches (see
+      // [onOpenLiveSession]).
+      final openLive = widget.onOpenLiveSession;
+      if (openLive != null) {
+        openLive(live.id);
+      } else {
+        widget.manager.switchTo(live.id);
+      }
       widget.onSessionTap?.call();
       return;
     }

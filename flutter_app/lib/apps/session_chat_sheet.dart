@@ -449,7 +449,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
       return;
     }
     if (_liveSessions.any((s) => s.id == id)) {
-      widget.manager.switchTo(id);
+      // Hosted (extension panel / relay shell): the local slot is only the
+      // boot attach keyholder — a bare switchTo never re-attaches the
+      // transcript and the row tap dead-ends silently. Re-dispatch through
+      // the SW so it switches (or re-attaches when already live).
+      final relayOpen = _activeService?.openSessionAction;
+      if (relayOpen != null) {
+        await relayOpen(id);
+      } else {
+        widget.manager.switchTo(id);
+      }
     } else {
       final metadata = _persisted.where((m) => m.id == id).firstOrNull;
       if (metadata != null) await _openPersisted(metadata);
