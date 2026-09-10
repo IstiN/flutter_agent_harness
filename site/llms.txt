@@ -36,11 +36,15 @@
   `bookmarks_remove`, `downloads_start`, `downloads_search`,
   `downloads_cancel`, `cookies_get`, `cookies_set`, `cookies_remove`,
   `inject_js`, `inject_css`, `cdp_eval`, `page_screenshot`,
-  `app_screenshot`, `nav_wait`.
+  `app_screenshot`, `nav_wait` — plus four Settings-gated second-tier
+  tools that surface once the user enables them:
+  `browser_search`, `top_sites`, `reading_list`, `page_capture`.
 - Entry points: the side panel, the omnibox (`fa <query>`), the
   Ctrl+Shift+1 hotkey, and the context menu on any selection. Page-derived
-  content is quarantined as untrusted data; `inject_js` always asks for
-  approval.
+  content is quarantined as untrusted data. `inject_js` prompts on every
+  call in every session mode by default — explicitly switching the
+  session to yolo drops that guard (the override is cleared, not
+  bypassed silently).
 - Artifact (rebuilt on every deploy):
   https://fa1.dev/extension/fa-extension.zip — unzip, then open
   chrome://extensions, enable Developer mode, Load unpacked, pick the
@@ -68,7 +72,8 @@
 
 - Core tools on every host: `read`, `write`, `edit`, `ls`, `bash`
   (plus background `bash_job`), `web_search`, `web_fetch`, `task`
-  (parallel subagents: explore/review/plan), `lsp`,
+  (parallel subagents: explore/review/plan; managed with `task_status`,
+  `task_send`, `task_observe`, `task_cancel`), `lsp`,
   `memory_add`, `memory_delete`, `memory_list`, `memory_search`,
   `checkpoint`, `rewind`, `ask`, `request_secret`, `config`,
   `agent_message`, `agent_directory`, `schedule_message`, `reply`,

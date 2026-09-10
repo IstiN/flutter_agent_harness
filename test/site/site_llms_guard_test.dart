@@ -21,7 +21,8 @@ void main() {
   /// lib/src/task/, lib/src/messaging/, lib/src/web_search/, lib/src/model_roles/).
   const coreTools = [
     'read', 'write', 'edit', 'ls', 'bash', 'bash_job', //
-    'web_search', 'web_fetch', 'task', 'lsp', //
+    'web_search', 'web_fetch', 'task', 'task_status', 'task_send', //
+    'task_observe', 'task_cancel', 'lsp', //
     'memory_add', 'memory_delete', 'memory_list', 'memory_search', //
     'checkpoint', 'rewind', 'ask', 'request_secret', 'config', //
     'agent_message', 'agent_directory', 'schedule_message', 'reply', //
@@ -40,6 +41,16 @@ void main() {
     'cookies_get', 'cookies_set', 'cookies_remove', //
     'inject_js', 'inject_css', 'cdp_eval', 'page_screenshot', //
     'app_screenshot', 'nav_wait',
+  ];
+
+  /// The 4 Settings-gated second-tier extension tools
+  /// (browser_ext/dart/src/browser_api_tools.dart, BrowserToolVisibility.secondTier
+  /// — registered only once the user enables them).
+  const extensionSecondTierTools = [
+    'browser_search',
+    'top_sites',
+    'reading_list',
+    'page_capture',
   ];
 
   /// CLI browser-bridge tools (lib/src/browser/browser_tools.dart), driven
@@ -83,6 +94,17 @@ void main() {
       llms,
       contains('34'),
       reason: 'llms.txt should state the tool count',
+    );
+  });
+
+  test('llms.txt lists every second-tier extension tool', () {
+    expectMentioned(llms, extensionSecondTierTools, 'site/llms.txt');
+    expect(
+      llms,
+      contains('yolo drops that guard'),
+      reason:
+          'the inject_js always-prompt claim must stay qualified — yolo '
+          'clears the override (agent_host.dart applyModePromptOverrides)',
     );
   });
 
