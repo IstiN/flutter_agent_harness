@@ -3089,6 +3089,12 @@
 
 - fix(85): context pair-integrity — validate and repair tool pairing at the request boundary (#93)
 
+## 0.1.337
+
+- feat(101): add explicit --prompt-file <path> headless prompt flag (#103)
+- fix(97): TUI secret sheet — value-first focus, placeholder name, masked input, Enter explains itself (#98)
+- fix(99): clear macOS traffic lights on the trajectory screen (#100)
+
 ## Unreleased
 
 ## Unreleased
