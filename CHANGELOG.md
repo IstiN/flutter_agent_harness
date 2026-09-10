@@ -3109,6 +3109,10 @@
 - build(deps): bump playwright (#106)
 - feat(89): Outlook Office Add-in host bridge (fa1.dev/outlook) (#94)
 
+## 0.1.339
+
+- feat(115): visualize pending scheduled follow-ups in the CLI TUI (#117)
+
 ## Unreleased
 
 ## Unreleased
