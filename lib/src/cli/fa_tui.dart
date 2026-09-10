@@ -11,6 +11,7 @@ import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
 import 'system_notice_render.dart';
 import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
+import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -164,6 +165,18 @@ void Function(String line)? faTuiBusyDiagnostics;
 /// Internal spinner-frame tick; re-scheduled while the model stays busy.
 final class SpinnerTickMsg extends Msg {}
 
+/// Host push of the pending scheduled follow-up count (`schedule_message`
+/// records): rendered as a dim row on top of the busy row (issue #115).
+final class ScheduledStatusMsg extends Msg {
+  const ScheduledStatusMsg(this.count, this.nextDueMs);
+
+  /// Deliverable pending records.
+  final int count;
+
+  /// Earliest due time (epoch ms); null when unknown.
+  final int? nextDueMs;
+}
+
 /// Message draining the queued messages (kimi-cli semantics: after a run
 /// settles the host takes them one-by-one as separate turns). The model
 /// echoes them into the history before clearing.
@@ -264,6 +277,8 @@ final class FaTuiModel extends Model {
     this.inputHistory = const [],
     this.historyIndex = -1,
     this.historyDraft,
+    this.scheduledCount = 0,
+    this.scheduledNextDueMs = -1,
     this.frameNonce = 0,
   });
 
@@ -333,6 +348,14 @@ final class FaTuiModel extends Model {
   /// Last activity timestamp while busy (any non-tick message). Feeds the
   /// "quiet Nm" hint and the watchdog.
   final int busyLastEventMs;
+
+  /// Pending scheduled follow-up messages (`schedule_message` records this
+  /// instance can still deliver); 0 hides the indicator row (issue #115).
+  final int scheduledCount;
+
+  /// Earliest pending due time (epoch ms; -1 unknown) — rendered as the
+  /// "next in 25m" suffix.
+  final int scheduledNextDueMs;
 
   /// Whether the TUI captures the mouse (wheel scrolling) instead of
   /// leaving it to the terminal's native text selection. Default on: the
@@ -497,6 +520,7 @@ final class FaTuiModel extends Model {
     const inputFrameH = 2;
     const statusH = 1;
     final busyH = busy ? 1 : 0;
+    final scheduledH = scheduledCount > 0 ? 1 : 0;
     final stickyH = _stickyActive ? stickyLines.length : 0;
     final queueH = queue.isEmpty ? 0 : queue.length + 1; // + hint line
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
@@ -504,6 +528,7 @@ final class FaTuiModel extends Model {
         progressH +
         _menuReservedLines +
         busyH +
+        scheduledH +
         stickyH +
         queueH +
         promptH +
@@ -577,6 +602,8 @@ final class FaTuiModel extends Model {
     List<String>? queue,
     List<String>? inputHistory,
     int? historyIndex,
+    int? scheduledCount,
+    int? scheduledNextDueMs,
     Object? historyDraft = _unset,
   }) {
     final copy = FaTuiModel(
@@ -611,6 +638,8 @@ final class FaTuiModel extends Model {
       queue: queue ?? this.queue,
       inputHistory: inputHistory ?? this.inputHistory,
       historyIndex: historyIndex ?? this.historyIndex,
+      scheduledCount: scheduledCount ?? this.scheduledCount,
+      scheduledNextDueMs: scheduledNextDueMs ?? this.scheduledNextDueMs,
       historyDraft: historyDraft == _unset
           ? this.historyDraft
           : historyDraft as String?,
@@ -648,6 +677,7 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _updateWithHeartbeat(Msg msg) {
+    if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
     // Output is handled before the exit check so trailing writes (e.g. the
     // 'bye' line from /exit) still render before the program quits; the host
     // sends _QuitRequestedMsg once it has marked exit.
@@ -666,6 +696,19 @@ final class FaTuiModel extends Model {
     }
     if (isExited()) return (this, () => quit());
     return _updateAfterExitCheck(msg);
+  }
+
+  /// The scheduled follow-ups indicator is a pure host push: store the
+  /// count/ETA and re-render. No chain, no watchdog — the next schedule or
+  /// fire event updates it again.
+  (Model, Cmd?) _handleScheduledStatus(ScheduledStatusMsg msg) {
+    return (
+      copyWith(
+        scheduledCount: msg.count,
+        scheduledNextDueMs: msg.nextDueMs ?? -1,
+      ),
+      null,
+    );
   }
 
   (Model, Cmd?) _handleOutputMsg(OutputMsg msg) {
@@ -2100,6 +2143,10 @@ final class FaTuiModel extends Model {
   /// streams. Queued messages (kimi-cli) render under it, one dim line per
   /// message plus the edit/steer hint, all above the framed input zone.
   void _writeBusyAndQueue(StringBuffer b) {
+    // Scheduled follow-ups sit ON TOP of the working row (issue #115) and
+    // stay visible while idle — a pending reminder is exactly what the user
+    // needs to see when nothing else is happening.
+    if (scheduledCount > 0) b.writeln(_scheduledRowLine());
     if (busy) b.writeln(_busyRowLine());
     if (queue.isNotEmpty) {
       for (final queued in queue) {
@@ -2112,6 +2159,19 @@ final class FaTuiModel extends Model {
       b.writeln(_dim('↑ to edit · ctrl-s to send immediately'));
     }
     b.writeln(_dim('─' * termWidth));
+  }
+
+  /// The scheduled follow-ups indicator line (one dim row): count + the
+  /// nearest ETA, styled after the busy row so it reads as one family.
+  String _scheduledRowLine() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final eta = scheduledNextDueMs < 0
+        ? ''
+        : scheduledNextDueMs <= now
+        ? ' · due now'
+        : ' · next in '
+              '${ScheduledMessageQueue.formatDelay(Duration(milliseconds: scheduledNextDueMs - now))}';
+    return _dim('⏰ $scheduledCount scheduled$eta');
   }
 
   /// The busy indicator line (one row): spinner + label + honesty
@@ -2138,9 +2198,7 @@ final class FaTuiModel extends Model {
     // stretch went quiet (no deltas/keys for minutes — reads as a hang,
     // now says so instead of pretending steady progress).
     final provenance = busySource.isEmpty ? '' : ' · $busySource';
-    final quiet = quietSeconds >= 180
-        ? ' · quiet ${quietSeconds ~/ 60}m'
-        : '';
+    final quiet = quietSeconds >= 180 ? ' · quiet ${quietSeconds ~/ 60}m' : '';
     return '${_accent2Plain(frame)} '
         '${_dim('$label ${elapsedSeconds}s$quiet$provenance')}';
   }
@@ -2480,6 +2538,12 @@ final class FaTuiController {
     // a bug class that already burned a night at 100% CPU).
     if (_busyDepth <= 0) return;
     _send(BusyMsg(true, phase: phase));
+  }
+
+  /// Pushes the pending scheduled follow-up count (`schedule_message`
+  /// records) so the indicator row tracks the queue live (issue #115).
+  void setScheduled(int count, int? nextDueMs) {
+    _send(ScheduledStatusMsg(count, nextDueMs));
   }
 
   /// Drains the queued messages (the model echoes them into the history) —

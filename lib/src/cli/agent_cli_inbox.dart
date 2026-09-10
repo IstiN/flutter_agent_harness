@@ -131,8 +131,15 @@ extension AgentCliMessagingFlow on AgentCli {
       ownerPrefix: () => _subagentManager.mailboxPrefix,
       // Terminal visibility: a dim line when a scheduled message is created
       // and when it fires, so self-reminders are observable without /tasks.
-      onScheduled: (text) => io.writeln(_style.dim('[sched] $text')),
-      onFired: (text) => io.writeln(_style.dim('[sched] $text')),
+      // Each transition also re-pushes the TUI indicator row (issue #115).
+      onScheduled: (text) {
+        io.writeln(_style.dim('[sched] $text'));
+        unawaited(_pushScheduledStatus());
+      },
+      onFired: (text) {
+        io.writeln(_style.dim('[sched] $text'));
+        unawaited(_pushScheduledStatus());
+      },
     );
   }
 
@@ -144,6 +151,7 @@ extension AgentCliMessagingFlow on AgentCli {
     // while another session was active surface in the now-active mailbox
     // (start() is an idempotent re-arm + drain).
     unawaited(_scheduledMessages.start());
+    unawaited(_pushScheduledStatus());
     // Presence: a zero-mail instance is discoverable in agent_directory.
     // The session display name rides along so peers can address this
     // mailbox by name (`--session goal_builder` → `goal_builder/main`).
@@ -151,6 +159,18 @@ extension AgentCliMessagingFlow on AgentCli {
     final prefix = _subagentManager.mailboxPrefix;
     if (fabric != null && prefix.isNotEmpty) {
       unawaited(_registerFabricMailbox(fabric, prefix));
+    }
+  }
+
+  /// Re-reads the pending scheduled records and pushes the count + nearest
+  /// due into the TUI indicator row (issue #115). Best-effort: a failing
+  /// scan only means a stale indicator, never a broken flow.
+  Future<void> _pushScheduledStatus() async {
+    try {
+      final pending = await _scheduledMessages.pendingSummary();
+      _tuiController?.setScheduled(pending.count, pending.nextDueMs);
+    } on Object {
+      // Indicator only — never let visibility break messaging.
     }
   }
 
