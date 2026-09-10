@@ -125,6 +125,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     final persistedCwdById = {
       for (final m in widget.persistedSessions) m.id: m.cwd,
     };
+    final persistedById = {for (final m in widget.persistedSessions) m.id: m};
     // Live sessions plus the persisted ones not currently open — the full
     // on-disk history stays reachable from the sidebar, like the mobile
     // chat sheet's persisted tail.
@@ -132,8 +133,13 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       for (final session in live)
         _SessionEntry(
           id: session.id,
-          createdAt: session.createdAt,
-          lastUpdatedAt: session.lastUpdatedAt,
+          // Hosted sessions: the manager slot's stamps are pinned at boot;
+          // after a broadcast session switch the persisted metadata (the
+          // SW poll) carries the LIVE session's real times. Without this
+          // the active dot's row never changes its label.
+          createdAt: persistedById[session.id]?.createdAt ?? session.createdAt,
+          lastUpdatedAt:
+              persistedById[session.id]?.lastUpdatedAt ?? session.lastUpdatedAt,
           cwd: persistedCwdById[session.id] ?? session.service.env.sessionCwd,
           live: session,
         ),
@@ -195,7 +201,8 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                           // per-tile cwd label would duplicate it.
                           cwd: null,
                           isActive: widget.manager.active?.id == entry.id,
-                          hubBound: widget.hubBoundSessionId != null &&
+                          hubBound:
+                              widget.hubBoundSessionId != null &&
                               widget.hubBoundSessionId == entry.id,
                           onTap: () => _openEntry(entry),
                           onMenu: (anchor) => _showSessionMenu(entry, anchor),

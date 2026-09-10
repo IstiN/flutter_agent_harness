@@ -469,6 +469,7 @@ final class AgentHost implements UiHostBackend {
     if (!_booted) throw StateError('not booted');
     if (_running) throw StateError('busy: finish the current turn first');
     final oldId = sessionId;
+    print('[dap-host] session_new: archiving $oldId');
     if (oldId.isNotEmpty) {
       await archiveLiveSession(
         fs: _env,
@@ -490,8 +491,15 @@ final class AgentHost implements UiHostBackend {
   @override
   Future<void> openSession(String requestedId) async {
     if (!_booted) throw StateError('not booted');
-    if (_running) throw StateError('busy: finish the current turn first');
+    if (_running) {
+      print(
+        '[dap-host] session_open($requestedId) REFUSED: a turn is '
+        'running — finish or cancel it first',
+      );
+      throw StateError('busy: finish the current turn first');
+    }
     final archivePath = sessionArchivePath(requestedId);
+    print('[dap-host] session_open($requestedId): switching from $sessionId');
     if ((await _env.exists(archivePath)).valueOrNull != true) {
       throw StateError('no such session: $requestedId');
     }
@@ -635,6 +643,10 @@ final class AgentHost implements UiHostBackend {
       case BoundSessionAction.stay:
         return;
       case BoundSessionAction.openBound:
+        print(
+          '[dap-host] inbound mail: switching to the bound session '
+          '${config.boundSessionId} (was $sessionId)',
+        );
         try {
           await openSession(config.boundSessionId!);
         } on Object {

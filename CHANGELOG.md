@@ -48,6 +48,17 @@
   drawer filter hid the freshly archived row ("added a session, still
   see one"). The trio now broadcasts to all connected ports, and the
   drawer filter no longer drops archived rows by a possibly-stale id.
+- fix(extension): session switches now follow the UI everywhere. The
+  manager's active slot kept its boot-time id/stamps after any
+  session_new/session_open, so the active dot stayed on a row whose
+  label never changed, and the wide-layout sidebar (app tab) listed only
+  one session — it read the page-local repo while the session files
+  live in the service worker. The relay now re-keys the manager slot on
+  an adopted broadcast, the sidebar/drawer take fresh stamps from the
+  SW poll, and listPersistedSessions delegates to the relay's
+  sessions_query on hosted pages. Logs: session switches, dispatches,
+  busy refusals, and mail-driven bound-session switches are printed on
+  both sides ([fah][relay] / [dap-host]).
 - fix(dap): the browser client stops the fast retry loop when the hub
   keeps rejecting the credential (wrong Hub password): after three
   fast closes with a credential configured it holds at a 30 s re-check

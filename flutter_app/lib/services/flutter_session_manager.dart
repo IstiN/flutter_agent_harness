@@ -102,7 +102,21 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// Every session persisted on disk, newest first (live ones included).
   /// Storage failures yield an empty list — a broken sessions dir must not
   /// break the sidebar listing.
+  ///
+  /// Hosted sessions (extension panel / app tab, the active service is a
+  /// relay): the session files live in the SERVICE WORKER's filesystem —
+  /// the page-local repo sees an empty tree and the sidebar collapsed to
+  /// a single row. The relay service's [AgentService.listSessions]
+  /// (sessions_query) is the authority there.
   Future<List<SessionMetadata>> listPersistedSessions() async {
+    final active = this.active?.service;
+    if (active != null && active.liveSessionId != null) {
+      try {
+        return await active.listSessions();
+      } on Object {
+        return const [];
+      }
+    }
     try {
       final roots = allSessionRoots(sessionsRoot);
       if (roots.length <= 1) {
@@ -247,6 +261,32 @@ final class FlutterSessionManager extends ChangeNotifier {
     );
     _activeId = id;
     _rememberActive(id);
+    notifyListeners();
+  }
+
+  /// Re-keys the ACTIVE session slot to [newId] — the hosted equivalent
+  /// of a session switch. The relay service adopts the SW's live session
+  /// id on every session_new/session_open (from ANY surface, via the
+  /// attach broadcast); without a re-key the manager slot keeps its boot
+  /// id and every active-dot/tile label in the UI points at a session
+  /// that is no longer live.
+  void rekeyActiveSession(String newId, {DateTime? createdAt}) {
+    final activeSlot = active;
+    if (activeSlot == null) return;
+    final oldId = activeSlot.id;
+    if (oldId == newId) {
+      // Same session — still refresh the stamp: the tile shows a time
+      // label that would otherwise stay pinned to the slot's boot time.
+      return;
+    }
+    _sessions.remove(oldId);
+    _sessions[newId] = FlutterManagedSession(
+      id: newId,
+      service: activeSlot.service,
+      createdAt: createdAt,
+    );
+    _activeId = newId;
+    _rememberActive(newId);
     notifyListeners();
   }
 

@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:async';
+
 import 'dart:math' as math;
 
 import 'package:fa/l10n/app_localizations.dart';
@@ -165,6 +166,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   /// Disk-listing poll: new CLI sessions appear without manager events.
   Timer? _persistedTimer;
+  Set<String> _lastDrawerRowIds = const <String>{};
+  Map<String, DateTime> _updatedAtById = const {};
 
   /// Disk-persisted sessions minus the live ones, listed in the drawer.
   List<SessionMetadata> _persisted = const [];
@@ -304,10 +307,26 @@ class SessionChatSheetState extends State<SessionChatSheet>
         liveIds: liveIds,
         relayLiveId: service.liveSessionId,
       );
+      final rowIds = all.map((m) => m.id).toSet();
+      final rowIdsChanged =
+          rowIds.length != _lastDrawerRowIds.length ||
+          !rowIds.every(_lastDrawerRowIds.contains);
+      if (rowIdsChanged) {
+        _lastDrawerRowIds = rowIds;
+        debugPrint(
+          '[fah][drawer] sessions: ${all.length} rows '
+          '(live=${service.liveSessionId ?? '-'}, '
+          'archived=${persisted.length})',
+        );
+      }
       if (mounted) {
         setState(() {
           _persisted = persisted;
           _createdAtById = {for (final m in all) m.id: m.createdAt};
+          _updatedAtById = {
+            for (final m in all)
+              if (m.lastUpdatedAt != null) m.id: m.lastUpdatedAt!,
+          };
           _cwdById = {for (final m in all) m.id: m.cwd};
         });
       }
@@ -833,8 +852,13 @@ class SessionChatSheetState extends State<SessionChatSheet>
             for (final s in _liveSessions)
               (
                 id: s.id,
-                createdAt: s.createdAt,
-                lastUpdatedAt: s.lastUpdatedAt,
+                // Hosted sessions: the slot's stamps are pinned at boot —
+                // after a session switch (broadcast adoption) the SW poll
+                // (_createdAtById) carries the LIVE session's real time.
+                // Without this the dot-row never changes its label and
+                // reads as "selection stuck on the first row".
+                createdAt: _createdAtById[s.id] ?? s.createdAt,
+                lastUpdatedAt: _updatedAtById[s.id] ?? s.lastUpdatedAt,
                 // The DISK cwd (the session's origin folder) wins: a live
                 // session stays grouped under the folder it belongs to,
                 // even when the app's current mount moved elsewhere.

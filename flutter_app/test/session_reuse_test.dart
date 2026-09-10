@@ -272,4 +272,34 @@ void main() {
       expect(manager2.activeId, older.id);
     });
   });
+
+  group('rekeyActiveSession (hosted session-switch adoption)', () {
+    late FlutterSessionManager manager;
+    late ExecutionEnv env;
+    setUp(() {
+      env = MemoryExecutionEnv(cwd: '/');
+      manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    });
+    test('re-keys the active slot and moves activeId with it', () {
+      final service = _fakeService(env);
+      manager.addSession('boot-id', service);
+      manager.rekeyActiveSession('sw-live-id');
+      expect(manager.sessions.map((s) => s.id), ['sw-live-id']);
+      expect(manager.activeId, 'sw-live-id');
+      expect(manager.active?.service, same(service));
+      // The UI (drawer dot, wide sidebar) reads manager.activeId — it now
+      // matches the SW's live session instead of the boot slot key.
+    });
+
+    test('re-keying to the SAME id is a no-op (no duplicate slot)', () {
+      manager.addSession('boot-id', _fakeService(env));
+      manager.rekeyActiveSession('boot-id');
+      expect(manager.sessions.map((s) => s.id), ['boot-id']);
+    });
+
+    test('no active slot — silently ignored', () {
+      manager.rekeyActiveSession('whatever');
+      expect(manager.sessions, isEmpty);
+    });
+  });
 }

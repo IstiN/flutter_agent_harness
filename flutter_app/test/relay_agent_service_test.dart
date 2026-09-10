@@ -77,6 +77,54 @@ Future<({RelayAgentService service, FakePortChannel channel})> _attached({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('an attach broadcast with a NEW session id fires the adoption '
+      'callback (live session switched from another surface)', () async {
+    final (:service, :channel) = await _attached();
+    final adopted = <String>[];
+    service.onLiveSessionIdChanged = adopted.add;
+    expect(service.liveSessionId, 'sw-1');
+    channel.fromWorker(AttachedMsg(sessionId: 'sw-2', replay: const []));
+    await pumpEventQueue();
+    expect(service.liveSessionId, 'sw-2');
+    expect(adopted, ['sw-2']);
+    // Same id again — no spurious callback.
+    channel.fromWorker(AttachedMsg(sessionId: 'sw-2', replay: const []));
+    await pumpEventQueue();
+    expect(adopted, ['sw-2']);
+  });
+
+  test('the FIRST attach (boot) does not count as a switch', () async {
+    final channel = FakePortChannel();
+    final transport = WorkerRelayTransport(
+      portFactory: () => channel,
+      channel: channel,
+    );
+    final service = RelayAgentService.forTest(transport);
+    final adopted = <String>[];
+    service.onLiveSessionIdChanged = adopted.add;
+    final connected = transport.connect();
+    await () async {
+      while (channel.sentOf('hello') == null) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      channel.fromWorker(
+        HelloAckMsg(
+          protoVersion: uiProtocolVersion,
+          serverCapabilities: const ['stream', 'approvals'],
+          sessionId: 'sw-1',
+        ),
+      );
+      while (channel.sentOf('attach') == null) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      channel.fromWorker(AttachedMsg(sessionId: 'sw-1', replay: const []));
+    }();
+    await connected;
+    expect(adopted, isEmpty);
+  });
+
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('attach replay rebuilds the transcript', () async {
     final (:service, :channel) = await _attached(
       replay: [

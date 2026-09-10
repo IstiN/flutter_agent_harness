@@ -94,6 +94,7 @@ final class RelayAgentService extends AgentService {
   Future<void> Function()? get newSessionAction => _running
       ? null
       : () async {
+          debugPrint('[fah][relay] session_new → SW (new session requested)');
           _transport.newSession();
         };
 
@@ -104,11 +105,18 @@ final class RelayAgentService extends AgentService {
   Future<void> Function(String sessionId)? get openSessionAction => _running
       ? null
       : (id) async {
+          debugPrint('[fah][relay] session_open($id) → SW (switch requested)');
           _transport.openSession(id);
         };
 
   @override
   String? get liveSessionId => _sessionId.isEmpty ? null : _sessionId;
+
+  /// Fired when the SW's live session changed under us — a
+  /// session_new/session_open from ANY surface arrives as an attach
+  /// broadcast. The host (main.dart) re-keys the manager's active slot so
+  /// active-dots and tile labels follow the real live session.
+  void Function(String newSessionId)? onLiveSessionIdChanged;
 
   /// The SW's session history (live + archives), fetched over
   /// `sessions_query`. Single-flight: overlapping callers share the
@@ -332,11 +340,22 @@ final class RelayAgentService extends AgentService {
       case HelloAckMsg(:final sessionId):
         _sessionId = sessionId ?? _sessionId;
       case AttachedMsg(:final sessionId, :final replay):
+        final previous = _sessionId;
         _sessionId = sessionId;
         _rebuild(replay);
         debugPrint(
-          '[fah][relay] attached: session=$sessionId replay=${replay.length}',
+          '[fah][relay] attached: session=$sessionId replay=${replay.length}'
+          '${previous.isNotEmpty && previous != sessionId ? ' (was $previous)' : ''}',
         );
+        if (sessionId.isNotEmpty &&
+            previous.isNotEmpty &&
+            previous != sessionId) {
+          debugPrint(
+            '[fah][relay] live session switched: $previous → $sessionId '
+            '(session_new/session_open from this or another surface)',
+          );
+          onLiveSessionIdChanged?.call(sessionId);
+        }
         // Pick up the SW's persisted provider/model (chrome.storage) so the
         // composer reflects reality; reconfigure() writes back the same way.
         _transport.dispatch(const SettingsQueryMsg());
