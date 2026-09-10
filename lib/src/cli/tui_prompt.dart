@@ -12,9 +12,12 @@
 /// future TUI host.
 library;
 
+import 'package:characters/characters.dart';
+
 import '../approval/approval.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
+import 'tui_text_width.dart';
 
 /// A transport-neutral key event — dart_tui's `KeyMsg` carries the same
 /// info but depends on `dart_tui`, so we re-shape it here and convert at
@@ -1042,12 +1045,6 @@ String _bold(String s) => '\x1b[1m$s\x1b[0m';
 String _yellow(String s) => '\x1b[38;2;250;204;21m$s\x1b[0m';
 String _red(String s) => '\x1b[38;2;248;113;113m$s\x1b[0m';
 
-String _fitWidth(String text, int maxWidth) {
-  if (maxWidth <= 1) return text.substring(0, maxWidth);
-  if (text.length <= maxWidth) return text;
-  return '${text.substring(0, maxWidth - 1)}…';
-}
-
 List<String> _frameRows(TuiPromptState state, int width) {
   final inner = width - 2;
   final rows = <String>[];
@@ -1081,7 +1078,7 @@ List<String> _askBodyRows(TuiPromptState state, AskPromptSpec spec, int inner) {
       'Question ${spec.index + 1} of ${spec.total}'
       '${spec.options.isEmpty ? ' (free text)' : ''}';
   final rows = <String>[_wrapBodyLine(header, inner, bold: true)];
-  for (final line in _wrapText(spec.question, inner)) {
+  for (final line in _wrapText(spec.question, inner - 1)) {
     rows.add(_wrapBodyLine(line, inner));
   }
   rows.addAll(_askOptionRows(state, inner));
@@ -1090,7 +1087,7 @@ List<String> _askBodyRows(TuiPromptState state, AskPromptSpec spec, int inner) {
 
 List<String> _secretBodyRows(SecretPromptSpec spec, int inner) {
   final rows = <String>[_wrapBodyLine('Credential request', inner, bold: true)];
-  for (final line in _wrapText(spec.reason, inner)) {
+  for (final line in _wrapText(spec.reason, inner - 1)) {
     rows.add(_wrapBodyLine(line, inner));
   }
   return rows;
@@ -1106,14 +1103,14 @@ List<String> _approvalBodyRows(
     _wrapBodyLine('Tool: ${req.toolName}', inner, bold: true),
     _wrapBodyLine('Tier: ${req.tier.name}', inner),
   ];
-  for (final line in _wrapText(req.reason, inner)) {
+  for (final line in _wrapText(req.reason, inner - 1)) {
     rows.add(_wrapBodyLine(line, inner, dim: true));
   }
   final args = req.arguments.entries
       .map((entry) => '${entry.key}=${entry.value}')
       .join(', ');
   final argLine = args.isEmpty ? '(no arguments)' : args;
-  rows.add(_wrapBodyLine('Args: ${_fitWidth(argLine, inner - 6)}', inner));
+  rows.add(_wrapBodyLine('Args: ${tuiFitWidth(argLine, inner - 6)}', inner));
   return rows;
 }
 
@@ -1126,22 +1123,31 @@ List<String> _textBodyRows(TextPromptSpec spec, int inner) {
   return rows;
 }
 
+/// One padded body row inside the frame: `│ ` + content + pad + `│` is
+/// exactly `inner + 2` cells. The content budget is therefore `inner - 1` —
+/// a full-`inner` row used to produce `' ' * -1` padding (an empty string),
+/// an over-wide row that wrapped in the real terminal and desynced the
+/// whole frame (issue #109). Padding is cell-width-aware so CJK/emoji
+/// content cannot skew it either.
 String _wrapBodyLine(
   String text,
   int inner, {
   bool bold = false,
   bool dim = false,
 }) {
-  final content = _fitWidth(text, inner);
-  // Padding must be based on the VISIBLE length — strip ANSI escape codes
-  // so pre-styled strings (dim/red/yellow hints) don't skew the frame.
-  final visibleLength = _stripAnsi(content).length;
+  final budgetCells = inner - 1;
+  final plain = _stripAnsi(text);
+  final fits = tuiTextWidth(plain) <= budgetCells;
+  // A fitting pre-styled row keeps its escape codes; an over-wide one is
+  // trimmed (the styles would be cut mid-sequence anyway).
+  final content = fits ? text : tuiFitWidth(plain, budgetCells);
+  final visible = fits ? tuiTextWidth(plain) : budgetCells;
   final styled = bold
       ? _bold(content)
       : dim
       ? _dim(content)
       : content;
-  return '│ $styled${' ' * (inner - visibleLength - 1)}│';
+  return '│ $styled${' ' * (budgetCells - visible)}│';
 }
 
 /// Strips ANSI escape sequences for visible-length computation.
@@ -1149,6 +1155,8 @@ String _stripAnsi(String text) {
   return text.replaceAll(RegExp(r'\x1b\[[0-9;]*[a-zA-Z]'), '');
 }
 
+/// Slices [text] into rows of at most [width] terminal cells (hard wrap),
+/// cell-aware so wide clusters never overflow the budget (issue #109).
 List<String> _wrapText(String text, int width) {
   if (text.isEmpty) return [''];
   final out = <String>[];
@@ -1157,14 +1165,30 @@ List<String> _wrapText(String text, int width) {
       out.add('');
       continue;
     }
-    var rest = paragraph;
-    while (rest.length > width) {
-      out.add(rest.substring(0, width));
-      rest = rest.substring(width);
-    }
-    out.add(rest);
+    out.addAll(_wrapCells(paragraph, width));
   }
   return out;
+}
+
+/// Hard-wraps [text] into chunks of at most [width] terminal cells,
+/// grapheme-aware so a wide (CJK/emoji) cluster is never split across rows.
+List<String> _wrapCells(String text, int width) {
+  if (tuiTextWidth(text) <= width) return [text];
+  final chunks = <String>[];
+  final chunk = StringBuffer();
+  var cells = 0;
+  for (final cluster in text.characters) {
+    final clusterWidth = tuiGraphemeWidth(cluster);
+    if (cells + clusterWidth > width && chunk.isNotEmpty) {
+      chunks.add(chunk.toString());
+      chunk.clear();
+      cells = 0;
+    }
+    chunk.write(cluster);
+    cells += clusterWidth;
+  }
+  if (chunk.isNotEmpty) chunks.add(chunk.toString());
+  return chunks;
 }
 
 List<String> _askOptionRows(TuiPromptState state, int inner) {
@@ -1185,7 +1209,7 @@ List<String> _askOptionRowLines(TuiPromptState state, int i, int inner) {
   final selected =
       i == state.askCursor && state.askMode != AskInputMode.freeText;
   final marker = _askOptionMarker(state, i, selected: selected);
-  final recommended = spec.recommended == i ? ' ★' : '';
+  final recommended = spec.recommended == i ? ' *' : '';
   final labelLine = '${i + 1}. $marker ${option.label}$recommended';
   final description = option.description;
   if (description != null && description.isNotEmpty) {
@@ -1204,7 +1228,7 @@ List<String> _askOptionRowLines(TuiPromptState state, int i, int inner) {
 String _askOptionMarker(TuiPromptState state, int i, {required bool selected}) {
   return switch (state.askMode) {
     AskInputMode.multiSelect => state.askSelected.contains(i) ? '◉' : '○',
-    _ => selected ? '▸' : ' ',
+    _ => selected ? '>' : ' ',
   };
 }
 
@@ -1216,21 +1240,23 @@ List<String> _askOptionDescriptionRows(
   required bool selected,
 }) {
   return [
-    _wrapBodyLine(_fitWidth(labelLine, inner), inner, dim: !selected),
-    for (final line in _wrapText('     $description', inner))
+    _wrapBodyLine(labelLine, inner, dim: !selected),
+    for (final line in _wrapText('     $description', inner - 1))
       _wrapBodyLine(line, inner, dim: true),
   ];
 }
 
 /// The one-line label row for an option without a description (accented
-/// when the cursor is on it).
+/// when the cursor is on it). The label is clipped to the same `inner - 1`
+/// cell budget every body row obeys (issue #109).
 String _askOptionLabelRow(
   String labelLine,
   int inner, {
   required bool selected,
 }) {
-  final styled = selected ? _accent(labelLine) : _fitWidth(labelLine, inner);
-  return '│ $styled${' ' * (inner - labelLine.length - 1)}│';
+  final label = tuiFitWidth(labelLine, inner - 1);
+  final padded = tuiPadRight(label, inner - 1);
+  return '│ ${selected ? _accent(padded) : padded}│';
 }
 
 List<String> _inputRows(TuiPromptState state, int inner, int width) {
@@ -1253,7 +1279,7 @@ List<String> _askInputRows(TuiPromptState state, int inner) {
         : 'Type your answer (Enter to send, Esc to cancel):';
     final rows = <String>[];
     rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-    rows.add(_cursorInputRow(buffer, cursor, inner));
+    rows.addAll(_framedInputRows(buffer, cursor, inner));
     return rows;
   }
   final hint = spec.multiSelect
@@ -1276,7 +1302,7 @@ List<String> _textInputRows(TuiPromptState state, int inner) {
       : 'Type your answer (Enter to send, Esc to cancel):';
   final rows = <String>[];
   rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-  rows.add(_cursorInputRow(display, cursor, inner));
+  rows.addAll(_framedInputRows(display, cursor, inner));
   return rows;
 }
 
@@ -1295,7 +1321,10 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
       dim: true,
     ),
   );
-  // F4: the focused row carries the ▸ marker. F1: an untouched name shows
+  // F4: the focused row carries the > marker (ASCII: ambiguous-width
+  // glyphs like ▸/★ measure 2 cells in the width table while terminals
+  // draw them 1, which shifts every padded row - issue #109). F1: an
+  // untouched name shows
   // the agent's suggestion as dimmed ghost text, never as committed input.
   final committedName = state.secretName;
   final nameRow = committedName.isEmpty
@@ -1303,7 +1332,7 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
       : committedName;
   rows.add(
     _wrapBodyLine(
-      '${nameFocused ? '${_accent('▸')} ' : '  '}$nameRow',
+      '${nameFocused ? '${_accent('>')} ' : '  '}$nameRow',
       inner,
       bold: committedName.isNotEmpty,
     ),
@@ -1315,7 +1344,7 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
   final display = visible ? state.secretValue : '•' * state.secretValue.length;
   rows.add(
     _wrapBodyLine(
-      '${nameFocused ? '  ' : '${_accent('▸')} '}$display',
+      '${nameFocused ? '  ' : '${_accent('>')} '}$display',
       inner,
       bold: true,
     ),
@@ -1355,13 +1384,64 @@ List<String> _approvalInputRows(TuiPromptState state, int inner) {
 /// The selector row for decision [index]: number, cursor arrow and the
 /// label — accented when it is the [selected] one.
 String _approvalOptionRow(int index, String label, int selected) {
-  final row = '${index + 1}. ${selected == index ? '▸' : ' '} $label';
+  final row = '${index + 1}. ${selected == index ? '>' : ' '} $label';
   return selected == index ? _accent(row) : row;
 }
 
+/// The framed input rows for a prompt buffer. A long answer (or a pasted
+/// multi-line one) used to render as ONE over-wide row — the terminal
+/// wrapped it, shifted every following row and left stale previous-frame
+/// text over torn borders (issue #109). Now the buffer wraps into one
+/// framed row per `inner - 3` cells ('\n' starts a new row) and the row
+/// holding [cursor] paints the reverse-video caret inline.
+List<String> _framedInputRows(String display, int cursor, int inner) {
+  final budget = inner - 3;
+  final segments = <String>[];
+  final starts = <int>[];
+  var offset = 0;
+  for (final line in display.split('\n')) {
+    if (line.isEmpty) {
+      starts.add(offset);
+      segments.add('');
+      offset++;
+      continue;
+    }
+    for (final chunk in _wrapCells(line, budget)) {
+      starts.add(offset);
+      segments.add(chunk);
+      offset += chunk.length;
+    }
+    offset++; // the newline itself
+  }
+  // The caret row: the segment whose code-unit span holds the cursor; a
+  // cursor at a wrap point paints at the end of the earlier row.
+  var cursorRow = segments.length - 1;
+  var cursorColumn = 0;
+  for (var i = 0; i < segments.length; i++) {
+    if (cursor >= starts[i] && cursor <= starts[i] + segments[i].length) {
+      cursorRow = i;
+      cursorColumn = cursor - starts[i];
+      break;
+    }
+  }
+  return [
+    for (var i = 0; i < segments.length; i++)
+      i == cursorRow
+          ? _cursorInputRow(segments[i], cursorColumn, inner)
+          : _inputRow(segments[i], inner),
+  ];
+}
+
+/// One framed input row without the caret: `│` + ` > ` + text + pad + `│`.
+String _inputRow(String segment, int inner) {
+  final padded = tuiPadRight(segment, inner - 3);
+  return '│ ${_accent2Plain('>')} ${_accent(padded)}│';
+}
+
 /// Renders an input row with the cursor inline (reverse-video block at
-/// [cursor] position). The visible width is exactly `inner + 2` columns:
-/// `│` + ` > ` + text + padding + `│`.
+/// [cursor] position). The visible width is exactly `inner + 2` cells:
+/// `│` + ` ` + `>` + ` ` + text + padding + `│`; padding is measured in
+/// terminal cells so wide characters cannot skew it (issue #109).
 String _cursorInputRow(String display, int cursor, int inner) {
   final clampedCursor = cursor.clamp(0, display.length);
   final before = display.substring(0, clampedCursor);
@@ -1371,10 +1451,8 @@ String _cursorInputRow(String display, int cursor, int inner) {
       : '';
   const invert = '\x1b[7m';
   const reset = '\x1b[0m';
-  // Visible width: │(1) (1) >(1) (1) + contentWidth + padding + │(1)
-  // = 5 + contentWidth + padding = inner + 2 → padding = inner - 3 - contentWidth
   final contentWidth =
-      display.length + (clampedCursor >= display.length ? 1 : 0);
+      tuiTextWidth(display) + (clampedCursor >= display.length ? 1 : 0);
   final padding = (inner - 3 - contentWidth).clamp(0, inner);
   return '│ ${_accent2Plain('>')} ${_accent(before)}'
       '$invert$at$reset${_accent(after)}'
