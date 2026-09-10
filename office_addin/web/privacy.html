@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy — fa for Outlook</title>
+<meta name="description" content="Privacy notes for the fa Outlook add-in: mail access only for the items you open the agent on, keys stay local, provider traffic goes to the AI providers you connect.">
+<link rel="canonical" href="https://fa1.dev/outlook/privacy.html">
+<style>
+  :root {
+    --bg: #070a10; --panel: #0d1420; --border: #1c2637;
+    --text: #e8eef7; --dim: #93a1b5; --accent: #5eead4;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.65; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 96px; }
+  a { color: var(--accent); }
+  h1 { font-size: 26px; margin: 0 0 8px; }
+  h2 { font-size: 18px; margin: 32px 0 8px; }
+  p, li { color: var(--dim); }
+  strong { color: var(--text); }
+  .back { display: inline-block; margin-bottom: 20px; text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+<a class="back" href="https://fa1.dev/privacy.html">← full fa privacy policy</a>
+<h1>Privacy — fa for Outlook</h1>
+<p>fa is a taskpane add-in for Outlook. The short version: your mail stays in Outlook unless you ask the agent about it, and what it reads goes only to the AI provider you connected.</p>
+<h2>What the add-in accesses</h2>
+<ul>
+  <li><strong>Read/write of the item you are viewing</strong> (ReadWriteItem): the taskpane runs on the mail item you opened it on, so the agent can read that message and act on your request.</li>
+  <li><strong>No mailbox-wide access.</strong> The add-in never scans other folders, never reads mail you did not open it on, and requests no broader permission tier.</li>
+</ul>
+<h2>Where your data goes</h2>
+<ul>
+  <li>fa runs local-first: agent state stays on your device.</li>
+  <li>Prompts that include mail content are sent <strong>only to the AI provider you configured</strong> (your API key, your provider). fa does not operate a mail-copying backend.</li>
+</ul>
+<h2>Full policy</h2>
+<p>The complete fa privacy policy (all hosts, not just the Outlook add-in) lives at <a href="https://fa1.dev/privacy.html">fa1.dev/privacy.html</a>.</p>
+<h2>Contact</h2>
+<p>Questions or data requests: <a href="mailto:support@fa1.dev">support@fa1.dev</a>.</p>
+</main>
+</body>
+</html>

@@ -109,6 +109,10 @@ fa-local/
 browser_ext/sw/agent.js
 browser_ext/sw/agent.js.map
 browser_ext/sw/agent.js.deps
+office_addin/web/office_agent.js
+office_addin/web/office_agent.js.map
+office_addin/web/office_agent.js.deps
+office_addin/dart/build/
 browser_ext/app/
 browser_ext/dart/build/
 
@@ -116,6 +120,9 @@ browser_ext/dart/build/
 browser_ext/e2e/node_modules/
 browser_ext/e2e/test-results/
 browser_ext/e2e/playwright-report/
+office_addin/e2e/node_modules/
+office_addin/e2e/test-results/
+office_addin/e2e/playwright-report/
 browser_ext/panel/app/
 
 # Local git worktrees from past sessions
