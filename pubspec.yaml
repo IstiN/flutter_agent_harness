@@ -20,6 +20,10 @@ false_secrets:
   # Tracked example Firebase config: public-by-design client identifiers
   # (see flutter_app/.gitignore), not secrets.
   - flutter_app/lib/firebase_options.dart
+  # Fake attacker-controlled page content inside a Dart string literal
+  # (quarantine test fixture: a fake PEM + fake .env in UNTRUSTED content),
+  # not a real key — pub publish scans shipped sources for PEM markers.
+  - browser_ext/dart/src/security/quarantine.dart
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
@@ -32,6 +36,11 @@ dependencies:
   archive: ^4.0.9
   characters: ^1.4.0
   crypto: ^3.0.3
+  # Direct dep: lib/src/hub/local_hub.dart imports package:cryptography
+  # (payload crypto via fa_hub_client types). Resolves transitively today,
+  # but `pub publish` hard-errors on shipped lib imports without an
+  # explicit declaration — the v0.1.313+ tag releases all died on this.
+  cryptography: ^2.7.0
   # Hosted for consumers (pub requires hosted deps). The local/CI builds
   # pin the PATCHED vendor fork via pubspec_overrides.yaml (never
   # published) — install_local.sh and the release binaries keep the
