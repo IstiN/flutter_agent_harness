@@ -626,6 +626,53 @@ void main() {
       },
     );
 
+    test(
+      'session_new broadcasts the attach trio to every connected channel',
+      () async {
+        final host = FakeHostConnector();
+        final server = UiPortServer(host: host);
+        final requester = FakeChannel();
+        final observer = FakeChannel(); // e.g. the app tab / second panel
+        server.serve(requester);
+        server.serve(observer);
+        requester.injectMsg(const SessionNewMsg());
+        await _pump();
+        // The OBSERVER must adopt the fresh session too: a surface that
+        // kept its stale session id filtered the just-archived row out
+        // of its sessions drawer (collapsed to a single row).
+        expect(host.newSessionCalls, 1);
+        expect(_ofKind(observer, 'attached')!['sessionId'], 'fresh');
+        expect(_ofKind(observer, 'tools_state'), isNotNull);
+        expect(
+          (_ofKind(observer, 'stream')!['event'] as Map)['type'],
+          'status',
+        );
+        // The requester still gets its trio (via the broadcast now).
+        expect(_ofKind(requester, 'attached')!['sessionId'], 'fresh');
+      },
+    );
+
+    test(
+      'session_open broadcasts the attach trio to every connected channel',
+      () async {
+        final host = FakeHostConnector();
+        final server = UiPortServer(host: host);
+        final requester = FakeChannel();
+        final observer = FakeChannel();
+        server.serve(requester);
+        server.serve(observer);
+        requester.injectMsg(const SessionOpenMsg(sessionId: 'arch'));
+        await _pump();
+        expect(host.openedSessions, ['arch']);
+        expect(_ofKind(observer, 'attached'), isNotNull);
+        expect(_ofKind(observer, 'tools_state'), isNotNull);
+        expect(
+          (_ofKind(observer, 'stream')!['event'] as Map)['type'],
+          'status',
+        );
+      },
+    );
+
     test('session_new busy/host errors answer a structured error', () async {
       final host = FakeHostConnector()..newSessionError = 'busy';
       final server = UiPortServer(host: host);

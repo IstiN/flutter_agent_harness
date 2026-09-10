@@ -68,9 +68,11 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
 /// live ids. Relay services (extension panel, `relayLiveId != null`): the
 /// service worker is the authority on which session is live — it marks
 /// archives with `archived: true` and already excludes the live row, so
-/// trust THAT instead of the manager slots. A slot id lags behind a
-/// session_new/session_open re-point, and filtering by it hides the
-/// freshly archived session (the drawer collapsed to the live row only).
+/// trust THAT and keep every archived row. Do NOT filter by
+/// [relayLiveId]: a surface that missed the session_new/session_open
+/// broadcast holds a STALE id, and filtering by it hid the freshly
+/// archived session (the drawer collapsed to the live row only —
+/// "added a session, still see one").
 List<SessionMetadata> drawerPersistedSessions({
   required List<SessionMetadata> all,
   required Set<String> liveIds,
@@ -79,9 +81,7 @@ List<SessionMetadata> drawerPersistedSessions({
   if (relayLiveId != null) {
     return [
       for (final metadata in all)
-        if (metadata.metadata?['archived'] == true &&
-            metadata.id != relayLiveId)
-          metadata,
+        if (metadata.metadata?['archived'] == true) metadata,
     ];
   }
   return [

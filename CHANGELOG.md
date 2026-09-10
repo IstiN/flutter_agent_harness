@@ -41,6 +41,13 @@
   hub — the session's client now dials with the HUB's password (prompted
   or read back from the state file), persisted as clientSecret so stale
   secrets from an older hub can never win the resolution precedence.
+- fix(extension): a session created from ANY surface now shows up in
+  every other surface's sessions drawer. The SW broadcast the attach
+  trio after session_new/session_open only to the requesting port, so a
+  panel/app-tab that missed it kept a stale live-session id and its
+  drawer filter hid the freshly archived row ("added a session, still
+  see one"). The trio now broadcasts to all connected ports, and the
+  drawer filter no longer drops archived rows by a possibly-stale id.
 - fix(dap): the browser client stops the fast retry loop when the hub
   keeps rejecting the credential (wrong Hub password): after three
   fast closes with a credential configured it holds at a 30 s re-check
