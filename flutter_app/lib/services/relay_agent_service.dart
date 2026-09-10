@@ -338,7 +338,19 @@ final class RelayAgentService extends AgentService {
   void _onProtocolMessage(UiProtocolMessage message) {
     switch (message) {
       case HelloAckMsg(:final sessionId):
+        // Hello (re)syncs after boot, panel reload and SW reconnect. The
+        // SW may have switched its live session while we were gone — a
+        // missed session_new/session_open broadcast leaves hostedLiveId
+        // pointing at a session that renders NOWHERE (the SW excludes the
+        // live row from archives, the slot still holds the old id) and
+        // every selection dot disappears. Re-broadcast like an attach.
+        final previousHello = _sessionId;
         _sessionId = sessionId ?? _sessionId;
+        if (sessionId != null &&
+            sessionId.isNotEmpty &&
+            sessionId != previousHello) {
+          onLiveSessionIdChanged?.call(sessionId);
+        }
       case AttachedMsg(:final sessionId, :final replay):
         final previous = _sessionId;
         _sessionId = sessionId;
@@ -347,9 +359,7 @@ final class RelayAgentService extends AgentService {
           '[fah][relay] attached: session=$sessionId replay=${replay.length}'
           '${previous.isNotEmpty && previous != sessionId ? ' (was $previous)' : ''}',
         );
-        if (sessionId.isNotEmpty &&
-            previous.isNotEmpty &&
-            previous != sessionId) {
+        if (sessionId.isNotEmpty && sessionId != previous) {
           debugPrint(
             '[fah][relay] live session switched: $previous → $sessionId '
             '(session_new/session_open from this or another surface)',

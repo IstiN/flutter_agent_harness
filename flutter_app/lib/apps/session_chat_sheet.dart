@@ -325,6 +325,12 @@ class SessionChatSheetState extends State<SessionChatSheet>
           'archived=${persisted.length})',
         );
       }
+      debugPrint(
+        '[fah][drawer] selection: selected=${_selectedSessionId ?? '-'} '
+        'hostedLive=${widget.manager.hostedLiveId.value ?? '-'} '
+        'active=${widget.manager.activeId ?? '-'} '
+        'slots=${_liveSessions.map((s) => s.id).join(',')}',
+      );
       if (mounted) {
         setState(() {
           _persisted = persisted;

@@ -93,35 +93,43 @@ void main() {
     expect(adopted, ['sw-2']);
   });
 
-  test('the FIRST attach (boot) does not count as a switch', () async {
-    final channel = FakePortChannel();
-    final transport = WorkerRelayTransport(
-      portFactory: () => channel,
-      channel: channel,
-    );
-    final service = RelayAgentService.forTest(transport);
-    final adopted = <String>[];
-    service.onLiveSessionIdChanged = adopted.add;
-    final connected = transport.connect();
-    await () async {
-      while (channel.sentOf('hello') == null) {
-        await Future<void>.delayed(Duration.zero);
-      }
-      channel.fromWorker(
-        HelloAckMsg(
-          protoVersion: uiProtocolVersion,
-          serverCapabilities: const ['stream', 'approvals'],
-          sessionId: 'sw-1',
-        ),
+  test(
+    'hello resyncs the SW live id — a missed switch while away heals',
+    () async {
+      // A panel reload / SW reconnect lands on a hello carrying the SW's
+      // CURRENT live session: any session_new/session_open broadcast missed
+      // while detached must heal here, or hostedLiveId points at a session
+      // that renders nowhere and every selection dot disappears.
+      final channel = FakePortChannel();
+      final transport = WorkerRelayTransport(
+        portFactory: () => channel,
+        channel: channel,
       );
-      while (channel.sentOf('attach') == null) {
-        await Future<void>.delayed(Duration.zero);
-      }
-      channel.fromWorker(AttachedMsg(sessionId: 'sw-1', replay: const []));
-    }();
-    await connected;
-    expect(adopted, isEmpty);
-  });
+      final service = RelayAgentService.forTest(transport);
+      final adopted = <String>[];
+      service.onLiveSessionIdChanged = adopted.add;
+      final connected = transport.connect();
+      await () async {
+        while (channel.sentOf('hello') == null) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        channel.fromWorker(
+          HelloAckMsg(
+            protoVersion: uiProtocolVersion,
+            serverCapabilities: const ['stream', 'approvals'],
+            sessionId: 'sw-9',
+          ),
+        );
+        while (channel.sentOf('attach') == null) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        channel.fromWorker(AttachedMsg(sessionId: 'sw-9', replay: const []));
+      }();
+      await connected;
+      expect(service.liveSessionId, 'sw-9');
+      expect(adopted, ['sw-9']);
+    },
+  );
 
   TestWidgetsFlutterBinding.ensureInitialized();
 
