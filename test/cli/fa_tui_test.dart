@@ -595,7 +595,10 @@ void main() {
     expect(frame, isNot(contains('Working…')));
     expect(frame, contains('waiting for your selection…'));
     model = model.update(BusyMsg(false)).$1 as FaTuiModel;
-    expect(model.view().content, isNot(contains('waiting for your selection…')));
+    expect(
+      model.view().content,
+      isNot(contains('waiting for your selection…')),
+    );
   });
 
   test(
@@ -2073,6 +2076,61 @@ void main() {
         runner: runner,
       );
       expect(result, isNull);
+    });
+  });
+
+  group('scheduled follow-ups indicator (issue #115)', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+    FaTuiModel withScheduled(FaTuiModel m, int count, int? nextDueMs) =>
+        send(m, ScheduledStatusMsg(count, nextDueMs));
+
+    test('pending follow-ups render on top of the Working row while busy', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      final due = DateTime.now().millisecondsSinceEpoch + 25 * 60 * 1000 + 5000;
+      model = withScheduled(model, 2, due);
+      model = send(model, const BusyMsg(true, source: 'run'));
+      final frame = model.view().content;
+      expect(frame, contains('⏰ 2 scheduled'));
+      expect(frame, contains('next in 25m'));
+      expect(
+        frame.indexOf('⏰ 2 scheduled'),
+        lessThan(frame.indexOf('Working…')),
+        reason: 'the indicator sits ON TOP of the working row',
+      );
+    });
+
+    test('the indicator stays visible while idle', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = withScheduled(
+        model,
+        1,
+        DateTime.now().millisecondsSinceEpoch + 60000,
+      );
+      expect(model.busy, isFalse);
+      expect(model.view().content, contains('⏰ 1 scheduled'));
+    });
+
+    test('a zero count clears the indicator', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = withScheduled(
+        model,
+        1,
+        DateTime.now().millisecondsSinceEpoch + 60000,
+      );
+      expect(model.view().content, contains('⏰ 1 scheduled'));
+      model = withScheduled(model, 0, null);
+      expect(model.view().content, isNot(contains('⏰')));
+    });
+
+    test('an already-due record reads "due now", never a negative delay', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = withScheduled(
+        model,
+        1,
+        DateTime.now().millisecondsSinceEpoch - 5000,
+      );
+      expect(model.view().content, contains('due now'));
     });
   });
 }
