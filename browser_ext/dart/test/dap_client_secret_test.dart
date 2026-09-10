@@ -29,4 +29,16 @@ void main() {
       expect(uri.queryParameters['dap_token'], 'pw');
     });
   });
+
+  group('looksLikeCredentialRejection', () {
+    test('holds only with a credential and a 3-fast-close streak', () {
+      expect(looksLikeCredentialRejection(0, hasCredential: true), isFalse);
+      expect(looksLikeCredentialRejection(2, hasCredential: true), isFalse);
+      expect(looksLikeCredentialRejection(3, hasCredential: true), isTrue);
+      expect(looksLikeCredentialRejection(7, hasCredential: true), isTrue);
+      // No credential configured — a fast-failing dial is a dead hub,
+      // not a password problem: keep the classic reconnect backoff.
+      expect(looksLikeCredentialRejection(5, hasCredential: false), isFalse);
+    });
+  });
 }

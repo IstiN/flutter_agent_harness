@@ -37,6 +37,14 @@
   field (write-only — an empty field keeps the stored one), wired through
   DapHubService.saveConnection: the extension variant rides hub.save, the
   desktop variant persists clientSecret into ~/.dap/config.json.
+- fix(dap): /dap start no longer 401-loops against its own protected
+  hub — the session's client now dials with the HUB's password (prompted
+  or read back from the state file), persisted as clientSecret so stale
+  secrets from an older hub can never win the resolution precedence.
+- fix(dap): the browser client stops the fast retry loop when the hub
+  keeps rejecting the credential (wrong Hub password): after three
+  fast closes with a credential configured it holds at a 30 s re-check
+  and surfaces the new `unauthorized` phase instead of hammering 401s.
 
 ## 0.1.331
 

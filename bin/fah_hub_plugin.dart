@@ -21,7 +21,7 @@ import 'dart:math' show Random;
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
-    show defaultHubStateFile, envHubSecret;
+    show defaultHubStateFile, envHubSecret, readHubStateSecret;
 
 /// Plugin name used by `--plugin hub` and `.fah/packages.yaml`.
 const _pluginName = 'hub';
@@ -215,11 +215,12 @@ final class HubPluginHost implements FahPlugin {
     // detached `fa hub serve` has no terminal, so it reads the password
     // from there (and later starts never ask again). Empty answer = stay
     // open and ask again next time.
+    String? promptedPassword;
+    final stateFile = defaultHubStateFile(
+      home: _home,
+      environment: _environment,
+    );
     if (context.askLine != null) {
-      final stateFile = defaultHubStateFile(
-        home: _home,
-        environment: _environment,
-      );
       final configured =
           (_environment[envHubSecret] ?? '').isNotEmpty ||
           await stateFile.exists();
@@ -229,6 +230,7 @@ final class HubPluginHost implements FahPlugin {
           secret: true,
         );
         final password = entered?.trim() ?? '';
+        promptedPassword = password.isEmpty ? null : password;
         if (password.isNotEmpty) {
           try {
             if (!await stateFile.parent.exists()) {
@@ -269,6 +271,42 @@ final class HubPluginHost implements FahPlugin {
       if (!up) {
         context.io.writeln('[hub] the local hub did not come up on port $port');
         return;
+      }
+    }
+    // The session's own client must hold the HUB's password, not the
+    // generated session secret — two different secrets were the 401
+    // loop (hub spawned with the prompted password while the client
+    // enrolled with the generated one). Resolution: prompted now > the
+    // state file (a previously saved password — /dap start on a later
+    // session reuses it). The password doubles as a master credential,
+    // so it both dials directly and enrolls; persisting it as
+    // clientSecret also retires any stale client secret left in the
+    // config by an older hub (which would otherwise win the resolution
+    // precedence and 401 forever).
+    final hubPassword =
+        promptedPassword ??
+        (() {
+          try {
+            return readHubStateSecret(stateFile);
+          } on Object {
+            return null;
+          }
+        })();
+    if (hubPassword != null && hubPassword.isNotEmpty) {
+      _environment[hub.envMasterSecret] = hubPassword;
+      try {
+        final dialSecret = hubPassword;
+        await hub.persistDapConfig(
+          url: _localHubUrl,
+          clientSecret: dialSecret,
+          file: hub.defaultDapConfigFile(_home, _environment),
+        );
+        context.io.writeln(
+          'this session joined the protected hub — the password was '
+          'applied to the connection',
+        );
+      } on Object {
+        // Best-effort — the env master above already authorizes enroll.
       }
     }
     // Point the resolution at the live hub BEFORE start(): with a stale

@@ -17,7 +17,16 @@ import 'package:fa_hub_client/src/hub/canonical.dart';
 import 'dap_frames.dart';
 
 /// Connection phases surfaced as status events.
-enum DapPhase { connecting, connected, reconnecting, disconnected }
+enum DapPhase {
+  connecting,
+  connected,
+  reconnecting,
+  disconnected,
+
+  /// The hub is up but rejecting the credential (likely a wrong
+  /// Hub password): fast retries are held at a slow re-check.
+  unauthorized,
+}
 
 /// One status snapshot (panel shows `hub: connected as <agentId>` etc.).
 final class DapStatus {
@@ -101,6 +110,8 @@ final class DapClient {
   var _attempt = 0;
   var _stopped = false;
   var _fatal = false; // hub rejected the hello — stop retrying (§3.1)
+  DateTime? _dialAt;
+  var _fastCloseStreak = 0;
   var _awaitingWelcome = false;
   String? agentId;
   DapPhase _phase = DapPhase.disconnected;
@@ -209,6 +220,7 @@ final class DapClient {
   void _connect() {
     if (_stopped || _fatal) return;
     final gen = ++_generation;
+    _dialAt = DateTime.now();
     print('[dap] ws → $url (attempt ${_attempt + 1})');
     final ws = _WebSocket(wsUrl);
     _ws = ws;
@@ -241,6 +253,26 @@ final class DapClient {
         '[dap] ws closed'
         '${reason.isEmpty ? '' : ' ($reason)'} — retry #$_attempt',
       );
+      final dialAt = _dialAt;
+      final fast =
+          dialAt != null && DateTime.now().difference(dialAt) < fastCloseWindow;
+      _fastCloseStreak = fast ? _fastCloseStreak + 1 : 0;
+      if (looksLikeCredentialRejection(
+        _fastCloseStreak,
+        hasCredential: secret.isNotEmpty,
+      )) {
+        if (_fastCloseStreak == 3) {
+          print(
+            '[dap] the hub keeps rejecting the credential — wrong Hub '
+            'password? holding at a ${credentialRecheckInterval.inSeconds}s '
+            're-check (save the connection to apply a new password)',
+          );
+        }
+        _set(DapPhase.unauthorized, reason: reason);
+        _retry?.cancel();
+        _retry = Timer(credentialRecheckInterval, _connect);
+        return;
+      }
       _set(DapPhase.reconnecting, reason: reason);
       _retry?.cancel();
       _retry = Timer(reconnectBackoff(_attempt), _connect);
@@ -280,6 +312,8 @@ final class DapClient {
       case 'welcome':
         _awaitingWelcome = false;
         _attempt = 0;
+        _fastCloseStreak = 0;
+        _dialAt = null;
         agentId = frame['agentId'] as String? ?? agentId;
         print('[dap] welcome — online as $agentId');
         _set(DapPhase.connected);

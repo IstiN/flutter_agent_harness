@@ -204,6 +204,24 @@ Duration reconnectBackoff(int attempt) {
   return Duration(seconds: 1 << shift > 30 ? 30 : 1 << shift);
 }
 
+/// The credential-rejection hold: when a Hub password IS configured and
+/// [fastCloseStreak] consecutive dials all closed within
+/// [fastCloseWindow] — the browser WebSocket exposes no HTTP status, so
+/// a 401 is inferred — stop the fast retry loop (a wrong password never
+/// fixes itself) and hold at a slow [credentialRecheckInterval] re-check
+/// so a hub that later comes up (or a re-saved password) still heals.
+bool looksLikeCredentialRejection(
+  int fastCloseStreak, {
+  required bool hasCredential,
+}) => hasCredential && fastCloseStreak >= 3;
+
+/// A dial that closed within this window counts as a fast close (the hub
+/// answered and rejected, or refused — both are sub-second locally).
+const Duration fastCloseWindow = Duration(seconds: 3);
+
+/// The credential-rejection re-check cadence.
+const Duration credentialRecheckInterval = Duration(seconds: 30);
+
 /// Decrypts a DM produced by [encryptDm]. The AAD target is the DM
 /// recipient id on both sides — i.e. the decrypting identity's own
 /// agentId — so a payload cross-posted to another agent fails the AEAD
