@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.339
+
+- fix(97): the TUI secret sheet accepts multiline and over-wide pastes
+  safely: a pasted NAME drops CR/LF (UPPER_SNAKE can never carry line
+  breaks), a pasted VALUE normalizes CRLF to LF and grants PEM-style
+  multiline credentials verbatim, and the masked/revealed value renders
+  one frame row per line instead of embedding a raw newline inside a row
+  (which physically tore the sheet frame in the terminal). The exact-width
+  row off-by-one seen in the same frames is issue #109 and is fixed there.
 ## 0.1.336
 
 - fix(97): TUI secret sheet opens on the VALUE field with the suggested
