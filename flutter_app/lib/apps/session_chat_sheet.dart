@@ -185,6 +185,12 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// Persisted sessions with an open in flight (drawer double-tap guard).
   final Set<String> _opening = {};
 
+  /// The session the user just tapped (an open is in flight): its row
+  /// highlights AND sorts to the top immediately — the SAME rule the wide
+  /// sidebar applies. Cleared once the manager's live id / active slot
+  /// catches up with the attach broadcast (see [_onManagerChanged]).
+  String? _pendingOpenId;
+
   /// Last seen live-session count — drives the persisted-list resync in
   /// [_onManagerChanged].
   var _lastLiveCount = -1;
@@ -335,11 +341,27 @@ class SessionChatSheetState extends State<SessionChatSheet>
     }
   }
 
+  /// The ONE selected id every drawer row compares against — the same
+  /// rule as the wide sidebar's `_selectedSessionId`: the click's pending
+  /// id wins while in flight, then the SW's live id (hosted), then the
+  /// manager's active slot. Pending is REPLACEMENT, not additive —
+  /// exactly one row can ever be highlighted.
+  String? get _selectedSessionId {
+    final pending = _pendingOpenId;
+    if (pending != null) return pending;
+    return widget.manager.hostedLiveId.value ?? widget.manager.activeId;
+  }
+
   /// External session changes (drawer open, another surface's switch):
   /// drop persisted entries that went live, resync the list on live-count
   /// changes (closed sessions reappear there) and rebuild.
   void _onManagerChanged() {
     if (!mounted) return;
+    if (_pendingOpenId != null &&
+        (widget.manager.hostedLiveId.value == _pendingOpenId ||
+            widget.manager.activeId == _pendingOpenId)) {
+      _pendingOpenId = null; // the broadcast landed — the real id took over
+    }
     final liveIds = _liveSessions.map((s) => s.id).toSet();
     final filtered = [
       for (final m in _persisted)
@@ -442,12 +464,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
   Future<void> _openSessionFromDrawer(String id) async {
     unawaited(_toggleDrawer());
     // A live CLI session attaches (read-only view + input hand-over)
-    // instead of opening a second writer on the same JSONL.
+    // instead of opening a second writer on the same JSONL. (No pending
+    // highlight: the manager never adopts an attached session.)
     if (_presence?.isLive(id) ?? false) {
       await _attachToCliSession(id);
       if (mounted) unawaited(_openPanel());
       return;
     }
+    // The dot moves NOW (same as the wide sidebar's pending id), not a
+    // beat later when the SW confirm arrives.
+    if (mounted) setState(() => _pendingOpenId = id);
     if (_liveSessions.any((s) => s.id == id)) {
       // Hosted (extension panel / relay shell): the local slot is only the
       // boot attach keyholder — a bare switchTo never re-attaches the
@@ -858,11 +884,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// sliding in from the left under the input bar.
   Widget _buildDrawer(FahColors colors) {
     final l10n = context.l10n;
-    // The hosted live id IS the active session on hosted surfaces — the
-    // manager slot only re-keys a beat later (attach broadcast), so prefer
-    // it: the dot moves the moment the SW confirms the switch.
-    final activeId =
-        widget.manager.hostedLiveId.value ?? widget.manager.activeId;
+    // The SAME selection rule as the wide sidebar (see
+    // [_selectedSessionId]): pending tap → SW live id → manager slot.
+    // The dot moves the moment the row is tapped, not a beat later.
+    final activeId = _selectedSessionId;
     final entries =
         <
             ({
@@ -1025,13 +1050,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
                           );
                         }
                         final entry = row.entry!;
-                        // ONE selection rule with the wide sidebar: the
-                        // hosted live id is the truth; the `entry.live`
-                        // requirement only applies to local surfaces.
-                        final isActive =
-                            entry.id == activeId &&
-                            (entry.live != null ||
-                                widget.manager.hostedLiveId.value != null);
+                        // ONE selection rule with the wide sidebar:
+                        // entry.id == selectedId, nothing else. (The old
+                        // `entry.live` guard was redundant — a row whose id
+                        // equals the manager's active id always has a slot.)
+                        final isActive = entry.id == activeId;
                         final title =
                             _namesStore?.titleFor(entry.id) ??
                             derivedSessionTitle(
