@@ -3095,6 +3095,11 @@
 - fix(97): TUI secret sheet — value-first focus, placeholder name, masked input, Enter explains itself (#98)
 - fix(99): clear macOS traffic lights on the trajectory screen (#100)
 
+## 0.1.338
+
+- build(deps): bump playwright (#106)
+- feat(89): Outlook Office Add-in host bridge (fa1.dev/outlook) (#94)
+
 ## Unreleased
 
 ## Unreleased
