@@ -137,6 +137,9 @@ class AgentService extends ChangeNotifier
     _attachRedactor(redactor);
     _attachApproval();
     _agent.subscribe(_onAgentEvent);
+    // Chat surfaces (the ✦ dynamic-messages list, inline widget tiles)
+    // must never hit an uninitialized field on this path either.
+    dynamicMessages = _buildDynamicMessages();
     // Pre-constructed-Agent path (tests): the caller owns the registry, so
     // availability still resolves (capabilities from the agent's own tools)
     // but the registry is not re-synced on toggle.
@@ -522,18 +525,7 @@ class AgentService extends ChangeNotifier
     // Interactive dynamic messages (issue #102): the host machinery behind
     // the `dynamic_message` tool — session-scoped JS widgets rendered
     // inline in the transcript with the full installed-app engine surface.
-    dynamicMessages = DynamicMessagesService(
-      env: env,
-      sendText: sendText,
-      sessionIdOf: () => _sessionId,
-      sessionFileOf: () => _sessionFile,
-      mediaGatewayOf: () => _mediaGateway,
-      videoReaderOf: () => _videoReader,
-      hostSecretsOf: hostSecrets,
-      llmHandlerOf: () => completeOnce,
-      asrTranscriberOf: resolveAsrTranscriber,
-      resolveHostSecretDefault: _requestSecretForWidget,
-    );
+    dynamicMessages = _buildDynamicMessages();
     final registry = ToolRegistry([
       ...builtinTools(
         toolEnv,
@@ -1830,6 +1822,19 @@ class AgentService extends ChangeNotifier
   /// machinery behind the `dynamic_message` tool. UI reads it for the
   /// ✦ list, the inline widget tiles, and save-as-app.
   late final DynamicMessagesService dynamicMessages;
+
+  DynamicMessagesService _buildDynamicMessages() => DynamicMessagesService(
+    env: env,
+    sendText: sendText,
+    sessionIdOf: () => _sessionId,
+    sessionFileOf: () => _sessionFile,
+    mediaGatewayOf: () => _mediaGateway,
+    videoReaderOf: () => _videoReader,
+    hostSecretsOf: hostSecrets,
+    llmHandlerOf: () => completeOnce,
+    asrTranscriberOf: resolveAsrTranscriber,
+    resolveHostSecretDefault: _requestSecretForWidget,
+  );
 
   /// The `jsr.fa.keys.request` backend for widget engines without a tile-
   /// supplied requester: the same secret sheet the `request_secret` tool

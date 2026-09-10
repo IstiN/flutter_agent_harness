@@ -13,7 +13,6 @@ import 'package:fa/services/media_tools.dart' show MediaGateway;
 import 'package:fa/services/video_tool.dart' show VideoReader;
 import 'package:fa_ui/fa_ui.dart' show FaChatMessage;
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart' show GlobalKey;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Host side of interactive dynamic messages (issue #102): the session-
@@ -73,10 +72,6 @@ class DynamicMessagesService extends ChangeNotifier {
   /// it; cleared on a successful boot and on session teardown.
   final Map<String, String> _bootErrors = {};
 
-  /// Root keys of the transcript tiles, by widget id — the ✦ sheet's
-  /// jump-to-message targets them (Scrollable.ensureVisible).
-  final Map<String, GlobalKey> _tileKeys = {};
-
   /// Widget definitions of the current session, in presentation order.
   final List<DynamicMessageDefinition> widgets = [];
 
@@ -84,6 +79,9 @@ class DynamicMessagesService extends ChangeNotifier {
   final Map<String, JsAppEngine> _engines = {};
   final Set<String> _booting = {};
   final Set<String> _bootFailed = {};
+
+  /// Per-widget no-UI watchdogs (see [noUiGrace]).
+  final Map<String, Timer> _noUiTimers = {};
 
   /// Presentations made in the CURRENT run — the anti-spam cap (at most
   /// [maxPerRun] per agent turn); reset on every run start.
@@ -101,6 +99,13 @@ class DynamicMessagesService extends ChangeNotifier {
   /// The agent-facing event payload cap; longer payloads truncate with an
   /// explicit marker.
   static const int maxEventPayloadChars = 4096;
+
+  /// How long a booted engine may stay without a UI tree before the tile
+  /// records a boot error (AC9's malformed-JS half: the runtime logs
+  /// syntax errors instead of throwing). Async widgets that fetch before
+  /// rendering have this long; the check is a no-op once a tree arrives.
+  @visibleForTesting
+  static Duration noUiGrace = const Duration(seconds: 10);
 
   /// The transcript marker role for dynamic widgets (fa_ui renders it
   /// through [FaChatHost.dynamicWidgetTileBuilder]).
@@ -124,10 +129,6 @@ class DynamicMessagesService extends ChangeNotifier {
   /// The last boot failure message of a widget; null when it boots (or
   /// never tried). The transcript tile renders it in the AC9 error tile.
   String? bootErrorFor(String id) => _bootErrors[id];
-
-  /// The jump-to-message anchor of a widget's transcript tile (the ✦
-  /// sheet scrolls it into view). Keys are stable per widget id.
-  GlobalKey tileKeyOf(String id) => _tileKeys.putIfAbsent(id, GlobalKey.new);
 
   /// Test/golden seam: injects a definition and, optionally, a fake
   /// engine or a boot error — no JS runtime, no session file needed.
@@ -256,9 +257,9 @@ class DynamicMessagesService extends ChangeNotifier {
     try {
       final store = await AppPermissionsStore.load(env);
       final engine = JsAppEngine(
-        app: _appInfo(definition),
+        app: appInfoFor(definition),
         env: env,
-        permissions: store.forApp(_appInfo(definition)).effective(),
+        permissions: store.forApp(appInfoFor(definition)).effective(),
         // Full installed-app surface (issue #102 AC6): the same llm/asr
         // backends a JsAppView boots with, sourced from the session.
         llmHandler: _llmHandlerOf(),
@@ -273,6 +274,13 @@ class DynamicMessagesService extends ChangeNotifier {
       );
       await engine.start();
       _engines[definition.id] = engine;
+      // A retry booted clean: drop the stale error so the tile renders
+      // the live widget instead of the AC9 error tile.
+      _bootFailed.remove(definition.id);
+      _bootErrors.remove(definition.id);
+      _noUiTimers[definition.id] = Timer(noUiGrace, () {
+        unawaited(_failNoUi(definition, engine));
+      });
       notifyListeners();
       return engine;
     } on Object catch (error) {
@@ -282,10 +290,32 @@ class DynamicMessagesService extends ChangeNotifier {
       );
       _bootFailed.add(definition.id);
       _bootErrors[definition.id] = '$error';
+      // Tiles rebuild to show the AC9 error tile.
+      notifyListeners();
       return null;
     } finally {
       _booting.remove(definition.id);
     }
+  }
+
+  /// The no-UI watchdog: a booted engine that never produced a tree
+  /// (malformed script — the runtime logs syntax errors instead of
+  /// failing the boot) records the boot error and frees the engine, so
+  /// the tile renders the AC9 error tile instead of spinning forever.
+  Future<void> _failNoUi(
+    DynamicMessageDefinition definition,
+    JsAppEngine engine,
+  ) async {
+    _noUiTimers.remove(definition.id);
+    if (_engines[definition.id] != engine) return;
+    if (engine.tree.value != null) return;
+    AppLog.i('apps', 'dynamic widget produced no UI: ${definition.id}');
+    _engines.remove(definition.id);
+    _bootFailed.add(definition.id);
+    _bootErrors[definition.id] =
+        'Widget produced no UI — the script may be invalid or empty.';
+    await engine.dispose();
+    notifyListeners();
   }
 
   /// Restarts one widget engine after a permissions change (same rule as
@@ -297,8 +327,11 @@ class DynamicMessagesService extends ChangeNotifier {
     Future<RequestSecretResult?> Function(String name, String reason)?
     keyRequestHandler,
   }) async {
+    _noUiTimers.remove(definition.id)?.cancel();
     final old = _engines.remove(definition.id);
-    if (old != null) await old.dispose();
+    if (old != null) {
+      await old.dispose();
+    }
     await ensureEngine(
       definition,
       locale: locale,
@@ -349,8 +382,7 @@ class DynamicMessagesService extends ChangeNotifier {
         jsonEncode({
           'id': slug,
           'name': definition.title,
-          'description':
-              'Graduated from the "${definition.title}" dynamic message.',
+          'description': graduatedDescription(definition.title),
           'version': '1.0.0',
         }),
       )).getOrThrow();
@@ -446,7 +478,7 @@ class DynamicMessagesService extends ChangeNotifier {
 
   /// The virtual app behind a widget engine: identity (sessionId,
   /// widgetId), code+storage under the session's own tree.
-  JsAppInfo _appInfo(DynamicMessageDefinition definition) => JsAppInfo(
+  JsAppInfo appInfoFor(DynamicMessageDefinition definition) => JsAppInfo(
     id: definition.id,
     name: definition.title,
     description: 'Dynamic message',
@@ -454,6 +486,11 @@ class DynamicMessagesService extends ChangeNotifier {
     declaredPermissions: const AppPermissions(),
     dirOverride: _widgetDirOf(definition.id),
   );
+
+  /// The app description a widget carries into its graduated app
+  /// (manifest + publish sheet).
+  static String graduatedDescription(String title) =>
+      'Graduated from the "$title" dynamic message.';
 
   static String _slugify(String raw) => raw
       .toLowerCase()
@@ -466,7 +503,7 @@ class DynamicMessagesService extends ChangeNotifier {
   Future<void> forgetAll() async {
     _pendingMarkers.clear();
     _presentedThisRun.clear();
-    _tileKeys.clear();
+
     final hadState =
         widgets.isNotEmpty || _engines.isNotEmpty || _bootErrors.isNotEmpty;
     if (!hadState) {
@@ -474,6 +511,10 @@ class DynamicMessagesService extends ChangeNotifier {
       return;
     }
     widgets.clear();
+    for (final timer in _noUiTimers.values) {
+      timer.cancel();
+    }
+    _noUiTimers.clear();
     final engines = List.of(_engines.values);
     _engines.clear();
     _bootFailed.clear();
@@ -486,6 +527,10 @@ class DynamicMessagesService extends ChangeNotifier {
 
   @override
   void dispose() {
+    for (final timer in _noUiTimers.values) {
+      timer.cancel();
+    }
+    _noUiTimers.clear();
     for (final engine in _engines.values) {
       engine.dispose();
     }

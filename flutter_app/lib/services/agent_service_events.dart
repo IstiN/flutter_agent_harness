@@ -107,6 +107,8 @@ extension AgentServiceEvents on AgentService {
                 data: presented.id,
               ),
             );
+            // The ✦ sheet's jump-to-message targets `msg-<index>` rows.
+            presented.markerIndex = messages.length - 1;
           }
         }
         _pushLiveActivityStatus();
