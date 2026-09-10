@@ -9,6 +9,10 @@
   one frame row per line instead of embedding a raw newline inside a row
   (which physically tore the sheet frame in the terminal). The exact-width
   row off-by-one seen in the same frames is issue #109 and is fixed there.
+ A shortening (CRLF) paste now advances the value cursor by the normalized
+ length - pinned to the raw paste length it overran the buffer and crashed
+ the next edit keystroke (review follow-up).
+
 ## 0.1.336
 
 - fix(97): TUI secret sheet opens on the VALUE field with the suggested

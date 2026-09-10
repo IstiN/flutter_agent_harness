@@ -185,6 +185,19 @@ void main() {
         'OTHER_API_KEY',
         timeout: const Duration(seconds: 20),
       );
+      // End-to-end grant integrity: the turn-2 request carries the grant
+      // CONFIRMATION - the transcript never carries the value itself
+      // (redaction by design). CR must not survive anywhere near it.
+      final turn2 = jsonDecode(mock.bodies[1]) as Map<String, dynamic>;
+      final transcript = (turn2['messages'] as List)
+          .map((m) => ((m as Map<String, dynamic>)['content'] ?? '').toString())
+          .join(' ');
+      expect(transcript, contains('Secret MY_SERVICE_TOKEN is available'));
+      expect(
+        transcript.contains('\r'),
+        isFalse,
+        reason: 'CR is a paste artifact',
+      );
       harness.sendEscape();
       await harness.waitForText(
         'turn-complete',

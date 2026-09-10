@@ -797,7 +797,10 @@ _PromptKeyResult? _handleSecretCharKey(TuiPromptState state, PromptKey key) {
   return (
     state: state.copyWith(
       secretValue: next,
-      secretCursor: state.secretCursor + text.length,
+      // Advance by the NORMALIZED length: the paste may have shrunk
+      // (CRLF -> LF); pinning the cursor to the raw paste length would
+      // overrun the buffer and crash the next edit keystroke.
+      secretCursor: state.secretCursor + clean.length,
     ),
     resolved: null,
   );

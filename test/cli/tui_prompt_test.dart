@@ -544,6 +544,21 @@ void main() {
       },
     );
 
+    test('a shortening paste keeps the cursor inside the buffer', () {
+      // 'AB\r\nCD' normalizes to 'AB\nCD' (5 chars, raw paste was 6). The
+      // cursor must advance by the NORMALIZED length: pinned to the raw
+      // paste length it overruns the buffer and the NEXT edit keystroke
+      // crashes with a RangeError (PR #111 review blocker).
+      var state = TuiPromptState(spec);
+      state = handleTuiPromptKey(state, PromptChar('k')).state;
+      state = handleTuiPromptKey(state, const PromptPaste('AB\r\nCD')).state;
+      expect(state.secretValue, 'kAB\nCD');
+      expect(state.secretCursor, state.secretValue.length);
+      final bs = handleTuiPromptKey(state, const PromptBackspace()).state;
+      expect(bs.secretValue, 'kAB\nC');
+      expect(bs.secretCursor, state.secretCursor - 1);
+    });
+
     test('a multiline value renders one masked row per line, frame closed', () {
       final state = TuiPromptState(
         spec,
