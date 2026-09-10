@@ -1,0 +1,17 @@
+#!/bin/sh
+# Terminal-Bench install script for the fa coding agent.
+# Runs inside the task container as the tmux user (root).
+set -e
+
+mkdir -p /opt/fa
+tar -xzf /installed-agent/fa-bundle.tar.gz -C /opt/fa
+chmod +x /opt/fa/bin/fah
+ln -sf /opt/fa/bin/fah /usr/local/bin/fa
+
+# No user is present during benchmark runs; unattended skips the
+# critical-pattern bash interceptor that headless mode would deny.
+mkdir -p ~/.fah
+grep -q approvalMode ~/.fah/config.yaml 2>/dev/null ||
+    printf 'approvalMode: unattended\n' > ~/.fah/config.yaml
+
+fa --version
