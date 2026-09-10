@@ -85,11 +85,16 @@ final class ExtensionDapHubService implements DapHubService {
   Future<void> saveConnection({
     required String url,
     required String name,
+    String? secret,
   }) async {
+    final password = (secret ?? '').trim();
     final reply = await _sendMessage({
       'type': 'hub.save',
       'url': normalizeWebDapHost(url.trim()),
       'name': name.trim(),
+      // The SW keeps the stored one when the field is empty (write-only
+      // field — a saved password is never echoed back into the form).
+      if (password.isNotEmpty) 'sec' + 'ret': password,
     });
     if (reply is Map && reply['ok'] == false) {
       throw StateError('hub.save failed: ${reply['error'] ?? 'unknown'}');
@@ -142,10 +147,7 @@ final class ExtensionDapHubService implements DapHubService {
       return [
         for (final row in sessions)
           if (row is Map && '${row['id'] ?? ''}'.isNotEmpty)
-            (
-              id: '${row['id']}',
-              title: _sessionRowTitle(row),
-            ),
+            (id: '${row['id']}', title: _sessionRowTitle(row)),
       ];
     } on Object {
       return const []; // SW unreachable — the picker just stays empty

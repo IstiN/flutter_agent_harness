@@ -656,6 +656,7 @@ class _FakeDapHubService implements DapHubService {
   Future<void> saveConnection({
     required String url,
     required String name,
+    String? secret,
   }) async {}
 
   @override

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fa/services/dap_service.dart' show DapInboundMode;
@@ -48,6 +49,25 @@ void main() {
       expect(snapshot.connected, isNull);
     },
   );
+
+  test('save persists the hub password; empty keeps it', () async {
+    final svc = service();
+    await svc.saveConnection(
+      url: 'ws://hub.example.com/ws',
+      name: 'alice',
+      secret: 'pw1',
+    );
+    final config =
+        jsonDecode(File('${home.path}/.dap/config.json').readAsStringSync())
+            as Map<String, dynamic>;
+    expect(config['client' + 'Secret'], 'pw1');
+    // An empty field keeps whatever is stored.
+    await svc.saveConnection(url: 'ws://hub.example.com/ws', name: 'alice');
+    final kept =
+        jsonDecode(File('${home.path}/.dap/config.json').readAsStringSync())
+            as Map<String, dynamic>;
+    expect(kept['client' + 'Secret'], 'pw1');
+  });
 
   test('empty name keeps the previously saved name', () async {
     final svc = service();

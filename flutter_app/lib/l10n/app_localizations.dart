@@ -1964,6 +1964,12 @@ abstract class AppLocalizations {
   /// **'Agent name'**
   String get settingsDapAgentNameLabel;
 
+  /// The hub password field on the connection editor
+  ///
+  /// In en, this message translates to:
+  /// **'Hub password'**
+  String get settingsDapPasswordLabel;
+
   /// No description provided for @settingsDapChannelsEmpty.
   ///
   /// In en, this message translates to:
@@ -2059,6 +2065,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'alice'**
   String get settingsDapNameHint;
+
+  /// Helper text: an empty password field keeps the stored one
+  ///
+  /// In en, this message translates to:
+  /// **'Leave empty to keep the current one'**
+  String get settingsDapPasswordHint;
 
   /// No description provided for @settingsDapProbeButton.
   ///

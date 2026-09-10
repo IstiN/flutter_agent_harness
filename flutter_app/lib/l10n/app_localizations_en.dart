@@ -1088,6 +1088,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDapAgentNameLabel => 'Agent name';
 
   @override
+  String get settingsDapPasswordLabel => 'Hub password';
+
+  @override
   String get settingsDapChannelsEmpty =>
       'No channels yet — channels appear here once the agent joins one (dap_invite / dap_connect).';
 
@@ -1140,6 +1143,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsDapNameHint => 'alice';
+
+  @override
+  String get settingsDapPasswordHint => 'Leave empty to keep the current one';
 
   @override
   String get settingsDapProbeButton => 'Check connection';

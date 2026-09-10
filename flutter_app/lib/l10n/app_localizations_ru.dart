@@ -1098,6 +1098,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsDapAgentNameLabel => 'Имя агента';
 
   @override
+  String get settingsDapPasswordLabel => 'Пароль хаба';
+
+  @override
   String get settingsDapChannelsEmpty =>
       'Каналов пока нет — они появятся здесь, когда агент присоединится к каналу (dap_invite / dap_connect).';
 
@@ -1152,6 +1155,10 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsDapNameHint => 'alice';
+
+  @override
+  String get settingsDapPasswordHint =>
+      'Оставьте пустым, чтобы сохранить текущий';
 
   @override
   String get settingsDapProbeButton => 'Проверить подключение';

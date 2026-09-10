@@ -100,6 +100,27 @@ void main() {
     expect(h.sent.single['name'], 'ext');
   });
 
+  test('save rides the password through hub.save only when typed', () async {
+    final h = harness();
+    await h.service.saveConnection(
+      url: '127.0.0.1:9999',
+      name: 'ext',
+      secret: 'pw1',
+    );
+    expect(h.sent.single['sec' + 'ret'], 'pw1');
+    // An empty field keeps the stored one: no key at all in the message.
+    final h2 = harness();
+    await h2.service.saveConnection(url: '127.0.0.1:9999', name: 'ext');
+    expect(h2.sent.single.containsKey('sec' + 'ret'), isFalse);
+    final h3 = harness();
+    await h3.service.saveConnection(
+      url: '127.0.0.1:9999',
+      name: 'ext',
+      secret: '  ',
+    );
+    expect(h3.sent.single.containsKey('sec' + 'ret'), isFalse);
+  });
+
   test('save surfaces a SW-side failure', () {
     final h = harness(
       onMessage: (_) => {'ok': false, 'error': 'storage blocked'},
@@ -205,14 +226,16 @@ void main() {
       expect(bind['title'], 'My session');
     });
 
-    test('saveBinding current clears the binding (no session fields)',
-        () async {
-      final h = harness();
-      await h.service.saveBinding(DapInboundMode.currentSession);
-      final bind = h.sent.singleWhere((m) => m['type'] == 'hub.bind');
-      expect(bind['mode'], 'current');
-      expect(bind.containsKey('sessionId'), isFalse);
-    });
+    test(
+      'saveBinding current clears the binding (no session fields)',
+      () async {
+        final h = harness();
+        await h.service.saveBinding(DapInboundMode.currentSession);
+        final bind = h.sent.singleWhere((m) => m['type'] == 'hub.bind');
+        expect(bind['mode'], 'current');
+        expect(bind.containsKey('sessionId'), isFalse);
+      },
+    );
 
     test('hub.bind failure throws', () async {
       final h = harness(

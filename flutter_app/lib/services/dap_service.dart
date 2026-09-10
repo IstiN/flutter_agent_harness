@@ -31,7 +31,11 @@ abstract interface class DapHubService {
   /// Persists the connection to `~/.dap/config.json`. [url] is normalized
   /// (`hub:8787` → `ws://hub:8787/ws`); an empty [name] leaves the saved
   /// name untouched (the persisted format has no clear-name operation).
-  Future<void> saveConnection({required String url, required String name});
+  Future<void> saveConnection({
+    required String url,
+    required String name,
+    String? secret,
+  });
 
   /// Dials the hub once ([HubPlugin] start → status → dispose) and returns
   /// the snapshot with [DapHubSnapshot.connected] set. Bounded: an

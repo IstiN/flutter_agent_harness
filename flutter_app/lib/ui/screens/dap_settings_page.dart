@@ -145,7 +145,11 @@ class _DapHubPageState extends State<DapHubPage> {
     );
     if (draft == null) return;
     try {
-      await _service.saveConnection(url: draft.url, name: draft.name);
+      await _service.saveConnection(
+        url: draft.url,
+        name: draft.name,
+        secret: (draft.secret ?? '').trim().isEmpty ? null : draft.secret,
+      );
     } on Object {
       // Bad host (normalizeDapHost) or a failed config write: tell the
       // user instead of an unhandled async exception.
@@ -434,9 +438,7 @@ class _DapHubPageState extends State<DapHubPage> {
         child: Row(
           children: [
             Icon(
-              selected
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_off,
+              selected ? Icons.radio_button_checked : Icons.radio_button_off,
               size: 18,
               color: selected ? theme.colorScheme.primary : colors.dim,
             ),
@@ -565,10 +567,18 @@ class _DapHubPageState extends State<DapHubPage> {
 
 /// The values collected by the [DapConnectionEditorPage].
 final class DapConnectionDraft {
-  const DapConnectionDraft({required this.url, required this.name});
+  const DapConnectionDraft({
+    required this.url,
+    required this.name,
+    this.secret,
+  });
 
   final String url;
   final String name;
+
+  /// The hub password as typed — `null`/empty keeps the stored one (the
+  /// field is write-only: a saved password is never echoed back).
+  final String? secret;
 }
 
 /// The add/edit connection form (the provider-editor UX): hub URL and agent
@@ -597,6 +607,7 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
   late final _nameController = TextEditingController(
     text: widget.initialName ?? '',
   );
+  late final _secretController = TextEditingController();
   String? _error;
 
   bool get _isAdd => widget.initialName == null;
@@ -611,6 +622,7 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
   void dispose() {
     _urlController.dispose();
     _nameController.dispose();
+    _secretController.dispose();
     super.dispose();
   }
 
@@ -620,9 +632,13 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
       setState(() => _error = context.l10n.settingsDapUrlRequired);
       return;
     }
-    Navigator.of(
-      context,
-    ).pop(DapConnectionDraft(url: url, name: _nameController.text.trim()));
+    Navigator.of(context).pop(
+      DapConnectionDraft(
+        url: url,
+        name: _nameController.text.trim(),
+        secret: _secretController.text.trim(),
+      ),
+    );
   }
 
   @override
@@ -659,6 +675,17 @@ class _DapConnectionEditorPageState extends State<DapConnectionEditorPage> {
                   labelText: context.l10n.settingsDapAgentNameLabel,
                   hintText: context.l10n.settingsDapNameHint,
                 ),
+                autocorrect: false,
+                enableSuggestions: false,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _secretController,
+                decoration: InputDecoration(
+                  labelText: context.l10n.settingsDapPasswordLabel,
+                  helperText: context.l10n.settingsDapPasswordHint,
+                ),
+                obscureText: true,
                 autocorrect: false,
                 enableSuggestions: false,
               ),

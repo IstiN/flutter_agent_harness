@@ -356,6 +356,10 @@
   "settingsDapAddConnection": "Add connection",
   "settingsDapAgentIdLabel": "Agent id",
   "settingsDapAgentNameLabel": "Agent name",
+  "settingsDapPasswordLabel": "Hub password",
+  "@settingsDapPasswordLabel": {
+    "description": "The hub password field on the connection editor"
+  },
   "settingsDapChannelsEmpty": "No channels yet — channels appear here once the agent joins one (dap_invite / dap_connect).",
   "settingsDapChannelsTitle": "Channels",
   "settingsDapEditConnection": "Edit connection",
@@ -372,6 +376,10 @@
   "settingsDapInboundBadgeTooltip": "This session receives messages from other agents",
   "settingsDapHubTitle": "Agent network",
   "settingsDapNameHint": "alice",
+  "settingsDapPasswordHint": "Leave empty to keep the current one",
+  "@settingsDapPasswordHint": {
+    "description": "Helper text: an empty password field keeps the stored one"
+  },
   "settingsDapProbeButton": "Check connection",
   "settingsDapStatusConnected": "Connected",
   "settingsDapStatusOffline": "Unreachable",

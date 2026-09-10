@@ -95,11 +95,19 @@ final class IoDapHubService implements DapHubService {
   }
 
   @override
-  Future<void> saveConnection({required String url, required String name}) {
+  Future<void> saveConnection({
+    required String url,
+    required String name,
+    String? secret,
+  }) {
     final trimmed = name.trim();
+    final password = (secret ?? '').trim();
     return persistDapConfig(
       url: normalizeDapHost(url.trim()),
       name: trimmed.isEmpty ? null : trimmed,
+      // The master password dials directly (the hub accepts it as a
+      // credential); an empty field keeps whatever is stored.
+      clientSecret: password.isEmpty ? null : password,
       file: defaultDapConfigFile(home, environment),
     );
   }
@@ -117,8 +125,7 @@ final class IoDapHubService implements DapHubService {
     } else {
       next['boundSession'] = <String, dynamic>{
         'mode': mode.name,
-        if (sessionId != null && sessionId.isNotEmpty)
-          'sessionId': sessionId,
+        if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
         if (sessionTitle != null && sessionTitle.isNotEmpty)
           'title': sessionTitle,
       };

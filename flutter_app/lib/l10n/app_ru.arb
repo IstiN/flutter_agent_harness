@@ -353,6 +353,10 @@
   "settingsDapAddConnection": "Добавить подключение",
   "settingsDapAgentIdLabel": "ID агента",
   "settingsDapAgentNameLabel": "Имя агента",
+  "settingsDapPasswordLabel": "Пароль хаба",
+  "@settingsDapPasswordLabel": {
+    "description": "The hub password field on the connection editor"
+  },
   "settingsDapChannelsEmpty": "Каналов пока нет — они появятся здесь, когда агент присоединится к каналу (dap_invite / dap_connect).",
   "settingsDapChannelsTitle": "Каналы",
   "settingsDapEditConnection": "Изменить подключение",
@@ -369,6 +373,10 @@
   "settingsDapInboundBadgeTooltip": "В эту сессию приходят сообщения от других агентов",
   "settingsDapHubTitle": "Сеть агентов",
   "settingsDapNameHint": "alice",
+  "settingsDapPasswordHint": "Оставьте пустым, чтобы сохранить текущий",
+  "@settingsDapPasswordHint": {
+    "description": "Helper text: an empty password field keeps the stored one"
+  },
   "settingsDapProbeButton": "Проверить подключение",
   "settingsDapStatusConnected": "Подключено",
   "settingsDapStatusOffline": "Недоступен",

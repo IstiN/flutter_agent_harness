@@ -27,8 +27,11 @@ final class UnsupportedDapHubService implements DapHubService {
   Future<DapHubSnapshot> probe() async => _snapshot;
 
   @override
-  Future<void> saveConnection({required String url, required String name}) =>
-      throw StateError('DAP hub is not supported on this platform.');
+  Future<void> saveConnection({
+    required String url,
+    required String name,
+    String? secret,
+  }) => throw StateError('DAP hub is not supported on this platform.');
 
   @override
   Future<void> saveBinding(

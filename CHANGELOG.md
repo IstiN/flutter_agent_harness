@@ -33,6 +33,10 @@
   connects, and a CLI enrolled with the same password exchanges DMs with
   the extension end to end. The shared scripted mock gains resetScript()
   so every test's CLI gets the dap_dm tool call as call #1.
+- feat(dap): the app-mode Agent network editor gains the Hub password
+  field (write-only — an empty field keeps the stored one), wired through
+  DapHubService.saveConnection: the extension variant rides hub.save, the
+  desktop variant persists clientSecret into ~/.dap/config.json.
 
 ## 0.1.331
 
