@@ -298,11 +298,19 @@ final class FlutterSessionManager extends ChangeNotifier {
   }) async {
     final existing = _sessions[metadata.id];
     if (existing != null) {
+      debugPrint(
+        '[fah][sessions] open ${metadata.id}: slot already loaded — '
+        'activating',
+      );
       _activeId = metadata.id;
       _rememberActive(metadata.id);
       notifyListeners();
       return existing;
     }
+    debugPrint(
+      '[fah][sessions] open ${metadata.id}: not in memory — loading from '
+      'disk (${_sessions.length} loaded)',
+    );
     final service = await serviceFactory();
     await service.loadSession(metadata);
     final managed = FlutterManagedSession(
@@ -386,28 +394,57 @@ final class FlutterSessionManager extends ChangeNotifier {
             .where((m) => m.id == lastActiveId)
             .firstOrNull;
         if (metadata != null) {
+          debugPrint(
+            '[fah][sessions] boot: resuming last active '
+            '$lastActiveId (${cachedList.length} persisted)',
+          );
           return await openSession(
             metadata,
             config: config,
             serviceFactory: openFactory,
           );
         }
-      } on Object {
+        debugPrint(
+          '[fah][sessions] boot: last active $lastActiveId is gone '
+          '(${cachedList.length} persisted) — picking reusable',
+        );
+      } on Object catch (error) {
         // Unreadable list/load — fall through to the reusable pick.
+        debugPrint(
+          '[fah][sessions] boot: last active $lastActiveId failed to '
+          'list/load ($error) — picking reusable',
+        );
       }
+    } else {
+      debugPrint(
+        '[fah][sessions] boot: no last-active marker — picking reusable',
+      );
     }
     final reusable = await findReusableSession(cachedSessionList: cachedList);
     if (reusable != null) {
+      debugPrint(
+        '[fah][sessions] boot: reusable pick ${reusable.id} '
+        '(created ${reusable.createdAt.toLocal()})',
+      );
       try {
         return await openSession(
           reusable,
           config: config,
           serviceFactory: openFactory,
         );
-      } on Object {
+      } on Object catch (error) {
         // The session failed to load (corrupt file, storage error) — fall
         // through to a fresh session rather than blocking the boot.
+        debugPrint(
+          '[fah][sessions] boot: reusable pick ${reusable.id} failed to '
+          'load ($error) — creating a fresh session',
+        );
       }
+    } else {
+      debugPrint(
+        '[fah][sessions] boot: no reusable session '
+        '(${cachedList?.length ?? 'n/a'} persisted) — creating fresh',
+      );
     }
     return createSession(config: config, serviceFactory: createFactory);
   }

@@ -661,13 +661,24 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     );
   }
 
-  /// Opens a persisted-only session from disk (the sidebar's history tail),
-  /// cloning the active service's connection — the same pattern the JS-app
-  /// session binding uses.
+  /// Opens a persisted-only session from the sidebar's history tail. On a
+  /// relay surface (browser extension) the session files live in the
+  /// service worker — the open is a `session_open` dispatch there, exactly
+  /// like the narrow drawer; cloning locally would fail (the page-side
+  /// service has no config to clone). Desktop clones the active service.
   Future<void> _openPersistedSession(SessionMetadata metadata) async {
     final active = widget.manager.active;
     if (active == null) return;
     final service = active.service;
+    final relayOpen = service.openSessionAction;
+    if (relayOpen != null) {
+      debugPrint(
+        '[fah][shell] open session ${metadata.id} via relay (session_open)',
+      );
+      await relayOpen(metadata.id);
+      return;
+    }
+    debugPrint('[fah][shell] open session ${metadata.id} via local clone');
     try {
       await widget.manager.openSession(
         metadata,
