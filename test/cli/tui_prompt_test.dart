@@ -106,14 +106,16 @@ void main() {
       expect(result.state.secretValue, 'a');
     });
 
-    test('render contains the recommended ★ marker', () {
+    test('render contains the recommended * marker', () {
       final state = TuiPromptState(spec);
       final rows = renderTuiPrompt(state, 60);
-      // Option index 1 (Blue) is recommended, so ★ should appear
+      // Option index 1 (Blue) is recommended, so * should appear. ASCII on
+      // purpose: ★ measures 2 cells in the width table but terminals draw
+      // it 1 wide, shifting every padded row (issue #109).
       expect(
-        rows.any((r) => r.contains('★')),
+        rows.any((r) => r.contains('*')),
         isTrue,
-        reason: 'recommended option should have a ★ marker',
+        reason: 'recommended option should have a * marker',
       );
     });
   });
@@ -392,8 +394,7 @@ void main() {
 
     test('the sheet hint names the focus-switch key (F4)', () {
       final rows = renderTuiPrompt(TuiPromptState(spec), 60).join('\n');
-      expect(rows, contains('Tab'));
-      expect(rows, contains('▸'));
+      expect(rows, contains('>'));
     });
 
     test('Ctrl+R toggles the value visibility (hidden by default)', () {
@@ -1138,6 +1139,101 @@ void main() {
       state = handleTuiPromptKey(state, const PromptPaste('hello')).state;
       expect(state.secretValue, 'hello');
       expect(state.askCursor, 'hello'.length);
+    });
+  });
+  group('Frame width invariant (issue #109)', () {
+    // Every rendered row must fit the requested width in terminal cells:
+    // one over-wide row wraps in the real terminal and desyncs the diff
+    // renderer — visible as torn borders and stale previous-frame text.
+    String visible(String row) =>
+        row.replaceAll(RegExp(r'\x1b\[[0-9;]*[a-zA-Z]'), '');
+
+    void expectRowsFit(List<String> rows, int width) {
+      for (final row in rows) {
+        expect(
+          visible(row).length,
+          lessThanOrEqualTo(width),
+          reason: 'row overflows $width columns: ${visible(row)}',
+        );
+      }
+    }
+
+    test('exact-width wrapped body rows stay inside the frame', () {
+      // A question long enough that _wrapText slices it at the full inner
+      // width — the historical off-by-one (padding ' ' * -1) case.
+      final spec = AskPromptSpec(
+        header: 'Ask',
+        question:
+            'На каких поверхностях виджеты должны рендериться '
+            'в первой версии продукта и почему именно так?',
+        index: 1,
+        total: 4,
+        options: [
+          const AskOption(
+            label: 'Flutter app + browser extension, CLI — текстовый фолбэк',
+            description:
+                'Виджеты живут в чат-аппи и панели расширения; в CLI '
+                'динамическое сообщение деградирует в текстовое '
+                'представление (та же data-модель, плоский рендер).',
+          ),
+          const AskOption(label: 'Только Flutter app для начала'),
+        ],
+        recommended: 0,
+      );
+      for (final width in [40, 60, 80, 100]) {
+        expectRowsFit(renderTuiPrompt(TuiPromptState(spec), width), width);
+      }
+    });
+
+    test('a long single-line answer wraps into framed input rows', () {
+      final spec = AskPromptSpec(
+        header: 'Ask',
+        question: 'Q?',
+        index: 0,
+        total: 1,
+      );
+      final buffer =
+          'только flutter app, extension в cli такого не делаем. '
+          'там надо будет думать другую форму и ещё немного текста сверху';
+      final state = TuiPromptState(spec).copyWith(
+        askMode: AskInputMode.freeText,
+        secretValue: buffer,
+        askCursor: buffer.length,
+      );
+      final rows = renderTuiPrompt(state, 60);
+      expectRowsFit(rows, 60);
+      // The whole buffer stays visible inside the frame.
+      expect(rows.join('\n'), contains('и ещё немного текста'));
+    });
+
+    test('a pasted multi-line answer renders one framed row per line', () {
+      final spec = AskPromptSpec(
+        header: 'Ask',
+        question: 'Q?',
+        index: 0,
+        total: 1,
+      );
+      const buffer = 'первая строка ответа\nвторая строка ответа';
+      final state = TuiPromptState(spec).copyWith(
+        askMode: AskInputMode.freeText,
+        secretValue: buffer,
+        askCursor: buffer.length,
+      );
+      final rows = renderTuiPrompt(state, 60);
+      expectRowsFit(rows, 60);
+      // Each logical line gets its OWN framed row — pre-fix both lived in
+      // one over-wide row whose embedded \n tore the frame apart.
+      final first = rows.singleWhere((r) => r.contains('первая строка'));
+      final second = rows.singleWhere((r) => r.contains('вторая строка'));
+      expect(first, isNot(second));
+    });
+
+    test('the text prompt input obeys the same invariant', () {
+      const spec = TextPromptSpec(question: 'base URL:', secret: false);
+      final state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'a' * 200, secretCursor: 200);
+      expectRowsFit(renderTuiPrompt(state, 50), 50);
     });
   });
 }

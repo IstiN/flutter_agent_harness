@@ -58,12 +58,12 @@ void main() {
           (l) => l.contains('MY_SERVICE_TOKEN'),
         );
         expect(
-          nameLine.contains('▸'),
+          nameLine.contains('>'),
           isFalse,
           reason: 'the name row must not hold focus on open',
         );
         expect(
-          harness.screenLines.where((l) => l.contains('▸')),
+          harness.screenLines.where((l) => l.contains('>')),
           isNotEmpty,
           reason: 'the focused (value) row carries the focus marker',
         );
@@ -143,7 +143,7 @@ void main() {
         harness.sendText('\t'); // focus the name field
         await harness.waitForOutput(settleMs: 300);
         harness.sendText('K');
-        await harness.waitForText('▸ K', timeout: const Duration(seconds: 10));
+        await harness.waitForText('> K', timeout: const Duration(seconds: 10));
         // Replaced wholesale — no leftover concat with the suggestion.
         expect(harness.screenText.contains('MY_SERVICE_TOKENK'), isFalse);
         harness.sendEscape();

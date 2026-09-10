@@ -150,19 +150,22 @@ void main() {
   test(
     'RT3: a name exactly as wide as the sheet interior keeps borders aligned',
     () async {
-      mock.nextName = 'A' * 76; // '▸ ' + name == inner width at an 80-col PTY
+      mock.nextName = 'A' * 76; // '> ' + name == inner width at an 80-col PTY
       await bootAndRequest();
       await harness.waitForOutput(settleMs: 500);
       expectFrameIntact();
+      harness.sendEscape();
+      // The mock scripts a second request (turn 2); decline it to finish.
+      await harness.waitForText(
+        'OTHER_API_KEY',
+        timeout: const Duration(seconds: 20),
+      );
       harness.sendEscape();
       await harness.waitForText(
         'turn-complete',
         timeout: const Duration(seconds: 30),
       );
     },
-    skip:
-        'exact-width frame arithmetic is issue #109 '
-        '(fix on fix/109-tui-answer-clear); unskip after rebasing on it',
   );
 
   test(
@@ -215,14 +218,17 @@ void main() {
       await harness.waitForOutput(settleMs: 500);
       expectFrameIntact();
       harness.sendEscape();
+      // The mock scripts a second request (turn 2); decline it to finish.
+      await harness.waitForText(
+        'OTHER_API_KEY',
+        timeout: const Duration(seconds: 20),
+      );
+      harness.sendEscape();
       await harness.waitForText(
         'turn-complete',
         timeout: const Duration(seconds: 30),
       );
     },
-    skip:
-        'exact-width frame arithmetic is issue #109 '
-        '(fix on fix/109-tui-answer-clear); unskip after rebasing on it',
   );
 }
 
@@ -279,9 +285,8 @@ final class _ResidualMock {
         0 => _secretChunks(
           'call_1',
           nextName ?? 'MY_SERVICE_TOKEN',
-          // Keep the reason short of the frame interior width: an
-          // exactly-full wrapped chunk trips the #109 width bug, which is
-          // pinned (and skipped) by RT3/RT5, not by the paste tests.
+          // Reason stays short of the frame interior width; the
+          // exactly-full-width case is RT3's job.
           'to call the upstream API and the nightly deploy job',
         ),
         1 => _secretChunks('call_2', 'OTHER_API_KEY', 'for the other service'),
