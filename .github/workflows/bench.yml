@@ -1,0 +1,122 @@
+name: Bench
+
+# Runs the fa coding agent against terminal-bench on a Linux runner
+# (issue #125). The `dart build cli` bundle must be a Linux x64 binary to
+# match the task container's arch — a macOS host bundle fails with
+# "cannot execute binary file", so this cannot run locally on macOS.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: 'Task id or glob passed to tb -t (e.g. hello-world, crack-7z-hash*)'
+        required: false
+        default: 'hello-world'
+      dataset:
+        description: 'Dataset spec passed to tb -d (name==version)'
+        required: false
+        default: 'terminal-bench-core==0.1.1'
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: fa on terminal-bench (glm-5.3-flash)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      # Same bundle as bench/terminal_bench/run.sh: tar the bundle/ dir so
+      # fa-setup.sh.j2 extracts bin/fah at the top level.
+      - name: Build fa CLI bundle (Linux x64)
+        run: |
+          bundle_dir="$(mktemp -d)/fa-bundle"
+          dart build cli --target=bin/fah.dart --output="$bundle_dir"
+          tar -czf fa-bundle.tar.gz -C "$bundle_dir/bundle" .
+
+      # terminal-bench's CLI breaks on Python 3.14 (typer: 'function' object
+      # is not subscriptable).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - run: pip install terminal-bench
+
+      - name: Run terminal-bench (fa agent)
+        env:
+          FA_BUNDLE_TARBALL: ${{ github.workspace }}/fa-bundle.tar.gz
+          PYTHONPATH: ${{ github.workspace }}/bench/terminal_bench
+          FA_PROVIDER_TYPE: zai
+          FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+          FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          DATASET: ${{ inputs.dataset }}
+          TASKS: ${{ inputs.tasks }}
+        run: |
+          [ -n "$FA_KEY_API_Z_AI_Z_AI" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
+          # fa_agent.py ships the key into the container base64-encoded; GitHub
+          # auto-masks only the raw value, so mask the base64 form too.
+          echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
+          tb run -d "$DATASET" --agent-import-path fa_agent:FaAgent \
+            --output-path tb-runs --no-cleanup -t "$TASKS"
+
+      - name: Upload tb runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb-runs
+          path: tb-runs/
+
+      # tb exits 0 even with unresolved tasks, so the verdict lives here: a
+      # failed task turns this step (and the job) red — after the artifact
+      # upload above — while the summary always lands.
+      - name: Accuracy summary & verdict
+        if: always()
+        run: |
+          python - <<'PY'
+          import glob
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          paths = sorted(glob.glob("tb-runs/*/results.json"))
+          lines = ["### fa on terminal-bench", ""]
+          if not paths:
+              lines.append("**No results.json produced — the tb run did not complete.**")
+              ok = False
+          else:
+              rows = []
+              for p in paths:
+                  data = json.loads(Path(p).read_text())
+                  for r in data.get("results", []):
+                      resolved = r.get("is_resolved")
+                      mark = {True: "yes", False: "no", None: "pending"}[resolved]
+                      rows.append((
+                          r.get("task_id", "?"), r.get("trial_name", "?"), mark,
+                          r.get("failure_mode") or "",
+                          r.get("total_input_tokens"), r.get("total_output_tokens"),
+                      ))
+              n_resolved = sum(1 for r in rows if r[2] == "yes")
+              accuracy = n_resolved / len(rows) if rows else 0.0
+              lines.append(f"**{n_resolved}/{len(rows)} resolved — accuracy {accuracy:.0%}**")
+              lines.append("")
+              lines.append("| task | trial | resolved | failure mode | tokens in/out |")
+              lines.append("|---|---|---|---|---|")
+              for task, trial, mark, mode, tin, tout in rows:
+                  tokens = f"{tin}/{tout}" if tin is not None or tout is not None else ""
+                  lines.append(f"| {task} | {trial} | {mark} | {mode} | {tokens} |")
+              ok = bool(rows) and n_resolved == len(rows)
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("\n".join(lines) + "\n")
+          sys.exit(0 if ok else 1)
+          PY
