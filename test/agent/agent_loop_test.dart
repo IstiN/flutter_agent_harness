@@ -106,6 +106,16 @@ Tool _tool(String name) {
   return Tool(name: name, description: '$name tool', parameters: const {});
 }
 
+/// An exception with a clean toString: the error-result path must leave it be.
+class _CleanError implements Exception {
+  const _CleanError(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 List<Type> _types(List<AgentEvent> events) {
   return events.map((event) => event.runtimeType).toList();
 }
@@ -592,7 +602,7 @@ void main() {
       expect(end.isError, isTrue);
       expect(
         (end.result.content.single as TextContent).text,
-        contains('disk exploded'),
+        equals('disk exploded'),
       );
       final toolResult = events
           .whereType<MessageEndEvent>()
@@ -600,6 +610,108 @@ void main() {
           .whereType<ToolResultMessage>()
           .single;
       expect(toolResult.isError, isTrue);
+    });
+
+    test(
+      'core exception prefixes are stripped from error tool results',
+      () async {
+        Future<String> textOf(Object Function() makeError) async {
+          final fake = _FakeStreamFunction([
+            _toolTurn([_call('call-1', 'weather')]),
+            _textTurn('handled'),
+          ]);
+          final stream = agentLoop(
+            prompts: [UserMessage.text('hi')],
+            context: Context(messages: [], tools: [_tool('weather')]),
+            config: const AgentLoopConfig(model: _model),
+            streamFunction: fake.call,
+            toolExecutor: (_, _, _) async => throw makeError(),
+          );
+          final events = await stream.toList();
+          return (events
+                      .whereType<ToolExecutionEndEvent>()
+                      .single
+                      .result
+                      .content
+                      .single
+                  as TextContent)
+              .text;
+        }
+
+        // StateError is the bash tool's non-zero-exit carrier (issue #118).
+        expect(
+          await textOf(
+            () => StateError('total 12\nCommand exited with code 2'),
+          ),
+          'total 12\nCommand exited with code 2',
+        );
+        expect(
+          await textOf(() => ArgumentError('args must be a map')),
+          'args must be a map',
+        );
+        expect(
+          await textOf(() => const FormatException('unexpected character')),
+          'unexpected character',
+        );
+      },
+    );
+
+    test('nested core exception prefixes are stripped recursively', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('call-1', 'weather')]),
+        _textTurn('handled'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: Context(messages: [], tools: [_tool('weather')]),
+        config: const AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async =>
+            throw ArgumentError(StateError('boom')),
+      );
+
+      final events = await stream.toList();
+      final end = events.whereType<ToolExecutionEndEvent>().single;
+      // "Invalid argument(s): Bad state: boom" — both prefixes go.
+      expect((end.result.content.single as TextContent).text, 'boom');
+    });
+
+    test('an empty error message stays empty after stripping', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('call-1', 'weather')]),
+        _textTurn('handled'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: Context(messages: [], tools: [_tool('weather')]),
+        config: const AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => throw StateError(''),
+      );
+
+      final events = await stream.toList();
+      final end = events.whereType<ToolExecutionEndEvent>().single;
+      expect(end.isError, isTrue);
+      expect((end.result.content.single as TextContent).text, isEmpty);
+    });
+
+    test('errors with clean toString pass through untouched', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([_call('call-1', 'weather')]),
+        _textTurn('handled'),
+      ]);
+      final stream = agentLoop(
+        prompts: [UserMessage.text('hi')],
+        context: Context(messages: [], tools: [_tool('weather')]),
+        config: const AgentLoopConfig(model: _model),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async =>
+            throw const _CleanError('rewind blocked'),
+      );
+
+      final events = await stream.toList();
+      final end = events.whereType<ToolExecutionEndEvent>().single;
+      expect((end.result.content.single as TextContent).text, 'rewind blocked');
     });
 
     test(

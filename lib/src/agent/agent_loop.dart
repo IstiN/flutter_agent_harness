@@ -1739,7 +1739,7 @@ Future<_ToolCallPreparation> _prepareToolCall(
       cancelToken,
     );
   } catch (error) {
-    return _ImmediateToolCall(_errorToolResult('$error'), true);
+    return _ImmediateToolCall(_errorToolResult(error), true);
   }
 }
 
@@ -1825,7 +1825,7 @@ Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
   } catch (error) {
     acceptingUpdates = false;
     await Future.wait(updateEvents);
-    return _ExecutedToolCallOutcome(_errorToolResult('$error'), true);
+    return _ExecutedToolCallOutcome(_errorToolResult(error), true);
   }
 }
 
@@ -1863,7 +1863,7 @@ Future<_FinalizedToolCall> _finalizeExecutedToolCall(
         isError = afterResult.isError ?? isError;
       }
     } catch (error) {
-      result = _errorToolResult('$error');
+      result = _errorToolResult(error);
       isError = true;
     }
   }
@@ -1876,8 +1876,46 @@ bool _shouldTerminateToolBatch(List<_FinalizedToolCall> finalizedCalls) {
       finalizedCalls.every((finalized) => finalized.result.terminate);
 }
 
-ToolExecutionResult _errorToolResult(String message) {
-  return ToolExecutionResult(content: [TextContent(text: message)]);
+/// Prefixes Dart core exceptions prepend in `toString()` — class noise, not
+/// information (issue #118: every failed bash surfaced as
+/// "Bad state: <output>"). Checked repeatedly, so wrapped errors
+/// ("Invalid argument(s): Bad state: …") strip recursively.
+const _coreErrorPrefixes = <String>[
+  'Bad state: ', // StateError
+  'Invalid argument(s): ', // ArgumentError
+  'FormatException: ', // FormatException
+  'Unsupported operation: ', // UnsupportedError
+  'UnimplementedError: ', // UnimplementedError
+  'Exception: ', // base Exception
+];
+
+/// Renders a caught error for a model-visible tool result: the bare message
+/// without the core-exception class prefixes. Errors with their own clean
+/// `toString()` pass through untouched.
+String _toolErrorText(Object error) {
+  var text = '$error';
+  var stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (final prefix in _coreErrorPrefixes) {
+      if (text.startsWith(prefix)) {
+        text = text.substring(prefix.length);
+        stripped = true;
+      }
+    }
+  }
+  return text;
+}
+
+/// Builds an error tool result. A [String] is taken as-is; anything else is
+/// a caught error routed through [_toolErrorText] — the single choke point
+/// every thrown tool error flows through.
+ToolExecutionResult _errorToolResult(Object message) {
+  return ToolExecutionResult(
+    content: [
+      TextContent(text: message is String ? message : _toolErrorText(message)),
+    ],
+  );
 }
 
 Future<void> _emitToolExecutionEnd(
