@@ -188,12 +188,27 @@ jobs:
             exit 1
           fi
 
+      # setup-dart (sdk >= 3.13) provisions a publish-scoped credential for
+      # the whole job: it exports PUB_TOKEN and registers
+      # `dart pub token add https://pub.dev --env-var PUB_TOKEN`, so EVERY
+      # pub.dev request — including `dart pub get` metadata reads — carries
+      # the publish token. pub.dev rejects it on metadata reads
+      # ("depends on ... which doesn't exist (authorization failed)",
+      # exit 69; tag v0.1.340, run 34503923233). Resolution must run
+      # unauthenticated: strip the credential, resolve, restore it only
+      # for the publish step.
+      - name: Strip publish credential for dependency resolution
+        if: steps.gate.outputs.publishable == 'true'
+        run: dart pub token remove https://pub.dev || true
+
       - run: dart pub get
         if: steps.gate.outputs.publishable == 'true'
 
       - name: Publish (automated publishing via OIDC)
         if: steps.gate.outputs.publishable == 'true'
-        run: dart pub publish --force
+        run: |
+          dart pub token add https://pub.dev --env-var PUB_TOKEN || true
+          dart pub publish --force
 
   binaries:
     name: Build native binaries
