@@ -48,6 +48,11 @@
   drawer filter hid the freshly archived row ("added a session, still
   see one"). The trio now broadcasts to all connected ports, and the
   drawer filter no longer drops archived rows by a possibly-stale id.
+- fix(app): clicking a session no longer teleports it to the top of the
+  sidebar. The pending-click jump-to-top reordered the list while the
+  row's stamps were still old, parking a "1:08 PM" row above an
+  "8:42 PM" row. The click now highlights the row in place; the list
+  reorders only when a session's real activity time changes.
 - fix(app): ONE session-selection source for every surface. The wide
   sidebar and the narrow drawer had divergent active-row logic
   (manager slot vs SW live id), so a switch lit two rows in the wide

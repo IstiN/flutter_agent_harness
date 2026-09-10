@@ -166,17 +166,11 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
             persisted: metadata,
           ),
     ]..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
-    if (widget.pendingSessionId != null) {
-      // The requested session jumps to the top right away — the poll that
-      // refreshes its real stamps lands a beat later.
-      final pendingIndex = entries.indexWhere(
-        (e) => e.id == widget.pendingSessionId,
-      );
-      if (pendingIndex > 0) {
-        final pending = entries.removeAt(pendingIndex);
-        entries.insert(0, pending);
-      }
-    }
+    // NO jump-to-top on pending clicks: reordering the list while the
+    // row's stamps are still old puts a "1:08 PM" row above an "8:42 PM"
+    // row — the list stops making sense. The click highlights the row IN
+    // PLACE (selection = selectedSessionId); the list only reorders when
+    // the session's real activity time actually changes.
     final grouped = _groupEntriesByFolder(
       entries,
       context.l10n.sessionFolderPersonal,

@@ -110,6 +110,8 @@ void main() {
     List<SessionMetadata> persisted = const [],
     Map<String, String> sessionInfoNames = const {},
     ValueChanged<SessionMetadata>? onOpenPersisted,
+    String? pendingSessionId,
+    String? selectedSessionId,
   }) {
     return MaterialApp(
       theme: buildFahTheme(),
@@ -122,6 +124,8 @@ void main() {
           persistedSessions: persisted,
           sessionInfoNames: sessionInfoNames,
           onOpenPersisted: onOpenPersisted,
+          pendingSessionId: pendingSessionId,
+          selectedSessionId: selectedSessionId,
         ),
       ),
     );
@@ -131,9 +135,7 @@ void main() {
     final meta = await persistSession(userText: 'hi');
     final session = await repo.open(meta);
     await session.appendSessionName('CLI title');
-    final names = await manager.readSessionNames([
-      await session.getMetadata(),
-    ]);
+    final names = await manager.readSessionNames([await session.getMetadata()]);
     expect(names, {meta.id: 'CLI title'});
   });
 
@@ -494,5 +496,80 @@ void main() {
     expect(await repo.list(), isEmpty);
     expect(manager.active, isNotNull);
     expect(manager.active!.id, isNot(meta.id));
+  });
+
+  /// Regression for the user-reported bug: clicking an OLDER session in the
+  /// sidebar must NOT teleport it to the top of the list (the old pending
+  /// jump-to-top parked a "1:08 PM" row above a fresher "8:42 PM" row). The
+  /// click moves only the selection highlight; the order is recency-sorted
+  /// and stays put.
+  testWidgets('clicking an older session highlights it in place, no reorder', (
+    tester,
+  ) async {
+    manager.addSession('live-1', _fakeService(env));
+    final older = await ageSession(await persistSession(userText: 'older'));
+    await tester.pumpWidget(
+      harness(
+        persisted: [older],
+        sessionInfoNames: {'live-1': 'Live chat', older.id: 'Older chat'},
+        selectedSessionId: 'live-1',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    double topOf(String title) => tester.getTopLeft(find.text(title)).dy;
+    // Recency order: the live (fresher) session first.
+    expect(topOf('Live chat'), lessThan(topOf('Older chat')));
+
+    FontWeight weightOf(String title) =>
+        tester.widget<Text>(find.text(title)).style!.fontWeight!;
+    expect(weightOf('Live chat'), FontWeight.w600); // selected in place
+    expect(weightOf('Older chat'), FontWeight.w400);
+
+    // The click is in flight (pending) and selection moved to the older
+    // session — exactly what the shell passes down mid-switch.
+    await tester.pumpWidget(
+      harness(
+        persisted: [older],
+        sessionInfoNames: {'live-1': 'Live chat', older.id: 'Older chat'},
+        pendingSessionId: older.id,
+        selectedSessionId: older.id,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // THE regression: the clicked row must keep its position — highlight
+    // moves to it IN PLACE, the fresher row stays on top.
+    expect(topOf('Live chat'), lessThan(topOf('Older chat')));
+    expect(weightOf('Older chat'), FontWeight.w600); // now selected
+    expect(weightOf('Live chat'), FontWeight.w400); // deselected
+
+    // And after the pending settles (broadcast landed): still in place.
+    await tester.pumpWidget(
+      harness(
+        persisted: [older],
+        sessionInfoNames: {'live-1': 'Live chat', older.id: 'Older chat'},
+        selectedSessionId: older.id,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(topOf('Live chat'), lessThan(topOf('Older chat')));
+    expect(weightOf('Older chat'), FontWeight.w600);
+
+    // The tap routes to onOpenPersisted with the clicked session.
+    var opened;
+    await tester.pumpWidget(
+      harness(
+        persisted: [older],
+        sessionInfoNames: {'live-1': 'Live chat', older.id: 'Older chat'},
+        selectedSessionId: older.id,
+        onOpenPersisted: (m) => opened = m,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Older chat'));
+    await tester.pumpAndSettle();
+    expect(opened, isNotNull);
+    expect(opened.id, older.id);
   });
 }
