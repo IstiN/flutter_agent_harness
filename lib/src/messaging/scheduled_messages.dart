@@ -222,6 +222,29 @@ final class ScheduledMessageQueue {
   /// Delivers every due record. Returns how many were delivered.
   Future<int> deliverDue() => _deliverDue();
 
+  /// The pending records this instance can still deliver: how many, and
+  /// the earliest due time (epoch ms; null: none). Same deliverability
+  /// rule as the timer — foreign-owned self-addressed records are not
+  /// ours to fire, so they are not ours to show either. Powers the CLI's
+  /// scheduled-follow-ups indicator (issue #115).
+  Future<({int count, int? nextDueMs})> pendingSummary() async {
+    final dir = await _pendingDir();
+    final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
+    var count = 0;
+    int? nearest;
+    for (final entry in entries) {
+      if (!entry.path.endsWith('.json')) continue;
+      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
+      final record = await _readRecord(path);
+      // Corrupt records arm no timer and light no indicator.
+      if (record == null || _deliveryTarget(record) == null) continue;
+      count++;
+      final due = record['dueMs'] as int?;
+      if (due != null && (nearest == null || due < nearest)) nearest = due;
+    }
+    return (count: count, nextDueMs: nearest);
+  }
+
   /// In-flight delivery guard: a timer tick landing while [deliverDue] is
   /// still running must not send the same record twice (the file inbox has
   /// no id dedup). The skipped tick is re-armed right after.
@@ -319,6 +342,9 @@ final class ScheduledMessageQueue {
     _armAsync();
   }
 
+  /// Scans the pending records for the earliest due time (null: none).
+  Future<int?> _nearestDueMs() async => (await pendingSummary()).nextDueMs;
+
   Future<void> _armAsync() async {
     if (_disposed) return;
     final nearest = await _nearestDueMs();
@@ -329,26 +355,5 @@ final class ScheduledMessageQueue {
       await _deliverDue();
       _arm();
     });
-  }
-
-  /// Scans the pending records for the earliest due time (null: none).
-  Future<int?> _nearestDueMs() async {
-    final dir = await _pendingDir();
-    final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
-    int? nearest;
-    for (final entry in entries) {
-      if (!entry.path.endsWith('.json')) continue;
-      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
-      final record = await _readRecord(path);
-      // Foreign self-addressed records arm no timer here: this instance can
-      // never deliver them (_deliveryTarget returns null), and arming would
-      // hot-loop a zero-delay timer until the owner sweeps the record.
-      if (record == null || _deliveryTarget(record) == null) continue;
-      final due = record['dueMs'] as int?;
-      if (due != null && (nearest == null || due < nearest)) {
-        nearest = due;
-      }
-    }
-    return nearest;
   }
 }
