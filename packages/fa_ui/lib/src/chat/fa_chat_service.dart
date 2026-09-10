@@ -113,6 +113,12 @@ abstract interface class FaChatService implements FaApprovalModeController {
   RequestSecretCallback? get secretRequestHandler;
   set secretRequestHandler(RequestSecretCallback? handler);
 
+  /// Jump-to-message executor: scrolls the transcript so the message with
+  /// [messageId] is in view. The chat screen installs the handler; null
+  /// outside a scrolling chat surface (tests, embedded previews).
+  void Function(String messageId)? get scrollToMessageHandler;
+  set scrollToMessageHandler(void Function(String messageId)? handler);
+
   /// The approval manager (mode selector in the composer menu).
   @override
   ApprovalManager get approval;

@@ -191,6 +191,16 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   List<Message> _lastSynced = [];
 
+  /// Transcript row keys by message id (`msg-<index>`): jump-to-message
+  /// targets (see [_scrollToMessage]); pruned on every sync.
+  final Map<String, GlobalKey> _itemKeys = {};
+
+  /// Wraps a transcript row in its jump anchor.
+  Widget _keyed(String id, Widget child) =>
+      KeyedSubtree(key: _keyFor(id), child: child);
+
+  GlobalKey _keyFor(String id) => _itemKeys.putIfAbsent(id, GlobalKey.new);
+
   /// True while the FIRST history sync is in flight: history inserts are
   /// rendered with a zero animation duration (a cascade of insert
   /// animations on a long transcript looks like glitchy bottom-up
@@ -359,8 +369,37 @@ class _FaChatScreenState extends State<FaChatScreen>
     });
   }
 
+  /// Brings the transcript row [messageId] into view (jump-to-message).
+  /// Exact via the row's key when it is built; otherwise the reversed
+  /// list is positioned by index fraction first — the jump lands within
+  /// the sliver's build extent, the row mounts, and the next pass is
+  /// exact. A few passes, then give up quietly (unknown id, no clients).
+  Future<void> _scrollToMessage(String messageId) async {
+    for (var pass = 0; pass < 4; pass++) {
+      final target = _itemKeys[messageId]?.currentContext;
+      if (target != null && target.mounted) {
+        await Scrollable.ensureVisible(
+          target,
+          duration: const Duration(milliseconds: 250),
+          alignment: 0.35,
+        );
+        return;
+      }
+      if (!_chatScrollController.hasClients) return;
+      final index = int.tryParse(messageId.replaceFirst('msg-', ''));
+      final total = _lastSynced.length;
+      if (index == null || index < 0 || index >= total || total < 2) return;
+      final fraction = (total - 1 - index) / (total - 1);
+      _chatScrollController.jumpTo(
+        fraction * _chatScrollController.position.maxScrollExtent,
+      );
+      await WidgetsBinding.instance.endOfFrame;
+    }
+  }
+
   void _subscribeToService(FaChatService service) {
     service.addListener(_onServiceChanged);
+    service.scrollToMessageHandler = _scrollToMessage;
     // This screen renders approval prompts as Material dialogs; clearing the
     // handler on dispose restores the deny-by-default for headless runs.
     if (widget.features.approvals) {
@@ -381,6 +420,9 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   void _unsubscribeFromService(FaChatService service) {
     service.removeListener(_onServiceChanged);
+    if (service.scrollToMessageHandler == _scrollToMessage) {
+      service.scrollToMessageHandler = null;
+    }
     if (service.approvalPromptHandler == _handleApprovalPrompt) {
       service.approvalPromptHandler = null;
     }
@@ -504,6 +546,9 @@ class _FaChatScreenState extends State<FaChatScreen>
       }
 
       _lastSynced = newList;
+      // Drop jump anchors for ids the sync removed (edits rebuild ids).
+      final liveIds = {for (final message in newList) message.id};
+      _itemKeys.removeWhere((id, _) => !liveIds.contains(id));
       // The first completed sync was the history load — live inserts from
       // here on animate normally.
       _suppressInsertAnimations = false;
@@ -628,17 +673,20 @@ class _FaChatScreenState extends State<FaChatScreen>
     required bool isSentByMe,
     MessageGroupStatus? groupStatus,
   }) {
-    return ChatMessageTile(
-      message: FaChatMessage(
-        role: isSentByMe ? 'user' : 'assistant',
-        content: message.text,
+    return _keyed(
+      message.id,
+      ChatMessageTile(
+        message: FaChatMessage(
+          role: isSentByMe ? 'user' : 'assistant',
+          content: message.text,
+        ),
+        images: _images,
+        avatarBuilder: widget.avatarBuilder,
+        onPermissionAction: widget.onPermissionAction,
+        onAuthRecovery: widget.onAuthRecovery,
+        audioControllerFactory: widget.audioControllerFactory,
+        videoControllerFactory: widget.videoControllerFactory,
       ),
-      images: _images,
-      avatarBuilder: widget.avatarBuilder,
-      onPermissionAction: widget.onPermissionAction,
-      onAuthRecovery: widget.onAuthRecovery,
-      audioControllerFactory: widget.audioControllerFactory,
-      videoControllerFactory: widget.videoControllerFactory,
     );
   }
 
@@ -662,33 +710,36 @@ class _FaChatScreenState extends State<FaChatScreen>
           )
         : Image.file(File(source), cacheWidth: 600);
     image = ClipRRect(borderRadius: BorderRadius.circular(10), child: image);
-    return Align(
-      alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
-        constraints: const BoxConstraints(maxWidth: 280),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            GestureDetector(
-              onTap: () => _showFullImage(context, source),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  border: Border.all(color: FahColors.of(context).border),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: image,
-              ),
-            ),
-            if (message.text?.isNotEmpty ?? false)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  message.text!,
-                  style: Theme.of(context).textTheme.bodyMedium,
+    return _keyed(
+      message.id,
+      Align(
+        alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+          constraints: const BoxConstraints(maxWidth: 280),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onTap: () => _showFullImage(context, source),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: FahColors.of(context).border),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: image,
                 ),
               ),
-          ],
+              if (message.text?.isNotEmpty ?? false)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    message.text!,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -716,20 +767,23 @@ class _FaChatScreenState extends State<FaChatScreen>
     MessageGroupStatus? groupStatus,
   }) {
     final metadata = message.metadata ?? const {};
-    return ChatMessageTile(
-      message: FaChatMessage(
-        role: (metadata['role'] as String?) ?? 'system',
-        content: (metadata['content'] as String?) ?? '',
-        toolName: metadata['toolName'] as String?,
-        isError: (metadata['isError'] as bool?) ?? false,
-        data: metadata['data'],
+    return _keyed(
+      message.id,
+      ChatMessageTile(
+        message: FaChatMessage(
+          role: (metadata['role'] as String?) ?? 'system',
+          content: (metadata['content'] as String?) ?? '',
+          toolName: metadata['toolName'] as String?,
+          isError: (metadata['isError'] as bool?) ?? false,
+          data: metadata['data'],
+        ),
+        images: _images,
+        avatarBuilder: widget.avatarBuilder,
+        onPermissionAction: widget.onPermissionAction,
+        onAuthRecovery: widget.onAuthRecovery,
+        audioControllerFactory: widget.audioControllerFactory,
+        videoControllerFactory: widget.videoControllerFactory,
       ),
-      images: _images,
-      avatarBuilder: widget.avatarBuilder,
-      onPermissionAction: widget.onPermissionAction,
-      onAuthRecovery: widget.onAuthRecovery,
-      audioControllerFactory: widget.audioControllerFactory,
-      videoControllerFactory: widget.videoControllerFactory,
     );
   }
 
@@ -809,11 +863,19 @@ class _FaChatScreenState extends State<FaChatScreen>
     final fileBrowserBuilder = widget.features.fileBrowser
         ? _fileBrowserBuilder
         : null;
+    final dynamicMessagesButton = FaChatHost.dynamicMessagesButtonBuilder?.call(
+      context,
+      widget.service,
+    );
     return Scaffold(
       appBar: widget.showAppBar
           ? AppBar(
               title: Text(widget.title),
               actions: [
+                // The host's dynamic-messages affordance (issue #102: the
+                // ✦ button). Consulted when the bar builds, so the host
+                // widget decides its own visibility; null = no button.
+                ?dynamicMessagesButton,
                 if (_isStreaming)
                   IconButton(
                     icon: const Icon(Icons.stop),

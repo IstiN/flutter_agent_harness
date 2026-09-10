@@ -103,4 +103,12 @@ abstract final class FaChatHost {
   /// stock system tile instead.
   static Widget? Function(BuildContext context, FaChatMessage message)?
   dynamicWidgetTileBuilder;
+
+  /// Builds the top-bar affordance for the session's dynamic messages (the
+  /// ✦ button opening the host's list sheet); null/unset or a null return
+  /// hides the button. Consulted when the app bar builds, so the host
+  /// widget decides its own visibility (e.g. hidden while the session has
+  /// no dynamic messages).
+  static Widget? Function(BuildContext context, FaChatService service)?
+  dynamicMessagesButtonBuilder;
 }

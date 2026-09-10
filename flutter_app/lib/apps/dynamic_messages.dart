@@ -8,10 +8,12 @@ import 'dart:convert';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/asr_service.dart' show AsrTranscriber;
 import 'package:fa/services/media_tools.dart' show MediaGateway;
 import 'package:fa/services/video_tool.dart' show VideoReader;
 import 'package:fa_ui/fa_ui.dart' show FaChatMessage;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show GlobalKey;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Host side of interactive dynamic messages (issue #102): the session-
@@ -35,6 +37,8 @@ class DynamicMessagesService extends ChangeNotifier {
     required MediaGateway? Function() mediaGatewayOf,
     required VideoReader? Function() videoReaderOf,
     required Map<String, String> Function() hostSecretsOf,
+    required FaLlmHandler? Function() llmHandlerOf,
+    required Future<AsrTranscriber?> Function() asrTranscriberOf,
     RequestSecretCallback? resolveHostSecretDefault,
   }) : _sendText = sendText,
        _sessionIdOf = sessionIdOf,
@@ -42,6 +46,8 @@ class DynamicMessagesService extends ChangeNotifier {
        _mediaGatewayOf = mediaGatewayOf,
        _videoReaderOf = videoReaderOf,
        _hostSecretsOf = hostSecretsOf,
+       _llmHandlerOf = llmHandlerOf,
+       _asrTranscriberOf = asrTranscriberOf,
        _resolveHostSecretDefault = resolveHostSecretDefault;
 
   final ExecutionEnv env;
@@ -51,14 +57,25 @@ class DynamicMessagesService extends ChangeNotifier {
 
   /// Suppliers resolved per engine boot: the session service owns the
   /// instances and they appear after this construction, so closures beat
-  /// captured values.
+  /// captured values. The llm/asr suppliers keep the `jsr.fa.llm*` /
+  /// `jsr.fa.asr.*` bridges at full installed-app parity (issue #102 AC6).
   final MediaGateway? Function() _mediaGatewayOf;
   final VideoReader? Function() _videoReaderOf;
   final Map<String, String> Function() _hostSecretsOf;
+  final FaLlmHandler? Function() _llmHandlerOf;
+  final Future<AsrTranscriber?> Function() _asrTranscriberOf;
 
   /// Fallback secret requester when a tile supplies none (no build
   /// context outside the transcript): the session's own flow.
   final RequestSecretCallback? _resolveHostSecretDefault;
+
+  /// Last engine-boot failure per widget id — the AC9 error tile renders
+  /// it; cleared on a successful boot and on session teardown.
+  final Map<String, String> _bootErrors = {};
+
+  /// Root keys of the transcript tiles, by widget id — the ✦ sheet's
+  /// jump-to-message targets them (Scrollable.ensureVisible).
+  final Map<String, GlobalKey> _tileKeys = {};
 
   /// Widget definitions of the current session, in presentation order.
   final List<DynamicMessageDefinition> widgets = [];
@@ -102,6 +119,28 @@ class DynamicMessagesService extends ChangeNotifier {
       if (widget.id == id) return widget;
     }
     return null;
+  }
+
+  /// The last boot failure message of a widget; null when it boots (or
+  /// never tried). The transcript tile renders it in the AC9 error tile.
+  String? bootErrorFor(String id) => _bootErrors[id];
+
+  /// The jump-to-message anchor of a widget's transcript tile (the ✦
+  /// sheet scrolls it into view). Keys are stable per widget id.
+  GlobalKey tileKeyOf(String id) => _tileKeys.putIfAbsent(id, GlobalKey.new);
+
+  /// Test/golden seam: injects a definition and, optionally, a fake
+  /// engine or a boot error — no JS runtime, no session file needed.
+  /// Production code never calls this.
+  @visibleForTesting
+  void debugAdd(
+    DynamicMessageDefinition definition, {
+    JsAppEngine? engine,
+    String? bootError,
+  }) {
+    widgets.add(definition);
+    if (engine != null) _engines[definition.id] = engine;
+    if (bootError != null) _bootErrors[definition.id] = bootError;
   }
 
   JsAppEngine? engineFor(String id) => _engines[id];
@@ -185,8 +224,7 @@ class DynamicMessagesService extends ChangeNotifier {
         initialState: request.initialState,
         heightHint: request.heightHint,
         createdAt:
-            DateTime.tryParse('${map['createdAt'] ?? ''}') ??
-            DateTime.now(),
+            DateTime.tryParse('${map['createdAt'] ?? ''}') ?? DateTime.now(),
         eventCount: (map['eventCount'] as num?)?.toInt() ?? 0,
       );
       widgets.add(definition);
@@ -214,12 +252,17 @@ class DynamicMessagesService extends ChangeNotifier {
     if (_booting.contains(definition.id)) return null;
     _booting.add(definition.id);
     _bootFailed.remove(definition.id);
+    _bootErrors.remove(definition.id);
     try {
       final store = await AppPermissionsStore.load(env);
       final engine = JsAppEngine(
         app: _appInfo(definition),
         env: env,
         permissions: store.forApp(_appInfo(definition)).effective(),
+        // Full installed-app surface (issue #102 AC6): the same llm/asr
+        // backends a JsAppView boots with, sourced from the session.
+        llmHandler: _llmHandlerOf(),
+        asrTranscriber: await _asrTranscriberOf(),
         mediaGateway: _mediaGatewayOf(),
         videoReader: _videoReaderOf(),
         keysSource: _hostSecretsOf,
@@ -233,8 +276,12 @@ class DynamicMessagesService extends ChangeNotifier {
       notifyListeners();
       return engine;
     } on Object catch (error) {
-      AppLog.i('apps', 'dynamic widget start failed: ${definition.id} — $error');
+      AppLog.i(
+        'apps',
+        'dynamic widget start failed: ${definition.id} — $error',
+      );
       _bootFailed.add(definition.id);
+      _bootErrors[definition.id] = '$error';
       return null;
     } finally {
       _booting.remove(definition.id);
@@ -275,10 +322,9 @@ class DynamicMessagesService extends ChangeNotifier {
     }
     definition.eventCount++;
     unawaited(
-      _sendText('[widget ${definition.title}] $event $json').then(
-        (_) => notifyListeners(),
-        onError: (Object _) {},
-      ),
+      _sendText(
+        '[widget ${definition.title}] $event $json',
+      ).then((_) => notifyListeners(), onError: (Object _) {}),
     );
   }
 
@@ -420,7 +466,10 @@ class DynamicMessagesService extends ChangeNotifier {
   Future<void> forgetAll() async {
     _pendingMarkers.clear();
     _presentedThisRun.clear();
-    if (widgets.isEmpty && _engines.isEmpty) {
+    _tileKeys.clear();
+    final hadState =
+        widgets.isNotEmpty || _engines.isNotEmpty || _bootErrors.isNotEmpty;
+    if (!hadState) {
       _bootFailed.clear();
       return;
     }
@@ -428,6 +477,7 @@ class DynamicMessagesService extends ChangeNotifier {
     final engines = List.of(_engines.values);
     _engines.clear();
     _bootFailed.clear();
+    _bootErrors.clear();
     for (final engine in engines) {
       await engine.dispose();
     }
