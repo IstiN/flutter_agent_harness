@@ -115,13 +115,17 @@ jobs:
         with:
           sdk: stable
       - run: dart pub get
-      - name: dart test --tags integration (skipped without keys)
+      # --exclude-tags browser-ext: the extension suite owns its own
+      # dedicated workflow (browser-ext.yml) which builds sw/agent.js and
+      # supplies Chrome for Testing — this job has neither, so running the
+      # suite here always failed (every tag since the suite landed).
+      - name: dart test --tags integration, excluding browser-ext (skipped without keys)
         run: |
           if [ -z "${OPENROUTER_API_KEY}${ANTHROPIC_API_KEY}${GOOGLE_API_KEY}${OLLAMA_API_KEY}" ]; then
             echo "No LLM API keys configured, skipping integration tests."
             exit 0
           fi
-          dart test --tags integration
+          dart test --tags integration --exclude-tags browser-ext
 
   js-ext-integration:
     name: JS engine integration (quickjs-ng)

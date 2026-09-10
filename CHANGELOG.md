@@ -3104,6 +3104,10 @@
 
 - feat(115): visualize pending scheduled follow-ups in the CLI TUI (#117)
 
+## 0.1.340
+
+- fix(107): un-red the tag pipeline — publish validation + LLM integration job (#108)
+
 ## Unreleased
 
 ## Unreleased
