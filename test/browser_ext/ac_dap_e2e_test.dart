@@ -13,7 +13,7 @@
 // Requires a REAL Chrome and a prior scripts/build_browser_ext.sh run. No
 // Chrome → loud ChromeLaunchException; `integration` tag keeps this out of
 // default runs.
-@Tags(['integration'])
+@Tags(['integration', 'browser-ext'])
 @TestOn('vm')
 @Timeout(Duration(minutes: 5))
 library;

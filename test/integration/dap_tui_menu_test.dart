@@ -79,8 +79,9 @@ void main() {
         expect(harness.screenText, contains(fragment));
       }
 
-      // "What is DAP?" is the 4th item: three arrows down + Enter.
-      for (var i = 0; i < 3; i++) {
+      // "What is DAP?" is the 5th item (start, status, connect, secret,
+      // about): four arrows down + Enter.
+      for (var i = 0; i < 4; i++) {
         harness.sendArrowDown();
         await Future<void>.delayed(const Duration(milliseconds: 150));
       }
@@ -130,7 +131,10 @@ void main() {
           'Connection status',
           timeout: const Duration(seconds: 20),
         );
-        // First item is selected by default.
+        // 'status' is the 2nd item (start came first in the #90 menu):
+        // one arrow down + Enter.
+        harness.sendArrowDown();
+        await Future<void>.delayed(const Duration(milliseconds: 150));
         harness.sendEnter();
         await harness.waitForText(
           'DAP disabled — no master secret',
@@ -165,11 +169,12 @@ void main() {
         'Set master secret',
         timeout: const Duration(seconds: 20),
       );
-      // Third item: two arrows down + Enter.
-      harness.sendArrowDown();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      harness.sendArrowDown();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      // 'secret' is the 4th item (start came first in the #90 menu):
+      // three arrows down + Enter.
+      for (var i = 0; i < 3; i++) {
+        harness.sendArrowDown();
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
       harness.sendEnter();
       await harness.waitForText(
         'DAP master secret',
@@ -223,9 +228,12 @@ void main() {
         'Connect to a hub',
         timeout: const Duration(seconds: 20),
       );
-      // Second item: one arrow down + Enter.
-      harness.sendArrowDown();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
+      // 'connect' is the 3rd item (start came first in the #90 menu):
+      // two arrows down + Enter.
+      for (var i = 0; i < 2; i++) {
+        harness.sendArrowDown();
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
       harness.sendEnter();
       await harness.waitForText(
         'hub host',

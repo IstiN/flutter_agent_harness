@@ -2,6 +2,11 @@ tags:
   integration:
     # Integration tests spawn real processes / network and are excluded from the
     # pre-commit gate. Run them manually with: dart test --tags integration
+  browser-ext:
+    # Headless-Chrome extension suite (test/browser_ext/). CI runs it only
+    # through the dedicated browser-ext.yml workflow (builds sw/agent.js and
+    # supplies Chrome for Testing); ci.yml's tag job excludes it:
+    # dart test --tags integration --exclude-tags browser-ext
   io:
     # IO tests use dart:io primitives (local sockets, processes) and are
     # excluded from the default pre-commit gate. Run them with:
