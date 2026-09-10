@@ -1111,6 +1111,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsDapEditConnection => 'Изменить подключение';
 
   @override
+  String get settingsDapMakeActive => 'Сделать активным';
+
+  @override
+  String get settingsDapActiveChip => 'Активно';
+
+  @override
   String get settingsDapSavedTitle => 'Сохранённые подключения';
 
   @override

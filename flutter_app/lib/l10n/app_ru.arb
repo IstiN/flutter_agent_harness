@@ -360,6 +360,8 @@
   "settingsDapChannelsEmpty": "Каналов пока нет — они появятся здесь, когда агент присоединится к каналу (dap_invite / dap_connect).",
   "settingsDapChannelsTitle": "Каналы",
   "settingsDapEditConnection": "Изменить подключение",
+  "settingsDapMakeActive": "Сделать активным",
+  "settingsDapActiveChip": "Активно",
   "settingsDapSavedTitle": "Сохранённые подключения",
   "settingsDapSavedHint": "Закладки хабов. Нажмите, чтобы переключить агента на этот хаб — переключение происходит сразу.",
   "settingsDapRemoveSaved": "Удалить",

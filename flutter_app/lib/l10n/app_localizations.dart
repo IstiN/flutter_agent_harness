@@ -1988,6 +1988,18 @@ abstract class AppLocalizations {
   /// **'Edit connection'**
   String get settingsDapEditConnection;
 
+  /// No description provided for @settingsDapMakeActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Make active'**
+  String get settingsDapMakeActive;
+
+  /// No description provided for @settingsDapActiveChip.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get settingsDapActiveChip;
+
   /// No description provided for @settingsDapSavedTitle.
   ///
   /// In en, this message translates to:

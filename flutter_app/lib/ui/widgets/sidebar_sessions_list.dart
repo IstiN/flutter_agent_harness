@@ -32,7 +32,15 @@ class SidebarSessionsList extends StatefulWidget {
     this.onOpenPersisted,
     this.collapsed = false,
     this.hubBoundSessionId,
+    this.pendingSessionId,
   });
+
+  /// The session the user just asked to open (a `session_open` dispatch is
+  /// in flight): its row highlights AND sorts to the top immediately —
+  /// otherwise the live dot appears to never move (the live session is
+  /// always the freshest row, so the dot sat pinned to the first row until
+  /// the SW poll refreshed the stamps seconds later).
+  final String? pendingSessionId;
 
   final FlutterSessionManager manager;
   final SessionNamesStore? sessionNamesStore;
@@ -153,6 +161,17 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
             persisted: metadata,
           ),
     ]..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+    if (widget.pendingSessionId != null) {
+      // The requested session jumps to the top right away — the poll that
+      // refreshes its real stamps lands a beat later.
+      final pendingIndex = entries.indexWhere(
+        (e) => e.id == widget.pendingSessionId,
+      );
+      if (pendingIndex > 0) {
+        final pending = entries.removeAt(pendingIndex);
+        entries.insert(0, pending);
+      }
+    }
     final grouped = _groupEntriesByFolder(
       entries,
       context.l10n.sessionFolderPersonal,
@@ -200,7 +219,9 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                           // The folder basename IS the group header — a
                           // per-tile cwd label would duplicate it.
                           cwd: null,
-                          isActive: widget.manager.active?.id == entry.id,
+                          isActive:
+                              widget.manager.active?.id == entry.id ||
+                              entry.id == widget.pendingSessionId,
                           hubBound:
                               widget.hubBoundSessionId != null &&
                               widget.hubBoundSessionId == entry.id,

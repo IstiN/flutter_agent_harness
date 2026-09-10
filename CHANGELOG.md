@@ -48,6 +48,17 @@
   drawer filter hid the freshly archived row ("added a session, still
   see one"). The trio now broadcasts to all connected ports, and the
   drawer filter no longer drops archived rows by a possibly-stale id.
+- fix(app): the wide sidebar's active dot follows session switches. The
+  live session is always the freshest row, so the dot sat pinned to the
+  first row and a switch had no immediate feedback. The clicked session
+  now highlights and jumps to the top instantly (pendingSessionId),
+  clearing when the manager's slot catches the attach broadcast.
+- feat(app): the Agent network page is now connections-first: a list
+  (active connection on top, always present even when never bookmarked)
+  + Add connection; tapping a row opens that connection's details in the
+  SAME page — the active one shows url/status/identity/incoming
+  routing/channels/edit, a bookmark shows its coordinates with Make
+  active and Remove (the switch stays live).
 - feat(app/extension): multiple hub connections in Agent network. The
   extension keeps a bookmark list (faDap.savedConnections): Add
   connection saves a new hub and goes live on it, tapping a bookmark

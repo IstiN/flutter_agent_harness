@@ -1101,6 +1101,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDapEditConnection => 'Edit connection';
 
   @override
+  String get settingsDapMakeActive => 'Make active';
+
+  @override
+  String get settingsDapActiveChip => 'Active';
+
+  @override
   String get settingsDapSavedTitle => 'Saved connections';
 
   @override

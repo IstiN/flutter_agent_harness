@@ -94,6 +94,12 @@ class _DapHubPageState extends State<DapHubPage> {
   List<DapSavedConnection>? _saved;
   var _switchingConnection = false;
 
+  /// The connection whose detail view is open (null = the list view).
+  /// The list and the details are the SAME page — tapping a row flips it
+  /// to that connection's details (url, identity, incoming routing),
+  /// back returns to the list.
+  DapSavedConnection? _selected;
+
   @override
   void initState() {
     super.initState();
@@ -314,65 +320,238 @@ class _DapHubPageState extends State<DapHubPage> {
   @override
   Widget build(BuildContext context) {
     final snapshot = _snapshot;
+    final selected = _selected;
+    final detailTitle = selected == null
+        ? context.l10n.settingsDapHubTitle
+        : (selected.name.isEmpty ? selected.url : selected.name);
     return Scaffold(
-      appBar: faAppBar(title: Text(context.l10n.settingsDapHubTitle)),
+      appBar: faAppBar(
+        title: Text(detailTitle),
+        leading: selected == null
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => setState(() => _selected = null),
+              ),
+      ),
       body: snapshot == null
           ? _error != null
                 ? _messageBody(context, _error!)
                 : const Center(child: CircularProgressIndicator())
           : snapshot.supported
-          ? _connectionBody(context, snapshot)
+          ? selected == null
+                ? _listBody(context, snapshot)
+                : _detailBody(context, snapshot, selected)
           : _unsupportedBody(context),
     );
   }
 
-  /// One bookmarked connection row: radio = active, tap = switch, menu =
-  /// remove. The active row's radio is checked and its menu has no switch.
-  Widget _savedRow(
+  /// The connections list: the active connection first (always present —
+  /// synthesized from the snapshot when never bookmarked), then the
+  /// bookmarks. Tapping a row opens its details; Add appends a new hub.
+  Widget _listBody(BuildContext context, DapHubSnapshot snapshot) {
+    final theme = Theme.of(context);
+    final colors = FahColors.of(context);
+    final rows = _rowsFor(snapshot);
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              context.l10n.settingsDapHubIntro,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              context.l10n.settingsDapSavedTitle,
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.l10n.settingsDapSavedHint,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+            ),
+            const SizedBox(height: 8),
+            for (final row in rows)
+              _connectionRow(context, snapshot, row.connection, row.active),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _addConnection,
+                icon: const Icon(Icons.add, size: 18),
+                label: Text(context.l10n.settingsDapAddConnection),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The detail view: the active connection gets the full body (url,
+  /// status, identity, incoming routing, channels, edit); a bookmark gets
+  /// its coordinates plus Make active / Remove.
+  Widget _detailBody(
+    BuildContext context,
+    DapHubSnapshot snapshot,
+    DapSavedConnection selected,
+  ) {
+    if (selected.url == snapshot.url) return _connectionBody(context, snapshot);
+    return _bookmarkDetailBody(context, snapshot, selected);
+  }
+
+  /// Rows for the list: the active connection first (synthesized when it
+  /// has no bookmark yet), then the bookmarked ones.
+  List<({DapSavedConnection connection, bool active})> _rowsFor(
+    DapHubSnapshot snapshot,
+  ) {
+    final saved = _saved ?? const <DapSavedConnection>[];
+    final rows = <({DapSavedConnection connection, bool active})>[];
+    var activeListed = false;
+    for (final entry in saved) {
+      final active = entry.url == snapshot.url;
+      activeListed |= active;
+      rows.add((connection: entry, active: active));
+    }
+    if (!activeListed) {
+      rows.insert(0, (
+        connection: DapSavedConnection(
+          url: snapshot.url,
+          name: snapshot.name ?? '',
+        ),
+        active: true,
+      ));
+    }
+    return rows;
+  }
+
+  /// One connection row: the active marker (teal dot + Active chip), name
+  /// and url. Tapping opens the detail view — switching lives there.
+  Widget _connectionRow(
+    BuildContext context,
+    DapHubSnapshot snapshot,
+    DapSavedConnection entry,
+    bool active,
+  ) {
+    final theme = Theme.of(context);
+    final colors = FahColors.of(context);
+    final selected = _selected?.url == entry.url;
+    return ListTile(
+      key: ValueKey('dapConn-${entry.url}'),
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      leading: Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: active ? colors.teal : colors.dim.withValues(alpha: 0.4),
+        ),
+      ),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              entry.name.isEmpty ? entry.url : entry.name,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: active ? FontWeight.w600 : null,
+              ),
+            ),
+          ),
+          if (active)
+            Text(
+              context.l10n.settingsDapActiveChip,
+              style: theme.textTheme.labelSmall?.copyWith(color: colors.teal),
+            ),
+        ],
+      ),
+      subtitle: Text(
+        entry.url,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: colors.dim,
+          fontFamily: 'JetBrainsMono',
+        ),
+      ),
+      trailing: Icon(
+        Icons.chevron_right,
+        color: selected ? colors.teal : colors.dim,
+      ),
+      onTap: () => setState(() => _selected = entry),
+    );
+  }
+
+  /// A non-active bookmark's details: its coordinates, the shared agent
+  /// identity, and the live switch.
+  Widget _bookmarkDetailBody(
     BuildContext context,
     DapHubSnapshot snapshot,
     DapSavedConnection entry,
   ) {
     final theme = Theme.of(context);
     final colors = FahColors.of(context);
-    final active = entry.url == snapshot.url;
-    return ListTile(
-      key: ValueKey('dapSaved-${entry.url}'),
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      leading: Radio<bool>(
-        value: true,
-        groupValue: active ? true : null,
-        onChanged: active || _switchingConnection
-            ? null
-            : (_) => unawaited(_switchTo(entry)),
-      ),
-      title: Text(
-        entry.name.isEmpty ? entry.url : entry.name,
-        style: theme.textTheme.bodyMedium,
-      ),
-      subtitle: entry.name.isEmpty
-          ? null
-          : Text(
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _labeledRow(
+              context,
+              context.l10n.settingsDapUrlLabel,
               entry.url,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.dim,
-                fontFamily: 'JetBrainsMono',
+              mono: true,
+            ),
+            _labeledRow(
+              context,
+              context.l10n.settingsDapAgentNameLabel,
+              entry.name.isEmpty ? '—' : entry.name,
+            ),
+            _labeledRow(
+              context,
+              context.l10n.settingsDapAgentIdLabel,
+              snapshot.agentId ?? '—',
+              mono: true,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              context.l10n.settingsDapIdentityHint,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: _switchingConnection
+                  ? null
+                  : () async {
+                      await _switchTo(entry);
+                      if (mounted) setState(() => _selected = entry);
+                    },
+              icon: _switchingConnection
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.swap_horiz, size: 18),
+              label: Text(context.l10n.settingsDapMakeActive),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _switchingConnection
+                  ? null
+                  : () async {
+                      await _removeSaved(entry);
+                      if (mounted) setState(() => _selected = null);
+                    },
+              icon: const Icon(Icons.bookmark_remove_outlined, size: 18),
+              label: Text(context.l10n.settingsDapRemoveSaved),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: theme.colorScheme.error,
               ),
             ),
-      onTap: active || _switchingConnection
-          ? null
-          : () => unawaited(_switchTo(entry)),
-      trailing: PopupMenuButton<String>(
-        onSelected: (value) {
-          if (value == 'remove') unawaited(_removeSaved(entry));
-        },
-        itemBuilder: (menuContext) => [
-          PopupMenuItem(
-            value: 'remove',
-            child: Text(context.l10n.settingsDapRemoveSaved),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -386,11 +565,6 @@ class _DapHubPageState extends State<DapHubPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              context.l10n.settingsDapHubIntro,
-              style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
-            ),
-            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
@@ -430,30 +604,6 @@ class _DapHubPageState extends State<DapHubPage> {
                 label: Text(context.l10n.settingsDapProbeButton),
               ),
             ),
-            if (_saved != null && snapshot.supported) ...[
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 16),
-              Text(
-                context.l10n.settingsDapSavedTitle,
-                style: theme.textTheme.titleSmall,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                context.l10n.settingsDapSavedHint,
-                style: theme.textTheme.bodySmall?.copyWith(color: colors.dim),
-              ),
-              const SizedBox(height: 8),
-              for (final entry in _saved!) _savedRow(context, snapshot, entry),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: _addConnection,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: Text(context.l10n.settingsDapAddConnection),
-                ),
-              ),
-            ],
             if (snapshot.envLocked) ...[
               const SizedBox(height: 12),
               Row(

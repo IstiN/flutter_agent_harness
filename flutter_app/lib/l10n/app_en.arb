@@ -363,6 +363,8 @@
   "settingsDapChannelsEmpty": "No channels yet — channels appear here once the agent joins one (dap_invite / dap_connect).",
   "settingsDapChannelsTitle": "Channels",
   "settingsDapEditConnection": "Edit connection",
+  "settingsDapMakeActive": "Make active",
+  "settingsDapActiveChip": "Active",
   "settingsDapSavedTitle": "Saved connections",
   "settingsDapSavedHint": "Bookmarked hubs. Tap one to make it the hub this agent is online on — the switch is live.",
   "settingsDapRemoveSaved": "Remove",

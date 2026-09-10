@@ -136,10 +136,18 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   static bool get _isMacOS =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
+  /// The session whose open is in flight (see [SidebarSessionsList
+  /// .pendingSessionId]) — cleared once the manager's active slot catches
+  /// up with the attach broadcast.
+  String? _pendingOpenId;
+
   void _onManagerChanged() {
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
+    if (_pendingOpenId != null && widget.manager.active?.id == _pendingOpenId) {
+      _pendingOpenId = null; // the broadcast landed — real state took over
+    }
     if (mounted) setState(() {});
   }
 
@@ -313,6 +321,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                   sessionInfoNames: _jsonlNames,
                   onOpenPersisted: _openPersistedSession,
                   hubBoundSessionId: DapBindingStore.instance.boundSessionId,
+                  pendingSessionId: _pendingOpenId,
                 ),
               ),
             ),
@@ -675,6 +684,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       debugPrint(
         '[fah][shell] open session ${metadata.id} via relay (session_open)',
       );
+      setState(() => _pendingOpenId = metadata.id);
       await relayOpen(metadata.id);
       return;
     }
