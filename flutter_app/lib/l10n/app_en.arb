@@ -594,5 +594,13 @@
   "githubBrowserCodeHint": "One-time code from fa1.dev",
   "@githubBrowserCodeHint": {
     "description": "Hint of the one-time-code field on the Browser tab"
+  },
+  "sessionTooLargeTitle": "Session too large to open in the app ({size}). Open it with the CLI instead.",
+  "@sessionTooLargeTitle": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
   }
 }

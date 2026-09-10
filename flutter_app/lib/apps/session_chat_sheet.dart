@@ -513,18 +513,30 @@ class SessionChatSheetState extends State<SessionChatSheet>
         await relayOpen(metadata.id);
         return;
       }
-      await widget.manager.openSession(
-        metadata,
-        config:
-            active.configForClone ??
-            AgentConfig(
-              providerKind: active.providerKind,
-              modelId: active.modelId,
-              baseUrl: '',
-              apiKey: '',
+      try {
+        await widget.manager.openSession(
+          metadata,
+          config:
+              active.configForClone ??
+              AgentConfig(
+                providerKind: active.providerKind,
+                modelId: active.modelId,
+                baseUrl: '',
+                apiKey: '',
+              ),
+          serviceFactory: () async => active.clone(),
+        );
+      } on SessionTooLargeException {
+        if (!mounted) return;
+        final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
             ),
-        serviceFactory: () async => active.clone(),
-      );
+          ),
+        );
+      }
     } finally {
       _opening.remove(metadata.id);
     }

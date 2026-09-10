@@ -273,6 +273,78 @@ void main() {
     });
   });
 
+  group('oversized session guards (macOS boot GC-storm regression)', () {
+    late MemoryExecutionEnv env;
+    late JsonlSessionRepo repo;
+
+    setUp(() {
+      env = MemoryExecutionEnv();
+      repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    });
+
+    FlutterSessionManager limitedManager() => FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      maxSessionLoadBytes: 512, // tiny on purpose
+    );
+
+    test(
+      'boot skips an oversized last-active session and creates a fresh one',
+      () async {
+        final big = await _persistSession(repo, userText: 'x' * 2048);
+        await env.writeFile(
+          '/sessions/${FlutterSessionManager.lastActiveFile}',
+          '{"version":1,"id":"${big.id}"}',
+        );
+        final manager = limitedManager();
+        final booted = await manager.createOrResumeSession(
+          config: _config,
+          createFactory: () async => _fakeService(env),
+          openFactory: () async => _fakeService(env),
+        );
+        // The giant session was NOT resumed — a fresh id took over.
+        expect(booted.id, isNot(big.id));
+        expect(manager.active?.id, booted.id);
+      },
+    );
+
+    test('boot still resumes a session under the limit', () async {
+      final small = await _persistSession(repo, userText: 'привет');
+      await env.writeFile(
+        '/sessions/${FlutterSessionManager.lastActiveFile}',
+        '{"version":1,"id":"${small.id}"}',
+      );
+      final manager = limitedManager();
+      final booted = await manager.createOrResumeSession(
+        config: _config,
+        createFactory: () async => _fakeService(env),
+        openFactory: () async => _fakeService(env),
+      );
+      expect(booted.id, small.id);
+    });
+
+    test(
+      'openSession throws SessionTooLarge for an oversized session',
+      () async {
+        await _persistSession(repo, userText: 'x' * 2048);
+        // The sidebar passes metadata straight from the repo listing, which
+        // carries the filesystem size.
+        final big = (await repo.list()).single;
+        final manager = limitedManager();
+        await expectLater(
+          manager.openSession(
+            big,
+            config: _config,
+            serviceFactory: () async => _fakeService(env),
+          ),
+          throwsA(isA<SessionTooLargeException>()),
+        );
+        // And nothing was half-loaded into the manager.
+        expect(manager.active?.id, isNot(big.id));
+      },
+    );
+  });
+
   group('rekeyActiveSession (hosted session-switch adoption)', () {
     late FlutterSessionManager manager;
     late ExecutionEnv env;

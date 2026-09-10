@@ -3145,6 +3145,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'One-time code from fa1.dev'**
   String get githubBrowserCodeHint;
+
+  /// No description provided for @sessionTooLargeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Session too large to open in the app ({size}). Open it with the CLI instead.'**
+  String sessionTooLargeTitle(String size);
 }
 
 class _AppLocalizationsDelegate

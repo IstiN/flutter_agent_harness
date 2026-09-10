@@ -714,6 +714,16 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
             ),
         serviceFactory: () => service.clone(),
       );
+    } on SessionTooLargeException {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
+          ),
+        ),
+      );
     } on Object catch (error) {
       // A torn/corrupt session file must not crash the shell — the entry
       // just stays in the list.

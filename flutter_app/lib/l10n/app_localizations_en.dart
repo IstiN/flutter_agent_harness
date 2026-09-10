@@ -1749,4 +1749,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get githubBrowserCodeHint => 'One-time code from fa1.dev';
+
+  @override
+  String sessionTooLargeTitle(String size) {
+    return 'Session too large to open in the app ($size). Open it with the CLI instead.';
+  }
 }

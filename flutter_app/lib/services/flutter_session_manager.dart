@@ -40,19 +40,55 @@ final class FlutterManagedSession {
 /// Manages several concurrent [AgentService] sessions for the Flutter chat
 /// UI. Shared resources (env, repo) are injected once; per-session resources
 /// (the [AgentService]) are created lazily.
+/// A session file exceeds the manager's load budget — refused instead of
+/// loaded, because multi-hundred-MB sessions monopolize the Dart heap and
+/// wedge the app in a permanent GC storm (the macOS boot freeze).
+final class SessionTooLargeException implements Exception {
+  /// Creates the exception.
+  SessionTooLargeException(this.metadata, this.limitBytes);
+
+  /// The refused session.
+  final SessionMetadata metadata;
+
+  /// The configured load budget in bytes.
+  final int limitBytes;
+
+  @override
+  String toString() =>
+      'Session ${metadata.id} is too large to load '
+      '(${metadata.sizeBytes} bytes > $limitBytes limit)';
+}
+
 final class FlutterSessionManager extends ChangeNotifier {
   /// Creates a session manager.
   FlutterSessionManager({
     required this.env,
     required this.sessionsRoot,
     JsonlSessionRepo? repo,
+    this.maxSessionLoadBytes = defaultMaxSessionLoadBytes,
   }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot);
+
+  /// The default per-session load budget (64 MiB): a JSONL session file
+  /// balloons to many times its size as Dart objects, so anything in the
+  /// tens of MB can wedge a host. Bigger sessions stay on disk — open them
+  /// with the CLI (`fa --session <id>`) until tail-loading lands.
+  static const int defaultMaxSessionLoadBytes = 64 * 1024 * 1024;
 
   /// The execution environment shared by all sessions.
   final ExecutionEnv env;
 
   /// Root directory for JSONL sessions.
   final String sessionsRoot;
+
+  /// Sessions whose file exceeds this many bytes are never auto-resumed at
+  /// boot and refused by [openSession] (typed
+  /// [SessionTooLargeException]) instead of freezing the host.
+  final int maxSessionLoadBytes;
+
+  /// True when [metadata]'s file is over the load budget (unknown size is
+  /// allowed — only paths that know the size can guard).
+  bool _tooLarge(SessionMetadata metadata) =>
+      (metadata.sizeBytes ?? 0) > maxSessionLoadBytes;
 
   final JsonlSessionRepo _repo;
 
@@ -318,6 +354,17 @@ final class FlutterSessionManager extends ChangeNotifier {
       '[fah][sessions] open ${metadata.id}: not in memory — loading from '
       'disk (${_sessions.length} loaded)',
     );
+    // Refuse pathological loads BEFORE building any service: a
+    // multi-hundred-MB session monopolizes the Dart heap and wedges the
+    // host in a GC storm (the macOS boot freeze of 2026-09-10).
+    if (_tooLarge(metadata)) {
+      debugPrint(
+        '[fah][sessions] open ${metadata.id}: REFUSED — '
+        '${metadata.sizeBytes} bytes over the '
+        '${maxSessionLoadBytes}-byte budget',
+      );
+      throw SessionTooLargeException(metadata, maxSessionLoadBytes);
+    }
     final service = await serviceFactory();
     await service.loadSession(metadata);
     final managed = FlutterManagedSession(
@@ -401,15 +448,26 @@ final class FlutterSessionManager extends ChangeNotifier {
             .where((m) => m.id == lastActiveId)
             .firstOrNull;
         if (metadata != null) {
-          debugPrint(
-            '[fah][sessions] boot: resuming last active '
-            '$lastActiveId (${cachedList.length} persisted)',
-          );
-          return await openSession(
-            metadata,
-            config: config,
-            serviceFactory: openFactory,
-          );
+          if (_tooLarge(metadata)) {
+            debugPrint(
+              '[fah][sessions] boot: last active $lastActiveId is '
+              '${metadata.sizeBytes} bytes — over the '
+              '${maxSessionLoadBytes}-byte load budget, NOT resuming '
+              '(it would wedge the app in GC). Starting fresh; open it '
+              'with the CLI instead.',
+            );
+            // Fall through to the reusable pick below.
+          } else {
+            debugPrint(
+              '[fah][sessions] boot: resuming last active '
+              '$lastActiveId (${cachedList.length} persisted)',
+            );
+            return await openSession(
+              metadata,
+              config: config,
+              serviceFactory: openFactory,
+            );
+          }
         }
         debugPrint(
           '[fah][sessions] boot: last active $lastActiveId is gone '
@@ -429,23 +487,31 @@ final class FlutterSessionManager extends ChangeNotifier {
     }
     final reusable = await findReusableSession(cachedSessionList: cachedList);
     if (reusable != null) {
-      debugPrint(
-        '[fah][sessions] boot: reusable pick ${reusable.id} '
-        '(created ${reusable.createdAt.toLocal()})',
-      );
-      try {
-        return await openSession(
-          reusable,
-          config: config,
-          serviceFactory: openFactory,
-        );
-      } on Object catch (error) {
-        // The session failed to load (corrupt file, storage error) — fall
-        // through to a fresh session rather than blocking the boot.
+      if (_tooLarge(reusable)) {
         debugPrint(
-          '[fah][sessions] boot: reusable pick ${reusable.id} failed to '
-          'load ($error) — creating a fresh session',
+          '[fah][sessions] boot: reusable pick ${reusable.id} is '
+          '${reusable.sizeBytes} bytes — over the load budget, creating '
+          'a fresh session',
         );
+      } else {
+        debugPrint(
+          '[fah][sessions] boot: reusable pick ${reusable.id} '
+          '(created ${reusable.createdAt.toLocal()})',
+        );
+        try {
+          return await openSession(
+            reusable,
+            config: config,
+            serviceFactory: openFactory,
+          );
+        } on Object catch (error) {
+          // The session failed to load (corrupt file, storage error) — fall
+          // through to a fresh session rather than blocking the boot.
+          debugPrint(
+            '[fah][sessions] boot: reusable pick ${reusable.id} failed to '
+            'load ($error) — creating a fresh session',
+          );
+        }
       }
     } else {
       debugPrint(
