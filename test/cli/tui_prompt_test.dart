@@ -313,41 +313,65 @@ void main() {
   group('Secret prompt', () {
     final spec = SecretPromptSpec(name: 'FOO', reason: 'needed');
 
-    test('initial state has spec name, empty value, and name focus', () {
+    test('initial state: value focus, suggestion is a placeholder (F1/F2)', () {
       final state = TuiPromptState(spec);
-      expect(state.secretName, 'FOO');
+      expect(
+        state.secretName,
+        '',
+        reason: 'the suggested name must not be committed input',
+      );
+      expect(state.effectiveSecretName, 'FOO');
       expect(state.secretValue, '');
-      expect(state.secretCursor, -1, reason: 'name focus is -1');
+      expect(
+        state.secretCursor,
+        0,
+        reason: 'initial focus is the value field, not the name',
+      );
     });
 
-    test('typing while in name focus appends to name', () {
+    test('the first keystroke lands in the masked value field', () {
       var state = TuiPromptState(spec);
-      // secretCursor == -1 → name focus: typing appends to name
-      state = handleTuiPromptKey(state, PromptChar('B')).state;
-      expect(state.secretName, 'FOOB');
-      expect(state.secretValue, '');
-      state = handleTuiPromptKey(state, PromptChar('A')).state;
-      state = handleTuiPromptKey(state, PromptChar('R')).state;
-      expect(state.secretName, 'FOOBAR');
+      state = handleTuiPromptKey(state, PromptChar('a')).state;
+      expect(state.secretValue, 'a');
+      expect(state.secretName, '');
+      expect(state.secretCursor, 1);
     });
 
-    test('Tab moves focus from name to value field', () {
+    test('a paste lands in the masked value field at the cursor', () {
       var state = TuiPromptState(spec);
-      expect(state.secretCursor, -1);
+      state = handleTuiPromptKey(
+        state,
+        const PromptPaste('pasted-secret'),
+      ).state;
+      expect(state.secretValue, 'pasted-secret');
+      expect(state.secretCursor, 'pasted-secret'.length);
+    });
+
+    test('Tab toggles focus; typing in name focus replaces the suggestion', () {
+      var state = TuiPromptState(spec);
+      state = handleTuiPromptKey(state, const PromptTab()).state;
+      expect(state.secretCursor, -1, reason: 'name focus');
+      state = handleTuiPromptKey(state, PromptChar('M')).state;
+      expect(
+        state.secretName,
+        'M',
+        reason: 'typing replaces the suggestion wholesale (F1)',
+      );
       state = handleTuiPromptKey(state, const PromptTab()).state;
       expect(state.secretCursor, 0);
-      // Typing now goes to value
       state = handleTuiPromptKey(state, PromptChar('v')).state;
       expect(state.secretValue, 'v');
-      expect(state.secretName, 'FOO');
+      expect(state.secretName, 'M');
     });
 
-    test('Ctrl+U clears the suggested name on name focus', () {
-      final spec = SecretPromptSpec(name: 'SUDO_PASSWORD', reason: 'deploy');
+    test('Ctrl+U on name focus restores the placeholder suggestion', () {
       var state = TuiPromptState(spec);
-      expect(state.secretCursor, -1, reason: 'name focus');
+      state = handleTuiPromptKey(state, const PromptTab()).state;
+      state = handleTuiPromptKey(state, PromptChar('X')).state;
+      expect(state.secretName, 'X');
       state = handleTuiPromptKey(state, const PromptCtrlU()).state;
       expect(state.secretName, '');
+      expect(state.effectiveSecretName, 'FOO');
     });
 
     test('Ctrl+U kills the value back to the cursor', () {
@@ -366,9 +390,10 @@ void main() {
       expect(state.secretCursor, 0);
     });
 
-    test('the sheet hint names Ctrl+U next to Ctrl+R', () {
+    test('the sheet hint names the focus-switch key (F4)', () {
       final rows = renderTuiPrompt(TuiPromptState(spec), 60).join('\n');
-      expect(rows, contains('Ctrl+U clears'));
+      expect(rows, contains('Tab'));
+      expect(rows, contains('▸'));
     });
 
     test('Ctrl+R toggles the value visibility (hidden by default)', () {
@@ -403,15 +428,18 @@ void main() {
       expect(result.resolved, isA<TuiPromptCancelled>());
     });
 
-    test('PromptEnter with empty value does NOT submit (not submittable)', () {
-      var state = TuiPromptState(spec).copyWith(secretCursor: 0);
-      // Name is 'FOO' which matches the pattern, but value is empty
+    test('blocked Enter shows the reason, then it goes stale (F3)', () {
+      var state = TuiPromptState(spec);
       final result = handleTuiPromptKey(state, const PromptEnter());
       expect(
         result.resolved,
         isNull,
         reason: 'should not submit when value is empty',
       );
+      expect(result.state.secretEnterError, contains('value'));
+      state = handleTuiPromptKey(result.state, PromptChar('x')).state;
+      expect(state.secretEnterError, '');
+      expect(state.secretValue, 'x');
     });
 
     test('typing targets the value field once focus is on the value '
@@ -447,6 +475,23 @@ void main() {
       expect(answer.value.persisted, isFalse);
     });
 
+    test('Enter with an untouched name submits the suggested name', () {
+      // The trapped production sequence from issue #97: open the sheet,
+      // type the secret, press Enter — the suggestion is the name.
+      var state = TuiPromptState(SecretPromptSpec(name: 'FOO', reason: 'x'));
+      for (final char in 'secret'.runes) {
+        state = handleTuiPromptKey(
+          state,
+          PromptChar(String.fromCharCode(char)),
+        ).state;
+      }
+      final result = handleTuiPromptKey(state, const PromptEnter());
+      final answer = result.resolved as SecretPromptAnswer;
+      expect(answer.value.name, 'FOO');
+      expect(answer.value.value, 'secret');
+      expect(answer.value.persisted, isFalse);
+    });
+
     test('backspace in value removes char before cursor', () {
       var state = TuiPromptState(
         spec,
@@ -466,17 +511,13 @@ void main() {
       expect(state.secretCursor, 3);
     });
 
-    test('PromptEnter with non-matching name does not submit', () {
-      // Entering a char while in name-focus keeps name non-submittable
-      // if the result doesn't match the UPPER_SNAKE pattern
-      // secretName starts as 'FOO' which matches, so we need a non-matching name
-      // Set secretValue non-empty via copyWith but keep a non-matching name
+    test('Enter with a non-matching name shows the name reason (F3)', () {
       final nonMatch = TuiPromptState(
         SecretPromptSpec(name: 'foo', reason: 'test'),
-      );
-      // foo doesn't match pattern, Enter does nothing
+      ).copyWith(secretValue: 'x', secretCursor: 1);
       final result = handleTuiPromptKey(nonMatch, const PromptEnter());
       expect(result.resolved, isNull);
+      expect(result.state.secretEnterError, contains('Name must match'));
     });
   });
 

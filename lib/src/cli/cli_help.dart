@@ -20,6 +20,7 @@ USAGE
   fa [options]                          interactive REPL
   fa [options] "fix the tests"          headless: run one prompt and exit
   fa [options] -p "fix the tests"       headless, prompt used verbatim
+  fa [options] --prompt-file p.md       headless, prompt read from a file
   fa [options] notes.md "summarize"     headless, existing file as prompt source
 
 INVOCATION
@@ -41,10 +42,15 @@ INVOCATION
   other file is attached as a path reference the agent can open with its
   tools; trailing text appends as the instruction. A path that does not
   exist is treated as plain prompt text. -p text is always used verbatim
-  (never a file).
+  (never a file). --prompt-file is the explicit form: the file is read as
+  UTF-8 and sent verbatim, whatever its extension; a missing or unreadable
+  file is a usage error (exit 64).
 
 OPTIONS
   -p, --prompt <text>          Run a single headless prompt and exit
+  -f, --prompt-file <path>     Read the headless prompt from a file (UTF-8,
+                               sent verbatim). Cannot be combined with
+                               --prompt or positional arguments.
   --model <id>                 Model id (default per provider, see PROVIDERS)
   --provider <kind>            openai-completions | anthropic | google | dial
                                | minimax | zai
