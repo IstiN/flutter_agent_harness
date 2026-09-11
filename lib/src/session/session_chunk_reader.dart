@@ -318,15 +318,15 @@ final class SessionChunkReader {
       final lines = _splitLines(buffer, lo);
       // When the window does not reach the file (anchor) start, the first
       // line segment is the TAIL of a record that begins above the window —
-      // never parse it as a record.
       final parseable = lo > 0 && lines.isNotEmpty ? lines.sublist(1) : lines;
       final entries = _collectNewest(
         parseable,
         maxRecords: maxRecords,
         maxBytes: maxBytes,
       );
-      if (lo == 0)
+      if (lo == 0) {
         return _topChunk(chunk: chunk, entries: entries, lines: lines);
+      }
       final capped = _cappedChunk(
         chunk: chunk,
         entries: entries,
