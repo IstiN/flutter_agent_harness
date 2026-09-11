@@ -19,6 +19,27 @@ void main() {
     expect(report.issues, isEmpty);
   });
 
+  test('committed manifest carries the Monarch command surfaces (#143)', () {
+    final xml = _artifact('manifest/outlook.xml');
+    expect(xml, contains('VersionOverridesV1_0'));
+    expect(xml, contains('MessageReadCommandSurface'));
+    // Compose parity: the classic ItemEdit form has an override twin.
+    expect(xml, contains('MessageComposeCommandSurface'));
+    expect(xml, contains('xsi:type="ShowTaskpane"'));
+  });
+
+  test('every icon the manifest references is committed', () {
+    final xml = _artifact('manifest/outlook.xml');
+    final icons = RegExp(r'icons/(fa-\d+\.png)')
+        .allMatches(xml)
+        .map((m) => m.group(1)!)
+        .toSet();
+    expect(icons, containsAll(['fa-16.png', 'fa-32.png', 'fa-80.png']));
+    for (final icon in icons) {
+      expect(File('../icons/$icon').existsSync(), isTrue, reason: icon);
+    }
+  });
+
   test(
     'index.html wires the Office.js CDN, the agent bundle and the boot banner',
     () {
