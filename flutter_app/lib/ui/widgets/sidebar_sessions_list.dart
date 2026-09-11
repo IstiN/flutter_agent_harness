@@ -2,6 +2,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/session_names_store.dart';
+import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
@@ -29,8 +30,23 @@ class SidebarSessionsList extends StatefulWidget {
     this.persistedSessions = const [],
     this.sessionInfoNames = const {},
     this.onOpenPersisted,
+    this.onOpenLiveSession,
     this.collapsed = false,
+    this.hubBoundSessionId,
+    this.pendingSessionId,
+    this.selectedSessionId,
   });
+
+  /// The session the user just asked to open (a `session_open` dispatch is
+  /// in flight): its row highlights AND sorts to the top immediately —
+  /// otherwise the live dot appears to never move (the live session is
+  /// always the freshest row, so the dot sat pinned to the first row until
+  /// the SW poll refreshed the stamps seconds later).
+  final String? pendingSessionId;
+
+  /// The ONE selected id (pending click > hosted live id > manager slot) —
+  /// computed by the host, which owns all three sources.
+  final String? selectedSessionId;
 
   final FlutterSessionManager manager;
   final SessionNamesStore? sessionNamesStore;
@@ -52,8 +68,19 @@ class SidebarSessionsList extends StatefulWidget {
   /// Opens a persisted-only session from disk (see [persistedSessions]).
   final ValueChanged<SessionMetadata>? onOpenPersisted;
 
+  /// Opens an already-live session by id. Hosted surfaces (extension
+  /// panel / relay shell) MUST dispatch through the relay even for rows
+  /// that have a local slot — [manager.switchTo] on such a row is a
+  /// silent local no-op (the slot only holds the boot attach) and the
+  /// transcript never re-attaches. Null falls back to [switchTo].
+  final ValueChanged<String>? onOpenLiveSession;
+
   /// When true the list renders as a compact column of session dots.
   final bool collapsed;
+
+  /// The DAP-bound session (inbound hub mail lands here) — its tile shows
+  /// the agent-network badge (DapBindingStore in the shell feeds this).
+  final String? hubBoundSessionId;
 
   @override
   State<SidebarSessionsList> createState() => _SidebarSessionsListState();
@@ -119,6 +146,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     final persistedCwdById = {
       for (final m in widget.persistedSessions) m.id: m.cwd,
     };
+    final persistedById = {for (final m in widget.persistedSessions) m.id: m};
     // Live sessions plus the persisted ones not currently open — the full
     // on-disk history stays reachable from the sidebar, like the mobile
     // chat sheet's persisted tail.
@@ -126,8 +154,13 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       for (final session in live)
         _SessionEntry(
           id: session.id,
-          createdAt: session.createdAt,
-          lastUpdatedAt: session.lastUpdatedAt,
+          // Hosted sessions: the manager slot's stamps are pinned at boot;
+          // after a broadcast session switch the persisted metadata (the
+          // SW poll) carries the LIVE session's real times. Without this
+          // the active dot's row never changes its label.
+          createdAt: persistedById[session.id]?.createdAt ?? session.createdAt,
+          lastUpdatedAt:
+              persistedById[session.id]?.lastUpdatedAt ?? session.lastUpdatedAt,
           cwd: persistedCwdById[session.id] ?? session.service.env.sessionCwd,
           live: session,
         ),
@@ -140,7 +173,15 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
             cwd: metadata.cwd,
             persisted: metadata,
           ),
-    ]..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+      // STABLE order: sort by CREATION time, not activity. An activity sort
+      // reshuffles the list on every switch — the just-archived session's
+      // file mtime bumps to now and the re-keyed live slot gets a fresh
+      // stamp, so the row you clicked teleports ("сессии прыгают").
+      // Creation time never changes: clicking moves only the dot, a new
+      // session still lands on top.
+    ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // The click highlights the row IN PLACE (selection =
+    // selectedSessionId); the list never reorders under the finger.
     final grouped = _groupEntriesByFolder(
       entries,
       context.l10n.sessionFolderPersonal,
@@ -188,7 +229,10 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                           // The folder basename IS the group header — a
                           // per-tile cwd label would duplicate it.
                           cwd: null,
-                          isActive: widget.manager.active?.id == entry.id,
+                          isActive: entry.id == widget.selectedSessionId,
+                          hubBound:
+                              widget.hubBoundSessionId != null &&
+                              widget.hubBoundSessionId == entry.id,
                           onTap: () => _openEntry(entry),
                           onMenu: (anchor) => _showSessionMenu(entry, anchor),
                         ),
@@ -203,7 +247,15 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   void _openEntry(_SessionEntry entry) {
     final live = entry.live;
     if (live != null) {
-      widget.manager.switchTo(live.id);
+      // Hosted: the slot is just the boot attach keyholder — re-dispatch
+      // through the host so the transcript actually switches (see
+      // [onOpenLiveSession]).
+      final openLive = widget.onOpenLiveSession;
+      if (openLive != null) {
+        openLive(live.id);
+      } else {
+        widget.manager.switchTo(live.id);
+      }
       widget.onSessionTap?.call();
       return;
     }
@@ -276,7 +328,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                   itemCount: sessions.length,
                   itemBuilder: (context, index) {
                     final session = sessions[index];
-                    final isActive = widget.manager.active?.id == session.id;
+                    final isActive = session.id == widget.selectedSessionId;
                     return Tooltip(
                       message: _titleFor(
                         _SessionEntry(
@@ -580,6 +632,7 @@ class SessionTile extends StatelessWidget {
     required this.isActive,
     this.cwd,
     this.live = false,
+    this.hubBound = false,
     required this.onTap,
     this.onMenu,
   });
@@ -595,6 +648,10 @@ class SessionTile extends StatelessWidget {
   /// True when a live agent process (a `fa` CLI run) currently owns this
   /// session — a pulsing green dot marks it and the tap attaches to it.
   final bool live;
+
+  /// True when inbound hub mail is routed to this session (DAP settings,
+  /// "Incoming messages") — the agent-network badge marks the tile.
+  final bool hubBound;
   final VoidCallback onTap;
 
   /// Called with the menu button's global rect when the 3-dot menu button
@@ -706,6 +763,14 @@ class SessionTile extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (hubBound)
+                  Tooltip(
+                    message: context.l10n.settingsDapInboundBadgeTooltip,
+                    child: const Padding(
+                      padding: EdgeInsets.only(right: 4),
+                      child: DapHubMark(size: 13),
+                    ),
+                  ),
                 // 3-dot menu button (visible on the active tile or on hover).
                 if (onMenu != null)
                   InkWell(

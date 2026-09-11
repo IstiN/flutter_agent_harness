@@ -47,6 +47,10 @@ final class ChromeStorageEnv implements ExecutionEnv {
   bool _booting = true;
   Future<void>? _saving;
 
+  /// One console warning per failure burst; reset by the next successful
+  /// save so a NEW outage is reported again.
+  bool _persistErrorLogged = false;
+
   /// Creates the env and replays the stored snapshot into the memory tree.
   static Future<ChromeStorageEnv> restore() async {
     final env = ChromeStorageEnv._();
@@ -151,9 +155,17 @@ final class ChromeStorageEnv implements ExecutionEnv {
         await _storageSet(
           <String, dynamic>{storageKey: await _snapshot()}.jsify() as JSObject,
         ).toDart;
-      } on Object {
+        _persistErrorLogged = false;
+      } on Object catch (error) {
         // Save failed (quota, blocked storage): stay dirty so the next
         // mutation or flush retries; never break the sandbox over it.
+        // Log once per failure burst — a silent permanent failure here is
+        // how sessions "disappeared" (nothing ever reached the disk).
+        if (!_persistErrorLogged) {
+          _persistErrorLogged = true;
+          // ignore: avoid_print
+          print('[faFs] persist failed (sessions NOT saved): $error');
+        }
         _dirty = true;
         return;
       }

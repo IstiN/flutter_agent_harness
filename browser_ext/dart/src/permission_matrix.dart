@@ -125,6 +125,13 @@ const List<ToolManifestEntry> _table = [
     tier: MatrixTier.core,
   ),
   ToolManifestEntry(
+    // Whole-tree session fs snapshots (faFs) outgrow the default 10 MB
+    // chrome.storage.local quota; unlimitedStorage lifts it.
+    tool: 'unlimitedStorage',
+    permissions: {'unlimitedStorage'},
+    tier: MatrixTier.core,
+  ),
+  ToolManifestEntry(
     tool: 'sidePanel',
     permissions: {'sidePanel'},
     tier: MatrixTier.core,

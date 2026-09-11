@@ -169,6 +169,27 @@ approval gate.
 | Cookies (3) | `cookies_get` `cookies_set` `cookies_remove` | get read; rest write |
 | Injection & CDP (4) | `inject_js` `inject_css` `cdp_eval` `page_screenshot` | see below |
 | App & navigation (2) | `app_screenshot` `nav_wait` | read |
+| Scripting (1) | `run_script` | exec |
+
+- **`run_script` — sandboxed interpreters, web-app parity.** The SW
+  cannot spawn processes and extension CSP forbids remote scripts, so
+  `run_script(language, code)` runs `python` (pyodide, WASM CPython)
+  and `javascript` (quickjs-emscripten) inside the MV3 offscreen
+  document (`offscreen.html` + `offscreen/interpreters.js`), with the
+  runtimes **vendored into the bundle** (`vendor/interpreters/`,
+  downloaded by `scripts/vendor_interpreters.sh` at build time — the
+  same versions the web app sandbox loads from a CDN). The SW side is
+  `browser_ext/dart/src/run_script_tool.dart` (pure Dart, VM-tested);
+  the chrome hops are the typed `OffscreenApi` facade plus one
+  `chrome.runtime.sendMessage` bridge in `chrome_api_js.dart`. The
+  document is created lazily on first call (reason `WORKERS`) and
+  shared with background DOM extraction; a `document_exists` race is
+  adopted, never an error. Script-level failures (a python traceback,
+  a JS exception) come back as the tool RESULT (`ok:false` + the
+  interpreter's error text) so the model can fix the script — only
+  transport failures raise. The first python call boots pyodide
+  (~10 MB wasm) and takes a few seconds; the interpreter then stays
+  warm for the document's lifetime.
 
 Injection & CDP details:
 

@@ -203,10 +203,12 @@ final class UiPortServer {
       case final SessionsQueryMsg _:
         _send(channel, SessionsResultMsg(sessions: host.sessionsList()));
       case final SessionNewMsg _:
-        // Reset + re-sync: the attach trio lands on the SAME channel so
-        // the requesting panel adopts the fresh session id and cleared
-        // replay immediately (other channels see it through their own
-        // attach cycle).
+        // Reset + re-sync: the attach trio lands on EVERY channel — a
+        // session switch from ANY surface (panel, app tab, e2e port)
+        // re-points all of them. A surface that kept its stale session id
+        // filtered the just-archived row out of its sessions drawer (id ==
+        // stale relayLiveId) and collapsed to a single row — "added a
+        // session, still see one".
         try {
           await host.newSession();
         } on Object catch (error) {
@@ -216,8 +218,7 @@ final class UiPortServer {
         // The reset invalidates the ring: a reconnect replaying OLD-session
         // events would resurface the archived transcript.
         _ring.clear();
-        _send(
-          channel,
+        broadcast(
           AttachedMsg(
             sessionId: host.sessionId,
             replay: [
@@ -225,8 +226,8 @@ final class UiPortServer {
             ],
           ),
         );
-        _send(channel, ToolsStateMsg(tools: host.toolsList()));
-        _send(channel, StreamMsg(event: {'type': 'status', ...host.state()}));
+        broadcast(ToolsStateMsg(tools: host.toolsList()));
+        broadcast(StreamMsg(event: {'type': 'status', ...host.state()}));
       case final SessionOpenMsg m:
         try {
           await host.openSession(m.sessionId);
@@ -235,8 +236,8 @@ final class UiPortServer {
           break;
         }
         _ring.clear();
-        _send(
-          channel,
+        // Same broadcast rule as session_new: every surface re-points.
+        broadcast(
           AttachedMsg(
             sessionId: host.sessionId,
             replay: [
@@ -244,8 +245,8 @@ final class UiPortServer {
             ],
           ),
         );
-        _send(channel, ToolsStateMsg(tools: host.toolsList()));
-        _send(channel, StreamMsg(event: {'type': 'status', ...host.state()}));
+        broadcast(ToolsStateMsg(tools: host.toolsList()));
+        broadcast(StreamMsg(event: {'type': 'status', ...host.state()}));
       case final SettingsQueryMsg _:
         _send(channel, SettingsResultMsg(settings: host.settingsGet()));
       case final SettingsPutMsg m:

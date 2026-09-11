@@ -19,6 +19,18 @@ import 'package:fa_hub_client/src/hub/payload_crypto.dart';
 /// identity is byte-compatible with the CLI's (`ed25519:<seed b64>`,
 /// `x25519:<priv b64>`, `x25519pub:<pub b64>` — that last line is
 /// informational; the public key is always re-derived from the scalar).
+/// The WS URL a browser client actually dials: [url] plus the
+/// `dap_token` credential when a hub password is set (browser WebSocket
+/// cannot set headers; the hub accepts the query form on the upgrade).
+/// Never log the result — log [url] instead.
+String dapWsUrlWithToken(String url, String secret) {
+  if (secret.isEmpty) return url;
+  final uri = Uri.parse(url);
+  return uri
+      .replace(queryParameters: {...uri.queryParameters, 'dap_token': secret})
+      .toString();
+}
+
 final class DapIdentity {
   DapIdentity._({
     required this.signingKeyPair,
@@ -191,6 +203,24 @@ Duration reconnectBackoff(int attempt) {
   final shift = attempt.clamp(1, 6) - 1; // clamp before shift (cap 30 s)
   return Duration(seconds: 1 << shift > 30 ? 30 : 1 << shift);
 }
+
+/// The credential-rejection hold: when a Hub password IS configured and
+/// [fastCloseStreak] consecutive dials all closed within
+/// [fastCloseWindow] — the browser WebSocket exposes no HTTP status, so
+/// a 401 is inferred — stop the fast retry loop (a wrong password never
+/// fixes itself) and hold at a slow [credentialRecheckInterval] re-check
+/// so a hub that later comes up (or a re-saved password) still heals.
+bool looksLikeCredentialRejection(
+  int fastCloseStreak, {
+  required bool hasCredential,
+}) => hasCredential && fastCloseStreak >= 3;
+
+/// A dial that closed within this window counts as a fast close (the hub
+/// answered and rejected, or refused — both are sub-second locally).
+const Duration fastCloseWindow = Duration(seconds: 3);
+
+/// The credential-rejection re-check cadence.
+const Duration credentialRecheckInterval = Duration(seconds: 30);
 
 /// Decrypts a DM produced by [encryptDm]. The AAD target is the DM
 /// recipient id on both sides — i.e. the decrypting identity's own

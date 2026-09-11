@@ -34,6 +34,19 @@ String derivedSessionTitle(
   }
 }
 
+/// Pluggable persistence for [SessionNamesStore] — the env file is the
+/// default; hosted (relay) mode round-trips names through the SW settings
+/// channel (`faSessionNames`) so every surface sees the same titles.
+abstract interface class SessionNamesPersistence {
+  /// The current authoritative names (sync — the relay snapshot is
+  /// in-memory).
+  Map<String, String> read();
+
+  /// Persists [names] (the full live map; tombstones for cleared ids are
+  /// the implementation's business).
+  Future<void> write(Map<String, String> names);
+}
+
 /// User-given titles for chat sessions, persisted as JSON at
 /// `session_names.json` in the root of the sandbox filesystem
 /// ([ExecutionEnv.cwd]) — on web that file rides the IndexedDB snapshot of
@@ -48,13 +61,27 @@ String derivedSessionTitle(
 /// Written on every [rename]; read once at load. A missing, unreadable, or
 /// corrupt file yields an empty store (never crashes boot).
 class SessionNamesStore extends ChangeNotifier {
-  SessionNamesStore._(this._env);
+  SessionNamesStore._(this._env) : _persistence = null;
 
   /// A store without persistence (tests, widget fallbacks): mutations
   /// notify listeners but nothing is written anywhere.
-  SessionNamesStore.inMemory([Map<String, String>? initial]) : _env = null {
+  SessionNamesStore.inMemory([Map<String, String>? initial])
+    : _env = null,
+      _persistence = null {
     if (initial != null) _names.addAll(initial);
   }
+
+  /// A store backed by [persistence] instead of the env file — the hosted
+  /// (relay) mode: renames round-trip through the SW settings channel so
+  /// EVERY surface (panel, desktop app, other tabs) sees them live.
+  SessionNamesStore.hosted(SessionNamesPersistence persistence)
+    : _env = null,
+      _persistence = persistence {
+    _names.addAll(persistence.read());
+  }
+
+  /// Pluggable persistence for the hosted store.
+  final SessionNamesPersistence? _persistence;
 
   /// File name (under [ExecutionEnv.cwd]) the store persists to.
   static const fileName = 'session_names.json';
@@ -73,9 +100,47 @@ class SessionNamesStore extends ChangeNotifier {
     return store;
   }
 
+  /// The process-wide shared store for [env] — ONE instance per env
+  /// identity, so every surface (wide sidebar, chat-sheet drawer, launcher)
+  /// observes the same renames live. Previously each surface called [load]
+  /// and got its own instance backed by the same file: a rename in the
+  /// sidebar updated only that instance's memory, and the drawer kept
+  /// showing the derived title until a full reload ("renamed to test,
+  /// reopened — not applied").
+  static Future<SessionNamesStore> shared(ExecutionEnv env) async {
+    final cached = _sharedCache[env];
+    if (cached != null) return cached;
+    final store = await load(env);
+    _sharedCache[env] = store;
+    return store;
+  }
+
+  static final Map<ExecutionEnv, SessionNamesStore> _sharedCache = {};
+
   /// The custom title for session [id], or `null` when none is set (the UI
   /// falls back to the derived name).
   String? titleFor(String id) => _names[id];
+
+  /// Replaces the in-memory names from an authoritative snapshot — hosted
+  /// mode, where a settings broadcast from ANOTHER surface carries its
+  /// renames. Notifies only on a real change (the relay's own put echoes
+  /// back the same map and must not rebuild).
+  void syncFromSnapshot(Map<String, String> names) {
+    var changed = false;
+    for (final id in _names.keys.toList()) {
+      if (names[id] != _names[id]) {
+        _names.remove(id);
+        changed = true;
+      }
+    }
+    names.forEach((id, title) {
+      if (title.isNotEmpty && _names[id] != title) {
+        _names[id] = title;
+        changed = true;
+      }
+    });
+    if (changed) notifyListeners();
+  }
 
   /// Sets the custom title for session [id]; a null or empty/blank title
   /// clears the entry instead. Persistence is best effort.
@@ -115,6 +180,11 @@ class SessionNamesStore extends ChangeNotifier {
   }
 
   Future<void> _save() async {
+    final persistence = _persistence;
+    if (persistence != null) {
+      await persistence.write(Map<String, String>.of(_names));
+      return;
+    }
     final env = _env;
     if (env == null) return;
     try {

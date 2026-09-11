@@ -35,6 +35,19 @@ extension type _Chunk._(JSObject _) implements JSObject {
 /// [http.Client] over the platform `fetch` — the only HTTP path inside a
 /// MV3 service worker. Install with `providerHttpClientFactory`.
 final class FetchClient extends http.BaseClient {
+  /// [credentials] rides the fetch credentials mode: `include` for the
+  /// provider traffic (cookie-auth hosts — CodeMie & friends: the SW
+  /// fetch itself must carry the user's jar — with <all_urls> host
+  /// permissions the browser attaches it, no header surgery; provider
+  /// targets are user-configured, so sending credentials is the design,
+  /// not a leak), `omit` for agent-driven web_fetch/web_search (the URL
+  /// is model-chosen — sending the user's cookies there would be an
+  /// exfil channel).
+  FetchClient({this.credentials = 'include'});
+
+  /// The fetch credentials mode (`include` / `omit`).
+  final String credentials;
+
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     final req = request as http.Request;
@@ -42,14 +55,13 @@ final class FetchClient extends http.BaseClient {
         ({
               'method': req.method,
               'headers': req.headers,
-              'body': req.body,
-              // Cookie-auth hosts (CodeMie & friends): the SW fetch itself
-              // must carry the user's jar — with <all_urls> host
-              // permissions the browser attaches it, no header surgery
-              // (Cookie is a forbidden fetch header). Provider targets are
-              // user-configured, so sending credentials is the design,
-              // not a leak.
-              'credentials': 'include',
+              // fetch() rejects ANY body (even an empty string) on
+              // GET/HEAD — and package:http fills req.body with ''.
+              if (req.method != 'GET' &&
+                  req.method != 'HEAD' &&
+                  req.body.isNotEmpty)
+                'body': req.body,
+              'credentials': credentials,
             }).jsify()
             as JSObject;
     try {

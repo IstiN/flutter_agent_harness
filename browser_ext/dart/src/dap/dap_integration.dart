@@ -23,18 +23,43 @@ final class DapConfig {
     required this.name,
     required this.loadKeyFile,
     required this.saveKeyFile,
+    this.secret = '',
+    this.boundSessionMode = 'current',
+    this.boundSessionId,
+    this.persistBoundSessionId,
   });
 
   final String url;
 
   /// Display name for the hello (cosmetic; ids are how peers address us).
   final String name;
+
+  /// The hub password (faDap.secret), sent as the
+  /// `dap_token` query param on the WS upgrade — browser WebSocket cannot
+  /// set headers, and the loopback hub accepts the query form. Empty =
+  /// open hub.
+  final String secret;
   final Future<String?> Function() loadKeyFile;
   final Future<void> Function(String) saveKeyFile;
 
+  /// Inbound hub-mail routing (`faDap.boundSession.mode`):
+  /// `current` (zero-config — mail lands in the open session),
+  /// `dedicated` (one agent-owned session; created lazily on first mail),
+  /// `named` (a user-picked session id in [boundSessionId]).
+  final String boundSessionMode;
+
+  /// The pinned session for `dedicated` (once created) / `named` modes.
+  final String? boundSessionId;
+
+  /// Persists the lazily created dedicated session id back into the
+  /// config (chrome.storage `faDap.boundSession.sessionId`) so the same
+  /// session keeps receiving mail across SW restarts.
+  final Future<void> Function(String sessionId)? persistBoundSessionId;
+
   /// Stable across reconnects/restarts: same config (url+name) keeps the
   /// live client instead of dropping the connection.
-  bool sameTargetAs(DapConfig other) => url == other.url && name == other.name;
+  bool sameTargetAs(DapConfig other) =>
+      url == other.url && name == other.name && secret == other.secret;
 }
 
 /// Owns the extension's hub presence for one [DapConfig]. Created by
@@ -111,14 +136,23 @@ final class DapIntegration {
   /// starts the client. Quiet on failure — the status reflects it.
   Future<void> start() async {
     try {
+      print(
+        '[dap] start: url=${config.url} '
+        'name=${config.name.isEmpty ? '—' : config.name}',
+      );
       final stored = await config.loadKeyFile();
       final identity = stored != null
           ? await DapIdentity.fromKeyFile(stored)
           : await _freshIdentity();
+      print(
+        '[dap] identity ${stored != null ? 'loaded' : 'generated'}: '
+        '${identity.agentId}',
+      );
       final client = DapClient(
         identity: identity,
         url: config.url,
         name: config.name,
+        secret: config.secret,
         onMail: pushMail,
         onStatus: (status) {
           _status = status.toMap();

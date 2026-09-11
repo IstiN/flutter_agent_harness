@@ -272,4 +272,106 @@ void main() {
       expect(manager2.activeId, older.id);
     });
   });
+
+  group('oversized session guards (macOS boot GC-storm regression)', () {
+    late MemoryExecutionEnv env;
+    late JsonlSessionRepo repo;
+
+    setUp(() {
+      env = MemoryExecutionEnv();
+      repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    });
+
+    FlutterSessionManager limitedManager() => FlutterSessionManager(
+      env: env,
+      sessionsRoot: '/sessions',
+      maxSessionLoadBytes: 512, // tiny on purpose
+    );
+
+    test(
+      'boot skips an oversized last-active session and creates a fresh one',
+      () async {
+        final big = await _persistSession(repo, userText: 'x' * 2048);
+        await env.writeFile(
+          '/sessions/${FlutterSessionManager.lastActiveFile}',
+          '{"version":1,"id":"${big.id}"}',
+        );
+        final manager = limitedManager();
+        final booted = await manager.createOrResumeSession(
+          config: _config,
+          createFactory: () async => _fakeService(env),
+          openFactory: () async => _fakeService(env),
+        );
+        // The giant session was NOT resumed — a fresh id took over.
+        expect(booted.id, isNot(big.id));
+        expect(manager.active?.id, booted.id);
+      },
+    );
+
+    test('boot still resumes a session under the limit', () async {
+      final small = await _persistSession(repo, userText: 'привет');
+      await env.writeFile(
+        '/sessions/${FlutterSessionManager.lastActiveFile}',
+        '{"version":1,"id":"${small.id}"}',
+      );
+      final manager = limitedManager();
+      final booted = await manager.createOrResumeSession(
+        config: _config,
+        createFactory: () async => _fakeService(env),
+        openFactory: () async => _fakeService(env),
+      );
+      expect(booted.id, small.id);
+    });
+
+    test(
+      'openSession throws SessionTooLarge for an oversized session',
+      () async {
+        await _persistSession(repo, userText: 'x' * 2048);
+        // The sidebar passes metadata straight from the repo listing, which
+        // carries the filesystem size.
+        final big = (await repo.list()).single;
+        final manager = limitedManager();
+        await expectLater(
+          manager.openSession(
+            big,
+            config: _config,
+            serviceFactory: () async => _fakeService(env),
+          ),
+          throwsA(isA<SessionTooLargeException>()),
+        );
+        // And nothing was half-loaded into the manager.
+        expect(manager.active?.id, isNot(big.id));
+      },
+    );
+  });
+
+  group('rekeyActiveSession (hosted session-switch adoption)', () {
+    late FlutterSessionManager manager;
+    late ExecutionEnv env;
+    setUp(() {
+      env = MemoryExecutionEnv(cwd: '/');
+      manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    });
+    test('re-keys the active slot and moves activeId with it', () {
+      final service = _fakeService(env);
+      manager.addSession('boot-id', service);
+      manager.rekeyActiveSession('sw-live-id');
+      expect(manager.sessions.map((s) => s.id), ['sw-live-id']);
+      expect(manager.activeId, 'sw-live-id');
+      expect(manager.active?.service, same(service));
+      // The UI (drawer dot, wide sidebar) reads manager.activeId — it now
+      // matches the SW's live session instead of the boot slot key.
+    });
+
+    test('re-keying to the SAME id is a no-op (no duplicate slot)', () {
+      manager.addSession('boot-id', _fakeService(env));
+      manager.rekeyActiveSession('boot-id');
+      expect(manager.sessions.map((s) => s.id), ['boot-id']);
+    });
+
+    test('no active slot — silently ignored', () {
+      manager.rekeyActiveSession('whatever');
+      expect(manager.sessions, isEmpty);
+    });
+  });
 }

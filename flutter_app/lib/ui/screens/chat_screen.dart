@@ -169,8 +169,8 @@ class _ChatScreenState extends State<ChatScreen> {
   /// render time against [ChatScreen.service] — always the active
   /// session's service, so session switches need no re-install.
   void _installDynamicHosts() {
-    fa_ui.FaChatHost.dynamicWidgetTileBuilder =
-        (context, message) => DynamicWidgetTile(
+    fa_ui.FaChatHost.dynamicWidgetTileBuilder = (context, message) =>
+        DynamicWidgetTile(
           service: widget.service.dynamicMessages,
           message: message,
           onSaveAsApp: _graduateWidget,
@@ -207,14 +207,14 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     final l10n = context.l10n;
     if (appId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.dynamicMessagesSaveFailed)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.dynamicMessagesSaveFailed)));
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(l10n.dynamicMessagesSaved(appId))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(l10n.dynamicMessagesSaved(appId))));
     final keys = SessionKeysScope.maybeOf(context);
     final account = sharedGithubAccountStore(
       keys ?? await SessionKeysStore.load(service.env),
@@ -228,14 +228,18 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     await showWidgetPublishSheet(
       context,
-      app: JsAppInfo.fromManifest({
-        'id': appId,
-        'name': definition.title,
-        'description': DynamicMessagesService.graduatedDescription(
-          definition.title,
-        ),
-        'version': '1.0.0',
-      }, bundled: false, fallbackId: appId),
+      app: JsAppInfo.fromManifest(
+        {
+          'id': appId,
+          'name': definition.title,
+          'description': DynamicMessagesService.graduatedDescription(
+            definition.title,
+          ),
+          'version': '1.0.0',
+        },
+        bundled: false,
+        fallbackId: appId,
+      ),
       account: account,
       service: publish,
       ledger: ledger,
