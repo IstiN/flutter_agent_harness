@@ -28,14 +28,18 @@ mobile form factor — for the broadest host coverage (Mailbox 1.8+).
 
 ## Install (sideload)
 
-Manifest URL: `https://fa1.dev/outlook/manifest.xml`
+Full step-by-step guide (requirements, exact UI path, troubleshooting):
+[docs/outlook-addin.md](../docs/outlook-addin.md), mirrored live at
+https://fa1.dev/outlook/support.html.
 
-- **Outlook on the web**: Settings → Integrate apps → Upload custom apps →
-  “Add from a URL”, paste the manifest URL. Tenants that disable URL
-  install: download the manifest and use “Add from file” instead (issue
-  #131).
-- **Windows / Mac (classic Outlook)**: follow Microsoft's sideload guide
-  with the same manifest URL.
+Short version — Microsoft removed "Add from a URL" from the manual
+surface, so download and add from file:
+
+1. Save https://fa1.dev/outlook/manifest.xml as `manifest.xml`.
+2. Open https://aka.ms/olksideload (My add-ins) — works from the web,
+   new Outlook, and classic Outlook.
+3. My add-ins → Custom add-ins → "+ Add a custom add-in" →
+   Add from file → `manifest.xml` → Install.
 
 ## Dev loop
 
