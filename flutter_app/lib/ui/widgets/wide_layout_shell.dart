@@ -16,6 +16,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/project_mount_flow.dart';
+import 'package:fa/services/dap_binding_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 
@@ -135,10 +136,29 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
   static bool get _isMacOS =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
+  /// The session whose open is in flight (see [SidebarSessionsList
+  /// .pendingSessionId]) — cleared once the manager's active slot catches
+  /// up with the attach broadcast.
+  String? _pendingOpenId;
+
+  /// The ONE selected id every row compares against: the click's pending
+  /// id wins while in flight, then the SW's live id (hosted), then the
+  /// manager's active slot (local). Pending is REPLACEMENT, not additive —
+  /// exactly one row can ever be highlighted.
+  String? get _selectedSessionId {
+    final pending = _pendingOpenId;
+    if (pending != null) return pending;
+    return widget.manager.hostedLiveId.value ?? widget.manager.active?.id;
+  }
+
   void _onManagerChanged() {
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
+    if (_pendingOpenId != null &&
+        widget.manager.hostedLiveId.value == _pendingOpenId) {
+      _pendingOpenId = null; // the broadcast landed — the live id took over
+    }
     if (mounted) setState(() {});
   }
 
@@ -201,7 +221,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (widget.sessionNamesStore != null || _namesStore != null) return;
     final service = widget.manager.active?.service;
     if (service == null) return;
-    final store = await SessionNamesStore.load(service.env);
+    final store =
+        service.namesStoreOverride ??
+        await SessionNamesStore.shared(service.env);
     if (!mounted) return;
     setState(() => _namesStore = store);
   }
@@ -298,15 +320,24 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           children: [
             _buildBrandHeader(colors),
             Expanded(
-              child: SidebarSessionsList(
-                manager: widget.manager,
-                sessionNamesStore: widget.sessionNamesStore ?? _namesStore,
-                collapsed: _sidebarCollapsed,
-                onNewSession: _newSession,
-                onSessionTap: () => setState(() {}),
-                persistedSessions: _persistedSessions,
-                sessionInfoNames: _jsonlNames,
-                onOpenPersisted: _openPersistedSession,
+              child: ListenableBuilder(
+                // The DAP inbound binding badge re-renders the list when
+                // the binding loads/changes (settings page, first load).
+                listenable: DapBindingStore.instance,
+                builder: (context, _) => SidebarSessionsList(
+                  manager: widget.manager,
+                  sessionNamesStore: widget.sessionNamesStore ?? _namesStore,
+                  collapsed: _sidebarCollapsed,
+                  onNewSession: _newSession,
+                  onSessionTap: () => setState(() {}),
+                  persistedSessions: _persistedSessions,
+                  sessionInfoNames: _jsonlNames,
+                  onOpenPersisted: _openPersistedSession,
+                  onOpenLiveSession: _openLiveSession,
+                  hubBoundSessionId: DapBindingStore.instance.boundSessionId,
+                  pendingSessionId: _pendingOpenId,
+                  selectedSessionId: _selectedSessionId,
+                ),
               ),
             ),
             Divider(height: 1, thickness: 1, color: colors.border),
@@ -654,13 +685,42 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     );
   }
 
-  /// Opens a persisted-only session from disk (the sidebar's history tail),
-  /// cloning the active service's connection — the same pattern the JS-app
-  /// session binding uses.
+  /// Opens a persisted-only session from the sidebar's history tail. On a
+  /// A tap on an already-live sidebar row. Hosted surfaces re-dispatch
+  /// through the relay (the local slot holds only the boot attach — a
+  /// bare switchTo would be a silent no-op); desktop falls back to it.
+  Future<void> _openLiveSession(String sessionId) async {
+    final active = widget.manager.active;
+    if (active == null) return;
+    final relayOpen = active.service.openSessionAction;
+    if (relayOpen != null) {
+      debugPrint('[fah][shell] open live session $sessionId via relay');
+      setState(() => _pendingOpenId = sessionId);
+      await relayOpen(sessionId);
+      return;
+    }
+    widget.manager.switchTo(sessionId);
+  }
+
+  /// Opens a persisted session row from the sidebar. On a hosted
+  /// relay surface (browser extension) the session files live in the
+  /// service worker — the open is a `session_open` dispatch there, exactly
+  /// like the narrow drawer; cloning locally would fail (the page-side
+  /// service has no config to clone). Desktop clones the active service.
   Future<void> _openPersistedSession(SessionMetadata metadata) async {
     final active = widget.manager.active;
     if (active == null) return;
     final service = active.service;
+    final relayOpen = service.openSessionAction;
+    if (relayOpen != null) {
+      debugPrint(
+        '[fah][shell] open session ${metadata.id} via relay (session_open)',
+      );
+      setState(() => _pendingOpenId = metadata.id);
+      await relayOpen(metadata.id);
+      return;
+    }
+    debugPrint('[fah][shell] open session ${metadata.id} via local clone');
     try {
       await widget.manager.openSession(
         metadata,
@@ -673,6 +733,16 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
               apiKey: '',
             ),
         serviceFactory: () => service.clone(),
+      );
+    } on SessionTooLargeException {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
+          ),
+        ),
       );
     } on Object catch (error) {
       // A torn/corrupt session file must not crash the shell — the entry

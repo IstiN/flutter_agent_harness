@@ -28,6 +28,7 @@ final class SessionMetadata {
     this.lastUpdatedAt,
     this.parentSessionPath,
     this.metadata,
+    this.sizeBytes,
   });
 
   /// Unique session id.
@@ -53,6 +54,13 @@ final class SessionMetadata {
 
   /// Free-form application metadata from the header.
   final Map<String, dynamic>? metadata;
+
+  /// Size of the session file in bytes, when known from the filesystem.
+  ///
+  /// Lets hosts skip or refuse to load pathological sessions (hundreds of
+  /// MB) without reading them — loading one monopolizes the Dart heap and
+  /// sends the VM into a permanent GC storm.
+  final int? sizeBytes;
 }
 
 /// The storage contract behind a [Session] tree.
@@ -229,6 +237,7 @@ SessionMetadata headerToSessionMetadata(
   SessionHeader header,
   String path, {
   DateTime? lastUpdatedAt,
+  int? sizeBytes,
 }) {
   return SessionMetadata(
     id: header.id,
@@ -238,6 +247,7 @@ SessionMetadata headerToSessionMetadata(
     lastUpdatedAt: lastUpdatedAt,
     parentSessionPath: header.parentSessionPath,
     metadata: header.metadata,
+    sizeBytes: sizeBytes,
   );
 }
 
@@ -251,6 +261,7 @@ Future<SessionMetadata> loadJsonlSessionMetadata(
   FileSystem fs,
   String filePath, {
   DateTime? lastUpdatedAt,
+  int? sizeBytes,
 }) async {
   final lines = _fsOrThrow(
     await fs.readTextLines(filePath, maxLines: 1),
@@ -262,6 +273,7 @@ Future<SessionMetadata> loadJsonlSessionMetadata(
       parseSessionHeaderLine(line, filePath),
       filePath,
       lastUpdatedAt: lastUpdatedAt,
+      sizeBytes: sizeBytes,
     );
   }
   _invalidSession(filePath, 'missing session header');

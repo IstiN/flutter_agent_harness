@@ -72,6 +72,9 @@ Map<String, dynamic> messageToJs(Message message) {
   return {
     'role': message.role,
     'text': text,
+    // The relay panel synthesizes its trajectory ledger from these rows —
+    // the record chain needs the real time, not the panel's receive time.
+    'timestamp': message.timestamp.toIso8601String(),
     // Tool-call names let the UI tell a tool-call-only turn (no text,
     // the tool results tell the story) apart from a genuinely empty
     // response (placeholder-worthy).

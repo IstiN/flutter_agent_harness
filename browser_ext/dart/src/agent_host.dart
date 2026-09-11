@@ -12,6 +12,7 @@ import 'dart:convert';
 
 import 'package:flutter_agent_harness/src/config/config_service.dart';
 import 'package:flutter_agent_harness/src/config/config_tool.dart';
+import 'package:flutter_agent_harness/src/web_search/web_search.dart';
 import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/agent/agent.dart';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
@@ -25,6 +26,7 @@ import 'package:flutter_agent_harness/src/compaction/compaction.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/session/session_storage.dart';
+import 'package:flutter_agent_harness/src/session/uuid.dart';
 import 'package:flutter_agent_harness/src/session/session_tree.dart';
 import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
@@ -38,10 +40,12 @@ import 'host_event_map.dart'
 import 'browser_api_tools.dart';
 import 'security/exfil_gate.dart' show OutboundKind, originOf;
 import 'chrome_api.dart';
+import 'run_script_tool.dart';
 import 'chrome_storage_env.dart';
 import 'fetch_client.dart';
 import 'dap/dap_frames.dart';
 import 'dap/dap_integration.dart';
+import 'dap/bound_session_routing.dart';
 import 'providers.dart';
 import 'session_reset.dart';
 import 'tool_gate.dart';
@@ -93,7 +97,11 @@ const _systemPrompt =
 /// Owns the agent, its tools, approvals, session, and the event bridge.
 final class AgentHost implements UiHostBackend {
   AgentHost._(this._env, this._ops, this._sink)
-    : _flow = ApprovalFlow(sink: _sink);
+    : _flow = ApprovalFlow(sink: _sink) {
+    // Provider diagnostics ride the relay into the panel console — the
+    // SW's own console is a separate DevTools window nobody opens.
+    hostEventSink = _sink;
+  }
 
   final ChromeStorageEnv _env;
   final OpCaller _ops;
@@ -178,10 +186,18 @@ final class AgentHost implements UiHostBackend {
     required HostConfig config,
     ChromeApi? chrome,
     Set<String>? visitedOrigins,
+    RunScriptExecutor? runScript,
+    WebSearchConfig? webSearch,
   }) async {
     final env = await ChromeStorageEnv.restore();
     final host = AgentHost._(env, ops, sink);
-    await host._init(config, chrome: chrome, visitedOrigins: visitedOrigins);
+    await host._init(
+      config,
+      chrome: chrome,
+      visitedOrigins: visitedOrigins,
+      runScript: runScript,
+      webSearch: webSearch,
+    );
     return host;
   }
 
@@ -189,10 +205,15 @@ final class AgentHost implements UiHostBackend {
     HostConfig config, {
     ChromeApi? chrome,
     Set<String>? visitedOrigins,
+    RunScriptExecutor? runScript,
+    WebSearchConfig? webSearch,
   }) async {
     _mailbox = config.mailbox;
     _registry = ToolRegistry([
-      ...builtinTools(_env).where((tool) => tool.name != 'bash'),
+      ...builtinTools(
+        _env,
+        webSearch: webSearch,
+      ).where((tool) => tool.name != 'bash'),
       // AC11 (issue #29): the config tool on the browser-storage surface.
       // chrome.storage has no home dir and the SW cannot spawn host-side
       // processes — the service refuses stdio servers with the named
@@ -200,6 +221,9 @@ final class AgentHost implements UiHostBackend {
       configTool(
         ConfigService(env: _env, homeDir: null, supportsProcesses: false),
       ),
+      // Sandboxed script interpreters (python/javascript) in the offscreen
+      // document — the web-app sandbox parity the SW otherwise lacks.
+      if (runScript != null) runScriptTool(execute: runScript),
       for (final MapEntry(:key, :value) in _browserOps.entries)
         _browserTool(key, value),
     ]);
@@ -242,6 +266,11 @@ final class AgentHost implements UiHostBackend {
     attachApproval(_agent, _approvals);
     _agent.subscribe(_onAgentEvent);
     _booted = true;
+    // DAP attach must happen on the boot path too, not only in
+    // reconfigure: after an extension reload the auto-boot reads faDap
+    // from storage, and without this call the hub presence silently never
+    // starts (config parses, no socket, panel shows "Unreachable").
+    _applyDapConfig(config.dap);
     unawaited(_refreshArchives());
     _emitStatus();
   }
@@ -344,7 +373,13 @@ final class AgentHost implements UiHostBackend {
   /// Starts/stops/retargets the hub presence without touching the agent.
   void _applyDapConfig(DapConfig? dap) {
     final current = _dapConfig;
-    if (current != null && dap != null && current.sameTargetAs(dap)) return;
+    if (current != null && dap != null && current.sameTargetAs(dap)) {
+      // Same hub target — keep the live client (no reconnect), but take
+      // the new config object: the session binding rides it and must
+      // apply immediately (mail routing reads _dapConfig).
+      _dapConfig = dap;
+      return;
+    }
     _detachDap();
     if (dap != null) _attachDap(dap);
   }
@@ -456,6 +491,7 @@ final class AgentHost implements UiHostBackend {
     if (!_booted) throw StateError('not booted');
     if (_running) throw StateError('busy: finish the current turn first');
     final oldId = sessionId;
+    print('[dap-host] session_new: archiving $oldId');
     if (oldId.isNotEmpty) {
       await archiveLiveSession(
         fs: _env,
@@ -477,8 +513,15 @@ final class AgentHost implements UiHostBackend {
   @override
   Future<void> openSession(String requestedId) async {
     if (!_booted) throw StateError('not booted');
-    if (_running) throw StateError('busy: finish the current turn first');
+    if (_running) {
+      print(
+        '[dap-host] session_open($requestedId) REFUSED: a turn is '
+        'running — finish or cancel it first',
+      );
+      throw StateError('busy: finish the current turn first');
+    }
     final archivePath = sessionArchivePath(requestedId);
+    print('[dap-host] session_open($requestedId): switching from $sessionId');
     if ((await _env.exists(archivePath)).valueOrNull != true) {
       throw StateError('no such session: $requestedId');
     }
@@ -589,11 +632,67 @@ final class AgentHost implements UiHostBackend {
   /// mid-run, starts a turn when idle.
   void pushMail(String from, String text) {
     if (!_mailDedupe.first(from, text)) return; // AC18: bridge/DAP duplicate
+    unawaited(_routeMail(from, text));
+  }
+
+  /// Routes one inbound mail: the session binding (faDap.boundSession)
+  /// pins hub mail to a dedicated or user-picked session — when idle, that
+  /// session becomes live BEFORE the turn so the conversation lands where
+  /// the user pointed it. A running turn keeps the classic behavior: the
+  /// mail steers into the active session (switching mid-run is refused).
+  Future<void> _routeMail(String from, String text) async {
+    if (!_running) await _ensureBoundSession();
     if (_running) {
       _mail.add((from: from, text: text));
       return;
     }
-    unawaited(_runTurn('[from $from] $text'));
+    await _runTurn('[from $from] $text');
+  }
+
+  /// Switches to the bound session when the binding asks for it: the
+  /// decision table is pure ([boundSessionAction]); failures degrade to
+  /// the current session — mail must never be lost over routing.
+  Future<void> _ensureBoundSession() async {
+    final config = _dapConfig;
+    if (config == null || !_booted) return;
+    final action = boundSessionAction(
+      mode: config.boundSessionMode,
+      boundId: config.boundSessionId,
+      currentId: sessionId,
+      pristineLive: _agent.state.messages.isEmpty,
+    );
+    switch (action) {
+      case BoundSessionAction.stay:
+        return;
+      case BoundSessionAction.openBound:
+        print(
+          '[dap-host] inbound mail: switching to the bound session '
+          '${config.boundSessionId} (was $sessionId)',
+        );
+        try {
+          await openSession(config.boundSessionId!);
+        } on Object {
+          // No such archive (cleared, never synced) — in dedicated mode
+          // fall through to minting a fresh dedicated session; in named
+          // mode stay on the current session rather than dropping mail.
+          if (config.boundSessionMode != 'dedicated') return;
+          await _createDedicatedSession(config);
+        }
+      case BoundSessionAction.createDedicated:
+        await _createDedicatedSession(config);
+    }
+  }
+
+  /// Mints (or adopts the pristine live session as) the dedicated agent
+  /// session and persists its id back into faDap so the same session
+  /// keeps receiving mail across SW restarts.
+  Future<void> _createDedicatedSession(DapConfig config) async {
+    try {
+      if (_agent.state.messages.isNotEmpty) await newSession();
+      await config.persistBoundSessionId?.call(sessionId);
+    } on Object {
+      // Busy/unbooted raced in — the current session takes the mail.
+    }
   }
 
   Future<List<Message>> _drainMail() async {
@@ -934,16 +1033,12 @@ final class AgentHost implements UiHostBackend {
   }
 }
 
-String _uuid() {
-  var seed = DateTime.now().microsecondsSinceEpoch;
-  var seq = 0;
-  // ponytail: UUID-shaped id; uniqueness only needs to hold within one SW life.
-  String next() => ((seed = seed * 1103515245 + 12345 + ++seq) & 0x7fffffff)
-      .toRadixString(16)
-      .padLeft(8, '0');
-  final a = next(), b = next(), c = next(), d = next(), e = next(), f = next();
-  return '$a-$b-4${c.substring(0, 3)}-a${d.substring(0, 3)}-$e${f.substring(0, 4)}';
-}
+/// Session ids come from the harness's UUIDv7: the old local LCG here
+/// collapsed under dart2js (int is a double; the multiply overflowed 2^53
+/// and zeroed the low bits), so two sessions minted close together could
+/// share an id and one's archive file overwrote the other — sessions
+/// "disappeared" from the picker. uuidv7 is time-ordered and secure-random.
+String _uuid() => uuidv7();
 
 /// Compaction progress sink that reports nothing (headless SW).
 final class _SilentHooks implements AutoCompactorHooks {

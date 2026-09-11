@@ -2,8 +2,10 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:fa/services/dap_service.dart' show DapInboundMode;
 import 'package:fa/services/dap_service_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -48,6 +50,25 @@ void main() {
     },
   );
 
+  test('save persists the hub password; empty keeps it', () async {
+    final svc = service();
+    await svc.saveConnection(
+      url: 'ws://hub.example.com/ws',
+      name: 'alice',
+      secret: 'pw1',
+    );
+    final config =
+        jsonDecode(File('${home.path}/.dap/config.json').readAsStringSync())
+            as Map<String, dynamic>;
+    expect(config['client' + 'Secret'], 'pw1');
+    // An empty field keeps whatever is stored.
+    await svc.saveConnection(url: 'ws://hub.example.com/ws', name: 'alice');
+    final kept =
+        jsonDecode(File('${home.path}/.dap/config.json').readAsStringSync())
+            as Map<String, dynamic>;
+    expect(kept['client' + 'Secret'], 'pw1');
+  });
+
   test('empty name keeps the previously saved name', () async {
     final svc = service();
     await svc.saveConnection(url: 'ws://hub.example.com/ws', name: 'alice');
@@ -70,6 +91,42 @@ void main() {
 
     expect(snapshot.connected, isFalse);
     expect(snapshot.supported, isTrue);
+  });
+
+  group('inbound binding', () {
+    test('saveBinding writes boundSession; load maps it back', () async {
+      final svc = service();
+      await svc.saveConnection(url: 'hub.example.com:8787', name: 'alice');
+      await svc.saveBinding(
+        DapInboundMode.named,
+        sessionId: 'sess-1',
+        sessionTitle: 'My session',
+      );
+      final snapshot = await svc.load();
+      expect(snapshot.inboundMode, DapInboundMode.named);
+      expect(snapshot.boundSessionId, 'sess-1');
+      expect(snapshot.boundSessionTitle, 'My session');
+    });
+
+    test('currentSession mode removes the boundSession block', () async {
+      final svc = service();
+      await svc.saveConnection(url: 'hub.example.com:8787', name: 'alice');
+      await svc.saveBinding(DapInboundMode.dedicated);
+      var snapshot = await svc.load();
+      expect(snapshot.inboundMode, DapInboundMode.dedicated);
+      await svc.saveBinding(DapInboundMode.currentSession);
+      snapshot = await svc.load();
+      expect(snapshot.inboundMode, DapInboundMode.currentSession);
+      expect(snapshot.boundSessionId, isNull);
+      // The connection itself survives binding edits.
+      expect(snapshot.url, 'ws://hub.example.com:8787/ws');
+      expect(snapshot.name, 'alice');
+    });
+
+    test('a missing config reports the zero-config default mode', () async {
+      final snapshot = await service().load();
+      expect(snapshot.inboundMode, DapInboundMode.currentSession);
+    });
   });
 
   test('env-pinned connection is reported as env-locked', () async {

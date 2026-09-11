@@ -132,6 +132,18 @@ void main() {
       },
     );
 
+    test('list populates sizeBytes from the filesystem entry', () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendMessage(UserMessage.text('hello'));
+      final all = await repo.list();
+      expect(all, hasLength(1));
+      final size = all.single.sizeBytes;
+      expect(size, isNotNull);
+      expect(size!, greaterThan(0));
+    });
+
     test('list skips corrupt session files', () async {
       final session = await repo.create(
         JsonlSessionCreateOptions(cwd: '/work'),

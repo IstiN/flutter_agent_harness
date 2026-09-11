@@ -121,7 +121,9 @@ OutlookManifestReport validateOutlookManifest(String xml, {bool dev = false}) {
       break;
     }
     if (xml.substring(open + 4, close).contains('--')) {
-      issues.add('XML comment contains "--"; Outlook rejects the document as malformed');
+      issues.add(
+        'XML comment contains "--"; Outlook rejects the document as malformed',
+      );
     }
     cursor = close + 3;
   }

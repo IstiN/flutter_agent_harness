@@ -247,6 +247,8 @@ final class ProviderHttpError implements Exception {
     this.retryAfter,
     this.requestUrl,
     this.redirectLocation,
+    this.answeredHtml = false,
+    this.answeredJson = false,
   });
 
   /// The HTTP status code.
@@ -264,6 +266,20 @@ final class ProviderHttpError implements Exception {
 
   /// `Location` response header on a redirect response, when present.
   final String? redirectLocation;
+
+  /// True when the endpoint answered `200 OK` with an HTML page instead of
+  /// the event stream — the signature of an SSO-gated API whose session
+  /// died: the transparent redirect (browser jar / fetch follows 3xx)
+  /// lands on the login portal, and without this flag the adapter would
+  /// finish with an EMPTY assistant message and no hint why.
+  final bool answeredHtml;
+
+  /// True when the endpoint answered `200 OK` with a buffered JSON body
+  /// instead of the event stream — a gateway/front-proxy error object
+  /// (`{"error": …}`) that never went through SSE framing. The body is
+  /// short and diagnostic, so [formatProviderError] surfaces it (unlike
+  /// the HTML login page, which is transcript junk).
+  final bool answeredJson;
 }
 
 /// Parses a `Retry-After` header value into a [Duration].
@@ -336,6 +352,8 @@ DateTime? _parseHttpDate(String value) {
 /// there is no SDK whose error shapes need probing here.
 String formatProviderError(Object error) {
   if (error is ProviderHttpError) {
+    if (error.answeredHtml) return _formatHtmlAnswer(error);
+    if (error.answeredJson) return _formatJsonAnswer(error);
     final redirect = _formatAuthRedirect(error);
     if (redirect != null) return redirect;
 
@@ -407,6 +425,41 @@ String stripAuthExpiredMarker(String formattedError) {
   return formattedError.substring(0, cut) + formattedError.substring(end);
 }
 
+/// Produces a friendly explanation for a `200 OK` that carried an HTML page
+/// ([ProviderHttpError.answeredHtml]). Same diagnosis as the 3xx path — an
+/// expired SSO session — but the redirect was followed transparently, so no
+/// status/Location ever surfaced. The HTML itself (a login SPA shell) is
+/// never useful in the transcript; the marker lets actionable UIs render a
+/// re-authorize card.
+String _formatHtmlAnswer(ProviderHttpError error) {
+  final requestUrl = error.requestUrl?.toString() ?? '';
+  if (_isKnownAuthExpiredHost(requestUrl)) {
+    return 'CodeMie session expired — the endpoint answered the API call '
+        'with the SSO login page instead of the event stream (the dead '
+        'session cookie was silently redirected). Re-authorize to refresh '
+        'the session (CLI: /provider codemie sso). '
+        '$authExpiredMarkerPrefix'
+        'codemie]]';
+  }
+  return 'The endpoint answered with an HTML page instead of a data stream '
+      '— usually an expired SSO login (the request was silently redirected '
+      'to a login portal) or a wrong URL.';
+}
+
+/// Produces the message for a `200 OK` that carried a buffered JSON body
+/// ([ProviderHttpError.answeredJson]): a gateway answered the streaming
+/// request with a plain error object (no SSE framing). Unlike the HTML
+/// login page the body is small and diagnostic — surface it (bounded) so
+/// the real gateway message (unknown model, dead session, quota) is
+/// visible instead of an empty assistant turn.
+String _formatJsonAnswer(ProviderHttpError error) {
+  final body = error.body.trim();
+  final preview = body.length > 500 ? '${body.substring(0, 500)}…' : body;
+  return 'The endpoint answered 200 with a JSON body instead of an event '
+      'stream — the gateway rejected the request without a proper status '
+      'code: $preview';
+}
+
 /// Produces a friendly explanation for an HTTP redirect (3xx). These are
 /// almost always expired SSO sessions or wrong URLs — the raw HTML redirect
 /// page is not useful in the transcript, and we want a human-readable hint
@@ -470,6 +523,38 @@ Future<http.StreamedResponse> sendProviderRequest(
       retryAfter: parseRetryAfter(response.headers['retry-after']),
       requestUrl: request.url,
       redirectLocation: response.headers['location'],
+    );
+  }
+
+  // A 200 with an HTML body is NEVER a valid event stream: an SSO-gated
+  // endpoint (CodeMie et al.) whose session died answers the API call with
+  // its login portal after a transparent redirect (fetch and dart:io both
+  // follow 3xx silently). Without this guard the SSE consumer sees no
+  // `data:` lines and the turn finishes with an empty assistant message —
+  // "(empty response — try again)" with zero hint that re-login is needed.
+  final contentType = response.headers['content-type'] ?? '';
+  final contentTypeLower = contentType.toLowerCase();
+  if (contentTypeLower.contains('text/html')) {
+    final body = await response.stream.bytesToString();
+    throw ProviderHttpError(
+      200,
+      body,
+      requestUrl: request.url,
+      answeredHtml: true,
+    );
+  }
+
+  // A 200 with a buffered JSON body is not an event stream either: a
+  // gateway (CodeMie/DIAL et al.) that rejects the request without proper
+  // status codes answers `{"error": …}` — a real error object the user
+  // must SEE instead of an empty assistant message.
+  if (contentTypeLower.contains('application/json')) {
+    final body = await response.stream.bytesToString();
+    throw ProviderHttpError(
+      200,
+      body,
+      requestUrl: request.url,
+      answeredJson: true,
     );
   }
   return response;

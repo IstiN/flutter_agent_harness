@@ -123,6 +123,30 @@ void main() {
     expect(call.arguments['code'], 'window.__faMain = "hi";\nsecond line');
   });
 
+  test('run_script directive → run_script call with language/code', () async {
+    final (reason, message) = await _finalOf([
+      UserMessage.text(
+        '[context] active tab: t — https://a.dev\n'
+        'run_script python print("hi")\nsecond line',
+      ),
+    ]);
+    expect(reason, StopReason.toolUse);
+    final call = message.content.whereType<ToolCall>().single;
+    expect(call.name, 'run_script');
+    expect(call.arguments['language'], 'python');
+    expect(call.arguments['code'], 'print("hi")\nsecond line');
+  });
+
+  test('tool directive → generic tool call with json args', () async {
+    final (reason, message) = await _finalOf([
+      UserMessage.text('tool web_fetch {"url": "http://127.0.0.1:9/x"}'),
+    ]);
+    expect(reason, StopReason.toolUse);
+    final call = message.content.whereType<ToolCall>().single;
+    expect(call.name, 'web_fetch');
+    expect(call.arguments['url'], 'http://127.0.0.1:9/x');
+  });
+
   test(
     'sessions_restore directive → sessions_restore call with the id',
     () async {

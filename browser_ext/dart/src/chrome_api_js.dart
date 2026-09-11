@@ -1384,3 +1384,33 @@ final class JsChromeApi implements ChromeApi {
   @override
   late final permissions = _Permissions();
 }
+
+// ---------------------------------------------------------------------------
+// run_script — runtime.sendMessage hop to the offscreen interpreter page
+// ---------------------------------------------------------------------------
+
+/// The [RunScriptSendMessage] hop over the REAL chrome.runtime.sendMessage:
+/// the SW's message reaches the offscreen document's onMessage listener
+/// (offscreen pages are extension contexts); the reply is that listener's
+/// sendResponse payload. A null reply means no listener answered — mapped
+/// to a ChromeApiException so the tool surfaces a transport failure
+/// instead of a silent empty result.
+Future<Map<String, Object?>> jsRunScriptSendMessage(
+  Map<String, Object?> message,
+) async {
+  final reply = await _invoke('runtime.sendMessage', [message]);
+  if (reply == null) {
+    throw ChromeApiException(
+      'no_listener',
+      'the offscreen interpreter page did not answer '
+      '(offscreen.html not open or still loading)',
+    );
+  }
+  if (reply is! Map) {
+    throw ChromeApiException(
+      'bad_reply',
+      'offscreen interpreter reply is not a map: $reply',
+    );
+  }
+  return reply.cast<String, Object?>();
+}

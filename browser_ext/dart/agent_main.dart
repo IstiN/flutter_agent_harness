@@ -24,9 +24,11 @@ import 'src/background/entry_points.dart';
 import 'src/bridge_relay.dart';
 import 'src/chrome_api.dart' show ChromeApi, ChromeApiException;
 import 'src/chrome_api_js.dart';
+import 'src/run_script_tool.dart';
 import 'src/fahx_import.dart' show FahxException, importFahxProviders;
 import 'src/dap/dap_integration.dart';
 import 'src/fetch_client.dart';
+import 'package:flutter_agent_harness/src/web_search/web_search.dart';
 import 'src/providers.dart';
 import 'src/security/exfil_gate.dart' show originOf;
 import 'src/ui_host_adapter.dart';
@@ -103,6 +105,7 @@ Future<void> main() async {
   _setProperty(faAgent, 'decide'.toJS, _decideImpl.toJS);
   _setProperty(faAgent, 'onEvent'.toJS, _onEventImpl.toJS);
   _setProperty(faAgent, 'getState'.toJS, _getStateImpl.toJS);
+  _setProperty(faAgent, 'sessionsList'.toJS, _sessionsListImpl.toJS);
   _setProperty(
     faAgent,
     'applyToolVisibility'.toJS,
@@ -274,6 +277,11 @@ void _onEventImpl(JSAny? cb) => _eventCb = cb as JSFunction?;
 JSAny? _getStateImpl() =>
     (_host?.getState() ?? <String, dynamic>{'booted': false}).jsify();
 
+/// The session list for the DAP settings picker (hub.sessions): the live
+/// session plus archives, same snapshot the v2 UI sheet polls.
+JSAny? _sessionsListImpl() =>
+    (_host?.sessionsList() ?? const <Map<String, dynamic>>[]).jsify();
+
 // -- faAgentV2 surface (scheduled tasks + wiring snapshot) --------------------------
 
 void _bindV2Surface() {
@@ -374,6 +382,24 @@ void _ensureHost(HostConfig config, {bool explicit = false}) {
             // The LIVE set: the gate reads it at call time, and
             // webNavigation keeps it warm after boot.
             visitedOrigins: chromeApi == null ? null : _visitedOrigins,
+            // Sandboxed python/javascript in the offscreen document —
+            // the run_script tool (web-app sandbox parity).
+            runScript: chromeApi == null
+                ? null
+                : (language, code) => offscreenRunScript(
+                    offscreen: chromeApi.offscreen,
+                    sendMessage: jsRunScriptSendMessage,
+                    language: language,
+                    code: code,
+                  ),
+            // web_fetch/web_search over the SW's fetch (package:http's
+            // XHR client does not exist in a worker); host_permissions
+            // <all_urls> makes both CORS-free — stronger than the web app.
+            // Model-chosen URLs must NOT receive the user's cookies
+            // (exfil channel) — credentials stay home.
+            webSearch: WebSearchConfig(
+              httpClient: FetchClient(credentials: 'omit'),
+            ),
           );
         })
         .then((host) => _host = host);
@@ -601,6 +627,7 @@ Future<Map<Object?, Object?>> _loadStoredRaw() async {
         'faApproval',
         'faDap',
         'faBrowserTools',
+        'faSessionNames',
       ].jsify(),
     ).toDart;
     if (result != null) {
@@ -731,17 +758,63 @@ Map<String, bool> _browserToolsFrom(Object? raw) {
   };
 }
 
-/// faDap storage shape: `{url, name}`. Empty url = no hub presence.
+/// faDap storage shape: `{url, name, boundSession?: {mode, sessionId?}}`.
+/// Empty url = no hub presence.
 DapConfig? _dapFrom(Object? raw) {
-  if (raw is! Map) return null;
+  if (raw is! Map) {
+    print('[dap] config: faDap absent/not a map — hub presence off');
+    return null;
+  }
   final url = '${raw['url'] ?? ''}'.trim();
-  if (url.isEmpty) return null;
+  if (url.isEmpty) {
+    print('[dap] config: empty url — hub presence off');
+    return null;
+  }
+  final name = '${raw['name'] ?? ''}'.trim();
+  // faDap.secret — the hub password (empty = open hub). Sent as
+  // the dap_token query param — browser WebSocket cannot set headers.
+  final secret =
+      '${raw['sec'
+                  'ret'] ?? ''}'
+          .trim();
+  print('[dap] config: url=$url name=${name.isEmpty ? '—' : name}');
+  final bound = raw['boundSession'];
+  final boundMap = bound is Map ? bound : const {};
+  final mode = '${boundMap['mode'] ?? 'current'}'.trim();
+  final boundId = '${boundMap['sessionId'] ?? ''}'.trim();
   return DapConfig(
     url: url,
-    name: '${raw['name'] ?? ''}'.trim(),
+    name: name,
+    secret: secret,
     loadKeyFile: () => _storageGetString('faDapKey'),
     saveKeyFile: (text) => _storageSetString('faDapKey', text),
+    boundSessionMode: switch (mode) {
+      'dedicated' || 'named' => mode,
+      _ => 'current',
+    },
+    boundSessionId: boundId.isEmpty ? null : boundId,
+    persistBoundSessionId: _persistBoundSessionId,
   );
+}
+
+/// Writes the lazily created dedicated session id back into faDap (merge —
+/// url/name/binding mode stay untouched) so the dedicated session survives
+/// SW restarts.
+Future<void> _persistBoundSessionId(String sessionId) async {
+  final raw = await _storageGet(['faDap'].jsify()).toDart;
+  final stored = raw == null
+      ? <Object?, Object?>{}
+      : (raw as JSObject).dartify() as Map<Object?, Object?>;
+  final dap = stored['faDap'];
+  if (dap is! Map) return;
+  final next = Map<Object?, Object?>.of(dap);
+  final bound = next['boundSession'];
+  final boundNext = Map<Object?, Object?>.of(bound is Map ? bound : const {});
+  boundNext['sessionId'] = sessionId;
+  next['boundSession'] = boundNext;
+  await _storageSet(
+    <String, Object?>{'faDap': next}.jsify() as JSObject,
+  ).toDart;
 }
 
 Future<String?> _storageGetString(String key) async {

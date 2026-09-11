@@ -1964,6 +1964,12 @@ abstract class AppLocalizations {
   /// **'Agent name'**
   String get settingsDapAgentNameLabel;
 
+  /// The hub password field on the connection editor
+  ///
+  /// In en, this message translates to:
+  /// **'Hub password'**
+  String get settingsDapPasswordLabel;
+
   /// No description provided for @settingsDapChannelsEmpty.
   ///
   /// In en, this message translates to:
@@ -1982,6 +1988,36 @@ abstract class AppLocalizations {
   /// **'Edit connection'**
   String get settingsDapEditConnection;
 
+  /// No description provided for @settingsDapMakeActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Make active'**
+  String get settingsDapMakeActive;
+
+  /// No description provided for @settingsDapActiveChip.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get settingsDapActiveChip;
+
+  /// No description provided for @settingsDapSavedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved connections'**
+  String get settingsDapSavedTitle;
+
+  /// No description provided for @settingsDapSavedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Bookmarked hubs. Tap one to make it the hub this agent is online on — the switch is live.'**
+  String get settingsDapSavedHint;
+
+  /// No description provided for @settingsDapRemoveSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get settingsDapRemoveSaved;
+
   /// No description provided for @settingsDapEnvNote.
   ///
   /// In en, this message translates to:
@@ -1991,13 +2027,67 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDapHubHint.
   ///
   /// In en, this message translates to:
-  /// **'Hub URL, agent identity, channels'**
+  /// **'Let Fa agents find and message each other'**
   String get settingsDapHubHint;
+
+  /// No description provided for @settingsDapHubIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'A hub is where your Fa agents meet — the CLI, this app, and the browser extension. Connect once and this agent becomes reachable by name: others can find it and send it messages.'**
+  String get settingsDapHubIntro;
+
+  /// No description provided for @settingsDapIdentityTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'How other agents see you'**
+  String get settingsDapIdentityTitle;
+
+  /// No description provided for @settingsDapIdentityHint.
+  ///
+  /// In en, this message translates to:
+  /// **'The name is how other agents address you. The id is derived from this device’s key.'**
+  String get settingsDapIdentityHint;
+
+  /// No description provided for @settingsDapInboundTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming messages'**
+  String get settingsDapInboundTitle;
+
+  /// No description provided for @settingsDapInboundHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Where messages from other agents land'**
+  String get settingsDapInboundHint;
+
+  /// No description provided for @settingsDapInboundDedicated.
+  ///
+  /// In en, this message translates to:
+  /// **'A dedicated agent session (recommended)'**
+  String get settingsDapInboundDedicated;
+
+  /// No description provided for @settingsDapInboundCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'Whichever session is open'**
+  String get settingsDapInboundCurrent;
+
+  /// No description provided for @settingsDapInboundNamed.
+  ///
+  /// In en, this message translates to:
+  /// **'A session you pick'**
+  String get settingsDapInboundNamed;
+
+  /// No description provided for @settingsDapInboundBadgeTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'This session receives messages from other agents'**
+  String get settingsDapInboundBadgeTooltip;
 
   /// No description provided for @settingsDapHubTitle.
   ///
   /// In en, this message translates to:
-  /// **'DAP hub'**
+  /// **'Agent network'**
   String get settingsDapHubTitle;
 
   /// No description provided for @settingsDapNameHint.
@@ -2005,6 +2095,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'alice'**
   String get settingsDapNameHint;
+
+  /// Helper text: an empty password field keeps the stored one
+  ///
+  /// In en, this message translates to:
+  /// **'Leave empty to keep the current one'**
+  String get settingsDapPasswordHint;
 
   /// No description provided for @settingsDapProbeButton.
   ///
@@ -3049,6 +3145,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'One-time code from fa1.dev'**
   String get githubBrowserCodeHint;
+
+  /// No description provided for @sessionTooLargeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Session too large to open in the app ({size}). Open it with the CLI instead.'**
+  String sessionTooLargeTitle(String size);
 
   /// Top-bar button listing the session's dynamic messages (issue #102)
   ///
