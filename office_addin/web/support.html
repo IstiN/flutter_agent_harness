@@ -39,7 +39,7 @@ write draft bodies. This page is the install guide.</p>
 <ul>
   <li>An Outlook account: personal (outlook.com) or work/school. Org tenants must allow custom add-ins — see <a href="#troubleshooting">troubleshooting</a> if yours doesn't.</li>
   <li>Any of: Outlook on the web (outlook.office.com / outlook.live.com), new Outlook for Windows, or classic Outlook for Windows / Mac.</li>
-  <li>The manifest: <a href="./manifest.xml"><code>https://fa1.dev/outlook/manifest.xml</code></a> — today 1.0.0.0, which surfaces in classic Outlook (Windows/Mac) and classic Outlook on the web. The <em>Apps</em>-flyout button in new Outlook for Windows needs 1.1.0.0, the VersionOverrides release from <a href="https://github.com/IstiN/flutter_agent_harness/issues/143" rel="noopener">issue #143</a> — until that deploys, new Outlook shows no fa entry at all.</li>
+  <li>The manifest: <a href="./manifest.xml"><code>https://fa1.dev/outlook/manifest.xml</code></a> — currently <strong>1.1.0.0</strong>, the VersionOverrides release from <a href="https://github.com/IstiN/flutter_agent_harness/issues/143" rel="noopener">issue #143</a>, which surfaces everywhere including the <em>Apps</em>-flyout button in new Outlook. Installs from the earlier 1.0.0.0 show no fa entry in new Outlook — re-install from the current manifest (see <a href="#troubleshooting">troubleshooting</a>).</li>
 </ul>
 
 <h2>1. Download the manifest</h2>
@@ -75,7 +75,7 @@ trust prompt (“This add-in is not from the App Store”) with
 <h2>4. Open the taskpane</h2>
 <p>Open (or select) any email message, then:</p>
 <ul>
-  <li><strong>New Outlook for Windows / Outlook on the web:</strong> the message's <em>Apps</em> flyout (toolbar or ⋯ menu) → <strong>fa</strong>; in a compose window the flyout sits in the compose toolbar. <em>(Needs manifest 1.1.0.0 — the VersionOverrides release, <a href="https://github.com/IstiN/flutter_agent_harness/issues/143" rel="noopener">issue #143</a>. Until it deploys, new Outlook shows no fa entry; use classic Outlook.)</em></li>
+  <li><strong>New Outlook for Windows / Outlook on the web:</strong> the message's <em>Apps</em> flyout (toolbar or ⋯ menu) → <strong>fa</strong>; in a compose window the flyout sits in the compose toolbar. <em>(Needs manifest 1.1.0.0 — the VersionOverrides release, <a href="https://github.com/IstiN/flutter_agent_harness/issues/143" rel="noopener">issue #143</a>. If you installed 1.0.0.0 earlier: remove the add-in, re-download the manifest, re-add from file; Outlook may cache the old version up to 24 h.)</em></li>
   <li><strong>Classic Outlook for Windows:</strong> <em>Home</em> ribbon → <strong>fa</strong> button.</li>
   <li><strong>Classic Outlook for Mac:</strong> the message ribbon → <strong>fa</strong>.</li>
 </ul>
@@ -90,7 +90,7 @@ attachment always prompts for approval. To remove:
   <tr><th>Symptom</th><th>Cause and fix</th></tr>
   <tr><td>“Installation failed — Add-in installation failed.” on upload</td><td>The manifest failed validation. This was a real manifest defect before v1.0.0.0 finished deployment (#131/#133 — an XML comment bug, since fixed; Microsoft's validation gateway now accepts the manifest). Re-download <code>manifest.xml</code> and retry; make sure the file wasn't saved as <code>.txt</code> or truncated.</td></tr>
   <tr><td>No <em>Custom add-ins</em> section, or “installing from url is disabled”</td><td>Your tenant blocks custom add-ins (common in corporate tenants). An admin can deploy fa via the M365 admin center (<em>Settings → Integrated apps → Upload custom apps</em>), or install with a personal Outlook.com account instead.</td></tr>
-  <tr><td>Installed but no <strong>fa</strong> button anywhere in new Outlook</td><td>Known gap: manifest 1.0.0.0 has no ribbon surface in new Outlook — that is exactly what <a href="https://github.com/IstiN/flutter_agent_harness/issues/143" rel="noopener">issue #143</a> fixes with the 1.1.0.0 VersionOverrides release. Until it deploys to fa1.dev, use classic Outlook (Windows/Mac) or classic Outlook on the web; once live, re-download the manifest (check <code>&lt;Version&gt;</code> — 1.1.0.0), remove the old add-in, re-add from file.</td></tr>
+  <tr><td>Installed but no <strong>fa</strong> button anywhere in new Outlook</td><td>You're running the pre-<a href="https://github.com/IstiN/flutter_agent_harness/issues/143" rel="noopener">#143</a> 1.0.0.0 manifest — it has no ribbon surface in new Outlook. Re-download the manifest (check <code>&lt;Version&gt;</code> — 1.1.0.0), remove the old add-in (<em>My add-ins</em> → <em>Custom add-ins</em> → ⋯ → <em>Remove</em>), re-add from file. Classic Outlook works on either version; Outlook may cache the old one up to 24 h.</td></tr>
   <tr><td>Old version keeps running after an update</td><td>Outlook caches add-ins for up to 24 h (classic Windows). Remove the add-in, re-add from the new manifest, restart Outlook; worst case wait out the cache.</td></tr>
   <tr><td>“host API unavailable” banner in the taskpane</td><td>The Office.js runtime did not load. Reload the taskpane; if it persists, the pane answers without mail tools.</td></tr>
   <tr><td>Taskpane blank</td><td>Make sure your network allows <code>fa1.dev</code> and the Office.js CDN (<code>appsforoffice.microsoft.com</code>) — check proxies and corporate filters.</td></tr>

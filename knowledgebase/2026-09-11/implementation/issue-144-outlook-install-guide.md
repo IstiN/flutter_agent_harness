@@ -48,12 +48,14 @@ fa1.dev serves **1.0.0.0** today and #143 (VersionOverrides) was still
 open, making the requirement unachievable. Reviewer caught it; final
 wording states the rollout explicitly:
 
-- 1.0.0.0 (today): surfaces in classic Outlook Win/Mac + classic web.
-- 1.1.0.0 (#143, VersionOverridesV1_0 + Read/Compose CommandSurface,
-  “fa” ShowTaskpane button): adds the *Apps*-flyout button in new
-  Outlook. Until it deploys, **new Outlook shows no fa entry at all** —
-  the troubleshooting row says “use classic surfaces”, not “re-download
-  for 1.1.0.0” (impossible today).
+- At merge time of #149: 1.0.0.0 live → “use classic surfaces
+  meanwhile”. After #151 (the #143 fix) merged and Pages deployed, the
+  live manifest became 1.1.0.0 (verified by fetching
+  fa1.dev/outlook/manifest.xml) and the wording flipped in this
+  follow-up: current version named, old installs told to re-install
+  (remove + re-add, 24 h cache note). Version language in shipped docs
+  must name the rollout state, never a bare requirement the CDN can't
+  satisfy yet.
 
 Screenshots: deliberately text-only (exact UI labels, verified against
 Microsoft Learn by review). No Outlook instance is reachable from the
@@ -94,7 +96,8 @@ markdown.
 
 - `site/` + `office_addin/web/` changed → **fa1.dev needs a redeploy**
   after merge (Pages).
-- Sibling #143 (PR #151) will bump the manifest to 1.1.0.0; when it
-  merges, the guide's “today 1.0.0.0 / until it deploys” wording should
-  flip to the simple “Apps flyout” state (one commit, three spots:
-  requirements, step 4, troubleshooting row).
+- Version flip already executed: #151 merged, Pages deployed, live
+  manifest verified **1.1.0.0** (curl), and this PR updates the guide's
+  three spots (requirements, step 4, troubleshooting row) from “today
+  1.0.0.0 / until #143 deploys” to the 1.1.0.0 state. fa1.dev already
+  serves the new support.html (verified: aka.ms path present).
