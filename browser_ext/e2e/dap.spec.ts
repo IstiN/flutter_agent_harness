@@ -339,18 +339,19 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
     mock.dmTarget = extAgentId;
     const cli = CliProc.start(home, mock.port);
     try {
-      // The hub handshake needs a moment before the prompt's tool call can
-      // send; the mock's first response only lands after a full boot anyway.
-      await new Promise((r) => setTimeout(r, 5_000));
-      cli.prompt('dm the extension agent');
-
-      // 3. The hub routed CLI → ext …
+      // Gate the prompt on the CLI's hub enrollment (#152 flake class): a
+      // fixed 5s sleep races `dart run` cold boot on a loaded runner — the
+      // mock's one-shot dap_dm response then fires before the DAP handshake
+      // completes, the tool call errors out, and nothing re-sends it.
       await expect
         .poll(
           () => hub.agentIds().find((id) => id !== extAgentId) ?? null,
           { timeout: 60_000 },
         )
         .not.toBeNull();
+      cli.prompt('dm the extension agent');
+
+      // 3. The hub routed CLI → ext …
       const otherId = hub.agentIds().find((id) => id !== extAgentId)!;
       await expect
         .poll(() => hub.relayTargets(), { timeout: 60_000 })
