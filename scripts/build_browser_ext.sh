@@ -154,7 +154,7 @@ fi
 mkdir -p build
 rm -f build/fa-extension.zip
 if command -v zip >/dev/null 2>&1; then
-  runtime="manifest.json sw content panel icons"
+  runtime="manifest.json sw content panel icons offscreen.html offscreen vendor"
   # panel/app rides inside the panel/ dir — no separate root entry.
   ( cd browser_ext && zip -qr ../build/fa-extension.zip $runtime \
       -x 'sw/agent.js.map' 'sw/agent.js.deps' )
@@ -188,4 +188,3 @@ with zipfile.ZipFile("build/fa-extension.zip") as z:
     z.extractall("build/fa-extension")
 PY
 echo "build/fa-extension/ (unpacked — load this in chrome://extensions)"
-xtensions)"
