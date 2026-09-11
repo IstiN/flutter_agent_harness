@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.344
+
 
 - fix(97): the TUI secret sheet accepts multiline and over-wide pastes
   safely: a pasted NAME drops CR/LF (UPPER_SNAKE can never carry line
@@ -3137,6 +3138,8 @@
 
 - fix(122): run dart pub publish --dry-run in PR quality gates (#128)
 - fix(118): strip Dart core exception prefixes from model-visible tool errors (#127)
+
+## Unreleased
 
 ## Unreleased
 
