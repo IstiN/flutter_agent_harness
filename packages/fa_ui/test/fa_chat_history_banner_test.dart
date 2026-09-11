@@ -80,4 +80,53 @@ void main() {
 
     expect(find.text('Load earlier (7 more)'), findsOneWidget);
   });
+
+  testWidgets('a failed page load surfaces the retry banner', (tester) async {
+    final service = _PagingService()
+      ..above = 42
+      ..historyLoadError = 'disk full';
+    await _pumpScreen(tester, service);
+
+    expect(
+      find.text("Couldn't load earlier messages - tap to retry"),
+      findsOneWidget,
+    );
+    expect(find.text('Load earlier (42 more)'), findsNothing);
+  });
+
+  testWidgets('tapping the retry banner pages history again', (tester) async {
+    final service = _PagingService()
+      ..above = 42
+      ..historyLoadError = 'disk full';
+    await _pumpScreen(tester, service);
+
+    await tester.tap(
+      find.text("Couldn't load earlier messages - tap to retry"),
+    );
+    await tester.pump();
+
+    expect(service.loadCalls, 1);
+  });
+
+  testWidgets('retry banner clears when the error does', (tester) async {
+    final service = _PagingService()
+      ..above = 42
+      ..historyLoadError = 'disk full';
+    await _pumpScreen(tester, service);
+    expect(
+      find.text("Couldn't load earlier messages - tap to retry"),
+      findsOneWidget,
+    );
+
+    service
+      ..historyLoadError = null
+      ..notifyListeners();
+    await tester.pump();
+
+    expect(find.text('Load earlier (42 more)'), findsOneWidget);
+    expect(
+      find.text("Couldn't load earlier messages - tap to retry"),
+      findsNothing,
+    );
+  });
 }

@@ -215,6 +215,9 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// landing, a page loading) can drive a rebuild.
   int? _historyAbove;
 
+  /// Mirrors [FaChatService.historyLoadError] for the retry banner.
+  String? _historyLoadError;
+
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
 
@@ -328,6 +331,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     _isStreaming = widget.service.isStreaming;
     _error = widget.service.error;
     _historyAbove = widget.service.historyAboveCount;
+    _historyLoadError = widget.service.historyLoadError;
     _syncMessages();
   }
 
@@ -343,6 +347,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       _isStreaming = widget.service.isStreaming;
       _error = widget.service.error;
       _historyAbove = widget.service.historyAboveCount;
+      _historyLoadError = widget.service.historyLoadError;
       _syncMessages();
       setState(() {});
     }
@@ -477,11 +482,13 @@ class _FaChatScreenState extends State<FaChatScreen>
     final needsRebuild =
         widget.service.isStreaming != _isStreaming ||
         widget.service.error != _error ||
-        widget.service.historyAboveCount != _historyAbove;
+        widget.service.historyAboveCount != _historyAbove ||
+        widget.service.historyLoadError != _historyLoadError;
     if (needsRebuild) {
       _isStreaming = widget.service.isStreaming;
       _error = widget.service.error;
       _historyAbove = widget.service.historyAboveCount;
+      _historyLoadError = widget.service.historyLoadError;
       if (mounted) setState(() {});
     }
   }
@@ -837,7 +844,9 @@ class _FaChatScreenState extends State<FaChatScreen>
                 ),
                 child: Center(
                   child: Text(
-                    historyAbove == null
+                    _historyLoadError != null
+                        ? strings.chatLoadEarlierFailed
+                        : historyAbove == null
                         ? strings.chatLoadEarlier
                         : strings.chatLoadEarlierCount('$historyAbove'),
                     style: TextStyle(

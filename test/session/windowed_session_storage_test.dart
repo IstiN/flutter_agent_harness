@@ -460,6 +460,8 @@ void main() {
         residentBytes: 24 * 1024 * 1024,
       );
       expect(storage.residentCount, 200); // open: tail chunk only
+      // The app's load-end refresh primes the above-count memo.
+      expect(await storage.countAbove(), 2800);
       for (var i = 0; i < 10; i++) {
         await storage.loadOlder();
       }
@@ -471,12 +473,13 @@ void main() {
         storage.residentWindowBytes,
         lessThanOrEqualTo(24 * 1024 * 1024),
       );
-      // Evicted records are simply "above" again.
-      expect(storage.hasOlder, isTrue);
+      // Paging up keeps the OLDEST resident slice (the just-loaded
+      // history); the newest side slides out (re-readable by paging
+      // back down) and the anchor keeps moving toward the file top.
       final ids = [for (final entry in await storage.getEntries()) entry.id];
-      expect(ids.contains('e0'), isFalse); // far above the window
-      expect(ids.contains('e2999'), isTrue); // live tail always resident
-      // The exact total survives eviction.
+      expect(ids, [for (var i = 800; i < 1400; i++) 'e$i']);
+      // 800 records remain above; the exact total survives eviction.
+      expect(await storage.countAbove(), 800);
       expect(await storage.countRecords(), 3000);
     });
 

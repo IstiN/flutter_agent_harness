@@ -147,4 +147,9 @@ abstract interface class FaChatService implements FaApprovalModeController {
   /// Pages the next chunk of older transcript history into view. No-op
   /// while a page load is running or everything is already loaded.
   Future<void> loadOlderHistory();
+
+  /// The last [loadOlderHistory] failure for the history banner's retry
+  /// state: null when nothing failed or a retry succeeded. Hosts without
+  /// history paging always return null.
+  String? get historyLoadError;
 }

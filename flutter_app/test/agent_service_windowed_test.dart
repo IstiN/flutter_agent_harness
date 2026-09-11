@@ -161,11 +161,15 @@ void main() {
     await io.File(path).writeAsString(buffer.toString());
   }
 
-  Future<(AgentService, CountingFileSystem)> loadedService(int count) async {
+  Future<(AgentService, CountingFileSystem)> loadedService(
+    int count, {
+    CountingFileSystem? countingFs,
+  }) async {
     final tmp = await io.Directory.systemTemp.createTemp('fa_windowed');
     addTearDown(() => tmp.delete(recursive: true));
     await seedRaw('${tmp.path}/big.jsonl', count);
-    final counting = CountingFileSystem(LocalFileSystem(cwd: tmp.path));
+    final counting =
+        countingFs ?? CountingFileSystem(LocalFileSystem(cwd: tmp.path));
     final service = AgentService(
       agent: _createAgent(),
       env: LocalExecutionEnv(cwd: tmp.path),
@@ -226,15 +230,22 @@ void main() {
     );
     expect(service.historyAboveCount, 4600);
 
-    // Paging down to the file top reports everything loaded.
+    // Paging to the file top reports everything ABOVE loaded; the
+    // transcript itself is the bounded resident window (the oldest
+    // slice, e0..e599) - the newest side slid out of residency and is
+    // re-readable by paging back down.
     while (service.historyAboveCount! > 0) {
       await service.loadOlderHistory();
     }
-    expect(service.messages, hasLength(5000));
     expect(service.historyAboveCount, 0);
+    expect(service.messages, hasLength(600));
+    expect(
+      service.messages.first.content,
+      'message 0 with a bit of body to be realistic',
+    );
     // And a further tap is a clean no-op.
     await service.loadOlderHistory();
-    expect(service.messages, hasLength(5000));
+    expect(service.messages, hasLength(600));
   }, timeout: const Timeout(Duration(minutes: 3)));
 
   test('small sessions load whole: history count reports 0', () async {
@@ -247,4 +258,45 @@ void main() {
     await service.loadOlderHistory();
     expect(service.messages, hasLength(5));
   });
+
+  test('a failed page load surfaces historyLoadError until a retry',
+      () async {
+    final flaky = FlakyFileSystem(LocalFileSystem(cwd: io.Directory.systemTemp.path));
+    final (service, _) = await loadedService(1000, countingFs: flaky);
+    addTearDown(service.dispose);
+    await waitForCount(service, 800);
+
+    // The next ranged read dies mid-page (a torn read).
+    flaky.failNextReadRange = true;
+    await service.loadOlderHistory();
+
+    expect(service.historyLoadError, 'torn read');
+    expect(service.messages, hasLength(200));
+
+    // A retry (no fault) succeeds and clears the error.
+    await service.loadOlderHistory();
+    expect(service.historyLoadError, isNull);
+    expect(service.messages, hasLength(400));
+  });
+}
+
+/// A [CountingFileSystem] whose ranged reads can be armed to fail once -
+/// the historyLoadError surface test's torn-read fault.
+final class FlakyFileSystem extends CountingFileSystem {
+  FlakyFileSystem(super.delegate);
+
+  bool failNextReadRange = false;
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) async {
+    if (failNextReadRange) {
+      failNextReadRange = false;
+      throw StateError('torn read');
+    }
+    return super.readRange(path, start, end);
+  }
 }

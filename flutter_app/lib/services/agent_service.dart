@@ -1592,6 +1592,14 @@ class AgentService extends ChangeNotifier
 
   bool _loadingHistory = false;
 
+  /// The last [loadOlderHistory] failure, shown by the history banner
+  /// ([FaChatService.historyLoadError]); cleared by a successful retry.
+  /// Kept separate from [error] so a failed history page never touches
+  /// the live transcript's error line.
+  @override
+  String? get historyLoadError => _historyLoadError;
+  String? _historyLoadError;
+
   /// Pages one chunk of records above the window into the transcript
   /// ([FaChatService.loadOlderHistory]). Re-entrant taps are ignored, as
   /// is any tap mid-run.
@@ -1605,24 +1613,26 @@ class AgentService extends ChangeNotifier
       final joined = await windowed.loadOlder();
       if (joined.isNotEmpty) await _reprojectLoadedWindow(_session!);
       await _refreshHistoryAbove();
-    } on Object {
-      // A torn read (the CLI mid-append): the next tap retries.
+      if (_historyLoadError != null) {
+        _historyLoadError = null;
+        notifyListeners();
+      }
+    } on Object catch (e) {
+      _historyLoadError = e is StateError ? e.message : e.toString();
+      notifyListeners();
     } finally {
       _loadingHistory = false;
     }
   }
 
-  /// Recomputes [historyAboveCount]: total file records (a newline
-  /// stream, no JSON decode) minus the loaded branch length — 0 once the
-  /// window covers the file. Runs unawaited at load end.
+  /// Recomputes [historyAboveCount] from the window's own above-count
+  /// (records before the resident anchor) — 0 once the window has reached
+  /// the file top, even under residency eviction. Runs unawaited at load
+  /// end.
   Future<void> _refreshHistoryAbove() async {
     final windowed = _windowed;
     if (windowed == null) return;
-    final total = await windowed.countRecords();
-    final count = !windowed.hasOlder
-        ? 0
-        : total -
-              (await windowed.getPathToRoot(await windowed.getLeafId())).length;
+    final count = await windowed.countAbove();
     if (_historyAboveCount != count) {
       _historyAboveCount = count;
       notifyListeners();

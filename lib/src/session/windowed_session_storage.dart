@@ -43,8 +43,14 @@ final class WindowedSessionStorage
        _knownFileBytes = chunk.endOffset,
        _residentRecordCap = residentRecords,
        _residentByteCap = residentBytes {
-    for (final entry in chunk.entries) {
-      _indexEntry(entry.record, offset: entry.offset);
+    for (var i = 0; i < chunk.entries.length; i++) {
+      _indexEntry(
+        chunk.entries[i].record,
+        start: chunk.entries[i].offset,
+        end: i + 1 < chunk.entries.length
+            ? chunk.entries[i + 1].offset
+            : chunk.endOffset,
+      );
     }
     _currentLeafId = chunk.entries.isEmpty
         ? null
@@ -65,9 +71,11 @@ final class WindowedSessionStorage
   final SessionChunkReader _reader;
 
   final List<SessionRecord> _entries = [];
-  /// File-order start offsets aligned with [_entries] - the byte span of
-  /// each resident record, so eviction frees exactly what it drops.
+  /// File-order start offsets aligned with [_entries].
   final List<int> _offsets = [];
+  /// File-order END offsets aligned with [_entries] (half-open spans
+  /// [_offsets[i], _ends[i])) - the byte span of each resident record.
+  final List<int> _ends = [];
   final Map<String, SessionRecord> _byId = {};
   final Map<String, String> _labelsById = {};
   String? _currentLeafId;
@@ -82,6 +90,12 @@ final class WindowedSessionStorage
 
   bool _hasOlder = false;
   int? _totalRecords;
+
+  /// Memoized number of records ABOVE the resident window (before the
+  /// anchor offset). Starts at total-minus-open-tail, decreases by the
+  /// branch records each [loadOlder] joins; appends and tail eviction
+  /// leave it untouched.
+  int? _countAbove;
 
   /// Resident-window instrumentation (issue #135 AC1: the bound is
   /// asserted by tests, not by user behavior).
@@ -135,6 +149,19 @@ final class WindowedSessionStorage
   Future<int> countRecords() async =>
       _totalRecords ??= await _reader.countRecords();
 
+  /// Records sitting ABOVE the resident window - the "Load earlier"
+  /// banner count. Zero once the window has reached the file top, no
+  /// matter how much was evicted from the tail.
+  Future<int> countAbove() async {
+    final memo = _countAbove;
+    if (memo != null) return memo;
+    final total = await countRecords();
+    final branch = _currentLeafId == null
+        ? <SessionRecord>[]
+        : await getPathToRoot(_currentLeafId);
+    return _countAbove ??= total - branch.length;
+  }
+
   /// Loads one chunk of records above the window, prepending them to the
   /// index. Returns the records that JOINED THE ACTIVE BRANCH, root-first —
   /// the transcript delta to render. Side-branch records enter the index
@@ -171,6 +198,12 @@ final class WindowedSessionStorage
       _offsets.insertAll(0, [
         for (final entry in chunk.entries) entry.offset,
       ]);
+      _ends.insertAll(0, [
+        for (var i = 0; i < chunk.entries.length; i++)
+          i + 1 < chunk.entries.length
+              ? chunk.entries[i + 1].offset
+              : chunk.endOffset,
+      ]);
       _entries.insertAll(0, [
         for (final entry in chunk.entries) entry.record,
       ]);
@@ -180,6 +213,9 @@ final class WindowedSessionStorage
         }
       }
       if (joined.isNotEmpty || !chunk.hasOlder) break;
+    }
+    if (joined.isNotEmpty && _countAbove != null) {
+      _countAbove = _countAbove! - joined.length;
     }
     _evictToBound();
     return joined;
@@ -198,9 +234,15 @@ final class WindowedSessionStorage
     }
     if (info.size == _knownFileBytes) return false;
     final chunk = await _reader.readForward(_knownFileBytes);
-    for (final entry in chunk.entries) {
-      _indexEntry(entry.record, offset: entry.offset);
-      _currentLeafId = leafIdAfterSessionRecord(entry.record);
+    for (var i = 0; i < chunk.entries.length; i++) {
+      _indexEntry(
+        chunk.entries[i].record,
+        start: chunk.entries[i].offset,
+        end: i + 1 < chunk.entries.length
+            ? chunk.entries[i + 1].offset
+            : chunk.endOffset,
+      );
+      _currentLeafId = leafIdAfterSessionRecord(chunk.entries[i].record);
     }
     _knownFileBytes = chunk.fileSize;
     // Appended lines are new records in the counted total too - a stale
@@ -226,8 +268,16 @@ final class WindowedSessionStorage
     _knownFileBytes = chunk.endOffset;
     _hasOlder = chunk.hasOlder;
     _offsets.clear();
-    for (final entry in chunk.entries) {
-      _indexEntry(entry.record, offset: entry.offset);
+    _ends.clear();
+    _countAbove = null;
+    for (var i = 0; i < chunk.entries.length; i++) {
+      _indexEntry(
+        chunk.entries[i].record,
+        start: chunk.entries[i].offset,
+        end: i + 1 < chunk.entries.length
+            ? chunk.entries[i + 1].offset
+            : chunk.endOffset,
+      );
     }
     _currentLeafId = chunk.entries.isEmpty
         ? null
@@ -236,39 +286,49 @@ final class WindowedSessionStorage
 
   /// Adds a record to the in-memory index (records that came FROM the
   /// file). Disk-backed appends go through [appendEntry].
-  void _indexEntry(SessionRecord record, {int? offset}) {
+  void _indexEntry(
+    SessionRecord record, {
+    required int start,
+    required int end,
+  }) {
     _entries.add(record);
-    _offsets.add(offset ?? (_offsets.isEmpty ? 0 : _offsets.last));
+    _offsets.add(start);
+    _ends.add(end);
     _byId[record.id] = record;
     updateSessionLabelCache(_labelsById, record);
   }
 
-  /// Slides the resident window down to its bounds: the oldest records
-  /// leave the index and count as "above" again ([loadOlder]'s anchor
-  /// advances to the oldest resident record, so a re-tap loads NEW
-  /// history instead of re-fetching the evicted zone).
+  /// Slides the resident window down to its bounds by dropping the NEWEST
+  /// records (the tail): paging upward makes progress - the just-loaded
+  /// history stays, the recently-seen tail is re-readable by paging back
+  /// down, and [loadOlder]'s anchor ([_windowTopOffset], the oldest
+  /// resident record) keeps moving toward the file top. The leaf rides to
+  /// the new last resident record so branch walks stay inside the window.
   ///
   /// Returns the number of evicted records.
   int _evictToBound() {
     var evicted = 0;
     while (_entries.length > _residentRecordCap ||
         _residentWindowBytes > _residentByteCap) {
-      _entries.removeAt(0);
-      _offsets.removeAt(0);
+      _entries.removeLast();
+      _offsets.removeLast();
+      _ends.removeLast();
       evicted++;
-      if (_offsets.isEmpty) break;
+      if (_entries.isEmpty) break;
     }
     if (evicted > 0) {
-      _windowTopOffset = _offsets.isEmpty ? null : _offsets.first;
-      if (_windowTopOffset == null) _hasOlder = false;
+      _currentLeafId = _entries.isEmpty
+          ? null
+          : leafIdAfterSessionRecord(_entries.last);
     }
     return evicted;
   }
 
-  /// Bytes resident on disk: the window is one contiguous file range
-  /// from the oldest indexed record to the ingest cursor.
+  /// Bytes resident on disk: the resident records form one contiguous
+  /// file range from the oldest record's start to the newest record's
+  /// end.
   int get _residentWindowBytes =>
-      _offsets.isEmpty ? 0 : _knownFileBytes - _offsets.first;
+      _ends.isEmpty ? 0 : _ends.last - _offsets.first;
 
 
   @override
@@ -307,9 +367,10 @@ final class WindowedSessionStorage
       await _fs.appendFile(_filePath, '$line\n'),
       'Failed to append session entry ${record.id}',
     );
-    _indexEntry(record, offset: _knownFileBytes);
-    _currentLeafId = leafIdAfterSessionRecord(record);
+    final start = _knownFileBytes;
     _knownFileBytes += line.length + 1;
+    _indexEntry(record, start: start, end: _knownFileBytes);
+    _currentLeafId = leafIdAfterSessionRecord(record);
     _evictToBound();
   }
 
