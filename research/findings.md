@@ -48,10 +48,9 @@ cheap LLM judge call (not rules), on a REAL session.
   rule when it could SEE pairs (iteration 2's contiguous ranges), but the
   engine must still snap ranges to pair-atomic boundaries before applying
   (D6) — a judge is a proposer, never the executor.
-- **F7 — z.ai reported `cached_tokens: 0`** on these one-shot calls; the
-  production pattern (judge re-runs at each pressure event over a
-  mostly-unchanged ledger prefix) is where caching would show. Provider-
-  dependent — treat as unproven upside.
+- **F7 — z.ai reports `cached_tokens: 0` and recalculates asynchronously**
+  (owner: "всегда отдает ноль, пересчитывают потом") — caching IS expected
+  to work server-side; the design still does not depend on it.
 
 ## Iterations
 
@@ -71,3 +70,27 @@ cheap LLM judge call (not rules), on a REAL session.
    contiguous ranges in output.
 4. Cost model confirmed: ~5–6k tokens per judge call at the edge — orders
    of magnitude under one classic compaction summary call.
+
+
+## Round 2 (2026-09-12) — judge prompt v3 + tail-window test
+
+v3 prompt additions: ASSISTANT-TEXT RULE (visible conversation is kept
+unless verifiably restated later), THINKING RULE (scratch reasoning hides
+freely), PAIR RULE unchanged.
+
+| run | window | hidden | freed | verdict |
+|---|---|---|---|---|
+| v3 | 1–140 (same as v2) | 115 | 89% | [85]/[108] turned out to be text+TOOLCALL records (announcement preambles, not final answers) — hiding them WITH their pairs is CORRECT; v3 keeps real assistant-TEXT conclusions |
+| v3 | 1440–1580 (live tail) | 66 | 14% | desired asymmetry: conservative near the edge; hid 36 custom (huge model_request_summary records — prime targets), 34 toolResults + their call carriers (pairs intact) |
+
+**Two new failure modes caught by the tail test (both now card requirements):**
+
+- **F8 — The judge hid a RESOLVED user ask** ([1472] "но я хочу … allow all
+  через yolo…") together with its answer [1471]. Semantically defensible
+  (the work was done), but it violates the exemption. Ruling: v1 treats
+  EVERY real user message as engine-side exempt (cheap, safe); judge
+  discretion over resolved exchanges is a later, separately-tested feature.
+- **F9 — Synthetic user-role records are NOT user messages** ([1508] was a
+  background-job system-notice). Hiding them is fine and desirable — the
+  ledger must TAG real-user vs system-notice so both the judge and the
+  engine exemption can tell them apart.
