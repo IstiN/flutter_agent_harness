@@ -3236,6 +3236,13 @@
 
 - ci(browser-ext): placeholder .env for the dispatch-only panel-app build (#136)
 
+## 0.1.349
+
+- docs(143): KB for the Monarch VersionOverrides manifest fix (#156)
+- docs: backend agent mode research — fa behind product Go backends
+- fix(143): manifest VersionOverrides command surface for Monarch/new OWA (#151)
+- docs(144): real Outlook add-in installation guide (#149)
+
 ## Unreleased
 
 ## Unreleased
