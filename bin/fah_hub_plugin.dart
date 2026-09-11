@@ -23,6 +23,15 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
     show defaultHubStateFile, envHubSecret, readHubStateSecret;
 
+// The /dap menu lives in lib/ as pure data (issue #129): the untagged
+// structural test pins it without importing this dart:io plugin, which
+// would drag bin/ into the default coverage run and trip the CRAP
+// ratchet. Re-exported so the integration PTY tests see the constant
+// through this library.
+export 'package:flutter_agent_harness/src/cli/dap_menu_options.dart'
+    show dapMenuOptions;
+import 'package:flutter_agent_harness/src/cli/dap_menu_options.dart';
+
 /// Plugin name used by `--plugin hub` and `.fah/packages.yaml`.
 const _pluginName = 'hub';
 
@@ -456,33 +465,7 @@ final class HubPluginHost implements FahPlugin {
     final choice = await pick(
       'DAP — Distributed Agents Platform: end-to-end-encrypted '
       'messaging between agents over a local hub',
-      [
-        (
-          'start',
-          'Start DAP locally (one step)',
-          'generates a session secret if needed, launches a local hub, connects',
-        ),
-        (
-          'status',
-          'Connection status',
-          'agent id, display name, hub url, joined channels',
-        ),
-        (
-          'connect',
-          'Connect to a hub…',
-          'enter a host, optional display name and channel',
-        ),
-        (
-          'secret',
-          'Set master secret…',
-          'masked input — enables DAP for this session',
-        ),
-        (
-          'about',
-          'What is DAP?',
-          'a short explainer of the hub, channels and secrets',
-        ),
-      ],
+      dapMenuOptions,
     );
     switch (choice) {
       case 'start':

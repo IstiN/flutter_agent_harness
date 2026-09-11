@@ -3,6 +3,8 @@
 // in the LICENSE file.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'
+    show debugDefaultTargetPlatformOverride;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -276,13 +278,42 @@ void main() {
 
     // The header clears the top inset; the tail row sits above the
     // bottom inset plus the keyboard (Scaffold resize + SafeArea).
-    expect(tester.getTopLeft(find.text('Trajectory')).dy, greaterThanOrEqualTo(40));
+    expect(
+      tester.getTopLeft(find.text('Trajectory')).dy,
+      greaterThanOrEqualTo(40),
+    );
     expect(find.textContaining('Turn 40 prompt'), findsOneWidget);
     expect(
       tester.getBottomLeft(find.textContaining('Turn 40 prompt')).dy,
       lessThanOrEqualTo(800 - 25 - 30),
     );
     expect(tester.takeException(), isNull);
+    controller.dispose();
+  });
+
+  testWidgets('macOS desktop clears the floating traffic lights', (
+    tester,
+  ) async {
+    // fullSizeContentView windows report no SafeArea top inset — the
+    // screen must reserve the clearance itself (issue #99).
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    final controller = fixtureController();
+    await _pump(tester, controller);
+
+    expect(
+      tester.getTopLeft(find.text('Trajectory')).dy,
+      greaterThanOrEqualTo(28),
+    );
+    debugDefaultTargetPlatformOverride = null;
+    controller.dispose();
+  });
+
+  testWidgets('non-macOS adds no traffic-light clearance', (tester) async {
+    final controller = fixtureController();
+    await _pump(tester, controller);
+
+    // 12px header padding only.
+    expect(tester.getTopLeft(find.text('Trajectory')).dy, lessThan(28));
     controller.dispose();
   });
 }

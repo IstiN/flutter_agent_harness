@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.1.344
+
+
+- fix(97): the TUI secret sheet accepts multiline and over-wide pastes
+  safely: a pasted NAME drops CR/LF (UPPER_SNAKE can never carry line
+  breaks), a pasted VALUE normalizes CRLF to LF and grants PEM-style
+  multiline credentials verbatim, and the masked/revealed value renders
+  one frame row per line instead of embedding a raw newline inside a row
+  (which physically tore the sheet frame in the terminal). The exact-width
+  row off-by-one seen in the same frames is issue #109 and is fixed there.
+ A shortening (CRLF) paste now advances the value cursor by the normalized
+ length - pinned to the raw paste length it overran the buffer and crashed
+ the next edit keystroke (review follow-up).
+
+## 0.1.336
+
+- fix(97): TUI secret sheet opens on the VALUE field with the suggested
+  name as a dim placeholder (typing replaces it wholesale, Tab toggles
+  fields, ▸ marks focus), the value renders masked from the first
+  keystroke (Ctrl+R reveals), and a blocked Enter shows the reason inline
+  instead of dying silently. SECURITY ADVISORY: with the sheet as shipped
+  before this fix, a credential typed on name focus rendered UNMASKED in
+  the Name row (visible in scrollback, screen recordings, transcripts) —
+  treat secrets entered through the CLI secret sheet before 0.1.336 as
+  potentially exposed and rotate them.
 ## 0.1.335
 
 - feat(dap): password-protected local hub — `LocalHub(masterSecret:)`
@@ -3161,6 +3186,57 @@
 - feat(29): AC11/AC12 cross-surface config parity (+AC8/AC10 pins) (#92)
 - fix(59): stop cross-instance theft of scheduled self-reminders (#88)
 - fix(86): compaction — LLM finds asks itself (no hardcode) + tool-results assessment in checkpoint prompts (#87)
+
+## 0.1.335
+
+- test(35): make the AC12 E2E catalog-first (#96)
+- feat(91): add --log-file to tee the live session trace to a file (#95)
+
+## 0.1.336
+
+- fix(85): context pair-integrity — validate and repair tool pairing at the request boundary (#93)
+
+## 0.1.337
+
+- feat(101): add explicit --prompt-file <path> headless prompt flag (#103)
+- fix(97): TUI secret sheet — value-first focus, placeholder name, masked input, Enter explains itself (#98)
+- fix(99): clear macOS traffic lights on the trajectory screen (#100)
+
+## 0.1.338
+
+- build(deps): bump playwright (#106)
+- feat(89): Outlook Office Add-in host bridge (fa1.dev/outlook) (#94)
+
+## 0.1.339
+
+- feat(115): visualize pending scheduled follow-ups in the CLI TUI (#117)
+
+## 0.1.340
+
+- fix(107): un-red the tag pipeline — publish validation + LLM integration job (#108)
+
+## 0.1.341
+
+- feat(102): interactive dynamic messages - UI surface (tile, sheet, save-as-app) (#120)
+- fix(121): scope the pub.dev publish token to the publish step only (#123)
+- feat(113): fa1.dev reflects the Chrome extension, Outlook add-in, and full tool surface (#116)
+
+## 0.1.342
+
+- feat(125): bench.yml — run fa on terminal-bench on a GitHub runner (#126)
+- fix(109): clear stale TUI ask answers and keep the prompt frame inside the terminal width (#112)
+- chore(114): terminal-bench adapter and runner for fa (#119)
+
+## 0.1.343
+
+- fix(122): run dart pub publish --dry-run in PR quality gates (#128)
+- fix(118): strip Dart core exception prefixes from model-visible tool errors (#127)
+
+## 0.1.346
+
+- ci(browser-ext): placeholder .env for the dispatch-only panel-app build (#136)
+
+## Unreleased
 
 ## Unreleased
 

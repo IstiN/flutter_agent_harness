@@ -38,6 +38,22 @@ jobs:
 
       - run: dart pub get
 
+      # Publish gate at PR time: publish-blocking problems (undeclared lib/
+      # imports, stray PEM-like strings) used to surface only in the tag-time
+      # publish job — the v0.1.331 era: an undeclared package:cryptography
+      # import shipped red on ~26 consecutive tags. --ignore-warnings: the
+      # two known layout warnings (gitignored install_local.sh, docs/
+      # naming) must not redden every PR, while validation ERRORS — "does
+      # not have X in the dependencies section of pubspec.yaml" — still
+      # fail. setup-dart (sdk >= 3.13) registers a publish-scoped PUB_TOKEN
+      # job-wide and pub.dev rejects authenticated metadata reads, so
+      # resolve unauthenticated (same pattern as the publish job);
+      # --dry-run never uploads.
+      - name: Publish dry-run (unauthenticated)
+        run: |
+          dart pub token remove https://pub.dev || true
+          dart pub publish --dry-run --ignore-warnings
+
       # The example Flutter app lives in this repo; without its package
       # config the repo-wide `dart analyze` cannot resolve Flutter imports.
       - name: Example app pub get (for repo-wide analyze)
@@ -115,13 +131,17 @@ jobs:
         with:
           sdk: stable
       - run: dart pub get
-      - name: dart test --tags integration (skipped without keys)
+      # --exclude-tags browser-ext: the extension suite owns its own
+      # dedicated workflow (browser-ext.yml) which builds sw/agent.js and
+      # supplies Chrome for Testing — this job has neither, so running the
+      # suite here always failed (every tag since the suite landed).
+      - name: dart test --tags integration, excluding browser-ext (skipped without keys)
         run: |
           if [ -z "${OPENROUTER_API_KEY}${ANTHROPIC_API_KEY}${GOOGLE_API_KEY}${OLLAMA_API_KEY}" ]; then
             echo "No LLM API keys configured, skipping integration tests."
             exit 0
           fi
-          dart test --tags integration
+          dart test --tags integration --exclude-tags browser-ext
 
   js-ext-integration:
     name: JS engine integration (quickjs-ng)
@@ -184,12 +204,27 @@ jobs:
             exit 1
           fi
 
+      # setup-dart (sdk >= 3.13) provisions a publish-scoped credential for
+      # the whole job: it exports PUB_TOKEN and registers
+      # `dart pub token add https://pub.dev --env-var PUB_TOKEN`, so EVERY
+      # pub.dev request — including `dart pub get` metadata reads — carries
+      # the publish token. pub.dev rejects it on metadata reads
+      # ("depends on ... which doesn't exist (authorization failed)",
+      # exit 69; tag v0.1.340, run 34503923233). Resolution must run
+      # unauthenticated: strip the credential, resolve, restore it only
+      # for the publish step.
+      - name: Strip publish credential for dependency resolution
+        if: steps.gate.outputs.publishable == 'true'
+        run: dart pub token remove https://pub.dev || true
+
       - run: dart pub get
         if: steps.gate.outputs.publishable == 'true'
 
       - name: Publish (automated publishing via OIDC)
         if: steps.gate.outputs.publishable == 'true'
-        run: dart pub publish --force
+        run: |
+          dart pub token add https://pub.dev --env-var PUB_TOKEN || true
+          dart pub publish --force
 
   binaries:
     name: Build native binaries

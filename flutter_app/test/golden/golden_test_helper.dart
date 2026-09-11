@@ -66,6 +66,10 @@ Future<void> pumpGolden(
   Locale locale = const Locale('en'),
   ThemeData? theme,
   Widget Function(Widget child)? wrap,
+
+  /// False for frames with infinite animations (spinners): settles by
+  /// pumping one frame instead of pumpAndSettle, which would time out.
+  bool settle = true,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -80,7 +84,11 @@ Future<void> pumpGolden(
       home: wrap != null ? wrap(child) : Scaffold(body: Center(child: child)),
     ),
   );
-  await tester.pumpAndSettle();
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+  }
 }
 
 /// Asserts the current frame matches `test/golden/goldens/<name>.png`.

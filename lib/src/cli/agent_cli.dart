@@ -1350,6 +1350,8 @@ class AgentCli {
     final controller = _createTuiController();
     _tuiController = controller;
     _setTuiIo(controller);
+    // Pending scheduled follow-ups light the indicator row on boot (#115).
+    unawaited(_pushScheduledStatus());
 
     // The banner is part of the TUI output history so it stays visible above
     // the input line inside the alternate screen.
@@ -2641,7 +2643,6 @@ class AgentCli {
     if (override != null) return override;
     return CompactionSettings.forWindow(_agent.state.model.contextWindow);
   }
-
 
   /// Writes a diagnostic line to the log file (`~/.fah/logs/fa.log`).
   /// TUI/stderr stay clean — the AutoCompactor hook streams progress to

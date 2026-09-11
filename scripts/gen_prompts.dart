@@ -140,6 +140,10 @@ const rootSpecs = <PromptSpec>[
     constName: 'requestSecretToolDescriptionPrompt',
   ),
   PromptSpec(
+    source: 'prompts/tools/dynamic_message.md',
+    constName: 'dynamicMessageToolDescriptionPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/tools/lsp.md',
     constName: 'lspToolDescriptionPrompt',
   ),

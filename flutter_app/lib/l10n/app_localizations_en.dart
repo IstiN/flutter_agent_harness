@@ -1754,4 +1754,45 @@ class AppLocalizationsEn extends AppLocalizations {
   String sessionTooLargeTitle(String size) {
     return 'Session too large to open in the app ($size). Open it with the CLI instead.';
   }
+
+  @override
+  String get dynamicMessagesButtonTooltip => 'Dynamic messages';
+
+  @override
+  String get dynamicMessagesSheetTitle => 'Dynamic messages';
+
+  @override
+  String get dynamicMessagesLive => 'live';
+
+  @override
+  String dynamicMessagesEventCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count events',
+      one: '1 event',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String dynamicMessagesSaved(String appId) {
+    return 'Saved to your apps as “$appId”';
+  }
+
+  @override
+  String get dynamicMessagesSaveFailed =>
+      'Could not save this dynamic message as an app.';
+
+  @override
+  String get dynamicTileSaveAsApp => 'Save as app';
+
+  @override
+  String get dynamicTilePermissions => 'Permissions';
+
+  @override
+  String get dynamicTileError => 'Widget error';
+
+  @override
+  String get dynamicTileRetry => 'Retry';
 }

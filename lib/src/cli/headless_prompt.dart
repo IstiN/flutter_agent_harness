@@ -15,6 +15,10 @@ const headlessTextExtensions = {'.md', '.markdown', '.txt'};
 
 /// Resolves the headless prompt from parsed CLI arguments.
 ///
+/// - [CliArgs.promptFile] (`--prompt-file <path>`, alias `-f`) wins: the
+///   file is read as UTF-8 text and returned verbatim — never further
+///   resolved. A missing, unreadable, or undecodable file is a
+///   [CliArgsException] (the executable reports it as a usage error).
 /// - [CliArgs.prompt] (`-p`/`--prompt`) is used verbatim — never resolved as
 ///   a file.
 /// - Empty [CliArgs.positionals] (and no `-p`) returns null: interactive
@@ -33,8 +37,10 @@ const headlessTextExtensions = {'.md', '.markdown', '.txt'};
 ///   slashes — never fail on a missing "file").
 String? resolveHeadlessPrompt({
   String? prompt,
+  String? promptFile,
   List<String> positionals = const [],
 }) {
+  if (promptFile != null) return _readPromptFile(promptFile);
   if (prompt != null) return prompt;
   if (positionals.isEmpty) return null;
   final file = File(positionals.first);
@@ -52,6 +58,23 @@ String? resolveHeadlessPrompt({
   final reference =
       '[attached file: ${file.absolute.path} — read it with your tools]';
   return trailing.isEmpty ? reference : '$reference\n\n$trailing';
+}
+
+/// Reads an explicit `--prompt-file` as UTF-8 text, verbatim. A missing,
+/// unreadable, or undecodable file is a usage error — unlike the implicit
+/// positional resolution above, an explicit flag must fail loudly instead
+/// of silently degrading the prompt.
+String _readPromptFile(String path) {
+  final file = File(path);
+  try {
+    return file.readAsStringSync();
+  } on FileSystemException catch (error) {
+    throw CliArgsException(
+      'cannot read --prompt-file "$path": ${error.message}',
+    );
+  } on FormatException {
+    throw CliArgsException('--prompt-file is not valid UTF-8: $path');
+  }
 }
 
 /// Creates the [File] probed by [resolveInteractiveFileReference].

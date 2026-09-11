@@ -46,6 +46,17 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/compaction/branch_summarization.dart` — `generateBranchSummary` +
   `navigateSessionTree` (use instead of `Session.moveTo` for tree
   navigation); summary is a `branch_summary` record on the entered branch.
+- `lib/src/agent/tool_pairing.dart` — context pair-integrity (issue #85):
+  `validateToolPairing` checks the wire-equivalent message sequence (orphan
+  results, unanswered calls, duplicate ids, displaced results after
+  same-role merges); `repairToolPairing` fixes the outbound payload only
+  (drop orphan + note, synthesize interrupted results, hoist steering text
+  after results, uniquify duplicate ids symmetrically on call+result).
+  `agent_loop.dart` repairs before every request and retries once on a
+  pairing-shaped provider 400 (`ToolPairingRepairEvent` is the audit
+  trail); `_finishStreamed` stamps per-run position-counter ids
+  session-unique; `auto_compactor.dart`'s `_localTrimFallback` routes the
+  kept region through the same repairer.
 - `lib/src/trajectory/` — the trajectory ledger core (issue #10): finalized
   session records project into an immutable `TrajectorySnapshot` through
   `TrajectorySnapshotBuilder.append`/`applyEvent` — streamed agent events
@@ -389,9 +400,11 @@ factual: paths, commands, invariants — no essays.
   `fa serve --a2a [--port N] [--token T]` mounts this agent as an endpoint
   (`bin/serve_a2a.dart`).
 - `bin/fah.dart` — the `fah`/`fa` CLI. REPL (no args) or headless
-  (`fa "prompt"` / `-p`, mutually exclusive). First positional naming an
-  EXISTING file is the prompt source (`.md`/`.txt` inlined, others attached
-  by reference; `-p` is verbatim). Args parsed in `lib/src/cli/cli_args.dart`
+  (`fa "prompt"` / `-p` / `--prompt-file <path>` (alias `-f`), mutually
+  exclusive). First positional naming an EXISTING file is the prompt source
+  (`.md`/`.txt` inlined, others attached by reference; `-p` is verbatim;
+  `--prompt-file` reads ANY path verbatim, missing/unreadable = usage
+  error exit 64). Args parsed in `lib/src/cli/cli_args.dart`
   (pure Dart). Headless: exit 0/1/130; `CliIO` contract — `write` = primary
   stream, `writeln` = diagnostics (stderr headless). The TUI captures the
   mouse by default (wheel scrolling — the alternate screen has no native

@@ -15,7 +15,7 @@
 // Requires a REAL Chrome and a prior scripts/build_browser_ext.sh run (see
 // ac_load_and_agent_test.dart). No Chrome → loud ChromeLaunchException; the
 // `integration` tag keeps this out of default runs.
-@Tags(['integration'])
+@Tags(['integration', 'browser-ext'])
 @TestOn('vm')
 @Timeout(Duration(minutes: 5))
 library;

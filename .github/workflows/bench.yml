@@ -1,0 +1,195 @@
+name: Bench
+
+# Runs the fa coding agent against terminal-bench on Linux runners
+# (issue #125). The `dart build cli` bundle must be a Linux x64 binary to
+# match the task container's arch — a macOS host bundle fails with
+# "cannot execute binary file", so this cannot run locally on macOS.
+#
+# Sharded matrix (issue #132): the full terminal-bench-core 0.1.1 dataset
+# is 80 tasks at ~11 min each — ~14 h sequential, past even the 6 h job
+# cap. Shape: setup (build bundle, resolve task ids into shards) → one
+# matrix job per shard, each well under the job timeout → merge job
+# aggregating overall accuracy. Small `tasks` inputs degenerate to a
+# single-shard matrix, so the hello-world smoke path is unchanged.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: 'Task id or glob passed to tb -t (e.g. hello-world, crack-7z-hash*, * for the full dataset)'
+        required: false
+        default: 'hello-world'
+      dataset:
+        description: 'Dataset spec passed to tb -d (name==version)'
+        required: false
+        default: 'terminal-bench-core==0.1.1'
+      shards:
+        description: 'Matrix shard count (10 tasks/shard on the 80-task core dataset)'
+        required: false
+        default: '8'
+
+permissions:
+  contents: read
+
+# A full-dataset run holds up to 5 runners for hours; queue a second
+# dispatch instead of stacking them.
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: Build bundle & resolve shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.shards.outputs.matrix }}
+      count: ${{ steps.shards.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      # Same bundle as bench/terminal_bench/run.sh: tar the bundle/ dir so
+      # fa-setup.sh.j2 extracts bin/fah at the top level.
+      - name: Build fa CLI bundle (Linux x64)
+        run: |
+          bundle_dir="$(mktemp -d)/fa-bundle"
+          dart build cli --target=bin/fah.dart --output="$bundle_dir"
+          tar -czf fa-bundle.tar.gz -C "$bundle_dir/bundle" .
+
+      - name: Upload fa bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: fa-bundle
+          path: fa-bundle.tar.gz
+
+      # terminal-bench's CLI breaks on Python 3.14 (typer: 'function' object
+      # is not subscriptable).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - run: pip install terminal-bench
+
+      # Resolve the task-id list exactly like tb does (union of Path.glob
+      # matches per -t pattern, against a dataset fetched via tb itself),
+      # then split into contiguous shards; empty shards are dropped, so a
+      # single-id smoke input degenerates to a one-job matrix.
+      - name: Resolve task ids into shards
+        id: shards
+        env:
+          DATASET: ${{ inputs.dataset }}
+          TASKS: ${{ inputs.tasks }}
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          tb datasets download -d "$DATASET" --output-dir "$RUNNER_TEMP/ds"
+          python bench/terminal_bench/shard_tasks.py \
+            --dataset-dir "$RUNNER_TEMP/ds" --shards "$SHARDS" --tasks "$TASKS"
+
+  bench:
+    name: fa on terminal-bench, shard ${{ matrix.i }} (glm-5.3-flash)
+    needs: setup
+    runs-on: ubuntu-latest
+    # 10 tasks/shard x ~11 min/task ~= 110 min + build & variance headroom.
+    # --n-concurrent 1 keeps that math sequential-predictable and holds the
+    # total concurrent LLM load to max-parallel x 1 (z.ai rate limits).
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download fa bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: fa-bundle
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - run: pip install terminal-bench
+
+      - name: Run terminal-bench (fa agent)
+        env:
+          FA_BUNDLE_TARBALL: ${{ github.workspace }}/fa-bundle.tar.gz
+          PYTHONPATH: ${{ github.workspace }}/bench/terminal_bench
+          FA_PROVIDER_TYPE: zai
+          FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+          FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          DATASET: ${{ inputs.dataset }}
+          # dataset task dir names: no whitespace, safe to word-split.
+          SHARD_TASKS: ${{ matrix.tasks }}
+        run: |
+          set -euo pipefail
+          [ -n "$FA_KEY_API_Z_AI_Z_AI" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
+          # fa_agent.py ships the key into the container base64-encoded; GitHub
+          # auto-masks only the raw value, so mask the base64 form too.
+          echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
+          args=()
+          for t in $SHARD_TASKS; do args+=(-t "$t"); done
+          # Pinned --run-id: one tb-runs/shard-N/ dir per shard, so the merge
+          # job's downloads cannot collide on tb's timestamped default.
+          tb run -d "$DATASET" --agent-import-path fa_agent:FaAgent \
+            --output-path tb-runs --no-cleanup --n-concurrent 1 \
+            --run-id "shard-${{ matrix.i }}" "${args[@]}"
+
+      - name: Upload tb runs (shard ${{ matrix.i }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb-runs-shard-${{ matrix.i }}
+          path: tb-runs/
+
+      # Informational per-shard tally (--no-fail); the verdict is the merge
+      # job's, over all shards.
+      - name: Shard accuracy summary
+        if: always()
+        run: |
+          python bench/terminal_bench/summary.py --no-fail tb-runs
+
+  merge:
+    name: Aggregate accuracy
+    needs: [setup, bench]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download shard results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tb-runs-shard-*
+          merge-multiple: true
+          path: tb-runs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # tb exits 0 even with unresolved tasks; the verdict here (via
+      # summary.py) covers run completeness — every expected task attempted
+      # — after the merged artifact below is uploaded.
+      - name: Upload merged tb runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tb-runs-merged
+          path: tb-runs/
+
+      - name: Accuracy summary & verdict
+        if: always()
+        env:
+          EXPECTED: ${{ needs.setup.outputs.count }}
+        run: |
+          python bench/terminal_bench/summary.py tb-runs "$EXPECTED"

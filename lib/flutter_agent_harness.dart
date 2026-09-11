@@ -9,6 +9,7 @@ library;
 export 'src/agent/agent.dart';
 export 'src/agent/agent_loop.dart';
 export 'src/agent/agent_tool.dart';
+export 'src/agent/tool_pairing.dart';
 export 'src/agent/auto_compactor.dart'
     show
         AutoCompactor,
@@ -140,6 +141,7 @@ export 'src/tools/availability_gate.dart';
 export 'src/tools/archive_reader.dart';
 export 'src/tools/builtin_tools.dart';
 export 'src/tools/checkpoint_tool.dart';
+export 'src/tools/dynamic_message_tool.dart';
 export 'src/tools/inspect_image.dart';
 export 'src/tools/read_selector.dart';
 export 'src/tools/request_secret_tool.dart';

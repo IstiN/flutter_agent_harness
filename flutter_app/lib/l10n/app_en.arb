@@ -602,5 +602,55 @@
         "type": "String"
       }
     }
+  },
+  "dynamicMessagesButtonTooltip": "Dynamic messages",
+  "@dynamicMessagesButtonTooltip": {
+    "description": "Top-bar button listing the session's dynamic messages (issue #102)"
+  },
+  "dynamicMessagesSheetTitle": "Dynamic messages",
+  "@dynamicMessagesSheetTitle": {
+    "description": "Title of the dynamic-messages list sheet (issue #102 AC5)"
+  },
+  "dynamicMessagesLive": "live",
+  "@dynamicMessagesLive": {
+    "description": "Badge marking a dynamic message with a running engine (issue #102)"
+  },
+  "dynamicMessagesEventCount": "{count, plural, =1{1 event} other{{count} events}}",
+  "@dynamicMessagesEventCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    },
+    "description": "Event back-channel count in the dynamic-messages list (issue #102 AC5)"
+  },
+  "dynamicMessagesSaved": "Saved to your apps as “{appId}”",
+  "@dynamicMessagesSaved": {
+    "placeholders": {
+      "appId": {
+        "type": "String"
+      }
+    },
+    "description": "Snack bar after a dynamic message is graduated into an installed app (issue #102 AC7)"
+  },
+  "dynamicMessagesSaveFailed": "Could not save this dynamic message as an app.",
+  "@dynamicMessagesSaveFailed": {
+    "description": "Snack bar when graduating a dynamic message fails (issue #102 AC7)"
+  },
+  "dynamicTileSaveAsApp": "Save as app",
+  "@dynamicTileSaveAsApp": {
+    "description": "Tile affordance graduating a dynamic message into an installed app (issue #102 AC7)"
+  },
+  "dynamicTilePermissions": "Permissions",
+  "@dynamicTilePermissions": {
+    "description": "Tile affordance opening the app permission dialog for a dynamic message (issue #102)"
+  },
+  "dynamicTileError": "Widget error",
+  "@dynamicTileError": {
+    "description": "Title of the expandable error tile for a failed dynamic message (issue #102 AC9)"
+  },
+  "dynamicTileRetry": "Retry",
+  "@dynamicTileRetry": {
+    "description": "Retry button on the dynamic-message error tile (issue #102 AC9)"
   }
 }

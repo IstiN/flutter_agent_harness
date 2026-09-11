@@ -95,6 +95,11 @@ final class FaTuiController {
   /// broke when only the real controller grew this member).
   void setBusyPhase(String phase) {}
 
+  /// No-op on web (the TUI never runs there). Mirrors the dart_tui
+  /// controller's method so agent_cli call sites compile for BOTH targets
+  /// (issue #115 scheduled-follow-ups indicator).
+  void setScheduled(int count, int? nextDueMs) {}
+
   Future<TuiPromptAnswer?> openPrompt(TuiPromptSpec spec) async => null;
 
   Future<List<String>> drainQueue() async => const [];

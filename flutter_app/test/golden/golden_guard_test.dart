@@ -67,6 +67,10 @@ const _coverage = <String, String>{
   'lib/apps/js_app_view.dart': 'test/golden/apps_golden_test.dart',
   'lib/apps/widgets_catalog_sheet.dart':
       'test/golden/widgets_catalog_golden_test.dart',
+  'lib/apps/dynamic_widget_tile.dart':
+      'test/golden/dynamic_messages_golden_test.dart',
+  'lib/apps/dynamic_messages_sheet.dart':
+      'test/golden/dynamic_messages_golden_test.dart',
   'lib/ui/widgets/downloaded_models_quick_start.dart':
       'test/golden/sections_golden_test.dart',
   'lib/gemma/gemma_cache_section.dart': 'test/golden/sections_golden_test.dart',
@@ -89,6 +93,10 @@ const _coverage = <String, String>{
 
 /// Widget files that legitimately cannot be snapshot-tested on the host.
 const _exempt = <String, String>{
+  'lib/ui/widgets/widget_publication_resume_refresh.dart':
+      'invisible lifecycle wrapper (renders only its child); the resume-'
+      'polling behavior is covered by test/ui/'
+      'widget_publication_resume_refresh_test.dart',
   'lib/services/aiin_oauth_web_impl.dart':
       'web-only conditional implementation (dart:html OAuth plumbing); '
       'no visual surface — the coordinator logic is unit-tested instead',
@@ -127,10 +135,6 @@ const _exempt = <String, String>{
       'service flow orchestrator; coordinates SSO + model picker dialogs (no widget of its own)',
   'lib/services/chatgpt_oauth_flow.dart':
       'OAuth flow orchestrator; no widget of its own',
-  'lib/ui/widgets/widget_publication_resume_refresh.dart':
-      'resume-polling lifecycle wrapper (build returns its child — no '
-      'visual of its own); the refresh behavior is covered by '
-      'test/ui/widget_publication_resume_refresh_test.dart',
 };
 
 final _widgetPattern = RegExp(

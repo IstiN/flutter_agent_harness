@@ -374,6 +374,84 @@ void main() {
     expect(state.messages.any((m) => m is ToolResultMessage), isFalse);
   });
 
+  test('local trim repairs a NON-leading orphan inside the kept region '
+      '(issue #85 merged-block wedge)', () async {
+    // The orphan no longer sits at the cut boundary: an old orphan result
+    // floats mid-context (damaged in-memory state — the wedge survived the
+    // old leading-only skip as the second block of a merged wire message,
+    // messages.0.content.1). Sizing (no usage anchors, pure chars/4):
+    // three ~400-token messages put the transcript over the 1000-token
+    // window, while the 150-token keep budget holds only the orphan + the
+    // small tail — so the kept region CONTAINS the mid-context orphan.
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    await session.appendMessage(UserMessage.text('old0${'a' * 1600}'));
+    await session.appendMessage(UserMessage.text('old1${'b' * 1600}'));
+    await session.appendMessage(UserMessage.text('old2${'c' * 1600}'));
+    await session.appendMessage(
+      AssistantMessage(
+        content: [
+          TextContent(text: 'call it'),
+          ToolCall(id: 'c9', name: 'bash', arguments: const {}),
+        ],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: StopReason.toolUse,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    await session.appendMessage(
+      ToolResultMessage(
+        toolCallId: 'bash_198',
+        toolName: 'bash',
+        content: [TextContent(text: 'stale ${'r' * 100}')],
+        isError: false,
+        timestamp: DateTime.utc(2026),
+      ),
+    );
+    await session.appendMessage(UserMessage.text('tail${'t' * 40}'));
+    // Corrupt the IN-MEMORY copy only: drop the call message, leaving its
+    // result orphaned mid-context — the damaged state the repair must fix.
+    final state = AgentState(
+      model: _model,
+      messages: (await session.buildContextMessages())..removeAt(3),
+    );
+
+    final hooks = _RecordingHooks();
+    Future<SummarizationResult> failing(SummarizationRequest request) async {
+      throw const CompactionException('summarizer down');
+    }
+
+    final ok = await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: failing,
+      mainSummary: failing,
+      smolModel: null,
+      hooks: hooks,
+    ).run();
+
+    expect(ok, isTrue);
+    expect(hooks.passes.last.fallback, 'local-trim');
+    // The orphan never reaches the provider: dropped, note appended.
+    expect(state.messages.whereType<ToolResultMessage>(), isEmpty);
+    final notes = state.messages
+        .whereType<UserMessage>()
+        .map((m) => m.content as String)
+        .where((t) => t.startsWith('[context note:'))
+        .toList();
+    expect(notes, hasLength(1));
+    expect(notes.single, contains('bash_198'));
+    // The trim marker still opens the kept region.
+    expect(
+      (state.messages.first as UserMessage).content as String,
+      contains('context trimmed locally'),
+    );
+  });
+
   test('both summarizers down but the transcript fits the keep budget: '
       'no trim, honest failure', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));

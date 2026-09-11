@@ -623,6 +623,83 @@ void main() {
   );
 
   test(
+    'pendingSummary reports deliverable count and the nearest due',
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid/main',
+      );
+      expect(await queue.pendingSummary(), (count: 0, nextDueMs: null));
+
+      await queue.schedule(text: 'later', delay: const Duration(hours: 2));
+      await queue.schedule(text: 'sooner', delay: const Duration(minutes: 25));
+      final before = DateTime.now().millisecondsSinceEpoch;
+      final summary = await queue.pendingSummary();
+      expect(summary.count, 2);
+      expect(summary.nextDueMs, greaterThan(before));
+      expect(
+        summary.nextDueMs,
+        lessThanOrEqualTo(before + const Duration(minutes: 26).inMilliseconds),
+        reason: 'the nearest due is the 25m record',
+      );
+
+      // Delivery consumes records; the summary follows the files.
+      await queue.schedule(
+        text: 'now',
+        delay: const Duration(milliseconds: 10),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await queue.deliverDue();
+      expect((await queue.pendingSummary()).count, 2);
+    },
+  );
+
+  test('pendingSummary skips foreign-owned self-addressed records', () async {
+    // Same visibility rule as the delivery timer: a record another live
+    // instance owns is not ours to deliver — and not ours to show (the
+    // issue #115 indicator must not count reminders that will never fire
+    // into this session).
+    final env = MemoryExecutionEnv(cwd: '/work');
+    const root = '/sessions/--work--/messages';
+    final repo = FileMessagingRepository(
+      env: env,
+      root: root,
+      homeDir: '/home/user',
+      decodeSessionCwd: decodeSessionCwd,
+    );
+    final queue = ScheduledMessageQueue(
+      env: env,
+      repo: () => repo,
+      root: () => root,
+      selfMailbox: () => 'sid-b/main',
+      ownerPrefix: () => 'sid-b',
+    );
+    const id = 'foreign-pending';
+    (await env.writeFile(
+      '$root/_scheduled/$id.json',
+      jsonEncode({
+        'id': id,
+        'dueMs': DateTime.now().millisecondsSinceEpoch + 60000,
+        'to': 'sid-a/main',
+        'from': 'sid-a/main',
+        'text': 'not mine',
+        'owner': 'sid-a',
+      }),
+    )).getOrThrow();
+    expect(await queue.pendingSummary(), (count: 0, nextDueMs: null));
+  });
+
+  test(
     'dispose releases ownership of pending self-addressed records (#59+#88)',
     () async {
       final env = MemoryExecutionEnv(cwd: '/work');

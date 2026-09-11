@@ -133,6 +133,11 @@ jobs:
 
       - name: Build extension with the fa web app
         run: |
+          # .env is gitignored but declared as a Flutter asset
+          # (flutter_app/pubspec.yaml); without the placeholder the web
+          # build dies with "No file or variants found for asset: .env".
+          # ci.yml does the same for the PR quality gates.
+          touch [REDACTED:Credential File]
           (cd flutter_app && flutter pub get)
           bash scripts/build_browser_ext.sh --with-app
 

@@ -12,6 +12,7 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import '../../bin/fah_hub_plugin.dart';
 import '../hub/fake_hub.dart';
 import 'pty_harness.dart';
 
@@ -70,21 +71,14 @@ void main() {
         'Connection status',
         timeout: const Duration(seconds: 20),
       );
-      // Every menu entry is visible with its hint.
-      for (final fragment in [
-        'Connect to a hub',
-        'Set master secret',
-        'What is DAP?',
-      ]) {
-        expect(harness.screenText, contains(fragment));
+      // Every menu label is visible, derived from the structural menu
+      // definition.
+      for (final option in dapMenuOptions) {
+        expect(harness.screenText, contains(option.$2));
       }
 
-      // "What is DAP?" is the 4th item: three arrows down + Enter.
-      for (var i = 0; i < 3; i++) {
-        harness.sendArrowDown();
-        await Future<void>.delayed(const Duration(milliseconds: 150));
-      }
-      harness.sendEnter();
+      // Walk to "What is DAP?" structurally (no magic arrow counts).
+      await _selectMenuOption(harness, 'about');
       await harness.waitForText(
         'zero-knowledge',
         timeout: const Duration(seconds: 20),
@@ -130,8 +124,8 @@ void main() {
           'Connection status',
           timeout: const Duration(seconds: 20),
         );
-        // First item is selected by default.
-        harness.sendEnter();
+        // Walk to 'status' structurally (no magic arrow counts).
+        await _selectMenuOption(harness, 'status');
         await harness.waitForText(
           'DAP disabled — no master secret',
           timeout: const Duration(seconds: 20),
@@ -165,12 +159,8 @@ void main() {
         'Set master secret',
         timeout: const Duration(seconds: 20),
       );
-      // Third item: two arrows down + Enter.
-      harness.sendArrowDown();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      harness.sendArrowDown();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      harness.sendEnter();
+      // Walk to 'secret' structurally (no magic arrow counts).
+      await _selectMenuOption(harness, 'secret');
       await harness.waitForText(
         'DAP master secret',
         timeout: const Duration(seconds: 20),
@@ -223,10 +213,8 @@ void main() {
         'Connect to a hub',
         timeout: const Duration(seconds: 20),
       );
-      // Second item: one arrow down + Enter.
-      harness.sendArrowDown();
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      harness.sendEnter();
+      // Walk to 'connect' structurally (no magic arrow counts).
+      await _selectMenuOption(harness, 'connect');
       await harness.waitForText(
         'hub host',
         timeout: const Duration(seconds: 20),
@@ -250,6 +238,30 @@ void main() {
       await harness.waitForOutput();
     });
   });
+}
+
+/// Arrow-down count that reaches [key] in the `/dap` menu, derived from
+/// the structural definition [dapMenuOptions] — a menu insertion fails
+/// the untagged assert in `test/cli/dap_menu_options_test.dart` at PR
+/// time instead of silently corrupting these offsets.
+int _arrowsTo(String key) {
+  final index = dapMenuOptions.indexWhere((option) => option.$1 == key);
+  if (index < 0) {
+    fail(
+      'no "/dap" menu option "$key" — the menu defines '
+      '${[for (final option in dapMenuOptions) option.$1]}',
+    );
+  }
+  return index;
+}
+
+/// Walks the open `/dap` menu down to [key] and activates it.
+Future<void> _selectMenuOption(FaCliHarness harness, String key) async {
+  for (var i = 0; i < _arrowsTo(key); i++) {
+    harness.sendArrowDown();
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+  }
+  harness.sendEnter();
 }
 
 /// A temp HOME with a minimal config (no real API key needed) and an

@@ -106,14 +106,16 @@ void main() {
       expect(result.state.secretValue, 'a');
     });
 
-    test('render contains the recommended ★ marker', () {
+    test('render contains the recommended * marker', () {
       final state = TuiPromptState(spec);
       final rows = renderTuiPrompt(state, 60);
-      // Option index 1 (Blue) is recommended, so ★ should appear
+      // Option index 1 (Blue) is recommended, so * should appear. ASCII on
+      // purpose: ★ measures 2 cells in the width table but terminals draw
+      // it 1 wide, shifting every padded row (issue #109).
       expect(
-        rows.any((r) => r.contains('★')),
+        rows.any((r) => r.contains('*')),
         isTrue,
-        reason: 'recommended option should have a ★ marker',
+        reason: 'recommended option should have a * marker',
       );
     });
   });
@@ -313,41 +315,65 @@ void main() {
   group('Secret prompt', () {
     final spec = SecretPromptSpec(name: 'FOO', reason: 'needed');
 
-    test('initial state has spec name, empty value, and name focus', () {
+    test('initial state: value focus, suggestion is a placeholder (F1/F2)', () {
       final state = TuiPromptState(spec);
-      expect(state.secretName, 'FOO');
+      expect(
+        state.secretName,
+        '',
+        reason: 'the suggested name must not be committed input',
+      );
+      expect(state.effectiveSecretName, 'FOO');
       expect(state.secretValue, '');
-      expect(state.secretCursor, -1, reason: 'name focus is -1');
+      expect(
+        state.secretCursor,
+        0,
+        reason: 'initial focus is the value field, not the name',
+      );
     });
 
-    test('typing while in name focus appends to name', () {
+    test('the first keystroke lands in the masked value field', () {
       var state = TuiPromptState(spec);
-      // secretCursor == -1 → name focus: typing appends to name
-      state = handleTuiPromptKey(state, PromptChar('B')).state;
-      expect(state.secretName, 'FOOB');
-      expect(state.secretValue, '');
-      state = handleTuiPromptKey(state, PromptChar('A')).state;
-      state = handleTuiPromptKey(state, PromptChar('R')).state;
-      expect(state.secretName, 'FOOBAR');
+      state = handleTuiPromptKey(state, PromptChar('a')).state;
+      expect(state.secretValue, 'a');
+      expect(state.secretName, '');
+      expect(state.secretCursor, 1);
     });
 
-    test('Tab moves focus from name to value field', () {
+    test('a paste lands in the masked value field at the cursor', () {
       var state = TuiPromptState(spec);
-      expect(state.secretCursor, -1);
+      state = handleTuiPromptKey(
+        state,
+        const PromptPaste('pasted-secret'),
+      ).state;
+      expect(state.secretValue, 'pasted-secret');
+      expect(state.secretCursor, 'pasted-secret'.length);
+    });
+
+    test('Tab toggles focus; typing in name focus replaces the suggestion', () {
+      var state = TuiPromptState(spec);
+      state = handleTuiPromptKey(state, const PromptTab()).state;
+      expect(state.secretCursor, -1, reason: 'name focus');
+      state = handleTuiPromptKey(state, PromptChar('M')).state;
+      expect(
+        state.secretName,
+        'M',
+        reason: 'typing replaces the suggestion wholesale (F1)',
+      );
       state = handleTuiPromptKey(state, const PromptTab()).state;
       expect(state.secretCursor, 0);
-      // Typing now goes to value
       state = handleTuiPromptKey(state, PromptChar('v')).state;
       expect(state.secretValue, 'v');
-      expect(state.secretName, 'FOO');
+      expect(state.secretName, 'M');
     });
 
-    test('Ctrl+U clears the suggested name on name focus', () {
-      final spec = SecretPromptSpec(name: 'SUDO_PASSWORD', reason: 'deploy');
+    test('Ctrl+U on name focus restores the placeholder suggestion', () {
       var state = TuiPromptState(spec);
-      expect(state.secretCursor, -1, reason: 'name focus');
+      state = handleTuiPromptKey(state, const PromptTab()).state;
+      state = handleTuiPromptKey(state, PromptChar('X')).state;
+      expect(state.secretName, 'X');
       state = handleTuiPromptKey(state, const PromptCtrlU()).state;
       expect(state.secretName, '');
+      expect(state.effectiveSecretName, 'FOO');
     });
 
     test('Ctrl+U kills the value back to the cursor', () {
@@ -366,9 +392,9 @@ void main() {
       expect(state.secretCursor, 0);
     });
 
-    test('the sheet hint names Ctrl+U next to Ctrl+R', () {
+    test('the sheet hint names the focus-switch key (F4)', () {
       final rows = renderTuiPrompt(TuiPromptState(spec), 60).join('\n');
-      expect(rows, contains('Ctrl+U clears'));
+      expect(rows, contains('>'));
     });
 
     test('Ctrl+R toggles the value visibility (hidden by default)', () {
@@ -403,15 +429,18 @@ void main() {
       expect(result.resolved, isA<TuiPromptCancelled>());
     });
 
-    test('PromptEnter with empty value does NOT submit (not submittable)', () {
-      var state = TuiPromptState(spec).copyWith(secretCursor: 0);
-      // Name is 'FOO' which matches the pattern, but value is empty
+    test('blocked Enter shows the reason, then it goes stale (F3)', () {
+      var state = TuiPromptState(spec);
       final result = handleTuiPromptKey(state, const PromptEnter());
       expect(
         result.resolved,
         isNull,
         reason: 'should not submit when value is empty',
       );
+      expect(result.state.secretEnterError, contains('value'));
+      state = handleTuiPromptKey(result.state, PromptChar('x')).state;
+      expect(state.secretEnterError, '');
+      expect(state.secretValue, 'x');
     });
 
     test('typing targets the value field once focus is on the value '
@@ -447,6 +476,23 @@ void main() {
       expect(answer.value.persisted, isFalse);
     });
 
+    test('Enter with an untouched name submits the suggested name', () {
+      // The trapped production sequence from issue #97: open the sheet,
+      // type the secret, press Enter — the suggestion is the name.
+      var state = TuiPromptState(SecretPromptSpec(name: 'FOO', reason: 'x'));
+      for (final char in 'secret'.runes) {
+        state = handleTuiPromptKey(
+          state,
+          PromptChar(String.fromCharCode(char)),
+        ).state;
+      }
+      final result = handleTuiPromptKey(state, const PromptEnter());
+      final answer = result.resolved as SecretPromptAnswer;
+      expect(answer.value.name, 'FOO');
+      expect(answer.value.value, 'secret');
+      expect(answer.value.persisted, isFalse);
+    });
+
     test('backspace in value removes char before cursor', () {
       var state = TuiPromptState(
         spec,
@@ -466,17 +512,122 @@ void main() {
       expect(state.secretCursor, 3);
     });
 
-    test('PromptEnter with non-matching name does not submit', () {
-      // Entering a char while in name-focus keeps name non-submittable
-      // if the result doesn't match the UPPER_SNAKE pattern
-      // secretName starts as 'FOO' which matches, so we need a non-matching name
-      // Set secretValue non-empty via copyWith but keep a non-matching name
+    test('Enter with a non-matching name shows the name reason (F3)', () {
       final nonMatch = TuiPromptState(
         SecretPromptSpec(name: 'foo', reason: 'test'),
-      );
-      // foo doesn't match pattern, Enter does nothing
+      ).copyWith(secretValue: 'x', secretCursor: 1);
       final result = handleTuiPromptKey(nonMatch, const PromptEnter());
       expect(result.resolved, isNull);
+      expect(result.state.secretEnterError, contains('Name must match'));
+    });
+
+    test(
+      'a paste normalizes CRLF in the value, drops line breaks in the name',
+      () {
+        var state = TuiPromptState(spec);
+        state = handleTuiPromptKey(state, const PromptPaste('a\r\nb')).state;
+        expect(
+          state.secretValue,
+          'a\nb',
+          reason: 'CRLF is a paste artifact; LF is PEM-real data',
+        );
+
+        state = handleTuiPromptKey(state, const PromptTab()).state;
+        state = handleTuiPromptKey(
+          state,
+          const PromptPaste('MY_KEY\r\n'),
+        ).state;
+        expect(
+          state.secretName,
+          'MY_KEY',
+          reason: 'the UPPER_SNAKE name can never carry line breaks',
+        );
+      },
+    );
+
+    test('a shortening paste keeps the cursor inside the buffer', () {
+      // 'AB\r\nCD' normalizes to 'AB\nCD' (5 chars, raw paste was 6). The
+      // cursor must advance by the NORMALIZED length: pinned to the raw
+      // paste length it overruns the buffer and the NEXT edit keystroke
+      // crashes with a RangeError (PR #111 review blocker).
+      var state = TuiPromptState(spec);
+      state = handleTuiPromptKey(state, PromptChar('k')).state;
+      state = handleTuiPromptKey(state, const PromptPaste('AB\r\nCD')).state;
+      expect(state.secretValue, 'kAB\nCD');
+      expect(state.secretCursor, state.secretValue.length);
+      final bs = handleTuiPromptKey(state, const PromptBackspace()).state;
+      expect(bs.secretValue, 'kAB\nC');
+      expect(bs.secretCursor, state.secretCursor - 1);
+    });
+
+    test('a multiline value renders one masked row per line, frame closed', () {
+      final state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'abc\n12\nx', secretCursor: 8);
+      final rows = renderTuiPrompt(state, 60);
+      expect(
+        rows.where((r) => r.contains('\n')),
+        isEmpty,
+        reason:
+            'a frame row carries a physical line break and tears the '
+            'frame',
+      );
+      final plain = [
+        for (final r in rows)
+          ...r
+              .split('\n')
+              .map((s) => s.replaceAll(RegExp(r'\x1b\[[0-9;?]*[a-zA-Z]'), '')),
+      ];
+      final top = plain.indexWhere((l) => l.startsWith('┌'));
+      final bottom = plain.lastIndexWhere((l) => l.startsWith('└'));
+
+      // Reveal (Ctrl+R): the raw value now flows into the frame — the
+      // newlines must become row splits, not physical breaks inside a row.
+      final revealed = handleTuiPromptKey(state, const PromptCtrlR()).state;
+      final shown = renderTuiPrompt(revealed, 60);
+      expect(
+        shown.where((r) => r.contains('\n')),
+        isEmpty,
+        reason: 'revealed frame row carries a physical line break',
+      );
+      final shownPlain = shown
+          .map((r) => r.replaceAll(RegExp(r'\x1b\[[0-9;?]*[a-zA-Z]'), ''))
+          .toList();
+      final shownTop = shownPlain.indexWhere((l) => l.startsWith('┌'));
+      final shownBottom = shownPlain.lastIndexWhere((l) => l.startsWith('└'));
+      final shownWidth = shownPlain[shownTop].trimRight().length;
+      for (final row in shownPlain.sublist(shownTop, shownBottom + 1)) {
+        final t = row.trimRight();
+        expect(t.length, shownWidth, reason: 'torn revealed row "$t"');
+      }
+      expect(shownPlain.join('\n'), contains('abc'));
+      expect(top, isNonNegative);
+      expect(bottom, greaterThan(top));
+      final width = plain[top].trimRight().length;
+      for (final row in plain.sublist(top, bottom + 1)) {
+        final t = row.trimRight();
+        expect(t.length, width, reason: 'torn row "$t"');
+        expect(
+          t.endsWith('┐') ||
+              t.endsWith('┤') ||
+              t.endsWith('│') ||
+              t.endsWith('┘'),
+          isTrue,
+          reason: 'unclosed row "$t"',
+        );
+      }
+      final body = plain.sublist(top, bottom + 1).join('\n');
+      expect(body, contains('•••'));
+      expect(plain.join('\n'), isNot(contains('abc')), reason: 'masked');
+    });
+
+    test('submitting preserves the multiline value verbatim', () {
+      final state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'a\nb', secretCursor: 3);
+      final result = handleTuiPromptKey(state, const PromptEnter());
+      final answer = result.resolved as SecretPromptAnswer;
+      expect(answer.value.value, 'a\nb');
     });
   });
 
@@ -988,6 +1139,101 @@ void main() {
       state = handleTuiPromptKey(state, const PromptPaste('hello')).state;
       expect(state.secretValue, 'hello');
       expect(state.askCursor, 'hello'.length);
+    });
+  });
+  group('Frame width invariant (issue #109)', () {
+    // Every rendered row must fit the requested width in terminal cells:
+    // one over-wide row wraps in the real terminal and desyncs the diff
+    // renderer — visible as torn borders and stale previous-frame text.
+    String visible(String row) =>
+        row.replaceAll(RegExp(r'\x1b\[[0-9;]*[a-zA-Z]'), '');
+
+    void expectRowsFit(List<String> rows, int width) {
+      for (final row in rows) {
+        expect(
+          visible(row).length,
+          lessThanOrEqualTo(width),
+          reason: 'row overflows $width columns: ${visible(row)}',
+        );
+      }
+    }
+
+    test('exact-width wrapped body rows stay inside the frame', () {
+      // A question long enough that _wrapText slices it at the full inner
+      // width — the historical off-by-one (padding ' ' * -1) case.
+      final spec = AskPromptSpec(
+        header: 'Ask',
+        question:
+            'На каких поверхностях виджеты должны рендериться '
+            'в первой версии продукта и почему именно так?',
+        index: 1,
+        total: 4,
+        options: [
+          const AskOption(
+            label: 'Flutter app + browser extension, CLI — текстовый фолбэк',
+            description:
+                'Виджеты живут в чат-аппи и панели расширения; в CLI '
+                'динамическое сообщение деградирует в текстовое '
+                'представление (та же data-модель, плоский рендер).',
+          ),
+          const AskOption(label: 'Только Flutter app для начала'),
+        ],
+        recommended: 0,
+      );
+      for (final width in [40, 60, 80, 100]) {
+        expectRowsFit(renderTuiPrompt(TuiPromptState(spec), width), width);
+      }
+    });
+
+    test('a long single-line answer wraps into framed input rows', () {
+      final spec = AskPromptSpec(
+        header: 'Ask',
+        question: 'Q?',
+        index: 0,
+        total: 1,
+      );
+      final buffer =
+          'только flutter app, extension в cli такого не делаем. '
+          'там надо будет думать другую форму и ещё немного текста сверху';
+      final state = TuiPromptState(spec).copyWith(
+        askMode: AskInputMode.freeText,
+        secretValue: buffer,
+        askCursor: buffer.length,
+      );
+      final rows = renderTuiPrompt(state, 60);
+      expectRowsFit(rows, 60);
+      // The whole buffer stays visible inside the frame.
+      expect(rows.join('\n'), contains('и ещё немного текста'));
+    });
+
+    test('a pasted multi-line answer renders one framed row per line', () {
+      final spec = AskPromptSpec(
+        header: 'Ask',
+        question: 'Q?',
+        index: 0,
+        total: 1,
+      );
+      const buffer = 'первая строка ответа\nвторая строка ответа';
+      final state = TuiPromptState(spec).copyWith(
+        askMode: AskInputMode.freeText,
+        secretValue: buffer,
+        askCursor: buffer.length,
+      );
+      final rows = renderTuiPrompt(state, 60);
+      expectRowsFit(rows, 60);
+      // Each logical line gets its OWN framed row — pre-fix both lived in
+      // one over-wide row whose embedded \n tore the frame apart.
+      final first = rows.singleWhere((r) => r.contains('первая строка'));
+      final second = rows.singleWhere((r) => r.contains('вторая строка'));
+      expect(first, isNot(second));
+    });
+
+    test('the text prompt input obeys the same invariant', () {
+      const spec = TextPromptSpec(question: 'base URL:', secret: false);
+      final state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'a' * 200, secretCursor: 200);
+      expectRowsFit(renderTuiPrompt(state, 50), 50);
     });
   });
 }

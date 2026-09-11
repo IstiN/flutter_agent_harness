@@ -12,9 +12,12 @@
 /// future TUI host.
 library;
 
+import 'package:characters/characters.dart';
+
 import '../approval/approval.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
+import 'tui_text_width.dart';
 
 /// A transport-neutral key event — dart_tui's `KeyMsg` carries the same
 /// info but depends on `dart_tui`, so we re-shape it here and convert at
@@ -187,15 +190,14 @@ final class TuiPromptState {
         AskPromptSpec s when s.multiSelect => AskInputMode.multiSelect,
         _ => AskInputMode.singleSelect,
       },
-      secretName = switch (spec) {
-        SecretPromptSpec s => s.name,
-        _ => '',
-      },
+      // The suggested name stays a PLACEHOLDER (rendered dimmed): it is
+      // never committed input the user has to erase (issue #97 F1).
+      secretName = '',
       secretValue = '',
-      secretCursor = switch (spec) {
-        SecretPromptSpec _ => -1, // -1 = focus on name field
-        _ => 0,
-      },
+      // Focus starts on the value field so the first keystroke is the
+      // secret, typed into the masked row (issue #97 F2).
+      secretCursor = 0,
+      secretEnterError = '',
       secretValueVisible = false,
       approvalInput = '',
       approvalSelected = 2;
@@ -207,6 +209,11 @@ final class TuiPromptState {
   final String secretName;
   final String secretValue;
   final int secretCursor;
+
+  /// Why the last Enter did not submit ("type the value first", a name
+  /// pattern violation). Set on a blocked Enter, cleared by the next
+  /// state-changing key — Enter never no-ops silently (issue #97 F3).
+  final String secretEnterError;
 
   /// Whether the secret sheet renders the typed value in clear text
   /// (Ctrl+R toggles; hidden is the default).
@@ -235,6 +242,14 @@ final class TuiPromptState {
 
   AskPromptSpec get askSpec => spec as AskPromptSpec;
   SecretPromptSpec get secretSpec => spec as SecretPromptSpec;
+
+  /// The name the grant carries: the user's committed name, or the agent's
+  /// suggestion while the name field is still untouched (empty).
+  String get effectiveSecretName {
+    final committed = secretName;
+    return committed.isEmpty ? secretSpec.name : committed;
+  }
+
   ApprovalPromptSpec get approvalSpec => spec as ApprovalPromptSpec;
   TextPromptSpec get textSpec => spec as TextPromptSpec;
 
@@ -246,6 +261,7 @@ final class TuiPromptState {
     String? secretValue,
     int? secretCursor,
     bool? secretValueVisible,
+    String? secretEnterError,
     String? approvalInput,
     int? approvalSelected,
   }) {
@@ -258,6 +274,7 @@ final class TuiPromptState {
       secretValue: secretValue ?? this.secretValue,
       secretCursor: secretCursor ?? this.secretCursor,
       secretValueVisible: secretValueVisible ?? this.secretValueVisible,
+      secretEnterError: secretEnterError ?? this.secretEnterError,
       approvalInput: approvalInput ?? this.approvalInput,
       approvalSelected: approvalSelected ?? this.approvalSelected,
     );
@@ -272,6 +289,7 @@ final class TuiPromptState {
     required this.secretValue,
     required this.secretCursor,
     this.secretValueVisible = false,
+    this.secretEnterError = '',
     this.approvalInput = '',
     this.approvalSelected = 2,
   });
@@ -655,7 +673,7 @@ final RegExp _secretNamePattern = RegExp(r'^[A-Z][A-Z0-9_]*$');
 
 bool _secretSubmittable(TuiPromptState state) {
   if (state.spec is! SecretPromptSpec) return false;
-  if (!_secretNamePattern.hasMatch(state.secretName)) return false;
+  if (!_secretNamePattern.hasMatch(state.effectiveSecretName)) return false;
   if (state.secretValue.isEmpty) return false;
   return true;
 }
@@ -663,7 +681,8 @@ bool _secretSubmittable(TuiPromptState state) {
 /// Secret prompt: value-cursor arrows → backspace → char → enter → tab →
 /// esc; ↑/↓ are ignored.
 _PromptKeyResult _handleSecretKey(TuiPromptState state, PromptKey key) {
-  return _handleSecretKillKey(state, key) ??
+  final result =
+      _handleSecretKillKey(state, key) ??
       _handleSecretRevealKey(state, key) ??
       _handleSecretArrowKey(state, key) ??
       _handleSecretBackspaceKey(state, key) ??
@@ -672,6 +691,16 @@ _PromptKeyResult _handleSecretKey(TuiPromptState state, PromptKey key) {
       _handleSecretTabKey(state, key) ??
       _handleEscapeKey(state, key) ??
       (state: state, resolved: null);
+  // A blocked Enter's reason goes stale the moment the state moves on.
+  if (key is! PromptEnter &&
+      state.secretEnterError.isNotEmpty &&
+      !identical(result.state, state)) {
+    return (
+      state: result.state.copyWith(secretEnterError: ''),
+      resolved: result.resolved,
+    );
+  }
+  return result;
 }
 
 /// Ctrl+U: name focus clears the suggested name, value focus kills from
@@ -750,39 +779,56 @@ _PromptKeyResult _backspaceSecretName(TuiPromptState state) {
   );
 }
 
-/// A typed char appends to the name on name focus, inserts at the cursor on
-/// value focus. Null when the key belongs to another cluster.
+/// A typed char (or a paste) appends to the name on name focus, inserts at
+/// the cursor on value focus. Null when the key belongs to another cluster.
 _PromptKeyResult? _handleSecretCharKey(TuiPromptState state, PromptKey key) {
-  if (key is! PromptChar) return null;
+  if (key is! PromptChar && key is! PromptPaste) return null;
+  final text = key is PromptChar ? key.text : (key as PromptPaste).text;
   if (state.secretCursor < 0) {
-    return (
-      state: state.copyWith(secretName: state.secretName + key.text),
-      resolved: null,
-    );
+    // A pasted name can carry line breaks (shell-copy artifacts); the name
+    // grammar is UPPER_SNAKE, so drop them instead of wedging the field.
+    final name = state.secretName + text.replaceAll(RegExp(r'[\r\n]'), '');
+    return (state: state.copyWith(secretName: name), resolved: null);
   }
+  // CRLF/CR are paste artifacts - normalize to LF. A bare LF is real data
+  // (PEM keys) and survives verbatim into the grant.
+  final clean = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   final next =
       state.secretValue.substring(0, state.secretCursor) +
-      key.text +
+      clean +
       state.secretValue.substring(state.secretCursor);
   return (
     state: state.copyWith(
       secretValue: next,
-      secretCursor: state.secretCursor + 1,
+      // Advance by the NORMALIZED length: the paste may have shrunk
+      // (CRLF -> LF); pinning the cursor to the raw paste length would
+      // overrun the buffer and crash the next edit keystroke.
+      secretCursor: state.secretCursor + clean.length,
     ),
     resolved: null,
   );
 }
 
-/// Enter submits the secret once the name matches and the value is
-/// non-empty. Null when the key belongs to another cluster.
+/// Enter submits once the effective name matches and the value is
+/// non-empty; otherwise it records WHY it did not submit — never a silent
+/// no-op (issue #97 F3). Null when the key belongs to another cluster.
 _PromptKeyResult? _handleSecretEnterKey(TuiPromptState state, PromptKey key) {
   if (key is! PromptEnter) return null;
-  if (!_secretSubmittable(state)) return (state: state, resolved: null);
+  if (!_secretSubmittable(state)) {
+    return (
+      state: state.copyWith(
+        secretEnterError: state.secretValue.isEmpty
+            ? 'Type the value first, then press Enter'
+            : 'Name must match ^[A-Z][A-Z0-9_]*\$',
+      ),
+      resolved: null,
+    );
+  }
   return (
     state: state,
     resolved: SecretPromptAnswer(
       RequestSecretResult(
-        name: state.secretName,
+        name: state.effectiveSecretName,
         value: state.secretValue,
         persisted: false,
       ),
@@ -790,14 +836,14 @@ _PromptKeyResult? _handleSecretEnterKey(TuiPromptState state, PromptKey key) {
   );
 }
 
-/// Tab moves from name (-1) to value (0) focus. Null when the key belongs
-/// to another cluster.
+/// Tab toggles focus between the value field and the name field. Null when
+/// the key belongs to another cluster.
 _PromptKeyResult? _handleSecretTabKey(TuiPromptState state, PromptKey key) {
   if (key is! PromptTab) return null;
-  if (state.secretCursor < 0) {
-    return (state: state.copyWith(secretCursor: 0), resolved: null);
-  }
-  return (state: state, resolved: null);
+  return (
+    state: state.copyWith(secretCursor: state.secretCursor < 0 ? 0 : -1),
+    resolved: null,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,12 +1051,6 @@ String _bold(String s) => '\x1b[1m$s\x1b[0m';
 String _yellow(String s) => '\x1b[38;2;250;204;21m$s\x1b[0m';
 String _red(String s) => '\x1b[38;2;248;113;113m$s\x1b[0m';
 
-String _fitWidth(String text, int maxWidth) {
-  if (maxWidth <= 1) return text.substring(0, maxWidth);
-  if (text.length <= maxWidth) return text;
-  return '${text.substring(0, maxWidth - 1)}…';
-}
-
 List<String> _frameRows(TuiPromptState state, int width) {
   final inner = width - 2;
   final rows = <String>[];
@@ -1044,7 +1084,7 @@ List<String> _askBodyRows(TuiPromptState state, AskPromptSpec spec, int inner) {
       'Question ${spec.index + 1} of ${spec.total}'
       '${spec.options.isEmpty ? ' (free text)' : ''}';
   final rows = <String>[_wrapBodyLine(header, inner, bold: true)];
-  for (final line in _wrapText(spec.question, inner)) {
+  for (final line in _wrapText(spec.question, inner - 1)) {
     rows.add(_wrapBodyLine(line, inner));
   }
   rows.addAll(_askOptionRows(state, inner));
@@ -1053,7 +1093,7 @@ List<String> _askBodyRows(TuiPromptState state, AskPromptSpec spec, int inner) {
 
 List<String> _secretBodyRows(SecretPromptSpec spec, int inner) {
   final rows = <String>[_wrapBodyLine('Credential request', inner, bold: true)];
-  for (final line in _wrapText(spec.reason, inner)) {
+  for (final line in _wrapText(spec.reason, inner - 1)) {
     rows.add(_wrapBodyLine(line, inner));
   }
   return rows;
@@ -1069,14 +1109,14 @@ List<String> _approvalBodyRows(
     _wrapBodyLine('Tool: ${req.toolName}', inner, bold: true),
     _wrapBodyLine('Tier: ${req.tier.name}', inner),
   ];
-  for (final line in _wrapText(req.reason, inner)) {
+  for (final line in _wrapText(req.reason, inner - 1)) {
     rows.add(_wrapBodyLine(line, inner, dim: true));
   }
   final args = req.arguments.entries
       .map((entry) => '${entry.key}=${entry.value}')
       .join(', ');
   final argLine = args.isEmpty ? '(no arguments)' : args;
-  rows.add(_wrapBodyLine('Args: ${_fitWidth(argLine, inner - 6)}', inner));
+  rows.add(_wrapBodyLine('Args: ${tuiFitWidth(argLine, inner - 6)}', inner));
   return rows;
 }
 
@@ -1089,22 +1129,31 @@ List<String> _textBodyRows(TextPromptSpec spec, int inner) {
   return rows;
 }
 
+/// One padded body row inside the frame: `│ ` + content + pad + `│` is
+/// exactly `inner + 2` cells. The content budget is therefore `inner - 1` —
+/// a full-`inner` row used to produce `' ' * -1` padding (an empty string),
+/// an over-wide row that wrapped in the real terminal and desynced the
+/// whole frame (issue #109). Padding is cell-width-aware so CJK/emoji
+/// content cannot skew it either.
 String _wrapBodyLine(
   String text,
   int inner, {
   bool bold = false,
   bool dim = false,
 }) {
-  final content = _fitWidth(text, inner);
-  // Padding must be based on the VISIBLE length — strip ANSI escape codes
-  // so pre-styled strings (dim/red/yellow hints) don't skew the frame.
-  final visibleLength = _stripAnsi(content).length;
+  final budgetCells = inner - 1;
+  final plain = _stripAnsi(text);
+  final fits = tuiTextWidth(plain) <= budgetCells;
+  // A fitting pre-styled row keeps its escape codes; an over-wide one is
+  // trimmed (the styles would be cut mid-sequence anyway).
+  final content = fits ? text : tuiFitWidth(plain, budgetCells);
+  final visible = fits ? tuiTextWidth(plain) : budgetCells;
   final styled = bold
       ? _bold(content)
       : dim
       ? _dim(content)
       : content;
-  return '│ $styled${' ' * (inner - visibleLength - 1)}│';
+  return '│ $styled${' ' * (budgetCells - visible)}│';
 }
 
 /// Strips ANSI escape sequences for visible-length computation.
@@ -1112,6 +1161,8 @@ String _stripAnsi(String text) {
   return text.replaceAll(RegExp(r'\x1b\[[0-9;]*[a-zA-Z]'), '');
 }
 
+/// Slices [text] into rows of at most [width] terminal cells (hard wrap),
+/// cell-aware so wide clusters never overflow the budget (issue #109).
 List<String> _wrapText(String text, int width) {
   if (text.isEmpty) return [''];
   final out = <String>[];
@@ -1120,14 +1171,30 @@ List<String> _wrapText(String text, int width) {
       out.add('');
       continue;
     }
-    var rest = paragraph;
-    while (rest.length > width) {
-      out.add(rest.substring(0, width));
-      rest = rest.substring(width);
-    }
-    out.add(rest);
+    out.addAll(_wrapCells(paragraph, width));
   }
   return out;
+}
+
+/// Hard-wraps [text] into chunks of at most [width] terminal cells,
+/// grapheme-aware so a wide (CJK/emoji) cluster is never split across rows.
+List<String> _wrapCells(String text, int width) {
+  if (tuiTextWidth(text) <= width) return [text];
+  final chunks = <String>[];
+  final chunk = StringBuffer();
+  var cells = 0;
+  for (final cluster in text.characters) {
+    final clusterWidth = tuiGraphemeWidth(cluster);
+    if (cells + clusterWidth > width && chunk.isNotEmpty) {
+      chunks.add(chunk.toString());
+      chunk.clear();
+      cells = 0;
+    }
+    chunk.write(cluster);
+    cells += clusterWidth;
+  }
+  if (chunk.isNotEmpty) chunks.add(chunk.toString());
+  return chunks;
 }
 
 List<String> _askOptionRows(TuiPromptState state, int inner) {
@@ -1148,7 +1215,7 @@ List<String> _askOptionRowLines(TuiPromptState state, int i, int inner) {
   final selected =
       i == state.askCursor && state.askMode != AskInputMode.freeText;
   final marker = _askOptionMarker(state, i, selected: selected);
-  final recommended = spec.recommended == i ? ' ★' : '';
+  final recommended = spec.recommended == i ? ' *' : '';
   final labelLine = '${i + 1}. $marker ${option.label}$recommended';
   final description = option.description;
   if (description != null && description.isNotEmpty) {
@@ -1167,7 +1234,7 @@ List<String> _askOptionRowLines(TuiPromptState state, int i, int inner) {
 String _askOptionMarker(TuiPromptState state, int i, {required bool selected}) {
   return switch (state.askMode) {
     AskInputMode.multiSelect => state.askSelected.contains(i) ? '◉' : '○',
-    _ => selected ? '▸' : ' ',
+    _ => selected ? '>' : ' ',
   };
 }
 
@@ -1179,21 +1246,23 @@ List<String> _askOptionDescriptionRows(
   required bool selected,
 }) {
   return [
-    _wrapBodyLine(_fitWidth(labelLine, inner), inner, dim: !selected),
-    for (final line in _wrapText('     $description', inner))
+    _wrapBodyLine(labelLine, inner, dim: !selected),
+    for (final line in _wrapText('     $description', inner - 1))
       _wrapBodyLine(line, inner, dim: true),
   ];
 }
 
 /// The one-line label row for an option without a description (accented
-/// when the cursor is on it).
+/// when the cursor is on it). The label is clipped to the same `inner - 1`
+/// cell budget every body row obeys (issue #109).
 String _askOptionLabelRow(
   String labelLine,
   int inner, {
   required bool selected,
 }) {
-  final styled = selected ? _accent(labelLine) : _fitWidth(labelLine, inner);
-  return '│ $styled${' ' * (inner - labelLine.length - 1)}│';
+  final label = tuiFitWidth(labelLine, inner - 1);
+  final padded = tuiPadRight(label, inner - 1);
+  return '│ ${selected ? _accent(padded) : padded}│';
 }
 
 List<String> _inputRows(TuiPromptState state, int inner, int width) {
@@ -1216,7 +1285,7 @@ List<String> _askInputRows(TuiPromptState state, int inner) {
         : 'Type your answer (Enter to send, Esc to cancel):';
     final rows = <String>[];
     rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-    rows.add(_cursorInputRow(buffer, cursor, inner));
+    rows.addAll(_framedInputRows(buffer, cursor, inner));
     return rows;
   }
   final hint = spec.multiSelect
@@ -1239,13 +1308,14 @@ List<String> _textInputRows(TuiPromptState state, int inner) {
       : 'Type your answer (Enter to send, Esc to cancel):';
   final rows = <String>[];
   rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-  rows.add(_cursorInputRow(display, cursor, inner));
+  rows.addAll(_framedInputRows(display, cursor, inner));
   return rows;
 }
 
 List<String> _secretInputRows(TuiPromptState state, int inner) {
   final rows = <String>[];
   final visible = state.secretValueVisible;
+  final nameFocused = state.secretCursor < 0;
   rows.add(
     _wrapBodyLine(
       _dim(
@@ -1257,15 +1327,43 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
       dim: true,
     ),
   );
-  rows.add(_wrapBodyLine(state.secretName, inner, bold: true));
-  final focusedOnValue = state.secretCursor >= 0;
-  final hint = focusedOnValue
-      ? 'Enter to save · Ctrl+U clears to cursor · Esc to cancel'
-      : 'Start typing the value · Ctrl+U clears the name · Esc to cancel';
+  // F4: the focused row carries the > marker (ASCII: ambiguous-width
+  // glyphs like ▸/★ measure 2 cells in the width table while terminals
+  // draw them 1, which shifts every padded row - issue #109). F1: an
+  // untouched name shows
+  // the agent's suggestion as dimmed ghost text, never as committed input.
+  final committedName = state.secretName;
+  final nameRow = committedName.isEmpty
+      ? _dim(state.effectiveSecretName)
+      : committedName;
+  rows.add(
+    _wrapBodyLine(
+      '${nameFocused ? '${_accent('>')} ' : '  '}$nameRow',
+      inner,
+      bold: committedName.isNotEmpty,
+    ),
+  );
+  final hint = nameFocused
+      ? 'Type to replace it · Tab to the value · Esc cancel'
+      : 'Enter to save · Tab to edit the name · Esc cancel';
   rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-  final display = visible ? state.secretValue : '•' * state.secretValue.length;
-  rows.add(_wrapBodyLine(display, inner, bold: true));
-  if (!_secretNamePattern.hasMatch(state.secretName)) {
+  // A multiline value (PEM paste) becomes one frame row per line - a bare
+  // LF inside a row would physically tear the frame in the terminal. Masked
+  // mode dots each segment separately so line structure stays visible.
+  // Marker is ASCII '>' (issue #109: ambiguous-width glyphs shift padded
+  // rows; only the first line of the value block carries the focus marker).
+  final display = visible
+      ? state.secretValue
+      : state.secretValue.split('\n').map((s) => '•' * s.length).join('\n');
+  final segments = display.split('\n');
+  for (var i = 0; i < segments.length; i++) {
+    final marker = nameFocused || i > 0 ? '  ' : '${_accent('>')} ';
+    rows.add(_wrapBodyLine('$marker${segments[i]}', inner, bold: true));
+  }
+  final error = state.secretEnterError;
+  if (error.isNotEmpty) {
+    rows.add(_wrapBodyLine(_red(error), inner));
+  } else if (!_secretNamePattern.hasMatch(state.effectiveSecretName)) {
     rows.add(_wrapBodyLine(_red('Name must match ^[A-Z][A-Z0-9_]*\$'), inner));
   }
   return rows;
@@ -1297,13 +1395,64 @@ List<String> _approvalInputRows(TuiPromptState state, int inner) {
 /// The selector row for decision [index]: number, cursor arrow and the
 /// label — accented when it is the [selected] one.
 String _approvalOptionRow(int index, String label, int selected) {
-  final row = '${index + 1}. ${selected == index ? '▸' : ' '} $label';
+  final row = '${index + 1}. ${selected == index ? '>' : ' '} $label';
   return selected == index ? _accent(row) : row;
 }
 
+/// The framed input rows for a prompt buffer. A long answer (or a pasted
+/// multi-line one) used to render as ONE over-wide row — the terminal
+/// wrapped it, shifted every following row and left stale previous-frame
+/// text over torn borders (issue #109). Now the buffer wraps into one
+/// framed row per `inner - 3` cells ('\n' starts a new row) and the row
+/// holding [cursor] paints the reverse-video caret inline.
+List<String> _framedInputRows(String display, int cursor, int inner) {
+  final budget = inner - 3;
+  final segments = <String>[];
+  final starts = <int>[];
+  var offset = 0;
+  for (final line in display.split('\n')) {
+    if (line.isEmpty) {
+      starts.add(offset);
+      segments.add('');
+      offset++;
+      continue;
+    }
+    for (final chunk in _wrapCells(line, budget)) {
+      starts.add(offset);
+      segments.add(chunk);
+      offset += chunk.length;
+    }
+    offset++; // the newline itself
+  }
+  // The caret row: the segment whose code-unit span holds the cursor; a
+  // cursor at a wrap point paints at the end of the earlier row.
+  var cursorRow = segments.length - 1;
+  var cursorColumn = 0;
+  for (var i = 0; i < segments.length; i++) {
+    if (cursor >= starts[i] && cursor <= starts[i] + segments[i].length) {
+      cursorRow = i;
+      cursorColumn = cursor - starts[i];
+      break;
+    }
+  }
+  return [
+    for (var i = 0; i < segments.length; i++)
+      i == cursorRow
+          ? _cursorInputRow(segments[i], cursorColumn, inner)
+          : _inputRow(segments[i], inner),
+  ];
+}
+
+/// One framed input row without the caret: `│` + ` > ` + text + pad + `│`.
+String _inputRow(String segment, int inner) {
+  final padded = tuiPadRight(segment, inner - 3);
+  return '│ ${_accent2Plain('>')} ${_accent(padded)}│';
+}
+
 /// Renders an input row with the cursor inline (reverse-video block at
-/// [cursor] position). The visible width is exactly `inner + 2` columns:
-/// `│` + ` > ` + text + padding + `│`.
+/// [cursor] position). The visible width is exactly `inner + 2` cells:
+/// `│` + ` ` + `>` + ` ` + text + padding + `│`; padding is measured in
+/// terminal cells so wide characters cannot skew it (issue #109).
 String _cursorInputRow(String display, int cursor, int inner) {
   final clampedCursor = cursor.clamp(0, display.length);
   final before = display.substring(0, clampedCursor);
@@ -1313,10 +1462,8 @@ String _cursorInputRow(String display, int cursor, int inner) {
       : '';
   const invert = '\x1b[7m';
   const reset = '\x1b[0m';
-  // Visible width: │(1) (1) >(1) (1) + contentWidth + padding + │(1)
-  // = 5 + contentWidth + padding = inner + 2 → padding = inner - 3 - contentWidth
   final contentWidth =
-      display.length + (clampedCursor >= display.length ? 1 : 0);
+      tuiTextWidth(display) + (clampedCursor >= display.length ? 1 : 0);
   final padding = (inner - 3 - contentWidth).clamp(0, inner);
   return '│ ${_accent2Plain('>')} ${_accent(before)}'
       '$invert$at$reset${_accent(after)}'

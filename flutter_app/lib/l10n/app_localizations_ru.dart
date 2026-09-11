@@ -1773,4 +1773,47 @@ class AppLocalizationsRu extends AppLocalizations {
   String sessionTooLargeTitle(String size) {
     return 'Сессия слишком большая для открытия в приложении ($size). Откройте её через CLI.';
   }
+
+  @override
+  String get dynamicMessagesButtonTooltip => 'Динамические сообщения';
+
+  @override
+  String get dynamicMessagesSheetTitle => 'Динамические сообщения';
+
+  @override
+  String get dynamicMessagesLive => 'активен';
+
+  @override
+  String dynamicMessagesEventCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count события',
+      many: '$count событий',
+      few: '$count события',
+      one: '1 событие',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String dynamicMessagesSaved(String appId) {
+    return 'Сохранено в приложениях как «$appId»';
+  }
+
+  @override
+  String get dynamicMessagesSaveFailed =>
+      'Не удалось сохранить это динамическое сообщение как приложение.';
+
+  @override
+  String get dynamicTileSaveAsApp => 'Сохранить как приложение';
+
+  @override
+  String get dynamicTilePermissions => 'Разрешения';
+
+  @override
+  String get dynamicTileError => 'Ошибка виджета';
+
+  @override
+  String get dynamicTileRetry => 'Повторить';
 }

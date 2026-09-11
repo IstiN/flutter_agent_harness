@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — fa for Outlook</title>
+<meta name="description" content="Support for the fa Outlook add-in: sideloading help, troubleshooting the taskpane, contact.">
+<link rel="canonical" href="https://fa1.dev/outlook/support.html">
+<style>
+  :root {
+    --bg: #070a10; --panel: #0d1420; --border: #1c2637;
+    --text: #e8eef7; --dim: #93a1b5; --accent: #5eead4;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); line-height: 1.65; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 96px; }
+  a { color: var(--accent); }
+  h1 { font-size: 26px; margin: 0 0 8px; }
+  h2 { font-size: 18px; margin: 32px 0 8px; }
+  p, li { color: var(--dim); }
+  strong { color: var(--text); }
+  code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--text); }
+  .back { display: inline-block; margin-bottom: 20px; text-decoration: none; }
+</style>
+</head>
+<body>
+<main>
+<a class="back" href="https://fa1.dev/">← fa1.dev</a>
+<h1>Support — fa for Outlook</h1>
+<h2>Installing</h2>
+<p>Sideload the add-in from its manifest: <code>https://fa1.dev/outlook/manifest.xml</code></p>
+<ul>
+  <li><strong>Outlook on the web:</strong> Settings → Integrate apps → Upload custom apps → “Add from a URL”, then paste the manifest URL.</li>
+  <li><strong>Windows / Mac (classic Outlook):</strong> follow Microsoft’s sideload guide with the same manifest URL.</li>
+</ul>
+<h2>Troubleshooting</h2>
+<ul>
+  <li><strong>“host API unavailable” banner:</strong> the Office.js runtime did not load. Reload the taskpane; if it persists, the pane answers without mail tools.</li>
+  <li><strong>Taskpane blank:</strong> make sure your network allows <code>fa1.dev</code> and the Office.js CDN.</li>
+  <li><strong>Build a dev copy:</strong> <code>bash scripts/build_office_addin.sh --dev</code> produces a manifest pointed at <code>https://localhost:8443</code>.</li>
+</ul>
+<h2>Contact</h2>
+<p>Still stuck? Mail <a href="mailto:support@fa1.dev">support@fa1.dev</a> and include your Outlook host (web / Windows / Mac) and the version shown in the taskpane.</p>
+</main>
+</body>
+</html>

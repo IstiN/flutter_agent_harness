@@ -5,7 +5,7 @@
 > awk, find, xargs, diff/patch, tar/zip), git over HTTP and SSH, python3 and
 > sqlite3 running in the browser, secrets redaction, a file browser, and a
 > session tree with context compaction. It runs on iOS, Android, web, desktop,
-> and as a CLI.
+> as a CLI, as a Chrome extension, and as an Outlook add-in.
 
 ## Live demo
 
@@ -24,6 +24,73 @@
   `git clone https://github.com/IstiN/flutter_agent_harness`, then
   `cd flutter_agent_harness/flutter_app && flutter run`.
 
+## Chrome extension
+
+- MV3 extension that hosts the full Fa web app in a side panel; the agent
+  runs in the service worker and drives the browser with 34 tools:
+  `tabs_open`, `tabs_close`, `tabs_update`, `tabs_query`, `tabs_move`,
+  `tabs_group`, `tabs_ungroup`, `tabs_reload`, `tabs_discard`,
+  `windows_open`, `windows_update`, `windows_close`, `windows_list`,
+  `groups_update`, `groups_close`, `sessions_recent`, `sessions_restore`,
+  `history_search`, `bookmarks_list`, `bookmarks_add`, `bookmarks_update`,
+  `bookmarks_remove`, `downloads_start`, `downloads_search`,
+  `downloads_cancel`, `cookies_get`, `cookies_set`, `cookies_remove`,
+  `inject_js`, `inject_css`, `cdp_eval`, `page_screenshot`,
+  `app_screenshot`, `nav_wait` — plus four Settings-gated second-tier
+  tools that surface once the user enables them:
+  `browser_search`, `top_sites`, `reading_list`, `page_capture`.
+- Entry points: the side panel, the omnibox (`fa <query>`), the
+  Ctrl+Shift+1 hotkey, and the context menu on any selection. Page-derived
+  content is quarantined as untrusted data. `inject_js` prompts on every
+  call in every session mode by default — explicitly switching the
+  session to yolo drops that guard (the override is cleared, not
+  bypassed silently).
+- Artifact (rebuilt on every deploy):
+  https://fa1.dev/extension/fa-extension.zip — unzip, then open
+  chrome://extensions, enable Developer mode, Load unpacked, pick the
+  unzipped folder.
+- Architecture and operations: `docs/browser-extension.md` in the repository.
+
+## Outlook add-in
+
+- Fa as an Office Add-in taskpane (classic MailApp manifest, Mailbox 1.8+,
+  ReadWriteItem permission): the same pure-Dart agent core plus three mail
+  tools — `outlook.read_current_item` (metadata + body of the open email),
+  `outlook.read_attachment` (one attachment, base64, 50 MB cap), and
+  `outlook.insert_draft_body` (compose mode). Attachment reads and draft
+  writes always prompt for approval.
+- Email bodies and attachments enter the model context only inside a
+  quarantine fence marked as untrusted data, so instructions inside a
+  message can never drive the agent.
+- Manifest artifact: https://fa1.dev/outlook/manifest.xml — sideload via
+  Outlook on the web (Settings → Integrate apps → Upload custom apps →
+  "Add from a URL", or download the manifest and add it from file when
+  the tenant disables URL install) or Microsoft's sideload guide for
+  classic Outlook on Windows/Mac. The taskpane page lives at
+  https://fa1.dev/outlook/.
+- Sources: `office_addin/` in the repository.
+
+## Agent tools (every platform)
+
+- Core tools on every host: `read`, `write`, `edit`, `ls`, `bash`
+  (plus background `bash_job`), `web_search`, `web_fetch`, `task`
+  (parallel subagents: explore/review/plan; managed with `task_status`,
+  `task_send`, `task_observe`, `task_cancel`), `lsp`,
+  `memory_add`, `memory_delete`, `memory_list`, `memory_search`,
+  `checkpoint`, `rewind`, `ask`, `request_secret`, `config`,
+  `agent_message`, `agent_directory`, `schedule_message`, `reply`,
+  `transcribe_audio`, `inspect_image`, `generate_image`, `generate_video`.
+- MCP: any server configured in `~/.fah/config.yaml` registers its tools
+  as `mcp__<server>__<tool>`.
+- CLI browser bridge: `fa serve --bridge` + `/browser connect` pairs a
+  desktop agent with the extension for `browser_navigate`, `browser_click`,
+  `browser_type`, `browser_press_key`, `browser_select`, `browser_tabs`,
+  `browser_switch_tab`, `browser_read_dom`, `browser_screenshot`,
+  `browser_eval`, `browser_wait_for`.
+- The shell behind `bash`: pure-Dart builtins on web, WASI binaries
+  (uutils coreutils, ripgrep, python3, sqlite3) on iOS/Android, the host
+  shell on macOS/Windows/Linux.
+
 ## Project
 
 - [GitHub repository](https://github.com/IstiN/flutter_agent_harness)
@@ -37,27 +104,40 @@
 - Web sandbox is a pure-Dart in-memory shell; mobile uses WASI binaries
   (uutils coreutils, ripgrep, sed/awk, python3, sqlite3, lua) under an embedded
   wasm runtime.
+- Ships as: CLI (`fa`/`fah`), Flutter apps (iOS/Android/macOS/Windows/Linux),
+  a static web app, a Chrome MV3 extension, and an Outlook Office add-in.
 - License: MIT. Published on pub.dev as `flutter_agent_harness`.
 
 ## FAQ (quotable answers)
 
 - What is Fa? An open-source coding agent for Dart and Flutter: a pure-Dart
   agent core plus a sandboxed workbench (shell, git, python3, sqlite3) running
-  identically on iOS, Android, web, desktop, and as a CLI.
+  identically on iOS, Android, web, desktop, and as a CLI — plus a Chrome
+  extension and an Outlook add-in on the same core.
 - Is the API key safe in the web demo? Yes: memory-only (never persisted to
   localStorage/cookies/disk, gone on reload), and calls go directly from the
   browser to the provider — the page is static files, no server or proxy.
 - Which providers? OpenAI-compatible endpoints (OpenRouter, Ollama Cloud,
   self-hosted llama.cpp/LM Studio/vLLM), Anthropic, Google; custom endpoints
   with a base URL, with model list/context window/output caps auto-detected.
-- Which platforms? iOS, Android, web (static files), macOS, Windows, Linux, CLI.
+- Which platforms? iOS, Android, web (static files), macOS, Windows, Linux,
+  CLI — plus a Chrome MV3 extension and an Outlook Office add-in.
 - What can the agent do? Shell (curl, jq, rg, sed/awk, tar/zip, diff/patch),
   git clone/push over HTTP and SSH, python3 with pip, sqlite3, QuickJS, file
-  edits, web search/fetch, and long sessions with automatic context compaction.
+  edits, web search/fetch, subagents, LSP, MCP tools, persistent memory,
+  checkpoint/rewind, and long sessions with automatic context compaction;
+  the Chrome extension adds 34 browser tools, Outlook adds three mail tools.
 - Is it free? The project is MIT-licensed open source; users pay their own LLM
   provider for tokens only — no subscription or account.
 - How to install the CLI? `curl -fsSL "https://fa1.dev/install.sh" | sh`
   (or `dart pub global activate flutter_agent_harness`), then run `fa`.
+- How do I install the Chrome extension? Download
+  https://fa1.dev/extension/fa-extension.zip, unzip it, then
+  chrome://extensions → Developer mode → Load unpacked.
+- Does Fa run in Outlook? Yes: sideload
+  https://fa1.dev/outlook/manifest.xml (Outlook on the web: Settings →
+  Integrate apps → Upload custom apps → Add from a URL, or add the
+  downloaded manifest from file when URL install is disabled).
 
 See the on-page FAQ for the same answers with anchors:
 [fa1.dev FAQ](https://fa1.dev/#faq)
@@ -70,4 +150,3 @@ See the on-page FAQ for the same answers with anchors:
 - Machine-readable catalog:
   https://github.com/IstiN/fa_widgets/releases/latest/download/catalog.json
 - Sources and contribution guide: https://github.com/IstiN/fa_widgets
-

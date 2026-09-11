@@ -13,6 +13,8 @@ on:
       - 'vendor/**'
       - 'browser_ext/**'
       - 'scripts/build_browser_ext.sh'
+      - 'office_addin/**'
+      - 'scripts/build_office_addin.sh'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -71,6 +73,16 @@ jobs:
           dart pub get
           cd browser_ext/dart && dart pub get && cd ../..
           bash scripts/build_browser_ext.sh --with-app
+
+      # The Office add-in ships on the site too (sideload from
+      # fa1.dev/outlook/manifest.xml): the script validates the manifest,
+      # dart2js-compiles the taskpane agent and assembles
+      # build/pages/root/outlook/ in place — BEFORE the assemble step, so
+      # the artifact dir persists into the upload.
+      - name: Build Office add-in
+        run: |
+          cd office_addin/dart && dart pub get && cd ../..
+          bash scripts/build_office_addin.sh
 
       - name: Assemble Pages artifact
         run: |

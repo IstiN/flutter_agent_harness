@@ -6,12 +6,15 @@
 //   AC2: globalThis.faAgent exists, reports booted, and selfTest() returns
 //        ok:true with a browser_navigate tool result in its transcript.
 //
-// Requires a REAL Chrome (CI: browser-actions/setup-chrome + CHROME_PATH)
-// and a prior `bash scripts/build_browser_ext.sh` (sw/agent.js is a build
-// artifact). Without Chrome the suite fails loudly via
-// ChromeLaunchException — there is no silent skip; the `integration` tag
-// keeps it out of default `dart test` runs.
-@Tags(['integration'])
+// Requires a REAL Chrome (CI: the "Browser extension" workflow supplies
+// Chrome for Testing via CHROME_PATH — branded google-chrome-stable
+// silently ignores --load-extension) and a prior
+// `bash scripts/build_browser_ext.sh` (sw/agent.js is a build artifact).
+// Without Chrome the suite fails loudly via ChromeLaunchException — there
+// is no silent skip; the `integration`+`browser-ext` tags keep it out of
+// default `dart test` runs and out of ci.yml's tag job (owned by the
+// dedicated workflow).
+@Tags(['integration', 'browser-ext'])
 @TestOn('vm')
 @Timeout(Duration(minutes: 3))
 library;

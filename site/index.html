@@ -13,7 +13,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fa — one agent harness, every device | Flutter Agent Harness</title>
-<meta name="description" content="Fa (Flutter Agent Harness): a Dart/Flutter coding agent with a real sandbox shell, git, and interpreters — running on iOS, Android, web, desktop, and CLI. Try it live in your browser with your own API key.">
+<meta name="description" content="Fa (Flutter Agent Harness): a Dart/Flutter coding agent with a real sandbox shell, git, and interpreters — as a CLI, on iOS, Android, web, and desktop, as a Chrome extension, and as an Outlook add-in. Try it live in your browser with your own API key.">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta name="theme-color" content="#070a10">
 <!-- Bust landing-page assets on every deploy; GitHub Pages caches aggressively. -->
@@ -28,7 +28,7 @@
 <meta property="og:site_name" content="Fa">
 <meta property="og:locale" content="en_US">
 <meta property="og:title" content="Fa — one agent harness, every device">
-<meta property="og:description" content="A coding agent with a real tool loop — sandboxed shell, git, python3 & sqlite in-browser, sessions and compaction. Try it live with your own API key.">
+<meta property="og:description" content="A coding agent with a real tool loop — sandboxed shell, git, python3 & sqlite in-browser, a Chrome extension, and an Outlook add-in. Try it live with your own API key.">
 <meta property="og:url" content="https://fa1.dev/">
 <meta property="og:image" content="https://fa1.dev/og-image.png?v=2">
 <meta property="og:image:type" content="image/png">
@@ -39,7 +39,7 @@
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Fa — one agent harness, every device">
-<meta name="twitter:description" content="A coding agent with a real tool loop — sandboxed shell, git, python3 & sqlite in-browser. Try it live with your own API key.">
+<meta name="twitter:description" content="A coding agent with a real tool loop — sandboxed shell, git, python3 & sqlite in-browser, Chrome extension, Outlook add-in. Try it live with your own API key.">
 <meta name="twitter:image" content="https://fa1.dev/og-image.png?v=2">
 <meta name="twitter:image:alt" content="Fa — one agent harness, every device. Live coding-agent demo in the browser.">
 
@@ -51,10 +51,10 @@
   "@type": "SoftwareApplication",
   "name": "Fa",
   "alternateName": "flutter_agent_harness",
-  "description": "Cross-platform AI agent harness for Dart and Flutter: streaming provider adapters, agent loop with tools, sandboxed shell, git, session persistence, and context compaction. Runs on iOS, Android, web, desktop, and CLI.",
+  "description": "Cross-platform AI agent harness for Dart and Flutter: streaming provider adapters, agent loop with tools, sandboxed shell, git, session persistence, and context compaction. Runs on iOS, Android, web, desktop, and CLI — plus a Chrome MV3 extension and an Outlook add-in.",
   "url": "https://fa1.dev/",
   "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "iOS, Android, Web, macOS, Windows, Linux",
+  "operatingSystem": "iOS, Android, Web, macOS, Windows, Linux, Chrome (extension), Outlook (add-in)",
   "license": "https://opensource.org/licenses/MIT",
   "codeRepository": "https://github.com/IstiN/flutter_agent_harness",
   "downloadUrl": "https://pub.dev/packages/flutter_agent_harness",
@@ -64,7 +64,7 @@
     "name": "IstiN",
     "url": "https://github.com/IstiN"
   },
-  "featureList": "Sandboxed shell with curl/jq/rg/sed/awk/git, python3 and sqlite3 in the browser, secrets redaction, file browser, session tree with compaction, BYOK live demo"
+  "featureList": "Sandboxed shell with curl/jq/rg/sed/awk/git, python3 and sqlite3 in the browser, secrets redaction, file browser, session tree with compaction, Chrome extension with 34 browser tools, Outlook add-in with mail tools, BYOK live demo"
 }
 </script>
 
@@ -102,7 +102,7 @@
       "name": "Which platforms does Fa run on?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "iOS, Android, web (as static files, no server), macOS, Windows, Linux, and a terminal CLI. The core library is pure Dart with no dart:io, so the same agent loop and tools run everywhere behind a small environment abstraction."
+        "text": "iOS, Android, web (as static files, no server), macOS, Windows, Linux, and a terminal CLI — plus a Chrome MV3 extension that hosts the full agent in your browser and an Outlook add-in that runs it inside your mailbox. The core library is pure Dart with no dart:io, so the same agent loop and tools run everywhere behind a small environment abstraction."
       }
     },
     {
@@ -110,7 +110,7 @@
       "name": "What can the agent actually do?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Run shell commands (curl, jq, rg, sed, awk, tar, zip, diff, patch), clone and push git repositories over HTTP/SSH, run python3 with pip, query sqlite3, execute QuickJS, edit files, browse the web, and keep long-running sessions with automatic context compaction. All of it inside a sandbox you can inspect live in the file browser."
+        "text": "Run shell commands (curl, jq, rg, sed, awk, tar, zip, diff, patch), clone and push git repositories over HTTP/SSH, run python3 with pip, query sqlite3, execute QuickJS, edit files, browse the web, spawn task subagents, use LSP and MCP servers, keep persistent memory, and — through the Chrome extension — drive tabs, history, bookmarks, downloads, cookies, and screenshots with approval-gated injection. Inside Outlook it reads the open email and its attachments and writes draft bodies."
       }
     },
     {
@@ -127,6 +127,22 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "One line: curl -fsSL \"https://fa1.dev/install.sh\" | sh (macOS / Linux / WSL) or the PowerShell equivalent on Windows, then run the setup wizard to pick a provider and key. Alternatively dart pub global activate flutter_agent_harness from pub.dev. Both give you the fa and fah commands."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I install the Chrome extension?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Download fa-extension.zip from https://fa1.dev/extension/fa-extension.zip, unzip it, open chrome://extensions, enable Developer mode, choose Load unpacked, and pick the unzipped folder. The side panel hosts the full Fa app, and the agent gains 34 browser tools — tabs, windows, history, bookmarks, downloads, cookies, screenshots, and approval-gated code injection."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does Fa run inside Outlook?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes — Fa ships as an Outlook Office Add-in. Sideload the manifest from https://fa1.dev/outlook/manifest.xml (Outlook on the web: Settings → Integrate apps → Upload custom apps → Add from a URL, or download the manifest and add it from file if your tenant disables URL install; classic Outlook on Windows and Mac: Microsoft's sideload guide with the same URL). The taskpane runs the full agent with three approval-gated mail tools: read the open email, read attachments, and insert draft bodies."
       }
     }
   ]
@@ -190,6 +206,7 @@
       <a href="#install">Install</a>
       <a href="#features">Features</a>
       <a href="#platforms">Platforms</a>
+      <a href="#addons">Add-ons</a>
       <a href="./widgets/">Widgets</a>
       <a href="#byok">BYOK</a>
       <a href="#faq">FAQ</a>
@@ -211,8 +228,9 @@
       <p class="lede">
         Fa is a coding agent with a real tool loop — a sandboxed shell, git,
         interpreters, and a file browser — built on a pure-Dart core that runs
-        on iOS, Android, web, desktop, and in your terminal. Same harness,
-        same tools, everywhere. This page is the proof: the app below runs
+        on iOS, Android, web, desktop, in your terminal, in Chrome, and in
+        Outlook. Same harness, same tools, everywhere. This page is the
+        proof: the app below runs
         entirely in your browser.
       </p>
       <div class="cta-row">
@@ -227,12 +245,15 @@
         <a class="btn" id="extension-download" href="./extension/fa-extension.zip">
           Chrome extension
         </a>
+        <a class="btn" href="#addons">
+          Outlook add-in
+        </a>
         <a class="btn" href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
         <a class="btn" href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
       </div>
       <ul class="pills" aria-label="Supported platforms">
         <li>iOS</li><li>Android</li><li>Web</li><li>macOS</li>
-        <li>Windows</li><li>Linux</li><li>CLI</li><li>Chrome</li>
+        <li>Windows</li><li>Linux</li><li>CLI</li><li>Chrome</li><li>Outlook</li>
       </ul>
     </div>
 
@@ -333,6 +354,18 @@ flutter run</pre>
         <em>Developer mode</em>, <em>Load unpacked</em> → pick the unzipped
         folder and pin Fa from the puzzle-piece menu.</p>
       </article>
+      <article class="card">
+        <h3>Outlook add-in</h3>
+        <p>Fa lives in your mailbox: a taskpane chat that reads the open
+        email, reads its attachments, and writes draft bodies — every mail
+        tool approval-gated. Sideload it once: in Outlook on the web open
+        <em>Settings → Integrate apps → Upload custom apps → Add from a
+        URL</em> and paste
+        <code>https://fa1.dev/outlook/manifest.xml</code>; if your tenant
+        disables URL install, download the manifest and pick <em>Add from
+        file</em> instead; classic Outlook on Windows/Mac follows
+        Microsoft's sideload guide with the same URL.</p>
+      </article>
     </div>
   </section>
 
@@ -386,6 +419,20 @@ flutter run</pre>
         <p>Append-only JSONL session trees you can resume and fork, with
         automatic LLM-powered compaction when the context window fills
         up.</p>
+      </article>
+      <article class="card">
+        <p class="card-glyph" aria-hidden="true">⚙</p>
+        <h3>The full tool belt</h3>
+        <p>Every platform ships the same core tools: <code>read</code> ·
+        <code>write</code> · <code>edit</code> · <code>ls</code> ·
+        <code>bash</code> · <code>web_search</code> ·
+        <code>web_fetch</code> · <code>task</code> subagents ·
+        <code>lsp</code> · <code>memory_search</code> ·
+        <code>checkpoint</code>/<code>rewind</code> · <code>ask</code> ·
+        <code>request_secret</code> — plus the <code>mcp__</code> servers
+        you configure. Hosts add their own: 34 browser tools in the Chrome
+        extension, three mail tools in Outlook. Full list in
+        <a href="./llms.txt">llms.txt</a>.</p>
       </article>
     </div>
   </section>
@@ -467,6 +514,55 @@ flutter run</pre>
     </p>
   </section>
 
+  <!-- ── Add-ons ──────────────────────────────────────────────────────── -->
+  <section id="addons" class="features reveal">
+    <p class="kicker">Add-ons</p>
+    <h2>The same agent, in your browser and your inbox.</h2>
+    <p class="section-lede">
+      Two hosts ship straight off this site, built from the same pure-Dart
+      core. Both are static artifacts — no server, no account.
+    </p>
+    <div class="grid">
+      <article class="card">
+        <p class="card-glyph" aria-hidden="true">◇</p>
+        <h3>Chrome extension (MV3)</h3>
+        <p>The side panel hosts the full Fa app; the agent runs in the
+        service worker and gains 34 browser tools — <code>tabs_*</code>,
+        <code>windows_*</code>, <code>bookmarks_*</code>,
+        <code>downloads_*</code>, <code>cookies_*</code>,
+        <code>history_search</code>, <code>inject_js</code>,
+        <code>cdp_eval</code>, <code>page_screenshot</code>, and more.
+        Reach it from the side panel, the omnibox
+        (<code>fa &lt;query&gt;</code>), the Ctrl+Shift+1 hotkey, or the
+        context menu on any selection. Every page-derived byte is
+        quarantined as untrusted data; code injection prompts on every
+        call by default — only an explicit yolo session drops that
+        guard.</p>
+        <p><a href="./extension/fa-extension.zip">Download
+        fa-extension.zip</a> — install steps in <a href="#install">Install
+        ↑</a>.</p>
+      </article>
+      <article class="card">
+        <p class="card-glyph" aria-hidden="true">✉</p>
+        <h3>Outlook add-in</h3>
+        <p>The same agent as an Office taskpane (Mailbox 1.8+). Three mail
+        tools: <code>outlook.read_current_item</code> (metadata + body of
+        the open email), <code>outlook.read_attachment</code>, and
+        <code>outlook.insert_draft_body</code> — the latter two always
+        prompt. Email bodies enter the context only inside a quarantine
+        fence marked untrusted, so instructions in a message can never
+        drive the agent. Ask about the open email, get attachments
+        summarized, or dictate a reply straight into the compose pane.</p>
+        <p>Sideload <a href="./outlook/manifest.xml">manifest.xml</a>:
+        Outlook on the web → <em>Settings → Integrate apps → Upload custom
+        apps → Add from a URL</em>, or download the manifest and use
+        <em>Add from file</em> when URL install is disabled; classic
+        Outlook on Windows/Mac via Microsoft's sideload guide.</p>
+      </article>
+    </div>
+  </section>
+
+
   <!-- ── BYOK ─────────────────────────────────────────────────────────── -->
   <section id="byok" class="byok reveal">
     <p class="kicker">BYOK</p>
@@ -525,17 +621,22 @@ flutter run</pre>
       <details class="faq-item" id="faq-platforms">
         <summary>Which platforms does Fa run on?</summary>
         <p>iOS, Android, web (as static files, no server), macOS, Windows,
-        Linux, and a terminal CLI. The core library is pure Dart with no
+        Linux, and a terminal CLI — plus a Chrome MV3 extension that hosts
+        the full agent in your browser and an Outlook add-in that runs it
+        inside your mailbox. The core library is pure Dart with no
         dart:io, so the same agent loop and tools run everywhere behind a
         small environment abstraction.</p>
       </details>
       <details class="faq-item" id="faq-tools">
         <summary>What can the agent actually do?</summary>
-        <p>Run shell commands (curl, jq, rg, sed, awk, tar, zip, diff, patch),
-        clone and push git repositories over HTTP/SSH, run python3 with pip,
-        query sqlite3, execute QuickJS, edit files, browse the web, and keep
-        long-running sessions with automatic context compaction. All of it
-        inside a sandbox you can inspect live in the file browser.</p>
+        <p>Run shell commands (curl, jq, rg, sed, awk, tar, zip, diff,
+        patch), clone and push git repositories over HTTP/SSH, run python3
+        with pip, query sqlite3, execute QuickJS, edit files, browse the
+        web, spawn task subagents, use LSP and MCP servers, keep persistent
+        memory, and — through the Chrome extension — drive tabs, history,
+        bookmarks, downloads, cookies, and screenshots with approval-gated
+        injection. Inside Outlook it reads the open email and its
+        attachments and writes draft bodies.</p>
       </details>
       <details class="faq-item" id="faq-cost">
         <summary>Is Fa free?</summary>
@@ -552,6 +653,28 @@ flutter run</pre>
         the setup wizard to pick a provider and key. You can also install via
         <code>dart pub global activate flutter_agent_harness</code> from
         pub.dev if you already have the Dart SDK.</p>
+      </details>
+      <details class="faq-item" id="faq-extension">
+        <summary>How do I install the Chrome extension?</summary>
+        <p>Download <a href="./extension/fa-extension.zip">fa-extension.zip</a>,
+        unzip it, open <code>chrome://extensions</code>, enable
+        <em>Developer mode</em>, <em>Load unpacked</em> → pick the unzipped
+        folder, and pin Fa from the puzzle-piece menu. The side panel hosts
+        the full Fa app; the agent gains 34 browser tools — tabs, windows,
+        history, bookmarks, downloads, cookies, screenshots, and
+        approval-gated code injection.</p>
+      </details>
+      <details class="faq-item" id="faq-outlook">
+        <summary>Does Fa run inside Outlook?</summary>
+        <p>Yes — as an Office Add-in. Sideload the manifest from
+        <a href="./outlook/manifest.xml">fa1.dev/outlook/manifest.xml</a>:
+        Outlook on the web → <em>Settings → Integrate apps → Upload custom
+        apps → Add from a URL</em>, or download it and use <em>Add from
+        file</em> if your tenant disables URL install; classic Outlook on
+        Windows and Mac follows Microsoft's sideload guide with the same
+        URL. The taskpane
+        runs the full agent with three approval-gated mail tools: read the
+        open email, read attachments, and insert draft bodies.</p>
       </details>
     </div>
   </section>

@@ -46,6 +46,7 @@ import '../types.dart';
 import '../trajectory/event_projection.dart' show textPayloadOf;
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
+import 'tool_pairing.dart';
 
 /// Marker embedded in the over-window guard's error message (see
 /// [_streamAssistantResponse]): hosts match it to recognize "the loop
@@ -577,6 +578,22 @@ final class ModelRequestEvent extends AgentEvent {
 
   /// Cheap summary of the outbound request payload.
   final TrajectoryRequestDetail detail;
+}
+
+/// Emitted when the outbound request context needed tool-pairing surgery
+/// (issue #85): orphaned tool results dropped, missing results synthesized,
+/// or duplicate ids renamed. Repairs are never silent — [report] carries
+/// the counts and affected ids, and [providerError] is set when the pass
+/// ran in response to a provider pairing error (the self-healing retry).
+final class ToolPairingRepairEvent extends AgentEvent {
+  const ToolPairingRepairEvent({required this.report, this.providerError});
+
+  /// What the repair changed (empty report = detection only).
+  final ToolPairingRepairReport report;
+
+  /// Raw provider error that triggered this pass, when it ran on the
+  /// retry path; null for the pre-request repair.
+  final String? providerError;
 }
 
 /// A tool reported a partial execution result.
@@ -1120,80 +1137,115 @@ Future<AssistantMessage> _streamAssistantResponse(
       _terminalMessage(config.model, StopReason.aborted, 'Operation aborted'),
     );
   }
+  for (var attempt = 0; ; attempt++) {
+    final (requestContext, repairReport) = await _buildRequestContext(
+      context,
+      config,
+      cancelToken,
+    );
+    // Pairing repairs are always surfaced (issue #85): hosts see exactly
+    // what was dropped/synthesized/renamed before the request went out.
+    if (repairReport.isNotEmpty) {
+      await emit(ToolPairingRepairEvent(report: repairReport));
+    }
 
-  final requestContext = await _buildRequestContext(
-    context,
-    config,
-    cancelToken,
-  );
+    // Mid-turn over-window guard: tool outputs can balloon one turn far past
+    // the model window (a 287k-token live context on a 200k model was seen in
+    // the wild because compaction only runs at turn boundaries). Stop BEFORE
+    // the request instead of silently sending a context the model cannot
+    // fit — the run ends with a clear error, the tool results stay in the
+    // session, and the post-run auto-compaction (with its local-trim valve)
+    // shrinks the transcript for the next turn. Only a GROSS overflow trips
+    // this (past the window itself): between the compaction trigger
+    // (window - reserve) and the window, the normal post-run compaction
+    // flow still owns the decision.
+    final window = config.model.contextWindow;
+    if (window > 0) {
+      final tokens = estimateContextTokens(requestContext.messages).tokens;
+      if (tokens > window) {
+        return _finishWithoutStream(
+          context,
+          emit,
+          _terminalMessage(
+            config.model,
+            StopReason.error,
+            '$contextWindowExhaustedMarker: the outgoing context is '
+            '~$tokens tokens, '
+            'the ${config.model.id} window is $window. The request was not '
+            'sent. Auto-compaction runs next; if it keeps failing, run '
+            '/compact or start a fresh session.',
+          ),
+        );
+      }
+    }
 
-  // Mid-turn over-window guard: tool outputs can balloon one turn far past
-  // the model window (a 287k-token live context on a 200k model was seen in
-  // the wild because compaction only runs at turn boundaries). Stop BEFORE
-  // the request instead of silently sending a context the model cannot
-  // fit — the run ends with a clear error, the tool results stay in the
-  // session, and the post-run auto-compaction (with its local-trim valve)
-  // shrinks the transcript for the next turn. Only a GROSS overflow trips
-  // this (past the window itself): between the compaction trigger
-  // (window - reserve) and the window, the normal post-run compaction
-  // flow still owns the decision.
-  final window = config.model.contextWindow;
-  if (window > 0) {
-    final tokens = estimateContextTokens(requestContext.messages).tokens;
-    if (tokens > window) {
+    await emit(ModelRequestEvent(detail: _summarizeRequest(requestContext)));
+
+    AssistantMessageEventStream response;
+    try {
+      response = streamFunction(
+        config.model,
+        requestContext,
+        cancelToken: cancelToken,
+      );
+    } catch (error) {
       return _finishWithoutStream(
         context,
         emit,
-        _terminalMessage(
-          config.model,
-          StopReason.error,
-          '$contextWindowExhaustedMarker: the outgoing context is '
-          '~$tokens tokens, '
-          'the ${config.model.id} window is $window. The request was not '
-          'sent. Auto-compaction runs next; if it keeps failing, run '
-          '/compact or start a fresh session.',
-        ),
+        _terminalMessage(config.model, StopReason.error, '$error'),
       );
     }
-  }
 
-  await emit(ModelRequestEvent(detail: _summarizeRequest(requestContext)));
+    final streamed = await _consumeResponseStream(response, context, emit);
+    final finished = streamed.finished;
+    if (finished != null) {
+      // Self-healing retry (issue #85): a provider pairing 400 means the
+      // context was corrupted in a shape this repairer missed. Log the
+      // detection, re-run the repair over the rebuilt request, retry ONCE —
+      // a wedged session recovers here instead of never. A second failure
+      // surfaces normally (no infinite loop).
+      if (attempt == 0 &&
+          finished.stopReason == StopReason.error &&
+          isToolPairingProviderError(finished.errorMessage)) {
+        await emit(
+          ToolPairingRepairEvent(
+            report: const ToolPairingRepairReport(),
+            providerError: finished.errorMessage,
+          ),
+        );
+        continue;
+      }
+      return finished;
+    }
 
-  AssistantMessageEventStream response;
-  try {
-    response = streamFunction(
-      config.model,
-      requestContext,
-      cancelToken: cancelToken,
-    );
-  } catch (error) {
+    // The provider stream closed without a terminal event (provider bug).
     return _finishWithoutStream(
       context,
       emit,
-      _terminalMessage(config.model, StopReason.error, '$error'),
+      _streamEndedWithoutTerminal(config, streamed.partial),
+      replaceLast: streamed.addedPartial,
     );
   }
+}
 
-  final streamed = await _consumeResponseStream(response, context, emit);
-  if (streamed.finished != null) return streamed.finished!;
-
-  // The provider stream closed without a terminal event (provider bug).
+/// Builds the synthetic error turn for a provider stream that closed
+/// without any terminal event (provider bug): keep the streamed partial
+/// when one landed, otherwise synthesize an empty error message.
+AssistantMessage _streamEndedWithoutTerminal(
+  AgentLoopConfig config,
+  AssistantMessage? partial,
+) {
   const errorText = 'Provider stream ended without a terminal event';
-  final base =
-      streamed.partial ??
-      _terminalMessage(config.model, StopReason.error, errorText);
-  return _finishWithoutStream(
-    context,
-    emit,
-    base.copyWith(stopReason: StopReason.error, errorMessage: errorText),
-    replaceLast: streamed.addedPartial,
-  );
+  return (partial ??
+          _terminalMessage(config.model, StopReason.error, errorText))
+      .copyWith(stopReason: StopReason.error, errorMessage: errorText);
 }
 
 /// Applies the request-payload rewrites before a provider call: the
-/// `transformContext` hook and the orphaned-tool-call repair. Only the
-/// request payload is rewritten, never the transcript.
-Future<Context> _buildRequestContext(
+/// `transformContext` hook and the symmetric tool-pairing repair. Only the
+/// request payload is rewritten, never the transcript. Returns the payload
+/// plus what the pairing repair changed (empty when nothing did).
+Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   Context context,
   AgentLoopConfig config,
   CancelToken? cancelToken,
@@ -1209,17 +1261,18 @@ Future<Context> _buildRequestContext(
       tools: context.tools,
     );
   }
-  // Orphaned tool calls (aborted run, restored session, compaction cut)
-  // make providers hard-400; repair the payload, never the transcript.
-  final repaired = repairOrphanedToolCalls(requestContext.messages);
-  if (!identical(repaired, requestContext.messages)) {
+  // Broken tool pairing (orphan results at any position, displaced results,
+  // duplicate ids, unanswered calls) makes providers hard-400 EVERY
+  // subsequent request; repair the payload, never the transcript.
+  final repaired = repairToolPairing(requestContext.messages);
+  if (!identical(repaired.messages, requestContext.messages)) {
     requestContext = Context(
       systemPrompt: requestContext.systemPrompt,
-      messages: repaired,
+      messages: repaired.messages,
       tools: requestContext.tools,
     );
   }
-  return requestContext;
+  return (requestContext, repaired.report);
 }
 
 /// Builds the cheap outbound-request summary emitted with
@@ -1274,14 +1327,22 @@ _consumeResponseStream(
 ) async {
   AssistantMessage? partialMessage;
   var addedPartial = false;
+  // Ids are stamped as they STREAM, not just at finalization: every
+  // host-visible partial snapshot must carry the ids the finalized message
+  // will — a rename that lands only on MessageEnd leaves the host's
+  // partial snapshots correlating by an id that no longer exists (issue #85).
+  final used = _transcriptToolCallIds(
+    context.messages,
+    context.messages.length,
+  );
 
   await for (final event in response) {
     switch (event) {
       case StartEvent(:final partial):
-        partialMessage = partial;
-        context.messages.add(partial);
+        partialMessage = _stampAgainstUsed(partial, used);
+        context.messages.add(partialMessage);
         addedPartial = true;
-        await emit(MessageStartEvent(partial));
+        await emit(MessageStartEvent(partialMessage));
       case DoneEvent() || ErrorEvent():
         return (
           finished: await _finishStreamed(context, emit, addedPartial, event),
@@ -1290,11 +1351,11 @@ _consumeResponseStream(
         );
       default:
         if (partialMessage != null) {
-          partialMessage = event.partial;
-          context.messages[context.messages.length - 1] = event.partial;
+          partialMessage = _stampAgainstUsed(event.partial, used);
+          context.messages[context.messages.length - 1] = partialMessage;
           await emit(
             MessageUpdateEvent(
-              message: event.partial,
+              message: partialMessage,
               assistantMessageEvent: event,
             ),
           );
@@ -1305,13 +1366,23 @@ _consumeResponseStream(
   return (finished: null, partial: partialMessage, addedPartial: addedPartial);
 }
 
+/// Finalizes the streamed terminal event into the context. The finished
+/// message's tool-call ids are first made session-unique (issue #85:
+/// some providers emit per-run position counters like `bash_198` that reset
+/// every run — ids are stamped against everything already in the transcript
+/// so replay/trim/branch can never put duplicate ids into one request).
 Future<AssistantMessage> _finishStreamed(
   Context context,
   AgentEventSink emit,
   bool addedPartial,
   AssistantMessageEvent terminalEvent,
 ) async {
-  final finalMessage = terminalEvent.partial;
+  var finalMessage = terminalEvent.partial;
+  finalMessage = _stampSessionUniqueToolCallIds(
+    finalMessage,
+    context,
+    skipLast: addedPartial,
+  );
   if (addedPartial) {
     context.messages[context.messages.length - 1] = finalMessage;
   } else {
@@ -1320,6 +1391,80 @@ Future<AssistantMessage> _finishStreamed(
   }
   await emit(MessageEndEvent(finalMessage));
   return finalMessage;
+}
+
+/// Renames any [ToolCall] id of [message] that already appears in the
+/// transcript (or twice within [message] itself) to `<id>_2`, `<id>_3`, ….
+/// Ids are opaque to tools and providers echo them back verbatim, so only
+/// generation changes. Collisions with ids the context never sees are
+/// harmless; collisions inside one context are what break pairing.
+AssistantMessage _stampSessionUniqueToolCallIds(
+  AssistantMessage message,
+  Context context, {
+  required bool skipLast,
+}) {
+  if (!message.content.any((block) => block is ToolCall)) return message;
+  final end = context.messages.length - (skipLast ? 1 : 0);
+  return _stampAgainstUsed(
+    message,
+    _transcriptToolCallIds(context.messages, end),
+  );
+}
+
+/// The rename core of [_stampSessionUniqueToolCallIds] against a
+/// caller-owned [used] set (mutated: every id, original or fresh,
+/// registers). Shared by the final-message pass and the per-partial pass in
+/// [_consumeResponseStream] so both produce the same ids for one stream.
+AssistantMessage _stampAgainstUsed(AssistantMessage message, Set<String> used) {
+  var changed = false;
+  final content = <ContentBlock>[];
+  for (final block in message.content) {
+    if (block is! ToolCall) {
+      content.add(block);
+      continue;
+    }
+    final renamed = _freshToolCallId(block, used);
+    changed = changed || !identical(renamed, block);
+    content.add(renamed);
+  }
+  return changed ? message.copyWith(content: content) : message;
+}
+
+/// Collects every tool-call id visible in `messages[0, end)`: ids of calls
+/// inside assistant messages and ids of the results answering them.
+Set<String> _transcriptToolCallIds(List<Message> messages, int end) {
+  final used = <String>{};
+  for (var i = 0; i < end; i++) {
+    switch (messages[i]) {
+      case AssistantMessage(:final content):
+        for (final block in content) {
+          if (block is ToolCall) used.add(block.id);
+        }
+      case ToolResultMessage(:final toolCallId):
+        used.add(toolCallId);
+      default:
+        break;
+    }
+  }
+  return used;
+}
+
+/// Returns [call] unchanged (registered in [used]) when its id is free,
+/// otherwise renamed to the first free `<id>_2`, `<id>_3`, … which is then
+/// registered too.
+ToolCall _freshToolCallId(ToolCall call, Set<String> used) {
+  if (!used.contains(call.id)) {
+    used.add(call.id);
+    return call;
+  }
+  var k = 2;
+  var fresh = '${call.id}_$k';
+  while (used.contains(fresh)) {
+    k++;
+    fresh = '${call.id}_$k';
+  }
+  used.add(fresh);
+  return call.copyWith(id: fresh);
 }
 
 /// Appends (or replaces the partial with) [message] and emits its lifecycle
@@ -1355,51 +1500,6 @@ AssistantMessage _terminalMessage(
     errorMessage: errorMessage,
     timestamp: DateTime.now(),
   );
-}
-
-/// Repairs orphaned tool calls in a request payload: every [ToolCall] in an
-/// assistant message must be answered by a [ToolResultMessage], or providers
-/// hard-reject the whole context (OpenAI 400: "an assistant message with
-/// 'tool_calls' must be followed by tool messages..."). Aborted runs,
-/// restored sessions and compaction cuts can all leave calls without
-/// results. Rather than dropping them (which erases what the run was doing),
-/// a synthetic interrupted result is injected right after the assistant
-/// message. The transcript itself is never modified — the repair applies to
-/// the outbound request only. Returns [messages] untouched (same instance)
-/// when nothing is missing.
-List<Message> repairOrphanedToolCalls(List<Message> messages) {
-  final answered = <String>{
-    for (final message in messages)
-      if (message is ToolResultMessage) message.toolCallId,
-  };
-  List<Message>? repaired;
-  for (var i = 0; i < messages.length; i++) {
-    final message = messages[i];
-    repaired?.add(message);
-    if (message is! AssistantMessage) continue;
-    final missing = message.content.whereType<ToolCall>().where(
-      (call) => !answered.contains(call.id),
-    );
-    for (final call in missing) {
-      (repaired ??= [...messages.sublist(0, i + 1)]).add(
-        ToolResultMessage(
-          toolCallId: call.id,
-          toolName: call.name,
-          content: [
-            TextContent(
-              text:
-                  'Tool call "${call.name}" did not produce a result: the '
-                  'run was interrupted before the tool finished. Re-issue '
-                  'the tool call if it is still needed.',
-            ),
-          ],
-          isError: true,
-          timestamp: DateTime.now(),
-        ),
-      );
-    }
-  }
-  return repaired ?? messages;
 }
 
 /// Fails all tool calls from an assistant message that was truncated by the
@@ -1639,7 +1739,7 @@ Future<_ToolCallPreparation> _prepareToolCall(
       cancelToken,
     );
   } catch (error) {
-    return _ImmediateToolCall(_errorToolResult('$error'), true);
+    return _ImmediateToolCall(_errorToolResult(error), true);
   }
 }
 
@@ -1725,7 +1825,7 @@ Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
   } catch (error) {
     acceptingUpdates = false;
     await Future.wait(updateEvents);
-    return _ExecutedToolCallOutcome(_errorToolResult('$error'), true);
+    return _ExecutedToolCallOutcome(_errorToolResult(error), true);
   }
 }
 
@@ -1763,7 +1863,7 @@ Future<_FinalizedToolCall> _finalizeExecutedToolCall(
         isError = afterResult.isError ?? isError;
       }
     } catch (error) {
-      result = _errorToolResult('$error');
+      result = _errorToolResult(error);
       isError = true;
     }
   }
@@ -1776,8 +1876,46 @@ bool _shouldTerminateToolBatch(List<_FinalizedToolCall> finalizedCalls) {
       finalizedCalls.every((finalized) => finalized.result.terminate);
 }
 
-ToolExecutionResult _errorToolResult(String message) {
-  return ToolExecutionResult(content: [TextContent(text: message)]);
+/// Prefixes Dart core exceptions prepend in `toString()` — class noise, not
+/// information (issue #118: every failed bash surfaced as
+/// "Bad state: <output>"). Checked repeatedly, so wrapped errors
+/// ("Invalid argument(s): Bad state: …") strip recursively.
+const _coreErrorPrefixes = <String>[
+  'Bad state: ', // StateError
+  'Invalid argument(s): ', // ArgumentError
+  'FormatException: ', // FormatException
+  'Unsupported operation: ', // UnsupportedError
+  'UnimplementedError: ', // UnimplementedError
+  'Exception: ', // base Exception
+];
+
+/// Renders a caught error for a model-visible tool result: the bare message
+/// without the core-exception class prefixes. Errors with their own clean
+/// `toString()` pass through untouched.
+String _toolErrorText(Object error) {
+  var text = '$error';
+  var stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (final prefix in _coreErrorPrefixes) {
+      if (text.startsWith(prefix)) {
+        text = text.substring(prefix.length);
+        stripped = true;
+      }
+    }
+  }
+  return text;
+}
+
+/// Builds an error tool result. A [String] is taken as-is; anything else is
+/// a caught error routed through [_toolErrorText] — the single choke point
+/// every thrown tool error flows through.
+ToolExecutionResult _errorToolResult(Object message) {
+  return ToolExecutionResult(
+    content: [
+      TextContent(text: message is String ? message : _toolErrorText(message)),
+    ],
+  );
 }
 
 Future<void> _emitToolExecutionEnd(
