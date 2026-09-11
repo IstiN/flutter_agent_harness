@@ -11,10 +11,19 @@ import 'fake_chat_service.dart';
 /// A [FakeChatService] with a controllable above-count and tap recording.
 class _PagingService extends FakeChatService {
   int? above;
+  int? below;
+  int? total;
+  bool loading = false;
   int loadCalls = 0;
 
   @override
   int? get historyAboveCount => above;
+  @override
+  int? get historyBelowCount => below;
+  @override
+  int? get historyTotalCount => total;
+  @override
+  bool get historyLoading => loading;
 
   @override
   Future<void> loadOlderHistory() async {
@@ -57,6 +66,62 @@ void main() {
     await tester.pump();
 
     expect(service.loadCalls, 1);
+  });
+
+  testWidgets('E6: the terminal banner at the file top', (tester) async {
+    final service = _PagingService()
+      ..above = 0
+      ..total = 5000;
+    await _pumpScreen(tester, service);
+
+    expect(find.text('Beginning of session (1 of 5000)'), findsOneWidget);
+    // The terminal state is not a tap target.
+    await tester.tap(find.text('Beginning of session (1 of 5000)'));
+    await tester.pump();
+    expect(service.loadCalls, 0);
+  });
+
+  testWidgets('the spinner replaces the label while a page is in flight', (
+    tester,
+  ) async {
+    final service = _PagingService()
+      ..above = 42
+      ..loading = true;
+    await _pumpScreen(tester, service);
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Load earlier (42 more)'), findsNothing);
+  });
+
+  testWidgets('the bottom "Load newer" banner pages back down', (tester) async {
+    final service = _PagingService()
+      ..above = 0
+      ..hasNewer = true;
+    await _pumpScreen(tester, service);
+
+    expect(find.text('Load newer'), findsOneWidget);
+    await tester.tap(find.text('Load newer'));
+    await tester.pump();
+    expect(service.loadNewerHistoryCalls, 1);
+
+    // Once the tail is back, the banner disappears.
+    service
+      ..hasNewer = false
+      ..notifyListeners();
+    await tester.pump();
+    expect(find.text('Load newer'), findsNothing);
+  });
+
+  testWidgets('a known below-count labels the "Load newer" banner', (
+    tester,
+  ) async {
+    final service = _PagingService()
+      ..above = 0
+      ..hasNewer = true
+      ..below = 2400;
+    await _pumpScreen(tester, service);
+
+    expect(find.text('Load newer (2400 more)'), findsOneWidget);
   });
 
   testWidgets('banner is absent once everything is loaded', (tester) async {

@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io' as io;
 import 'dart:typed_data';
 
@@ -230,22 +229,59 @@ void main() {
     );
     expect(service.historyAboveCount, 4600);
 
-    // Paging to the file top reports everything ABOVE loaded; the
-    // transcript itself is the bounded resident window (the oldest
-    // slice, e0..e599) - the newest side slid out of residency and is
-    // re-readable by paging back down.
+    // Paging to the file top loads EVERYTHING into the VIEW (the
+    // transcript the user reads); residency inside the storage stays
+    // bounded, and the newest side that slid out is reported BELOW.
     while (service.historyAboveCount! > 0) {
       await service.loadOlderHistory();
     }
     expect(service.historyAboveCount, 0);
-    expect(service.messages, hasLength(600));
+    expect(service.messages, hasLength(5000));
     expect(
       service.messages.first.content,
       'message 0 with a bit of body to be realistic',
     );
+    expect(service.historyHasNewer, isTrue);
+    expect(service.historyBelowCount, 4400);
+
+    // The page-down path (round-2 review): residency slides back to the
+    // tail chunk by chunk; the VIEW already holds everything, so the
+    // transcript only settles - it never shrinks or reorders.
+    while (service.historyHasNewer) {
+      await service.loadNewerHistory();
+    }
+    expect(service.historyBelowCount, 0);
+    expect(service.messages, hasLength(5000));
+    expect(
+      service.messages.last.content,
+      'message 4999 with a bit of body to be realistic',
+    );
     // And a further tap is a clean no-op.
     await service.loadOlderHistory();
-    expect(service.messages, hasLength(600));
+    expect(service.messages, hasLength(5000));
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('jumpToMessage pages history in until the target lands', () async {
+    final (service, _) = await loadedService(3000);
+    addTearDown(service.dispose);
+    await waitForCount(service, 2800);
+
+    expect(service.messages, hasLength(200));
+    // Target deep in the paged-out region: paging-in lands it.
+    final jumped = await service.jumpToMessage('msg-1500');
+    expect(jumped, isTrue);
+    // The row AT the index is loaded (that is the contract the chat
+    // screen scrolls to); rows stay ordered oldest-first.
+    expect(service.messages, hasLength(greaterThan(1500)));
+    expect(
+      int.parse(service.messages[1500].content.split(' ')[1]),
+      lessThan(int.parse(service.messages[1501].content.split(' ')[1])),
+    );
+    // Out-of-range targets resolve as a miss without paging the whole
+    // file (bounded by the 100-pass cap).
+    expect(await service.jumpToMessage('msg-99999'), isFalse);
+    // Garbage ids are a plain miss.
+    expect(await service.jumpToMessage('nope'), isFalse);
   }, timeout: const Timeout(Duration(minutes: 3)));
 
   test('small sessions load whole: history count reports 0', () async {
@@ -259,9 +295,10 @@ void main() {
     expect(service.messages, hasLength(5));
   });
 
-  test('a failed page load surfaces historyLoadError until a retry',
-      () async {
-    final flaky = FlakyFileSystem(LocalFileSystem(cwd: io.Directory.systemTemp.path));
+  test('a failed page load surfaces historyLoadError until a retry', () async {
+    final flaky = FlakyFileSystem(
+      LocalFileSystem(cwd: io.Directory.systemTemp.path),
+    );
     final (service, _) = await loadedService(1000, countingFs: flaky);
     addTearDown(service.dispose);
     await waitForCount(service, 800);

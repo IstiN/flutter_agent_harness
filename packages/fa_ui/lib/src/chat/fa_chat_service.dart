@@ -152,4 +152,37 @@ abstract interface class FaChatService implements FaApprovalModeController {
   /// state: null when nothing failed or a retry succeeded. Hosts without
   /// history paging always return null.
   String? get historyLoadError;
+
+  /// Whether a history page load ([loadOlderHistory] or
+  /// [loadNewerHistory]) is in flight: the banners render a spinner and
+  /// ignore taps while true (issue #135 E6).
+  bool get historyLoading;
+
+  /// The exact total transcript-record count once the background count
+  /// landed - the N of the terminal "Beginning of session (1 of N)"
+  /// banner; `null` until then.
+  int? get historyTotalCount;
+
+  /// Whether newer transcript records sit below the loaded window (the
+  /// "Load newer" banner's visibility signal - true even while the exact
+  /// count is still unknown, e.g. right after a jump). Hosts without
+  /// history paging return `false`.
+  bool get historyHasNewer;
+
+  /// Transcript records BELOW the loaded window (deep paging evicted the
+  /// newest side): `null` while unknown, `0` at the live tail, `N` -
+  /// what a "Load newer" banner shows before tapping [loadNewerHistory]
+  /// pages the next chunk back in. Visibility comes from
+  /// [historyHasNewer], not from this count.
+  int? get historyBelowCount;
+
+  /// Pages the next chunk of newer transcript history back into view -
+  /// the page-down path back to the live tail after deep paging.
+  Future<void> loadNewerHistory();
+
+  /// Jump-to-message (issue #135 AC6): brings the transcript row
+  /// [messageId] into the loaded window, paging older history in when
+  /// the target sits above the loaded range. Returns whether the target
+  /// is now loaded; the caller (the chat screen) then scrolls to it.
+  Future<bool> jumpToMessage(String messageId);
 }

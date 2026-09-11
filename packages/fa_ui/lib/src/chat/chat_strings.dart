@@ -56,6 +56,9 @@ abstract class FaChatStrings {
   String get chatLoadEarlier;
   String chatLoadEarlierCount(String count);
   String get chatLoadEarlierFailed;
+  String chatBeginningOfSession(String count);
+  String get chatLoadNewer;
+  String chatLoadNewerCount(String count);
   String get chatCollapse;
   String chatShowAll(String count);
   String approvalAllowToolTitle(String tool);
@@ -167,6 +170,13 @@ class FaChatStringsEn extends FaChatStrings {
   @override
   String get chatLoadEarlierFailed =>
       "Couldn't load earlier messages - tap to retry";
+  @override
+  String chatBeginningOfSession(String count) =>
+      'Beginning of session (1 of $count)';
+  @override
+  String get chatLoadNewer => 'Load newer';
+  @override
+  String chatLoadNewerCount(String count) => 'Load newer ($count more)';
   @override
   String approvalAllowToolTitle(String tool) => 'Allow $tool?';
   @override
@@ -317,6 +327,13 @@ class FaChatStringsRu extends FaChatStrings {
   @override
   String get chatLoadEarlierFailed =>
       'Не удалось загрузить более ранние — нажмите, чтобы повторить';
+  @override
+  String chatBeginningOfSession(String count) => 'Начало сессии (1 из $count)';
+  @override
+  String get chatLoadNewer => 'Загрузить более новые';
+  @override
+  String chatLoadNewerCount(String count) =>
+      'Загрузить более новые (ещё $count)';
   @override
   String approvalAllowToolTitle(String tool) => 'Разрешить $tool?';
   @override

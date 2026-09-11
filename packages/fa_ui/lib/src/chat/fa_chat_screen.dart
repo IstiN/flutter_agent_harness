@@ -212,11 +212,18 @@ class _FaChatScreenState extends State<FaChatScreen>
   String? _error;
 
   /// Mirrors [FaChatService.historyAboveCount] so a change (a count
-  /// landing, a page loading) can drive a rebuild.
+  /// landing, a page loading) drives a rebuild.
   int? _historyAbove;
 
   /// Mirrors [FaChatService.historyLoadError] for the retry banner.
   String? _historyLoadError;
+
+  /// Mirrors the in-flight page flag (spinner state, issue #135 E6) and
+  /// the below-count driving the "Load newer" banner.
+  bool _historyLoading = false;
+  bool _historyHasNewer = false;
+  int? _historyBelow;
+  int? _historyTotal;
 
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
@@ -332,6 +339,10 @@ class _FaChatScreenState extends State<FaChatScreen>
     _error = widget.service.error;
     _historyAbove = widget.service.historyAboveCount;
     _historyLoadError = widget.service.historyLoadError;
+    _historyLoading = widget.service.historyLoading;
+    _historyHasNewer = widget.service.historyHasNewer;
+    _historyBelow = widget.service.historyBelowCount;
+    _historyTotal = widget.service.historyTotalCount;
     _syncMessages();
   }
 
@@ -348,6 +359,10 @@ class _FaChatScreenState extends State<FaChatScreen>
       _error = widget.service.error;
       _historyAbove = widget.service.historyAboveCount;
       _historyLoadError = widget.service.historyLoadError;
+      _historyLoading = widget.service.historyLoading;
+      _historyHasNewer = widget.service.historyHasNewer;
+      _historyBelow = widget.service.historyBelowCount;
+      _historyTotal = widget.service.historyTotalCount;
       _syncMessages();
       setState(() {});
     }
@@ -384,8 +399,14 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// Exact via the row's key when it is built; otherwise the reversed
   /// list is positioned by index fraction first — the jump lands within
   /// the sliver's build extent, the row mounts, and the next pass is
-  /// exact. A few passes, then give up quietly (unknown id, no clients).
+  /// exact. A target ABOVE the loaded window is paged in first through
+  /// [FaChatService.jumpToMessage] (issue #135 AC6) — the jump never
+  /// silently gives up on out-of-window targets anymore.
   Future<void> _scrollToMessage(String messageId) async {
+    final index = int.tryParse(messageId.replaceFirst('msg-', ''));
+    if (index != null && index >= _lastSynced.length) {
+      await widget.service.jumpToMessage(messageId);
+    }
     for (var pass = 0; pass < 4; pass++) {
       final target = _itemKeys[messageId]?.currentContext;
       if (target != null && target.mounted) {
@@ -397,7 +418,6 @@ class _FaChatScreenState extends State<FaChatScreen>
         return;
       }
       if (!_chatScrollController.hasClients) return;
-      final index = int.tryParse(messageId.replaceFirst('msg-', ''));
       final total = _lastSynced.length;
       if (index == null || index < 0 || index >= total || total < 2) return;
       final fraction = (total - 1 - index) / (total - 1);
@@ -483,12 +503,20 @@ class _FaChatScreenState extends State<FaChatScreen>
         widget.service.isStreaming != _isStreaming ||
         widget.service.error != _error ||
         widget.service.historyAboveCount != _historyAbove ||
-        widget.service.historyLoadError != _historyLoadError;
+        widget.service.historyLoadError != _historyLoadError ||
+        widget.service.historyLoading != _historyLoading ||
+        widget.service.historyHasNewer != _historyHasNewer ||
+        widget.service.historyBelowCount != _historyBelow ||
+        widget.service.historyTotalCount != _historyTotal;
     if (needsRebuild) {
       _isStreaming = widget.service.isStreaming;
       _error = widget.service.error;
       _historyAbove = widget.service.historyAboveCount;
       _historyLoadError = widget.service.historyLoadError;
+      _historyLoading = widget.service.historyLoading;
+      _historyHasNewer = widget.service.historyHasNewer;
+      _historyBelow = widget.service.historyBelowCount;
+      _historyTotal = widget.service.historyTotalCount;
       if (mounted) setState(() {});
     }
   }
@@ -805,10 +833,14 @@ class _FaChatScreenState extends State<FaChatScreen>
   Widget _buildChatBody(BuildContext context) {
     final composerBuilder = widget.composerBuilder;
     final strings = FaChatStrings.of(context);
-    // Pinned "Load earlier" banner: tap-only (no busy state), shown while
-    // the above-count is still being computed (null) and while records
-    // remain above the window (>0); hidden once everything is loaded (0).
+    // Pinned history banners (issue #135): "Load earlier" at the top of
+    // the loaded range, "Load newer" at the bottom (the page-down path
+    // back to the live tail after deep paging). Both are tap-only (no
+    // scroll-triggered loads), show a spinner while a page is in flight,
+    // and turn into the terminal "Beginning of session (1 of N)" once
+    // the top of the file is reached (E6).
     final historyAbove = _historyAbove;
+    final historyBelow = _historyBelow;
     return Column(
       children: [
         if (_error case final error?)
@@ -832,31 +864,14 @@ class _FaChatScreenState extends State<FaChatScreen>
               ),
             ),
           ),
-        if (historyAbove == null || historyAbove > 0)
-          Material(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: InkWell(
-              onTap: widget.service.loadOlderHistory,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 12,
-                  horizontal: 16,
-                ),
-                child: Center(
-                  child: Text(
-                    _historyLoadError != null
-                        ? strings.chatLoadEarlierFailed
-                        : historyAbove == null
-                        ? strings.chatLoadEarlier
-                        : strings.chatLoadEarlierCount('$historyAbove'),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+        if (_topBannerVisible(historyAbove))
+          _historyPinnedBanner(
+            top: true,
+            label: _topBannerLabel(strings, historyAbove),
+            // An error banner IS the retry surface (round-1 behavior).
+            tappable:
+                !_historyLoading &&
+                !(historyAbove == 0 && _historyLoadError == null),
           ),
         Expanded(
           child: Chat(
@@ -895,10 +910,85 @@ class _FaChatScreenState extends State<FaChatScreen>
                 : buildFahChatTheme(uiTheme: FaUiThemeProvider.of(context)),
           ),
         ),
+        if (_historyHasNewer)
+          _historyPinnedBanner(
+            top: false,
+            label: _historyLoadError != null
+                ? strings.chatLoadEarlierFailed
+                : historyBelow == null || historyBelow <= 0
+                ? strings.chatLoadNewer
+                : strings.chatLoadNewerCount('$historyBelow'),
+            tappable: !_historyLoading,
+          ),
         composerBuilder != null
             ? composerBuilder(context, widget.service)
             : ChatComposer(service: widget.service, features: widget.features),
       ],
+    );
+  }
+
+  /// The top banner hides only on non-windowed hosts (no total, nothing
+  /// above); a windowed host always shows it — count, spinner, or the
+  /// terminal "Beginning of session" state (E6).
+  bool _topBannerVisible(int? historyAbove) =>
+      historyAbove == null || historyAbove > 0 || _historyTotal != null;
+
+  String _topBannerLabel(FaChatStrings strings, int? historyAbove) {
+    if (_historyLoadError != null) return strings.chatLoadEarlierFailed;
+    if (_historyLoading) return '';
+    if (historyAbove == null) return strings.chatLoadEarlier;
+    if (historyAbove == 0) {
+      return strings.chatBeginningOfSession('${_historyTotal ?? '?'}');
+    }
+    return strings.chatLoadEarlierCount('$historyAbove');
+  }
+
+  /// One pinned history banner row: a spinner while a page load is in
+  /// flight, otherwise the label; tappable only when [tappable].
+  Widget _historyPinnedBanner({
+    required bool top,
+    required String label,
+    required bool tappable,
+  }) {
+    final loading = _historyLoading;
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: InkWell(
+        onTap: tappable
+            ? (top
+                  ? widget.service.loadOlderHistory
+                  : widget.service.loadNewerHistory)
+            : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              // Long error labels must wrap/ellipsize, never overflow.
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 2,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
