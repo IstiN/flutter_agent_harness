@@ -173,12 +173,15 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
             cwd: metadata.cwd,
             persisted: metadata,
           ),
-    ]..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
-    // NO jump-to-top on pending clicks: reordering the list while the
-    // row's stamps are still old puts a "1:08 PM" row above an "8:42 PM"
-    // row — the list stops making sense. The click highlights the row IN
-    // PLACE (selection = selectedSessionId); the list only reorders when
-    // the session's real activity time actually changes.
+      // STABLE order: sort by CREATION time, not activity. An activity sort
+      // reshuffles the list on every switch — the just-archived session's
+      // file mtime bumps to now and the re-keyed live slot gets a fresh
+      // stamp, so the row you clicked teleports ("сессии прыгают").
+      // Creation time never changes: clicking moves only the dot, a new
+      // session still lands on top.
+    ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // The click highlights the row IN PLACE (selection =
+    // selectedSessionId); the list never reorders under the finger.
     final grouped = _groupEntriesByFolder(
       entries,
       context.l10n.sessionFolderPersonal,

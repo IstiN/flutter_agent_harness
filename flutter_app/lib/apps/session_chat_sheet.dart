@@ -950,7 +950,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
                   persisted: null,
                 ),
           ]
-          ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+          // STABLE order, same rule as the wide sidebar: creation time
+          // never changes, so clicking a session moves only the dot — an
+          // activity sort teleported the clicked row to the top on every
+          // switch (archive mtime bump + fresh slot stamp).
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     // Folder-grouped rows (headers + tiles): the sessions of one project
     // stay together under the folder basename, most recently active
     // project first (entries are activity-sorted, groups follow).
