@@ -216,6 +216,12 @@ for the protocol, the hub server, and an end-to-end setup walkthrough.
 bridge — or runs the agent fully self-contained in the extension's
 service worker: [docs/browser-extension.md](docs/browser-extension.md).
 
+## Outlook add-in
+
+fa also runs as an Outlook taskpane (approval-gated mail tools on top
+of the same agent core) — install guide and troubleshooting:
+[docs/outlook-addin.md](docs/outlook-addin.md).
+
 ## Development
 
 ```bash

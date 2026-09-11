@@ -2,19 +2,28 @@
 
 fa as an Outlook taskpane: the Dart agent core (`dart/` → `dart compile js` →
 `web/office_agent.js`) runs inside the Outlook host, with mail tools
-(`outlook.*`) on top. Classic v1 MailApp manifest — no VersionOverrides, no
-mobile form factor — for the broadest host coverage (Mailbox 1.8+).
+(`outlook.*`) on top. Classic v1 MailApp manifest plus a
+`VersionOverrides` command surface (Mailbox 1.8+, no mobile form factor):
+an «fa» button on the message Apps flyout / compose ribbon opens the
+taskpane — new Outlook for Windows (Monarch) and modern OWA render
+command-based add-ins only (issue #143), legacy hosts fall back to the
+classic pane.
 
 ## Layout
 
-- `manifest/outlook.xml` — classic Outlook add-in manifest. Prod URLs point
-  at `https://fa1.dev/outlook/…`; the build's `--dev` variant rewrites them
-  to `https://localhost:8443`.
+- `manifest/outlook.xml` — Outlook add-in manifest: classic FormSettings
+  for legacy hosts plus `VersionOverridesV1_0` command surfaces
+  (MessageRead + MessageCompose) for Monarch/new OWA. Prod URLs point
+  at `https://fa1.dev/outlook/…`; the build's `--dev` variant rewrites
+  them to `https://localhost:8443`.
 - `dart/` — `fa_office_agent` package. `src/manifest.dart` is a pure-Dart
   manifest validator (https + host + `/outlook/` path shape, permission
   ladder exactly `ReadWriteItem` ⇒ `{ReadItem, ReadWriteItem}`, one
-  Mailbox host, no MobileFormFactor); `tool/validate_manifest.dart` is its
-  CLI (`dart run tool/validate_manifest.dart ../manifest/outlook.xml [--dev]`).
+  Mailbox host, no MobileFormFactor, clean XML comments, ItemEdit
+  SourceLocation-only, and the command surface: MessageReadCommandSurface
+  + ShowTaskpane, 16/32/80 px button icons, MailHost type, resolvable
+  resids); `tool/validate_manifest.dart` is its CLI
+  (`dart run tool/validate_manifest.dart ../manifest/outlook.xml [--dev]`).
 - `web/` — taskpane page (`index.html`), privacy and support pages. The
   page boots Office.js from the Microsoft CDN; if the host API never
   becomes available it shows a banner and the agent answers without mail
@@ -24,18 +33,37 @@ mobile form factor — for the broadest host coverage (Mailbox 1.8+).
   to `faOfficeAgent.decide`, and the raw event log stays below for
   sideload debugging. The full fa app loads in `app/index.html` only when
   the build bundled it (`--with-app`).
-- `icons/` — taskpane icons (`fa-64.png`, `fa-128.png`).
+- `icons/` — taskpane icons (`fa-16/32/80.png` for the command buttons,
+  `fa-64.png`, `fa-128.png` for the store/list surfaces).
 
 ## Install (sideload)
 
-Manifest URL: `https://fa1.dev/outlook/manifest.xml`
+Full step-by-step guide (requirements, exact UI path, troubleshooting):
+[docs/outlook-addin.md](../docs/outlook-addin.md), mirrored live at
+https://fa1.dev/outlook/support.html.
 
-- **Outlook on the web**: Settings → Integrate apps → Upload custom apps →
-  “Add from a URL”, paste the manifest URL. Tenants that disable URL
-  install: download the manifest and use “Add from file” instead (issue
-  #131).
-- **Windows / Mac (classic Outlook)**: follow Microsoft's sideload guide
-  with the same manifest URL.
+Short version — Microsoft removed "Add from a URL" from the manual
+surface, so download and add from file:
+
+1. Save https://fa1.dev/outlook/manifest.xml as `manifest.xml`.
+2. Open https://aka.ms/olksideload (My add-ins) — works from the web,
+   new Outlook, and classic Outlook.
+3. My add-ins → Custom add-ins → "+ Add a custom add-in" →
+   Add from file → `manifest.xml` → Install.
+
+## Where the add-in shows up
+
+After install the entry point depends on the client (manifest ≥ 1.1.0.0):
+
+- **New Outlook for Windows (Monarch) / OWA**: open a message, click
+  **Apps** (…) in the reading surface — the «fa» button opens the
+  taskpane. In compose: «fa» sits in the message toolbar.
+- **Classic Outlook (Win/Mac)**: «fa» group on the Home ribbon; legacy
+  hosts that ignore command surfaces still auto-open the classic pane
+  when a message is selected.
+
+Sideloaded installs re-add the manifest after a version bump; store and
+centralized deployments re-fetch automatically.
 
 ## Dev loop
 
