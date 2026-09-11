@@ -324,6 +324,17 @@ StreamFunction openAiLikeStream(ProviderConfig config) {
     OpenAICompletionsOptions(
       apiKey: config.apiKey.isEmpty ? null : config.apiKey,
       cancelToken: cancelToken,
+      // Response diagnostics: an expired CodeMie session arrives as a
+      // silently-followed redirect (200 + text/html login page) — this log
+      // line proves which answer the endpoint gave when a turn comes back
+      // empty, instead of guessing from the transcript.
+      onResponse: (statusCode, headers, _) {
+        print(
+          '[provider] response $statusCode '
+          'content-type=${headers['content-type'] ?? '—'} '
+          'url=${config.baseUrl}',
+        );
+      },
     ),
   );
 }
