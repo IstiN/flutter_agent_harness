@@ -494,7 +494,20 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Nothing to release
+        # Both platforms picked a no-binary content mode (none /
+        # metadata_only / screenshots_only) — nothing was built, so there
+        # is nothing to download or release. Record it in the job summary
+        # and skip every release step instead of failing on `ls artifacts/`.
+        if: needs.build-android.result != 'success' && needs.build-ios.result != 'success'
+        run: |
+          {
+            echo '### Nothing to release'
+            echo '`android_content` and `ios_content` both selected no binary build (none / metadata_only / screenshots_only) — no release created.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout repository
+        if: needs.build-android.result == 'success' || needs.build-ios.result == 'success'
         uses: actions/checkout@v4
 
       - name: Download iOS IPA artifact
@@ -512,9 +525,11 @@ jobs:
           path: artifacts/
 
       - name: List downloaded artifacts
+        if: needs.build-android.result == 'success' || needs.build-ios.result == 'success'
         run: ls -laR artifacts/
 
       - name: Create or update GitHub Release
+        if: needs.build-android.result == 'success' || needs.build-ios.result == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.version.outputs.tag }}
