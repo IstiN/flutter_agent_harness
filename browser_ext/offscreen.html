@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>fa offscreen host</title>
+  </head>
+  <body>
+    <!--
+      Single MV3 offscreen document, shared by:
+      - run_script (sandboxed python/javascript interpreters, vendored —
+        extension CSP forbids remote scripts);
+      - background DOM extraction (issue #30).
+      Keep it tiny: everything heavy loads lazily on first use.
+    -->
+    <script src="offscreen/interpreters.js"></script>
+  </body>
+</html>

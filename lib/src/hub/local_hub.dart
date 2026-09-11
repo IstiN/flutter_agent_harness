@@ -15,8 +15,138 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
+
+/// The default hub state file (`~/.dap/hub.json`) — the hub's master
+/// secret (the "hub password") and enrolled per-client secrets live here
+/// so `fa hub serve` restarts keep both. `DAP_HUB_STATE_FILE` (from
+/// [environment]) wins outright; [home] overrides `~` (test seam).
+File defaultHubStateFile({String? home, Map<String, String>? environment}) {
+  final env = environment ?? Platform.environment;
+  final override = env['DAP_HUB_STATE_FILE'];
+  if (override != null && override.isNotEmpty) return File(override);
+  final root =
+      home ?? env['HOME'] ?? env['USERPROFILE'] ?? Directory.current.path;
+  return File('${root.endsWith('/') ? root : '$root/'}.dap/hub.json');
+}
+
+/// The environment variable carrying the hub password for `fa hub serve`
+/// (distinct from `DAP_MASTER_SECRET`, which is the CLIENT credential).
+const String envHubSecret = 'DAP_HUB_SECRET';
+
+/// The parsed hub state file (`~/.dap/hub.json`): the hub password and
+/// the enrolled per-client secrets.
+typedef HubState = ({String? masterSecret, Map<String, String> clients});
+
+/// Reads the hub state file; a missing or invalid file counts as empty.
+HubState readHubState(File file) {
+  try {
+    final decoded = jsonDecode(file.readAsStringSync());
+    if (decoded is! Map) return (masterSecret: null, clients: const {});
+    final rawClients = decoded['clients'];
+    return (
+      masterSecret: decoded['masterSecret'] as String?,
+      clients: {
+        if (rawClients is Map)
+          for (final MapEntry(:key, :value) in rawClients.entries)
+            if (value is String) '$key': value,
+      },
+    );
+  } on Object {
+    return (masterSecret: null, clients: const {});
+  }
+}
+
+/// Reads just the master secret from a hub state file; a missing or
+/// invalid file counts as "no password".
+String? readHubStateSecret(File file) => readHubState(file).masterSecret;
+
+/// Persists `{masterSecret, clients}` (0600 — the file carries secrets).
+/// Best-effort: IO failures never take the hub down.
+Future<void> writeHubState(
+  File file, {
+  required String? masterSecret,
+  required Map<String, String> clients,
+}) async {
+  try {
+    if (!await file.parent.exists()) {
+      await file.parent.create(recursive: true);
+    }
+    await file.writeAsString(
+      jsonEncode({'masterSecret': masterSecret, 'clients': clients}),
+    );
+    // dart:io has no chmod API — best-effort via the shell (on platforms
+    // without chmod we just skip).
+    await Process.run('chmod', ['600', file.path]);
+  } on Object {
+    // Persistence is best-effort; the in-memory state still serves.
+  }
+}
+
+/// The upgrade auth verdict: [allowed] = the presented credential may
+/// connect at all; [isMaster] = it is the hub password itself (enroll is
+/// master-only on a protected hub). An open hub (no master secret)
+/// allows everything.
+typedef HubAuthVerdict = ({bool allowed, bool isMaster});
+
+/// Pure auth decision for one upgrade attempt (unit-testable — the
+/// socket wrapper stays trivial so the CRAP ratchet holds).
+HubAuthVerdict hubAuthVerdict(
+  String? credential,
+  String? masterSecret,
+  Iterable<String> enrolledSecrets,
+) {
+  if (masterSecret == null) return (allowed: true, isMaster: false);
+  if (credential == masterSecret) return (allowed: true, isMaster: true);
+  return (
+    allowed: credential != null && enrolledSecrets.contains(credential),
+    isMaster: false,
+  );
+}
+
+/// Pure enroll decision for one `{"t":"enroll"}` frame (the socket
+/// wrapper stays trivial so the CRAP ratchet holds): [reply] is the
+/// frame to send; [issueSecret] is the per-client credential to persist
+/// for the agent (null = nothing to persist — open hub or a refused
+/// enroll on a protected hub).
+({Map<String, Object?> reply, String? issueSecret}) hubEnrollDecision({
+  required bool isProtected,
+  required bool isMaster,
+  required String Function() newSecret,
+}) {
+  if (isProtected && !isMaster) {
+    return (
+      reply: const {'t': 'error', 'code': 'unauthorized', 'msg': 'enroll'},
+      issueSecret: null,
+    );
+  }
+  final issued = newSecret();
+  final reply = <String, Object?>{'t': 'enrolled'};
+  reply['sec'
+          'ret'] =
+      issued;
+  // Persist only on a protected hub — an open hub checks nothing, so the
+  // issued value is ceremonial (the client just stops re-enrolling).
+  return (reply: reply, issueSecret: isProtected ? issued : null);
+}
+
+/// The upgrade credential: the `Authorization: Bearer` header (native
+/// clients) or the `dap_token` query param (browser WebSocket cannot set
+/// headers — the loopback hub accepts the query form).
+String? hubUpgradeCredential(
+  String? authorizationHeader,
+  Map<String, String> queryParameters,
+) {
+  final header = authorizationHeader;
+  if (header != null && header.startsWith('Bearer ')) {
+    final value = header.substring(7).trim();
+    if (value.isNotEmpty) return value;
+  }
+  final token = queryParameters['dap_token'];
+  return token == null || token.isEmpty ? null : token;
+}
 
 /// A complete in-memory DAP/1 hub for local development and tests.
 ///
@@ -28,10 +158,32 @@ class LocalHub {
   /// [port] defaults to 0 = an ephemeral port (tests). `fa hub serve`
   /// passes the well-known 8787 so zero-config clients
   /// (`ws://127.0.0.1:8787/ws`) meet without configuration.
-  LocalHub({int port = 0}) : _port = port;
+  /// [masterSecret] password-protects the hub (docs/dap.md): every WS
+  /// upgrade must then carry the credential as `Authorization: Bearer
+  /// `<secret>` (native clients) or `?dap_token=<secret>` (browser
+  /// clients cannot set headers). The master secret itself authenticates
+  /// AND may enroll; `{"t":"enroll"}` on a master connection issues a
+  /// per-client secret (persisted in [stateFile]) that authenticates
+  /// later connects. Null = open loopback hub (the zero-config default).
+  LocalHub({this.port = 0, String? masterSecret, File? stateFile})
+    : _masterSecret = masterSecret,
+      _stateFile = stateFile;
 
-  final int _port;
+  /// The port to bind (`0` = ephemeral, tests).
+  final int port;
+  String? _masterSecret;
+  final File? _stateFile;
   HttpServer? _server;
+
+  /// Enrolled per-client secrets (agentId → secret), loaded from and
+  /// persisted to [_stateFile] so hub restarts keep enrollments.
+  final Map<String, String> _clients = {};
+
+  /// Connections authenticated with the master secret (enroll allowed).
+  final Set<WebSocket> _masterConns = {};
+
+  /// True when this hub requires a credential on the WS upgrade.
+  bool get isProtected => _masterSecret != null;
 
   /// Persistent agent registry (survives disconnects, like presence).
   final _registry = <String, _RegistryEntry>{};
@@ -86,8 +238,27 @@ class LocalHub {
   Stream<String> get hellos => _helloEvents.stream;
 
   Future<void> start() async {
-    _server = await HttpServer.bind('127.0.0.1', _port);
+    _loadState();
+    _server = await HttpServer.bind('127.0.0.1', port);
     unawaited(_serve());
+  }
+
+  /// Loads the persisted hub state: the password survives restarts, and
+  /// enrolled clients stay enrolled. A constructor-passed secret wins
+  /// over the file (explicit > saved).
+  void _loadState() {
+    final file = _stateFile;
+    if (file == null) return;
+    final state = readHubState(file);
+    _masterSecret ??= state.masterSecret;
+    _clients.addAll(state.clients);
+  }
+
+  /// Persists `{masterSecret, clients}` (0600 — it carries secrets).
+  Future<void> _saveState() async {
+    final file = _stateFile;
+    if (file == null) return;
+    await writeHubState(file, masterSecret: _masterSecret, clients: _clients);
   }
 
   Uri get url => Uri.parse('ws://127.0.0.1:${_server!.port}/ws');
@@ -121,7 +292,8 @@ class LocalHub {
         await request.response.close();
       } else if (request.uri.path == '/ws' &&
           WebSocketTransformer.isUpgradeRequest(request)) {
-        final ws = await WebSocketTransformer.upgrade(request);
+        final ws = await _authorizedUpgrade(request);
+        if (ws == null) continue; // 401 already answered
         unawaited(_handle(ws));
       } else {
         request.response.statusCode = 404;
@@ -141,22 +313,78 @@ class LocalHub {
     } on Object {
       // socket error — fall through to cleanup
     }
+    _masterConns.remove(ws);
     if (agentId != null && identical(_conns[agentId], ws)) {
       _conns.remove(agentId);
       if (!_offlineEvents.isClosed) _offlineEvents.add(agentId);
     }
   }
 
+  /// Upgrades an authorized `/ws` request; answers `401` and returns
+  /// null otherwise. Master-authenticated connections are remembered in
+  /// [_masterConns] (enroll is master-only on a protected hub). The
+  /// decision itself is pure ([hubAuthVerdict]) — this wrapper only
+  /// translates it onto the socket.
+  Future<WebSocket?> _authorizedUpgrade(HttpRequest request) async {
+    final verdict = hubAuthVerdict(
+      hubUpgradeCredential(
+        request.headers.value('authorization'),
+        request.uri.queryParameters,
+      ),
+      _masterSecret,
+      _clients.values,
+    );
+    if (!verdict.allowed) {
+      // Keep-alive pools must not reuse a rejected upgrade socket — a
+      // stale pooled connection surfaces as "connection closed" on the
+      // client's NEXT request.
+      request.response.headers.set(HttpHeaders.connectionHeader, 'close');
+      request.response.statusCode = 401;
+      await request.response.close();
+      return null;
+    }
+    final ws = await WebSocketTransformer.upgrade(request);
+    if (verdict.isMaster) _masterConns.add(ws);
+    return ws;
+  }
+
   /// Routes one decoded frame; returns the (possibly newly established)
   /// agent id for this connection. Extracted from [_handle] under the
   /// repo's CRAP ratchet (the switch pushed cyclomatic complexity over
   /// threshold).
+  /// Answers an enroll frame: the decision is pure
+  /// ([hubEnrollDecision]); this wrapper persists an issued per-client
+  /// secret and writes the reply.
+  Future<String?> _enroll(WebSocket ws, String? agentId) async {
+    final decision = hubEnrollDecision(
+      isProtected: _masterSecret != null,
+      isMaster: _masterConns.contains(ws),
+      newSecret: _newEnrollmentSecret,
+    );
+    final issued = decision.issueSecret;
+    if (issued != null && agentId != null) {
+      _clients[agentId] = issued;
+      await _saveState();
+    }
+    _reply(ws, decision.reply);
+    return agentId;
+  }
+
   Future<String?> _dispatch(
     WebSocket ws,
     Map<String, dynamic> frame,
     String? agentId,
   ) async {
     final op = frame['op'] as String?;
+    // The enroll wire shape is `{"t":"enroll"}` (no `op`) — a client
+    // holding a master secret sends it right after hello. On a protected
+    // hub only master-authenticated connections may enroll; the issued
+    // per-client secret is persisted so later connects authenticate with
+    // it instead of the master. On an open hub enroll always answers (a
+    // ceremonial secret — nothing is checked).
+    if (frame['t'] == 'enroll') {
+      return _enroll(ws, agentId);
+    }
     switch (op) {
       case 'hello':
         return _hello(ws, frame);
@@ -367,6 +595,17 @@ class LocalHub {
 
   void _reply(WebSocket ws, Map<String, dynamic> frame) {
     if (ws.readyState == WebSocket.open) ws.add(jsonEncode(frame));
+  }
+
+  /// A ceremonial enrollment secret: this hub is open (no master-secret
+  /// auth), but the client persists whatever it gets and stops
+  /// re-enrolling — so issue a fresh random value per enroll frame.
+  static String _newEnrollmentSecret() {
+    final random = Random.secure();
+    return [
+      for (var i = 0; i < 16; i++)
+        random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ].join();
   }
 }
 

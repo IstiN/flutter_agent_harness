@@ -20,6 +20,21 @@ import { fileURLToPath } from 'node:url';
 export const e2eDir = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(e2eDir, '..', '..');
 const extDir = path.join(repoRoot, 'browser_ext');
+
+/** The shared persistent-context launch options (start + restartBrowser). */
+function launchOptions() {
+  return {
+    executablePath: chromeBinary()!,
+    headless: true, // new headless loads MV3 extensions
+    args: [
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      `--disable-extensions-except=${extDir}`,
+      `--load-extension=${extDir}`,
+    ],
+  };
+}
 const PATH_NAMES = ['google-chrome', 'chromium', 'chromium-browser'];
 const fixtureRoot = path.join(repoRoot, 'test', 'browser_ext', 'fixture');
 
@@ -190,11 +205,20 @@ export class FixtureServer {
  */
 export class FaHarness {
   private constructor(
-    readonly context: BrowserContext,
+    private _context: BrowserContext,
     readonly extId: string,
     readonly fixture: FixtureServer,
-    readonly panel: Page,
+    private _panel: Page,
+    private readonly userDataDir: string,
   ) {}
+
+  get context(): BrowserContext {
+    return this._context;
+  }
+
+  get panel(): Page {
+    return this._panel;
+  }
 
   static async start(): Promise<FaHarness> {
     const fixture = new FixtureServer();
@@ -205,20 +229,33 @@ export class FaHarness {
     const userDataDir = await fs.promises.mkdtemp(
       path.join(tmpdir(), 'fa-e2e-'),
     );
-    const context = await chromium.launchPersistentContext(userDataDir, {
-      executablePath: chromeBinary()!,
-      headless: true, // new headless loads MV3 extensions
-      args: [
-        '--no-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        `--disable-extensions-except=${extDir}`,
-        `--load-extension=${extDir}`,
-      ],
-    });
+    const context = await chromium.launchPersistentContext(
+      userDataDir,
+      launchOptions(),
+    );
     const panel = context.pages()[0] ?? (await context.newPage());
     await panel.goto(`chrome-extension://${extensionId()}/panel/panel.html`);
-    return new FaHarness(context, extensionId(), fixture, panel);
+    return new FaHarness(context, extensionId(), fixture, panel, userDataDir);
+  }
+
+  /**
+   * Kills the browser and relaunches it on the SAME profile — the real
+   * cold start: storage survives, the SW boots from scratch. Needed
+   * because chrome.runtime.reload() permanently unloads a
+   * --load-extension extension under automation (see residency.spec.ts)
+   * and a debugged SW never idle-stops.
+   */
+  async restartBrowser(): Promise<void> {
+    await this._context.close();
+    this._context = await chromium.launchPersistentContext(
+      this.userDataDir,
+      launchOptions(),
+    );
+    this._panel =
+      this._context.pages()[0] ?? (await this._context.newPage());
+    await this._panel.goto(
+      `chrome-extension://${this.extId}/panel/panel.html`,
+    );
   }
 
   /** The extension SW target, waking it first (it only exists while it runs). */

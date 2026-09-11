@@ -1098,6 +1098,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsDapAgentNameLabel => 'Имя агента';
 
   @override
+  String get settingsDapPasswordLabel => 'Пароль хаба';
+
+  @override
   String get settingsDapChannelsEmpty =>
       'Каналов пока нет — они появятся здесь, когда агент присоединится к каналу (dap_invite / dap_connect).';
 
@@ -1108,17 +1111,70 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsDapEditConnection => 'Изменить подключение';
 
   @override
+  String get settingsDapMakeActive => 'Сделать активным';
+
+  @override
+  String get settingsDapActiveChip => 'Активно';
+
+  @override
+  String get settingsDapSavedTitle => 'Сохранённые подключения';
+
+  @override
+  String get settingsDapSavedHint =>
+      'Закладки хабов. Нажмите, чтобы переключить агента на этот хаб — переключение происходит сразу.';
+
+  @override
+  String get settingsDapRemoveSaved => 'Удалить';
+
+  @override
   String get settingsDapEnvNote =>
       'Переменные DAP_HUB_URL или DAP_AGENT_NAME заданы в окружении — env имеет приоритет над сохранённым подключением.';
 
   @override
-  String get settingsDapHubHint => 'URL хаба, идентификация агента, каналы';
+  String get settingsDapHubHint =>
+      'Агенты Fa находят друг друга и обмениваются сообщениями';
 
   @override
-  String get settingsDapHubTitle => 'DAP-хаб';
+  String get settingsDapHubIntro =>
+      'Хаб — место встречи ваших агентов Fa: CLI, это приложение и браузерное расширение. Подключитесь один раз — и этот агент станет доступен по имени: другие смогут найти его и отправлять ему сообщения.';
+
+  @override
+  String get settingsDapIdentityTitle => 'Как вас видят другие агенты';
+
+  @override
+  String get settingsDapIdentityHint =>
+      'Имя — это адрес для других агентов. ID выводится из ключа этого устройства.';
+
+  @override
+  String get settingsDapInboundTitle => 'Входящие сообщения';
+
+  @override
+  String get settingsDapInboundHint =>
+      'Куда попадают сообщения от других агентов';
+
+  @override
+  String get settingsDapInboundDedicated =>
+      'Отдельная сессия агента (рекомендуется)';
+
+  @override
+  String get settingsDapInboundCurrent => 'Текущая открытая сессия';
+
+  @override
+  String get settingsDapInboundNamed => 'Выбранная вами сессия';
+
+  @override
+  String get settingsDapInboundBadgeTooltip =>
+      'В эту сессию приходят сообщения от других агентов';
+
+  @override
+  String get settingsDapHubTitle => 'Сеть агентов';
 
   @override
   String get settingsDapNameHint => 'alice';
+
+  @override
+  String get settingsDapPasswordHint =>
+      'Оставьте пустым, чтобы сохранить текущий';
 
   @override
   String get settingsDapProbeButton => 'Проверить подключение';
@@ -1712,6 +1768,11 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get githubBrowserCodeHint => 'Одноразовый код с fa1.dev';
+
+  @override
+  String sessionTooLargeTitle(String size) {
+    return 'Сессия слишком большая для открытия в приложении ($size). Откройте её через CLI.';
+  }
 
   @override
   String get dynamicMessagesButtonTooltip => 'Динамические сообщения';

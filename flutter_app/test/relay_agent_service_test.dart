@@ -77,6 +77,62 @@ Future<({RelayAgentService service, FakePortChannel channel})> _attached({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('an attach broadcast with a NEW session id fires the adoption '
+      'callback (live session switched from another surface)', () async {
+    final (:service, :channel) = await _attached();
+    final adopted = <String>[];
+    service.onLiveSessionIdChanged = adopted.add;
+    expect(service.liveSessionId, 'sw-1');
+    channel.fromWorker(AttachedMsg(sessionId: 'sw-2', replay: const []));
+    await pumpEventQueue();
+    expect(service.liveSessionId, 'sw-2');
+    expect(adopted, ['sw-2']);
+    // Same id again — no spurious callback.
+    channel.fromWorker(AttachedMsg(sessionId: 'sw-2', replay: const []));
+    await pumpEventQueue();
+    expect(adopted, ['sw-2']);
+  });
+
+  test(
+    'hello resyncs the SW live id — a missed switch while away heals',
+    () async {
+      // A panel reload / SW reconnect lands on a hello carrying the SW's
+      // CURRENT live session: any session_new/session_open broadcast missed
+      // while detached must heal here, or hostedLiveId points at a session
+      // that renders nowhere and every selection dot disappears.
+      final channel = FakePortChannel();
+      final transport = WorkerRelayTransport(
+        portFactory: () => channel,
+        channel: channel,
+      );
+      final service = RelayAgentService.forTest(transport);
+      final adopted = <String>[];
+      service.onLiveSessionIdChanged = adopted.add;
+      final connected = transport.connect();
+      await () async {
+        while (channel.sentOf('hello') == null) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        channel.fromWorker(
+          HelloAckMsg(
+            protoVersion: uiProtocolVersion,
+            serverCapabilities: const ['stream', 'approvals'],
+            sessionId: 'sw-9',
+          ),
+        );
+        while (channel.sentOf('attach') == null) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        channel.fromWorker(AttachedMsg(sessionId: 'sw-9', replay: const []));
+      }();
+      await connected;
+      expect(service.liveSessionId, 'sw-9');
+      expect(adopted, ['sw-9']);
+    },
+  );
+
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('attach replay rebuilds the transcript', () async {
     final (:service, :channel) = await _attached(
       replay: [
@@ -278,6 +334,61 @@ void main() {
     expect(sessions[0].createdAt.year, 2026);
     expect(sessions[1].metadata?['archived'], isTrue);
     addTearDown(channel.close);
+  });
+
+  test('session names round-trip the SW settings channel '
+      '(faSessionNames)', () async {
+    final (:service, :channel) = await _attached();
+    addTearDown(channel.close);
+    // A snapshot from the SW (another surface renamed s-1) seeds the store.
+    channel.fromWorker(
+      SettingsResultMsg(
+        settings: {
+          'faSessionNames': {'s-1': 'one'},
+        },
+      ),
+    );
+    await pumpEventQueue();
+    expect(service.namesStoreOverride, same(service.namesStore));
+    expect(service.namesStore.titleFor('s-1'), 'one');
+
+    // Rename s-2 → settings_put carries the full names map.
+    await service.namesStore.rename('s-2', 'two');
+    final put = channel.sentOf('settings_put');
+    expect(put, isNotNull);
+    expect((put!['settings'] as Map)['faSessionNames'], {
+      's-1': 'one',
+      's-2': 'two',
+    });
+
+    // The SW merges + broadcasts; clearing s-2 sends a tombstone.
+    channel.fromWorker(
+      SettingsResultMsg(
+        settings: {
+          'faSessionNames': {'s-1': 'one', 's-2': 'two'},
+        },
+      ),
+    );
+    await pumpEventQueue();
+    await service.namesStore.rename('s-2'); // clear
+    final put2 = channel.sentOf('settings_put');
+    expect((put2!['settings'] as Map)['faSessionNames'], {
+      's-1': 'one',
+      's-2': '',
+    });
+    expect(service.namesStore.titleFor('s-2'), isNull);
+
+    // A broadcast from ANOTHER surface updates the store live.
+    channel.fromWorker(
+      SettingsResultMsg(
+        settings: {
+          'faSessionNames': {'s-1': 'one', 's-3': 'three'},
+        },
+      ),
+    );
+    await pumpEventQueue();
+    expect(service.namesStore.titleFor('s-3'), 'three');
+    expect(service.namesStore.titleFor('s-2'), isNull);
   });
 
   test('openSessionAction dispatches session_open with the id', () async {

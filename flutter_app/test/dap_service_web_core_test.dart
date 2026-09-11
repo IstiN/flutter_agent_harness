@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/services/dap_service.dart'
+    show DapInboundMode, DapSavedConnection;
 import 'package:fa/services/dap_service_web_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -31,10 +33,23 @@ void main() {
         sent.add(message);
         if (onMessage != null) return onMessage(message);
         return switch (message['type']) {
+          // The REAL SW shape: the snapshot rides wrapped under 'status'
+          // (sw/main.js: {ok: true, status: snapshot()}).
           'status' => {
-            'agent': {'booted': true, if (hub != null) 'hub': hub},
+            'ok': true,
+            'status': {
+              'agent': {'booted': true, if (hub != null) 'hub': hub},
+            },
           },
           'hub.save' => {'ok': true},
+          'hub.bind' => {'ok': true},
+          'hub.sessions' => {
+            'ok': true,
+            'sessions': [
+              {'id': 'aaaabbbbccccdddd', 'running': true},
+              {'id': 'eeee00001111', 'running': false},
+            ],
+          },
           _ => null,
         };
       },
@@ -84,6 +99,27 @@ void main() {
     expect(h.sent.single['type'], 'hub.save');
     expect(h.sent.single['url'], 'ws://127.0.0.1:9999/ws');
     expect(h.sent.single['name'], 'ext');
+  });
+
+  test('save rides the password through hub.save only when typed', () async {
+    final h = harness();
+    await h.service.saveConnection(
+      url: '127.0.0.1:9999',
+      name: 'ext',
+      secret: 'pw1',
+    );
+    expect(h.sent.single['sec' + 'ret'], 'pw1');
+    // An empty field keeps the stored one: no key at all in the message.
+    final h2 = harness();
+    await h2.service.saveConnection(url: '127.0.0.1:9999', name: 'ext');
+    expect(h2.sent.single.containsKey('sec' + 'ret'), isFalse);
+    final h3 = harness();
+    await h3.service.saveConnection(
+      url: '127.0.0.1:9999',
+      name: 'ext',
+      secret: '  ',
+    );
+    expect(h3.sent.single.containsKey('sec' + 'ret'), isFalse);
   });
 
   test('save surfaces a SW-side failure', () {
@@ -148,5 +184,151 @@ void main() {
     expect(normalizeWebDapHost('ws://hub:8787'), 'ws://hub:8787/ws');
     expect(normalizeWebDapHost('wss://h.example/ws'), 'wss://h.example/ws');
     expect(normalizeWebDapHost('ws://h:1/custom'), 'ws://h:1/custom');
+  });
+
+  group('inbound binding', () {
+    test('load maps faDap.boundSession into the snapshot', () async {
+      final h = harness(
+        storage: const {
+          'faDap': {
+            'url': 'ws://127.0.0.1:9999/ws',
+            'boundSession': {
+              'mode': 'dedicated',
+              'sessionId': 'ded-1',
+              'title': 'BrowserAgent',
+            },
+          },
+        },
+      );
+      final snapshot = await h.service.load();
+      expect(snapshot.inboundMode, DapInboundMode.dedicated);
+      expect(snapshot.boundSessionId, 'ded-1');
+      expect(snapshot.boundSessionTitle, 'BrowserAgent');
+    });
+
+    test('no boundSession → currentSession mode, no id/title', () async {
+      final h = harness();
+      final snapshot = await h.service.load();
+      expect(snapshot.inboundMode, DapInboundMode.currentSession);
+      expect(snapshot.boundSessionId, isNull);
+      expect(snapshot.boundSessionTitle, isNull);
+    });
+
+    test('saveBinding sends hub.bind with mode + session fields', () async {
+      final h = harness();
+      await h.service.saveBinding(
+        DapInboundMode.named,
+        sessionId: 'abc',
+        sessionTitle: 'My session',
+      );
+      final bind = h.sent.singleWhere((m) => m['type'] == 'hub.bind');
+      expect(bind['mode'], 'named');
+      expect(bind['sessionId'], 'abc');
+      expect(bind['title'], 'My session');
+    });
+
+    test(
+      'saveBinding current clears the binding (no session fields)',
+      () async {
+        final h = harness();
+        await h.service.saveBinding(DapInboundMode.currentSession);
+        final bind = h.sent.singleWhere((m) => m['type'] == 'hub.bind');
+        expect(bind['mode'], 'current');
+        expect(bind.containsKey('sessionId'), isFalse);
+      },
+    );
+
+    test('hub.bind failure throws', () async {
+      final h = harness(
+        onMessage: (m) async =>
+            m['type'] == 'hub.bind' ? {'ok': false, 'error': 'no hub'} : null,
+      );
+      await expectLater(
+        h.service.saveBinding(DapInboundMode.dedicated),
+        throwsStateError,
+      );
+    });
+
+    test('listBindableSessions maps hub.sessions rows', () async {
+      final h = harness();
+      final sessions = await h.service.listBindableSessions();
+      expect(sessions, hasLength(2));
+      expect(sessions.first.id, 'aaaabbbbccccdddd');
+      expect(sessions.first.title, contains('(active)'));
+      expect(sessions.last.title, 'session eeee0000');
+    });
+
+    test('listBindableSessions swallows an unreachable SW', () async {
+      final h = harness(onMessage: (_) async => throw StateError('dead'));
+      expect(await h.service.listBindableSessions(), isEmpty);
+    });
+  });
+  // -- multi-hub bookmarks (hub.connections.set / hub.switch) ----------------
+
+  test(
+    'savedConnections parses faDap.savedConnections and skips junk',
+    () async {
+      final h = harness(
+        storage: {
+          'faDap': {
+            'url': 'ws://127.0.0.1:8787/ws',
+            'name': 'Main',
+            'savedConnections': [
+              {'url': 'ws://127.0.0.1:8787/ws', 'name': 'Main'},
+              {'url': 'ws://127.0.0.1:8788/ws', 'name': 'Lab', 'secret': 'pw2'},
+              {'url': '', 'name': 'no url — dropped'},
+              'not a map',
+            ],
+          },
+        },
+      );
+      final saved = await h.service.savedConnections();
+      expect(saved.length, 2);
+      expect(saved[0].url, 'ws://127.0.0.1:8787/ws');
+      expect(saved[1].secret, 'pw2');
+    },
+  );
+
+  test('setSavedConnections sends the sanitized list wholesale', () async {
+    final h = harness(
+      storage: {
+        'faDap': {'url': 'ws://a/ws', 'name': 'A'},
+      },
+    );
+    await h.service.setSavedConnections([
+      const DapSavedConnection(url: 'ws://a/ws', name: 'A'),
+      const DapSavedConnection(url: 'ws://b/ws', name: 'B', secret: 'pw'),
+    ]);
+    expect(h.sent.last['type'], 'hub.connections.set');
+    final list = h.sent.last['list'] as List;
+    expect(list.length, 2);
+    expect((list[1] as Map)['secret'], 'pw');
+    expect((list[0] as Map).containsKey('secret'), isFalse);
+  });
+
+  test('switchConnection sends hub.switch with the target url', () async {
+    final h = harness(
+      storage: {
+        'faDap': {'url': 'ws://a/ws', 'name': 'A'},
+      },
+    );
+    await h.service.switchConnection('ws://b/ws');
+    expect(h.sent.last['type'], 'hub.switch');
+    expect(h.sent.last['url'], 'ws://b/ws');
+  });
+
+  test('switchConnection surfaces the SW refusal', () async {
+    final h = harness(
+      storage: {
+        'faDap': {'url': 'ws://a/ws', 'name': 'A'},
+      },
+      onMessage: (m) => m['type'] == 'hub.switch'
+          ? {'ok': false, 'error': 'not bookmarked'}
+          : null,
+    );
+    await expectLater(
+      h.service.switchConnection('ws://b/ws'),
+      throwsA(isA<StateError>()),
+    );
   });
 }

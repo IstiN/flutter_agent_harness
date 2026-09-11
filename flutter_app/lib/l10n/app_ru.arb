@@ -353,13 +353,35 @@
   "settingsDapAddConnection": "Добавить подключение",
   "settingsDapAgentIdLabel": "ID агента",
   "settingsDapAgentNameLabel": "Имя агента",
+  "settingsDapPasswordLabel": "Пароль хаба",
+  "@settingsDapPasswordLabel": {
+    "description": "The hub password field on the connection editor"
+  },
   "settingsDapChannelsEmpty": "Каналов пока нет — они появятся здесь, когда агент присоединится к каналу (dap_invite / dap_connect).",
   "settingsDapChannelsTitle": "Каналы",
   "settingsDapEditConnection": "Изменить подключение",
+  "settingsDapMakeActive": "Сделать активным",
+  "settingsDapActiveChip": "Активно",
+  "settingsDapSavedTitle": "Сохранённые подключения",
+  "settingsDapSavedHint": "Закладки хабов. Нажмите, чтобы переключить агента на этот хаб — переключение происходит сразу.",
+  "settingsDapRemoveSaved": "Удалить",
   "settingsDapEnvNote": "Переменные DAP_HUB_URL или DAP_AGENT_NAME заданы в окружении — env имеет приоритет над сохранённым подключением.",
-  "settingsDapHubHint": "URL хаба, идентификация агента, каналы",
-  "settingsDapHubTitle": "DAP-хаб",
+  "settingsDapHubHint": "Агенты Fa находят друг друга и обмениваются сообщениями",
+  "settingsDapHubIntro": "Хаб — место встречи ваших агентов Fa: CLI, это приложение и браузерное расширение. Подключитесь один раз — и этот агент станет доступен по имени: другие смогут найти его и отправлять ему сообщения.",
+  "settingsDapIdentityTitle": "Как вас видят другие агенты",
+  "settingsDapIdentityHint": "Имя — это адрес для других агентов. ID выводится из ключа этого устройства.",
+  "settingsDapInboundTitle": "Входящие сообщения",
+  "settingsDapInboundHint": "Куда попадают сообщения от других агентов",
+  "settingsDapInboundDedicated": "Отдельная сессия агента (рекомендуется)",
+  "settingsDapInboundCurrent": "Текущая открытая сессия",
+  "settingsDapInboundNamed": "Выбранная вами сессия",
+  "settingsDapInboundBadgeTooltip": "В эту сессию приходят сообщения от других агентов",
+  "settingsDapHubTitle": "Сеть агентов",
   "settingsDapNameHint": "alice",
+  "settingsDapPasswordHint": "Оставьте пустым, чтобы сохранить текущий",
+  "@settingsDapPasswordHint": {
+    "description": "Helper text: an empty password field keeps the stored one"
+  },
   "settingsDapProbeButton": "Проверить подключение",
   "settingsDapStatusConnected": "Подключено",
   "settingsDapStatusOffline": "Недоступен",
@@ -565,6 +587,7 @@
   "@githubBrowserCodeHint": {
     "description": "Hint of the one-time-code field on the Browser tab"
   },
+  "sessionTooLargeTitle": "Сессия слишком большая для открытия в приложении ({size}). Откройте её через CLI.",
   "dynamicMessagesButtonTooltip": "Динамические сообщения",
   "@dynamicMessagesButtonTooltip": {
     "description": "Top-bar button listing the session's dynamic messages (issue #102)"

@@ -12,6 +12,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
+import 'package:fa/ui/widgets/widget_publication_resume_refresh.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
@@ -495,20 +496,21 @@ void main() {
         tester,
         tileApps: {'alpha': '2x2'},
         tileSizes: {'alpha': (w: 1, h: 1)},
-        tileEngineFactory: ({
-          required app,
-          required env,
-          required permissions,
-          required initialTheme,
-        }) {
-          engineBoots++;
-          return _FakeTileEngine(
-            app: app,
-            env: env,
-            permissions: permissions,
-            initialTheme: initialTheme,
-          );
-        },
+        tileEngineFactory:
+            ({
+              required app,
+              required env,
+              required permissions,
+              required initialTheme,
+            }) {
+              engineBoots++;
+              return _FakeTileEngine(
+                app: app,
+                env: env,
+                permissions: permissions,
+                initialTheme: initialTheme,
+              );
+            },
       );
       // Icon-only: the live tile is gone and the classic icon + label
       // block is back; no tile engine ever booted for the 1x1 cell.
@@ -889,8 +891,12 @@ void main() {
     testWidgets('narrow (< 900px) boots into the apps launcher', (
       tester,
     ) async {
+      final home = await homeAt(tester, const Size(390, 844));
+      // faHomeScreen wraps the choice in the resume-polling refresher
+      // (issue #35) — assert the CHOICE through the wrapper.
+      expect(home, isA<WidgetPublicationResumeRefresher>());
       expect(
-        await homeAt(tester, const Size(390, 844)),
+        (home as WidgetPublicationResumeRefresher).child,
         isA<AppLauncherScreen>(),
       );
     });
@@ -899,8 +905,10 @@ void main() {
       tester,
     ) async {
       // Wide screens use the sidebar + content layout.
+      final home = await homeAt(tester, const Size(1280, 800));
+      expect(home, isA<WidgetPublicationResumeRefresher>());
       expect(
-        await homeAt(tester, const Size(1280, 800)),
+        (home as WidgetPublicationResumeRefresher).child,
         isA<WideLayoutShell>(),
       );
     });

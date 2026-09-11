@@ -290,6 +290,19 @@ abstract interface class BridgeLlmRelay {
 /// function on every reconfigure.
 ({BridgeLlmRelay relay, String providerName})? activeRelay;
 
+/// Panel-visible diagnostics sink, set by the agent host to its event
+/// sink so provider diagnostics ride the relay into the PANEL console —
+/// the SW's own console is a separate DevTools window nobody opens, and
+/// an empty turn otherwise has zero observable cause. Events use the
+/// `debug` type (the panel prints them and never renders them).
+void Function(Map<String, dynamic> event)? hostEventSink;
+
+/// Emits one diagnostic line to the SW console AND the panel relay.
+void providerDebug(String line) {
+  print(line);
+  hostEventSink?.call({'type': 'debug', 'text': line});
+}
+
 /// Model ids starting with `fake:` select the deterministic CI provider.
 bool isFakeModel(String model) => model.startsWith('fake:');
 
@@ -318,14 +331,54 @@ Model modelForConfig(ProviderConfig config) => Model(
 /// the service worker (AC8).
 StreamFunction openAiLikeStream(ProviderConfig config) {
   providerHttpClientFactory = () => FetchClient();
-  return (model, context, {cancelToken}) => streamOpenAICompletions(
-    model,
-    context,
-    OpenAICompletionsOptions(
-      apiKey: config.apiKey.isEmpty ? null : config.apiKey,
-      cancelToken: cancelToken,
-    ),
-  );
+  return (model, context, {cancelToken}) {
+    final inner = streamOpenAICompletions(
+      model,
+      context,
+      OpenAICompletionsOptions(
+        apiKey: config.apiKey.isEmpty ? null : config.apiKey,
+        cancelToken: cancelToken,
+        // Response diagnostics: an expired CodeMie session arrives as a
+        // silently-followed redirect (200 + text/html login page) — this
+        // log line proves which answer the endpoint gave when a turn comes
+        // back empty, instead of guessing from the transcript.
+        onResponse: (statusCode, headers, _) {
+          providerDebug(
+            '[provider] response $statusCode '
+            'content-type=${headers['content-type'] ?? '—'} '
+            'url=${config.baseUrl}',
+          );
+        },
+      ),
+    );
+    // Terminal-event diagnostics: an empty turn must name its cause in
+    // the SW console — done-with-no-content (empty SSE stream) and
+    // error look identical downstream ("empty response" bubble).
+    final outer = createAssistantMessageEventStream();
+    inner.listen((event) {
+      switch (event) {
+        case DoneEvent(:final reason, :final message):
+          final textLen = message.content.whereType<TextContent>().fold<int>(
+            0,
+            (sum, block) => sum + block.text.length,
+          );
+          final toolCalls = message.content.whereType<ToolCall>().length;
+          providerDebug(
+            '[provider] done reason=$reason '
+            'textLen=$textLen toolCalls=$toolCalls '
+            'stopReason=${message.stopReason}',
+          );
+        case ErrorEvent(:final reason, :final error):
+          providerDebug(
+            '[provider] error reason=$reason '
+            'message=${error.errorMessage}',
+          );
+        default:
+      }
+      outer.push(event);
+    }, onDone: outer.end);
+    return outer;
+  };
 }
 
 /// Resolves the stream function for the ACTIVE [config]: `fake:*` →

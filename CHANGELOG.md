@@ -25,6 +25,99 @@
   the Name row (visible in scrollback, screen recordings, transcripts) —
   treat secrets entered through the CLI secret sheet before 0.1.336 as
   potentially exposed and rotate them.
+## 0.1.335
+
+- feat(dap): password-protected local hub — `LocalHub(masterSecret:)`
+  requires a credential on every WS upgrade (`Authorization: Bearer` for
+  native clients, the `dap_token` query param for browser clients that
+  cannot set headers), rejects strangers with `401` + `Connection: close`
+  (keep-alive pools never replay a dead socket), and gates
+  `{"t":"enroll"}` to master-authenticated connections: enrolling issues a
+  per-client secret persisted (agentId → secret, mode 0600) in
+  `~/.dap/hub.json` alongside the password, so hub restarts keep both.
+  `fa hub serve` resolves the password as `--secret` > `DAP_HUB_SECRET` >
+  the state file, and the first interactive start (bare `fa hub serve` or
+  the CLI's one-button `/dap start`) offers to set a password once (empty
+  = stay open, remembered). The browser extension joins a protected hub
+  via a new Hub password field in the panel (faDap.secret, sent as
+  `dap_token`); an empty field keeps the stored password, and `hub.bind`
+  rebinds preserve it. Docs: docs/dap.md §8.1/§8.3.
+- fix(59): scheduled-message ownership release on dispose — tearing a
+  session down now clears the `owner` tag on its pending self-addressed
+  records, so the next session's queue adopts them (the #65 recreate
+  contract) while #88's anti-theft tagging keeps protecting LIVE foreign
+  owners. Fixes the pre-existing flutter_app regression from the #88
+  merge; also repairs the branch's golden gaps (DapHubMark golden +
+  guard registration, resume-refresher exemption, regenerated DAP page
+  snapshots) and the golden-test fake missing the DapHubService binding
+  members.
+- test(dap): protected-hub e2e — the Playwright dap spec now also runs
+  against a PASSWORD-PROTECTED hub (FakeHub(masterSecret:) +
+  DAP_E2E_HUB_SECRET on the e2e hub server): a stranger boot is 401'd
+  before any hello (client stays reconnecting), the password boot
+  connects, and a CLI enrolled with the same password exchanges DMs with
+  the extension end to end. The shared scripted mock gains resetScript()
+  so every test's CLI gets the dap_dm tool call as call #1.
+- feat(dap): the app-mode Agent network editor gains the Hub password
+  field (write-only — an empty field keeps the stored one), wired through
+  DapHubService.saveConnection: the extension variant rides hub.save, the
+  desktop variant persists clientSecret into ~/.dap/config.json.
+- fix(dap): /dap start no longer 401-loops against its own protected
+  hub — the session's client now dials with the HUB's password (prompted
+  or read back from the state file), persisted as clientSecret so stale
+  secrets from an older hub can never win the resolution precedence.
+- fix(extension): a session created from ANY surface now shows up in
+  every other surface's sessions drawer. The SW broadcast the attach
+  trio after session_new/session_open only to the requesting port, so a
+  panel/app-tab that missed it kept a stale live-session id and its
+  drawer filter hid the freshly archived row ("added a session, still
+  see one"). The trio now broadcasts to all connected ports, and the
+  drawer filter no longer drops archived rows by a possibly-stale id.
+- fix(app): clicking a session no longer teleports it to the top of the
+  sidebar. The pending-click jump-to-top reordered the list while the
+  row's stamps were still old, parking a "1:08 PM" row above an
+  "8:42 PM" row. The click now highlights the row in place; the list
+  reorders only when a session's real activity time changes.
+- fix(app): ONE session-selection source for every surface. The wide
+  sidebar and the narrow drawer had divergent active-row logic
+  (manager slot vs SW live id), so a switch lit two rows in the wide
+  sidebar (pending + stale slot) and none moved in the drawer.
+  FlutterSessionManager.hostedLiveId is now the single truth (set on
+  every attach broadcast), pending clicks REPLACE it until it lands,
+  and both surfaces derive their dot from the same effective id.
+- fix(app): the wide sidebar's active dot follows session switches. The
+  live session is always the freshest row, so the dot sat pinned to the
+  first row and a switch had no immediate feedback. The clicked session
+  now highlights and jumps to the top instantly (pendingSessionId),
+  clearing when the manager's slot catches the attach broadcast.
+- feat(app): the Agent network page is now connections-first: a list
+  (active connection on top, always present even when never bookmarked)
+  + Add connection; tapping a row opens that connection's details in the
+  SAME page — the active one shows url/status/identity/incoming
+  routing/channels/edit, a bookmark shows its coordinates with Make
+  active and Remove (the switch stays live).
+- feat(app/extension): multiple hub connections in Agent network. The
+  extension keeps a bookmark list (faDap.savedConnections): Add
+  connection saves a new hub and goes live on it, tapping a bookmark
+  switches the live agent (hub.switch — the entry's own secret applies,
+  an open bookmark clears the stored password), re-saving the active
+  connection preserves the list (hub.connections.set manages it). SW
+  logs: [dap-hub] connection saved / switched / list set.
+- fix(extension): session switches now follow the UI everywhere. The
+  manager's active slot kept its boot-time id/stamps after any
+  session_new/session_open, so the active dot stayed on a row whose
+  label never changed, and the wide-layout sidebar (app tab) listed only
+  one session — it read the page-local repo while the session files
+  live in the service worker. The relay now re-keys the manager slot on
+  an adopted broadcast, the sidebar/drawer take fresh stamps from the
+  SW poll, and listPersistedSessions delegates to the relay's
+  sessions_query on hosted pages. Logs: session switches, dispatches,
+  busy refusals, and mail-driven bound-session switches are printed on
+  both sides ([fah][relay] / [dap-host]).
+- fix(dap): the browser client stops the fast retry loop when the hub
+  keeps rejecting the credential (wrong Hub password): after three
+  fast closes with a credential configured it holds at a 30 s re-check
+  and surfaces the new `unauthorized` phase instead of hammering 401s.
 
 ## 0.1.331
 

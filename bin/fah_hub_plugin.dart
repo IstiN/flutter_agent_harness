@@ -14,11 +14,14 @@
 library;
 
 import 'dart:async';
+import 'dart:convert' show jsonEncode;
 import 'dart:io' show HttpClient, Platform, Process, ProcessStartMode;
 import 'dart:math' show Random;
 
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart'
+    show defaultHubStateFile, envHubSecret, readHubStateSecret;
 
 // The /dap menu lives in lib/ as pure data (issue #129): the untagged
 // structural test pins it without importing this dart:io plugin, which
@@ -216,6 +219,46 @@ final class HubPluginHost implements FahPlugin {
         'export DAP_MASTER_SECRET to make it permanent',
       );
     }
+    // Hub password: the one-button bring-up asks once, interactive hosts
+    // only. The answer is persisted into the hub state file — the
+    // detached `fa hub serve` has no terminal, so it reads the password
+    // from there (and later starts never ask again). Empty answer = stay
+    // open and ask again next time.
+    String? promptedPassword;
+    final stateFile = defaultHubStateFile(
+      home: _home,
+      environment: _environment,
+    );
+    if (context.askLine != null) {
+      final configured =
+          (_environment[envHubSecret] ?? '').isNotEmpty ||
+          await stateFile.exists();
+      if (!configured) {
+        final entered = await context.askLine!(
+          'Set a password for the local hub (empty = keep it open):',
+          secret: true,
+        );
+        final password = entered?.trim() ?? '';
+        promptedPassword = password.isEmpty ? null : password;
+        if (password.isNotEmpty) {
+          try {
+            if (!await stateFile.parent.exists()) {
+              await stateFile.parent.create(recursive: true);
+            }
+            await stateFile.writeAsString(
+              jsonEncode({
+                'masterSecret': password,
+                'clients': <String, String>{},
+              }),
+            );
+            await Process.run('chmod', ['600', stateFile.path]);
+            context.io.writeln('hub password saved to ${stateFile.path}');
+          } on Object catch (error) {
+            context.io.writeln('[hub] could not persist the password: $error');
+          }
+        }
+      }
+    }
     final port = Uri.parse(_localHubUrl).port;
     if (!await _hubHealthProbe(port)) {
       context.io.writeln('starting a local hub on port $port…');
@@ -237,6 +280,42 @@ final class HubPluginHost implements FahPlugin {
       if (!up) {
         context.io.writeln('[hub] the local hub did not come up on port $port');
         return;
+      }
+    }
+    // The session's own client must hold the HUB's password, not the
+    // generated session secret — two different secrets were the 401
+    // loop (hub spawned with the prompted password while the client
+    // enrolled with the generated one). Resolution: prompted now > the
+    // state file (a previously saved password — /dap start on a later
+    // session reuses it). The password doubles as a master credential,
+    // so it both dials directly and enrolls; persisting it as
+    // clientSecret also retires any stale client secret left in the
+    // config by an older hub (which would otherwise win the resolution
+    // precedence and 401 forever).
+    final hubPassword =
+        promptedPassword ??
+        (() {
+          try {
+            return readHubStateSecret(stateFile);
+          } on Object {
+            return null;
+          }
+        })();
+    if (hubPassword != null && hubPassword.isNotEmpty) {
+      _environment[hub.envMasterSecret] = hubPassword;
+      try {
+        final dialSecret = hubPassword;
+        await hub.persistDapConfig(
+          url: _localHubUrl,
+          clientSecret: dialSecret,
+          file: hub.defaultDapConfigFile(_home, _environment),
+        );
+        context.io.writeln(
+          'this session joined the protected hub — the password was '
+          'applied to the connection',
+        );
+      } on Object {
+        // Best-effort — the env master above already authorizes enroll.
       }
     }
     // Point the resolution at the live hub BEFORE start(): with a stale
