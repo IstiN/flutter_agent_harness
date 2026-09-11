@@ -72,6 +72,14 @@ Plus: `StreamManager` already handles chat→stream mapping, reconnection and
 chunk accumulation; messages persist as `ContentBlock`s in Postgres; chat IDs
 are stable per user (`user-chat-<userId>`), parents may read children's chats.
 
+One structural bug this mode fixes: today the turn's lifecycle is bound to the
+SSE request (`defer cancel()` on the body-stream writer) — leave the screen and
+the turn dies server-side, so "reconnect" has nothing to reconnect to. Under
+fa the process is owned by the supervisor, never by the HTTP request: the turn
+runs to completion on disconnect; re-attach replays buffered frames
+(`reconnect` event) and streams the tail; a turn that FINISHED while the user
+was away is replayed whole within a grace window, else served from history.
+
 **Implication:** the integration is an *adapter*, not a rewrite. Whatever emits
 `AgentEvent`s must be translated 1:1 into this grammar (§6), and the canonical
 user-visible history must keep landing in Postgres (§5).
