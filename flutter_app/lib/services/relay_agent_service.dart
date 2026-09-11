@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'agent_service.dart';
+import 'codemie_extension_signin.dart';
 import 'relay/ext_runtime.dart';
 import 'session_names_store.dart';
 
@@ -167,6 +168,7 @@ final class RelayAgentService extends AgentService {
     // include it — a known v1 gap after a page reload).
     _append(fa_ui.FaChatMessage(role: 'user', content: text));
     _trajectoryAppend(UserMessage.text(text, timestamp: DateTime.now()));
+    _lastUserText = text;
     if (_running) {
       _transport.steer(text);
     } else {
@@ -293,6 +295,76 @@ final class RelayAgentService extends AgentService {
   DateTime _rowTimestamp(Map<String, dynamic> row) =>
       DateTime.tryParse(row['timestamp'] as String? ?? '')?.toLocal() ??
       DateTime.now();
+
+  /// Automatic CodeMie re-authorization — the CLI's proactive SSO restart,
+  /// extension edition: an auth-expired turn opens the CodeMie login tab
+  /// (the extension shares the browser cookie jar, so a plain tab sign-in
+  /// refreshes the credential the SW's fetch carries), polls the jar back
+  /// to life, then resends the failed prompt. The user watches the turn
+  /// complete instead of babysitting a re-login button.
+  bool _codemieReauthInFlight = false;
+  String? _lastUserText;
+
+  Future<void> _autoReauthCodemie() async {
+    if (_codemieReauthInFlight) return;
+    _codemieReauthInFlight = true;
+    _append(
+      fa_ui.FaChatMessage(
+        role: 'system',
+        content:
+            'CodeMie session expired — a browser tab with the CodeMie '
+            'login page is opening. Sign in there; the message resends '
+            'automatically once the session is back.',
+      ),
+    );
+    notifyListeners();
+    try {
+      final orgUrl = codeMieOrgUrl(_baseUrl);
+      final probeUrl =
+          '${codeMieApiBase(orgUrl)}/v1/llm_models?include_all=true';
+      final models = await pollCodeMieSignIn(
+        probe: () async {
+          final result = await extFetchString(probeUrl);
+          // Not an extension host: the auth-expired card stays the
+          // manual path — end the poll instead of spinning 5 minutes.
+          if (result == null) throw StateError('not an extension host');
+          return result;
+        },
+        openLoginPage: () => unawaited(extOpenTab('$orgUrl/login')),
+      );
+      if (models == null) {
+        _append(
+          fa_ui.FaChatMessage(
+            role: 'system',
+            content:
+                'CodeMie re-authorization did not complete — use the '
+                'Authorize button on the error above to try again.',
+          ),
+        );
+        return;
+      }
+      final text = _lastUserText;
+      _append(
+        fa_ui.FaChatMessage(
+          role: 'system',
+          content: text != null
+              ? 'CodeMie session refreshed — resending your message…'
+              : 'CodeMie session refreshed — send your message again.',
+        ),
+      );
+      // Resend straight to the transport: NOT sendText — the original
+      // user bubble (and its trajectory record) already exists.
+      if (text != null && !_running) {
+        _transport.sendPrompt(
+          'p-${DateTime.now().microsecondsSinceEpoch}-$_promptSeq',
+          text,
+        );
+      }
+    } finally {
+      _codemieReauthInFlight = false;
+      notifyListeners();
+    }
+  }
 
   /// Synthesizes the assistant message one trajectory record wraps: the
   /// relay row carries only text (+ error), so api/provider/usage are
@@ -720,6 +792,12 @@ final class RelayAgentService extends AgentService {
           errorMessage: errorText,
         ),
       );
+      // The CLI restarts CodeMie SSO the moment the saved cookie is
+      // expired; the extension does the same reactively — open the login
+      // tab and resend, no manual Authorize click needed.
+      if (authExpiredProvider(errorText) == 'codemie') {
+        unawaited(_autoReauthCodemie());
+      }
       notifyListeners();
       return;
     }
