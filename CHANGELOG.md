@@ -3248,6 +3248,14 @@
 - docs(backend-mode): pin MVP shape with mermaid architecture
 - DAP slash-flow + CodeMie SSO expiry detection & auto re-auth (extension/app/CLI) (#145)
 
+## 0.1.353
+
+- ci(merge-trigger): prefer PAT_TOKEN so machine merges land as the owner (#164)
+- ci(159): skip mobile release cleanly when no binaries were built (#162)
+- docs(backend-mode): reconnect semantics — turns survive client disconnect
+- docs(backend-mode): memory mapping for backend mode
+- docs(backend-mode): memory mapping for backend mode
+
 ## Unreleased
 
 ## Unreleased
