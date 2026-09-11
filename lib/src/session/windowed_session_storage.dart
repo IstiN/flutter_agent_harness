@@ -189,35 +189,47 @@ final class WindowedSessionStorage
       }
       _windowTopOffset = chunk.firstOffset;
       _hasOlder = chunk.hasOlder;
-      // Older records extend the window UPWARD: they precede everything
-      // loaded so far.
-      for (final entry in chunk.entries) {
-        _byId[entry.record.id] = entry.record;
-        updateSessionLabelCache(_labelsById, entry.record);
-      }
-      _offsets.insertAll(0, [
-        for (final entry in chunk.entries) entry.offset,
-      ]);
-      _ends.insertAll(0, [
-        for (var i = 0; i < chunk.entries.length; i++)
-          i + 1 < chunk.entries.length
-              ? chunk.entries[i + 1].offset
-              : chunk.endOffset,
-      ]);
-      _entries.insertAll(0, [
-        for (final entry in chunk.entries) entry.record,
-      ]);
-      if (_currentLeafId != null) {
-        for (final record in await getPathToRoot(_currentLeafId)) {
-          if (seen.add(record.id)) joined.add(record);
-        }
-      }
+      _extendWindowUpward(chunk);
+      joined.addAll(await _joinBranch(seen));
       if (joined.isNotEmpty || !chunk.hasOlder) break;
     }
     if (joined.isNotEmpty && _countAbove != null) {
       _countAbove = _countAbove! - joined.length;
     }
     _evictToBound();
+    return joined;
+  }
+
+  /// Extends the resident window upward with a freshly read chunk of
+  /// OLDER records: id/label caches, then the three parallel file-order
+  /// lists (records, start offsets, end offsets) get the chunk prepended.
+  void _extendWindowUpward(SessionChunk chunk) {
+    for (final entry in chunk.entries) {
+      _byId[entry.record.id] = entry.record;
+      updateSessionLabelCache(_labelsById, entry.record);
+    }
+    _offsets.insertAll(0, [
+      for (final entry in chunk.entries) entry.offset,
+    ]);
+    _ends.insertAll(0, [
+      for (var i = 0; i < chunk.entries.length; i++)
+        i + 1 < chunk.entries.length
+            ? chunk.entries[i + 1].offset
+            : chunk.endOffset,
+    ]);
+    _entries.insertAll(0, [
+      for (final entry in chunk.entries) entry.record,
+    ]);
+  }
+
+  /// Branch records made visible by the latest extension, root-first -
+  /// the transcript delta. [seen] deduplicates across passes.
+  Future<List<SessionRecord>> _joinBranch(Set<String> seen) async {
+    if (_currentLeafId == null) return const [];
+    final joined = <SessionRecord>[];
+    for (final record in await getPathToRoot(_currentLeafId)) {
+      if (seen.add(record.id)) joined.add(record);
+    }
     return joined;
   }
 
