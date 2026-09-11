@@ -3243,6 +3243,11 @@
 - fix(143): manifest VersionOverrides command surface for Monarch/new OWA (#151)
 - docs(144): real Outlook add-in installation guide (#149)
 
+## 0.1.352
+
+- docs(backend-mode): pin MVP shape with mermaid architecture
+- DAP slash-flow + CodeMie SSO expiry detection & auto re-auth (extension/app/CLI) (#145)
+
 ## Unreleased
 
 ## Unreleased
