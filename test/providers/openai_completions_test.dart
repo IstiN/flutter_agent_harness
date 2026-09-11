@@ -752,6 +752,36 @@ void main() {
     );
 
     test(
+      '200 with a JSON body (gateway error object) surfaces the body',
+      () async {
+        // A gateway that rejects the request without proper status codes
+        // answers 200 + application/json — previously consumed as an empty
+        // SSE stream and rendered as "(empty response — try again)".
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) async => http.StreamedResponse(
+            Stream.value(
+              utf8.encode('{"error":{"message":"Unknown deployment: m1"}}'),
+            ),
+            200,
+            headers: {'content-type': 'application/json'},
+          ),
+        );
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          client,
+        );
+
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, contains('Unknown deployment: m1'));
+      },
+    );
+
+    test(
       'a silent endpoint errors on the idle watchdog instead of hanging',
       () async {
         final client = http_testing.MockClient.streaming(

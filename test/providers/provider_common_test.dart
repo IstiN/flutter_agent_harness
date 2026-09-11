@@ -130,6 +130,34 @@ void main() {
         expect(authExpiredProvider(msg), isNull);
       });
     });
+
+    group('200-with-JSON (gateway error without SSE framing)', () {
+      test('surfaces the gateway error body, no auth marker', () {
+        const body = '{"error":{"message":"Unknown deployment: gemini-x"}}';
+        final msg = formatProviderError(
+          ProviderHttpError(
+            200,
+            body,
+            requestUrl: Uri.parse(
+              'https://codemie.lab.epam.com/code-assistant-api/v1/'
+              'chat/completions',
+            ),
+            answeredJson: true,
+          ),
+        );
+
+        expect(msg, contains('JSON'));
+        expect(msg, contains('Unknown deployment: gemini-x'));
+        expect(authExpiredProvider(msg), isNull);
+      });
+
+      test('an overlong body is bounded', () {
+        final msg = formatProviderError(
+          ProviderHttpError(200, '{"pad":"${'x' * 1000}"}', answeredJson: true),
+        );
+        expect(msg.length, lessThan(700));
+      });
+    });
   });
 
   group('authExpiredProvider / stripAuthExpiredMarker', () {

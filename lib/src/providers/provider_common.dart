@@ -248,6 +248,7 @@ final class ProviderHttpError implements Exception {
     this.requestUrl,
     this.redirectLocation,
     this.answeredHtml = false,
+    this.answeredJson = false,
   });
 
   /// The HTTP status code.
@@ -272,6 +273,13 @@ final class ProviderHttpError implements Exception {
   /// lands on the login portal, and without this flag the adapter would
   /// finish with an EMPTY assistant message and no hint why.
   final bool answeredHtml;
+
+  /// True when the endpoint answered `200 OK` with a buffered JSON body
+  /// instead of the event stream — a gateway/front-proxy error object
+  /// (`{"error": …}`) that never went through SSE framing. The body is
+  /// short and diagnostic, so [formatProviderError] surfaces it (unlike
+  /// the HTML login page, which is transcript junk).
+  final bool answeredJson;
 }
 
 /// Parses a `Retry-After` header value into a [Duration].
@@ -345,6 +353,7 @@ DateTime? _parseHttpDate(String value) {
 String formatProviderError(Object error) {
   if (error is ProviderHttpError) {
     if (error.answeredHtml) return _formatHtmlAnswer(error);
+    if (error.answeredJson) return _formatJsonAnswer(error);
     final redirect = _formatAuthRedirect(error);
     if (redirect != null) return redirect;
 
@@ -437,6 +446,20 @@ String _formatHtmlAnswer(ProviderHttpError error) {
       'to a login portal) or a wrong URL.';
 }
 
+/// Produces the message for a `200 OK` that carried a buffered JSON body
+/// ([ProviderHttpError.answeredJson]): a gateway answered the streaming
+/// request with a plain error object (no SSE framing). Unlike the HTML
+/// login page the body is small and diagnostic — surface it (bounded) so
+/// the real gateway message (unknown model, dead session, quota) is
+/// visible instead of an empty assistant turn.
+String _formatJsonAnswer(ProviderHttpError error) {
+  final body = error.body.trim();
+  final preview = body.length > 500 ? '${body.substring(0, 500)}…' : body;
+  return 'The endpoint answered 200 with a JSON body instead of an event '
+      'stream — the gateway rejected the request without a proper status '
+      'code: $preview';
+}
+
 /// Produces a friendly explanation for an HTTP redirect (3xx). These are
 /// almost always expired SSO sessions or wrong URLs — the raw HTML redirect
 /// page is not useful in the transcript, and we want a human-readable hint
@@ -510,13 +533,28 @@ Future<http.StreamedResponse> sendProviderRequest(
   // `data:` lines and the turn finishes with an empty assistant message —
   // "(empty response — try again)" with zero hint that re-login is needed.
   final contentType = response.headers['content-type'] ?? '';
-  if (contentType.toLowerCase().contains('text/html')) {
+  final contentTypeLower = contentType.toLowerCase();
+  if (contentTypeLower.contains('text/html')) {
     final body = await response.stream.bytesToString();
     throw ProviderHttpError(
       200,
       body,
       requestUrl: request.url,
       answeredHtml: true,
+    );
+  }
+
+  // A 200 with a buffered JSON body is not an event stream either: a
+  // gateway (CodeMie/DIAL et al.) that rejects the request without proper
+  // status codes answers `{"error": …}` — a real error object the user
+  // must SEE instead of an empty assistant message.
+  if (contentTypeLower.contains('application/json')) {
+    final body = await response.stream.bytesToString();
+    throw ProviderHttpError(
+      200,
+      body,
+      requestUrl: request.url,
+      answeredJson: true,
     );
   }
   return response;
