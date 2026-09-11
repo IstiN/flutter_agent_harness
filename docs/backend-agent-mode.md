@@ -169,6 +169,12 @@ unchanged, so the spike is not throwaway.
 
 Principle: **the harness keeps its native format; the server owns the copies.**
 
+Product truth that shapes this layer: the learn.ai chat is **infinite** — users
+never clean it, so sessions are lifelong threads; and the sandbox is
+**personal** — users must never intersect (separate per-user directory trees,
+separate processes; cross-user paths are not addressable by construction, not
+just by policy).
+
 1. **Agent truth** — per-chat JSONL (append-only, crash-safe). Lives on the
    node that runs the chat's harness instance (Option B) or in a per-user
    workspace volume (Option A).
@@ -180,8 +186,13 @@ Principle: **the harness keeps its native format; the server owns the copies.**
    from object storage (or regenerate from Postgres for display-only needs),
    drop it into the workspace, resume. Sticky routing `chatId → node` via the
    existing stream/chat map; fallback rehydrate makes nodes interchangeable.
-4. **Retention** — JSONL is rebuildable state; Postgres is canonical. Deleting
-   a chat (`DELETE /:chatId`) deletes both, plus the workspace.
+4. **Retention (lifelong threads)** — chats are never cleaned by users, so
+   there is NO session GC: idle processes are reaped, JSONL never is; the
+   active context stays bounded by pre-flight auto-compaction (the
+   compactor's `reserveTokens`/`keepRecentTokens` knobs are tuned for
+   1000-turn threads) and disk by a per-user quota. Deleting a chat
+   (`DELETE /:chatId`) is the ONLY removal: JSONL + Postgres rows + the
+   user's workspace tree, idempotent.
 
 This answers "мы хранили сессию удалённо" without inventing a new session
 format: remote = the same JSONL, relocated and mirrored.
@@ -212,19 +223,27 @@ Layered, default-deny — mandatory for a kids' product:
    (already supported). Default set for learn.ai: *no shell, no filesystem
    outside the workspace*; only product tools (homework lookup, notebook,
    test-generator) exposed as a narrow tool API.
-2. **Workspace isolation** — each chat gets a scratch dir; file tools are
+2. **Personal sandbox (hard user isolation)** — every user gets their own
+   directory tree (`users/<userId>/{sessions,workspace}`), their own process
+   (one fa per user-chat), and their own OS identity/container: cross-user
+   paths are not addressable by construction (session layout
+   `<sessionsRoot>/<encoded-cwd>/…` + per-user root) AND blocked by OS
+   permissions as the second wall. MCP tool connections carry the userId
+   stamped at connect time; ids inside tool arguments are data, never
+   identity.
+3. **Workspace isolation** — each chat gets a scratch dir; file tools are
    chroot'd there (Option B: enforced in the daemon; Option A: OS user per
    product, bind-mounted dir). Heavier "task execution" (code, media) goes to
    ephemeral containers with CPU/RAM/time budgets — the daemon treats the
    container as just another tool backend.
-3. **Network egress** — model provider + product APIs only; per-tool egress
+4. **Network egress** — model provider + product APIs only; per-tool egress
    rules; no arbitrary URLs by default.
-4. **Approvals** — harness approval flow maps to `deny` (or to a parent-consent
+5. **Approvals** — harness approval flow maps to `deny` (or to a parent-consent
    product flow) server-side; never surfaced raw to a child.
-5. **Moderation** — Go edge moderates user input and assistant output
+6. **Moderation** — Go edge moderates user input and assistant output
    pre-`chunk` flush; a `status{status:"blocked"}` + `done` keeps the grammar
    intact when a turn is cut.
-6. **Budgets** — per-chat/per-day token and request ceilings in Go (quota is
+7. **Budgets** — per-chat/per-day token and request ceilings in Go (quota is
    already a product concept); the daemon enforces a per-turn wall clock.
 
 ## 8. familylearn.ai-class integration (the "smooth and beautiful" part)
