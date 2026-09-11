@@ -44,6 +44,76 @@ const _validProd = '''
   <Rule xsi:type="RuleCollection" Mode="Or">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
   </Rule>
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="MailHost">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="MessageReadCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="fa-read-group">
+                <Label resid="groupLabel"/>
+                <Control xsi:type="Button" id="fa-read-open-pane">
+                  <Label resid="paneButtonLabel"/>
+                  <Supertip>
+                    <Title resid="paneButtonTitle"/>
+                    <Description resid="paneButtonDesc"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="icon16"/>
+                    <bt:Image size="32" resid="icon32"/>
+                    <bt:Image size="80" resid="icon80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="taskpaneUrl"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+          <ExtensionPoint xsi:type="MessageComposeCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="fa-compose-group">
+                <Label resid="groupLabel"/>
+                <Control xsi:type="Button" id="fa-compose-open-pane">
+                  <Label resid="paneButtonLabel"/>
+                  <Supertip>
+                    <Title resid="paneButtonTitle"/>
+                    <Description resid="paneButtonDesc"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="icon16"/>
+                    <bt:Image size="32" resid="icon32"/>
+                    <bt:Image size="80" resid="icon80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="taskpaneUrl"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="icon16" DefaultValue="https://fa1.dev/outlook/icons/fa-16.png"/>
+        <bt:Image id="icon32" DefaultValue="https://fa1.dev/outlook/icons/fa-32.png"/>
+        <bt:Image id="icon80" DefaultValue="https://fa1.dev/outlook/icons/fa-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="taskpaneUrl" DefaultValue="https://fa1.dev/outlook/index.html"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="groupLabel" DefaultValue="fa"/>
+        <bt:String id="paneButtonLabel" DefaultValue="fa"/>
+        <bt:String id="paneButtonTitle" DefaultValue="fa"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="paneButtonDesc" DefaultValue="Open the fa taskpane."/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
 </OfficeApp>
 ''';
 
@@ -181,5 +251,64 @@ void main() {
     );
     expect(report.ok, isFalse);
     expect(report.issues.join('\n'), contains('not allowed in ItemEdit'));
+  });
+
+  test('classic-only manifest rejected: no command surface (issue #143)', () {
+    // Exactly the bug: the add-in installed but stayed invisible in new
+    // Outlook (Monarch) and modern OWA — classic FormSettings only.
+    final classic = _validProd.substring(
+      0,
+      _validProd.indexOf('  <VersionOverrides'),
+    );
+    final report = validateOutlookManifest('$classic</OfficeApp>');
+    expect(report.ok, isFalse);
+    expect(report.issues.join('\n'), contains('no VersionOverrides'));
+  });
+
+  test('VersionOverrides without MessageReadCommandSurface rejected', () {
+    final report = validateOutlookManifest(
+      _validProd.replaceFirst(
+        'xsi:type="MessageReadCommandSurface"',
+        'xsi:type="MessageComposeCommandSurface"',
+      ),
+    );
+    expect(report.ok, isFalse);
+    expect(
+      report.issues.join('\n'),
+      contains('must declare MessageReadCommandSurface'),
+    );
+  });
+
+  test('command Icon without a 80 px bt:Image rejected', () {
+    final report = validateOutlookManifest(
+      _validProd.replaceFirst('<bt:Image size="80" resid="icon80"/>', ''),
+    );
+    expect(report.ok, isFalse);
+    expect(
+      report.issues.join('\n'),
+      contains('command Icon must declare a 80 px bt:Image'),
+    );
+  });
+
+  test('unresolved resid reference rejected', () {
+    final report = validateOutlookManifest(
+      _validProd.replaceFirst('resid="taskpaneUrl"', 'resid="goneUrl"'),
+    );
+    expect(report.ok, isFalse);
+    expect(report.issues.join('\n'), contains('unresolved resid reference'));
+  });
+
+  test('VersionOverrides Host as Mailbox rejected, must be MailHost', () {
+    // The override Host type enum is MailHost; Mailbox makes the OMEX
+    // validation gateway reject the whole package ("Package Type Not
+    // Identified").
+    final report = validateOutlookManifest(
+      _validProd.replaceFirst(
+        '<Host xsi:type="MailHost">',
+        '<Host xsi:type="Mailbox">',
+      ),
+    );
+    expect(report.ok, isFalse);
+    expect(report.issues.join('\n'), contains('MailHost'));
   });
 }

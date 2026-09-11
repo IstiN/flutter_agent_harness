@@ -1,12 +1,15 @@
 // Outlook add-in manifest validator (issue #89, AC1).
 //
-// Pure-Dart check over the classic v1 MailApp XML: every resource URL is
-// https under the expected host (fa1.dev, or localhost:8443 in --dev
-// builds) with path prefix /outlook/, the permission ladder lands exactly
-// on ReadWriteItem (⇒ derived tiers {ReadItem, ReadWriteItem}), exactly
-// one Mailbox host, no mobile form factor, and XML comments free of
-// "--" (illegal; strict hosts reject the whole document, #131).
-// Regex-shaped on purpose: this is a lint pass, not a schema parser.
+// Pure-Dart check over the MailApp XML: every resource URL is https
+// under the expected host (fa1.dev, or localhost:8443 in --dev builds)
+// with path prefix /outlook/, the permission ladder lands exactly on
+// ReadWriteItem (⇒ derived tiers {ReadItem, ReadWriteItem}), exactly
+// one Mailbox host, no mobile form factor, XML comments free of "--"
+// (illegal; strict hosts reject the whole document, #131), and a
+// VersionOverrides command surface that Monarch/new OWA need (#143):
+// MessageReadCommandSurface + ShowTaskpane, 16/32/80 px button icons,
+// MailHost type, resids that resolve. Regex-shaped on purpose: this is
+// a lint pass, not a schema parser.
 library;
 
 /// Verdict for one manifest document.
@@ -142,6 +145,57 @@ OutlookManifestReport validateOutlookManifest(String xml, {bool dev = false}) {
   }
   if (!textUrl.hasMatch(xml)) {
     issues.add('AppDomains must list at least one domain');
+  }
+
+  // --- Command surface (issue #143): new Outlook for Windows (Monarch)
+  // and modern OWA render command-based add-ins only; without
+  // MessageReadCommandSurface the add-in installs but never shows. ---
+  final voStart = xml.indexOf('<VersionOverrides');
+  final vo = voStart < 0 ? '' : xml.substring(voStart);
+  if (vo.isEmpty) {
+    issues.add(
+      'no VersionOverrides: new Outlook (Monarch) and modern OWA render '
+      'command-based add-ins only (issue #143)',
+    );
+  } else {
+    if (!vo.contains('xsi:type="MessageReadCommandSurface"')) {
+      issues.add('VersionOverrides must declare MessageReadCommandSurface');
+    }
+    if (!vo.contains('xsi:type="ShowTaskpane"')) {
+      issues.add('VersionOverrides must contain a ShowTaskpane action');
+    }
+    if (vo.contains('<Host xsi:type="Mailbox"')) {
+      issues.add('VersionOverrides Host must be xsi:type="MailHost"');
+    }
+
+    // Button icons: the command schema requires 16, 32 and 80 px resources.
+    for (final m in RegExp(
+      r'<Icon>(.*?)</Icon>',
+      dotAll: true,
+    ).allMatches(vo)) {
+      final sizes = RegExp(r'size="(\d+)"')
+          .allMatches(m.group(1)!)
+          .map((s) => s.group(1)!)
+          .toSet();
+      for (final need in const ['16', '32', '80']) {
+        if (!sizes.contains(need)) {
+          issues.add('command Icon must declare a $need px bt:Image');
+        }
+      }
+    }
+
+    // Every resid reference must resolve to a declared resource id, else
+    // the host drops the control silently.
+    final declared = RegExp(r'<bt:(?:Image|Url|String)\s+id="([^"]+)"')
+        .allMatches(vo)
+        .map((m) => m.group(1)!)
+        .toSet();
+    for (final m in RegExp(r'\bresid="([^"]+)"').allMatches(vo)) {
+      final id = m.group(1)!;
+      if (!declared.contains(id)) {
+        issues.add('unresolved resid reference: $id');
+      }
+    }
   }
 
   return OutlookManifestReport(issues);

@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- fa — Outlook add-in (issue #89). Classic v1 MailApp manifest:
-     broadest host coverage (no VersionOverrides, no mobile form factor).
+<!-- fa — Outlook add-in (issue #89). Classic v1 MailApp manifest plus a
+     VersionOverrides command surface (issue #143): new Outlook for
+     Windows (Monarch) and modern OWA render command-based add-ins only,
+     so an «fa» button (ShowTaskpane) lives on the message Apps flyout
+     and the compose ribbon, opening the same taskpane. The classic
+     FormSettings section stays for legacy hosts that still render it.
      All taskpane resources are served from https://fa1.dev/outlook/;
      scripts/build_office_addin.sh in dev mode rewrites the host to
      https://localhost:8443 for the local dev loop. -->
@@ -10,7 +14,7 @@
   xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
   xsi:type="MailApp">
   <Id>4D907D39-1309-4EF7-953B-13A88FAF1C60</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.1.0.0</Version>
   <ProviderName>Flutter Agent Harness</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="fa"/>
@@ -48,4 +52,74 @@
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Edit"/>
   </Rule>
   <DisableEntityHighlighting>false</DisableEntityHighlighting>
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="MailHost">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="MessageReadCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="fa-read-group">
+                <Label resid="groupLabel"/>
+                <Control xsi:type="Button" id="fa-read-open-pane">
+                  <Label resid="paneButtonLabel"/>
+                  <Supertip>
+                    <Title resid="paneButtonTitle"/>
+                    <Description resid="paneButtonDesc"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="icon16"/>
+                    <bt:Image size="32" resid="icon32"/>
+                    <bt:Image size="80" resid="icon80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="taskpaneUrl"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+          <ExtensionPoint xsi:type="MessageComposeCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="fa-compose-group">
+                <Label resid="groupLabel"/>
+                <Control xsi:type="Button" id="fa-compose-open-pane">
+                  <Label resid="paneButtonLabel"/>
+                  <Supertip>
+                    <Title resid="paneButtonTitle"/>
+                    <Description resid="paneButtonDesc"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="icon16"/>
+                    <bt:Image size="32" resid="icon32"/>
+                    <bt:Image size="80" resid="icon80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="taskpaneUrl"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="icon16" DefaultValue="https://fa1.dev/outlook/icons/fa-16.png"/>
+        <bt:Image id="icon32" DefaultValue="https://fa1.dev/outlook/icons/fa-32.png"/>
+        <bt:Image id="icon80" DefaultValue="https://fa1.dev/outlook/icons/fa-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="taskpaneUrl" DefaultValue="https://fa1.dev/outlook/index.html"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="groupLabel" DefaultValue="fa"/>
+        <bt:String id="paneButtonLabel" DefaultValue="fa"/>
+        <bt:String id="paneButtonTitle" DefaultValue="fa"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="paneButtonDesc" DefaultValue="Open the fa taskpane: your agent inside this message, with approval-gated mail tools."/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
 </OfficeApp>
