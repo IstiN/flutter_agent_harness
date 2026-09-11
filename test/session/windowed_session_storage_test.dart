@@ -448,4 +448,115 @@ void main() {
       expect(forward.limitOffset, (await fs.fileInfo(path)).getOrThrow().size);
     });
   });
+
+  group('residency bound', () {
+    test('resident window stays capped while paging far past it', () async {
+      await seedRaw(3000);
+      final storage = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 200,
+        residentRecords: 600,
+        residentBytes: 24 * 1024 * 1024,
+      );
+      expect(storage.residentCount, 200); // open: tail chunk only
+      for (var i = 0; i < 10; i++) {
+        await storage.loadOlder();
+      }
+      // Ten pages loaded 2200 records, yet the index never outgrew the
+      // cache bound - the invariant retires the full-materialization
+      // blowup (issue #135 AC1, instrumented).
+      expect(storage.residentCount, 600);
+      expect(
+        storage.residentWindowBytes,
+        lessThanOrEqualTo(24 * 1024 * 1024),
+      );
+      // Evicted records are simply "above" again.
+      expect(storage.hasOlder, isTrue);
+      final ids = [for (final entry in await storage.getEntries()) entry.id];
+      expect(ids.contains('e0'), isFalse); // far above the window
+      expect(ids.contains('e2999'), isTrue); // live tail always resident
+      // The exact total survives eviction.
+      expect(await storage.countRecords(), 3000);
+    });
+
+    test('byte cap bounds residency with pathological records', () async {
+      // Five ~1.2 MiB records: the record cap alone would admit them all.
+      const iso = '2026-01-01T00:00:00.000Z';
+      final buffer = StringBuffer(
+        '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
+        '"cwd":"/work"}\n',
+      );
+      for (var i = 0; i < 5; i++) {
+        buffer.write(
+          '{"type":"message","id":"e$i","parentId":'
+          '${i == 0 ? 'null' : '"e${i - 1}"'},"timestamp":"$iso",'
+          '"message":{"role":"user","content":[{"type":"text","text":'
+          '"${'x' * (1200 * 1024)}"}]}}\n',
+        );
+      }
+      await fs.writeFile(path, buffer.toString());
+      final storage = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 4,
+        chunkBytes: 8 * 1024 * 1024,
+        residentRecords: 6,
+        residentBytes: 3 * 1024 * 1024,
+      );
+      await storage.loadOlder();
+      // The byte cap holds even though the record cap (6) would allow
+      // every one of the 5 MiB-scale records resident.
+      expect(storage.residentWindowBytes, lessThanOrEqualTo(3 * 1024 * 1024));
+      expect(storage.residentCount, lessThan(5));
+    });
+
+    test('external appends keep the cached total fresh (no drift)', () async {
+      await seedRaw(1000);
+      final storage = await WindowedSessionStorage.open(fs, path);
+      expect(await storage.countRecords(), 1000);
+      // A CLI appends 5 records straight to the file.
+      const iso = '2026-01-01T00:00:00.000Z';
+      final extra = StringBuffer();
+      for (var i = 0; i < 5; i++) {
+        extra.write(
+          '{"type":"message","id":"e${1000 + i}","parentId":"e${999 + i}",'
+          '"timestamp":"$iso","message":{"role":"user","content":'
+          '[{"type":"text","text":"appended $i"}]}}\n',
+        );
+      }
+      final appended = await fs.appendFile(path, extra.toString());
+      if (appended.isErr) fail('append failed: ${appended.errorOrNull}');
+      expect(await storage.ingestAppended(), isTrue);
+      // A stale memo would report 1000 and drift the banner count
+      // downward (negative) after every external append.
+      expect(await storage.countRecords(), 1005);
+    });
+
+    test('seeded tap-walk concatenates the full branch with no gaps',
+        () async {
+      await seedRaw(777);
+      final storage = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 5000,
+        residentBytes: 1 << 30,
+      );
+      final walked = <String>[];
+      while (storage.hasOlder) {
+        final joined = await storage.loadOlder();
+        if (joined.isEmpty) fail('loadOlder stalled with history above');
+        walked.insertAll(0, [for (final record in joined) record.id]);
+      }
+      // The deltas (tap-joined records, root-first each tap) rebuild
+      // everything above the open tail exactly: e0..e726, no gaps, no
+      // duplicates, no reordering (issue #135 AC3).
+      expect(walked, [for (var i = 0; i < 727; i++) 'e$i']);
+      // And the resident window now spans the whole branch in file
+      // order, open tail included.
+      final ids = [for (final record in await storage.getEntries()) record.id];
+      expect(ids, [for (var i = 0; i < 777; i++) 'e$i']);
+    });
+  });
 }
