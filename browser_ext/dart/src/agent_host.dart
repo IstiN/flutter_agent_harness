@@ -12,6 +12,7 @@ import 'dart:convert';
 
 import 'package:flutter_agent_harness/src/config/config_service.dart';
 import 'package:flutter_agent_harness/src/config/config_tool.dart';
+import 'package:flutter_agent_harness/src/web_search/web_search.dart';
 import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/agent/agent.dart';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
@@ -186,6 +187,7 @@ final class AgentHost implements UiHostBackend {
     ChromeApi? chrome,
     Set<String>? visitedOrigins,
     RunScriptExecutor? runScript,
+    WebSearchConfig? webSearch,
   }) async {
     final env = await ChromeStorageEnv.restore();
     final host = AgentHost._(env, ops, sink);
@@ -194,6 +196,7 @@ final class AgentHost implements UiHostBackend {
       chrome: chrome,
       visitedOrigins: visitedOrigins,
       runScript: runScript,
+      webSearch: webSearch,
     );
     return host;
   }
@@ -203,10 +206,14 @@ final class AgentHost implements UiHostBackend {
     ChromeApi? chrome,
     Set<String>? visitedOrigins,
     RunScriptExecutor? runScript,
+    WebSearchConfig? webSearch,
   }) async {
     _mailbox = config.mailbox;
     _registry = ToolRegistry([
-      ...builtinTools(_env).where((tool) => tool.name != 'bash'),
+      ...builtinTools(
+        _env,
+        webSearch: webSearch,
+      ).where((tool) => tool.name != 'bash'),
       // AC11 (issue #29): the config tool on the browser-storage surface.
       // chrome.storage has no home dir and the SW cannot spawn host-side
       // processes — the service refuses stdio servers with the named

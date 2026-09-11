@@ -116,6 +116,28 @@ AssistantMessageEventStream fakeStream(
     return stream;
   }
 
+  // Generic tool call: "tool <name> <json-args>" — drives ANY registered
+  // tool from an e2e spec (e.g. web_fetch against a local test server).
+  // Unanchored for the same [context]-prefix reason as inject_js.
+  final generic = RegExp(
+    r'tool (\w+) (\{.+\})',
+    dotAll: true,
+  ).firstMatch(prompt);
+  if (generic != null) {
+    _emitToolCall(
+      stream,
+      model,
+      'fake: tool ${generic.group(1)!}',
+      ToolCall(
+        id: 'fake-call-generic',
+        name: generic.group(1)!,
+        arguments:
+            (jsonDecode(generic.group(2)!) as Map).cast<String, dynamic>(),
+      ),
+    );
+    return stream;
+  }
+
   // Session restore: "sessions_restore <sessionId>" (the tool requires the
   // id from sessions_recent — there is no default restore path). Unanchored
   // for the same [context]-prefix reason as inject_js.

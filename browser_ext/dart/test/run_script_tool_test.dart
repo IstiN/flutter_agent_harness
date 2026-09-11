@@ -76,6 +76,12 @@ void main() {
       expect(decoded['stderr'], 'warn!');
     });
 
+test('description documents the CORS-free network bridge', () {
+      final tool = runScriptTool(execute: (_, _) async => {'ok': true});
+      expect(tool.description, contains('fetch'));
+      expect(tool.description, contains('CORS-free'));
+    });
+
     test('rejects an unknown language', () async {
       final tool = runScriptTool(
         execute: (language, code) async => throw StateError('must not run'),

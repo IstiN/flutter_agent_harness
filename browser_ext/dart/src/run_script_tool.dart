@@ -99,13 +99,20 @@ AgentTool runScriptTool({required RunScriptExecutor execute}) {
     description:
         'Run a script in a sandboxed interpreter and return its '
         'stdout/stderr. language "python" is CPython (pyodide, WASM — no '
-        'network, no host filesystem) with the standard library; '
-        '"javascript" is QuickJS (no DOM, no fetch). Use this for data '
-        'processing, calculations, file-format work — anything that needs '
-        'a real interpreter instead of reasoning. Print results to '
-        'stdout; the tool returns stdout, stderr and any script error. '
-        'The first python call takes a few seconds while the interpreter '
-        'boots.',
+        'host filesystem) with the standard library; "javascript" is '
+        'QuickJS (no DOM). Use this for data processing, calculations, '
+        'file-format work — anything that needs a real interpreter '
+        'instead of reasoning. Print results to stdout; the tool returns '
+        'stdout, stderr and any script error. The first python call '
+        'takes a few seconds while the interpreter boots.\n'
+        'NETWORK IS AVAILABLE and CORS-free (the extension host has '
+        '<all_urls> permissions — unlike a web page, scripts can reach '
+        'any URL): in javascript use the global '
+        '`fetch(url, {method, headers, body})` (await it; resolves to '
+        '`{status, headers, body}` with body as text, 30s timeout); in '
+        'python use `await fetch(url, method="GET", headers=None, '
+        'body=None)` (same result dict; top-level await is supported) '
+        'or pyodide\'s own pyfetch. Prefer fetch over guessing URLs.',
     parameters: const {
       'type': 'object',
       'properties': {

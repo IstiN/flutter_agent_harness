@@ -28,6 +28,7 @@ import 'src/run_script_tool.dart';
 import 'src/fahx_import.dart' show FahxException, importFahxProviders;
 import 'src/dap/dap_integration.dart';
 import 'src/fetch_client.dart';
+import 'package:flutter_agent_harness/src/web_search/web_search.dart';
 import 'src/providers.dart';
 import 'src/security/exfil_gate.dart' show originOf;
 import 'src/ui_host_adapter.dart';
@@ -391,6 +392,14 @@ void _ensureHost(HostConfig config, {bool explicit = false}) {
                     language: language,
                     code: code,
                   ),
+            // web_fetch/web_search over the SW's fetch (package:http's
+            // XHR client does not exist in a worker); host_permissions
+            // <all_urls> makes both CORS-free — stronger than the web app.
+            // Model-chosen URLs must NOT receive the user's cookies
+            // (exfil channel) — credentials stay home.
+            webSearch: WebSearchConfig(
+              httpClient: FetchClient(credentials: 'omit'),
+            ),
           );
         })
         .then((host) => _host = host);
