@@ -387,11 +387,28 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
         .toBeGreaterThan(0);
 
       // 5. … and the reply made it back: the CLI's idle wake ran a turn
-      //    against the mock, printing the marker.
       await expect
         .poll(() => cli.output(), { timeout: 120_000, intervals: [1_000] })
         .toContain('mock: cli done');
-      expect(hub.relayTargets()).toContain(otherId);
+      try {
+        expect(hub.relayTargets()).toContain(otherId);
+      } catch (e) {
+        // The reply relay is the one remaining intermittent (#152):
+        // dump both sides so the next red run pins the sender-side cause.
+        console.log(
+          '[dap-e2e-diag]',
+          JSON.stringify({
+            extAgentId,
+            otherId,
+            relays: hub.relayTargets(),
+            extDapDm: (await fa.events()).filter(
+              (ev) => ev.toolName === 'dap_dm',
+            ),
+            cliTail: cli.output().slice(-1500),
+          }),
+        );
+        throw e;
+      }
     } finally {
       await cli.stop();
       fs.rmSync(home, { recursive: true, force: true });
