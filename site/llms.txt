@@ -64,8 +64,10 @@
   message can never drive the agent.
 - Manifest artifact: https://fa1.dev/outlook/manifest.xml — sideload via
   Outlook on the web (Settings → Integrate apps → Upload custom apps →
-  "Add from a URL") or Microsoft's sideload guide for classic Outlook on
-  Windows/Mac. The taskpane page lives at https://fa1.dev/outlook/.
+  "Add from a URL", or download the manifest and add it from file when
+  the tenant disables URL install) or Microsoft's sideload guide for
+  classic Outlook on Windows/Mac. The taskpane page lives at
+  https://fa1.dev/outlook/.
 - Sources: `office_addin/` in the repository.
 
 ## Agent tools (every platform)
@@ -134,7 +136,8 @@
   chrome://extensions → Developer mode → Load unpacked.
 - Does Fa run in Outlook? Yes: sideload
   https://fa1.dev/outlook/manifest.xml (Outlook on the web: Settings →
-  Integrate apps → Upload custom apps → Add from a URL).
+  Integrate apps → Upload custom apps → Add from a URL, or add the
+  downloaded manifest from file when URL install is disabled).
 
 See the on-page FAQ for the same answers with anchors:
 [fa1.dev FAQ](https://fa1.dev/#faq)

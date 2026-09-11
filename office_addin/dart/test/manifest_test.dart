@@ -145,4 +145,44 @@ void main() {
       contains('exactly {ReadItem, ReadWriteItem}'),
     );
   });
+
+  test('benign XML comment passes', () {
+    final report = validateOutlookManifest('<!-- fa taskpane -->$_validProd');
+    expect(report.ok, isTrue);
+  });
+
+  test('"--" inside an XML comment rejected (issue #131)', () {
+    // Exactly the bug: a comment naming the --dev build flag made Outlook
+    // reject the whole manifest as malformed XML.
+    final report = validateOutlookManifest(
+      '<!-- build with the --dev flag -->$_validProd',
+    );
+    expect(report.ok, isFalse);
+    expect(report.issues.join('\n'), contains('"--"'));
+  });
+
+  test('unterminated XML comment rejected', () {
+    final report = validateOutlookManifest('<!-- oops$_validProd');
+    expect(report.ok, isFalse);
+    expect(report.issues.join('\n'), contains('unterminated XML comment'));
+  });
+
+  test('RequestedHeight inside an ItemEdit form rejected (issue #131)', () {
+    // The Office schema allows only SourceLocation in the compose form's
+    // DesktopSettings; Outlook's upload validation rejects the rest.
+    final report = validateOutlookManifest(
+      _validProd.replaceFirst(
+        '</FormSettings>',
+        '<Form xsi:type="ItemEdit"><DesktopSettings>'
+            '<SourceLocation DefaultValue="https://fa1.dev/outlook/index.html"/>'
+            '<RequestedHeight>400</RequestedHeight>'
+            '</DesktopSettings></Form></FormSettings>',
+      ),
+    );
+    expect(report.ok, isFalse);
+    expect(
+      report.issues.join('\n'),
+      contains('not allowed in ItemEdit'),
+    );
+  });
 }

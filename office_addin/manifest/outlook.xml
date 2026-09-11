@@ -2,7 +2,7 @@
 <!-- fa — Outlook add-in (issue #89). Classic v1 MailApp manifest:
      broadest host coverage (no VersionOverrides, no mobile form factor).
      All taskpane resources are served from https://fa1.dev/outlook/;
-     scripts/build_office_addin.sh --dev rewrites the host to
+     scripts/build_office_addin.sh in dev mode rewrites the host to
      https://localhost:8443 for the local dev loop. -->
 <OfficeApp
   xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
@@ -39,7 +39,6 @@
     <Form xsi:type="ItemEdit">
       <DesktopSettings>
         <SourceLocation DefaultValue="https://fa1.dev/outlook/index.html"/>
-        <RequestedHeight>400</RequestedHeight>
       </DesktopSettings>
     </Form>
   </FormSettings>
