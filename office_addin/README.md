@@ -31,7 +31,9 @@ mobile form factor — for the broadest host coverage (Mailbox 1.8+).
 Manifest URL: `https://fa1.dev/outlook/manifest.xml`
 
 - **Outlook on the web**: Settings → Integrate apps → Upload custom apps →
-  “Add from a URL”, paste the manifest URL.
+  “Add from a URL”, paste the manifest URL. Tenants that disable URL
+  install: download the manifest and use “Add from file” instead (issue
+  #131).
 - **Windows / Mac (classic Outlook)**: follow Microsoft's sideload guide
   with the same manifest URL.
 
