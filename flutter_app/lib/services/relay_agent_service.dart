@@ -322,6 +322,10 @@ final class RelayAgentService extends AgentService {
       final orgUrl = codeMieOrgUrl(_baseUrl);
       final probeUrl =
           '${codeMieApiBase(orgUrl)}/v1/llm_models?include_all=true';
+      // Belt and braces (the caller already checks): a base URL that does
+      // not yield an ABSOLUTE probe would resolve against the extension
+      // origin and 404 the poll forever.
+      if (!(Uri.tryParse(probeUrl)?.hasScheme ?? false)) return;
       final models = await pollCodeMieSignIn(
         probe: () async {
           final result = await extFetchString(probeUrl);
@@ -636,7 +640,7 @@ final class RelayAgentService extends AgentService {
             );
           }
         } else {
-          _finishAssistant(event);
+          _finishAssistant(event, silent: silent);
         }
       case 'tool_result':
         final toolText = event['text'] as String? ?? '';
@@ -760,7 +764,7 @@ final class RelayAgentService extends AgentService {
     notifyListeners();
   }
 
-  void _finishAssistant(Map<String, dynamic> message) {
+  void _finishAssistant(Map<String, dynamic> message, {bool silent = false}) {
     final role = message['role'] as String? ?? 'assistant';
     final text = message['text'] as String? ?? '';
     debugPrint('[fah][relay] message_done role=$role len=${text.length}');
@@ -794,8 +798,14 @@ final class RelayAgentService extends AgentService {
       );
       // The CLI restarts CodeMie SSO the moment the saved cookie is
       // expired; the extension does the same reactively — open the login
-      // tab and resend, no manual Authorize click needed.
-      if (authExpiredProvider(errorText) == 'codemie') {
+      // tab and resend, no manual Authorize click needed. LIVE failures
+      // only: a replayed historical error row must not fire the flow at
+      // every boot (and `_baseUrl` may still be empty before the settings
+      // snapshot lands — a relative probe URL then resolves against the
+      // extension origin and 404s forever).
+      if (!silent &&
+          authExpiredProvider(errorText) == 'codemie' &&
+          (Uri.tryParse(_baseUrl)?.hasScheme ?? false)) {
         unawaited(_autoReauthCodemie());
       }
       notifyListeners();
