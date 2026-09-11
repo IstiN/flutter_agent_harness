@@ -785,19 +785,25 @@ _PromptKeyResult? _handleSecretCharKey(TuiPromptState state, PromptKey key) {
   if (key is! PromptChar && key is! PromptPaste) return null;
   final text = key is PromptChar ? key.text : (key as PromptPaste).text;
   if (state.secretCursor < 0) {
-    return (
-      state: state.copyWith(secretName: state.secretName + text),
-      resolved: null,
-    );
+    // A pasted name can carry line breaks (shell-copy artifacts); the name
+    // grammar is UPPER_SNAKE, so drop them instead of wedging the field.
+    final name = state.secretName + text.replaceAll(RegExp(r'[\r\n]'), '');
+    return (state: state.copyWith(secretName: name), resolved: null);
   }
+  // CRLF/CR are paste artifacts - normalize to LF. A bare LF is real data
+  // (PEM keys) and survives verbatim into the grant.
+  final clean = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   final next =
       state.secretValue.substring(0, state.secretCursor) +
-      text +
+      clean +
       state.secretValue.substring(state.secretCursor);
   return (
     state: state.copyWith(
       secretValue: next,
-      secretCursor: state.secretCursor + text.length,
+      // Advance by the NORMALIZED length: the paste may have shrunk
+      // (CRLF -> LF); pinning the cursor to the raw paste length would
+      // overrun the buffer and crash the next edit keystroke.
+      secretCursor: state.secretCursor + clean.length,
     ),
     resolved: null,
   );
@@ -1341,14 +1347,19 @@ List<String> _secretInputRows(TuiPromptState state, int inner) {
       ? 'Type to replace it · Tab to the value · Esc cancel'
       : 'Enter to save · Tab to edit the name · Esc cancel';
   rows.add(_wrapBodyLine(_dim(hint), inner, dim: true));
-  final display = visible ? state.secretValue : '•' * state.secretValue.length;
-  rows.add(
-    _wrapBodyLine(
-      '${nameFocused ? '  ' : '${_accent('>')} '}$display',
-      inner,
-      bold: true,
-    ),
-  );
+  // A multiline value (PEM paste) becomes one frame row per line - a bare
+  // LF inside a row would physically tear the frame in the terminal. Masked
+  // mode dots each segment separately so line structure stays visible.
+  // Marker is ASCII '>' (issue #109: ambiguous-width glyphs shift padded
+  // rows; only the first line of the value block carries the focus marker).
+  final display = visible
+      ? state.secretValue
+      : state.secretValue.split('\n').map((s) => '•' * s.length).join('\n');
+  final segments = display.split('\n');
+  for (var i = 0; i < segments.length; i++) {
+    final marker = nameFocused || i > 0 ? '  ' : '${_accent('>')} ';
+    rows.add(_wrapBodyLine('$marker${segments[i]}', inner, bold: true));
+  }
   final error = state.secretEnterError;
   if (error.isNotEmpty) {
     rows.add(_wrapBodyLine(_red(error), inner));

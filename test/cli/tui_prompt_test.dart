@@ -520,6 +520,115 @@ void main() {
       expect(result.resolved, isNull);
       expect(result.state.secretEnterError, contains('Name must match'));
     });
+
+    test(
+      'a paste normalizes CRLF in the value, drops line breaks in the name',
+      () {
+        var state = TuiPromptState(spec);
+        state = handleTuiPromptKey(state, const PromptPaste('a\r\nb')).state;
+        expect(
+          state.secretValue,
+          'a\nb',
+          reason: 'CRLF is a paste artifact; LF is PEM-real data',
+        );
+
+        state = handleTuiPromptKey(state, const PromptTab()).state;
+        state = handleTuiPromptKey(
+          state,
+          const PromptPaste('MY_KEY\r\n'),
+        ).state;
+        expect(
+          state.secretName,
+          'MY_KEY',
+          reason: 'the UPPER_SNAKE name can never carry line breaks',
+        );
+      },
+    );
+
+    test('a shortening paste keeps the cursor inside the buffer', () {
+      // 'AB\r\nCD' normalizes to 'AB\nCD' (5 chars, raw paste was 6). The
+      // cursor must advance by the NORMALIZED length: pinned to the raw
+      // paste length it overruns the buffer and the NEXT edit keystroke
+      // crashes with a RangeError (PR #111 review blocker).
+      var state = TuiPromptState(spec);
+      state = handleTuiPromptKey(state, PromptChar('k')).state;
+      state = handleTuiPromptKey(state, const PromptPaste('AB\r\nCD')).state;
+      expect(state.secretValue, 'kAB\nCD');
+      expect(state.secretCursor, state.secretValue.length);
+      final bs = handleTuiPromptKey(state, const PromptBackspace()).state;
+      expect(bs.secretValue, 'kAB\nC');
+      expect(bs.secretCursor, state.secretCursor - 1);
+    });
+
+    test('a multiline value renders one masked row per line, frame closed', () {
+      final state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'abc\n12\nx', secretCursor: 8);
+      final rows = renderTuiPrompt(state, 60);
+      expect(
+        rows.where((r) => r.contains('\n')),
+        isEmpty,
+        reason:
+            'a frame row carries a physical line break and tears the '
+            'frame',
+      );
+      final plain = [
+        for (final r in rows)
+          ...r
+              .split('\n')
+              .map((s) => s.replaceAll(RegExp(r'\x1b\[[0-9;?]*[a-zA-Z]'), '')),
+      ];
+      final top = plain.indexWhere((l) => l.startsWith('┌'));
+      final bottom = plain.lastIndexWhere((l) => l.startsWith('└'));
+
+      // Reveal (Ctrl+R): the raw value now flows into the frame — the
+      // newlines must become row splits, not physical breaks inside a row.
+      final revealed = handleTuiPromptKey(state, const PromptCtrlR()).state;
+      final shown = renderTuiPrompt(revealed, 60);
+      expect(
+        shown.where((r) => r.contains('\n')),
+        isEmpty,
+        reason: 'revealed frame row carries a physical line break',
+      );
+      final shownPlain = shown
+          .map((r) => r.replaceAll(RegExp(r'\x1b\[[0-9;?]*[a-zA-Z]'), ''))
+          .toList();
+      final shownTop = shownPlain.indexWhere((l) => l.startsWith('┌'));
+      final shownBottom = shownPlain.lastIndexWhere((l) => l.startsWith('└'));
+      final shownWidth = shownPlain[shownTop].trimRight().length;
+      for (final row in shownPlain.sublist(shownTop, shownBottom + 1)) {
+        final t = row.trimRight();
+        expect(t.length, shownWidth, reason: 'torn revealed row "$t"');
+      }
+      expect(shownPlain.join('\n'), contains('abc'));
+      expect(top, isNonNegative);
+      expect(bottom, greaterThan(top));
+      final width = plain[top].trimRight().length;
+      for (final row in plain.sublist(top, bottom + 1)) {
+        final t = row.trimRight();
+        expect(t.length, width, reason: 'torn row "$t"');
+        expect(
+          t.endsWith('┐') ||
+              t.endsWith('┤') ||
+              t.endsWith('│') ||
+              t.endsWith('┘'),
+          isTrue,
+          reason: 'unclosed row "$t"',
+        );
+      }
+      final body = plain.sublist(top, bottom + 1).join('\n');
+      expect(body, contains('•••'));
+      expect(plain.join('\n'), isNot(contains('abc')), reason: 'masked');
+    });
+
+    test('submitting preserves the multiline value verbatim', () {
+      final state = TuiPromptState(
+        spec,
+      ).copyWith(secretValue: 'a\nb', secretCursor: 3);
+      final result = handleTuiPromptKey(state, const PromptEnter());
+      final answer = result.resolved as SecretPromptAnswer;
+      expect(answer.value.value, 'a\nb');
+    });
   });
 
   // ---------------------------------------------------------------------------
