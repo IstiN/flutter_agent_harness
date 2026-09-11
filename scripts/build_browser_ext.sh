@@ -30,6 +30,10 @@ else
   grep -q '"manifest_version"[[:space:]]*:[[:space:]]*3' "$manifest"
 fi
 
+# --- Vendored interpreter runtimes for the run_script tool (offscreen
+# document). Extension CSP forbids remote scripts — these ship in-bundle. ---
+"$(dirname "$0")/vendor_interpreters.sh"
+
 # --- Embedded agent (dart2js). Output is a build artifact: never committed. ---
 agent_js=browser_ext/sw/agent.js
 if command -v dart >/dev/null 2>&1; then
@@ -157,10 +161,11 @@ if command -v zip >/dev/null 2>&1; then
 else
 python3 - <<'PY'
 import os, zipfile
-RUNTIME_DIRS = ("sw", "content", "panel", "icons")
+RUNTIME_DIRS = ("sw", "content", "panel", "icons", "offscreen", "vendor")
 SKIP_NAMES = {"README.md", "agent.js.map", "agent.js.deps"}
 with zipfile.ZipFile("build/fa-extension.zip", "w", zipfile.ZIP_DEFLATED) as z:
     z.write("browser_ext/manifest.json", "manifest.json")
+    z.write("browser_ext/offscreen.html", "offscreen.html")
     for d in RUNTIME_DIRS:
         for root, _, files in os.walk(os.path.join("browser_ext", d)):
             for f in files:
@@ -183,3 +188,4 @@ with zipfile.ZipFile("build/fa-extension.zip") as z:
     z.extractall("build/fa-extension")
 PY
 echo "build/fa-extension/ (unpacked — load this in chrome://extensions)"
+xtensions)"

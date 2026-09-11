@@ -39,6 +39,7 @@ import 'host_event_map.dart'
 import 'browser_api_tools.dart';
 import 'security/exfil_gate.dart' show OutboundKind, originOf;
 import 'chrome_api.dart';
+import 'run_script_tool.dart';
 import 'chrome_storage_env.dart';
 import 'fetch_client.dart';
 import 'dap/dap_frames.dart';
@@ -184,10 +185,16 @@ final class AgentHost implements UiHostBackend {
     required HostConfig config,
     ChromeApi? chrome,
     Set<String>? visitedOrigins,
+    RunScriptExecutor? runScript,
   }) async {
     final env = await ChromeStorageEnv.restore();
     final host = AgentHost._(env, ops, sink);
-    await host._init(config, chrome: chrome, visitedOrigins: visitedOrigins);
+    await host._init(
+      config,
+      chrome: chrome,
+      visitedOrigins: visitedOrigins,
+      runScript: runScript,
+    );
     return host;
   }
 
@@ -195,6 +202,7 @@ final class AgentHost implements UiHostBackend {
     HostConfig config, {
     ChromeApi? chrome,
     Set<String>? visitedOrigins,
+    RunScriptExecutor? runScript,
   }) async {
     _mailbox = config.mailbox;
     _registry = ToolRegistry([
@@ -206,6 +214,9 @@ final class AgentHost implements UiHostBackend {
       configTool(
         ConfigService(env: _env, homeDir: null, supportsProcesses: false),
       ),
+      // Sandboxed script interpreters (python/javascript) in the offscreen
+      // document — the web-app sandbox parity the SW otherwise lacks.
+      if (runScript != null) runScriptTool(execute: runScript),
       for (final MapEntry(:key, :value) in _browserOps.entries)
         _browserTool(key, value),
     ]);

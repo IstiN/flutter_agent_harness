@@ -8,6 +8,8 @@
 //   * a steering mail shaped "[from <sender>] dm <text>" → one `dap_dm`
 //     tool call replying to the sender (deterministic E2E DM seam, AC6),
 //     then DoneEvent(toolUse).
+//   * "run_script <language> <code…>" → one `run_script` tool call
+//     (sandboxed python/javascript in the offscreen document);
 //   * "inject_js <tabId> <world> <code…>" → one `inject_js` tool call with
 //     the tab/world/code verbatim (bad worlds fail cleanly in the tool, E2).
 //   * "sessions_restore <sessionId>" → one `sessions_restore` tool call.
@@ -97,6 +99,23 @@ AssistantMessageEventStream fakeStream(
     return stream;
   }
 
+  // Sandboxed interpreters: "run_script <language> <code…>" — code is the
+  // rest of the match, verbatim (multi-line allowed). Unanchored for the
+  // same [context]-prefix reason as inject_js.
+  final runScript = RegExp(
+    r'run_script (\w+) (.+)',
+    dotAll: true,
+  ).firstMatch(prompt);
+  if (runScript != null) {
+    _emitRunScript(
+      stream,
+      model,
+      language: runScript.group(1)!,
+      code: runScript.group(2)!,
+    );
+    return stream;
+  }
+
   // Session restore: "sessions_restore <sessionId>" (the tool requires the
   // id from sessions_recent — there is no default restore path). Unanchored
   // for the same [context]-prefix reason as inject_js.
@@ -179,6 +198,24 @@ void _emitInjectJs(
       id: 'fake-call-inject',
       name: 'inject_js',
       arguments: {'tabId': tabId, 'world': world, 'code': code},
+    ),
+  );
+}
+
+void _emitRunScript(
+  AssistantMessageEventStream stream,
+  Model model, {
+  required String language,
+  required String code,
+}) {
+  _emitToolCall(
+    stream,
+    model,
+    'fake: run_script $language',
+    ToolCall(
+      id: 'fake-call-run-script',
+      name: 'run_script',
+      arguments: {'language': language, 'code': code},
     ),
   );
 }

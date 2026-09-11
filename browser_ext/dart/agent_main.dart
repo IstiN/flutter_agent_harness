@@ -24,6 +24,7 @@ import 'src/background/entry_points.dart';
 import 'src/bridge_relay.dart';
 import 'src/chrome_api.dart' show ChromeApi, ChromeApiException;
 import 'src/chrome_api_js.dart';
+import 'src/run_script_tool.dart';
 import 'src/fahx_import.dart' show FahxException, importFahxProviders;
 import 'src/dap/dap_integration.dart';
 import 'src/fetch_client.dart';
@@ -380,6 +381,16 @@ void _ensureHost(HostConfig config, {bool explicit = false}) {
             // The LIVE set: the gate reads it at call time, and
             // webNavigation keeps it warm after boot.
             visitedOrigins: chromeApi == null ? null : _visitedOrigins,
+            // Sandboxed python/javascript in the offscreen document —
+            // the run_script tool (web-app sandbox parity).
+            runScript: chromeApi == null
+                ? null
+                : (language, code) => offscreenRunScript(
+                    offscreen: chromeApi.offscreen,
+                    sendMessage: jsRunScriptSendMessage,
+                    language: language,
+                    code: code,
+                  ),
           );
         })
         .then((host) => _host = host);

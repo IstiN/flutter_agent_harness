@@ -136,3 +136,6 @@ browser_ext/panel/app/
 
 # DAP hub local key material (never commit)
 .dap/
+
+# Vendored interpreter runtimes (scripts/vendor_interpreters.sh — downloaded at build time)
+browser_ext/vendor/
