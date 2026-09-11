@@ -273,6 +273,14 @@ class CliProc {
 
 test.describe('DAP: CLI agent ↔ extension agent', () => {
   skipWithoutChrome();
+  // One retry, this describe ONLY: the DM exchange is a three-process
+  // choreography (MV3 service worker ↔ dart hub ↔ dart CLI) whose
+  // presence-gated sends (dap_dm refuses offline peers by design) still
+  // carry a browser-timing window the spec cannot close from outside —
+  // observed post-fixes on runs 34641400371 (reply relay) and
+  // 34642770301 (forward relay). Everything else stays at the project's
+  // retries: 0 so deterministic regressions keep failing loudly (#152).
+  test.describe.configure({ retries: 1 });
   test.setTimeout(300_000);
 
   let hub: HubProc;
