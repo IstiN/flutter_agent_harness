@@ -401,42 +401,6 @@ const List<ToolManifestEntry> _table = [
     tier: MatrixTier.excluded,
     rationale: 'device-admin surface, managed contexts only',
   ),
-  ToolManifestEntry(
-    tool: 'gcm',
-    permissions: {'gcm'},
-    tier: MatrixTier.excluded,
-    rationale: 'push-messaging transport, not an agent surface',
-  ),
-  ToolManifestEntry(
-    tool: 'devtools',
-    permissions: {'devtools'},
-    tier: MatrixTier.excluded,
-    rationale: 'opens interactive devtools windows, not automation',
-  ),
-  ToolManifestEntry(
-    tool: 'fileBrowserHandler',
-    permissions: {'fileBrowserHandler'},
-    tier: MatrixTier.excluded,
-    rationale: 'ChromeOS-only',
-  ),
-  ToolManifestEntry(
-    tool: 'printing',
-    permissions: {'printing'},
-    tier: MatrixTier.excluded,
-    rationale: 'ChromeOS-only',
-  ),
-  ToolManifestEntry(
-    tool: 'printingMetrics',
-    permissions: {'printingMetrics'},
-    tier: MatrixTier.excluded,
-    rationale: 'ChromeOS-only',
-  ),
-  ToolManifestEntry(
-    tool: 'fileSystemProvider',
-    permissions: {'fileSystemProvider'},
-    tier: MatrixTier.excluded,
-    rationale: 'ChromeOS-only',
-  ),
   // The impossible row: chrome exposes no password API. Anything — a
   // manifest entry, a tool spec, a prompt — reaching for one is a bug by
   // construction, so the checker flags it wherever it appears.

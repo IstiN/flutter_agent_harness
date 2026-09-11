@@ -268,8 +268,10 @@ final class HeadlessChrome {
   /// extension, an ephemeral DevTools port. On Linux, sandbox/GPU flags are
   /// added unconditionally (CI and containers need them). Resolves only
   /// after Chrome prints its DevTools endpoint; exits early → loud failure
-  /// with the captured stderr.
-  static Future<HeadlessChrome> launch() async {
+  /// with the captured stderr. [extensionPath] overrides the loaded
+  /// extension directory (the trimmed-manifest build for #137 AC6/E7);
+  /// the manifest "key" pins the id either way.
+  static Future<HeadlessChrome> launch({String? extensionPath}) async {
     final binary = resolveBinary();
     final userDataDir = await Directory.systemTemp.createTemp('fa-ext-test-');
     // --load-extension needs an absolute path to browser_ext/.
@@ -282,7 +284,7 @@ final class HeadlessChrome {
       '--no-first-run',
       '--no-default-browser-check',
       if (Platform.isLinux) ...['--no-sandbox', '--disable-dev-shm-usage'],
-      '--load-extension=$repoRoot/browser_ext',
+      '--load-extension=${extensionPath ?? '$repoRoot/browser_ext'}',
       'about:blank',
     ];
     final stderrBuf = StringBuffer();

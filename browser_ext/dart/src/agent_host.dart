@@ -931,13 +931,17 @@ final class AgentHost implements UiHostBackend {
   }
 
   /// The bridge's exec-tier ask (issue #137): same prompt surface as
-  /// ordinary approvals, same mode contract as the exfil gate —
-  /// yolo/unattended answer silently (zero prompts is yolo's contract),
-  /// ask/write prompt. The static tier of browser_api is read, so the
-  /// approval matrix never double-prompts; this ask carries the
-  /// exec-tier namespaces only.
+  /// ordinary approvals. The static tier of browser_api is read, so the
+  /// approval matrix never double-prompts; this ask carries the exec-tier
+  /// namespaces in write mode (the one mode where the matrix is silent
+  /// but exec must still ask).
   Future<bool> _askBridgeRisk(String path, ApprovalTier tier) async {
-    if (!exfilGateShouldAsk(_approvals.mode)) return true;
+    // Exactly ONE prompt per exec-tier call in the interactive modes:
+    // write mode's matrix auto-allowed the static read tier, so this ask
+    // is the prompt; ask mode's matrix already prompts every browser_api
+    // call (read tier included), so asking here too would double-prompt;
+    // yolo/unattended ask nothing (zero prompts is their contract).
+    if (_approvals.mode != ApprovalMode.write) return true;
     final allow = await _promptApproval(
       ApprovalRequest(
         toolName: 'browser_api',

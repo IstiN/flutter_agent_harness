@@ -148,7 +148,7 @@ flow; the plain web build (no `chrome.runtime.id`) still refuses.
   `error` — a desynced or hostile peer degrades into a visible message,
   never a dead listener.
 
-## The tool surface — 34 tools
+## The tool surface — 36 tools
 
 `browser_api_tools.dart` maps Chrome's extension APIs onto a documented
 tool set over the typed `ChromeApi` facade (23 chrome.* groups; every
@@ -191,6 +191,66 @@ approval gate.
   (~10 MB wasm) and takes a few seconds; the interpreter then stays
   warm for the document's lifetime.
 
+### The generic chrome.* bridge (issue #137)
+
+Two tools expose the WHOLE declared chrome surface — everything the
+manifest grants, not just what has a curated wrapper — so the next
+browser capability is usable today with zero new tools and zero
+releases:
+
+- **`browser_api_catalog`** (read tier) — lists the `chrome.*`
+  namespaces this browser actually granted the extension, built by
+  runtime reflection over the service worker's live `chrome` global.
+  MV3 materializes exactly the manifest-granted namespaces, so the
+  catalog is truthful by construction — an ungranted API is absent,
+  never advertised. With `{namespace: "bookmarks"}` it lists that
+  namespace's methods (name → declared arity), events, and child
+  namespaces (`storage.local` shape).
+- **`browser_api`** (`{path, args}`) — calls any
+  `chrome.<namespace>.<method>(args…)` by path. Failures come back as
+  `{"ok":false,"error":{code,message}}` DATA (error-as-data — the turn
+  continues, the model adapts); results pass the redaction pipeline,
+  are wrapped as UNTRUSTED content, and are capped at 64 KiB
+  (`truncated: true` marker). A call that never settles fails loudly
+  after 30 s. Callback-era APIs are settled by a promisify wrapper;
+  `runtime.lastError` is mapped inside the callback.
+
+Safety kernel (`bridge_tools.dart`):
+
+- **Hard deny list, every mode (yolo included)**: `chrome.management.*`
+  (an injected page must not be able to disable/uninstall the agent's
+  own extension) and `chrome.runtime.*` (the extension's own
+  machinery) plus path validation — only exact
+  `chrome.<ns>.<method>` paths, no events (`on*`), no prototype
+  tricks (`__proto__`/`constructor`/`prototype`).
+- **Per-root risk map**: read/write roots (`tabs`, `windows`,
+  `bookmarks`, `history`, `idle`, `system`, …) ride their tier;
+  exec roots (`scripting`, `debugger`, `cookies`, `browsingData`,
+  `webRequest`, `declarativeNetRequest`, `proxy`, `privacy`,
+  `tabCapture`, `nativeMessaging`) prompt before EVERY call. Unknown
+  or unmapped namespaces default to exec — new Chrome APIs are
+  safe-by-default until mapped.
+- **Exactly one prompt per exec-tier call per mode**: ask mode's
+  approval matrix prompts every call already; write mode's matrix is
+  silent for the static read tier, so the bridge's dynamic risk ask
+  carries the exec namespaces there; yolo/unattended never prompt.
+- **Yolo means trust**: in yolo every namespace executes immediately,
+  the panel shows a persistent "bridge: yolo — no prompts" indicator,
+  and the first bridge call of the session drops a one-time notice in
+  the transcript. Every call still lands in the session/trajectory
+  audit trail with full path+args — no prompts never means invisible.
+- **Curated tools stay**: the stable-schema family above is untouched;
+  the bridge is the escape hatch and the anti-bloat measure for the
+  long tail (~100 namespaces no tool wraps). Events
+  (`chrome.tabs.onUpdated`-style listeners) are NOT bridge-callable in
+  v1 — persistent listeners need lifecycle management and stay
+  curated.
+- For page-code injection prefer `inject_js`/
+  `cdp_eval`: `scripting.executeScript` through the bridge cannot
+  carry a source string (MV3 CSP blocks eval; `files[]` works), while
+  `chrome.debugger`-based injection IS reachable through the bridge
+  at the exec tier.
+
 Injection & CDP details:
 
 - **`inject_js` is first-class and always prompts.** It runs
@@ -231,21 +291,26 @@ two-way checker (`checkMatrix`) turns every drift into a typed
 
 | Tier | Rows | Treatment |
 |---|---|---|
-| **Core** | 28 (26 manifest permissions + `runtime`, which needs none) | Registered and exposed; an unpacked manifest must carry the permission |
-| **Second tier** | 8 (`search`, `topSites`, `readingList`, `pageCapture`, `tabCapture`, `desktopCapture`, `userScripts`, `declarativeNetRequest`) | Implemented but registered-hidden — a Settings gate turns them on; permissions ride `optional_permissions` |
-| **Excluded** | 12 (`browsingData`, `privacy`, `proxy`, `management`, `gcm`, `devtools`, `fileBrowserHandler`, `printing`, `printingMetrics`, `fileSystemProvider`, `tts`, `passwords`) | Absent from manifest AND registry; the table row records the rationale so absence is auditable |
+| **Core** | 45 — the 29 curated-tool roots (incl. `runtime`, which needs no permission) + 14 bridge-only roots (`search`, `readingList`, `tabCapture`, `browsingData`, `tts`, `declarativeNetRequest`, `privacy`, `proxy`, `management`, `clipboard`, `contentSettings`, `fontSettings`, `nativeMessaging`, `webRequest`) + `browser_api` + `browser_api_catalog` themselves | Registered and exposed; an unpacked manifest must carry the permission |
+| **Second tier** | 4 (`topSites`, `pageCapture`, `desktopCapture`, `userScripts`) | Implemented but registered-hidden — a Settings gate turns them on; permissions ride `optional_permissions` |
+| **Excluded** | 12 (`gcm`, `instanceID`, `devtools`, `fileBrowserHandler`, `printing`, `printingMetrics`, `fileSystemProvider`, `platformKeys`, `wallpaper`, `enterprise.deviceAttributes`, `enterprise.networkingAttributes`, `passwords`) | Absent from manifest AND registry; the table row records the rationale so absence is auditable |
 
-Excluded rationales: `browsingData` wipes user data; `privacy`/`proxy`
-mutate browser-wide settings; `management` controls other extensions;
-`gcm` is push transport, not an agent surface; `devtools` opens
-interactive windows; the ChromeOS-only quartet
-(`fileBrowserHandler`, `printing`, `printingMetrics`,
-`fileSystemProvider`) has no desktop meaning. `tts` is not
-optional-eligible — Chrome refuses to list it in `optional_permissions`
-— so no agent surface ships on it. The `passwords` row is
-**impossible by construction** — chrome exposes no password API — and
-the checker flags anything (manifest entry, tool spec, prompt vocabulary)
-reaching for one wherever it appears.
+Issue #137 moved `browsingData`/`tts`/`declarativeNetRequest`/`privacy`/
+`proxy`/`management` (and the Tier-1 additions above) from excluded or
+optional into **core + declared**: the manifest now carries the maximum
+viable permission set and the bridge exposes each declared namespace —
+permissions without access are pure waste. `management` is declared but
+the bridge DENIES `chrome.management` calls in every mode
+(self-preservation; the row exists so the permission is auditable).
+Remaining excluded rationales: `gcm`/`instanceID` are push transport,
+not an agent surface; `devtools` opens interactive windows; the
+ChromeOS-only set (`fileBrowserHandler`, `printing`,
+`printingMetrics`, `fileSystemProvider`, `platformKeys`, `wallpaper`)
+and the `enterprise.*` pair (device-admin) have no desktop-agent
+meaning. The `passwords` row is **impossible by construction** — chrome
+exposes no password API — and the checker flags anything (manifest
+entry, tool spec, prompt vocabulary) reaching for one wherever it
+appears.
 
 **Profiles.** `profileUnpacked` (developers, enterprise) carries the
 full core set; `profileStore` strips `debugger` + `cookies` (store
@@ -605,6 +670,9 @@ Four layers, cheapest first:
    `ui_protocol_test.dart` (17-kind codec, version negotiation),
    `ui_transport_test.dart` (transports, backoff, offline queue),
    `browser_api_tools_test.dart` (34-tool surface over `FakeChrome`),
+   `bridge_tools_test.dart` (the chrome.* bridge over `FakeChrome`:
+   path validation, deny list, risk map, error-as-data, hygiene,
+   gating, REG +2),
    `permission_matrix_test.dart` (manifest⇄table⇄registry lockstep),
    `background_test.dart` + `background_offscreen_entry_test.dart`
    (badge/alarms/offscreen/entry points), `quarantine_test.dart`
@@ -622,10 +690,14 @@ Four layers, cheapest first:
    bootstrap; `providers_sync.test.mjs` exercises the SW bridge glue —
    hello capability, copy-mode sync storage + acked echo, re-pair
    overwrite, UT-S1 byte-scan, llmReq stream/done/error.
-3. **Headless Chrome E2E (issue #23, unchanged)** — `test/browser_ext/`
+3. **Headless Chrome integration (issues #23/#137)** — `test/browser_ext/`
    launches a real Chrome with the extension loaded and exercises the
    whole path (extension load + agent self-test, fixture task, bridge
-   E2E, DAP E2E), tagged `@Tags(['integration'])`:
+   E2E, DAP E2E); `ac137_bridge_test.dart` pins the chrome.* bridge's
+   browser-side truth (catalog = manifest-granted namespaces both
+   directions, `chrome.idle.queryState` end-to-end, the
+   trimmed-manifest build via `extensionPath`), tagged
+   `@Tags(['integration'])`:
 
    ```bash
    bash scripts/build_browser_ext.sh

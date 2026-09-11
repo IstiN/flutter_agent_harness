@@ -30,6 +30,9 @@ function launchOptions() {
       '--no-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
+      // The AC8 audio fixture needs autoplay without a user gesture for
+      // chrome.tabs.query({audible:true}) to find its tab.
+      '--autoplay-policy=no-user-gesture-required',
       `--disable-extensions-except=${extDir}`,
       `--load-extension=${extDir}`,
     ],
