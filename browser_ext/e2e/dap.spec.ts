@@ -292,39 +292,52 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
   test('two agents exchange end-to-end-encrypted DMs through the hub', async ({
     fa,
   }) => {
+    // Boots (or re-boots — idempotent, config + identity persist) the
+    // extension agent onto the hub and returns its agent id once connected.
+    // Re-used right before the CLI's turn: MV3 idle-kills the SW during
+    // the CLI's `dart run` boot, dap_dm is presence-gated (an offline peer
+    // errors the send with nothing re-sending it), so the DM's target
+    // must be freshly online when the scripted turn fires (#152 flake
+    // class; observed as relayTargets stuck empty on runs 34627556966 and
+    // 34629634925).
+    const bootExtAgent = async (): Promise<string> => {
+      await fa.swEval(
+        (config) => {
+          const sw = globalThis as unknown as {
+            faAgent: { boot(c: unknown): Promise<unknown> };
+          };
+          return sw.faAgent.boot(config);
+        },
+        {
+          approvalMode: 'unattended',
+          dap: { url: hub.url, name: 'ext-agent' },
+        },
+      );
+      await expect
+        .poll(
+          () =>
+            fa.swEval(() => {
+              const sw = globalThis as unknown as {
+                faAgent: { getState(): { hub?: { phase?: string } } };
+              };
+              return sw.faAgent.getState().hub?.phase ?? null;
+            }),
+          { timeout: 60_000 },
+        )
+        .toBe('connected');
+      const agentId = await fa.swEval(() => {
+        const sw = globalThis as unknown as {
+          faAgent: { getState(): { hub?: { agentId?: string } } };
+        };
+        return sw.faAgent.getState().hub?.agentId ?? '';
+      });
+      expect(agentId).toMatch(/^[0-9a-f]{16}$/);
+      return agentId;
+    };
+
     // 1. Boot the extension agent onto the hub (fake provider — no LLM;
     //    dap config persists + connects via the boot path).
-    await fa.swEval(
-      (config) => {
-        const sw = globalThis as unknown as {
-          faAgent: { boot(c: unknown): Promise<unknown> };
-        };
-        return sw.faAgent.boot(config);
-      },
-      {
-        approvalMode: 'unattended',
-        dap: { url: hub.url, name: 'ext-agent' },
-      },
-    );
-    await expect
-      .poll(
-        () =>
-          fa.swEval(() => {
-            const sw = globalThis as unknown as {
-              faAgent: { getState(): { hub?: { phase?: string } } };
-            };
-            return sw.faAgent.getState().hub?.phase ?? null;
-          }),
-        { timeout: 60_000 },
-      )
-      .toBe('connected');
-    const extAgentId = await fa.swEval(() => {
-      const sw = globalThis as unknown as {
-        faAgent: { getState(): { hub?: { agentId?: string } } };
-      };
-      return sw.faAgent.getState().hub?.agentId ?? '';
-    });
-    expect(extAgentId).toMatch(/^[0-9a-f]{16}$/);
+    const extAgentId = await bootExtAgent();
     await fa.collectEvents();
 
     // 2. Bring the CLI up on the same hub and have its scripted provider
@@ -349,6 +362,11 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
           { timeout: 60_000 },
         )
         .not.toBeNull();
+      // Re-wake the extension's SW (see bootExtAgent): the enrollment wait
+      // above can span the SW's idle lifetime, and the dap_dm target must
+      // be online when the turn fires milliseconds later.
+      mock.dmTarget = await bootExtAgent();
+      expect(mock.dmTarget).toBe(extAgentId); // identity must persist across re-boots
       cli.prompt('dm the extension agent');
 
       // 3. The hub routed CLI → ext …
