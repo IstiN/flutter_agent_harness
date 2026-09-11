@@ -10,7 +10,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'agent_service.dart';
+import 'codemie_extension_signin.dart';
 import 'relay/ext_runtime.dart';
+import 'session_names_store.dart';
 
 /// The [AgentService] chat surface served by the extension's service-worker
 /// agent over a [WorkerRelayTransport] (issue #34 item 1).
@@ -94,6 +96,7 @@ final class RelayAgentService extends AgentService {
   Future<void> Function()? get newSessionAction => _running
       ? null
       : () async {
+          debugPrint('[fah][relay] session_new → SW (new session requested)');
           _transport.newSession();
         };
 
@@ -104,11 +107,18 @@ final class RelayAgentService extends AgentService {
   Future<void> Function(String sessionId)? get openSessionAction => _running
       ? null
       : (id) async {
+          debugPrint('[fah][relay] session_open($id) → SW (switch requested)');
           _transport.openSession(id);
         };
 
   @override
   String? get liveSessionId => _sessionId.isEmpty ? null : _sessionId;
+
+  /// Fired when the SW's live session changed under us — a
+  /// session_new/session_open from ANY surface arrives as an attach
+  /// broadcast. The host (main.dart) re-keys the manager's active slot so
+  /// active-dots and tile labels follow the real live session.
+  void Function(String newSessionId)? onLiveSessionIdChanged;
 
   /// The SW's session history (live + archives), fetched over
   /// `sessions_query`. Single-flight: overlapping callers share the
@@ -157,6 +167,8 @@ final class RelayAgentService extends AgentService {
     // user bubble is drawn locally at send time (attach replay does not
     // include it — a known v1 gap after a page reload).
     _append(fa_ui.FaChatMessage(role: 'user', content: text));
+    _trajectoryAppend(UserMessage.text(text, timestamp: DateTime.now()));
+    _lastUserText = text;
     if (_running) {
       _transport.steer(text);
     } else {
@@ -246,7 +258,180 @@ final class RelayAgentService extends AgentService {
   }
 
   @override
-  Stream<TrajectorySnapshot> get trajectory => const Stream.empty();
+  Stream<TrajectorySnapshot> get trajectory => _trajectoryFeed.stream;
+
+  @override
+  void dispose() {
+    _trajectoryFeed.dispose();
+    super.dispose();
+  }
+
+  /// The panel-side trajectory ledger: the SW owns no session-record
+  /// chain (its persistence is message-based chrome.storage), so the
+  /// panel synthesizes records from the relay rows as they land — the
+  /// same data the transcript renders, with the SW's real timestamps.
+  final fa_ui.TrajectoryServiceFeed _trajectoryFeed =
+      fa_ui.TrajectoryServiceFeed();
+  String? _trajectoryLastId;
+  int _trajectoryCounter = 0;
+
+  /// Appends one synthesized record to the trajectory ledger, chained
+  /// onto the previous row (the builder derives turns from the chain).
+  void _trajectoryAppend(Message message) {
+    final id = 'relay-${_trajectoryCounter++}';
+    _trajectoryFeed.append(
+      MessageRecord(
+        id: id,
+        parentId: _trajectoryLastId,
+        timestamp: message.timestamp,
+        message: message,
+      ),
+    );
+    _trajectoryLastId = id;
+  }
+
+  /// The SW's `timestamp` field (messageToJs), with a receive-time
+  /// fallback for rows from an older SW build.
+  DateTime _rowTimestamp(Map<String, dynamic> row) =>
+      DateTime.tryParse(row['timestamp'] as String? ?? '')?.toLocal() ??
+      DateTime.now();
+
+  /// Automatic CodeMie re-authorization — the CLI's proactive SSO restart,
+  /// extension edition: an auth-expired turn opens the CodeMie login tab
+  /// (the extension shares the browser cookie jar, so a plain tab sign-in
+  /// refreshes the credential the SW's fetch carries), polls the jar back
+  /// to life, then resends the failed prompt. The user watches the turn
+  /// complete instead of babysitting a re-login button.
+  bool _codemieReauthInFlight = false;
+  String? _lastUserText;
+
+  Future<void> _autoReauthCodemie() async {
+    if (_codemieReauthInFlight) return;
+    _codemieReauthInFlight = true;
+    _append(
+      fa_ui.FaChatMessage(
+        role: 'system',
+        content:
+            'CodeMie session expired — a browser tab with the CodeMie '
+            'login page is opening. Sign in there; the message resends '
+            'automatically once the session is back.',
+      ),
+    );
+    notifyListeners();
+    try {
+      final orgUrl = codeMieOrgUrl(_baseUrl);
+      final probeUrl =
+          '${codeMieApiBase(orgUrl)}/v1/llm_models?include_all=true';
+      // Belt and braces (the caller already checks): a base URL that does
+      // not yield an ABSOLUTE probe would resolve against the extension
+      // origin and 404 the poll forever.
+      if (!(Uri.tryParse(probeUrl)?.hasScheme ?? false)) return;
+      final models = await pollCodeMieSignIn(
+        probe: () async {
+          final result = await extFetchString(probeUrl);
+          // Not an extension host: the auth-expired card stays the
+          // manual path — end the poll instead of spinning 5 minutes.
+          if (result == null) throw StateError('not an extension host');
+          return result;
+        },
+        openLoginPage: () => unawaited(extOpenTab('$orgUrl/login')),
+      );
+      if (models == null) {
+        _append(
+          fa_ui.FaChatMessage(
+            role: 'system',
+            content:
+                'CodeMie re-authorization did not complete — use the '
+                'Authorize button on the error above to try again.',
+          ),
+        );
+        return;
+      }
+      final text = _lastUserText;
+      _append(
+        fa_ui.FaChatMessage(
+          role: 'system',
+          content: text != null
+              ? 'CodeMie session refreshed — resending your message…'
+              : 'CodeMie session refreshed — send your message again.',
+        ),
+      );
+      // Resend straight to the transport: NOT sendText — the original
+      // user bubble (and its trajectory record) already exists.
+      if (text != null && !_running) {
+        _transport.sendPrompt(
+          'p-${DateTime.now().microsecondsSinceEpoch}-$_promptSeq',
+          text,
+        );
+      }
+    } finally {
+      _codemieReauthInFlight = false;
+      notifyListeners();
+    }
+  }
+
+  /// Synthesizes the assistant message one trajectory record wraps: the
+  /// relay row carries only text (+ error), so api/provider/usage are
+  /// static stand-ins — the ledger renders text, roles and times.
+  AssistantMessage _assistantRecord(
+    String text, {
+    required DateTime timestamp,
+    StopReason stopReason = StopReason.stop,
+    String? errorMessage,
+  }) => AssistantMessage(
+    content: [TextContent(text: text)],
+    api: 'openai-completions',
+    provider: 'relay',
+    model: _modelId,
+    usage: Usage.zero,
+    stopReason: stopReason,
+    errorMessage: errorMessage,
+    timestamp: timestamp,
+  );
+
+  /// User-given session titles, backed by the SW settings channel
+  /// (`faSessionNames`): a rename on ANY surface (panel, desktop app,
+  /// another tab) round-trips `settings_put` and lands here via the
+  /// snapshot broadcast — file-backed stores never saw cross-surface
+  /// renames ("renamed to test, reopened — not applied").
+  late final SessionNamesStore namesStore = SessionNamesStore.hosted(
+    _RelaySessionNamesPersistence(this),
+  );
+
+  @override
+  SessionNamesStore? get namesStoreOverride => namesStore;
+
+  /// The names half of the last SW settings snapshot.
+  Map<String, String> get swSessionNames => {
+    if (_lastSwSettings?['faSessionNames'] is Map)
+      for (final entry in (_lastSwSettings!['faSessionNames'] as Map).entries)
+        if (entry.value is String && (entry.value as String).isNotEmpty)
+          '${entry.key}': entry.value as String,
+  };
+
+  /// The last full settings snapshot (raw, as broadcast by the SW).
+  Map<String, dynamic>? _lastSwSettings;
+
+  /// Persists [names] through `settings_put`: the SW merges per id, so
+  /// concurrent renames of DIFFERENT sessions from two surfaces both
+  /// survive; ids the snapshot still holds but the writer cleared go out
+  /// as empty-string tombstones (the SW merge deletes on empty).
+  void putSessionNames(Map<String, String> names) {
+    final previous = swSessionNames;
+    _transport.dispatch(
+      SettingsPutMsg(
+        settings: {
+          'faSessionNames': {
+            ...names,
+            for (final id in previous.keys.where(
+              (id) => !names.containsKey(id),
+            ))
+              id: '',
+          },
+        },
+      ),
+    );
+  }
 
   // -- FaChatConnection ------------------------------------------------------
   // Reflects the SW connection once its snapshot landed; falls back to the
@@ -330,13 +515,34 @@ final class RelayAgentService extends AgentService {
   void _onProtocolMessage(UiProtocolMessage message) {
     switch (message) {
       case HelloAckMsg(:final sessionId):
+        // Hello (re)syncs after boot, panel reload and SW reconnect. The
+        // SW may have switched its live session while we were gone — a
+        // missed session_new/session_open broadcast leaves hostedLiveId
+        // pointing at a session that renders NOWHERE (the SW excludes the
+        // live row from archives, the slot still holds the old id) and
+        // every selection dot disappears. Re-broadcast like an attach.
+        final previousHello = _sessionId;
         _sessionId = sessionId ?? _sessionId;
+        if (sessionId != null &&
+            sessionId.isNotEmpty &&
+            sessionId != previousHello) {
+          onLiveSessionIdChanged?.call(sessionId);
+        }
       case AttachedMsg(:final sessionId, :final replay):
+        final previous = _sessionId;
         _sessionId = sessionId;
         _rebuild(replay);
         debugPrint(
-          '[fah][relay] attached: session=$sessionId replay=${replay.length}',
+          '[fah][relay] attached: session=$sessionId replay=${replay.length}'
+          '${previous.isNotEmpty && previous != sessionId ? ' (was $previous)' : ''}',
         );
+        if (sessionId.isNotEmpty && sessionId != previous) {
+          debugPrint(
+            '[fah][relay] live session switched: $previous → $sessionId '
+            '(session_new/session_open from this or another surface)',
+          );
+          onLiveSessionIdChanged?.call(sessionId);
+        }
         // Pick up the SW's persisted provider/model (chrome.storage) so the
         // composer reflects reality; reconfigure() writes back the same way.
         _transport.dispatch(const SettingsQueryMsg());
@@ -383,6 +589,9 @@ final class RelayAgentService extends AgentService {
     _messages.clear();
     _currentAssistant = null;
     _currentThinking = null;
+    // New session, new ledger — replay rows rebuild it record by record.
+    _trajectoryFeed.reset();
+    _trajectoryLastId = null;
     for (final entry in replay) {
       final event = entry['event'];
       // dartify() (the port transport decodes JS objects) yields
@@ -426,17 +635,32 @@ final class RelayAgentService extends AgentService {
                 ? raw.split('\n').skip(1).join('\n')
                 : raw;
             _append(fa_ui.FaChatMessage(role: 'user', content: content));
+            _trajectoryAppend(
+              UserMessage.text(content, timestamp: _rowTimestamp(event)),
+            );
           }
         } else {
-          _finishAssistant(event);
+          _finishAssistant(event, silent: silent);
         }
       case 'tool_result':
+        final toolText = event['text'] as String? ?? '';
+        final toolName = event['toolName'] as String?;
+        final toolIsError = event['isError'] as bool? ?? false;
         _append(
           fa_ui.FaChatMessage(
             role: 'tool',
-            content: event['text'] as String? ?? '',
-            toolName: event['toolName'] as String?,
-            isError: event['isError'] as bool? ?? false,
+            content: toolText,
+            toolName: toolName,
+            isError: toolIsError,
+          ),
+        );
+        _trajectoryAppend(
+          ToolResultMessage(
+            toolCallId: '',
+            toolName: toolName ?? 'tool',
+            content: [TextContent(text: toolText)],
+            isError: toolIsError,
+            timestamp: _rowTimestamp(event),
           ),
         );
       case 'status':
@@ -448,6 +672,12 @@ final class RelayAgentService extends AgentService {
         }
       case 'error':
         _error = event['error'] as String? ?? 'unknown relay error';
+      case 'debug':
+        // SW-side diagnostics (provider response/terminal events): the
+        // SW console is a separate DevTools window nobody opens, so the
+        // lines ride the relay into THIS console — visible next to the
+        // [fah][relay] lines when an empty turn needs a cause.
+        debugPrint('[fah][sw] ${event['text']}');
     }
     if (!silent) notifyListeners();
   }
@@ -456,6 +686,10 @@ final class RelayAgentService extends AgentService {
   /// The SW's merged settings snapshot (settings_result): the provider
   /// trio feeds the models screens and the composer.
   void _applySwSettings(Map<String, dynamic> settings) {
+    _lastSwSettings = settings;
+    // Another surface's renames (or this one's echo) ride the snapshot —
+    // sync the hosted names store (no-op when nothing changed).
+    namesStore.syncFromSnapshot(swSessionNames);
     final provider = settings['faProvider'];
     debugPrint(
       '[fah][relay] settings snapshot: hasProvider=${provider != null} '
@@ -530,7 +764,7 @@ final class RelayAgentService extends AgentService {
     notifyListeners();
   }
 
-  void _finishAssistant(Map<String, dynamic> message) {
+  void _finishAssistant(Map<String, dynamic> message, {bool silent = false}) {
     final role = message['role'] as String? ?? 'assistant';
     final text = message['text'] as String? ?? '';
     debugPrint('[fah][relay] message_done role=$role len=${text.length}');
@@ -541,6 +775,42 @@ final class RelayAgentService extends AgentService {
     // The finished thinking bubble stays on screen; the next turn's
     // reasoning opens a fresh one.
     _currentThinking = null;
+    // An errored turn (expired SSO session, gateway failure) carries its
+    // message in the `error` field with an EMPTY text — surface it as an
+    // error bubble (the [[auth-expired:…]] marker renders the
+    // re-authorize card), never as the "empty response" placeholder.
+    final errorText = message['error'] as String?;
+    if (role == 'assistant' && errorText != null && errorText.isNotEmpty) {
+      _append(
+        fa_ui.FaChatMessage(
+          role: 'assistant',
+          content: errorText,
+          isError: true,
+        ),
+      );
+      _trajectoryAppend(
+        _assistantRecord(
+          errorText,
+          timestamp: _rowTimestamp(message),
+          stopReason: StopReason.error,
+          errorMessage: errorText,
+        ),
+      );
+      // The CLI restarts CodeMie SSO the moment the saved cookie is
+      // expired; the extension does the same reactively — open the login
+      // tab and resend, no manual Authorize click needed. LIVE failures
+      // only: a replayed historical error row must not fire the flow at
+      // every boot (and `_baseUrl` may still be empty before the settings
+      // snapshot lands — a relative probe URL then resolves against the
+      // extension origin and 404s forever).
+      if (!silent &&
+          authExpiredProvider(errorText) == 'codemie' &&
+          (Uri.tryParse(_baseUrl)?.hasScheme ?? false)) {
+        unawaited(_autoReauthCodemie());
+      }
+      notifyListeners();
+      return;
+    }
     if (role == 'assistant' && text.isEmpty) {
       // A tool-call-only assistant turn legitimately has no text — the
       // tool_result rows that follow tell the story; a placeholder here
@@ -563,6 +833,11 @@ final class RelayAgentService extends AgentService {
           content: text,
           toolName: message['toolName'] as String?,
         ),
+      );
+    } else if (role == 'assistant' && text.isNotEmpty) {
+      _append(fa_ui.FaChatMessage(role: role, content: text));
+      _trajectoryAppend(
+        _assistantRecord(text, timestamp: _rowTimestamp(message)),
       );
     } else {
       _append(fa_ui.FaChatMessage(role: role, content: text));
@@ -622,4 +897,19 @@ final class RelayAgentService extends AgentService {
       ),
     );
   }
+}
+
+/// [SessionNamesPersistence] over the relay's settings channel: reads the
+/// names half of the last SW snapshot, writes through `settings_put`.
+final class _RelaySessionNamesPersistence implements SessionNamesPersistence {
+  _RelaySessionNamesPersistence(this._service);
+
+  final RelayAgentService _service;
+
+  @override
+  Map<String, String> read() => _service.swSessionNames;
+
+  @override
+  Future<void> write(Map<String, String> names) async =>
+      _service.putSessionNames(names);
 }

@@ -88,6 +88,7 @@ const _coverage = <String, String>{
       'test/golden/github_publish_golden_test.dart',
   'lib/ui/widgets/github_connect_sheet.dart':
       'test/golden/github_publish_golden_test.dart',
+  'lib/ui/widgets/dap_hub_mark.dart': 'test/golden/widgets_golden_test.dart',
 };
 
 /// Widget files that legitimately cannot be snapshot-tested on the host.

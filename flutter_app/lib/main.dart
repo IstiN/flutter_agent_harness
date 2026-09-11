@@ -783,6 +783,25 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
         relay.relaySessionId.isEmpty ? 'relay' : relay.relaySessionId,
         relay,
       );
+      // The SAME adoption contract as the desktop hosted boot (the
+      // createRelayServiceIfHosted caller below): a session_new/
+      // session_open from ANY surface arrives as an attach broadcast —
+      // re-key the slot and the selection source. Without this the panel
+      // kept its BOOT session id forever: the drawer's live row pinned
+      // the stale dot, the real live session rendered nowhere, and the
+      // archived twin of the stale slot duplicated the row.
+      relay.onLiveSessionIdChanged = (newId) {
+        manager.hostedLiveId.value = newId;
+        manager.rekeyActiveSession(newId);
+      };
+      // The hello/attach handshake may have completed BEFORE the callback
+      // was assigned (RelayAgentService.create awaits it) — converge once
+      // so hostedLiveId is authoritative from the first frame.
+      final liveAtBoot = relay.liveSessionId;
+      if (liveAtBoot != null && liveAtBoot.isNotEmpty) {
+        manager.hostedLiveId.value = liveAtBoot;
+        manager.rekeyActiveSession(liveAtBoot);
+      }
       // The models/provider screens read this registry; in relay mode the
       // truth lives in the SW's chrome.storage, so seed one entry from the
       // attach-time settings snapshot. The key stays session-only
@@ -1216,10 +1235,28 @@ class SetupScreen extends StatelessWidget {
       // The relay session id is the SW's; the manager only needs a stable
       // key for the tile/active-session bookkeeping. The local session
       // lifecycle below does not apply — the SW owns the JSONL session.
+      // A session_new/session_open from ANY surface arrives as an attach
+      // broadcast; re-key the slot so active-dots and labels follow. The
+      // hostedLiveId notifier is the single selection source every session
+      // UI reads (wide sidebar + narrow drawer) — set it FIRST so the
+      // rebuild triggered by the rekey already sees the new truth.
+      relay.onLiveSessionIdChanged = (newId) {
+        manager.hostedLiveId.value = newId;
+        manager.rekeyActiveSession(newId);
+      };
       manager.addSession(
         relay.relaySessionId.isEmpty ? 'relay' : relay.relaySessionId,
         relay,
       );
+      // The hello/attach handshake completes inside
+      // RelayAgentService.create — BEFORE the callback above exists — so
+      // the boot-time resync fired into the void; converge once now that
+      // the slot exists (no-op when the slot is already keyed right).
+      final hostedLiveAtBoot = relay.liveSessionId;
+      if (hostedLiveAtBoot != null && hostedLiveAtBoot.isNotEmpty) {
+        manager.hostedLiveId.value = hostedLiveAtBoot;
+        manager.rekeyActiveSession(hostedLiveAtBoot);
+      }
     } else {
       await manager.createOrResumeSession(
         config: config,

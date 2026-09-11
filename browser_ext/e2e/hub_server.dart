@@ -18,9 +18,19 @@ import 'dart:io';
 import '../../test/hub/fake_hub.dart';
 
 Future<void> main() async {
-  final hub = FakeHub();
+  // DAP_E2E_HUB_SECRET — stand the hub up PASSWORD-PROTECTED (the spec
+  // sets it for the protected-join tests). Never echoed back: the ready
+  // line only reports THAT it is protected.
+  final secret = Platform.environment['DAP_E2E_HUB_SECRET'];
+  final hub = FakeHub(masterSecret: secret);
   await hub.start();
-  stdout.writeln(jsonEncode({'type': 'ready', 'url': hub.url.toString()}));
+  stdout.writeln(
+    jsonEncode({
+      'type': 'ready',
+      'url': hub.url.toString(),
+      'protected': secret != null && secret.isNotEmpty,
+    }),
+  );
 
   var hellosSeen = 0;
   var relayedSeen = 0;

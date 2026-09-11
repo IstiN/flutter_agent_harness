@@ -708,6 +708,108 @@ void main() {
     });
 
     test(
+      '200 with an HTML body (expired SSO session) errors, not empty',
+      () async {
+        // The transparent redirect to the login portal is followed silently
+        // (fetch / dart:io), so a dead CodeMie session arrives as 200 +
+        // text/html. Without the guard the SSE consumer would see no data:
+        // lines and the turn would finish with an EMPTY assistant message.
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) async => http.StreamedResponse(
+            Stream.value(
+              utf8.encode('<!DOCTYPE html><html><body>Sign in</body></html>'),
+            ),
+            200,
+            headers: {'content-type': 'text/html; charset=utf-8'},
+          ),
+        );
+
+        final codemieModel = Model(
+          id: 'gpt-4o',
+          api: 'openai-completions',
+          provider: 'codemie',
+          baseUrl: 'https://codemie.lab.epam.com/code-assistant-api/v1',
+          contextWindow: 128000,
+          maxTokens: 8192,
+        );
+        final stream = streamOpenAICompletions(
+          codemieModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(),
+          client,
+        );
+
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, contains('CodeMie'));
+        expect(error.error.errorMessage, contains('expired'));
+        // No raw login-page HTML in the transcript.
+        expect(error.error.errorMessage, isNot(contains('<html>')));
+        // The machine-readable marker lets UIs render a re-authorize card.
+        expect(authExpiredProvider(error.error.errorMessage ?? ''), 'codemie');
+      },
+    );
+
+    test(
+      '200 with a JSON body (gateway error object) surfaces the body',
+      () async {
+        // A gateway that rejects the request without proper status codes
+        // answers 200 + application/json — previously consumed as an empty
+        // SSE stream and rendered as "(empty response — try again)".
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) async => http.StreamedResponse(
+            Stream.value(
+              utf8.encode('{"error":{"message":"Unknown deployment: m1"}}'),
+            ),
+            200,
+            headers: {'content-type': 'application/json'},
+          ),
+        );
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          client,
+        );
+
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, contains('Unknown deployment: m1'));
+      },
+    );
+
+    test(
+      'an empty event stream (no data lines) becomes an error event',
+      () async {
+        // The gateway accepted the request and sent nothing — previously a
+        // silent empty done ("(empty response — try again)").
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) async => http.StreamedResponse(
+            Stream.value(utf8.encode('data: [DONE]\n\n')),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          ),
+        );
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          client,
+        );
+
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, contains('EMPTY event stream'));
+        expect(error.error.errorMessage, contains(testModel.id));
+      },
+    );
+
+    test(
       'a silent endpoint errors on the idle watchdog instead of hanging',
       () async {
         final client = http_testing.MockClient.streaming(

@@ -338,8 +338,9 @@ $('fahxFile').addEventListener('change', async () => {
 });
 
 $('saveHub').addEventListener('click', async () => {
-  const res = await call({ type: 'hub.save', url: $('hubUrl').value, name: $('hubName').value });
+  const res = await call({ type: 'hub.save', url: $('hubUrl').value, name: $('hubName').value, secret: $('hubSecret').value });
   if (res?.ok) log('hub settings saved');
+  $('hubSecret').value = '';
 });
 
 // -- Advanced: Settings-gated power tools (issue #34 AC4d) --------------------

@@ -3,9 +3,15 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fa_hub_client/fa_hub_client.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show JsonlSessionRepo, SessionMetadata;
+import 'package:flutter_agent_harness/io.dart' show LocalExecutionEnv;
+
+import 'package:fa/services/sessions_root.dart';
 
 import 'dap_service.dart';
 
@@ -54,6 +60,7 @@ final class IoDapHubService implements DapHubService {
     final channels = (await loadChannelKeys(
       settings.channelsFile,
     )).keys.toList()..sort();
+    final binding = _readBinding();
     return DapHubSnapshot(
       supported: true,
       url: settings.url,
@@ -64,17 +71,111 @@ final class IoDapHubService implements DapHubService {
           environment.containsKey(HubConfig.envUrl) ||
           environment.containsKey(HubConfig.envName),
       connected: null,
+      inboundMode: binding.$1,
+      boundSessionId: binding.$2,
+      boundSessionTitle: binding.$3,
+    );
+  }
+
+  /// The `boundSession` block of the raw config (`{mode, sessionId?,
+  /// title?}`) — readDapConfig returns the full map, so app-only keys
+  /// ride along untouched by the package's persist helpers.
+  (DapInboundMode, String?, String?) _readBinding() {
+    final raw = readDapConfig(defaultDapConfigFile(home, environment));
+    final bound = raw['boundSession'];
+    if (bound is! Map) return (DapInboundMode.currentSession, null, null);
+    final mode = switch ('${bound['mode'] ?? ''}') {
+      'dedicated' => DapInboundMode.dedicated,
+      'named' => DapInboundMode.named,
+      _ => DapInboundMode.currentSession,
+    };
+    final title = '${bound['title'] ?? ''}'.trim();
+    final id = '${bound['sessionId'] ?? ''}'.trim();
+    return (mode, id.isEmpty ? null : id, title.isEmpty ? null : title);
+  }
+
+  @override
+  Future<void> saveConnection({
+    required String url,
+    required String name,
+    String? secret,
+  }) {
+    final trimmed = name.trim();
+    final password = (secret ?? '').trim();
+    return persistDapConfig(
+      url: normalizeDapHost(url.trim()),
+      name: trimmed.isEmpty ? null : trimmed,
+      // The master password dials directly (the hub accepts it as a
+      // credential); an empty field keeps whatever is stored.
+      clientSecret: password.isEmpty ? null : password,
+      file: defaultDapConfigFile(home, environment),
     );
   }
 
   @override
-  Future<void> saveConnection({required String url, required String name}) {
-    final trimmed = name.trim();
-    return persistDapConfig(
-      url: normalizeDapHost(url.trim()),
-      name: trimmed.isEmpty ? null : trimmed,
-      file: defaultDapConfigFile(home, environment),
+  Future<void> saveBinding(
+    DapInboundMode mode, {
+    String? sessionId,
+    String? sessionTitle,
+  }) async {
+    final path = defaultDapConfigFile(home, environment);
+    final next = Map<String, dynamic>.of(readDapConfig(path));
+    if (mode == DapInboundMode.currentSession) {
+      next.remove('boundSession');
+    } else {
+      next['boundSession'] = <String, dynamic>{
+        'mode': mode.name,
+        if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+        if (sessionTitle != null && sessionTitle.isNotEmpty)
+          'title': sessionTitle,
+      };
+    }
+    final target = File(path);
+    if (!await target.parent.exists()) {
+      await target.parent.create(recursive: true);
+    }
+    await target.writeAsString(
+      '${const JsonEncoder.withIndent('  ').convert(next)}\n',
     );
+  }
+
+  @override
+  Future<List<DapBindableSession>> listBindableSessions() async {
+    // The app's own sessions: every candidate root (the shared App Group
+    // container + the ~/.fah fallback on macOS), newest activity first.
+    final env = LocalExecutionEnv();
+    final out = <DapBindableSession>[];
+    for (final root in allSessionRoots(
+      defaultSessionsRoot(Directory.current.path),
+    )) {
+      try {
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: root);
+        final metas = await repo.list();
+        for (final meta in metas) {
+          out.add((id: meta.id, title: _sessionTitle(meta)));
+        }
+      } on Object {
+        // Unreadable root — other roots still list.
+      }
+    }
+    // Dedup by id (a session visible from two roots lists once).
+    final seen = <String>{};
+    return [
+      for (final entry in out)
+        if (seen.add(entry.id)) entry,
+    ].take(50).toList();
+  }
+
+  /// Display label for the picker: the app-written title/name metadata,
+  /// else a short id.
+  static String _sessionTitle(SessionMetadata meta) {
+    final raw = meta.metadata;
+    for (final key in const ['title', 'name', 'displayName']) {
+      final value = raw?[key];
+      if (value is String && value.trim().isNotEmpty) return value.trim();
+    }
+    final id = meta.id;
+    return 'session ${id.length > 8 ? id.substring(0, 8) : id}';
   }
 
   @override

@@ -51,7 +51,13 @@ abstract interface class UiHostBackend {
 /// chrome.storage keys the settings flow reads and writes — identical to
 /// the v1 panel provider.save flow, so panel settings stay one source of
 /// truth regardless of which surface wrote them.
-const uiSettingsKeys = {'faProvider', 'faApproval', 'faDap', 'faBrowserTools'};
+const uiSettingsKeys = {
+  'faProvider',
+  'faApproval',
+  'faDap',
+  'faBrowserTools',
+  'faSessionNames',
+};
 
 /// [UiHostConnector] over a lazily-resolved host. The backend resolves at
 /// CALL time (not construction) because the SW boots asynchronously: ports
@@ -167,11 +173,35 @@ final class UiHostAdapter implements UiHostConnector {
 
 /// The [UiHostAdapter.merge] hook for `faProvider`: field-level merge so a
 /// panel save without a model (or without retyping the key) keeps the
-/// stored values instead of wiping the provider.
-Object? faProviderMergeHook(String key, Object? incoming, Object? stored) =>
-    key == 'faProvider'
-    ? mergeProvider(
-        stored is Map ? Map<Object?, Object?>.from(stored) : null,
-        incoming is Map ? Map<Object?, Object?>.from(incoming) : const {},
-      )
-    : incoming;
+/// stored values instead of wiping the provider. For `faSessionNames`
+/// (user-given session titles, issue #34 hosted rename): a PER-ID merge —
+/// two surfaces renaming different sessions concurrently keep both, and
+/// an empty value is the tombstone that deletes a cleared title.
+Object? faProviderMergeHook(String key, Object? incoming, Object? stored) {
+  if (key == 'faProvider') {
+    return mergeProvider(
+      stored is Map ? Map<Object?, Object?>.from(stored) : null,
+      incoming is Map ? Map<Object?, Object?>.from(incoming) : const {},
+    );
+  }
+  if (key == 'faSessionNames') {
+    final merged = <String, String>{
+      if (stored is Map)
+        for (final entry in stored.entries)
+          if (entry.value is String && (entry.value as String).isNotEmpty)
+            '${entry.key}': entry.value as String,
+    };
+    if (incoming is Map) {
+      for (final entry in incoming.entries) {
+        final value = entry.value;
+        if (value is String && value.isNotEmpty) {
+          merged['${entry.key}'] = value;
+        } else {
+          merged.remove('${entry.key}');
+        }
+      }
+    }
+    return merged;
+  }
+  return incoming;
+}

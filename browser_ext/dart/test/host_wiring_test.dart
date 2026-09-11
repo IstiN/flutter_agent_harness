@@ -40,6 +40,51 @@ void main() {
     expect(persisted['faProvider'], stored);
   });
 
+  group('faSessionNames (hosted session rename round-trip)', () {
+    UiHostAdapter adapter(Map<String, Object?> persisted) => UiHostAdapter(
+      backend: () => null,
+      onSettings: (_) {},
+      persist: (key, value) async => persisted[key] = value,
+      merge: faProviderMergeHook,
+    );
+
+    test('two surfaces renaming different sessions keep both', () {
+      final persisted = <String, Object?>{};
+      final a = adapter(persisted);
+      a.settingsPut({
+        'faSessionNames': {'s-1': 'first'},
+      });
+      a.settingsPut({
+        'faSessionNames': {'s-2': 'second'},
+      });
+      expect(a.settingsGet()['faSessionNames'], {
+        's-1': 'first',
+        's-2': 'second',
+      });
+      expect(persisted['faSessionNames'], {'s-1': 'first', 's-2': 'second'});
+    });
+
+    test('an empty value is the tombstone that deletes a cleared title', () {
+      final persisted = <String, Object?>{};
+      final a = adapter(persisted);
+      a.settingsPut({
+        'faSessionNames': {'s-1': 'first', 's-2': 'second'},
+      });
+      a.settingsPut({
+        'faSessionNames': {'s-1': ''},
+      });
+      expect(a.settingsGet()['faSessionNames'], {'s-2': 'second'});
+    });
+
+    test('the key round-trips the seed (chrome.storage boot read)', () {
+      final a = adapter(<String, Object?>{});
+      a.seed({
+        'faSessionNames': {'s-9': 'kept'},
+      });
+      expect(a.settingsGet()['faSessionNames'], {'s-9': 'kept'});
+    });
+  });
+
   group('originOf (visited-set seeding)', () {
     test('http(s) origins normalize to scheme://host[:port]', () {
       expect(

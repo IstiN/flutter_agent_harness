@@ -74,7 +74,14 @@ Future<List<String>?> pollCodeMieSignIn({
       if (result.status >= 200 && result.status < 300 && models != null) {
         return models;
       }
-      if ((result.status == 401 || result.status == 403) && !loginAsked) {
+      // Logged-out shows up two ways: a bare 401/403, OR a 200 carrying
+      // the SPA's login HTML (the transparent SSO redirect). Both mean
+      // "open the login tab once" — without the HTML branch the poll
+      // would spin to the timeout without ever opening the tab.
+      final loggedOutHtml =
+          result.status >= 200 && result.status < 300 && models == null;
+      if ((result.status == 401 || result.status == 403 || loggedOutHtml) &&
+          !loginAsked) {
         loginAsked = true;
         openLoginPage();
       }

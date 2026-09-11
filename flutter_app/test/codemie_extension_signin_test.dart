@@ -82,6 +82,23 @@ void main() {
       expect(probes, 2);
     });
 
+    test('200 with an HTML body also opens the login tab once', () async {
+      // The logged-out CodeMie answers the transparently-redirected probe
+      // with the SPA's login shell (200 + HTML), not a 401 — the tab must
+      // open on that signature too, or the poll would spin to the timeout
+      // without ever letting the user sign in.
+      var opened = 0;
+      final models = await pollCodeMieSignIn(
+        probe: () async => opened == 0
+            ? (status: 200, body: '<html>login</html>')
+            : (status: 200, body: '[{"id":"m4"}]'),
+        openLoginPage: () => opened += 1,
+        interval: Duration.zero,
+      );
+      expect(models, ['m4']);
+      expect(opened, 1);
+    });
+
     test('deadline → null; cancel flag → null', () async {
       final timedOut = await pollCodeMieSignIn(
         probe: () async => (status: 401, body: 'denied'),
