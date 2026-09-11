@@ -176,11 +176,18 @@ final class SessionChunkReader {
   }
 
   /// Reads records from the line boundary [fromOffset] to EOF. With
-  /// [maxRecords] (the jump path) at most that many parseable records are
-  /// kept; without it (the live-tail ingest path — an external CLI appended
-  /// while the app held the window) everything is returned, so a burst of
-  /// external appends is never silently dropped.
-  Future<SessionChunk> readForward(int fromOffset, {int? maxRecords}) async {
+  /// [maxRecords]/[maxBytes] (the jump and page-down paths) at most that
+  /// much is kept, scanned block-wise — the below-range of a deep-paged
+  /// window is never read whole; without caps (the live-tail ingest path
+  /// — an external CLI appended while the app held the window) everything
+  /// is returned, so a burst of external appends is never silently
+  /// dropped. The chunk's [SessionChunk.limitOffset] is the end of the
+  /// last kept record, so a capped read resumes exactly after it.
+  Future<SessionChunk> readForward(
+    int fromOffset, {
+    int? maxRecords,
+    int? maxBytes,
+  }) async {
     final info = await stat();
     if (info == null) {
       throw SessionException(
@@ -197,15 +204,91 @@ final class SessionChunkReader {
         limitOffset: info.size,
       );
     }
+    if (maxRecords != null || maxBytes != null) {
+      return _scanForwardCapped(
+        fromOffset,
+        size: info.size,
+        mtimeMs: info.mtimeMs,
+        maxRecords: maxRecords ?? 1 << 40,
+        maxBytes: maxBytes ?? 1 << 60,
+      );
+    }
     final bytes = await _readRange(fromOffset, info.size);
     final lines = _splitLines(bytes, fromOffset);
     final entries = _parseAllLines(lines);
     return SessionChunk(
-      entries: maxRecords == null ? entries : entries.take(maxRecords).toList(),
+      entries: entries,
       fileSize: info.size,
       fileMtimeMs: info.mtimeMs,
       hasOlder: false,
       limitOffset: info.size,
+    );
+  }
+
+  /// Forward scan bounded by both caps: 1 MiB blocks, the torn tail line
+  /// carries into the next block, unparseable lines are skipped (never
+  /// fatal in a windowed read).
+  Future<SessionChunk> _scanForwardCapped(
+    int fromOffset, {
+    required int size,
+    required int mtimeMs,
+    required int maxRecords,
+    required int maxBytes,
+  }) async {
+    const block = 1 << 20;
+    final entries = <SessionChunkEntry>[];
+    var lastKeptEnd = fromOffset;
+    var totalBytes = 0;
+    final torn = BytesBuilder();
+    var tornStart = fromOffset;
+    var offset = fromOffset;
+    var capped = false;
+    while (!capped && offset < size) {
+      final end = offset + block < size ? offset + block : size;
+      final bytes = await _readRange(offset, end);
+      var scan = 0;
+      while (scan < bytes.length) {
+        final nl = bytes.indexOf(0x0A, scan);
+        if (nl < 0) {
+          if (torn.isEmpty) tornStart = offset + scan;
+          torn.add(Uint8List.sublistView(bytes, scan));
+          scan = bytes.length;
+          break;
+        }
+        torn.add(Uint8List.sublistView(bytes, scan, nl));
+        final raw = torn.takeBytes();
+        final lineStart = tornStart;
+        final lineEnd = offset + nl + 1;
+        tornStart = lineEnd;
+        scan = nl + 1;
+        if (raw.isEmpty) continue;
+        try {
+          final record = parseSessionEntryLine(utf8.decode(raw), '', lineStart);
+          entries.add(
+            SessionChunkEntry(
+              offset: lineStart,
+              bytes: raw.length,
+              record: record,
+            ),
+          );
+          lastKeptEnd = lineEnd;
+          totalBytes += raw.length + 1;
+        } on Object {
+          // torn or foreign line: skip
+        }
+        if (entries.length >= maxRecords || totalBytes >= maxBytes) {
+          capped = true;
+          break;
+        }
+      }
+      offset = end;
+    }
+    return SessionChunk(
+      entries: entries,
+      fileSize: size,
+      fileMtimeMs: mtimeMs,
+      hasOlder: false,
+      limitOffset: lastKeptEnd,
     );
   }
 

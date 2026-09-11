@@ -104,7 +104,6 @@ final class CountingFileSystem implements FileSystem, RangedReadFileSystem {
   }
 }
 
-
 void main() {
   late MemoryFileSystem fs;
   const path = '/sessions/big.jsonl';
@@ -132,6 +131,7 @@ void main() {
     await fs.writeFile(path, buffer.toString());
     return count;
   }
+
   Future<JsonlSessionStorage> seed(int count) async {
     final storage = await JsonlSessionStorage.create(
       fs,
@@ -152,8 +152,9 @@ void main() {
     return storage;
   }
 
-  List<String> idsOf(List<SessionRecord> records) =>
-      [for (final record in records) record.id];
+  List<String> idsOf(List<SessionRecord> records) => [
+    for (final record in records) record.id,
+  ];
 
   group('WindowedSessionStorage.open', () {
     test('reads only the tail window, not the whole file', () async {
@@ -183,7 +184,8 @@ void main() {
       expect(
         counting.bulkBytes,
         0,
-        reason: 'windowed open must not materialize the file via '
+        reason:
+            'windowed open must not materialize the file via '
             'readTextFile/readBinaryFile',
       );
       expect(
@@ -255,8 +257,7 @@ void main() {
       expect(await windowed.loadOlder(), isEmpty);
     });
 
-    test('a chunk of foreign-branch records does not strand paging',
-        () async {
+    test('a chunk of foreign-branch records does not strand paging', () async {
       // File shape (root-first): e0 - e1 - [e2 (branch A) | f2 (branch B)]
       // - e3, with the active leaf on branch A. The newest window (records
       // e3, f2) contains NO active-branch record above e3 — paging must
@@ -296,27 +297,31 @@ void main() {
       expect(idsOf(older2), ['e0']);
       expect(windowed.hasOlder, isFalse);
       // The branch walk renders the active branch only, root-first.
-      expect(
-        idsOf(await windowed.getPathToRoot('e3')),
-        ['e0', 'e1', 'e2', 'e3'],
-      );
+      expect(idsOf(await windowed.getPathToRoot('e3')), [
+        'e0',
+        'e1',
+        'e2',
+        'e3',
+      ]);
     });
   });
 
   group('WindowedSessionStorage byte cap', () {
-    test('keeps at least one record even when it alone exceeds the cap',
-        () async {
-      await seed(3); // e0, e1, e2 — e2 is the newest
-      final windowed = await WindowedSessionStorage.open(
-        fs,
-        path,
-        chunkRecords: 10,
-        chunkBytes: 1, // nothing should fit; the newest record still must
-      );
-      final entries = await windowed.getEntries();
-      expect(idsOf(entries), ['e2']);
-      expect(windowed.hasOlder, isTrue);
-    });
+    test(
+      'keeps at least one record even when it alone exceeds the cap',
+      () async {
+        await seed(3); // e0, e1, e2 — e2 is the newest
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 10,
+          chunkBytes: 1, // nothing should fit; the newest record still must
+        );
+        final entries = await windowed.getEntries();
+        expect(idsOf(entries), ['e2']);
+        expect(windowed.hasOlder, isTrue);
+      },
+    );
   });
 
   group('WindowedSessionStorage.mutations', () {
@@ -343,18 +348,20 @@ void main() {
       expect(await reopened.getLeafId(), 'e4');
     });
 
-    test('setLeafId writes a leaf record chaining from the current leaf',
-        () async {
-      await seed(4);
-      final windowed = await WindowedSessionStorage.open(
-        fs,
-        path,
-        chunkRecords: 2,
-      );
-      await windowed.setLeafId('e2'); // fork up to e2 — an in-window record
-      final reopened = await JsonlSessionStorage.open(fs, path);
-      expect(await reopened.getLeafId(), 'e2');
-    });
+    test(
+      'setLeafId writes a leaf record chaining from the current leaf',
+      () async {
+        await seed(4);
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 2,
+        );
+        await windowed.setLeafId('e2'); // fork up to e2 — an in-window record
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        expect(await reopened.getLeafId(), 'e2');
+      },
+    );
 
     test('createEntryId avoids collisions with loaded records', () async {
       await seed(2);
@@ -385,12 +392,12 @@ void main() {
         ),
       );
 
-      expect(await windowed.ingestAppended(), isTrue);
+      expect(idsOf((await windowed.ingestAppended()).delta), ['e10']);
       final entries = await windowed.getEntries();
       expect(idsOf(entries).last, 'e10');
       expect(await windowed.getLeafId(), 'e10');
       // Idempotent when nothing new landed.
-      expect(await windowed.ingestAppended(), isFalse);
+      expect((await windowed.ingestAppended()).delta, isEmpty);
     });
 
     test('a shrunken file re-anchors to the new tail (E5)', () async {
@@ -404,7 +411,7 @@ void main() {
       final truncated = '${raw.split('\n').take(4).join('\n')}\n';
       await fs.writeFile(path, truncated);
 
-      expect(await windowed.ingestAppended(), isTrue);
+      expect((await windowed.ingestAppended()).reanchored, isTrue);
       final entries = await windowed.getEntries();
       expect(entries, hasLength(3)); // e0..e2 survive truncation
       expect(idsOf(entries), ['e0', 'e1', 'e2']);
@@ -469,10 +476,7 @@ void main() {
       // cache bound - the invariant retires the full-materialization
       // blowup (issue #135 AC1, instrumented).
       expect(storage.residentCount, 600);
-      expect(
-        storage.residentWindowBytes,
-        lessThanOrEqualTo(24 * 1024 * 1024),
-      );
+      expect(storage.residentWindowBytes, lessThanOrEqualTo(24 * 1024 * 1024));
       // Paging up keeps the OLDEST resident slice (the just-loaded
       // history); the newest side slides out (re-readable by paging
       // back down) and the anchor keeps moving toward the file top.
@@ -480,8 +484,169 @@ void main() {
       expect(ids, [for (var i = 800; i < 1400; i++) 'e$i']);
       // 800 records remain above; the exact total survives eviction.
       expect(await storage.countAbove(), 800);
+      // The evicted newest side is COUNTED below (the page-down
+      // banner), not silently gone: 10 pages x 200 slid out.
+      expect(storage.countBelow, 1600);
       expect(await storage.countRecords(), 3000);
     });
+
+    test(
+      'eviction prunes every side structure - nothing outlives residency',
+      () async {
+        await seedRaw(3000);
+        final storage = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 200,
+          residentRecords: 600,
+          residentBytes: 24 * 1024 * 1024,
+        );
+        for (var i = 0; i < 10; i++) {
+          await storage.loadOlder();
+        }
+        // The id index and the branch walk stop at the window edge: the
+        // evicted newest records hold no strong reference (round-2
+        // review: monotonic map growth).
+        expect(await storage.getEntry('e2999'), isNull);
+        expect(await storage.getLabel('e2999'), isNull);
+        expect(idsOf(await storage.getPathToRoot('e1399')), [
+          for (var i = 800; i <= 1399; i++) 'e$i',
+        ]);
+        // The sparse offset map keeps everything explored (AC6 jumps).
+        expect(storage.offsetOf('e2999'), isNotNull);
+        expect(storage.offsetOf('e2998'), isNotNull);
+      },
+    );
+
+    test(
+      'appends never evict the live tail; the oldest side gives way',
+      () async {
+        await seedRaw(100);
+        final storage = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 50,
+          residentRecords: 60,
+          residentBytes: 1 << 30,
+        );
+        for (var i = 100; i < 400; i++) {
+          await storage.appendEntry(
+            MessageRecord(
+              id: 'e$i',
+              parentId: 'e${i - 1}',
+              timestamp: DateTime.utc(2026, 1, 2),
+              message: UserMessage.text('appended $i'),
+            ),
+          );
+        }
+        expect(storage.residentCount, 60);
+        // The live tail is resident, the leaf is the TRUE file leaf, and
+        // eviction only ever took the oldest side (round-2 review: the
+        // tail can never silently vanish).
+        final ids = idsOf(await storage.getEntries());
+        expect(ids.last, 'e399');
+        expect(await storage.getEntry('e399'), isNotNull);
+        expect(await storage.getLeafId(), 'e399');
+        expect(await storage.getEntry('e50'), isNull);
+        expect(await storage.countAbove(), 340);
+        expect(storage.countBelow, 0);
+      },
+    );
+
+    test('external ingest never evicts the live tail either', () async {
+      await seedRaw(1000);
+      final storage = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 200,
+        residentRecords: 220,
+        residentBytes: 1 << 30,
+      );
+      const iso = '2026-01-01T00:00:00.000Z';
+      final extra = StringBuffer();
+      for (var i = 1000; i < 1050; i++) {
+        extra.write(
+          '{"type":"message","id":"e$i","parentId":"e${i - 1}",'
+          '"timestamp":"$iso","message":{"role":"user","content":'
+          '[{"type":"text","text":"cli $i"}]}}\n',
+        );
+      }
+      await fs.appendFile(path, extra.toString());
+      expect(idsOf((await storage.ingestAppended()).delta).last, 'e1049');
+      expect(idsOf(await storage.getEntries()).last, 'e1049');
+      // 200 + 50 ingested over the 220 cap: the OLDEST side gives way,
+      // the tail stays.
+      expect(storage.residentCount, 220);
+      expect(await storage.countAbove(), 830);
+    });
+    test(
+      'deep paging slides the newest side out; loadNewer pages it back',
+      () async {
+        await seedRaw(3000);
+        final storage = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 200,
+          residentRecords: 600,
+          residentBytes: 24 * 1024 * 1024,
+        );
+        final view = idsOf(await storage.getEntries());
+        while (storage.hasOlder) {
+          final joined = await storage.loadOlder();
+          if (joined.isEmpty) fail('loadOlder stalled with history above');
+          view.insertAll(0, idsOf(joined));
+        }
+        // The paged deltas rebuild the whole branch above the open tail:
+        // no gaps, no duplicates, no reordering (AC3).
+        expect(view, [for (var i = 0; i < 3000; i++) 'e$i']);
+        expect(await storage.countAbove(), 0);
+        // Everything that slid out the newest side is COUNTED below.
+        expect(storage.countBelow, 2400);
+
+        // The page-down path (round-2 review): the evicted newest side
+        // comes back chunk by chunk, oldest-first, until the live tail.
+        final paged = <String>[];
+        while (storage.hasNewer) {
+          final joined = await storage.loadNewer();
+          if (joined.isEmpty) fail('loadNewer stalled with records below');
+          paged.addAll(idsOf(joined));
+        }
+        expect(paged, [for (var i = 600; i < 3000; i++) 'e$i']);
+        expect(storage.countBelow, 0);
+        expect(idsOf(await storage.getEntries()).last, 'e2999');
+      },
+    );
+
+    test(
+      'jumpToOffset recenters the window; leaf and counts behave (AC6)',
+      () async {
+        await seedRaw(3000);
+        final storage = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 200,
+        );
+        await storage.loadOlder(); // explore one chunk up: e2600..e2799
+        final target = storage.offsetOf('e2700');
+        expect(target, isNotNull);
+
+        final branch = await storage.jumpToOffset(target!);
+        expect(idsOf(branch), contains('e2700'));
+        final ids = idsOf(await storage.getEntries());
+        expect(ids, contains('e2700'));
+        expect(ids.length, lessThanOrEqualTo(200));
+        // The leaf is the TRUE file leaf regardless of the window position.
+        expect(await storage.getLeafId(), 'e2999');
+        // Edges are unknown right after a jump (null, not a guess).
+        expect(await storage.countAbove(), isNull);
+        // And the jump window pages back down to the tail cleanly.
+        while (storage.hasNewer) {
+          await storage.loadNewer();
+        }
+        expect(idsOf(await storage.getEntries()).last, 'e2999');
+        expect(storage.countBelow, 0);
+      },
+    );
 
     test('byte cap bounds residency with pathological records', () async {
       // Five ~1.2 MiB records: the record cap alone would admit them all.
@@ -530,14 +695,13 @@ void main() {
       }
       final appended = await fs.appendFile(path, extra.toString());
       if (appended.isErr) fail('append failed: ${appended.errorOrNull}');
-      expect(await storage.ingestAppended(), isTrue);
+      expect(idsOf((await storage.ingestAppended()).delta), hasLength(5));
       // A stale memo would report 1000 and drift the banner count
       // downward (negative) after every external append.
       expect(await storage.countRecords(), 1005);
     });
 
-    test('seeded tap-walk concatenates the full branch with no gaps',
-        () async {
+    test('seeded tap-walk concatenates the full branch with no gaps', () async {
       await seedRaw(777);
       final storage = await WindowedSessionStorage.open(
         fs,

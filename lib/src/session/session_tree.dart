@@ -352,6 +352,16 @@ final class Session {
     ];
   }
 
+  /// Projects an explicit record path (root-first) into messages — the
+  /// same fold [buildContext] applies to the storage-walked branch. The
+  /// windowed host keeps its own accumulated view path (storage residency
+  /// is tail-anchored and drops old records), so the transcript renders
+  /// through this instead of a second storage walk.
+  List<Message> projectPath(List<SessionRecord> path) => [
+    for (final entry in _applyCompactionTransform(path))
+      ..._entryToMessages(entry),
+  ];
+
   /// Rebuilds the full [SessionContext] (messages plus derived model state)
   /// for the active branch.
   Future<SessionContext> buildContext() async {
