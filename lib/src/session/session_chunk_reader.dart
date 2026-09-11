@@ -261,20 +261,10 @@ final class SessionChunkReader {
         final lineEnd = offset + nl + 1;
         tornStart = lineEnd;
         scan = nl + 1;
-        if (raw.isEmpty) continue;
-        try {
-          final record = parseSessionEntryLine(utf8.decode(raw), '', lineStart);
-          entries.add(
-            SessionChunkEntry(
-              offset: lineStart,
-              bytes: raw.length,
-              record: record,
-            ),
-          );
+        final added = _keepEntry(raw, lineStart, lineEnd, entries);
+        if (added > 0) {
           lastKeptEnd = lineEnd;
-          totalBytes += raw.length + 1;
-        } on Object {
-          // torn or foreign line: skip
+          totalBytes += added;
         }
         if (entries.length >= maxRecords || totalBytes >= maxBytes) {
           capped = true;
@@ -290,6 +280,26 @@ final class SessionChunkReader {
       hasOlder: false,
       limitOffset: lastKeptEnd,
     );
+  }
+
+  /// Parses one complete line and, on success, records it; returns the
+  /// line's byte weight (0 when the line is skipped - torn or foreign).
+  int _keepEntry(
+    Uint8List raw,
+    int lineStart,
+    int lineEnd,
+    List<SessionChunkEntry> entries,
+  ) {
+    if (raw.isEmpty) return 0;
+    try {
+      final record = parseSessionEntryLine(utf8.decode(raw), '', lineStart);
+      entries.add(
+        SessionChunkEntry(offset: lineStart, bytes: raw.length, record: record),
+      );
+      return raw.length + 1;
+    } on Object {
+      return 0;
+    }
   }
 
   /// Streams the file counting newlines — no JSON decode (~1 s per 300 MB).

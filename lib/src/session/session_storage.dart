@@ -112,7 +112,10 @@ String? leafIdAfterSessionRecord(SessionRecord record) {
   return record is LeafRecord ? record.targetId : record.id;
 }
 
-void updateSessionLabelCache(Map<String, String> labelsById, SessionRecord record) {
+void updateSessionLabelCache(
+  Map<String, String> labelsById,
+  SessionRecord record,
+) {
   if (record is! LabelRecord) return;
   final label = record.label?.trim();
   if (label != null && label.isNotEmpty) {
@@ -216,7 +219,11 @@ SessionHeader parseSessionHeaderLine(String line, String filePath) {
 /// Public for the windowed reader (`session_chunk_reader.dart`). Throws
 /// [SessionException] on a torn or foreign line — windowed callers treat
 /// that as "skip this line", never as a fatal open failure.
-SessionRecord parseSessionEntryLine(String line, String filePath, int lineNumber) {
+SessionRecord parseSessionEntryLine(
+  String line,
+  String filePath,
+  int lineNumber,
+) {
   Object? parsed;
   try {
     parsed = jsonDecode(line);
@@ -282,8 +289,7 @@ Future<SessionMetadata> loadJsonlSessionMetadata(
 /// Append-only JSONL session storage on top of a [FileSystem].
 ///
 /// Ported from pi's `JsonlSessionStorage`.
-final class JsonlSessionStorage
-    implements SessionStorage, SessionHeaderCache {
+final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   JsonlSessionStorage._(
     this._fs,
     this._filePath,

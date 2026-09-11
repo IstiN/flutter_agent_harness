@@ -231,31 +231,45 @@ final class WindowedSessionStorage
   }) async {
     final joined = <SessionRecord>[];
     for (var pass = 0; pass < maxChunks; pass++) {
-      if (!_hasOlder) break;
-      final connectId = await _branchConnectId();
-      if (connectId == null) break; // branch root is already resident
-      final top = _windowTopOffset;
-      if (top == null) break;
-      final chunk = await _reader.readBefore(
-        top,
-        maxRecords: maxRecords,
-        maxBytes: maxBytes,
-      );
-      if (chunk.isEmpty) {
-        _hasOlder = false;
-        break;
-      }
-      _windowTopOffset = chunk.firstOffset;
-      _hasOlder = chunk.hasOlder;
-      _indexChunk(chunk, prepend: true);
-      _aboveCount = _aboveCount == null
-          ? null
-          : _aboveCount! - chunk.entries.length;
-      joined.addAll(_joinBranchUpward(chunk, connectId));
+      final chunk = await _readOlderChunk(maxRecords, maxBytes);
+      if (chunk == null) break;
+      joined.addAll(_joinBranchUpward(chunk.$1, chunk.$2));
       if (joined.isNotEmpty || !_hasOlder) break;
     }
     _evictToBound(newestSide: true);
     return joined;
+  }
+
+  /// One page-up pass: reads the chunk above the window, indexes it
+  /// (prepended), advances the window top, and reports the connect id
+  /// for the branch join. `null` when no pass applies (no history above,
+  /// branch root resident, or the file top reached - `_hasOlder` then
+  /// goes false).
+  Future<(SessionChunk, String?)?> _readOlderChunk(
+    int maxRecords,
+    int maxBytes,
+  ) async {
+    if (!_hasOlder) return null;
+    final connectId = await _branchConnectId();
+    if (connectId == null) return null; // branch root is already resident
+    final top = _windowTopOffset;
+    if (top == null) return null;
+    final chunk = await _reader.readBefore(
+      top,
+      maxRecords: maxRecords,
+      maxBytes: maxBytes,
+    );
+    if (chunk.isEmpty) {
+      _hasOlder = false;
+      return null;
+    }
+    _windowTopOffset = chunk.firstOffset;
+    _hasOlder = chunk.hasOlder;
+    _indexChunk(chunk, prepend: true);
+    _aboveCount = _aboveCount == null
+        ? null
+        : _aboveCount! - chunk.entries.length;
+    return (chunk, connectId);
   }
 
   /// Pages one chunk of records back in BELOW the window — the
@@ -336,19 +350,30 @@ final class WindowedSessionStorage
     }
     _fileSize = info.size;
     if (_knownFileBytes != previousSize) {
-      // Deep-paged: the appends land below the window. Count them (and
-      // remember their offsets for jumps) without indexing — paging
-      // down re-reads the range.
-      final chunk = await _reader.readForward(_knownFileBytes);
-      for (final entry in chunk.entries) {
-        _offsetById[entry.record.id] = entry.offset;
-        _appendedBelow[entry.record.id] = entry.record;
-      }
-      if (_belowCount != null) {
-        _belowCount = _belowCount! + chunk.entries.length;
-      }
-      return (reanchored: false, delta: const <SessionRecord>[]);
+      return _ingestBelowWindow();
     }
+    return _ingestAtTail();
+  }
+
+  /// Deep-paged ingest: the appended lines land BELOW the window. They
+  /// are counted (and their offsets remembered for jumps) without being
+  /// indexed - paging down re-reads the range.
+  Future<({bool reanchored, List<SessionRecord> delta})>
+  _ingestBelowWindow() async {
+    final chunk = await _reader.readForward(_knownFileBytes);
+    for (final entry in chunk.entries) {
+      _offsetById[entry.record.id] = entry.offset;
+      _appendedBelow[entry.record.id] = entry.record;
+    }
+    if (_belowCount != null) {
+      _belowCount = _belowCount! + chunk.entries.length;
+    }
+    return (reanchored: false, delta: const <SessionRecord>[]);
+  }
+
+  /// Tail-anchored ingest: the appended lines extend the window bottom
+  /// directly. The delta is the part of the branch below the old bottom.
+  Future<({bool reanchored, List<SessionRecord> delta})> _ingestAtTail() async {
     final chunk = await _reader.readForward(_knownFileBytes);
     _indexChunk(chunk);
     if (chunk.entries.isNotEmpty) {
