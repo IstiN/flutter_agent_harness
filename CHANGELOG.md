@@ -3139,6 +3139,10 @@
 - fix(122): run dart pub publish --dry-run in PR quality gates (#128)
 - fix(118): strip Dart core exception prefixes from model-visible tool errors (#127)
 
+## 0.1.346
+
+- ci(browser-ext): placeholder .env for the dispatch-only panel-app build (#136)
+
 ## Unreleased
 
 ## Unreleased
