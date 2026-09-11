@@ -54,7 +54,17 @@ if [ "$with_app" -eq 1 ]; then
   # --base-href MUST match the panel-relative location: panel.js resolves
   # 'app/index.html' against panel/panel.html, so the bundle lives at
   # browser_ext/panel/app/ (a root-level copy is invisible to the panel).
-  ( cd flutter_app && flutter pub get >/dev/null && \
+  ( cd flutter_app && flutter pub get >/dev/null
+    # .env is gitignored but declared as a Flutter asset (pubspec.yaml),
+    # so the web build dies bundling it when the file is absent (#140).
+    # Create it AFTER pub get — pub get removes a placeholder touched
+    # earlier (runs 34593431895, 34596707238) — and keep it non-empty:
+    # the populated placeholder is the shape build-macos.yml's app job
+    # has shipped green. A real local .env (developer keys) is never
+    # overwritten.
+    if [ ! -f .env ]; then
+      printf 'OPENROUTER_API_KEY=\nMODEL_ID=\nBASE_URL=\n' > .env
+    fi
     FLUTTER_WEB_CANVASKIT_URL=./canvaskit/ \
     flutter build web --release --pwa-strategy=none --base-href=/panel/app/ \
       --dart-define=FA_HOST=extension )
