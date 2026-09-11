@@ -328,6 +328,15 @@ final _branchSummaryPattern = RegExp(
   r'^The following is a summary of a branch',
 );
 
+/// Whether a user-role text is synthetic harness content (system-notice
+/// envelope, agent mail, or a projected branch summary) rather than the
+/// user's own words. Shared by the summarizer's request-candidate scan
+/// and the structured compaction ledger (which must never hide a real
+/// user turn).
+bool isSyntheticUserText(String text) =>
+    _systemNoticePattern.hasMatch(text) ||
+    _branchSummaryPattern.hasMatch(text) ||
+    _agentMailPattern.hasMatch(text);
 /// Flattens a user-message content (plain text or content blocks) to text.
 String _userMessageText(Object content) {
   if (content is String) return content;
