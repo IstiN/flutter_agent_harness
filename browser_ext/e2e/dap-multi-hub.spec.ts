@@ -1,7 +1,9 @@
 // SMOKE (sw/main.js hub.* handlers): bookmarks list — save preserves it,
 // hub.connections.set overwrites it, hub.switch re-points faDap with the
 // entry's secret semantics (open bookmark clears the stored password).
-import { test, expect } from './helpers';
+import fs from 'node:fs';
+import path from 'node:path';
+import { repoRoot, test, expect } from './helpers';
 
 type Msg = Record<string, unknown>;
 
@@ -10,8 +12,22 @@ test('multi-hub bookmarks: set / preserve / switch / secret semantics', async ({
 }) => {
   test.setTimeout(120_000);
   const page = fa.panel;
-  await page.waitForURL('**/app/index.html', { timeout: 20_000 });
-  await page.waitForTimeout(2_000);
+  // Both panel flavors serve this spec — every step below is
+  // chrome.runtime.sendMessage / chrome.storage.local from the extension
+  // origin, on the legacy panel.html just as on the app page. Only the
+  // --with-app build redirects (issue #157: the unconditional app-URL
+  // wait was a guaranteed 20s timeout on the no-bundle default job, where
+  // the panel never leaves panel.html), so only it needs the settle wait:
+  // evaluating mid-redirect dies with "Execution context was destroyed".
+  // Key on the bundle FILE, not FA_E2E_WITH_APP — mirrors #158's guard
+  // class; swap to helpers.appBundlePresent when #158 rides this branch.
+  if (
+    fs.existsSync(
+      path.join(repoRoot, 'browser_ext', 'panel', 'app', 'index.html'),
+    )
+  ) {
+    await page.waitForURL('**/app/index.html', { timeout: 20_000 });
+  }
 
   const send = (msg: Msg) =>
     page.evaluate(
