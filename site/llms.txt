@@ -62,12 +62,16 @@
 - Email bodies and attachments enter the model context only inside a
   quarantine fence marked as untrusted data, so instructions inside a
   message can never drive the agent.
-- Manifest artifact: https://fa1.dev/outlook/manifest.xml — sideload via
-  Outlook on the web (Settings → Integrate apps → Upload custom apps →
-  "Add from a URL", or download the manifest and add it from file when
-  the tenant disables URL install) or Microsoft's sideload guide for
-  classic Outlook on Windows/Mac. The taskpane page lives at
-  https://fa1.dev/outlook/.
+- Manifest artifact: https://fa1.dev/outlook/manifest.xml — download it,
+  open https://aka.ms/olksideload (My add-ins), then Custom add-ins →
+  "+ Add a custom add-in" → Add from file → manifest.xml → Install.
+  Microsoft removed the manual "Add from a URL" entry, so
+  download-then-file is the only self-service install path (works in
+  Outlook on the web, new Outlook for Windows, and classic Outlook;
+  tenants that block custom add-ins need an admin deployment or a
+  personal Outlook.com account). The taskpane page lives at
+  https://fa1.dev/outlook/; full step-by-step guide with troubleshooting:
+  https://fa1.dev/outlook/support.html
 - Sources: `office_addin/` in the repository.
 
 ## Agent tools (every platform)
@@ -134,10 +138,11 @@
 - How do I install the Chrome extension? Download
   https://fa1.dev/extension/fa-extension.zip, unzip it, then
   chrome://extensions → Developer mode → Load unpacked.
-- Does Fa run in Outlook? Yes: sideload
-  https://fa1.dev/outlook/manifest.xml (Outlook on the web: Settings →
-  Integrate apps → Upload custom apps → Add from a URL, or add the
-  downloaded manifest from file when URL install is disabled).
+- Does Fa run in Outlook? Yes: download
+  https://fa1.dev/outlook/manifest.xml, open https://aka.ms/olksideload
+  (My add-ins), then Custom add-ins → "+ Add a custom add-in" →
+  Add from file (Microsoft removed "Add from a URL"; guide:
+  https://fa1.dev/outlook/support.html).
 
 See the on-page FAQ for the same answers with anchors:
 [fa1.dev FAQ](https://fa1.dev/#faq)

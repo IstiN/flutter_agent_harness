@@ -142,7 +142,7 @@
       "name": "Does Fa run inside Outlook?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes — Fa ships as an Outlook Office Add-in. Sideload the manifest from https://fa1.dev/outlook/manifest.xml (Outlook on the web: Settings → Integrate apps → Upload custom apps → Add from a URL, or download the manifest and add it from file if your tenant disables URL install; classic Outlook on Windows and Mac: Microsoft's sideload guide with the same URL). The taskpane runs the full agent with three approval-gated mail tools: read the open email, read attachments, and insert draft bodies."
+        "text": "Yes — Fa ships as an Outlook Office Add-in. Download manifest.xml from https://fa1.dev/outlook/manifest.xml, open https://aka.ms/olksideload (My add-ins), then Custom add-ins → \"+ Add a custom add-in\" → Add from file → manifest.xml → Install. Microsoft removed the manual \"Add from a URL\" entry, so download-then-file is the only self-service path (admin-deployed catalogs can still use the URL). Works in Outlook on the web, new Outlook for Windows, and classic Outlook; the taskpane runs the full agent with three approval-gated mail tools: read the open email, read attachments, and insert draft bodies. Full step-by-step guide with troubleshooting: https://fa1.dev/outlook/support.html"
       }
     }
   ]
@@ -358,13 +358,14 @@ flutter run</pre>
         <h3>Outlook add-in</h3>
         <p>Fa lives in your mailbox: a taskpane chat that reads the open
         email, reads its attachments, and writes draft bodies — every mail
-        tool approval-gated. Sideload it once: in Outlook on the web open
-        <em>Settings → Integrate apps → Upload custom apps → Add from a
-        URL</em> and paste
-        <code>https://fa1.dev/outlook/manifest.xml</code>; if your tenant
-        disables URL install, download the manifest and pick <em>Add from
-        file</em> instead; classic Outlook on Windows/Mac follows
-        Microsoft's sideload guide with the same URL.</p>
+        tool approval-gated. Sideload it once: download
+        <a href="./outlook/manifest.xml">manifest.xml</a>, open
+        <a href="https://aka.ms/olksideload" rel="noopener">aka.ms/olksideload</a>
+        (My add-ins), then <em>Custom add-ins → “+ Add a custom add-in” →
+        Add from file</em>. Microsoft removed the manual “Add from a URL”
+        entry — download-then-file is the only self-service path.
+        Full guide: <a href="./outlook/support.html">Outlook install
+        guide</a>.</p>
       </article>
     </div>
   </section>
@@ -553,11 +554,12 @@ flutter run</pre>
         fence marked untrusted, so instructions in a message can never
         drive the agent. Ask about the open email, get attachments
         summarized, or dictate a reply straight into the compose pane.</p>
-        <p>Sideload <a href="./outlook/manifest.xml">manifest.xml</a>:
-        Outlook on the web → <em>Settings → Integrate apps → Upload custom
-        apps → Add from a URL</em>, or download the manifest and use
-        <em>Add from file</em> when URL install is disabled; classic
-        Outlook on Windows/Mac via Microsoft's sideload guide.</p>
+        <p>Sideload: download <a href="./outlook/manifest.xml">manifest.xml</a>,
+        open <a href="https://aka.ms/olksideload" rel="noopener">aka.ms/olksideload</a>
+        → My add-ins → <em>Custom add-ins → “+ Add a custom add-in” →
+        Add from file</em> (Microsoft removed the manual “Add from a URL”
+        entry). Full guide: <a href="./outlook/support.html">install +
+        troubleshooting</a>.</p>
       </article>
     </div>
   </section>
@@ -666,15 +668,17 @@ flutter run</pre>
       </details>
       <details class="faq-item" id="faq-outlook">
         <summary>Does Fa run inside Outlook?</summary>
-        <p>Yes — as an Office Add-in. Sideload the manifest from
-        <a href="./outlook/manifest.xml">fa1.dev/outlook/manifest.xml</a>:
-        Outlook on the web → <em>Settings → Integrate apps → Upload custom
-        apps → Add from a URL</em>, or download it and use <em>Add from
-        file</em> if your tenant disables URL install; classic Outlook on
-        Windows and Mac follows Microsoft's sideload guide with the same
-        URL. The taskpane
+        <p>Yes — as an Office Add-in. Download
+        <a href="./outlook/manifest.xml">fa1.dev/outlook/manifest.xml</a>,
+        open <a href="https://aka.ms/olksideload" rel="noopener">aka.ms/olksideload</a>
+        (My add-ins), then <em>Custom add-ins → “+ Add a custom add-in” →
+        Add from file</em> → manifest.xml → Install — Microsoft removed
+        the manual “Add from a URL” entry, so download-then-file is the
+        only self-service path. Works in Outlook on the web, new Outlook
+        for Windows, and classic Outlook. The taskpane
         runs the full agent with three approval-gated mail tools: read the
-        open email, read attachments, and insert draft bodies.</p>
+        open email, read attachments, and insert draft bodies. Full guide:
+        <a href="./outlook/support.html">Outlook install guide</a>.</p>
       </details>
     </div>
   </section>
