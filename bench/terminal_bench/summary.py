@@ -8,9 +8,11 @@ Reads every <runs-dir>/*/results.json (sharded runs pin --run-id, so one
 subdir per shard) and prints a GitHub-flavoured-markdown accuracy table,
 also appending it to $GITHUB_STEP_SUMMARY when set.
 
-tb exits 0 even with unresolved tasks, so the exit code is the verdict:
-1 when nothing was produced, when fewer than expected-count tasks were
-attempted (lost/killed shard), or when any task is unresolved.
+tb exits 0 even with unresolved tasks, so the exit code is the verdict on
+run COMPLETENESS only: 1 when nothing was produced or fewer than
+expected-count tasks were attempted (lost/killed shard). Unresolved or
+pending tasks are the run's scoreboard, not an infra failure — they are
+reported in the table and accuracy line without failing the step.
 --no-fail turns the verdict off (informational per-shard tallies).
 """
 import glob
@@ -65,9 +67,6 @@ def main():
 
         if missing > 0:
             problems.append(f"only {len(rows)}/{expected} expected tasks attempted")
-        unresolved = sum(1 for r in rows if r[2] != "yes")
-        if unresolved:
-            problems.append(f"{unresolved} task(s) unresolved")
 
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
