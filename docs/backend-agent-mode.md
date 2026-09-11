@@ -197,6 +197,20 @@ just by policy).
 This answers "мы хранили сессию удалённо" without inventing a new session
 format: remote = the same JSONL, relocated and mirrored.
 
+**Memory (fa built-in) in backend mode.** fa ships two memory scopes
+(`projectPath`/`userPath`, relocatable via the `memory:` config), explicit
+`memory_add/search/list/delete` tools, and compaction-time durable-fact
+extraction. Mapping — zero harness changes: a per-user HOME puts every store
+physically inside the personal sandbox; fa **user scope = the person's
+lifelong cross-chat memory** (main thread + homework chats of that user share
+it); fa **project scope = the per-chat workspace** (dies with the chat's
+DELETE); product knowledge is the system prompt + Go tools, never agent
+memory. On an infinite thread compaction fires regularly, and extraction is
+what keeps durable facts alive after old turns leave the window. Account
+deletion wipes the user's whole tree including both stores; extracted entries
+pass output moderation before landing (flagged → dropped, compaction
+unaffected).
+
 ## 6. Event mapping (harness → client grammar)
 
 | Harness `AgentEvent` | learn.ai SSE | familylearn-class SSE (v2, proposed) |
