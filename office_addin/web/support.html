@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Support — fa for Outlook</title>
-<meta name="description" content="Support for the fa Outlook add-in: sideloading help, troubleshooting the taskpane, contact.">
+<meta name="description" content="Install guide and support for the fa Outlook add-in: download the manifest, sideload it via My add-ins → Custom add-ins → Add from file, troubleshooting.">
 <link rel="canonical" href="https://fa1.dev/outlook/support.html">
 <style>
   :root {
@@ -21,24 +21,86 @@
   strong { color: var(--text); }
   code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--text); }
   .back { display: inline-block; margin-bottom: 20px; text-decoration: none; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { color: var(--text); }
+  td { color: var(--dim); }
 </style>
 </head>
 <body>
 <main>
 <a class="back" href="https://fa1.dev/">← fa1.dev</a>
 <h1>Support — fa for Outlook</h1>
-<h2>Installing</h2>
-<p>Sideload the add-in from its manifest: <code>https://fa1.dev/outlook/manifest.xml</code></p>
+<p>fa lives in your mailbox as a taskpane chat with three
+approval-gated mail tools: read the open email, read its attachments,
+write draft bodies. This page is the install guide.</p>
+
+<h2>Requirements</h2>
 <ul>
-  <li><strong>Outlook on the web:</strong> Settings → Integrate apps → Upload custom apps → “Add from a URL”, then paste the manifest URL.</li>
-  <li><strong>Windows / Mac (classic Outlook):</strong> follow Microsoft’s sideload guide with the same manifest URL.</li>
+  <li>An Outlook account: personal (outlook.com) or work/school. Org tenants must allow custom add-ins — see <a href="#troubleshooting">troubleshooting</a> if yours doesn't.</li>
+  <li>Any of: Outlook on the web (outlook.office.com / outlook.live.com), new Outlook for Windows, or classic Outlook for Windows / Mac.</li>
+  <li>The manifest: <code>https://fa1.dev/outlook/manifest.xml</code> (version ≥ 1.1.0.0 — required for the ribbon button in new Outlook).</li>
 </ul>
-<h2>Troubleshooting</h2>
+
+<h2>1. Download the manifest</h2>
+<p>Save <a href="./manifest.xml"><code>https://fa1.dev/outlook/manifest.xml</code></a>
+as <code>manifest.xml</code> (right-click → <em>Save link as…</em>, or
+Ctrl+S / Cmd+S on the page). If the browser shows the XML as text,
+save the page source; don't let the file become
+<code>manifest.xml.txt</code>.</p>
+<p>Why download instead of URL: Microsoft removed the manual
+“Add from a URL” entry from the add-ins dialog, so
+download-then-file is the only self-service install path.</p>
+
+<h2>2. Open the add-ins manager</h2>
+<p>The reliable entry on every surface is Microsoft's deep link:
+<strong><a href="https://aka.ms/olksideload" rel="noopener">https://aka.ms/olksideload</a></strong>
+— it opens Outlook's <em>My add-ins</em> dialog directly. Sign in with
+the same account you read mail with.</p>
+<p>Manual alternatives (same dialog, more clicks):</p>
 <ul>
-  <li><strong>“host API unavailable” banner:</strong> the Office.js runtime did not load. Reload the taskpane; if it persists, the pane answers without mail tools.</li>
-  <li><strong>Taskpane blank:</strong> make sure your network allows <code>fa1.dev</code> and the Office.js CDN.</li>
-  <li><strong>Build a dev copy:</strong> <code>bash scripts/build_office_addin.sh --dev</code> produces a manifest pointed at <code>https://localhost:8443</code>.</li>
+  <li><strong>Outlook on the web / new Outlook:</strong> open a message, then the <em>Apps</em> flyout in the reading-pane toolbar → <em>Get add-ins</em>. Note: new Outlook's main Settings page has no add-ins section — the Apps flyout on a message is the entry.</li>
+  <li><strong>Classic Outlook (Windows/Mac):</strong> ribbon <em>Home</em> → <em>Get Add-ins</em> (or <em>File</em> → <em>Manage Add-ins</em>), then the <em>My add-ins</em> tab.</li>
 </ul>
+
+<h2>3. Install from file</h2>
+<p>In the dialog: <strong>My add-ins → Custom add-ins →
+“+ Add a custom add-in” → Add from file</strong> → pick the
+downloaded <code>manifest.xml</code> → <em>Install</em>. Accept the
+trust prompt (“This add-in is not from the App Store”) with
+<em>Install</em>.</p>
+<p>The add-in now appears under <em>My add-ins</em> →
+<em>Custom add-ins</em> as <strong>fa</strong>.</p>
+
+<h2>4. Open the taskpane</h2>
+<p>Open (or select) any email message, then:</p>
+<ul>
+  <li><strong>New Outlook for Windows / Outlook on the web:</strong> the message's <em>Apps</em> flyout (toolbar or ⋯ menu) → <strong>fa</strong>; in a compose window the flyout sits in the compose toolbar. <em>(Requires manifest ≥ 1.1.0.0.)</em></li>
+  <li><strong>Classic Outlook for Windows:</strong> <em>Home</em> ribbon → <strong>fa</strong> button.</li>
+  <li><strong>Classic Outlook for Mac:</strong> the message ribbon → <strong>fa</strong>.</li>
+</ul>
+<p>Configure a provider and API key inside the pane (BYOK — the key
+stays in the add-in's local storage). Reading a mail body or
+attachment always prompts for approval. To remove:
+<em>My add-ins</em> → <em>Custom add-ins</em> → ⋯ on fa →
+<em>Remove</em>.</p>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<table>
+  <tr><th>Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>“Installation failed — Add-in installation failed.” on upload</td><td>The manifest failed validation. This was a real manifest defect before v1.0.0.0 finished deployment (#131/#133 — an XML comment bug, since fixed; Microsoft's validation gateway now accepts the manifest). Re-download <code>manifest.xml</code> and retry; make sure the file wasn't saved as <code>.txt</code> or truncated.</td></tr>
+  <tr><td>No <em>Custom add-ins</em> section, or “installing from url is disabled”</td><td>Your tenant blocks custom add-ins (common in corporate tenants). An admin can deploy fa via the M365 admin center (<em>Settings → Integrated apps → Upload custom apps</em>), or install with a personal Outlook.com account instead.</td></tr>
+  <tr><td>Installed but no <strong>fa</strong> button anywhere in new Outlook</td><td>Manifest &lt; 1.1.0.0 has no ribbon surface in new Outlook (#143). Re-download the manifest (check <code>&lt;Version&gt;</code> — need 1.1.0.0+), remove the old add-in, re-add from file. In classic Outlook the taskpane entry appears without the button.</td></tr>
+  <tr><td>Old version keeps running after an update</td><td>Outlook caches add-ins for up to 24 h (classic Windows). Remove the add-in, re-add from the new manifest, restart Outlook; worst case wait out the cache.</td></tr>
+  <tr><td>“host API unavailable” banner in the taskpane</td><td>The Office.js runtime did not load. Reload the taskpane; if it persists, the pane answers without mail tools.</td></tr>
+  <tr><td>Taskpane blank</td><td>Make sure your network allows <code>fa1.dev</code> and the Office.js CDN (<code>appsforoffice.microsoft.com</code>) — check proxies and corporate filters.</td></tr>
+</table>
+<p>Full guide with the same steps in the repository:
+<a href="https://github.com/IstiN/flutter_agent_harness/blob/main/docs/outlook-addin.md">docs/outlook-addin.md</a>.</p>
+
+<h2>Dev copy</h2>
+<p><code>bash scripts/build_office_addin.sh --dev</code> produces a manifest pointed at <code>https://localhost:8443</code>.</p>
+
 <h2>Contact</h2>
 <p>Still stuck? Mail <a href="mailto:support@fa1.dev">support@fa1.dev</a> and include your Outlook host (web / Windows / Mac) and the version shown in the taskpane.</p>
 </main>
