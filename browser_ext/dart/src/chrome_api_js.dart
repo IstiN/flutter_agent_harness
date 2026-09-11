@@ -37,6 +37,9 @@ external JSAny? _applyFn(JSFunction fn, JSAny? thisArg, JSArray args);
 @JS('chrome')
 external JSObject get _chromeRoot;
 
+@JS('Object.getOwnPropertyNames')
+external JSArray<JSAny> _ownPropertyNames(JSObject target);
+
 // ---------------------------------------------------------------------------
 // Generic core — the ONE mechanism every facade rides on
 // ---------------------------------------------------------------------------
@@ -1286,6 +1289,134 @@ final class _PageCapture implements PageCaptureApi {
   );
 }
 
+/// The generic bridge (issue #137): reflection over the live chrome global
+/// + promisified path calls. The catalog never lies — it reads exactly the
+/// namespaces Chrome materialized for this manifest.
+final class _Bridge implements BridgeApi {
+  @override
+  Future<List<String>> namespaces() async {
+    final names = <String>[];
+    for (final any in _ownPropertyNames(_chromeRoot).toDart) {
+      final name = (any as JSString).toDart;
+      final value = _prop(_chromeRoot, name);
+      // Namespaces are objects; function-valued leftovers (legacy
+      // chrome.loadTimes-style) and primitives are not API surfaces.
+      if (value != null && value.isA<JSObject>() && !value.isA<JSFunction>()) {
+        names.add(name);
+      }
+    }
+    names.sort();
+    return names;
+  }
+
+  @override
+  Future<Map<String, Object?>> namespace(String ns) async {
+    var node = _chromeRoot;
+    for (final segment in ns.split('.')) {
+      final next = _prop(node, segment);
+      if (next == null || !next.isA<JSObject>() || next.isA<JSFunction>()) {
+        throw ChromeApiException('api_missing', 'chrome.$ns is not available');
+      }
+      node = next as JSObject;
+    }
+    final methods = <String, int>{};
+    final events = <String>[];
+    final children = <String>[];
+    for (final any in _ownPropertyNames(node).toDart) {
+      final name = (any as JSString).toDart;
+      final value = _prop(node, name);
+      if (value != null && value.isA<JSFunction>()) {
+        // Arity = the function's declared parameter count (fn.length) —
+        // what the model uses to shape args.
+        final arity = _intOf(
+          _getProperty(value as JSObject, 'length'.toJS),
+        );
+        methods[name] = arity ?? 0;
+        continue;
+      }
+      if (value != null && value.isA<JSObject>()) {
+        final listener = _prop(value as JSObject, 'addListener');
+        if (listener != null && listener.isA<JSFunction>()) {
+          events.add(name);
+        } else {
+          children.add(name);
+        }
+      }
+    }
+    return {
+      'methods': methods,
+      'events': events..sort(),
+      if (children.isNotEmpty) 'children': children..sort(),
+    };
+  }
+
+  @override
+  Future<Object?> call(String path, List<Object?> args) {
+    final (self, fn) = _resolve(path);
+    final completer = Completer<Object?>();
+    var settled = false;
+
+    void fail(Object error) {
+      if (settled) return;
+      settled = true;
+      completer.completeError(_chromeError(path, error));
+    }
+
+    void settle(Object? value) {
+      if (settled) return;
+      settled = true;
+      completer.complete(value);
+    }
+
+    // The promisify wrapper (E1): append a trailing callback so the
+    // callback-era stragglers can settle; MV3 promise-native APIs accept
+    // the same optional callback (Chrome's binding contract), return their
+    // promise, and whichever settles first wins. runtime.lastError is only
+    // readable inside the callback — check it there (E5).
+    final callback = ((JSAny? v) {
+      final runtime = _prop(_chromeRoot, 'runtime');
+      Object? lastError;
+      if (runtime != null && runtime.isA<JSObject>()) {
+        final err = _prop(runtime as JSObject, 'lastError');
+        if (err != null && err.isA<JSObject>()) {
+          final dartified = err.dartify();
+          if (dartified is Map && dartified['message'] != null) {
+            lastError = dartified['message'];
+          } else if (dartified != null) {
+            lastError = dartified;
+          }
+        }
+      }
+      if (lastError != null) {
+        fail(lastError);
+      } else {
+        settle(v?.dartify());
+      }
+    }).toJS;
+
+    JSAny? raw;
+    try {
+      raw = _applyFn(fn, self, [...args, callback].jsify() as JSArray);
+    } on Object catch (error) {
+      fail(error);
+      return completer.future;
+    }
+    if (raw != null && raw.isA<JSPromise>()) {
+      (raw as JSPromise<JSAny?>)
+          .toDart
+          .then((value) => settle(value?.dartify()), onError: fail);
+    }
+    // Neither promise nor callback answered synchronously: the callback
+    // owns the settlement (E1); a stray void return settles as null.
+    return completer.future;
+  }
+}
+
+int? _intOf(JSAny? raw) {
+  final dartified = raw?.dartify();
+  return dartified is int ? dartified : null;
+}
+
 final class _Permissions implements PermissionsApi {
   @override
   Future<bool> contains(List<String> permissions) async => _b(
@@ -1349,6 +1480,8 @@ final class JsChromeApi implements ChromeApi {
   late final cookies = _Cookies();
   @override
   late final storage = _Storage();
+  @override
+  late final bridge = _Bridge();
   @override
   late final alarms = _Alarms();
   @override

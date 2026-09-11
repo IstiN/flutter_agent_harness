@@ -38,6 +38,7 @@ import 'ext_ops.dart';
 import 'host_event_map.dart'
     show hostEventOf, messageToJs, transcriptReplayOf, v1OpToolResult;
 import 'browser_api_tools.dart';
+import 'bridge_tools.dart';
 import 'security/exfil_gate.dart' show OutboundKind, originOf;
 import 'chrome_api.dart';
 import 'run_script_tool.dart';
@@ -236,6 +237,14 @@ final class AgentHost implements UiHostBackend {
         visitedOrigins: visitedOrigins,
         enabledSecondTier: _enabledTools,
         exfilApproval: _askOutbound,
+      );
+      // Generic chrome.* bridge (issue #137): catalog + path calls over
+      // every declared namespace, exec-tier gated by the dynamic ask.
+      await registerBridgeTools(
+        _registry,
+        chrome,
+        riskAsk: _askBridgeRisk,
+        onFirstCall: _onFirstBridgeCall,
       );
     }
     _visitedOrigins = visitedOrigins;
@@ -919,6 +928,37 @@ final class AgentHost implements UiHostBackend {
       if (origin != null) _visitedOrigins?.add(origin);
     }
     return allow;
+  }
+
+  /// The bridge's exec-tier ask (issue #137): same prompt surface as
+  /// ordinary approvals, same mode contract as the exfil gate —
+  /// yolo/unattended answer silently (zero prompts is yolo's contract),
+  /// ask/write prompt. The static tier of browser_api is read, so the
+  /// approval matrix never double-prompts; this ask carries the
+  /// exec-tier namespaces only.
+  Future<bool> _askBridgeRisk(String path, ApprovalTier tier) async {
+    if (!exfilGateShouldAsk(_approvals.mode)) return true;
+    final allow = await _promptApproval(
+      ApprovalRequest(
+        toolName: 'browser_api',
+        tier: tier,
+        arguments: {'path': path},
+        reason: 'chrome.$path is an exec-tier namespace '
+            '(code execution or user-facing surface)',
+      ),
+    );
+    return allow != ApprovalDecision.deny;
+  }
+
+  /// One-time yolo notice: the first bridge call in yolo mode drops a
+  /// status line so the transcript shows the agent reaching chrome.*
+  /// ungated (the panel also carries the persistent indicator).
+  void _onFirstBridgeCall(String path) {
+    if (_approvals.mode != ApprovalMode.yolo) return;
+    _sink({
+      'type': 'status',
+      'note': 'bridge: first chrome.* call "$path" — yolo mode, no prompt',
+    });
   }
 
   // -- Browser tools (over __faOps) ---------------------------------------------

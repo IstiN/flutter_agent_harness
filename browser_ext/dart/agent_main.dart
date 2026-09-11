@@ -290,8 +290,59 @@ void _bindV2Surface() {
   _setProperty(faAgentV2, 'removeScheduled'.toJS, _removeScheduledImpl.toJS);
   _setProperty(faAgentV2, 'listScheduled'.toJS, _listScheduledImpl.toJS);
   _setProperty(faAgentV2, 'state'.toJS, _v2StateImpl.toJS);
+  // Generic bridge seam (issue #137): raw catalog/call for the
+  // integration harness — the AGENT-facing path (tiers, gates, hygiene)
+  // is the browser_api/browser_api_catalog tools.
+  _setProperty(faAgentV2, 'bridgeCatalog'.toJS, _bridgeCatalogImpl.toJS);
+  _setProperty(faAgentV2, 'bridgeCall'.toJS, _bridgeCallImpl.toJS);
   _setProperty(globalContext, 'faAgentV2'.toJS, faAgentV2);
 }
+
+/// faAgentV2.bridgeCatalog() → {ok, namespaces} | {ok, namespace, methods,
+/// events, children?}; faAgentV2.bridgeCatalog(ns) for one namespace.
+JSPromise<JSAny?> _bridgeCatalogImpl(JSAny? ns) =>
+    _bridgeCatalog(ns).toJS;
+
+Future<JSAny?> _bridgeCatalog(JSAny? ns) async {
+  final chrome = _chromeApi;
+  if (chrome == null) return _bridgeErr('api_missing', 'no chrome surface');
+  try {
+    final name = ns == null ? null : (ns.dartify() as String?);
+    if (name == null || name.isEmpty) {
+      return {'ok': true, 'namespaces': await chrome.bridge.namespaces()}.jsify();
+    }
+    return {
+      'ok': true,
+      'namespace': name,
+      ...await chrome.bridge.namespace(name),
+    }.jsify();
+  } on ChromeApiException catch (e) {
+    return _bridgeErr(e.code, e.message);
+  } on Object catch (e) {
+    return _bridgeErr('bridge_error', '$e');
+  }
+}
+
+/// faAgentV2.bridgeCall(path, args) → {ok, result} | {ok:false, error}.
+JSPromise<JSAny?> _bridgeCallImpl(JSAny? path, JSAny? args) =>
+    _bridgeCall(path, args).toJS;
+
+Future<JSAny?> _bridgeCall(JSAny? path, JSAny? args) async {
+  final chrome = _chromeApi;
+  if (chrome == null) return _bridgeErr('api_missing', 'no chrome surface');
+  try {
+    final p = (path?.dartify() as String?) ?? '';
+    final list = (args?.dartify() as List?) ?? const [];
+    return {'ok': true, 'result': await chrome.bridge.call(p, list)}.jsify();
+  } on ChromeApiException catch (e) {
+    return _bridgeErr(e.code, e.message);
+  } on Object catch (e) {
+    return _bridgeErr('bridge_error', '$e');
+  }
+}
+
+JSAny? _bridgeErr(String code, String message) =>
+    {'ok': false, 'error': {'code': code, 'message': message}}.jsify();
 
 /// faAgentV2.schedule(id, prompt, periodMinutes) — registers a persisted
 /// task; the alarm fires `prompt` into the agent (steers mid-run, AC4c).

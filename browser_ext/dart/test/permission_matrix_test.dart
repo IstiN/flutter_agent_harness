@@ -25,7 +25,12 @@ Map<String, dynamic> _manifestJsonMap() {
   ]) {
     final file = File(path);
     if (file.existsSync()) {
-      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      // The manifest carries // comments (Chrome's parser is lenient,
+      // jsonDecode is not) — strip them, same as chrome_driver.dart.
+      final raw = file
+          .readAsStringSync()
+          .replaceAll(RegExp(r'^\s*//.*$', multiLine: true), '');
+      return jsonDecode(raw) as Map<String, dynamic>;
     }
   }
   fail(
@@ -109,12 +114,16 @@ void main() {
               isNotNull,
               reason: '${spec.name}: "$permission" is outside the table',
             );
+            // Issue #137: a Settings-gated tool may ride a core-declared
+            // permission now (the bridge made search/readingList/
+            // tabCapture always-declared) — the floor is "classified and
+            // not excluded".
             expect(
-              tier == MatrixTier.secondTier,
-              spec.visibility == BrowserToolVisibility.secondTier,
+              tier != MatrixTier.excluded,
+              isTrue,
               reason:
-                  '${spec.name} declares ${spec.visibility.name} but the '
-                  'table classifies "$permission" as ${tier!.name}',
+                  '${spec.name} needs "$permission" but the table '
+                  'classifies it as ${tier!.name}',
             );
           }
         }
@@ -210,13 +219,13 @@ void main() {
 
     test('excluded API in the manifest → exposed_excluded with rationale', () {
       final violations = checkMatrix(
-        manifestPermissions: {...corePermissions(), 'browsingData'},
+        manifestPermissions: {...corePermissions(), 'gcm'},
         entries: manifestEntries(),
         registeredToolNames: _registeredTools(),
       );
       expect(violations, hasLength(1));
       expect(violations.single.kind, 'exposed_excluded');
-      expect(violations.single.detail, contains('wipes user data'));
+      expect(violations.single.detail, contains('push-messaging'));
     });
 
     test('registration absent from the table → ghost registration', () {
@@ -263,10 +272,10 @@ void main() {
     );
 
     test('excluded APIs fail under both profiles', () {
-      final withBrowsingData = {...corePermissions(), 'browsingData'};
+      final withExcluded = {...corePermissions(), 'wallpaper'};
       for (final profile in const [profileUnpacked, profileStore]) {
         final violations = checkMatrix(
-          manifestPermissions: withBrowsingData,
+          manifestPermissions: withExcluded,
           entries: manifestEntries(),
           registeredToolNames: _registeredTools(),
           profile: profile,
@@ -274,7 +283,7 @@ void main() {
         expect(
           violations.where((v) => v.kind == 'exposed_excluded'),
           isNotEmpty,
-          reason: 'profile $profile tolerated browsingData',
+          reason: 'profile $profile tolerated wallpaper',
         );
       }
     });
@@ -342,7 +351,8 @@ void main() {
       final permissionless = manifestEntries().where(
         (e) => e.permissions.isEmpty,
       );
-      expect(permissionless.map((e) => e.tool), ['runtime']);
+      expect(permissionless.map((e) => e.tool),
+          unorderedEquals(['runtime', 'browser_api_catalog']));
       expect(tableTools, containsAll(_registeredTools()));
     });
   });

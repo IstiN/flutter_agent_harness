@@ -22,10 +22,17 @@ esac
 
 manifest=browser_ext/manifest.json
 
+# The manifest carries // comments (Chrome's parser is lenient, strict
+# JSON validators are not) — strip them before validating, the same
+# regex test/browser_ext/chrome_driver.dart uses.
 if command -v python3 >/dev/null 2>&1; then
-  python3 -m json.tool "$manifest" >/dev/null
+  python3 -c '
+import json, re, sys
+raw = open(sys.argv[1]).read()
+json.loads(re.sub(r"^\s*//.*$", "", raw, flags=re.M))
+' "$manifest"
 elif command -v node >/dev/null 2>&1; then
-  node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$manifest"
+  node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^\s*\/\/.*$/gm, ""))' "$manifest"
 else
   grep -q '"manifest_version"[[:space:]]*:[[:space:]]*3' "$manifest"
 fi

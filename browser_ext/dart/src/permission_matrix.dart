@@ -207,28 +207,13 @@ const List<ToolManifestEntry> _table = [
 
   // --- second tier: registered-but-hidden behind a Settings gate ---
   ToolManifestEntry(
-    tool: 'search',
-    permissions: {'search'},
-    tier: MatrixTier.secondTier,
-  ),
-  ToolManifestEntry(
     tool: 'topSites',
     permissions: {'topSites'},
     tier: MatrixTier.secondTier,
   ),
   ToolManifestEntry(
-    tool: 'readingList',
-    permissions: {'readingList'},
-    tier: MatrixTier.secondTier,
-  ),
-  ToolManifestEntry(
     tool: 'pageCapture',
     permissions: {'pageCapture'},
-    tier: MatrixTier.secondTier,
-  ),
-  ToolManifestEntry(
-    tool: 'tabCapture',
-    permissions: {'tabCapture'},
     tier: MatrixTier.secondTier,
   ),
   ToolManifestEntry(
@@ -242,44 +227,179 @@ const List<ToolManifestEntry> _table = [
     tier: MatrixTier.secondTier,
   ),
 
-  // --- excluded: absent from manifest and registry, on the record ---
+  // --- bridge-only core (issue #137): permissions the generic chrome.*
+  // bridge surfaces with no curated tool. Declared in permissions (the
+  // catalog must be truthful), callable through browser_api; risk rides
+  // bridgeRiskTier (bridge_tools.dart), the hard deny list still applies. ---
+  ToolManifestEntry(
+    tool: 'search',
+    permissions: {'search'},
+    tier: MatrixTier.core,
+  ),
+  ToolManifestEntry(
+    tool: 'readingList',
+    permissions: {'readingList'},
+    tier: MatrixTier.core,
+  ),
+  ToolManifestEntry(
+    tool: 'tabCapture',
+    permissions: {'tabCapture'},
+    tier: MatrixTier.core,
+  ),
   ToolManifestEntry(
     tool: 'browsingData',
     permissions: {'browsingData'},
-    tier: MatrixTier.excluded,
-    rationale: 'wipes user data',
+    tier: MatrixTier.core,
   ),
   ToolManifestEntry(
     tool: 'tts',
     permissions: {'tts'},
-    tier: MatrixTier.excluded,
-    rationale: 'Chrome omits tts from optional_permissions (not '
-        'optional-eligible); no agent surface ships on it yet',
+    tier: MatrixTier.core,
   ),
   ToolManifestEntry(
     tool: 'declarativeNetRequest',
     permissions: {'declarativeNetRequest'},
-    tier: MatrixTier.excluded,
-    rationale: 'Chrome omits declarativeNetRequest from '
-        'optional_permissions (not optional-eligible)',
+    tier: MatrixTier.core,
   ),
   ToolManifestEntry(
     tool: 'privacy',
     permissions: {'privacy'},
-    tier: MatrixTier.excluded,
-    rationale: 'mutates browser-wide privacy settings',
+    tier: MatrixTier.core,
   ),
   ToolManifestEntry(
     tool: 'proxy',
     permissions: {'proxy'},
-    tier: MatrixTier.excluded,
-    rationale: 'browser-wide settings mutation',
+    tier: MatrixTier.core,
   ),
+  // Declared for catalog truthfulness; the bridge DENIES chrome.management
+  // calls in every mode (self-preservation — see bridgeDeniedNamespaces).
   ToolManifestEntry(
     tool: 'management',
     permissions: {'management'},
+    tier: MatrixTier.core,
+  ),
+  ToolManifestEntry(
+    tool: 'clipboard',
+    permissions: {'clipboardRead', 'clipboardWrite'},
+    tier: MatrixTier.core,
+  ),
+  ToolManifestEntry(
+    tool: 'contentSettings',
+    permissions: {'contentSettings'},
+    tier: MatrixTier.core,
+  ),
+  ToolManifestEntry(
+    tool: 'fontSettings',
+    permissions: {'fontSettings'},
+    tier: MatrixTier.core,
+  ),
+  ToolManifestEntry(
+    tool: 'nativeMessaging',
+    permissions: {'nativeMessaging'},
+    tier: MatrixTier.core,
+  ),
+  ToolManifestEntry(
+    tool: 'webRequest',
+    permissions: {'webRequest'},
+    tier: MatrixTier.core,
+  ),
+  // The bridge itself: one row claiming everything only it exposes, so
+  // each bridge-only permission above is accounted for at the tool layer.
+  ToolManifestEntry(
+    tool: 'browser_api',
+    permissions: {
+      'search',
+      'readingList',
+      'tabCapture',
+      'browsingData',
+      'tts',
+      'declarativeNetRequest',
+      'privacy',
+      'proxy',
+      'management',
+      'clipboardRead',
+      'clipboardWrite',
+      'contentSettings',
+      'fontSettings',
+      'nativeMessaging',
+      'webRequest',
+    },
+    tier: MatrixTier.core,
+  ),
+  ToolManifestEntry(
+    tool: 'browser_api_catalog',
+    permissions: {},
+    tier: MatrixTier.core,
+  ),
+
+  // --- excluded: absent from manifest and registry, on the record ---
+  // (issue #137 moved browsingData/tts/declarativeNetRequest/privacy/
+  // proxy/management to core — declared + bridge-gated instead of absent.)
+  ToolManifestEntry(
+    tool: 'gcm',
+    permissions: {'gcm'},
     tier: MatrixTier.excluded,
-    rationale: 'controls other extensions',
+    rationale: 'push-messaging transport, not an agent surface',
+  ),
+  ToolManifestEntry(
+    tool: 'instanceID',
+    permissions: {'instanceID'},
+    tier: MatrixTier.excluded,
+    rationale: 'legacy push-token transport, gcm sibling',
+  ),
+  ToolManifestEntry(
+    tool: 'devtools',
+    permissions: {'devtools'},
+    tier: MatrixTier.excluded,
+    rationale: 'opens interactive devtools windows, not automation',
+  ),
+  ToolManifestEntry(
+    tool: 'fileBrowserHandler',
+    permissions: {'fileBrowserHandler'},
+    tier: MatrixTier.excluded,
+    rationale: 'ChromeOS-only',
+  ),
+  ToolManifestEntry(
+    tool: 'printing',
+    permissions: {'printing'},
+    tier: MatrixTier.excluded,
+    rationale: 'ChromeOS-only',
+  ),
+  ToolManifestEntry(
+    tool: 'printingMetrics',
+    permissions: {'printingMetrics'},
+    tier: MatrixTier.excluded,
+    rationale: 'ChromeOS-only',
+  ),
+  ToolManifestEntry(
+    tool: 'fileSystemProvider',
+    permissions: {'fileSystemProvider'},
+    tier: MatrixTier.excluded,
+    rationale: 'ChromeOS-only',
+  ),
+  ToolManifestEntry(
+    tool: 'platformKeys',
+    permissions: {'platformKeys'},
+    tier: MatrixTier.excluded,
+    rationale: 'ChromeOS-only',
+  ),
+  ToolManifestEntry(
+    tool: 'wallpaper',
+    permissions: {'wallpaper'},
+    tier: MatrixTier.excluded,
+    rationale: 'ChromeOS-only',
+  ),
+  ToolManifestEntry(
+    tool: 'enterprise.deviceAttributes',
+    permissions: {'enterprise.deviceAttributes'},
+    tier: MatrixTier.excluded,
+    rationale: 'device-admin surface, managed contexts only',
+  ),
+  ToolManifestEntry(
+    tool: 'enterprise.networkingAttributes',
+    permissions: {'enterprise.networkingAttributes'},
+    tier: MatrixTier.excluded,
+    rationale: 'device-admin surface, managed contexts only',
   ),
   ToolManifestEntry(
     tool: 'gcm',
