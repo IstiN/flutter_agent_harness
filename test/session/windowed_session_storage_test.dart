@@ -1,0 +1,451 @@
+import 'dart:typed_data';
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:test/test.dart';
+
+/// A [FileSystem] that tallies how many bytes each read strategy touched —
+/// the O(window)-not-O(file) proof for issue #135.
+final class CountingFileSystem implements FileSystem, RangedReadFileSystem {
+  CountingFileSystem(this.delegate);
+
+  final FileSystem delegate;
+
+  /// Bytes moved by ranged (seek) reads — the windowed path.
+  int rangedBytes = 0;
+
+  /// Bytes moved by whole-file reads — must stay 0 while windowed.
+  int bulkBytes = 0;
+
+  @override
+  String get cwd => delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      delegate.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      delegate.joinPath(parts);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) async {
+    final result = await delegate.readTextFile(path);
+    if (result.isOk) bulkBytes += result.valueOrNull!.length;
+    return result;
+  }
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) async {
+    final result = await delegate.readBinaryFile(path);
+    if (result.isOk) bulkBytes += result.valueOrNull!.length;
+    return result;
+  }
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      delegate.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      delegate.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      delegate.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      delegate.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) async {
+    final Result<Uint8List, FileError> result;
+    if (delegate case final RangedReadFileSystem ranged) {
+      result = await ranged.readRange(path, start, end);
+    } else {
+      result = Err(
+        FileError(FileErrorCode.notSupported, 'no ranged reads', path: path),
+      );
+    }
+    if (result.isOk) rangedBytes += result.valueOrNull!.length;
+    return result;
+  }
+}
+
+
+void main() {
+  late MemoryFileSystem fs;
+  const path = '/sessions/big.jsonl';
+
+  setUp(() {
+    fs = MemoryFileSystem();
+  });
+
+  /// Builds a big session file in one write (raw JSONL lines) — thousands
+  /// of awaited storage appends would dominate the test runtime.
+  Future<int> seedRaw(int count) async {
+    const iso = '2026-01-01T00:00:00.000Z';
+    final buffer = StringBuffer(
+      '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
+      '"cwd":"/work"}\n',
+    );
+    for (var i = 0; i < count; i++) {
+      buffer.write(
+        '{"type":"message","id":"e$i","parentId":'
+        '${i == 0 ? 'null' : '"e${i - 1}"'},"timestamp":"$iso",'
+        '"message":{"role":"user","content":[{"type":"text","text":'
+        '"message $i with a bit of body to be realistic"}]}}\n',
+      );
+    }
+    await fs.writeFile(path, buffer.toString());
+    return count;
+  }
+  Future<JsonlSessionStorage> seed(int count) async {
+    final storage = await JsonlSessionStorage.create(
+      fs,
+      path,
+      cwd: '/work',
+      sessionId: 'big',
+    );
+    for (var i = 0; i < count; i++) {
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'e$i',
+          parentId: i == 0 ? null : 'e${i - 1}',
+          timestamp: DateTime.utc(2026, 1, 1).add(Duration(minutes: i)),
+          message: UserMessage.text('message $i'),
+        ),
+      );
+    }
+    return storage;
+  }
+
+  List<String> idsOf(List<SessionRecord> records) =>
+      [for (final record in records) record.id];
+
+  group('WindowedSessionStorage.open', () {
+    test('reads only the tail window, not the whole file', () async {
+      const count = 20000; // ~4 MB file
+      await seedRaw(count);
+      final raw = (await fs.readBinaryFile(path)).getOrThrow();
+      final counting = CountingFileSystem(fs);
+
+      final windowed = await WindowedSessionStorage.open(
+        counting,
+        path,
+        chunkRecords: 200,
+      );
+
+      // Functional: the newest 200 records are resident, oldest-first.
+      final entries = await windowed.getEntries();
+      expect(entries, hasLength(200));
+      expect(idsOf(entries).first, 'e${count - 200}');
+      expect(idsOf(entries).last, 'e${count - 1}');
+      expect(windowed.hasOlder, isTrue);
+      expect(windowed.cachedMetadata.id, 'big');
+
+      // The bound: opening a ~4 MB session must move on the order of the
+      // initial window (128 KiB) plus a small header prefix — a small
+      // constant, never a fraction of the file, and never via a whole-file
+      // read.
+      expect(
+        counting.bulkBytes,
+        0,
+        reason: 'windowed open must not materialize the file via '
+            'readTextFile/readBinaryFile',
+      );
+      expect(
+        counting.rangedBytes,
+        lessThan(256 << 10),
+        reason: 'open touched ${counting.rangedBytes} of ${raw.length} bytes',
+      );
+    });
+
+    test('header parse fails loudly on a corrupt first line', () async {
+      await fs.writeFile(path, 'not json at all\n');
+      await expectLater(
+        WindowedSessionStorage.open(fs, path),
+        throwsA(isA<SessionException>()),
+      );
+    });
+
+    test('missing file surfaces notFound', () async {
+      await expectLater(
+        WindowedSessionStorage.open(fs, '/sessions/nope.jsonl'),
+        throwsA(
+          isA<SessionException>().having(
+            (error) => error.code,
+            'code',
+            SessionErrorCode.notFound,
+          ),
+        ),
+      );
+    });
+  });
+
+  group('WindowedSessionStorage.loadOlder', () {
+    test('pages older records in order until the file top', () async {
+      const count = 120;
+      final full = await seed(count);
+      final expected = idsOf(await full.getEntries());
+
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 30,
+      );
+      final loaded = idsOf(await windowed.getEntries());
+      expect(loaded, expected.sublist(count - 30));
+
+      var batches = 0;
+      while (windowed.hasOlder) {
+        final older = await windowed.loadOlder(maxRecords: 30);
+        batches++;
+        expect(older, isNotEmpty);
+        // Root-first: each batch continues upward without gaps or overlaps.
+        final previous = 'e${int.parse(loaded.first.substring(1)) - 1}';
+        expect(idsOf(older).last, previous);
+        loaded.insertAll(0, idsOf(older));
+      }
+      expect(batches, 3, reason: '120 records in 30-record pages');
+      expect(windowed.hasOlder, isFalse);
+      expect(await windowed.loadOlder(), isEmpty);
+      expect(idsOf(await windowed.getEntries()), expected);
+      // The exact count agrees with a whole-file newline scan.
+      expect(await windowed.countRecords(), count);
+    });
+
+    test('small sessions load whole: window == file', () async {
+      await seed(5);
+      final windowed = await WindowedSessionStorage.open(fs, path);
+      expect(await windowed.getEntries(), hasLength(5));
+      expect(windowed.hasOlder, isFalse);
+      expect(await windowed.loadOlder(), isEmpty);
+    });
+
+    test('a chunk of foreign-branch records does not strand paging',
+        () async {
+      // File shape (root-first): e0 - e1 - [e2 (branch A) | f2 (branch B)]
+      // - e3, with the active leaf on branch A. The newest window (records
+      // e3, f2) contains NO active-branch record above e3 — paging must
+      // keep going and land e2, then e1/e0.
+      const iso = '2026-01-01T00:00:00.000Z';
+      final header =
+          '{"type":"session","version":3,"id":"fork","timestamp":"$iso",'
+          '"cwd":"/work"}';
+      String entry(String id, String? parent) =>
+          '{"type":"message","id":"$id","parentId":${parent == null ? 'null' : '"$parent"'},'
+          '"timestamp":"$iso","message":{"role":"user","content":[{"type":"text","text":"$id"}]}}';
+      final lines = [
+        header,
+        entry('e0', null),
+        entry('e1', 'e0'),
+        entry('e2', 'e1'), // branch A
+        entry('f2', 'e1'), // branch B (foreign)
+        entry('e3', 'e2'), // newest write: active leaf chain e3-e2-e1-e0
+      ];
+      await fs.writeFile(path, '${lines.join('\n')}\n');
+
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 2,
+      );
+      expect(idsOf(await windowed.getEntries()), ['f2', 'e3']);
+      expect(await windowed.getLeafId(), 'e3');
+
+      final older = await windowed.loadOlder(maxRecords: 2);
+      // The 2-record chunk above f2 is [e1, e2]; both join the branch in
+      // one batch (f2 itself is skipped — foreign). Root-first.
+      expect(idsOf(older), ['e1', 'e2']);
+      expect(idsOf(await windowed.getEntries()), ['e1', 'e2', 'f2', 'e3']);
+
+      final older2 = await windowed.loadOlder(maxRecords: 2);
+      expect(idsOf(older2), ['e0']);
+      expect(windowed.hasOlder, isFalse);
+      // The branch walk renders the active branch only, root-first.
+      expect(
+        idsOf(await windowed.getPathToRoot('e3')),
+        ['e0', 'e1', 'e2', 'e3'],
+      );
+    });
+  });
+
+  group('WindowedSessionStorage byte cap', () {
+    test('keeps at least one record even when it alone exceeds the cap',
+        () async {
+      await seed(3); // e0, e1, e2 — e2 is the newest
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 10,
+        chunkBytes: 1, // nothing should fit; the newest record still must
+      );
+      final entries = await windowed.getEntries();
+      expect(idsOf(entries), ['e2']);
+      expect(windowed.hasOlder, isTrue);
+    });
+  });
+
+  group('WindowedSessionStorage.mutations', () {
+    test('appends persist and a full reopen sees them', () async {
+      await seed(4);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 2,
+      );
+      await windowed.appendEntry(
+        MessageRecord(
+          id: 'e4',
+          parentId: 'e3',
+          timestamp: DateTime.utc(2026, 1, 2),
+          message: UserMessage.text('appended'),
+        ),
+      );
+      expect(await windowed.getLeafId(), 'e4');
+
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      final all = await reopened.getEntries();
+      expect(idsOf(all).last, 'e4');
+      expect(await reopened.getLeafId(), 'e4');
+    });
+
+    test('setLeafId writes a leaf record chaining from the current leaf',
+        () async {
+      await seed(4);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 2,
+      );
+      await windowed.setLeafId('e2'); // fork up to e2 — an in-window record
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      expect(await reopened.getLeafId(), 'e2');
+    });
+
+    test('createEntryId avoids collisions with loaded records', () async {
+      await seed(2);
+      final windowed = await WindowedSessionStorage.open(fs, path);
+      final id = await windowed.createEntryId();
+      final entries = await windowed.getEntries();
+      expect(idsOf(entries), isNot(contains(id)));
+    });
+  });
+
+  group('WindowedSessionStorage.live tail', () {
+    test('ingestAppended picks up externally-appended records', () async {
+      await seed(10);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 5,
+      );
+
+      // An external writer (running CLI) appends below the app's nose.
+      final external = await JsonlSessionStorage.open(fs, path);
+      await external.appendEntry(
+        MessageRecord(
+          id: 'e10',
+          parentId: 'e9',
+          timestamp: DateTime.utc(2026, 1, 2),
+          message: UserMessage.text('from cli'),
+        ),
+      );
+
+      expect(await windowed.ingestAppended(), isTrue);
+      final entries = await windowed.getEntries();
+      expect(idsOf(entries).last, 'e10');
+      expect(await windowed.getLeafId(), 'e10');
+      // Idempotent when nothing new landed.
+      expect(await windowed.ingestAppended(), isFalse);
+    });
+
+    test('a shrunken file re-anchors to the new tail (E5)', () async {
+      await seed(10);
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 5,
+      );
+      final raw = (await fs.readTextFile(path)).getOrThrow();
+      final truncated = '${raw.split('\n').take(4).join('\n')}\n';
+      await fs.writeFile(path, truncated);
+
+      expect(await windowed.ingestAppended(), isTrue);
+      final entries = await windowed.getEntries();
+      expect(entries, hasLength(3)); // e0..e2 survive truncation
+      expect(idsOf(entries), ['e0', 'e1', 'e2']);
+      expect(await windowed.getLeafId(), 'e2');
+    });
+  });
+
+  group('SessionChunkReader', () {
+    test('countRecords counts records, not lines', () async {
+      await seed(7);
+      final reader = SessionChunkReader(fs: fs, path: path);
+      expect(await reader.countRecords(), 7);
+    });
+
+    test('readAround centers on the target record', () async {
+      await seed(20);
+      final reader = SessionChunkReader(fs: fs, path: path);
+      final tail = await reader.readTail(maxRecords: 20);
+      final target = tail.entries
+          .firstWhere((entry) => entry.record.id == 'e10')
+          .offset;
+      final around = await reader.readAround(target, maxRecords: 9);
+      final ids = [for (final entry in around.entries) entry.record.id];
+      // Records below AND above the target are present, in order.
+      expect(ids.indexOf('e10'), lessThan(ids.length - 1));
+      expect(ids.indexOf('e10'), greaterThan(0));
+    });
+
+    test('readForward parses only bytes from the offset', () async {
+      await seed(6);
+      final reader = SessionChunkReader(fs: fs, path: path);
+      final tail = await reader.readTail(maxRecords: 6);
+      final e3 = tail.entries
+          .firstWhere((entry) => entry.record.id == 'e3')
+          .offset;
+      final forward = await reader.readForward(e3);
+      expect(
+        [for (final entry in forward.entries) entry.record.id],
+        ['e3', 'e4', 'e5'],
+      );
+      expect(forward.limitOffset, (await fs.fileInfo(path)).getOrThrow().size);
+    });
+  });
+}

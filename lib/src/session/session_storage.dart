@@ -92,11 +92,19 @@ abstract interface class SessionStorage {
   Future<List<SessionRecord>> getEntries();
 }
 
-String? _leafIdAfter(SessionRecord record) {
+/// A [SessionStorage] whose header is parsed at construction and exposed
+/// synchronously — prompt-cache affinity and the session-scoped
+/// `.tools/<id>.yaml` path read it without an async hop.
+abstract interface class SessionHeaderCache {
+  /// The header metadata (parsed at open/creation).
+  SessionMetadata get cachedMetadata;
+}
+
+String? leafIdAfterSessionRecord(SessionRecord record) {
   return record is LeafRecord ? record.targetId : record.id;
 }
 
-void _updateLabelCache(Map<String, String> labelsById, SessionRecord record) {
+void updateSessionLabelCache(Map<String, String> labelsById, SessionRecord record) {
   if (record is! LabelRecord) return;
   final label = record.label?.trim();
   if (label != null && label.isNotEmpty) {
@@ -106,7 +114,7 @@ void _updateLabelCache(Map<String, String> labelsById, SessionRecord record) {
   }
 }
 
-String _generateEntryId(Map<String, SessionRecord> byId) {
+String generateSessionEntryId(Map<String, SessionRecord> byId) {
   for (var i = 0; i < 100; i++) {
     // The uuidv7 prefix is timestamp-derived and nearly constant between
     // calls, so short ids must come from the random tail.
@@ -127,7 +135,7 @@ final Map<String, Future<void>> _sessionFileOps = <String, Future<void>>{};
 
 /// Runs [op] after every previously queued operation on [filePath]
 /// completes. Never lets one failure poison the chain for later callers.
-Future<T> _withSessionFileLock<T>(String filePath, Future<T> Function() op) {
+Future<T> withSessionFileLock<T>(String filePath, Future<T> Function() op) {
   final result = (_sessionFileOps[filePath] ?? Future<void>.value()).then(
     (_) => op(),
   );
@@ -170,7 +178,11 @@ T _fsOrThrow<T>(Result<T, FileError> result, String message) {
   return result.valueOrNull as T;
 }
 
-SessionHeader _parseHeaderLine(String line, String filePath) {
+/// Parses the header line of a session file into its [SessionHeader].
+///
+/// Public for the windowed reader (`session_chunk_reader.dart`), which
+/// parses only the lines it reads. Throws [SessionException] on a bad line.
+SessionHeader parseSessionHeaderLine(String line, String filePath) {
   Object? parsed;
   try {
     parsed = jsonDecode(line);
@@ -191,7 +203,12 @@ SessionHeader _parseHeaderLine(String line, String filePath) {
   }
 }
 
-SessionRecord _parseEntryLine(String line, String filePath, int lineNumber) {
+/// Parses one JSONL entry line into its [SessionRecord].
+///
+/// Public for the windowed reader (`session_chunk_reader.dart`). Throws
+/// [SessionException] on a torn or foreign line — windowed callers treat
+/// that as "skip this line", never as a fatal open failure.
+SessionRecord parseSessionEntryLine(String line, String filePath, int lineNumber) {
   Object? parsed;
   try {
     parsed = jsonDecode(line);
@@ -208,7 +225,7 @@ SessionRecord _parseEntryLine(String line, String filePath, int lineNumber) {
   }
 }
 
-SessionMetadata _headerToMetadata(
+SessionMetadata headerToSessionMetadata(
   SessionHeader header,
   String path, {
   DateTime? lastUpdatedAt,
@@ -241,8 +258,8 @@ Future<SessionMetadata> loadJsonlSessionMetadata(
   );
   final line = lines.firstOrNull;
   if (line != null && line.trim().isNotEmpty) {
-    return _headerToMetadata(
-      _parseHeaderLine(line, filePath),
+    return headerToSessionMetadata(
+      parseSessionHeaderLine(line, filePath),
       filePath,
       lastUpdatedAt: lastUpdatedAt,
     );
@@ -253,7 +270,8 @@ Future<SessionMetadata> loadJsonlSessionMetadata(
 /// Append-only JSONL session storage on top of a [FileSystem].
 ///
 /// Ported from pi's `JsonlSessionStorage`.
-final class JsonlSessionStorage implements SessionStorage {
+final class JsonlSessionStorage
+    implements SessionStorage, SessionHeaderCache {
   JsonlSessionStorage._(
     this._fs,
     this._filePath,
@@ -261,13 +279,13 @@ final class JsonlSessionStorage implements SessionStorage {
     List<SessionRecord> entries,
     String? leafId, {
     int quarantined = 0,
-  }) : _metadata = _headerToMetadata(header, _filePath),
+  }) : _metadata = headerToSessionMetadata(header, _filePath),
        _entries = entries,
        _byId = {for (final entry in entries) entry.id: entry},
        _currentLeafId = leafId,
        _quarantinedEntries = quarantined {
     for (final entry in entries) {
-      _updateLabelCache(_labelsById, entry);
+      updateSessionLabelCache(_labelsById, entry);
     }
   }
 
@@ -286,6 +304,7 @@ final class JsonlSessionStorage implements SessionStorage {
 
   /// The header metadata, available synchronously (it is parsed at
   /// construction). Backs [Session.cachedId].
+  @override
   SessionMetadata get cachedMetadata => _metadata;
 
   /// Opens an existing session file.
@@ -299,7 +318,7 @@ final class JsonlSessionStorage implements SessionStorage {
   static Future<JsonlSessionStorage> open(
     FileSystem fs,
     String filePath,
-  ) async => _withSessionFileLock(filePath, () => _openLocked(fs, filePath));
+  ) async => withSessionFileLock(filePath, () => _openLocked(fs, filePath));
 
   static Future<JsonlSessionStorage> _openLocked(
     FileSystem fs,
@@ -314,17 +333,17 @@ final class JsonlSessionStorage implements SessionStorage {
         if (line.trim().isNotEmpty) line,
     ];
     if (allLines.isEmpty) _invalidSession(filePath, 'missing session header');
-    final header = _parseHeaderLine(allLines.first, filePath);
+    final header = parseSessionHeaderLine(allLines.first, filePath);
     final entries = <SessionRecord>[];
     final goodLines = <String>[allLines.first];
     final tornLines = <String>[];
     String? leafId;
     for (var i = 1; i < allLines.length; i++) {
       try {
-        final entry = _parseEntryLine(allLines[i], filePath, i + 1);
+        final entry = parseSessionEntryLine(allLines[i], filePath, i + 1);
         entries.add(entry);
         goodLines.add(allLines[i]);
-        leafId = _leafIdAfter(entry);
+        leafId = leafIdAfterSessionRecord(entry);
       } on Object {
         // A malformed line is a torn write: drop the record, keep the raw
         // bytes for the sidecar below. Never fatal.
@@ -369,7 +388,7 @@ final class JsonlSessionStorage implements SessionStorage {
       parentSessionPath: parentSessionPath,
       metadata: metadata,
     );
-    await _withSessionFileLock(filePath, () async {
+    await withSessionFileLock(filePath, () async {
       _fsOrThrow(
         await fs.writeFile(filePath, '${jsonEncode(header.toJson())}\n'),
         'Failed to create session $filePath',
@@ -402,7 +421,7 @@ final class JsonlSessionStorage implements SessionStorage {
       );
     }
     final record = LeafRecord(
-      id: _generateEntryId(_byId),
+      id: generateSessionEntryId(_byId),
       parentId: _currentLeafId,
       timestamp: DateTime.now(),
       targetId: leafId,
@@ -411,7 +430,7 @@ final class JsonlSessionStorage implements SessionStorage {
   }
 
   @override
-  Future<String> createEntryId() async => _generateEntryId(_byId);
+  Future<String> createEntryId() async => generateSessionEntryId(_byId);
 
   @override
   Future<void> appendEntry(SessionRecord record) async {
@@ -419,7 +438,7 @@ final class JsonlSessionStorage implements SessionStorage {
     // open-time heal rewrite, creation) so concurrent persistence bursts —
     // message records landing while subagent-registry snapshots flush —
     // can never interleave their byte ranges mid-record.
-    await _withSessionFileLock(_filePath, () async {
+    await withSessionFileLock(_filePath, () async {
       _fsOrThrow(
         await _fs.appendFile(_filePath, '${jsonEncode(record.toJson())}\n'),
         'Failed to append session entry ${record.id}',
@@ -427,8 +446,8 @@ final class JsonlSessionStorage implements SessionStorage {
     });
     _entries.add(record);
     _byId[record.id] = record;
-    _updateLabelCache(_labelsById, record);
-    _currentLeafId = _leafIdAfter(record);
+    updateSessionLabelCache(_labelsById, record);
+    _currentLeafId = leafIdAfterSessionRecord(record);
   }
 
   @override
