@@ -166,6 +166,7 @@ final class RelayAgentService extends AgentService {
     // user bubble is drawn locally at send time (attach replay does not
     // include it — a known v1 gap after a page reload).
     _append(fa_ui.FaChatMessage(role: 'user', content: text));
+    _trajectoryAppend(UserMessage.text(text, timestamp: DateTime.now()));
     if (_running) {
       _transport.steer(text);
     } else {
@@ -255,7 +256,62 @@ final class RelayAgentService extends AgentService {
   }
 
   @override
-  Stream<TrajectorySnapshot> get trajectory => const Stream.empty();
+  Stream<TrajectorySnapshot> get trajectory => _trajectoryFeed.stream;
+
+  @override
+  void dispose() {
+    _trajectoryFeed.dispose();
+    super.dispose();
+  }
+
+  /// The panel-side trajectory ledger: the SW owns no session-record
+  /// chain (its persistence is message-based chrome.storage), so the
+  /// panel synthesizes records from the relay rows as they land — the
+  /// same data the transcript renders, with the SW's real timestamps.
+  final fa_ui.TrajectoryServiceFeed _trajectoryFeed =
+      fa_ui.TrajectoryServiceFeed();
+  String? _trajectoryLastId;
+  int _trajectoryCounter = 0;
+
+  /// Appends one synthesized record to the trajectory ledger, chained
+  /// onto the previous row (the builder derives turns from the chain).
+  void _trajectoryAppend(Message message) {
+    final id = 'relay-${_trajectoryCounter++}';
+    _trajectoryFeed.append(
+      MessageRecord(
+        id: id,
+        parentId: _trajectoryLastId,
+        timestamp: message.timestamp,
+        message: message,
+      ),
+    );
+    _trajectoryLastId = id;
+  }
+
+  /// The SW's `timestamp` field (messageToJs), with a receive-time
+  /// fallback for rows from an older SW build.
+  DateTime _rowTimestamp(Map<String, dynamic> row) =>
+      DateTime.tryParse(row['timestamp'] as String? ?? '')?.toLocal() ??
+      DateTime.now();
+
+  /// Synthesizes the assistant message one trajectory record wraps: the
+  /// relay row carries only text (+ error), so api/provider/usage are
+  /// static stand-ins — the ledger renders text, roles and times.
+  AssistantMessage _assistantRecord(
+    String text, {
+    required DateTime timestamp,
+    StopReason stopReason = StopReason.stop,
+    String? errorMessage,
+  }) => AssistantMessage(
+    content: [TextContent(text: text)],
+    api: 'openai-completions',
+    provider: 'relay',
+    model: _modelId,
+    usage: Usage.zero,
+    stopReason: stopReason,
+    errorMessage: errorMessage,
+    timestamp: timestamp,
+  );
 
   /// User-given session titles, backed by the SW settings channel
   /// (`faSessionNames`): a rename on ANY surface (panel, desktop app,
@@ -457,6 +513,9 @@ final class RelayAgentService extends AgentService {
     _messages.clear();
     _currentAssistant = null;
     _currentThinking = null;
+    // New session, new ledger — replay rows rebuild it record by record.
+    _trajectoryFeed.reset();
+    _trajectoryLastId = null;
     for (final entry in replay) {
       final event = entry['event'];
       // dartify() (the port transport decodes JS objects) yields
@@ -500,17 +559,32 @@ final class RelayAgentService extends AgentService {
                 ? raw.split('\n').skip(1).join('\n')
                 : raw;
             _append(fa_ui.FaChatMessage(role: 'user', content: content));
+            _trajectoryAppend(
+              UserMessage.text(content, timestamp: _rowTimestamp(event)),
+            );
           }
         } else {
           _finishAssistant(event);
         }
       case 'tool_result':
+        final toolText = event['text'] as String? ?? '';
+        final toolName = event['toolName'] as String?;
+        final toolIsError = event['isError'] as bool? ?? false;
         _append(
           fa_ui.FaChatMessage(
             role: 'tool',
-            content: event['text'] as String? ?? '',
-            toolName: event['toolName'] as String?,
-            isError: event['isError'] as bool? ?? false,
+            content: toolText,
+            toolName: toolName,
+            isError: toolIsError,
+          ),
+        );
+        _trajectoryAppend(
+          ToolResultMessage(
+            toolCallId: '',
+            toolName: toolName ?? 'tool',
+            content: [TextContent(text: toolText)],
+            isError: toolIsError,
+            timestamp: _rowTimestamp(event),
           ),
         );
       case 'status':
@@ -625,6 +699,30 @@ final class RelayAgentService extends AgentService {
     // The finished thinking bubble stays on screen; the next turn's
     // reasoning opens a fresh one.
     _currentThinking = null;
+    // An errored turn (expired SSO session, gateway failure) carries its
+    // message in the `error` field with an EMPTY text — surface it as an
+    // error bubble (the [[auth-expired:…]] marker renders the
+    // re-authorize card), never as the "empty response" placeholder.
+    final errorText = message['error'] as String?;
+    if (role == 'assistant' && errorText != null && errorText.isNotEmpty) {
+      _append(
+        fa_ui.FaChatMessage(
+          role: 'assistant',
+          content: errorText,
+          isError: true,
+        ),
+      );
+      _trajectoryAppend(
+        _assistantRecord(
+          errorText,
+          timestamp: _rowTimestamp(message),
+          stopReason: StopReason.error,
+          errorMessage: errorText,
+        ),
+      );
+      notifyListeners();
+      return;
+    }
     if (role == 'assistant' && text.isEmpty) {
       // A tool-call-only assistant turn legitimately has no text — the
       // tool_result rows that follow tell the story; a placeholder here
@@ -647,6 +745,11 @@ final class RelayAgentService extends AgentService {
           content: text,
           toolName: message['toolName'] as String?,
         ),
+      );
+    } else if (role == 'assistant' && text.isNotEmpty) {
+      _append(fa_ui.FaChatMessage(role: role, content: text));
+      _trajectoryAppend(
+        _assistantRecord(text, timestamp: _rowTimestamp(message)),
       );
     } else {
       _append(fa_ui.FaChatMessage(role: role, content: text));
