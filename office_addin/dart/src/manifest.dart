@@ -4,8 +4,9 @@
 // https under the expected host (fa1.dev, or localhost:8443 in --dev
 // builds) with path prefix /outlook/, the permission ladder lands exactly
 // on ReadWriteItem (⇒ derived tiers {ReadItem, ReadWriteItem}), exactly
-// one Mailbox host, no mobile form factor. Regex-shaped on purpose: this
-// is a lint pass, not a schema parser.
+// one Mailbox host, no mobile form factor, and XML comments free of
+// "--" (illegal; strict hosts reject the whole document, #131).
+// Regex-shaped on purpose: this is a lint pass, not a schema parser.
 library;
 
 /// Verdict for one manifest document.
@@ -102,6 +103,35 @@ OutlookManifestReport validateOutlookManifest(String xml, {bool dev = false}) {
   // --- Mobile form factor is out of scope for v1. ---
   if (xml.contains('MobileFormFactor')) {
     issues.add('MobileFormFactor is not allowed in v1');
+  }
+
+  // --- XML comments: "--" inside a comment is illegal (XML 1.0 §2.5);
+  // strict hosts (Outlook upload validation) then reject the whole
+  // document as malformed ("Add-in installation failed", issue #131). ---
+  var cursor = 0;
+  while (true) {
+    final open = xml.indexOf('<!--', cursor);
+    if (open < 0) break;
+    final close = xml.indexOf('-->', open + 4);
+    if (close < 0) {
+      issues.add('unterminated XML comment');
+      break;
+    }
+    if (xml.substring(open + 4, close).contains('--')) {
+      issues.add('XML comment contains "--"; Outlook rejects the document as malformed');
+    }
+    cursor = close + 3;
+  }
+
+  // --- Compose (ItemEdit) forms: DesktopSettings allows only
+  // SourceLocation; RequestedHeight there fails the Office schema
+  // validation Outlook runs on upload (issue #131). ---
+  for (final m in RegExp(
+    r'<Form\s+xsi:type="ItemEdit">([\s\S]*?)</Form>',
+  ).allMatches(xml)) {
+    if (m.group(1)!.contains('RequestedHeight')) {
+      issues.add('RequestedHeight is not allowed in ItemEdit (compose) forms');
+    }
   }
 
   // --- Required presence. ---
