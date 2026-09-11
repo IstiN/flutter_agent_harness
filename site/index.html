@@ -142,7 +142,7 @@
       "name": "Does Fa run inside Outlook?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes — Fa ships as an Outlook Office Add-in. Download manifest.xml from https://fa1.dev/outlook/manifest.xml, open https://aka.ms/olksideload (My add-ins), then Custom add-ins → \"+ Add a custom add-in\" → Add from file → manifest.xml → Install. Microsoft removed the manual \"Add from a URL\" entry, so download-then-file is the only self-service path (admin-deployed catalogs can still use the URL). Works in Outlook on the web, new Outlook for Windows, and classic Outlook; the taskpane runs the full agent with three approval-gated mail tools: read the open email, read attachments, and insert draft bodies. Full step-by-step guide with troubleshooting: https://fa1.dev/outlook/support.html"
+        "text": "Yes — Fa ships as an Outlook Office Add-in. Download manifest.xml from https://fa1.dev/outlook/manifest.xml, open https://aka.ms/olksideload (My add-ins), then Custom add-ins → \"+ Add a custom add-in\" → Add from file → manifest.xml → Install. Microsoft removed the manual \"Add from a URL\" entry, so download-then-file is the only self-service path (admin-deployed catalogs can still use the URL). Works in Outlook on the web, new Outlook for Windows, and classic Outlook: in new Outlook and OWA the «fa» button sits in a message's Apps flyout, classic Outlook shows it on the Home ribbon. The taskpane runs the full agent with three approval-gated mail tools: read the open email, read attachments, and insert draft bodies. Full step-by-step guide with troubleshooting: https://fa1.dev/outlook/support.html"
       }
     }
   ]
@@ -558,7 +558,9 @@ flutter run</pre>
         open <a href="https://aka.ms/olksideload" rel="noopener">aka.ms/olksideload</a>
         → My add-ins → <em>Custom add-ins → “+ Add a custom add-in” →
         Add from file</em> (Microsoft removed the manual “Add from a URL”
-        entry). Full guide: <a href="./outlook/support.html">install +
+        entry). In new Outlook (Windows) and OWA the «fa» button lives in
+        a message's <em>Apps</em> flyout; classic Outlook shows it on the
+        Home ribbon. Full guide: <a href="./outlook/support.html">install +
         troubleshooting</a>.</p>
       </article>
     </div>
