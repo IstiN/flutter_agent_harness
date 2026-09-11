@@ -50,7 +50,7 @@ cp "$agent_js" "$out/"
 
 # --- 3. Static pages + icons. ---
 cp office_addin/web/index.html office_addin/web/privacy.html office_addin/web/support.html "$out/"
-cp office_addin/icons/fa-64.png office_addin/icons/fa-128.png "$out/icons/"
+cp office_addin/icons/fa-16.png office_addin/icons/fa-32.png office_addin/icons/fa-80.png office_addin/icons/fa-64.png office_addin/icons/fa-128.png "$out/icons/"
 
 # --- 4. Optional fa web app (flutter_app → outlook/app). Build artifact. ---
 if [ "$with_app" -eq 1 ]; then
