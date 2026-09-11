@@ -226,18 +226,31 @@ sealed class SessionRecord {
         display: json['display'] as bool? ?? false,
         details: json['details'],
       ),
-      'label' => LabelRecord(
+      'hidden_range' => HiddenRangeRecord(
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
-        targetId: json['targetId'] as String? ?? '',
-        label: json['label'] as String?,
+        recordIds: [
+          for (final recordId in (json['recordIds'] as List?) ?? const [])
+            recordId as String,
+        ],
       ),
-      'session_info' => SessionInfoRecord(
+      'compact_checkpoint' => CompactCheckpointRecord(
         id: id,
         parentId: parentId as String?,
         timestamp: timestamp,
-        name: json['name'] as String?,
+        firstRecordId: json['firstRecordId'] as String? ?? '',
+        lastRecordId: json['lastRecordId'] as String? ?? '',
+        text: json['text'] as String? ?? '',
+        coversRecordIds: [
+          for (final recordId in (json['coversRecordIds'] as List?) ?? const [])
+            recordId as String,
+        ],
+        flattenedRecordIds: [
+          for (final recordId
+              in (json['flattenedRecordIds'] as List?) ?? const [])
+            recordId as String,
+        ],
       ),
       'leaf' => LeafRecord(
         id: id,
@@ -397,6 +410,85 @@ final class CompactionRecord extends SessionRecord {
     'tokensBefore': tokensBefore,
     if (details != null) 'details': details,
     if (fromHook != null) 'fromHook': fromHook,
+  };
+}
+
+/// Marks records hidden in place by the structured compaction engine
+/// (issue #148, pass 1). Hiding is lossless: the referenced records stay in
+/// the session file and project into context as one-line placeholder
+/// markers at their original position, expandable on demand via
+/// `compact_expand`.
+///
+/// State is expressed over stable record ids — NEVER over positions or
+/// derived indexes (AC3 of #148: the stored state model is position-free;
+/// the short numeric ids the model sees are computed at render time from
+/// the append-only file order).
+final class HiddenRangeRecord extends SessionRecord {
+  /// Creates a [HiddenRangeRecord].
+  const HiddenRangeRecord({
+    required super.id,
+    required super.parentId,
+    required super.timestamp,
+    required this.recordIds,
+  });
+
+  /// The ids of the records hidden by this event (stable session ids).
+  final List<String> recordIds;
+
+  @override
+  String get type => 'hidden_range';
+
+  @override
+  Map<String, dynamic> payloadJson() => {'recordIds': recordIds};
+}
+
+/// A text checkpoint the structured compaction engine compacts a range
+/// into (issue #148, pass 2). The checkpoint's text replaces the range in
+/// the context projection, but every segment it covers stays listed with
+/// its expand id — nothing becomes unreachable (the anti-#81 pin).
+final class CompactCheckpointRecord extends SessionRecord {
+  /// Creates a [CompactCheckpointRecord].
+  const CompactCheckpointRecord({
+    required super.id,
+    required super.parentId,
+    required super.timestamp,
+    required this.firstRecordId,
+    required this.lastRecordId,
+    required this.text,
+    required this.coversRecordIds,
+    required this.flattenedRecordIds,
+  });
+
+  /// Id of the first record in the compacted range (inclusive).
+  final String firstRecordId;
+
+  /// Id of the last record in the compacted range (inclusive).
+  final String lastRecordId;
+
+  /// The LLM-generated checkpoint text.
+  final String text;
+
+  /// Every record id the checkpoint replaces — hidden segments, inner
+  /// checkpoints, and newly swallowed records alike. Written as ranges at
+  /// render time; stored as stable record ids.
+  final List<String> coversRecordIds;
+
+  /// Inner checkpoints whose text was folded into this one by the depth
+  /// cap (issue #148 D5: nesting depth ≤ 4, flattening merges the deepest
+  /// level's text and covers transitively). Those records stop counting
+  /// for nesting depth — they are dead nodes in the checkpoint DAG.
+  final List<String> flattenedRecordIds;
+
+  @override
+  String get type => 'compact_checkpoint';
+
+  @override
+  Map<String, dynamic> payloadJson() => {
+    'firstRecordId': firstRecordId,
+    'lastRecordId': lastRecordId,
+    'text': text,
+    'coversRecordIds': coversRecordIds,
+    'flattenedRecordIds': flattenedRecordIds,
   };
 }
 
