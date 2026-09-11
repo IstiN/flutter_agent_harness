@@ -78,12 +78,52 @@ user-visible history must keep landing in Postgres (§5).
 
 ## 4. Integration options
 
-### Option A — fa sidecar: subprocess per turn (works today)
+MVP shape (Option A) — the pinned Dart binary per user, product prompt, product
+tools over MCP, UI frozen:
 
+```mermaid
+flowchart TB
+    UI["📱 Flutter app — UI UNCHANGED (thin)"]
+
+    subgraph GO["🟦 Go product backend (familylearn / learn.ai)"]
+        direction TB
+        API["existing chat API (SSE / history / delete)"]
+        EDGE["auth · quotas · family rules · moderation"]
+        ADAPT["SSE adapter: HEP → product grammar"]
+        SUP["per-user supervisor<br/>spawn · isolate · reap · pin FA_VERSION"]
+        MCS["MCP tool server over EXISTING Go tools"]
+        MIR["session mirror"]
+    end
+
+    subgraph FAI["🟩 fa — isolated PER USER (Dart binary, version pinned)"]
+        direction TB
+        PROMPT["product system prompt<br/>--system-prompt-file"]
+        LOOP["agent loop + typed AgentEvents"]
+        SESS["session JSONL · compaction · memory"]
+        MCC["MCP client"]
+    end
+
+    TOOLS["existing Go tools: homework · notebook · test-gen"]
+    LLM["LLM provider (server-side keys)"]
+    PG[("Postgres — product truth")]
+    JL[("per-user session dir — JSONL")]
+
+    UI -->|"existing API + SSE"| API
+    API --> EDGE --> ADAPT
+    SUP ==>|"fah --session u:<userId> --output events"| LOOP
+    LOOP -->|"HEP events"| ADAPT
+    ADAPT -->|"SSE grammar unchanged"| UI
+    MCC <-->|"MCP stdio/HTTP"| MCS
+    MCS --> TOOLS
+    LOOP <--> LLM
+    SESS --> JL
+    MIR --> PG
 ```
-Flutter app ──SSE──▶ Go api-service ──spawn──▶ fah --session <key> --print "<msg>"
-                     (translates)   ◀─events──  (session JSONL on disk)
-```
+
+No migration of fa to Go: the pinned `fah` binary IS the deployment interface
+(same discipline as pinning Bifrost in aiin). Upgrades = new image.
+
+### Option A — fa sidecar: subprocess per turn (works today)
 
 - Go spawns `runHeadless`-equivalent per user message; harness emits machine-
   readable events on stdout (needs a small `--output jsonl` flag — *the only
@@ -98,12 +138,10 @@ Flutter app ──SSE──▶ Go api-service ──spawn──▶ fah --session
 
 ### Option B — fa agent service: long-lived Dart daemon (recommended target)
 
-```
-Flutter app ──SSE──▶ Go api-service ──WS/gRPC──▶ fa-agentd (Dart)
-                     edge: auth, quota,          pool of harness instances
-                     family rules, moderation,   per-chat session in memory
-                     SSE translation             + JSONL persistence
-```
+The same diagram with the supervisor replaced by a pooled `fa-agentd` daemon
+(WS HEP, sticky chat→instance routing, idle eviction); everything else —
+prompt, MCP tools, SSE grammar, storage split — unchanged from Option A.
+
 
 - A small daemon wraps the harness *library* (not the CLI): one harness
   instance per active chat, `AgentEvent` stream relayed over WS/HTTP; sessions
