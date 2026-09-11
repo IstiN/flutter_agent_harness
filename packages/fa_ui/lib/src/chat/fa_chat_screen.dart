@@ -211,6 +211,10 @@ class _FaChatScreenState extends State<FaChatScreen>
   bool _isStreaming = false;
   String? _error;
 
+  /// Mirrors [FaChatService.historyAboveCount] so a change (a count
+  /// landing, a page loading) can drive a rebuild.
+  int? _historyAbove;
+
   /// Whether the file browser side panel is expanded (wide layouts only).
   bool _filesPanelOpen = false;
 
@@ -323,6 +327,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     if (widget.features.trajectory) _trajectory;
     _isStreaming = widget.service.isStreaming;
     _error = widget.service.error;
+    _historyAbove = widget.service.historyAboveCount;
     _syncMessages();
   }
 
@@ -337,6 +342,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       if (widget.features.trajectory) _trajectory;
       _isStreaming = widget.service.isStreaming;
       _error = widget.service.error;
+      _historyAbove = widget.service.historyAboveCount;
       _syncMessages();
       setState(() {});
     }
@@ -470,10 +476,12 @@ class _FaChatScreenState extends State<FaChatScreen>
 
     final needsRebuild =
         widget.service.isStreaming != _isStreaming ||
-        widget.service.error != _error;
+        widget.service.error != _error ||
+        widget.service.historyAboveCount != _historyAbove;
     if (needsRebuild) {
       _isStreaming = widget.service.isStreaming;
       _error = widget.service.error;
+      _historyAbove = widget.service.historyAboveCount;
       if (mounted) setState(() {});
     }
   }
@@ -789,6 +797,11 @@ class _FaChatScreenState extends State<FaChatScreen>
 
   Widget _buildChatBody(BuildContext context) {
     final composerBuilder = widget.composerBuilder;
+    final strings = FaChatStrings.of(context);
+    // Pinned "Load earlier" banner: tap-only (no busy state), shown while
+    // the above-count is still being computed (null) and while records
+    // remain above the window (>0); hidden once everything is loaded (0).
+    final historyAbove = _historyAbove;
     return Column(
       children: [
         if (_error case final error?)
@@ -809,6 +822,30 @@ class _FaChatScreenState extends State<FaChatScreen>
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        if (historyAbove == null || historyAbove > 0)
+          Material(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: InkWell(
+              onTap: widget.service.loadOlderHistory,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                  horizontal: 16,
+                ),
+                child: Center(
+                  child: Text(
+                    historyAbove == null
+                        ? strings.chatLoadEarlier
+                        : strings.chatLoadEarlierCount('$historyAbove'),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
               ),
             ),
           ),

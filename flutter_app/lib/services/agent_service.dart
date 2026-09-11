@@ -1546,24 +1546,25 @@ class AgentService extends ChangeNotifier
 
   /// Pulls externally-appended rows into the visible transcript. Only
   /// while IDLE: mid-run the agent owns the state machine (streaming,
-  /// tool calls) and a concurrent reload would corrupt it. The session
-  /// storage parses the file ONCE at open — an external reload re-opens
-  /// it fresh (cheap: header + tree index).
+  /// tool calls) and a concurrent reload would corrupt it. A windowed
+  /// session ingests just the appended tail (any history the user paged
+  /// in stays put); a full-open session is re-opened fresh (cheap:
+  /// header + tree index).
   Future<void> _reloadExternalMessages() async {
     final session = _session;
     if (session == null || isStreaming) return;
     try {
+      if (session.getStorage() case final WindowedSessionStorage windowed) {
+        if (await windowed.ingestAppended()) {
+          await _reprojectLoadedWindow(session);
+          unawaited(_refreshHistoryAbove());
+        }
+        return;
+      }
       final metadata = await session.getMetadata();
       final fresh = await _repo.open(metadata);
-      final context = await fresh.buildContext();
       _session = fresh;
-      _agent.state.messages = context.messages;
-      _persistedCount = context.messages.length;
-      messages
-        ..clear()
-        ..addAll(context.messages.map(_toChatMessage));
-      await _rebuildTrajectory();
-      notifyListeners();
+      await _reprojectLoadedWindow(fresh);
     } on Object {
       // A torn read (the CLI mid-append): the next poll retries.
     }
@@ -1572,6 +1573,75 @@ class AgentService extends ChangeNotifier
   void _stopSessionWatch() {
     _sessionWatchTimer?.cancel();
     _sessionWatchTimer = null;
+  }
+
+  /// The windowed storage when the open session was opened windowed
+  /// (issue #135); null for full-open sessions — no paging surface.
+  WindowedSessionStorage? get _windowed {
+    final storage = _session?.getStorage();
+    return storage is WindowedSessionStorage ? storage : null;
+  }
+
+  /// Transcript records sitting above the loaded window
+  /// ([FaChatService.historyAboveCount]): `null` while the background
+  /// count is still running, `0` once the whole branch is loaded, `N` —
+  /// what the "Load earlier" banner shows.
+  @override
+  int? get historyAboveCount => _historyAboveCount;
+  int? _historyAboveCount;
+
+  bool _loadingHistory = false;
+
+  /// Pages one chunk of records above the window into the transcript
+  /// ([FaChatService.loadOlderHistory]). Re-entrant taps are ignored, as
+  /// is any tap mid-run.
+  @override
+  Future<void> loadOlderHistory() async {
+    if (_loadingHistory || isStreaming) return;
+    final windowed = _windowed;
+    if (windowed == null) return;
+    _loadingHistory = true;
+    try {
+      final joined = await windowed.loadOlder();
+      if (joined.isNotEmpty) await _reprojectLoadedWindow(_session!);
+      await _refreshHistoryAbove();
+    } on Object {
+      // A torn read (the CLI mid-append): the next tap retries.
+    } finally {
+      _loadingHistory = false;
+    }
+  }
+
+  /// Recomputes [historyAboveCount]: total file records (a newline
+  /// stream, no JSON decode) minus the loaded branch length — 0 once the
+  /// window covers the file. Runs unawaited at load end.
+  Future<void> _refreshHistoryAbove() async {
+    final windowed = _windowed;
+    if (windowed == null) return;
+    final total = await windowed.countRecords();
+    final count = !windowed.hasOlder
+        ? 0
+        : total -
+              (await windowed.getPathToRoot(await windowed.getLeafId())).length;
+    if (_historyAboveCount != count) {
+      _historyAboveCount = count;
+      notifyListeners();
+    }
+  }
+
+  /// Rebuilds the agent context, the visible transcript, and the ledger
+  /// from [session]'s active branch as currently loaded. Everything
+  /// loaded is by definition already on disk, so the persist cursor rides
+  /// to the full length (nothing re-appends on the next persist).
+  Future<void> _reprojectLoadedWindow(Session session) async {
+    final context = await session.buildContext();
+    _agent.state.messages = context.messages;
+    _persistedCount = context.messages.length;
+    messages
+      ..clear()
+      ..addAll(context.messages.map(_toChatMessage));
+    await _rebuildTrajectory();
+    notifyListeners();
   }
 
   Session? _session;
@@ -2208,6 +2278,7 @@ class AgentService extends ChangeNotifier
     await dynamicMessages.forgetAll();
     error = null;
     _persistedCount = 0;
+    _historyAboveCount = null;
     _trajectory.reset();
     _currentAssistantMessage = null;
     await initialize();
@@ -2362,7 +2433,13 @@ class AgentService extends ChangeNotifier
   Future<void> loadSession(SessionMetadata metadata) async {
     abort();
     await waitForIdle();
-    final session = await _repo.open(metadata);
+    // Windowed open (issue #135): header + newest chunk only; older
+    // records page in through loadOlderHistory. Small sessions load
+    // completely either way.
+    final session = await _repo.open(metadata, windowed: true);
+    // The count belongs to the session being opened; the background
+    // refresh at the end of this method fills it in.
+    _historyAboveCount = null;
     final context = await session.buildContext();
     final contextMessages = context.messages;
     _agent.reset();
@@ -2449,6 +2526,9 @@ class AgentService extends ChangeNotifier
       ..clear()
       ..addAll(rebuilt);
     notifyListeners();
+    // Background count of the records above the window (newline stream,
+    // no decode): fills in the banner count without blocking the load.
+    unawaited(_refreshHistoryAbove());
   }
 
   /// Deletes a persisted session. Deleting the ACTIVE session starts a new

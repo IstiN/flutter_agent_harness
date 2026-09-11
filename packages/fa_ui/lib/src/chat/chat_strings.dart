@@ -53,6 +53,8 @@ abstract class FaChatStrings {
   String chatSendError(String error);
   String chatUploadFailed(String error);
   String uploadTooLarge(String max, String total);
+  String get chatLoadEarlier;
+  String chatLoadEarlierCount(String count);
   String get chatCollapse;
   String chatShowAll(String count);
   String approvalAllowToolTitle(String tool);
@@ -157,6 +159,10 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatCollapse => 'Collapse';
   @override
   String chatShowAll(String count) => 'Show all ($count)';
+  @override
+  String get chatLoadEarlier => 'Load earlier';
+  @override
+  String chatLoadEarlierCount(String count) => 'Load earlier ($count more)';
   @override
   String approvalAllowToolTitle(String tool) => 'Allow $tool?';
   @override
@@ -299,6 +305,11 @@ class FaChatStringsRu extends FaChatStrings {
   String get chatCollapse => 'Свернуть';
   @override
   String chatShowAll(String count) => 'Показать все ($count)';
+  @override
+  String get chatLoadEarlier => 'Загрузить более ранние';
+  @override
+  String chatLoadEarlierCount(String count) =>
+      'Загрузить более ранние (ещё $count)';
   @override
   String approvalAllowToolTitle(String tool) => 'Разрешить $tool?';
   @override

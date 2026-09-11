@@ -229,7 +229,10 @@ final class JsonlSessionRepo implements SessionRepo {
   /// records page in on demand through the returned [Session]'s
   /// [WindowedSessionStorage]; small sessions load completely either way.
   /// The default full open reads the whole file (CLI, tools, migrations).
-  Future<Session> open(SessionMetadata metadata, {bool windowed = false}) async {
+  Future<Session> open(
+    SessionMetadata metadata, {
+    bool windowed = false,
+  }) async {
     final exists = _fsOrThrow(
       await _fs.exists(metadata.path),
       'Failed to check session ${metadata.path}',
@@ -283,16 +286,17 @@ final class JsonlSessionRepo implements SessionRepo {
     if (!rootExists) return 0;
     final files = await _collectJsonlFiles(root);
     for (final path in files) {
-      final contents = _fsOrThrow(
-        await _fs.readTextFile(path),
+      // Emptiness is decidable from the first two lines: line 1 is the
+      // header, and any transcript content means a second line. The read
+      // streams and stops there — scanning every session whole would turn
+      // the cleanup pass into O(bytes on disk) and defeat windowed
+      // loading (issue #135) on big session files. (fa writers never emit
+      // blank lines, so "second line empty" can only mean "no content".)
+      final lines = _fsOrThrow(
+        await _fs.readTextLines(path, maxLines: 2),
         'Failed to read $path',
       );
-      // A session that holds only its header record has zero or one
-      // non-empty line; anything more means real transcript.
-      final nonEmpty = contents
-          .split('\n')
-          .where((line) => line.trim().isNotEmpty)
-          .length;
+      final nonEmpty = lines.where((line) => line.trim().isNotEmpty).length;
       if (nonEmpty > 1) continue;
       _fsOrThrow(
         await _fs.remove(path, force: true),

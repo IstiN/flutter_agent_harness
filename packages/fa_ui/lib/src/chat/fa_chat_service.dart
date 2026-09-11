@@ -136,4 +136,15 @@ abstract interface class FaChatService implements FaApprovalModeController {
   /// `FaChatFeatures.trajectory` off instead (a never-emitting stream
   /// would only leave the panel loading).
   Stream<TrajectorySnapshot> get trajectory;
+
+  /// Transcript records sitting ABOVE the loaded window: `null` while the
+  /// count is still being computed, `0` once the whole transcript is
+  /// loaded, `N` — the number a "Load earlier" banner shows before
+  /// tapping [loadOlderHistory] pages the next chunk in. Hosts without
+  /// history paging return `0` (the banner never renders).
+  int? get historyAboveCount;
+
+  /// Pages the next chunk of older transcript history into view. No-op
+  /// while a page load is running or everything is already loaded.
+  Future<void> loadOlderHistory();
 }
