@@ -356,13 +356,35 @@
   "settingsDapAddConnection": "Add connection",
   "settingsDapAgentIdLabel": "Agent id",
   "settingsDapAgentNameLabel": "Agent name",
+  "settingsDapPasswordLabel": "Hub password",
+  "@settingsDapPasswordLabel": {
+    "description": "The hub password field on the connection editor"
+  },
   "settingsDapChannelsEmpty": "No channels yet — channels appear here once the agent joins one (dap_invite / dap_connect).",
   "settingsDapChannelsTitle": "Channels",
   "settingsDapEditConnection": "Edit connection",
+  "settingsDapMakeActive": "Make active",
+  "settingsDapActiveChip": "Active",
+  "settingsDapSavedTitle": "Saved connections",
+  "settingsDapSavedHint": "Bookmarked hubs. Tap one to make it the hub this agent is online on — the switch is live.",
+  "settingsDapRemoveSaved": "Remove",
   "settingsDapEnvNote": "DAP_HUB_URL or DAP_AGENT_NAME is set in the environment — env overrides the saved connection.",
-  "settingsDapHubHint": "Hub URL, agent identity, channels",
-  "settingsDapHubTitle": "DAP hub",
+  "settingsDapHubHint": "Let Fa agents find and message each other",
+  "settingsDapHubIntro": "A hub is where your Fa agents meet — the CLI, this app, and the browser extension. Connect once and this agent becomes reachable by name: others can find it and send it messages.",
+  "settingsDapIdentityTitle": "How other agents see you",
+  "settingsDapIdentityHint": "The name is how other agents address you. The id is derived from this device’s key.",
+  "settingsDapInboundTitle": "Incoming messages",
+  "settingsDapInboundHint": "Where messages from other agents land",
+  "settingsDapInboundDedicated": "A dedicated agent session (recommended)",
+  "settingsDapInboundCurrent": "Whichever session is open",
+  "settingsDapInboundNamed": "A session you pick",
+  "settingsDapInboundBadgeTooltip": "This session receives messages from other agents",
+  "settingsDapHubTitle": "Agent network",
   "settingsDapNameHint": "alice",
+  "settingsDapPasswordHint": "Leave empty to keep the current one",
+  "@settingsDapPasswordHint": {
+    "description": "Helper text: an empty password field keeps the stored one"
+  },
   "settingsDapProbeButton": "Check connection",
   "settingsDapStatusConnected": "Connected",
   "settingsDapStatusOffline": "Unreachable",
@@ -572,6 +594,14 @@
   "githubBrowserCodeHint": "One-time code from fa1.dev",
   "@githubBrowserCodeHint": {
     "description": "Hint of the one-time-code field on the Browser tab"
+  },
+  "sessionTooLargeTitle": "Session too large to open in the app ({size}). Open it with the CLI instead.",
+  "@sessionTooLargeTitle": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
   },
   "dynamicMessagesButtonTooltip": "Dynamic messages",
   "@dynamicMessagesButtonTooltip": {

@@ -37,6 +37,7 @@
     "system.storage",
     "tabGroups",
     "tabs",
+    "unlimitedStorage",
     "webNavigation"
   ],
   "optional_permissions": [

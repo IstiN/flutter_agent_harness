@@ -167,3 +167,119 @@ final class _StoreBackedRolesMap
   @override
   List<ModelRef>? remove(Object? key) => throw UnsupportedError('read-only');
 }
+
+/// The compaction window sizing + the auto-compact trigger — extension on
+/// [AgentService] living in this part to keep the main file under the
+/// 2800-line guard (same library, so private members resolve).
+extension CompactionWindowSizing on AgentService {
+  /// Compaction thresholds for the active model, scaled by
+  /// [CompactionSettings.forWindow] to the conversation window (the model's
+  /// context window minus the system-prompt overhead). pi's fixed defaults
+  /// exceed the whole window of an on-device model, so the same settings
+  /// cannot serve hosted 128k models and 8k WebLLM presets.
+  CompactionSettings get compactionSettings =>
+      CompactionSettings.forWindow(_conversationWindow);
+
+  /// The window left for the conversation after [_systemOverheadTokens];
+  /// `0` when the prompt alone exhausts the model window (compaction then
+  /// has nothing sensible to plan against).
+  int get _conversationWindow {
+    final window = _agent.state.model.contextWindow - _systemOverheadTokens;
+    return window > 0 ? window : 0;
+  }
+
+  /// Estimated tokens the provider counts against the context window on top
+  /// of the transcript: the rendered system prompt plus — for the chat-only
+  /// on-device backends (WebLLM, transformers.js), whose stream functions
+  /// run through the prompt-tools wrapper — the tool instructions appended
+  /// to that prompt. The wrapper's instruction block outweighs the base
+  /// system prompt several times over, so ignoring it would size compaction
+  /// against a window the engine does not actually have.
+  int get _systemOverheadTokens {
+    var system = _agent.state.systemPrompt;
+    if (_providerKind == webLlmProviderKind ||
+        _providerKind == transformersJsProviderKind) {
+      system = '$system\n\n${promptToolInstructions(_agent.state.tools)}';
+    }
+    return estimateTokens(UserMessage.text(system));
+  }
+
+  /// Auto-compaction after each completed run (CLI parity): the shared
+  /// [AutoCompactor] in core drives the multi-pass loop + smol→main
+  /// fallback + transient retry. This wrapper only builds the per-host
+  /// smol/main summarizers and the [AutoCompactorHooks] that mirrors the
+  /// compacted transcript into the chat list.
+  Future<bool> _maybeAutoCompact() async {
+    final conversationWindow = _conversationWindow;
+    if (_session == null || conversationWindow <= 0) return false;
+    final settings = compactionSettings;
+    final transcriptTokens = estimateContextTokens(
+      _agent.state.messages,
+    ).tokens;
+    if (!shouldCompact(transcriptTokens, conversationWindow, settings)) {
+      return false;
+    }
+    // The whole transcript fits in the kept region: compaction could not
+    // drop anything. (A single oversized message can still overflow the
+    // engine — that surfaces as a readable run error, not a compaction
+    // loop.)
+    if (transcriptTokens <= settings.keepRecentTokens) return false;
+
+    // Resolve the smol summarizer from the task-models store, or fall
+    // back to the main stream. The harness core doesn't know about
+    // TaskModelsStore — only the host does.
+    final smolConfig = _taskModelsStore?.overrideFor(TaskRole.smol);
+    StreamFunction? smolStream;
+    Model? smolModel;
+    if (smolConfig != null && smolConfig.modelId.isNotEmpty) {
+      var apiKey = _activeApiKey;
+      final keyName = smolConfig.apiKeyName;
+      if (keyName != null && keyName.isNotEmpty) {
+        final resolved = _secretsEnv != null
+            ? _secretsEnv.secretsSnapshot()[keyName]
+            : null;
+        if (resolved != null && resolved.isNotEmpty) apiKey = resolved;
+      }
+      smolModel = Model(
+        id: smolConfig.modelId,
+        name: smolConfig.modelId,
+        api: _agent.state.model.api,
+        provider: _agent.state.model.provider,
+        baseUrl: smolConfig.baseUrl,
+        contextWindow: _agent.state.model.contextWindow,
+        maxTokens: _agent.state.model.maxTokens,
+        input: _agent.state.model.input,
+      );
+      smolStream = providerStreamFunction(smolConfig.providerKind, apiKey);
+    }
+
+    await AutoCompactorFactory(
+      session: _session!,
+      state: _agent.state,
+      window: conversationWindow,
+      settings: settings,
+      sources: AutoCompactorSources(
+        smolStream: smolStream,
+        smolModel: smolModel,
+        mainStream: _agent.streamFunction,
+        mainModel: _agent.state.model,
+      ),
+      hooks: const _AutoCompactorFlutterHooks(),
+      prompts: const CompactionPrompts(),
+    ).run();
+
+    // The AutoCompactor replaces `state.messages` on success; mirror
+    // that into the chat list so the UI reflects the new transcript.
+    _persistedCount = _agent.state.messages.length;
+    messages
+      ..clear()
+      ..addAll(_agent.state.messages.map(AgentService._toChatMessage));
+    // Extensions may not call the protected notifyListeners — _notify is
+    // the class's own one-line wrapper, in scope via the same library.
+    _notify();
+    // Success signal for the over-window guard's auto-continuation: the
+    // transcript actually shrank.
+    final afterTokens = estimateContextTokens(_agent.state.messages).tokens;
+    return afterTokens < transcriptTokens;
+  }
+}

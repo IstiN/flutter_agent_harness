@@ -317,6 +317,31 @@ answers on the zero-config port — the hub outlives the CLI — and
 connects, persisting the URL so the next boot is online by itself. It
 also leads the guided `/dap` menu.
 
+#### Hub password
+
+Anyone on the machine can join an open loopback hub, so the hub can be
+password-protected. The password (the hub's *master secret*) resolves
+as `--secret` > the `DAP_HUB_SECRET` environment variable > the
+persisted `~/.dap/hub.json` state file. When none is set, the first
+interactive `fa hub serve` — and `/dap start` on an interactive host —
+offers to set one (empty answer = stay open); the answer is persisted
+and never asked again.
+
+On a protected hub every WebSocket upgrade must carry a credential:
+`Authorization: Bearer <secret>` from native clients, or the
+`?dap_token=<secret>` query parameter from browser clients (browser
+WebSocket cannot set headers). The master password itself authenticates
+and may enroll: a client connecting with it sends `{"t":"enroll"}` and
+receives a per-client secret, which the hub persists in the state file
+(agentId → secret) and accepts on later upgrades; enroll from a
+non-master connection is refused (`unauthorized`). A rejected upgrade
+answers `401` with `Connection: close` so HTTP keep-alive pools never
+replay a dead socket.
+
+The browser extension carries the password as the `secret` field of its
+`faDap` storage entry (the panel's Hub section has the field) and dials
+with the `dap_token` query param.
+
 For a shared deployment you need the same semantics behind a real
 socket: bind a public interface (or reverse-proxy to the loopback hub),
 and put TLS in front (§8.2). The stateless model means hubs are
@@ -336,9 +361,15 @@ against the system trust store, so use a real certificate.
 
 ### 8.3 What the hub stores
 
-Nothing on disk, per the reference model: all state is in memory, and
-the only durable state in the system lives on the *agents* (§9.2). A
-hub restart is transparent apart from lost offline mail.
+Per the reference model all runtime state is in memory — registry, live
+connections, offline mailboxes, the seen-nonce set — and the only
+durable agent state lives on the *agents* (§9.2). A hub restart is
+transparent apart from lost offline mail.
+
+One exception, opt-in: a password-protected hub persists its master
+secret and the enrolled per-client secrets in `~/.dap/hub.json` (mode
+0600, overridable via `DAP_HUB_STATE_FILE`) so restarts keep the
+password and the enrollments. An open hub writes nothing.
 
 
 ## 9. Client configuration

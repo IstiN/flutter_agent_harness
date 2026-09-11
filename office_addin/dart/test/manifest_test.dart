@@ -250,10 +250,7 @@ void main() {
       ),
     );
     expect(report.ok, isFalse);
-    expect(
-      report.issues.join('\n'),
-      contains('not allowed in ItemEdit'),
-    );
+    expect(report.issues.join('\n'), contains('not allowed in ItemEdit'));
   });
 
   test('classic-only manifest rejected: no command surface (issue #143)', () {

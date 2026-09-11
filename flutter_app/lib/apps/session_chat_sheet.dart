@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:async';
+
 import 'dart:math' as math;
 
 import 'package:fa/l10n/app_localizations.dart';
@@ -10,7 +11,8 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:fa_ui/fa_ui.dart' show FaChatSurfaceHandlers;
+import 'package:fa_ui/fa_ui.dart'
+    show FaAuthRecoveryCallback, FaChatSurfaceHandlers;
 
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
@@ -19,6 +21,7 @@ import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/attached_session_controller.dart';
 import 'package:fa/services/cli_session_presence.dart';
+import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/project_mount_env.dart';
@@ -68,9 +71,11 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
 /// live ids. Relay services (extension panel, `relayLiveId != null`): the
 /// service worker is the authority on which session is live — it marks
 /// archives with `archived: true` and already excludes the live row, so
-/// trust THAT instead of the manager slots. A slot id lags behind a
-/// session_new/session_open re-point, and filtering by it hides the
-/// freshly archived session (the drawer collapsed to the live row only).
+/// trust THAT and keep every archived row. Do NOT filter by
+/// [relayLiveId]: a surface that missed the session_new/session_open
+/// broadcast holds a STALE id, and filtering by it hid the freshly
+/// archived session (the drawer collapsed to the live row only —
+/// "added a session, still see one").
 List<SessionMetadata> drawerPersistedSessions({
   required List<SessionMetadata> all,
   required Set<String> liveIds,
@@ -79,9 +84,7 @@ List<SessionMetadata> drawerPersistedSessions({
   if (relayLiveId != null) {
     return [
       for (final metadata in all)
-        if (metadata.metadata?['archived'] == true &&
-            metadata.id != relayLiveId)
-          metadata,
+        if (metadata.metadata?['archived'] == true) metadata,
     ];
   }
   return [
@@ -165,6 +168,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   /// Disk-listing poll: new CLI sessions appear without manager events.
   Timer? _persistedTimer;
+  Set<String> _lastDrawerRowIds = const <String>{};
+  Map<String, DateTime> _updatedAtById = const {};
 
   /// Disk-persisted sessions minus the live ones, listed in the drawer.
   List<SessionMetadata> _persisted = const [];
@@ -181,6 +186,12 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   /// Persisted sessions with an open in flight (drawer double-tap guard).
   final Set<String> _opening = {};
+
+  /// The session the user just tapped (an open is in flight): its row
+  /// highlights AND sorts to the top immediately — the SAME rule the wide
+  /// sidebar applies. Cleared once the manager's live id / active slot
+  /// catches up with the attach broadcast (see [_onManagerChanged]).
+  String? _pendingOpenId;
 
   /// Last seen live-session count — drives the persisted-list resync in
   /// [_onManagerChanged].
@@ -205,6 +216,32 @@ class SessionChatSheetState extends State<SessionChatSheet>
   late final FaChatSurfaceHandlers _surfaceHandlers = FaChatSurfaceHandlers(
     context: context,
   );
+
+  /// The auth-expired card's action: a CodeMie SSO session died mid-chat
+  /// (the API call came back as the SSO login page) — re-run the platform
+  /// sign-in flow. On the extension this opens the CodeMie login tab and
+  /// polls the shared cookie jar; on desktop/mobile the full SSO flow.
+  Future<void> _onAuthRecovery(String providerId) async {
+    if (providerId != 'codemie') return;
+    final ok = await runCodemieSsoFlow(
+      context: context,
+      registry: widget.registry ?? ProviderRegistry.inMemory(),
+      service: _activeService,
+      lastConnectionStore:
+          widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Authorization successful — try sending your message again.'
+              : 'Authorization cancelled.',
+        ),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
 
   List<FlutterManagedSession> get _liveSessions => widget.manager.sessions;
 
@@ -287,7 +324,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
   Future<void> _loadNamesStore() async {
     final service = _activeService;
     if (service == null) return;
-    final store = await SessionNamesStore.load(service.env);
+    final store =
+        service.namesStoreOverride ??
+        await SessionNamesStore.shared(service.env);
     if (!mounted || _namesStore != null) return;
     setState(() => _namesStore = store..addListener(_onChanged));
   }
@@ -304,10 +343,32 @@ class SessionChatSheetState extends State<SessionChatSheet>
         liveIds: liveIds,
         relayLiveId: service.liveSessionId,
       );
+      final rowIds = all.map((m) => m.id).toSet();
+      final rowIdsChanged =
+          rowIds.length != _lastDrawerRowIds.length ||
+          !rowIds.every(_lastDrawerRowIds.contains);
+      if (rowIdsChanged) {
+        _lastDrawerRowIds = rowIds;
+        debugPrint(
+          '[fah][drawer] sessions: ${all.length} rows '
+          '(live=${service.liveSessionId ?? '-'}, '
+          'archived=${persisted.length})',
+        );
+      }
+      debugPrint(
+        '[fah][drawer] selection: selected=${_selectedSessionId ?? '-'} '
+        'hostedLive=${widget.manager.hostedLiveId.value ?? '-'} '
+        'active=${widget.manager.activeId ?? '-'} '
+        'slots=${_liveSessions.map((s) => s.id).join(',')}',
+      );
       if (mounted) {
         setState(() {
           _persisted = persisted;
           _createdAtById = {for (final m in all) m.id: m.createdAt};
+          _updatedAtById = {
+            for (final m in all)
+              if (m.lastUpdatedAt != null) m.id: m.lastUpdatedAt!,
+          };
           _cwdById = {for (final m in all) m.id: m.cwd};
         });
       }
@@ -316,11 +377,27 @@ class SessionChatSheetState extends State<SessionChatSheet>
     }
   }
 
+  /// The ONE selected id every drawer row compares against — the same
+  /// rule as the wide sidebar's `_selectedSessionId`: the click's pending
+  /// id wins while in flight, then the SW's live id (hosted), then the
+  /// manager's active slot. Pending is REPLACEMENT, not additive —
+  /// exactly one row can ever be highlighted.
+  String? get _selectedSessionId {
+    final pending = _pendingOpenId;
+    if (pending != null) return pending;
+    return widget.manager.hostedLiveId.value ?? widget.manager.activeId;
+  }
+
   /// External session changes (drawer open, another surface's switch):
   /// drop persisted entries that went live, resync the list on live-count
   /// changes (closed sessions reappear there) and rebuild.
   void _onManagerChanged() {
     if (!mounted) return;
+    if (_pendingOpenId != null &&
+        (widget.manager.hostedLiveId.value == _pendingOpenId ||
+            widget.manager.activeId == _pendingOpenId)) {
+      _pendingOpenId = null; // the broadcast landed — the real id took over
+    }
     final liveIds = _liveSessions.map((s) => s.id).toSet();
     final filtered = [
       for (final m in _persisted)
@@ -423,14 +500,27 @@ class SessionChatSheetState extends State<SessionChatSheet>
   Future<void> _openSessionFromDrawer(String id) async {
     unawaited(_toggleDrawer());
     // A live CLI session attaches (read-only view + input hand-over)
-    // instead of opening a second writer on the same JSONL.
+    // instead of opening a second writer on the same JSONL. (No pending
+    // highlight: the manager never adopts an attached session.)
     if (_presence?.isLive(id) ?? false) {
       await _attachToCliSession(id);
       if (mounted) unawaited(_openPanel());
       return;
     }
+    // The dot moves NOW (same as the wide sidebar's pending id), not a
+    // beat later when the SW confirm arrives.
+    if (mounted) setState(() => _pendingOpenId = id);
     if (_liveSessions.any((s) => s.id == id)) {
-      widget.manager.switchTo(id);
+      // Hosted (extension panel / relay shell): the local slot is only the
+      // boot attach keyholder — a bare switchTo never re-attaches the
+      // transcript and the row tap dead-ends silently. Re-dispatch through
+      // the SW so it switches (or re-attaches when already live).
+      final relayOpen = _activeService?.openSessionAction;
+      if (relayOpen != null) {
+        await relayOpen(id);
+      } else {
+        widget.manager.switchTo(id);
+      }
     } else {
       final metadata = _persisted.where((m) => m.id == id).firstOrNull;
       if (metadata != null) await _openPersisted(metadata);
@@ -494,18 +584,30 @@ class SessionChatSheetState extends State<SessionChatSheet>
         await relayOpen(metadata.id);
         return;
       }
-      await widget.manager.openSession(
-        metadata,
-        config:
-            active.configForClone ??
-            AgentConfig(
-              providerKind: active.providerKind,
-              modelId: active.modelId,
-              baseUrl: '',
-              apiKey: '',
+      try {
+        await widget.manager.openSession(
+          metadata,
+          config:
+              active.configForClone ??
+              AgentConfig(
+                providerKind: active.providerKind,
+                modelId: active.modelId,
+                baseUrl: '',
+                apiKey: '',
+              ),
+          serviceFactory: () async => active.clone(),
+        );
+      } on SessionTooLargeException {
+        if (!mounted) return;
+        final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.l10n.sessionTooLargeTitle(sizeMb.toStringAsFixed(0)),
             ),
-        serviceFactory: () async => active.clone(),
-      );
+          ),
+        );
+      }
     } finally {
       _opening.remove(metadata.id);
     }
@@ -805,6 +907,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 bottomPadding: _barHeight,
                 audioControllerFactory: widget.audioControllerFactory,
                 videoControllerFactory: widget.videoControllerFactory,
+                onAuthRecovery: _onAuthRecovery,
               ),
             ),
           ],
@@ -818,7 +921,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// sliding in from the left under the input bar.
   Widget _buildDrawer(FahColors colors) {
     final l10n = context.l10n;
-    final activeId = widget.manager.activeId;
+    // The SAME selection rule as the wide sidebar (see
+    // [_selectedSessionId]): pending tap → SW live id → manager slot.
+    // The dot moves the moment the row is tapped, not a beat later.
+    final activeId = _selectedSessionId;
     final entries =
         <
             ({
@@ -833,8 +939,13 @@ class SessionChatSheetState extends State<SessionChatSheet>
             for (final s in _liveSessions)
               (
                 id: s.id,
-                createdAt: s.createdAt,
-                lastUpdatedAt: s.lastUpdatedAt,
+                // Hosted sessions: the slot's stamps are pinned at boot —
+                // after a session switch (broadcast adoption) the SW poll
+                // (_createdAtById) carries the LIVE session's real time.
+                // Without this the dot-row never changes its label and
+                // reads as "selection stuck on the first row".
+                createdAt: _createdAtById[s.id] ?? s.createdAt,
+                lastUpdatedAt: _updatedAtById[s.id] ?? s.lastUpdatedAt,
                 // The DISK cwd (the session's origin folder) wins: a live
                 // session stays grouped under the folder it belongs to,
                 // even when the app's current mount moved elsewhere.
@@ -868,7 +979,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
                   persisted: null,
                 ),
           ]
-          ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+          // STABLE order, same rule as the wide sidebar: creation time
+          // never changes, so clicking a session moves only the dot — an
+          // activity sort teleported the clicked row to the top on every
+          // switch (archive mtime bump + fresh slot stamp).
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     // Folder-grouped rows (headers + tiles): the sessions of one project
     // stay together under the folder basename, most recently active
     // project first (entries are activity-sorted, groups follow).
@@ -976,8 +1091,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
                           );
                         }
                         final entry = row.entry!;
-                        final isActive =
-                            entry.live != null && entry.id == activeId;
+                        // ONE selection rule with the wide sidebar:
+                        // entry.id == selectedId, nothing else. (The old
+                        // `entry.live` guard was redundant — a row whose id
+                        // equals the manager's active id always has a slot.)
+                        final isActive = entry.id == activeId;
                         final title =
                             _namesStore?.titleFor(entry.id) ??
                             derivedSessionTitle(
@@ -1189,12 +1307,18 @@ class _SessionTranscript extends StatefulWidget {
   const _SessionTranscript({
     super.key,
     required this.service,
+    this.onAuthRecovery,
     this.bottomPadding = 0,
     this.audioControllerFactory,
     this.videoControllerFactory,
   });
 
   final AgentService service;
+
+  /// Auth-expired card action (CodeMie SSO session died): re-runs the
+  /// platform sign-in flow — on the extension it opens the CodeMie login
+  /// tab and polls the shared cookie jar back to life.
+  final FaAuthRecoveryCallback? onAuthRecovery;
 
   /// Extra bottom clearance lifting the messages above the floating input
   /// bar that overlaps the panel's bottom edge.
@@ -1295,6 +1419,7 @@ class _SessionTranscriptState extends State<_SessionTranscript>
               message: message,
               images: _images,
               compact: true,
+              onAuthRecovery: widget.onAuthRecovery,
               messageFontSize: ChatTextScope.maybeOf(context)?.fontSize,
               audioControllerFactory: widget.audioControllerFactory,
               videoControllerFactory: widget.videoControllerFactory,

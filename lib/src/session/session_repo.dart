@@ -387,6 +387,7 @@ final class JsonlSessionRepo implements SessionRepo {
         _fs,
         entry.path,
         lastUpdatedAt: DateTime.fromMillisecondsSinceEpoch(entry.mtimeMs),
+        sizeBytes: entry.size,
       );
     } on SessionException catch (error) {
       if (error.code != SessionErrorCode.invalidSession) rethrow;

@@ -113,6 +113,7 @@ const mv3OffscreenReasons = {
   'TESTING',
   'USER_MEDIA',
   'WEB_RTC',
+  'WORKERS',
 };
 
 /// Default chrome.storage.local quota (10 MB, chrome's real budget).

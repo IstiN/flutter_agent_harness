@@ -34,13 +34,16 @@ void main() {
     test('relay: the SW live row is never persisted, even when the '
         'service live id lags the SW', () {
       // relayLiveId still says A while the SW already lists B as live:
-      // B (not archived) must not pop in as a persisted twin.
+      // B (not archived) must not pop in as a persisted twin — but the
+      // freshly archived A must SURVIVE. Filtering by the stale
+      // relayLiveId used to hide A too (the drawer collapsed to the
+      // live row only — "added a session, still see one").
       final persisted = drawerPersistedSessions(
         all: [_row('B'), _row('A', archived: true)],
         liveIds: {'A'},
         relayLiveId: 'A',
       );
-      expect(persisted, isEmpty);
+      expect(persisted.map((m) => m.id), ['A']);
     });
 
     test('relay: a live row is excluded even without the archived flag', () {
