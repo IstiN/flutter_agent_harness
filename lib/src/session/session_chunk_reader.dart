@@ -80,8 +80,7 @@ final class SessionChunk {
   bool get isEmpty => entries.isEmpty;
 
   /// Byte offset of the first (oldest) record — [limitOffset] when empty.
-  int get firstOffset =>
-      entries.isEmpty ? limitOffset : entries.first.offset;
+  int get firstOffset => entries.isEmpty ? limitOffset : entries.first.offset;
 
   /// Byte offset just past the scanned range — where live-tail ingest
   /// resumes (a line boundary).
@@ -158,10 +157,7 @@ final class SessionChunkReader {
     // Forward part first: the target record plus half the budget below it,
     // so records above the target (the older half) keep room.
     final forwardRecords = 1 + (maxRecords - 1) ~/ 2;
-    final forward = await readForward(
-      byteOffset,
-      maxRecords: forwardRecords,
-    );
+    final forward = await readForward(byteOffset, maxRecords: forwardRecords);
     var budgetRecords = maxRecords - forward.entries.length;
     var budgetBytes = maxBytes - _bytesOf(forward.entries);
     final backward = await _scanBackward(
@@ -184,10 +180,7 @@ final class SessionChunkReader {
   /// kept; without it (the live-tail ingest path — an external CLI appended
   /// while the app held the window) everything is returned, so a burst of
   /// external appends is never silently dropped.
-  Future<SessionChunk> readForward(
-    int fromOffset, {
-    int? maxRecords,
-  }) async {
+  Future<SessionChunk> readForward(int fromOffset, {int? maxRecords}) async {
     final info = await stat();
     if (info == null) {
       throw SessionException(
@@ -208,9 +201,7 @@ final class SessionChunkReader {
     final lines = _splitLines(bytes, fromOffset);
     final entries = _parseAllLines(lines);
     return SessionChunk(
-      entries: maxRecords == null
-          ? entries
-          : entries.take(maxRecords).toList(),
+      entries: maxRecords == null ? entries : entries.take(maxRecords).toList(),
       fileSize: info.size,
       fileMtimeMs: info.mtimeMs,
       hasOlder: false,
@@ -249,6 +240,7 @@ final class SessionChunkReader {
     if (info.kind != FileKind.file) return null;
     return (size: info.size, mtimeMs: info.mtimeMs);
   }
+
   /// Reads the session header (first line) only — the metadata an open
   /// needs without touching the record body. The prefix read doubles from
   /// 4 KiB so a normal open moves a few KiB, never the file.
@@ -296,14 +288,15 @@ final class SessionChunkReader {
     final limit = endExclusive == null
         ? info.size
         : (endExclusive < info.size ? endExclusive : info.size);
-    SessionChunk empty() => SessionChunk(
-      entries: const [],
-      fileSize: info.size,
-      fileMtimeMs: info.mtimeMs,
-      hasOlder: false,
-      limitOffset: limit,
-    );
-    if (limit <= 0) return empty();
+    SessionChunk chunk(bool hasOlder, List<SessionChunkEntry> entries) =>
+        SessionChunk(
+          entries: entries,
+          fileSize: info.size,
+          fileMtimeMs: info.mtimeMs,
+          hasOlder: hasOlder,
+          limitOffset: limit,
+        );
+    if (limit <= 0) return chunk(false, const []);
 
     var window = startWindowBytes;
     // Previously-read bytes covering [bufferStart, limit). Each doubling
@@ -314,62 +307,88 @@ final class SessionChunkReader {
     var buffer = Uint8List(0);
     var bufferStart = limit;
     while (true) {
-      final lo = limit - window > 0 ? limit - window : 0;
-      if (lo < bufferStart) {
-        final strip = await _readRange(lo, bufferStart);
-        final merged = Uint8List(strip.length + buffer.length);
-        merged.setAll(0, strip);
-        merged.setAll(strip.length, buffer);
-        buffer = merged;
-        bufferStart = lo;
-      }
-      final bytes = buffer;
-      final lines = _splitLines(bytes, lo);
+      final (merged, start, lo) = await _readChunkAt(
+        limit: limit,
+        window: window,
+        buffer: buffer,
+        bufferStart: bufferStart,
+      );
+      buffer = merged;
+      bufferStart = start;
+      final lines = _splitLines(buffer, lo);
       // When the window does not reach the file (anchor) start, the first
       // line segment is the TAIL of a record that begins above the window —
       // never parse it as a record.
-      final parseable = lo > 0 && lines.isNotEmpty
-          ? lines.sublist(1)
-          : lines;
+      final parseable = lo > 0 && lines.isNotEmpty ? lines.sublist(1) : lines;
       final entries = _collectNewest(
         parseable,
         maxRecords: maxRecords,
         maxBytes: maxBytes,
       );
-      if (lo == 0) {
-        // Reached the file start: the header line (offset 0) is not a
-        // record — drop it if it landed in the chunk. There is older
-        // history ONLY if the caps stopped the collection above the first
-        // record line; reaching lines[1] means the whole file is loaded.
-        final withoutHeader = [
-          for (final entry in entries)
-            if (entry.offset != 0) entry,
-        ];
-        final firstRecordOffset = lines.length > 1 ? lines[1].$1 : null;
-        final reachedTop = withoutHeader.isEmpty ||
-            firstRecordOffset == null ||
-            withoutHeader.first.offset == firstRecordOffset;
-        return SessionChunk(
-          entries: withoutHeader,
-          fileSize: info.size,
-          fileMtimeMs: info.mtimeMs,
-          hasOlder: !reachedTop,
-          limitOffset: limit,
-        );
-      }
-      if (entries.isNotEmpty &&
-          (entries.length >= maxRecords ||
-              _bytesOf(entries) >= maxBytes)) {
-        return SessionChunk(
-          entries: entries,
-          fileSize: info.size,
-          fileMtimeMs: info.mtimeMs,
-          hasOlder: true,
-          limitOffset: limit,
-        );
-      }
+      if (lo == 0)
+        return _topChunk(chunk: chunk, entries: entries, lines: lines);
+      final capped = _cappedChunk(
+        chunk: chunk,
+        entries: entries,
+        maxRecords: maxRecords,
+        maxBytes: maxBytes,
+      );
+      if (capped != null) return capped;
       window *= 2;
     }
+  }
+
+  /// Reads the window strip above [bufferStart] and prepends it to
+  /// [buffer]. Returns the merged buffer, its new start, and [lo] — the
+  /// window's low watermark (0 = file start reached).
+  Future<(Uint8List, int, int)> _readChunkAt({
+    required int limit,
+    required int window,
+    required Uint8List buffer,
+    required int bufferStart,
+  }) async {
+    final lo = limit - window > 0 ? limit - window : 0;
+    if (lo >= bufferStart) return (buffer, bufferStart, lo);
+    final strip = await _readRange(lo, bufferStart);
+    final merged = Uint8List(strip.length + buffer.length)
+      ..setAll(0, strip)
+      ..setAll(strip.length, buffer);
+    return (merged, lo, lo);
+  }
+
+  /// Chunk for a scan that reached the file top: the header line (offset
+  /// 0) is not a record — drop it if it landed in the chunk. There is
+  /// older history ONLY if the caps stopped the collection above the
+  /// first record line; reaching lines[1] means the whole file is loaded.
+  SessionChunk _topChunk({
+    required SessionChunk Function(bool, List<SessionChunkEntry>) chunk,
+    required List<SessionChunkEntry> entries,
+    required List<(int offset, Uint8List bytes)> lines,
+  }) {
+    final withoutHeader = [
+      for (final entry in entries)
+        if (entry.offset != 0) entry,
+    ];
+    final firstRecordOffset = lines.length > 1 ? lines[1].$1 : null;
+    final reachedTop =
+        withoutHeader.isEmpty ||
+        firstRecordOffset == null ||
+        withoutHeader.first.offset == firstRecordOffset;
+    return chunk(!reachedTop, withoutHeader);
+  }
+
+  /// The caps-stopped chunk, or null when the window must keep growing.
+  SessionChunk? _cappedChunk({
+    required SessionChunk Function(bool, List<SessionChunkEntry>) chunk,
+    required List<SessionChunkEntry> entries,
+    required int maxRecords,
+    required int maxBytes,
+  }) {
+    if (entries.isEmpty) return null;
+    if (entries.length < maxRecords && _bytesOf(entries) < maxBytes) {
+      return null;
+    }
+    return chunk(true, entries);
   }
 
   Future<Uint8List> _readRange(int start, int end) async {
@@ -425,29 +444,19 @@ final class SessionChunkReader {
     var totalBytes = 0;
     for (var i = lines.length - 1; i >= 0; i--) {
       if (picked.length >= maxRecords) break;
-      if (maxBytes >= 0 &&
-          picked.isNotEmpty &&
-          totalBytes >= maxBytes) {
+      if (maxBytes >= 0 && picked.isNotEmpty && totalBytes >= maxBytes) {
         break;
       }
       final (offset, raw) = lines[i];
       if (raw.isEmpty) continue;
       final SessionRecord record;
       try {
-        record = parseSessionEntryLine(
-          utf8.decode(raw),
-          '',
-          offset,
-        );
+        record = parseSessionEntryLine(utf8.decode(raw), '', offset);
       } on Object {
         continue; // torn or foreign line: never fatal in a windowed read
       }
       picked.add(
-        SessionChunkEntry(
-          offset: offset,
-          bytes: raw.length,
-          record: record,
-        ),
+        SessionChunkEntry(offset: offset, bytes: raw.length, record: record),
       );
       totalBytes += raw.length + 1;
     }
