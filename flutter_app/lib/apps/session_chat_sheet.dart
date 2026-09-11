@@ -11,7 +11,8 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:fa_ui/fa_ui.dart' show FaChatSurfaceHandlers;
+import 'package:fa_ui/fa_ui.dart'
+    show FaAuthRecoveryCallback, FaChatSurfaceHandlers;
 
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
@@ -20,6 +21,7 @@ import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/attached_session_controller.dart';
 import 'package:fa/services/cli_session_presence.dart';
+import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/project_mount_env.dart';
@@ -214,6 +216,32 @@ class SessionChatSheetState extends State<SessionChatSheet>
   late final FaChatSurfaceHandlers _surfaceHandlers = FaChatSurfaceHandlers(
     context: context,
   );
+
+  /// The auth-expired card's action: a CodeMie SSO session died mid-chat
+  /// (the API call came back as the SSO login page) — re-run the platform
+  /// sign-in flow. On the extension this opens the CodeMie login tab and
+  /// polls the shared cookie jar; on desktop/mobile the full SSO flow.
+  Future<void> _onAuthRecovery(String providerId) async {
+    if (providerId != 'codemie') return;
+    final ok = await runCodemieSsoFlow(
+      context: context,
+      registry: widget.registry ?? ProviderRegistry.inMemory(),
+      service: _activeService,
+      lastConnectionStore:
+          widget.lastConnectionStore ?? LastConnectionStore.inMemory(),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Authorization successful — try sending your message again.'
+              : 'Authorization cancelled.',
+        ),
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
 
   List<FlutterManagedSession> get _liveSessions => widget.manager.sessions;
 
@@ -879,6 +907,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 bottomPadding: _barHeight,
                 audioControllerFactory: widget.audioControllerFactory,
                 videoControllerFactory: widget.videoControllerFactory,
+                onAuthRecovery: _onAuthRecovery,
               ),
             ),
           ],
@@ -1278,12 +1307,18 @@ class _SessionTranscript extends StatefulWidget {
   const _SessionTranscript({
     super.key,
     required this.service,
+    this.onAuthRecovery,
     this.bottomPadding = 0,
     this.audioControllerFactory,
     this.videoControllerFactory,
   });
 
   final AgentService service;
+
+  /// Auth-expired card action (CodeMie SSO session died): re-runs the
+  /// platform sign-in flow — on the extension it opens the CodeMie login
+  /// tab and polls the shared cookie jar back to life.
+  final FaAuthRecoveryCallback? onAuthRecovery;
 
   /// Extra bottom clearance lifting the messages above the floating input
   /// bar that overlaps the panel's bottom edge.
@@ -1384,6 +1419,7 @@ class _SessionTranscriptState extends State<_SessionTranscript>
               message: message,
               images: _images,
               compact: true,
+              onAuthRecovery: widget.onAuthRecovery,
               messageFontSize: ChatTextScope.maybeOf(context)?.fontSize,
               audioControllerFactory: widget.audioControllerFactory,
               videoControllerFactory: widget.videoControllerFactory,

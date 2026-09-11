@@ -77,6 +77,59 @@ void main() {
       final msg = formatProviderError(const ProviderHttpError(500, ''));
       expect(msg, 'Request failed with status 500');
     });
+
+    group('200-with-HTML (silently followed SSO redirect)', () {
+      const loginPage =
+          '<!DOCTYPE html><html><head><title>Sign in'
+          '</title></head><body>login</body></html>';
+
+      test('CodeMie endpoint explains the expired session, with marker', () {
+        final msg = formatProviderError(
+          ProviderHttpError(
+            200,
+            loginPage,
+            requestUrl: Uri.parse(
+              'https://codemie.lab.epam.com/code-assistant-api/v1/'
+              'chat/completions',
+            ),
+            answeredHtml: true,
+          ),
+        );
+
+        expect(msg, contains('CodeMie'));
+        expect(msg, contains('expired'));
+        expect(msg, contains('/provider codemie sso'));
+        // The login HTML is NOT dumped into the transcript.
+        expect(msg, isNot(contains('<html>')));
+        expect(authExpiredProvider(msg), 'codemie');
+      });
+
+      test('generic endpoint explains the HTML answer, no marker', () {
+        final msg = formatProviderError(
+          ProviderHttpError(
+            200,
+            loginPage,
+            requestUrl: Uri.parse('https://example.com/v1/chat/completions'),
+            answeredHtml: true,
+          ),
+        );
+
+        expect(msg, contains('HTML'));
+        expect(msg, contains('SSO'));
+        expect(msg, isNot(contains('<html>')));
+        expect(authExpiredProvider(msg), isNull);
+      });
+
+      test('without a request URL the generic explanation is used', () {
+        final msg = formatProviderError(
+          const ProviderHttpError(200, loginPage, answeredHtml: true),
+        );
+
+        expect(msg, contains('HTML'));
+        expect(msg, isNot(contains('<html>')));
+        expect(authExpiredProvider(msg), isNull);
+      });
+    });
   });
 
   group('authExpiredProvider / stripAuthExpiredMarker', () {
