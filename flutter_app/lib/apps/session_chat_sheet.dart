@@ -296,7 +296,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
   Future<void> _loadNamesStore() async {
     final service = _activeService;
     if (service == null) return;
-    final store = await SessionNamesStore.load(service.env);
+    final store =
+        service.namesStoreOverride ??
+        await SessionNamesStore.shared(service.env);
     if (!mounted || _namesStore != null) return;
     setState(() => _namesStore = store..addListener(_onChanged));
   }

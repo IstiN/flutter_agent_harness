@@ -11,6 +11,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'agent_service.dart';
 import 'relay/ext_runtime.dart';
+import 'session_names_store.dart';
 
 /// The [AgentService] chat surface served by the extension's service-worker
 /// agent over a [WorkerRelayTransport] (issue #34 item 1).
@@ -256,6 +257,50 @@ final class RelayAgentService extends AgentService {
   @override
   Stream<TrajectorySnapshot> get trajectory => const Stream.empty();
 
+  /// User-given session titles, backed by the SW settings channel
+  /// (`faSessionNames`): a rename on ANY surface (panel, desktop app,
+  /// another tab) round-trips `settings_put` and lands here via the
+  /// snapshot broadcast — file-backed stores never saw cross-surface
+  /// renames ("renamed to test, reopened — not applied").
+  late final SessionNamesStore namesStore = SessionNamesStore.hosted(
+    _RelaySessionNamesPersistence(this),
+  );
+
+  @override
+  SessionNamesStore? get namesStoreOverride => namesStore;
+
+  /// The names half of the last SW settings snapshot.
+  Map<String, String> get swSessionNames => {
+    if (_lastSwSettings?['faSessionNames'] is Map)
+      for (final entry in (_lastSwSettings!['faSessionNames'] as Map).entries)
+        if (entry.value is String && (entry.value as String).isNotEmpty)
+          '${entry.key}': entry.value as String,
+  };
+
+  /// The last full settings snapshot (raw, as broadcast by the SW).
+  Map<String, dynamic>? _lastSwSettings;
+
+  /// Persists [names] through `settings_put`: the SW merges per id, so
+  /// concurrent renames of DIFFERENT sessions from two surfaces both
+  /// survive; ids the snapshot still holds but the writer cleared go out
+  /// as empty-string tombstones (the SW merge deletes on empty).
+  void putSessionNames(Map<String, String> names) {
+    final previous = swSessionNames;
+    _transport.dispatch(
+      SettingsPutMsg(
+        settings: {
+          'faSessionNames': {
+            ...names,
+            for (final id in previous.keys.where(
+              (id) => !names.containsKey(id),
+            ))
+              id: '',
+          },
+        },
+      ),
+    );
+  }
+
   // -- FaChatConnection ------------------------------------------------------
   // Reflects the SW connection once its snapshot landed; falls back to the
   // idle local defaults before that (the boot screens render early).
@@ -485,6 +530,10 @@ final class RelayAgentService extends AgentService {
   /// The SW's merged settings snapshot (settings_result): the provider
   /// trio feeds the models screens and the composer.
   void _applySwSettings(Map<String, dynamic> settings) {
+    _lastSwSettings = settings;
+    // Another surface's renames (or this one's echo) ride the snapshot —
+    // sync the hosted names store (no-op when nothing changed).
+    namesStore.syncFromSnapshot(swSessionNames);
     final provider = settings['faProvider'];
     debugPrint(
       '[fah][relay] settings snapshot: hasProvider=${provider != null} '
@@ -651,4 +700,19 @@ final class RelayAgentService extends AgentService {
       ),
     );
   }
+}
+
+/// [SessionNamesPersistence] over the relay's settings channel: reads the
+/// names half of the last SW snapshot, writes through `settings_put`.
+final class _RelaySessionNamesPersistence implements SessionNamesPersistence {
+  _RelaySessionNamesPersistence(this._service);
+
+  final RelayAgentService _service;
+
+  @override
+  Map<String, String> read() => _service.swSessionNames;
+
+  @override
+  Future<void> write(Map<String, String> names) async =>
+      _service.putSessionNames(names);
 }

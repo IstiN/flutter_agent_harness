@@ -607,6 +607,7 @@ Future<Map<Object?, Object?>> _loadStoredRaw() async {
         'faApproval',
         'faDap',
         'faBrowserTools',
+        'faSessionNames',
       ].jsify(),
     ).toDart;
     if (result != null) {

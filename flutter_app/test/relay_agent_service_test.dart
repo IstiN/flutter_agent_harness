@@ -336,6 +336,61 @@ void main() {
     addTearDown(channel.close);
   });
 
+  test('session names round-trip the SW settings channel '
+      '(faSessionNames)', () async {
+    final (:service, :channel) = await _attached();
+    addTearDown(channel.close);
+    // A snapshot from the SW (another surface renamed s-1) seeds the store.
+    channel.fromWorker(
+      SettingsResultMsg(
+        settings: {
+          'faSessionNames': {'s-1': 'one'},
+        },
+      ),
+    );
+    await pumpEventQueue();
+    expect(service.namesStoreOverride, same(service.namesStore));
+    expect(service.namesStore.titleFor('s-1'), 'one');
+
+    // Rename s-2 → settings_put carries the full names map.
+    await service.namesStore.rename('s-2', 'two');
+    final put = channel.sentOf('settings_put');
+    expect(put, isNotNull);
+    expect((put!['settings'] as Map)['faSessionNames'], {
+      's-1': 'one',
+      's-2': 'two',
+    });
+
+    // The SW merges + broadcasts; clearing s-2 sends a tombstone.
+    channel.fromWorker(
+      SettingsResultMsg(
+        settings: {
+          'faSessionNames': {'s-1': 'one', 's-2': 'two'},
+        },
+      ),
+    );
+    await pumpEventQueue();
+    await service.namesStore.rename('s-2'); // clear
+    final put2 = channel.sentOf('settings_put');
+    expect((put2!['settings'] as Map)['faSessionNames'], {
+      's-1': 'one',
+      's-2': '',
+    });
+    expect(service.namesStore.titleFor('s-2'), isNull);
+
+    // A broadcast from ANOTHER surface updates the store live.
+    channel.fromWorker(
+      SettingsResultMsg(
+        settings: {
+          'faSessionNames': {'s-1': 'one', 's-3': 'three'},
+        },
+      ),
+    );
+    await pumpEventQueue();
+    expect(service.namesStore.titleFor('s-3'), 'three');
+    expect(service.namesStore.titleFor('s-2'), isNull);
+  });
+
   test('openSessionAction dispatches session_open with the id', () async {
     final (:service, :channel) = await _attached();
     final open = service.openSessionAction;

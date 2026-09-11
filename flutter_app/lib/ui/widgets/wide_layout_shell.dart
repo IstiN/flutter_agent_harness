@@ -221,7 +221,9 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (widget.sessionNamesStore != null || _namesStore != null) return;
     final service = widget.manager.active?.service;
     if (service == null) return;
-    final store = await SessionNamesStore.load(service.env);
+    final store =
+        service.namesStoreOverride ??
+        await SessionNamesStore.shared(service.env);
     if (!mounted) return;
     setState(() => _namesStore = store);
   }
