@@ -65,7 +65,7 @@ jobs:
       - name: Merge issues labeled pr_approved
         if: steps.gate.outputs.enabled == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN || github.token }}
           LABEL: pr_approved
           CI_RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
