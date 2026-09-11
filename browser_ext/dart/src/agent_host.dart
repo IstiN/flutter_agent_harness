@@ -95,7 +95,11 @@ const _systemPrompt =
 /// Owns the agent, its tools, approvals, session, and the event bridge.
 final class AgentHost implements UiHostBackend {
   AgentHost._(this._env, this._ops, this._sink)
-    : _flow = ApprovalFlow(sink: _sink);
+    : _flow = ApprovalFlow(sink: _sink) {
+    // Provider diagnostics ride the relay into the panel console — the
+    // SW's own console is a separate DevTools window nobody opens.
+    hostEventSink = _sink;
+  }
 
   final ChromeStorageEnv _env;
   final OpCaller _ops;

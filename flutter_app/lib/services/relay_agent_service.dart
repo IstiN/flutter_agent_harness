@@ -522,6 +522,12 @@ final class RelayAgentService extends AgentService {
         }
       case 'error':
         _error = event['error'] as String? ?? 'unknown relay error';
+      case 'debug':
+        // SW-side diagnostics (provider response/terminal events): the
+        // SW console is a separate DevTools window nobody opens, so the
+        // lines ride the relay into THIS console — visible next to the
+        // [fah][relay] lines when an empty turn needs a cause.
+        debugPrint('[fah][sw] ${event['text']}');
     }
     if (!silent) notifyListeners();
   }

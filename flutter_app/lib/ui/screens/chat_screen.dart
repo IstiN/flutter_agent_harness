@@ -20,6 +20,7 @@ import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
@@ -188,6 +189,9 @@ class _ChatScreenState extends State<ChatScreen> {
     return fa_ui.FaChatScreen(
       service: service,
       title: context.l10n.appTitle,
+      // Relay sessions (the extension's SW owns the agent): the trajectory
+      // ledger stream never emits — the tab would spin forever.
+      features: fa_ui.FaChatFeatures(trajectory: service is! RelayAgentService),
       settingsBuilder: (_) => SettingsScreen(
         service: service,
         env: service.env,

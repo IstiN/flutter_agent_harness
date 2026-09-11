@@ -297,6 +297,7 @@ final class _OpenAICompletionsSession {
       idleTimeout: options?.idleTimeout,
     );
 
+    var dataChunks = 0;
     while (await iterator.moveNext()) {
       final data = iterator.current.data.trim();
       if (data.isEmpty || data == '[DONE]') {
@@ -306,7 +307,21 @@ final class _OpenAICompletionsSession {
       if (chunk is! Map<String, dynamic>) {
         continue;
       }
+      dataChunks++;
       _handleChunk(chunk);
+    }
+    if (dataChunks == 0) {
+      // The endpoint accepted the request (200, an event-stream
+      // content-type) but sent NOTHING — no completion chunk, not even
+      // an error object. Downstream this renders as "(empty response —
+      // try again)" with zero diagnosable cause; a gateway doing this
+      // (dead session, unknown deployment) must surface as an error.
+      throw StateError(
+        'The endpoint answered with an EMPTY event stream (no SSE data) '
+        '— the gateway accepted the request but sent nothing. Check the '
+        'deployment/model id (${model.id}) and sign-in state at '
+        '${model.baseUrl}.',
+      );
     }
   }
 

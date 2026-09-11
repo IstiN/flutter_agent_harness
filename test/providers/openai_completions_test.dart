@@ -782,6 +782,34 @@ void main() {
     );
 
     test(
+      'an empty event stream (no data lines) becomes an error event',
+      () async {
+        // The gateway accepted the request and sent nothing — previously a
+        // silent empty done ("(empty response — try again)").
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) async => http.StreamedResponse(
+            Stream.value(utf8.encode('data: [DONE]\n\n')),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          ),
+        );
+
+        final stream = streamOpenAICompletions(
+          testModel,
+          simpleContext(),
+          const OpenAICompletionsOptions(apiKey: '[REDACTED:Sensitive Value]'),
+          client,
+        );
+
+        final events = await stream.toList();
+        final error = events.last as ErrorEvent;
+        expect(error.reason, StopReason.error);
+        expect(error.error.errorMessage, contains('EMPTY event stream'));
+        expect(error.error.errorMessage, contains(testModel.id));
+      },
+    );
+
+    test(
       'a silent endpoint errors on the idle watchdog instead of hanging',
       () async {
         final client = http_testing.MockClient.streaming(

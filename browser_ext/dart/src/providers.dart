@@ -290,6 +290,19 @@ abstract interface class BridgeLlmRelay {
 /// function on every reconfigure.
 ({BridgeLlmRelay relay, String providerName})? activeRelay;
 
+/// Panel-visible diagnostics sink, set by the agent host to its event
+/// sink so provider diagnostics ride the relay into the PANEL console —
+/// the SW's own console is a separate DevTools window nobody opens, and
+/// an empty turn otherwise has zero observable cause. Events use the
+/// `debug` type (the panel prints them and never renders them).
+void Function(Map<String, dynamic> event)? hostEventSink;
+
+/// Emits one diagnostic line to the SW console AND the panel relay.
+void providerDebug(String line) {
+  print(line);
+  hostEventSink?.call({'type': 'debug', 'text': line});
+}
+
 /// Model ids starting with `fake:` select the deterministic CI provider.
 bool isFakeModel(String model) => model.startsWith('fake:');
 
@@ -330,7 +343,7 @@ StreamFunction openAiLikeStream(ProviderConfig config) {
         // log line proves which answer the endpoint gave when a turn comes
         // back empty, instead of guessing from the transcript.
         onResponse: (statusCode, headers, _) {
-          print(
+          providerDebug(
             '[provider] response $statusCode '
             'content-type=${headers['content-type'] ?? '—'} '
             'url=${config.baseUrl}',
@@ -350,13 +363,13 @@ StreamFunction openAiLikeStream(ProviderConfig config) {
             (sum, block) => sum + block.text.length,
           );
           final toolCalls = message.content.whereType<ToolCall>().length;
-          print(
+          providerDebug(
             '[provider] done reason=$reason '
             'textLen=$textLen toolCalls=$toolCalls '
             'stopReason=${message.stopReason}',
           );
         case ErrorEvent(:final reason, :final error):
-          print(
+          providerDebug(
             '[provider] error reason=$reason '
             'message=${error.errorMessage}',
           );
