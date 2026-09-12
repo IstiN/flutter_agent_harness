@@ -3,7 +3,7 @@
 // check the validator owns.
 import 'package:test/test.dart';
 
-import '../src/manifest.dart';
+import 'package:fa_office_agent/src/manifest.dart';
 
 const _validProd = '''
 <?xml version="1.0" encoding="UTF-8"?>
@@ -35,7 +35,7 @@ const _validProd = '''
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://fa1.dev/outlook/index.html"/>
+        <SourceLocation DefaultValue="https://fa1.dev/outlook/app/index.html"/>
         <RequestedHeight>400</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -102,7 +102,7 @@ const _validProd = '''
         <bt:Image id="icon80" DefaultValue="https://fa1.dev/outlook/icons/fa-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="taskpaneUrl" DefaultValue="https://fa1.dev/outlook/index.html"/>
+        <bt:Url id="taskpaneUrl" DefaultValue="https://fa1.dev/outlook/app/index.html"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="groupLabel" DefaultValue="fa"/>
@@ -150,8 +150,8 @@ void main() {
   test('foreign host rejected', () {
     final report = validateOutlookManifest(
       _validProd.replaceFirst(
-        'https://fa1.dev/outlook/index.html',
-        'https://evil.example/outlook/index.html',
+        'https://fa1.dev/outlook/app/index.html',
+        'https://evil.example/outlook/app/index.html',
       ),
     );
     expect(report.ok, isFalse);
@@ -161,7 +161,7 @@ void main() {
   test('path outside /outlook/ rejected', () {
     final report = validateOutlookManifest(
       _validProd.replaceFirst(
-        'https://fa1.dev/outlook/index.html',
+        'https://fa1.dev/outlook/app/index.html',
         'https://fa1.dev/evil.html',
       ),
     );
@@ -244,7 +244,7 @@ void main() {
       _validProd.replaceFirst(
         '</FormSettings>',
         '<Form xsi:type="ItemEdit"><DesktopSettings>'
-            '<SourceLocation DefaultValue="https://fa1.dev/outlook/index.html"/>'
+            '<SourceLocation DefaultValue="https://fa1.dev/outlook/app/index.html"/>'
             '<RequestedHeight>400</RequestedHeight>'
             '</DesktopSettings></Form></FormSettings>',
       ),

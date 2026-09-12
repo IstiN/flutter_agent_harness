@@ -11,9 +11,9 @@ import 'package:flutter_agent_harness/src/approval/approval.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
-import '../src/fake_office.dart';
-import '../src/office_api.dart';
-import '../src/outlook_tools.dart';
+import 'package:fa_office_agent/src/fake_office.dart';
+import 'package:fa_office_agent/src/office_api.dart';
+import 'package:fa_office_agent/src/outlook_tools.dart';
 
 /// Runs a tool and returns the text channel.
 Future<String> _run(

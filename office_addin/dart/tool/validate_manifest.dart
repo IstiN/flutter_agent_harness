@@ -1,5 +1,5 @@
 import 'dart:io';
-import '../src/manifest.dart';
+import 'package:fa_office_agent/src/manifest.dart';
 
 void main(List<String> args) {
   final dev = args.contains('--dev');

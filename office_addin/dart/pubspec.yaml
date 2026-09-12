@@ -1,15 +1,16 @@
-# ponytail: Office taskpane twin of fa_browser_agent — path dep on the
-# harness core (pure Dart, web-safe) plus the extension package's
-# chrome-free provider slice (resolveStreamFn / fake: provider / registry
-# merge) so provider streaming is never forked per host.
+# Office taskpane bridge package (issue #182): the pane is the fa Flutter
+# app now — this package ships only what the app embeds (Office.js facade,
+# outlook.* tools, quarantine, manifest validator, the fake for tests).
+# Built into the app bundle via flutter_app's path dep; the standalone
+# dart2js taskpane agent of #94 is gone.
 name: fa_office_agent
 description: >-
-  fa agent core compiled into the Office Add-in taskpane (issue #89):
-  Office.js host bridge, outlook.* tools, manifest validation. Built by
-  scripts/build_office_addin.sh with `dart compile js` into
-  office_addin/web/office_agent.js.
+  fa agent bridge for the Office Add-in taskpane (issues #89/#182):
+  Office.js host bridge, outlook.* tools, manifest validation. Compiled
+  into the fa web app that scripts/build_office_addin.sh bundles at
+  outlook/app/.
 publish_to: none
-version: 0.1.0
+version: 0.2.0
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
@@ -17,10 +18,6 @@ environment:
 dependencies:
   flutter_agent_harness:
     path: ../../
-  fa_browser_agent:
-    path: ../../browser_ext/dart
-  http: ^1.6.0
-  cryptography: ^2.7.0
 
 dev_dependencies:
   lints: ^6.1.0

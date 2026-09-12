@@ -8,7 +8,7 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
-import '../src/manifest.dart';
+import 'package:fa_office_agent/src/manifest.dart';
 
 String _artifact(String pathInOfficeAddin) =>
     File('../$pathInOfficeAddin').readAsStringSync();
@@ -41,15 +41,21 @@ void main() {
   });
 
   test(
-    'index.html wires the Office.js CDN, the agent bundle and the boot banner',
+    'taskpane page is the app redirect shim — no bootstrap agent surface',
     () {
+      // Issue #182: the manifest points at app/index.html (the Flutter
+      // app); the committed web/index.html is ONLY a redirect for cached
+      // pre-1.2 manifests. The #94 bootstrap surface (office_agent.js,
+      // the fake provider's chat, the EVENTS dump) must be gone, not
+      // hidden (AC1).
       final html = _artifact('web/index.html');
-      expect(
-        html,
-        contains('https://appsforoffice.microsoft.com/lib/1/hosted/office.js'),
-      );
-      expect(html, contains('office_agent.js'));
-      expect(html, contains('fa-office-unavailable'));
+      expect(html, contains('app/index.html'));
+      expect(html, isNot(contains('office_agent.js')));
+      expect(html, isNot(contains('fa-events')));
+      expect(html, isNot(contains('fa-transcript')));
+      final manifest = _artifact('manifest/outlook.xml');
+      expect(manifest, contains('https://fa1.dev/outlook/app/index.html'));
+      expect(manifest, contains('<Version>1.2.0.0</Version>'));
     },
   );
 
