@@ -1,3 +1,4 @@
+@Tags(['integration'])
 /// Headless self-config round trips (issue #29 S4: AC4/AC5/AC6). The agent
 /// drives the `config` tool through the REAL `AgentCli` turn loop; AC6
 /// additionally replays the fresh-boot resolution chain

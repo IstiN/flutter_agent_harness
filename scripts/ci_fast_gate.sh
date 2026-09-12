@@ -110,7 +110,7 @@ classify_path() {
   # Echoes the stage group contributed by one changed path (union logic).
   case "$1" in
     scripts/*|.github/*|crap4dart.yaml) echo "all" ;;
-    lib/*|bin/*|test/*|pubspec.yaml|pubspec.*) echo "core" ;;
+    lib/*|bin/*|test/*|example/*|pubspec.yaml|pubspec.*) echo "core" ;;
     flutter_app/*|packages/*) echo "app" ;;
     docs/*|prompts/*|*.md) echo "docs" ;;
     *) echo "all" ;;             # unknown path: safe default (E2)

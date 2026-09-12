@@ -1,3 +1,4 @@
+@Tags(['integration'])
 /// Session image registry (issue #171) integration tests: a real agent
 /// loop over a scripted fake provider, asserting the OUTGOING request
 /// shape (send-once, refs, kill switch, compaction interplay).
