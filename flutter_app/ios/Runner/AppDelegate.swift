@@ -2019,7 +2019,7 @@ private func micStartRecording() -> Any {
   do {
     let recorder = try AVAudioRecorder(url: url, settings: settings)
     guard recorder.record(forDuration: micMaxRecordSeconds) else {
-      try? session.setActive(false)
+      micRestorePlaybackSession()
       return FlutterError(
         code: "record_failed",
         message: "the microphone could not start (permission denied?)",
@@ -2030,13 +2030,26 @@ private func micStartRecording() -> Any {
     micStartedAt = Date()
     return true
   } catch {
-    try? session.setActive(false)
+    micRestorePlaybackSession()
     return FlutterError(
       code: "record_failed",
       message: error.localizedDescription,
       details: nil,
     )
   }
+}
+
+/// Leaves the shared audio session back in a playback-friendly state
+/// after a mic take. `.record` silences ALL audio output (media widgets
+/// included) and the category persists across `setActive(false)`, so
+/// without this every video/audio node stayed muted for the rest of the
+/// app run once voice input had been used (iOS-only — macOS has no
+/// AVAudioSession). `.playback` matches the app's media baseline
+/// (audioplayers' default context).
+private func micRestorePlaybackSession() {
+  let session = AVAudioSession.sharedInstance()
+  try? session.setCategory(.playback, mode: .default)
+  try? session.setActive(false, options: .notifyOthersOnDeactivation)
 }
 
 private func micStopRecording() -> Any {
@@ -2051,7 +2064,7 @@ private func micStopRecording() -> Any {
   let durationMs = Int(((micStartedAt.map { Date().timeIntervalSince($0) }) ?? 0) * 1000)
   micRecorder = nil
   micStartedAt = nil
-  try? AVAudioSession.sharedInstance().setActive(false)
+  micRestorePlaybackSession()
   return [
     "path": recorder.url.path,
     "durationMs": durationMs,
