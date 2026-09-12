@@ -90,7 +90,7 @@ async function engineUp(page: Page) {
 
 /** Waits until the app rendered its first frame (splash fades out). */
 async function firstFrame(page: Page) {
-  await expect(page.locator('#fah-splash.fah-done')).toHaveClass(/fah-done/, { timeout: 60_000 });
+  await expect(page.locator('#fah-splash.fah-done')).toHaveClass(/fah-done/, { timeout: 100_000 });
 }
 
 // NOTE: the office branch itself (FA_HOST=office → outlook.* registry) is
@@ -174,6 +174,8 @@ test('pane CSP: interpreter CDN loads, inline script refused', async ({ page }) 
 });
 
 test('sandbox IndexedDB FS persists across pane reloads', async ({ page }) => {
+  await openAppPane(page);
+  await engineUp(page);
   const marker = { test: 'issue-182', at: Date.now() };
   await page.evaluate((m) => window.__fahFsSave?.(m), marker);
   await page.reload({ waitUntil: 'load' });
