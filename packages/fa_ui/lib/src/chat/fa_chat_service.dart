@@ -136,4 +136,53 @@ abstract interface class FaChatService implements FaApprovalModeController {
   /// `FaChatFeatures.trajectory` off instead (a never-emitting stream
   /// would only leave the panel loading).
   Stream<TrajectorySnapshot> get trajectory;
+
+  /// Transcript records sitting ABOVE the loaded window: `null` while the
+  /// count is still being computed, `0` once the whole transcript is
+  /// loaded, `N` — the number a "Load earlier" banner shows before
+  /// tapping [loadOlderHistory] pages the next chunk in. Hosts without
+  /// history paging return `0` (the banner never renders).
+  int? get historyAboveCount;
+
+  /// Pages the next chunk of older transcript history into view. No-op
+  /// while a page load is running or everything is already loaded.
+  Future<void> loadOlderHistory();
+
+  /// The last [loadOlderHistory] failure for the history banner's retry
+  /// state: null when nothing failed or a retry succeeded. Hosts without
+  /// history paging always return null.
+  String? get historyLoadError;
+
+  /// Whether a history page load ([loadOlderHistory] or
+  /// [loadNewerHistory]) is in flight: the banners render a spinner and
+  /// ignore taps while true (issue #135 E6).
+  bool get historyLoading;
+
+  /// The exact total transcript-record count once the background count
+  /// landed - the N of the terminal "Beginning of session (1 of N)"
+  /// banner; `null` until then.
+  int? get historyTotalCount;
+
+  /// Whether newer transcript records sit below the loaded window (the
+  /// "Load newer" banner's visibility signal - true even while the exact
+  /// count is still unknown, e.g. right after a jump). Hosts without
+  /// history paging return `false`.
+  bool get historyHasNewer;
+
+  /// Transcript records BELOW the loaded window (deep paging evicted the
+  /// newest side): `null` while unknown, `0` at the live tail, `N` -
+  /// what a "Load newer" banner shows before tapping [loadNewerHistory]
+  /// pages the next chunk back in. Visibility comes from
+  /// [historyHasNewer], not from this count.
+  int? get historyBelowCount;
+
+  /// Pages the next chunk of newer transcript history back into view -
+  /// the page-down path back to the live tail after deep paging.
+  Future<void> loadNewerHistory();
+
+  /// Jump-to-message (issue #135 AC6): brings the transcript row
+  /// [messageId] into the loaded window, paging older history in when
+  /// the target sits above the loaded range. Returns whether the target
+  /// is now loaded; the caller (the chat screen) then scrolls to it.
+  Future<bool> jumpToMessage(String messageId);
 }

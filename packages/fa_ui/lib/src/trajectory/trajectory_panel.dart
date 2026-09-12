@@ -100,6 +100,8 @@ class TrajectoryScreen extends StatefulWidget {
     required this.controller,
     required this.onClose,
     this.loaded = true,
+    this.scope,
+    this.onRecordActivate,
   });
 
   /// The screen-level controller holding the snapshot and interaction state.
@@ -110,6 +112,12 @@ class TrajectoryScreen extends StatefulWidget {
 
   /// Whether the first snapshot has landed; false renders the loading state.
   final bool loaded;
+
+  /// What the projected window covers (issue #135 AC11).
+  final TrajectoryProjectionScope? scope;
+
+  /// Jump-in-chat for a ledger record (issue #135 AC6); null hides it.
+  final ValueChanged<TrajectoryRecord>? onRecordActivate;
 
   @override
   State<TrajectoryScreen> createState() => _TrajectoryScreenState();
@@ -173,6 +181,8 @@ class _TrajectoryScreenState extends State<TrajectoryScreen> {
               child: TrajectoryBody(
                 controller: widget.controller,
                 onClose: widget.onClose,
+                scope: widget.scope,
+                onRecordActivate: widget.onRecordActivate,
               ),
             ),
           ),

@@ -53,6 +53,12 @@ abstract class FaChatStrings {
   String chatSendError(String error);
   String chatUploadFailed(String error);
   String uploadTooLarge(String max, String total);
+  String get chatLoadEarlier;
+  String chatLoadEarlierCount(String count);
+  String get chatLoadEarlierFailed;
+  String chatBeginningOfSession(String count);
+  String get chatLoadNewer;
+  String chatLoadNewerCount(String count);
   String get chatCollapse;
   String chatShowAll(String count);
   String approvalAllowToolTitle(String tool);
@@ -157,6 +163,20 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatCollapse => 'Collapse';
   @override
   String chatShowAll(String count) => 'Show all ($count)';
+  @override
+  String get chatLoadEarlier => 'Load earlier';
+  @override
+  String chatLoadEarlierCount(String count) => 'Load earlier ($count more)';
+  @override
+  String get chatLoadEarlierFailed =>
+      "Couldn't load earlier messages - tap to retry";
+  @override
+  String chatBeginningOfSession(String count) =>
+      'Beginning of session (1 of $count)';
+  @override
+  String get chatLoadNewer => 'Load newer';
+  @override
+  String chatLoadNewerCount(String count) => 'Load newer ($count more)';
   @override
   String approvalAllowToolTitle(String tool) => 'Allow $tool?';
   @override
@@ -299,6 +319,21 @@ class FaChatStringsRu extends FaChatStrings {
   String get chatCollapse => 'Свернуть';
   @override
   String chatShowAll(String count) => 'Показать все ($count)';
+  @override
+  String get chatLoadEarlier => 'Загрузить более ранние';
+  @override
+  String chatLoadEarlierCount(String count) =>
+      'Загрузить более ранние (ещё $count)';
+  @override
+  String get chatLoadEarlierFailed =>
+      'Не удалось загрузить более ранние — нажмите, чтобы повторить';
+  @override
+  String chatBeginningOfSession(String count) => 'Начало сессии (1 из $count)';
+  @override
+  String get chatLoadNewer => 'Загрузить более новые';
+  @override
+  String chatLoadNewerCount(String count) =>
+      'Загрузить более новые (ещё $count)';
   @override
   String approvalAllowToolTitle(String tool) => 'Разрешить $tool?';
   @override

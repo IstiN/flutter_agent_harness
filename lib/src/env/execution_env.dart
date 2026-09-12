@@ -232,6 +232,26 @@ abstract interface class FileSystem {
   });
 }
 
+/// Optional [FileSystem] capability: byte-range reads.
+///
+/// Powers windowed session loading (`SessionChunkReader`): the app reads
+/// only the tail of a JSONL session file instead of materializing it whole.
+/// Backends that cannot seek (pure web stores in v1) simply do not
+/// implement it — callers probe with `is RangedReadFileSystem` and fall
+/// back to the full-load path. Decorators forward to their delegate so
+/// wrapping an env never hides the capability.
+abstract interface class RangedReadFileSystem {
+  /// Reads the bytes of [path] in the half-open range [start, end).
+  ///
+  /// Never throws: failures come back as [Err]. An [end] past EOF reads to
+  /// EOF; a [start] at or past EOF yields an empty list.
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  );
+}
+
 /// Stable, backend-independent error codes returned by [Shell.exec].
 ///
 /// Ported from pi's `ExecutionErrorCode` union.
