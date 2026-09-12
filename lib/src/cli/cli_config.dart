@@ -23,6 +23,7 @@ import '../skills/skills_access.dart';
 import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
+import '../agent/image_registry.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
 import 'custom_providers.dart';
@@ -57,6 +58,43 @@ ProviderTimeoutsOverride? _parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
+/// Parses the `images:` section (session image registry, issue #171):
+/// `registry` (kill switch) and `maxPerRequest` (per-request unique-image
+/// cap). Strict — a bad schema throws [ConfigException] instead of
+/// silently keeping the defaults.
+ImageRegistryConfig? _parseImagesSection(Object? node) {
+  if (node == null) return null;
+  if (node is! YamlMap) {
+    throw ConfigException('images must be a map, got: $node');
+  }
+  bool? registry;
+  int? maxPerRequest;
+  for (final key in node.keys) {
+    switch (key) {
+      case 'registry':
+        final value = node[key];
+        if (value is! bool) {
+          throw ConfigException('"images.registry" must be a boolean');
+        }
+        registry = value;
+      case 'maxPerRequest':
+        final value = node[key];
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+              '"images.maxPerRequest" must be a positive integer');
+        }
+        maxPerRequest = value;
+      default:
+        throw ConfigException('unknown "images" key: $key');
+    }
+  }
+  if (registry == null && maxPerRequest == null) return null;
+  return ImageRegistryConfig(
+    enabled: registry ?? true,
+    maxPerRequest: maxPerRequest ?? defaultMaxImagesPerRequest,
+  );
+}
+
 /// Persisted CLI configuration.
 final class CliConfig {
   CliConfig({
@@ -82,6 +120,7 @@ final class CliConfig {
     this.tools,
     this.redact,
     this.compactionEngine,
+    this.images,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -154,6 +193,7 @@ final class CliConfig {
         map['compaction'],
         label: '~/.fah/config.yaml',
       ),
+      images: _parseImagesSection(map['images']),
       // The fabric section (issue #27 phase 2 discovery announcements) is
       // strict too.
       fabric: map['fabric'] == null
@@ -298,6 +338,11 @@ final class CliConfig {
   /// the effective engine resolves global < project < runtime.
   final CompactionEngine? compactionEngine;
 
+  /// Optional `images:` section (session image registry, issue #171):
+  /// `registry` kill switch + `maxPerRequest` cap. `null` keeps the
+  /// defaults (registry on, [defaultMaxImagesPerRequest]).
+  final ImageRegistryConfig? images;
+
   /// Optional `redact:` section — layered secret redaction. `null` means
   /// the section is absent (redaction still runs with default config; the
   /// pipeline assembly happens in the host startup, see
@@ -337,6 +382,7 @@ final class CliConfig {
     if (compactionEngine != null) {
       buffer.write('compaction:\n  engine: ${compactionEngine!.value}\n');
     }
+    if (images != null) buffer.write(_imagesYaml());
     return buffer.toString();
   }
 
@@ -411,6 +457,17 @@ final class CliConfig {
     if (skillsDisableShellExecution) {
       buffer.write('  disableShellExecution: true\n');
     }
+  }
+
+  String _imagesYaml() {
+    final config = images;
+    if (config == null) return '';
+    final buffer = StringBuffer('images:\n');
+    if (!config.enabled) buffer.write('  registry: false\n');
+    if (config.maxPerRequest != defaultMaxImagesPerRequest) {
+      buffer.write('  maxPerRequest: ${config.maxPerRequest}\n');
+    }
+    return buffer.toString();
   }
 
   String _allowedToolsYaml() {

@@ -1177,6 +1177,9 @@ Future<void> _runApp(List<String> args) async {
   // Provider watchdog overrides (`providerTimeouts:` section): process-wide,
   // read by the adapters' connect/idle watchdogs on every request.
   providerTimeoutsOverride = saved.providerTimeouts;
+  // Session image registry (`images:` section, issue #171): process-wide,
+  // read inside the agent loop's request build. Default: on.
+  imageRegistryConfig = saved.images ?? const ImageRegistryConfig();
 
   // `fa config export-providers` — needs the loaded config (saved
   // providers + key names); check|path|get|set already ran above.
