@@ -339,13 +339,64 @@ const _lightColors = _FahThemeColors(
 /// [uiTheme] re-skins the result (accent colors, typeface, radii) — see
 /// [FaUiTheme]; null keeps the stock brand look.
 ThemeData buildFahTheme({FaUiTheme? uiTheme}) =>
-    _buildFahTheme(_darkColors, Brightness.dark, uiTheme);
+    _buildFahTheme(_themedColors(_darkColors, Brightness.dark, uiTheme),
+        Brightness.dark, uiTheme);
 
 /// The light counterpart of [buildFahTheme], derived from
 /// [FahLightPalette]: same structure, same brand accents, AA-readable
 /// grays on white surfaces.
 ThemeData buildFahThemeLight({FaUiTheme? uiTheme}) =>
-    _buildFahTheme(_lightColors, Brightness.light, uiTheme);
+    _buildFahTheme(_themedColors(_lightColors, Brightness.light, uiTheme),
+        Brightness.light, uiTheme);
+
+/// The effective per-brightness color set: the [FaUiTheme] palette slots
+/// (theme packs) over the stock values. A null palette (or an all-default
+/// [FaUiTheme]) is exactly the stock set, so the built theme is
+/// byte-identical to the pre-palette one.
+_FahThemeColors _themedColors(
+  _FahThemeColors stock,
+  Brightness brightness,
+  FaUiTheme? uiTheme,
+) {
+  final palette = uiTheme?.paletteFor(brightness);
+  if (palette == null) return stock;
+  return _FahThemeColors(
+    bg: palette.bg,
+    bgAlt: palette.bgAlt,
+    panel: palette.panel,
+    panelAlt: palette.panelAlt,
+    border: palette.border,
+    borderBright: palette.borderBright,
+    text: palette.text,
+    dim: palette.dim,
+    teal: palette.teal,
+    indigo: palette.indigo,
+    onAccent: palette.onAccent,
+    error: palette.error,
+    errorContainer: palette.errorContainer,
+    primaryContainer: stock.primaryContainer,
+    onPrimaryContainer: stock.onPrimaryContainer,
+    secondaryContainer: stock.secondaryContainer,
+    onSecondaryContainer: stock.onSecondaryContainer,
+    onError: stock.onError,
+    onErrorContainer: stock.onErrorContainer,
+    surfaceLow: stock.surfaceLow,
+    surfaceHighest: stock.surfaceHighest,
+    outlineVariant: stock.outlineVariant,
+    onInverseSurface: stock.onInverseSurface,
+    inversePrimary: stock.inversePrimary,
+    selection: palette.indigo.withValues(alpha: 0x55 / 255),
+    segmentedSelected: palette.indigo.withValues(alpha: 0x33 / 255),
+    elevatedBg: palette.panelAlt,
+    snackbarBg: stock.snackbarBg,
+    snackbarText: stock.snackbarText,
+    snackbarAction: stock.snackbarAction,
+    snackbarBorder: stock.snackbarBorder,
+    tooltipBg: stock.tooltipBg,
+    tooltipText: stock.tooltipText,
+    tooltipBorder: stock.tooltipBorder,
+  );
+}
 
 ThemeData _buildFahTheme(
   _FahThemeColors c,
@@ -618,35 +669,41 @@ ThemeData _buildFahTheme(
 ///
 /// [FaUiTheme.background] / [FaUiTheme.surface] re-seat the transcript on
 /// the host's own palette; null keeps the stock colors.
-ChatTheme buildFahChatTheme({FaUiTheme? uiTheme}) => ChatTheme(
-  colors: ChatColors(
-    primary: uiTheme?.indigo ?? FahPalette.indigo,
-    onPrimary: FahPalette.onAccent,
-    surface: uiTheme?.background ?? FahPalette.bg,
-    onSurface: FahPalette.text,
-    surfaceContainerLow: const Color(0xFF0A0F18),
-    surfaceContainer: uiTheme?.surface ?? FahPalette.panel,
-    surfaceContainerHigh: FahPalette.panelAlt,
-  ),
-  typography: ChatTypography.standard(),
-  shape: const BorderRadius.all(Radius.circular(12)),
-);
+ChatTheme buildFahChatTheme({FaUiTheme? uiTheme}) {
+  final p = uiTheme?.darkPalette;
+  return ChatTheme(
+    colors: ChatColors(
+      primary: uiTheme?.indigo ?? p?.indigo ?? FahPalette.indigo,
+      onPrimary: p?.onAccent ?? FahPalette.onAccent,
+      surface: uiTheme?.background ?? p?.bg ?? FahPalette.bg,
+      onSurface: p?.text ?? FahPalette.text,
+      surfaceContainerLow: p?.bgAlt ?? const Color(0xFF0A0F18),
+      surfaceContainer: uiTheme?.surface ?? p?.panel ?? FahPalette.panel,
+      surfaceContainerHigh: p?.panelAlt ?? FahPalette.panelAlt,
+    ),
+    typography: ChatTypography.standard(),
+    shape: const BorderRadius.all(Radius.circular(12)),
+  );
+}
 
 /// The light counterpart of [buildFahChatTheme], matching
 /// [buildFahThemeLight].
-ChatTheme buildFahChatThemeLight({FaUiTheme? uiTheme}) => ChatTheme(
-  colors: ChatColors(
-    primary: uiTheme?.indigo ?? FahLightPalette.indigo,
-    onPrimary: FahLightPalette.onAccent,
-    surface: uiTheme?.background ?? FahLightPalette.bg,
-    onSurface: FahLightPalette.text,
-    surfaceContainerLow: FahLightPalette.bgAlt,
-    surfaceContainer: uiTheme?.surface ?? FahLightPalette.panel,
-    surfaceContainerHigh: FahLightPalette.panelAlt,
-  ),
-  typography: ChatTypography.standard(),
-  shape: const BorderRadius.all(Radius.circular(12)),
-);
+ChatTheme buildFahChatThemeLight({FaUiTheme? uiTheme}) {
+  final p = uiTheme?.lightPalette;
+  return ChatTheme(
+    colors: ChatColors(
+      primary: uiTheme?.indigo ?? p?.indigo ?? FahLightPalette.indigo,
+      onPrimary: p?.onAccent ?? FahLightPalette.onAccent,
+      surface: uiTheme?.background ?? p?.bg ?? FahLightPalette.bg,
+      onSurface: p?.text ?? FahLightPalette.text,
+      surfaceContainerLow: p?.bgAlt ?? FahLightPalette.bgAlt,
+      surfaceContainer: uiTheme?.surface ?? p?.panel ?? FahLightPalette.panel,
+      surfaceContainerHigh: p?.panelAlt ?? FahLightPalette.panelAlt,
+    ),
+    typography: ChatTypography.standard(),
+    shape: const BorderRadius.all(Radius.circular(12)),
+  );
+}
 
 /// The palette for chat surfaces (transcript tiles, the composer strip):
 /// [FahColors.of] re-seated on the host's [FaUiTheme.background] /
@@ -737,10 +794,9 @@ final class FahColors {
   /// [FaUiThemeProvider] overrides the accent colors, the returned instance
   /// carries the overrides (accents, brand gradient, bubble tints).
   static FahColors of(BuildContext context) {
-    final base = Theme.of(context).brightness == Brightness.light
-        ? light
-        : dark;
     final uiTheme = FaUiThemeProvider.maybeOf(context);
+    final base = uiTheme?.paletteFor(Theme.of(context).brightness) ??
+        (Theme.of(context).brightness == Brightness.light ? light : dark);
     if (uiTheme == null ||
         (uiTheme.indigo == null &&
             uiTheme.teal == null &&
@@ -825,6 +881,45 @@ final class FahColors {
       userBubble: userBubble,
       userBubbleBorder: userBubbleBorder,
       codeBg: codeBg,
+      brandGradient: brandGradient,
+    );
+  }
+
+  /// A copy with the theme-pack slots replaced (null keeps the current
+  /// value) — the construction path for [FaUiTheme.darkPalette] /
+  /// [FaUiTheme.lightPalette]. Accents and the gradient ride
+  /// [withAccents] so the derived tints follow.
+  FahColors override({
+    Color? bg,
+    Color? bgAlt,
+    Color? panel,
+    Color? panelAlt,
+    Color? border,
+    Color? borderBright,
+    Color? text,
+    Color? dim,
+    Color? onAccent,
+    Color? error,
+    Color? codeBg,
+  }) {
+    return FahColors._(
+      bg: bg ?? this.bg,
+      bgAlt: bgAlt ?? this.bgAlt,
+      panel: panel ?? this.panel,
+      panelAlt: panelAlt ?? this.panelAlt,
+      border: border ?? this.border,
+      borderBright: borderBright ?? this.borderBright,
+      text: text ?? this.text,
+      dim: dim ?? this.dim,
+      teal: teal,
+      indigo: indigo,
+      onAccent: onAccent ?? this.onAccent,
+      error: error ?? this.error,
+      errorContainer: errorContainer,
+      pending: pending,
+      userBubble: userBubble,
+      userBubbleBorder: userBubbleBorder,
+      codeBg: codeBg ?? this.codeBg,
       brandGradient: brandGradient,
     );
   }

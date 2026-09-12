@@ -51,6 +51,7 @@ class ThemeController extends ChangeNotifier {
 
   final ExecutionEnv? _env;
   FahThemeMode _mode = FahThemeMode.system;
+  String? _packId;
 
   /// Loads the mode persisted in [env]; a missing, unreadable, or corrupt
   /// file yields the default mode.
@@ -62,6 +63,11 @@ class ThemeController extends ChangeNotifier {
 
   /// The selected appearance choice.
   FahThemeMode get mode => _mode;
+
+  /// The active theme pack id (null = the stock Fa look), persisted in the
+  /// same `theme.json` envelope. The id survives pack updates (E1) and a
+  /// removed pack resolves to the stock look at apply time (never a crash).
+  String? get packId => _packId;
 
   /// The [ThemeMode] handed to `MaterialApp.themeMode`.
   ThemeMode get themeMode => switch (_mode) {
@@ -75,13 +81,31 @@ class ThemeController extends ChangeNotifier {
   Future<void> setMode(FahThemeMode mode) async {
     if (mode == _mode) return;
     _mode = mode;
+    await _persist();
     notifyListeners();
+  }
+
+  /// Selects the active theme pack ([packId] null reverts to the stock
+  /// look). Persistence is best effort, same contract as [setMode].
+  Future<void> setPack(String? packId) async {
+    if (packId == _packId) return;
+    _packId = packId;
+    await _persist();
+    notifyListeners();
+  }
+
+  /// Writes the current envelope; best effort by design.
+  Future<void> _persist() async {
     final env = _env;
     if (env == null) return;
     try {
       await env.writeFile(
         '${env.cwd}/$fileName',
-        jsonEncode({'version': _version, 'mode': mode.name}),
+        jsonEncode({
+          'version': _version,
+          'mode': _mode.name,
+          if (_packId != null) 'pack': _packId,
+        }),
       );
     } on Object {
       // Best effort: persistence must never block the theme switch.
@@ -98,6 +122,8 @@ class ThemeController extends ChangeNotifier {
       if (decoded is! Map<String, dynamic>) return;
       if (decoded['version'] != _version) return;
       _mode = FahThemeMode.parse(decoded['mode'] as String?);
+      final pack = decoded['pack'];
+      if (pack is String && pack.isNotEmpty) _packId = pack;
     } on Object {
       // Corrupt or incompatible file → default mode, never crash boot.
     }

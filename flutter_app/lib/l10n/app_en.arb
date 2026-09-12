@@ -72,6 +72,8 @@
   "appsPermissionHomekitDesc": "jsr.fa.homekit — smart home devices (coming soon)",
   "appsPermissionKeys": "Host keys",
   "appsPermissionKeysDesc": "jsr.fa.keys — read the API keys saved in Fa and request new ones",
+  "appsPermissionTheme": "Theme packs",
+  "appsPermissionThemeDesc": "jsr.fa.theme — list theme packs and apply one (the user confirms every apply)",
   "appsPermissionLlm": "LLM",
   "appsPermissionLlmDesc": "jsr.fa.llm — let the app ask the connected model",
   "appsPermissionMedia": "Media",
@@ -657,5 +659,19 @@
   "dynamicTileRetry": "Retry",
   "@dynamicTileRetry": {
     "description": "Retry button on the dynamic-message error tile (issue #102 AC9)"
-  }
+  },
+  "themeConsentTitle": "Apply theme pack?",
+  "themeConsentBody": "{app} wants to apply the theme pack \"{pack}\".",
+  "@themeConsentBody": { "placeholders": { "app": { "type": "String" }, "pack": { "type": "String" } } },
+  "themeConsentContrast": "Warning: some color pairs in this pack are below WCAG AA contrast (4.5:1).",
+  "themeConsentApply": "Apply",
+  "themeConsentDeny": "Keep current",
+  "themePacksTitle": "Theme packs",
+  "themePacksSubtitle": "Install a .zip with theme.json, switch the active pack, or remove one",
+  "themePackDefault": "Default Fa look",
+  "themePackImport": "Import theme pack",
+  "themePackDelete": "Remove",
+  "themePackActiveChip": "active",
+  "themePackWallpaperChip": "wallpaper",
+  "themePackImportFailed": "Theme pack rejected"
 }
