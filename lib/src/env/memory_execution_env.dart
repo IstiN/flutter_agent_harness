@@ -12,12 +12,43 @@ import 'dart:typed_data';
 
 import 'execution_env.dart';
 
+/// A point-in-time deep copy of a [MemoryFileSystem] tree — see
+/// [FsSnapshotExporter.exportSnapshot].
+final class MemoryFsSnapshot {
+  const MemoryFsSnapshot({required this.dirs, required this.files});
+
+  /// Every directory below the root, depth-first with children sorted by
+  /// name — the same order a [FileSystem.listDir]-based traversal yields.
+  final List<String> dirs;
+
+  /// File path → deep-copied bytes, in the same traversal order as [dirs]
+  /// (insertion-ordered map).
+  final Map<String, Uint8List> files;
+}
+
+/// A filesystem that can export a point-in-time deep copy of its whole
+/// tree in ONE synchronous pass.
+///
+/// Unlike an async `listDir`/`readBinaryFile` walk, a synchronous copy has
+/// no event-loop yield points, so a concurrent write can never interleave
+/// mid-copy and tear the snapshot. Persistence layers that serialize the
+/// tree (the web sandbox's `PersistentWebExecutionEnv`) must prefer this
+/// over walking whenever the delegate implements it.
+abstract interface class FsSnapshotExporter {
+  /// Deep-copies the whole tree below [FileSystem.cwd] synchronously.
+  /// Traversal order matches a `listDir` walk exactly (depth-first,
+  /// children sorted by name), so an export of a quiescent tree is
+  /// identical to an async walk of it.
+  MemoryFsSnapshot exportSnapshot();
+}
+
 /// In-memory [FileSystem] with POSIX-style (`/`-separated) paths.
 ///
 /// Paths are normalized (`.`/`..` resolved, duplicate slashes collapsed) and
 /// relative paths are resolved against [cwd]. Writes and appends create
 /// parent directories automatically, matching the `dart:io` implementation.
-final class MemoryFileSystem implements FileSystem, RangedReadFileSystem {
+final class MemoryFileSystem
+    implements FileSystem, RangedReadFileSystem, FsSnapshotExporter {
   /// Creates a [MemoryFileSystem] rooted at [cwd] (default `/`).
   MemoryFileSystem({this.cwd = '/'}) {
     _dirs.add('/');
@@ -170,6 +201,30 @@ final class MemoryFileSystem implements FileSystem, RangedReadFileSystem {
       DateTime.now().millisecondsSinceEpoch,
     );
     return const Ok(null);
+  }
+
+  @override
+  MemoryFsSnapshot exportSnapshot() {
+    final root = _normalize(cwd);
+    final dirs = <String>[];
+    final files = <String, Uint8List>{};
+    void walk(String dir) {
+      final prefix = dir == '/' ? '/' : '$dir/';
+      final children = _childNames(dir, prefix).toList()..sort();
+      for (final name in children) {
+        final child = '$prefix$name';
+        if (_dirs.contains(child)) {
+          dirs.add(child);
+          walk(child);
+        } else {
+          final file = _files[child];
+          if (file != null) files[child] = Uint8List.fromList(file.bytes);
+        }
+      }
+    }
+
+    if (_dirs.contains(root)) walk(root);
+    return MemoryFsSnapshot(dirs: dirs, files: files);
   }
 
   /// Test-only: updates the modification time of [path] to [mtimeMs].
