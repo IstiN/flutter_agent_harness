@@ -190,7 +190,7 @@ final class AgentHost implements UiHostBackend {
     RunScriptExecutor? runScript,
     WebSearchConfig? webSearch,
   }) async {
-    final env = await ChromeStorageEnv.restore();
+    final env = await ChromeStorageEnv.restore(storage: chrome?.storage);
     final host = AgentHost._(env, ops, sink);
     await host._init(
       config,
