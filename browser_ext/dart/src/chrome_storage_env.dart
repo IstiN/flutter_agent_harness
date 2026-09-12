@@ -3,17 +3,12 @@
 // same shape as the Flutter sandbox's wrapper.
 import 'dart:async';
 import 'dart:convert';
-import 'dart:js_interop';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/src/env/execution_env.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 
-@JS('chrome.storage.local.get')
-external JSPromise<JSAny?> _storageGet(JSAny? keys);
-
-@JS('chrome.storage.local.set')
-external JSPromise<JSAny?> _storageSet(JSObject items);
+import 'chrome_api.dart' show StorageApi;
 
 /// [ExecutionEnv] persisted into `chrome.storage.local` under [storageKey].
 ///
@@ -29,15 +24,26 @@ external JSPromise<JSAny?> _storageSet(JSObject items);
 /// `shellUnavailable` error naming the sandbox — the `browser_*` tools are
 /// the action surface.
 final class ChromeStorageEnv implements ExecutionEnv {
-  ChromeStorageEnv._() : _delegate = MemoryExecutionEnv(cwd: '/');
+  ChromeStorageEnv._(this._storage) : _delegate = MemoryExecutionEnv(cwd: '/');
 
   final MemoryExecutionEnv _delegate;
+
+  /// The `chrome.storage.local` surface; null when the chrome global is
+  /// unavailable (non-extension context) — the env then runs memory-only,
+  /// same as the old blocked-storage clean start.
+  final StorageApi? _storage;
 
   /// Snapshot schema version. Different version → ignored, clean start.
   static const snapshotVersion = 1;
 
   /// chrome.storage.local key holding the versioned JSON envelope.
   static const storageKey = 'faFs';
+
+  /// Backup key an unreadable envelope is preserved under (issue #228).
+  static const backupKey = 'faFs.bak';
+
+  /// Per-session-file record key prefix: `faFs.session<path>` (issue #228).
+  static const sessionKeyPrefix = 'faFs.session';
 
   static const _persistDelay = Duration(milliseconds: 800);
 
@@ -52,19 +58,19 @@ final class ChromeStorageEnv implements ExecutionEnv {
   bool _persistErrorLogged = false;
 
   /// Creates the env and replays the stored snapshot into the memory tree.
-  static Future<ChromeStorageEnv> restore() async {
-    final env = ChromeStorageEnv._();
+  static Future<ChromeStorageEnv> restore({StorageApi? storage}) async {
+    final env = ChromeStorageEnv._(storage);
     await env._restore();
     env._booting = false;
     return env;
   }
 
   Future<void> _restore() async {
+    final storage = _storage;
+    if (storage == null) return;
     String? raw;
     try {
-      final result = await _storageGet(storageKey.toJS).toDart;
-      if (result == null) return;
-      final stored = (result as JSObject).dartify() as Map<Object?, Object?>;
+      final stored = await storage.get([storageKey]);
       raw = stored[storageKey] as String?;
     } on Object {
       return; // Storage unavailable (blocked, private mode) → clean start.
@@ -124,11 +130,15 @@ final class ChromeStorageEnv implements ExecutionEnv {
   }
 
   void _schedulePersist() {
-    if (_disposed || _booting) return;
+    if (_disposed || _booting || _storage == null) return;
     _dirty = true;
     _timer?.cancel();
     _timer = Timer(_persistDelay, () => unawaited(_persistNow()));
   }
+
+  /// True when mutations since the last completed save are still
+  /// unpersisted (including a save that failed and armed the retry).
+  bool get hasPendingChanges => _dirty;
 
   /// Persists immediately when changes are pending. Awaits any in-flight
   /// save; call after each agent run so a reaped SW never loses a turn.
@@ -144,17 +154,17 @@ final class ChromeStorageEnv implements ExecutionEnv {
   }
 
   Future<void> _persistNow() {
-    if (_disposed) return Future.value();
+    if (_disposed || _storage == null) return Future.value();
     return _saving ??= _persistLoop().whenComplete(() => _saving = null);
   }
 
   Future<void> _persistLoop() async {
+    final storage = _storage;
+    if (storage == null) return;
     while (_dirty && !_disposed) {
       _dirty = false;
       try {
-        await _storageSet(
-          <String, dynamic>{storageKey: await _snapshot()}.jsify() as JSObject,
-        ).toDart;
+        await storage.set({storageKey: await _snapshot()});
         _persistErrorLogged = false;
       } on Object catch (error) {
         // Save failed (quota, blocked storage): stay dirty so the next
