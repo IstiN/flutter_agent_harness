@@ -44,11 +44,15 @@ StreamFunction _singleTextResponse(String text) {
   };
 }
 
-AgentService _fakeService(ExecutionEnv env, [StreamFunction? streamFunction]) {
+AgentService _fakeService(
+  ExecutionEnv env, [
+  StreamFunction? streamFunction,
+  String modelId = 'test-model',
+]) {
   return AgentService(
     agent: Agent(
       model: Model(
-        id: 'test-model',
+        id: modelId,
         api: 'test-api',
         provider: 'test',
         baseUrl: 'https://example.com',
@@ -63,7 +67,7 @@ AgentService _fakeService(ExecutionEnv env, [StreamFunction? streamFunction]) {
     sessionsRoot: '/sessions',
     config: AgentConfig(
       providerKind: 'test',
-      modelId: 'test-model',
+      modelId: modelId,
       baseUrl: 'https://example.com',
       apiKey: '',
     ),
@@ -386,12 +390,14 @@ Future<void> _pumpLauncher(
   bool liveTiles = false,
   TileEngineFactory? tileEngineFactory,
   EdgeInsets? viewPadding,
+  Size size = goldenSizePhone,
+  String modelId = 'test-model',
 }) async {
   final env = await _seededEnv(liveTiles: liveTiles);
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   for (final entry
       in (sessions ?? const {'fake-session': <FahChatMessage>[]}).entries) {
-    final service = _fakeService(env, streamFunction);
+    final service = _fakeService(env, streamFunction, modelId);
     service.messages.addAll(entry.value);
     // Pinned creation time (deep in the past → the "Jan 5"-style branch):
     // the session tile's relative-time subtitle must not stamp the golden
@@ -444,7 +450,7 @@ Future<void> _pumpLauncher(
               child: launcher,
             ),
           ),
-    size: goldenSizePhone,
+    size: size,
     locale: locale,
     theme: theme,
     wrap: (child) => child,
@@ -736,6 +742,23 @@ void main() {
       );
       await openSessionPanel(tester, 'sess-b');
       await expectGolden(tester, 'launcher/sheet_session_insets_light');
+    });
+
+    // Issue #167 AC3: the header's quick model chip
+    // (lib/ui/widgets/quick_model_chip.dart) ellipsis-clamps very long
+    // model ids on the narrowest supported canvas (320pt) without
+    // overflowing the panel header.
+    testWidgets('session panel model chip — 320pt long model id — dark', (
+      tester,
+    ) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        size: const Size(320, 568),
+        modelId: 'an-extremely-long-model-identifier-that-must-ellipsis-clamp',
+      );
+      await openSessionPanel(tester, 'sess-b');
+      await expectGolden(tester, 'launcher/sheet_session_chip_320_dark');
     });
   });
 }

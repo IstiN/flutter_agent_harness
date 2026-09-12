@@ -122,6 +122,7 @@
   "chatMicError": "Ошибка голосового ввода: {error}",
   "chatMicStopTooltip": "Остановить запись",
   "chatMicTooltip": "Голосовой ввод",
+  "chatModelSwitchTooltip": "Сменить модель",
   "chatRemoveAttachment": "Удалить вложение",
   "chatSendError": "Не удалось отправить: {error}",
   "chatSendTooltip": "Отправить",
