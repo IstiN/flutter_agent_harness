@@ -86,6 +86,7 @@ import '../providers/copilot_oauth.dart';
 import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
+import '../agent/image_registry.dart' show imageDropNotice;
 import '../providers/provider_common.dart'
     show authExpiredProvider, stripAuthExpiredMarker;
 import '../providers/transient_retry_stream.dart';
@@ -1070,6 +1071,23 @@ class AgentCli {
     };
   }
 
+  /// Image registry drop visibility (issue #171): when the per-request
+  /// cap drops a history image, say so — a dim transcript line + an
+  /// fa.log entry instead of a silent degradation.
+  void _wireImageDropNotice() {
+    imageDropNotice = (index, keyPreview) {
+      io.writeln(
+        _style.dim(
+          '[images] dropping [Image $index] (key $keyPreview…) '
+          '— per-request cap reached',
+        ),
+      );
+      _logDiagnostic(
+        'image registry drop sid=$_logSid index=$index key=$keyPreview',
+      );
+    };
+  }
+
   Future<void> run() async {
     await _cubeBootRestore();
     await _loadAgentContext();
@@ -1086,6 +1104,7 @@ class AgentCli {
     // version next to the session id before any lifecycle line.
     _logDiagnostic('fa boot sid=$_logSid version=$_version');
     _wireTransientRetryNotice();
+    _wireImageDropNotice();
     final presence = await _registerLivePresence();
     // Phase 3a: rehydrate the subagent registry from the resumed session's
     // `subagent_registry` records — agents of this session are visible again
