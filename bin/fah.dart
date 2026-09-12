@@ -33,6 +33,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/cli/config_command.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
+import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
@@ -44,12 +45,15 @@ import 'package:fa_hub_client/fa_hub_client.dart'
         HubConfig,
         HubPlugin,
         defaultDapConfigFile,
+        envClientSecret,
         envMasterSecret,
         persistDapConfig,
+        readDapConfig,
         resolveDapSettings;
 import 'fah_hub_plugin.dart';
 import 'fah_hub_serve.dart';
 import 'hub_fabric_repository.dart';
+import 'package:flutter_agent_harness/src/hub/hub_boot_credential.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 import 'serve_bridge.dart';
@@ -172,9 +176,13 @@ void _writeHepLine(String line) {
   stdout.flush();
 }
 
+/// The mime reported when the magic-byte sniff misses — callers treat it
+/// as "not an image" (issue #196 `--attach` passthrough).
+const _unknownAttachMime = 'application/octet-stream';
+
 /// Image type by magic bytes (issue #155 `--attach`): the file extension
 /// is untrusted; the first bytes are. png/jpeg/gif/webp covered, else
-/// application/octet-stream.
+/// [_unknownAttachMime].
 String _sniffMime(Uint8List bytes) {
   bool startsWith(List<int> magic) {
     if (bytes.length < magic.length) return false;
@@ -196,7 +204,7 @@ String _sniffMime(Uint8List bytes) {
       bytes[11] == 0x50) {
     return 'image/webp';
   }
-  return 'application/octet-stream';
+  return _unknownAttachMime;
 }
 
 Never _exitWithVersion(String version, {String? output}) {
@@ -374,7 +382,7 @@ _resolvePlugins(
   final enabled = resolveEnabledPlugins(args.plugins, config);
   final hubEnabled =
       enabled.contains('hub') &&
-      (Platform.environment[envMasterSecret] ?? '').isNotEmpty;
+      (dapEnvironment[envMasterSecret] ?? '').isNotEmpty;
   final hubFabric = hubEnabled ? HubFabricRepository(hubPlugin) : null;
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
@@ -1139,8 +1147,10 @@ Future<void> _runApp(List<String> args) async {
   try {
     parsed = switch (parseCliArgs(serve.cliArgs)) {
       CliArgsHelp() => _exitWithUsage(packageVersion),
-      CliArgsVersion(:final output) =>
-        _exitWithVersion(packageVersion, output: output),
+      CliArgsVersion(:final output) => _exitWithVersion(
+        packageVersion,
+        output: output,
+      ),
       final CliArgs cliArgs => cliArgs,
     };
   } on CliArgsException catch (error) {
@@ -1178,6 +1188,28 @@ Future<void> _runApp(List<String> args) async {
         env: extEnv,
         projectDir: extEnv.cwd,
         userDir: _homeDir(),
+      ),
+    );
+  }
+
+  // `fa session list [--json] [--flat]` (issue #198) — the tree-grouped
+  // session listing, intercepted like trajectory: no agent boot.
+  final sessionList = parsed.sessionList;
+  if (sessionList != null) {
+    final io = _TerminalCliIO(headless: true);
+    final listEnv = LocalExecutionEnv(
+      cwd: parsed.cwd ?? Directory.current.path,
+    );
+    exit(
+      await runSessionListCliCommand(
+        write: io.write,
+        writeln: io.writeln,
+        env: listEnv,
+        sessionRoot:
+            parsed.sessionRoot ?? _defaultSessionRoot(),
+        cwd: listEnv.cwd,
+        json: sessionList.json,
+        flat: sessionList.flat,
       ),
     );
   }
@@ -1523,6 +1555,18 @@ Future<void> _runApp(List<String> args) async {
   // "Set master secret" flow enables DAP at runtime by writing into
   // this map (the hub plugin re-reads it on every access).
   final dapEnvironment = Map<String, String>.of(Platform.environment);
+  // "The next boot is online by itself" (docs/dap.md): with no explicit
+  // env credential, seed the hub kill-switch key from the persisted
+  // `~/.dap/config.json` `clientSecret` (the explicit prior opt-in from
+  // `/dap start`). Without this the hub plugin never connects on a fresh
+  // boot and `agent_directory` shows file inboxes only — hub peers (the
+  // browser extension, embedded hosts) stay invisible from the CLI.
+  seedHubBootCredential(
+    dapEnvironment,
+    masterSecretKey: envMasterSecret,
+    clientSecretKey: envClientSecret,
+    dapConfig: readDapConfig(defaultDapConfigFile(null, dapEnvironment)),
+  );
   final hubPlugin = HubPlugin(environment: dapEnvironment);
   final resolved = await _resolvePlugins(
     effective,
@@ -1544,18 +1588,24 @@ Future<void> _runApp(List<String> args) async {
   // --log-file (issue #91): tee the rendered session trace into a file so
   // a parent CLI's stdout capture cannot swallow it. The sink is a sync
   // RandomAccessFile — unbuffered, so `tail -f` streams the trace live and
-  // even a SIGINT exit never loses the tail of the log.
+  // even a SIGINT exit never loses the tail of the log. FA_LOG_FILE
+  // (issue #178) is the env twin — the default when the flag is absent,
+  // so CI hosts that cannot pass flags still leave the trace; flag wins.
   RandomAccessFile? logTeeFile;
   CliIO io = terminalIo;
-  if (parsed.logFile case final logPath?) {
+  final logPath = parsed.logFile ?? logFileFromEnv(Platform.environment);
+  if (logPath case final path?) {
     final RandomAccessFile tee;
     try {
-      tee = File(logPath).openSync(mode: FileMode.write);
+      tee = File(path).openSync(mode: FileMode.write);
     } on Object catch (error) {
-      _fail('cannot open --log-file "$logPath": $error');
+      _fail('cannot open --log-file "$path": $error');
     }
     logTeeFile = tee;
     io = TeeCliIO(terminalIo, tee.writeStringSync);
+    if (parsed.logFile == null) {
+      io.writeln('note: --log-file "$path" from the FA_LOG_FILE env var');
+    }
   }
   // HEP events mode (issue #155): resolved below with the writer; the
   // assignment happens once `parsed.output` is known — see HepEventsIO.
@@ -1699,15 +1749,25 @@ Future<void> _runApp(List<String> args) async {
         )
       : null;
   final attachedImages = <ImageContent>[];
+  final attachReferences = <String>[];
   for (final attachment in parsed.attachments) {
     final file = File(attachment);
     if (!file.existsSync()) {
       _fail('--attach: no such file: $attachment');
     }
     final bytes = file.readAsBytesSync();
-    attachedImages.add(
-      ImageContent(data: base64Encode(bytes), mimeType: _sniffMime(bytes)),
-    );
+    final mime = _sniffMime(bytes);
+    if (mime == _unknownAttachMime) {
+      // Not an image (magic-byte sniff missed): pass through as a path
+      // reference — the same marker positional file-as-prompt uses — so
+      // the agent opens it with its tools instead of a provider-rejected
+      // octet-stream image block (issue #196).
+      attachReferences.add(attachPathReference(file.absolute.path));
+    } else {
+      attachedImages.add(
+        ImageContent(data: base64Encode(bytes), mimeType: mime),
+      );
+    }
   }
   if (eventsMode) {
     // Stdout purity: deltas ride frames; diagnostics keep their channel
@@ -1994,7 +2054,14 @@ Future<void> _runApp(List<String> args) async {
     );
   };
 
-  await persistConfig();
+  try {
+    await persistConfig();
+  } on ConfigException catch (error) {
+    // Issue #221 E3: an unparseable config.yaml makes the save refuse
+    // loudly instead of clobbering the file with defaults. Keep running
+    // with the in-memory config; the user's file stays untouched.
+    stderr.writeln('warning: config not saved: $error');
+  }
 
   Future<void> resetTerminalForShell() async {
     if (!stdin.hasTerminal) return;
@@ -2067,7 +2134,11 @@ Future<void> _runApp(List<String> args) async {
 
   if (headlessPrompt != null) {
     _headlessRun = cli.runHeadless(
-      headlessPrompt,
+      attachReferences.isEmpty
+          ? headlessPrompt
+          // Non-image --attach files pass through as path references
+          // appended to the prompt (issue #196).
+          : '$headlessPrompt\n\n${attachReferences.join('\n\n')}',
       images: attachedImages,
       hep: hep,
     );

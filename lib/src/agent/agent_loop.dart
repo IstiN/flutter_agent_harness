@@ -37,7 +37,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../cancel_token.dart';
-import '../compaction/token_estimation.dart' show estimateContextTokens;
+import '../compaction/token_estimation.dart' show estimateRequestTokens;
 import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
@@ -1162,7 +1162,17 @@ Future<AssistantMessage> _streamAssistantResponse(
     // flow still owns the decision.
     final window = config.model.contextWindow;
     if (window > 0) {
-      final tokens = estimateContextTokens(requestContext.messages).tokens;
+      // The same accounting basis as the host's ctx meter and the
+      // compaction threshold: transcript estimate PLUS the system-prompt /
+      // tool-schema overhead when no provider-usage anchor prices them in
+      // (an unanchored estimate otherwise undercounts every request by
+      // that overhead — the "meter said 64% but the request was
+      // over-window" mismatch).
+      final tokens = estimateRequestTokens(
+        requestContext.messages,
+        systemPrompt: requestContext.systemPrompt,
+        tools: requestContext.tools ?? const [],
+      );
       if (tokens > window) {
         return _finishWithoutStream(
           context,

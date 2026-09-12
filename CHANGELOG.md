@@ -3,6 +3,33 @@
 ## 0.1.358
 
 
+- fix(hub): boot online from the persisted DAP credential — with no
+  `DAP_MASTER_SECRET`/`DAP_CLIENT_SECRET` in the environment, the CLI now
+  seeds the hub kill switch from `~/.dap/config.json` `clientSecret`
+  (the explicit prior opt-in from `/dap start`), restoring the documented
+  "the next boot is online by itself" behavior: hub mail delivery and
+  hub peers in `agent_directory` (the browser extension, embedded hosts)
+  work on a fresh boot. The fabric gate also reads the mutable
+  environment overlay the plugin actually uses, not the read-only
+  process environment.
+- fix(195): images follow-up from the #190 review. F2: a stale
+  `[Image N]` citation in history no longer silently rebinds to the
+  WRONG image after compaction renumbering — once a renumbering boundary
+  (compaction summary, structured marker, local-trim note) exists in the
+  window, authored history citations degrade to the
+  `(image no longer available)` note while generated content-keyed refs,
+  carrier labels and the current message stay intact. F3: the current
+  message's in-place images now carry their `[Image N]` label so the
+  model can cite what it sees. F4: the app logs per-request cap drops
+  through `AppLog` (`logs/app.log`) instead of silently dropping. F5:
+  `estimateContextTokens` charges repeated images at the wire-replacement
+  cost (first occurrence full, repeats ~32 chars), fixing the
+  transcript-vs-wire estimation asymmetry; per-message `estimateTokens`
+  is unchanged. F1: the `images:` config section gained the previously
+  claimed tests — CLI parse/round-trip/strictness (bad bools, unknown
+  keys, non-positive ints, malformed sections) and the config-service
+  validator dispatch pin.
+
 - feat(169): declarative-only secured theme API — theme packs
   (`theme.json` + optional wallpaper image in a `.zip`; strict schema
   validation with unknown-key rejection, path-traversal/symlink/size
@@ -13,6 +40,18 @@
   `list`/`current`/`apply` behind the `theme` permission with a consent
   dialog per apply. Apps can never install or delete packs (no such API
   exists; pinned by a byte-scan test).
+- chore(flutter): raise the Flutter floor to 3.47 (`>=3.47.0`) across
+  `flutter_app`, `packages/fa_ui`, `packages/fa_llm_flutter` and
+  `yoclip`; drop the `meta: 1.18.0` dependency overrides (the 3.47 SDK
+  declares `meta ^1.18.3`, so 1.19.0 resolves for dart_tui without an
+  override); regenerate the flutter_app goldens for the 3.47.4
+  rendering (text/geometry drift only); clean up new-SDK lints in two
+  config tests; ios Podfile now forces the iOS 16 deployment floor on
+  pod TARGET-level build configs too (podspec-declared 15.0 targets
+  broke the build against 16.0-only Promises under the newer toolchain).
+- chore(deps): js_widget_runtime ^0.4.121 — typed fallback hardening
+  for legacy manifest keys, widget manifest i18n compatibility, and the
+  JSR video `onError` bridge.
 
 ## 0.1.357
 
@@ -3381,6 +3420,28 @@
 - ci(161): daily auto-publish — TestFlight + pub.dev + CLI + website + add-in, self-filing fix issues (#170)
 - fix(152): root-cause the browser-ext e2e dispatch flake class (#158)
 - ci(177): drop the 'Quality gates' alias — protection switched to 'Quality gate' (#192)
+
+## 0.1.361
+
+- feat(178): honor FA_LOG_FILE env var as the default for --log-file (#216)
+- fix(197): four minor windowing defects from the round-4 review (#211)
+- fix(196): HEP follow-up from #193 review (#210)
+- fix(195): images follow-up - stale citation renumbering guard + F3/F4/F5 + config tests (#205)
+
+## 0.1.363
+
+- chore(flutter): raise Flutter floor to 3.47 + js_widget_runtime ^0.4.121 (#230)
+- fix(apps): unmute JSR media widgets on iOS — audio session category drift (#227)
+- feat(apps): widget manifest i18n — additive nameI18n/descriptionI18n keys (#226)
+- fix(catalog): single-slash URL join for all release-asset fetches (#219)
+
+## 0.1.364
+
+- feat(198): tree-grouped session listings (core + CLI) (#220)
+- fix(ext): sessions survive reload/update/restart — issue #228 persistence vectors (#236)
+- fix(config): merge-before-write + atomic save for ~/.fah/config.yaml (#221) (#235)
+- fix(catalog): web installs widgets from CORS-friendly raw URLs (#231)
+- fix(ctx): footer meter, over-window guard and compaction share one request-size basis (#217)
 
 ## Unreleased
 

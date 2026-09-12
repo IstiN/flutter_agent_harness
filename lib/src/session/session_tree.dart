@@ -15,6 +15,7 @@ import '../exceptions.dart';
 import '../types.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
+import 'windowed_session_storage.dart';
 
 /// Prefix wrapping a compaction summary when it is projected into the model
 /// context. Ported from pi's `COMPACTION_SUMMARY_PREFIX`.
@@ -136,6 +137,24 @@ final class Session {
     if (entries.isEmpty) return null;
     final name = (entries.last as SessionInfoRecord).name?.trim();
     return name != null && name.isNotEmpty ? name : null;
+  }
+
+  /// The session's display name, paging older chunks when the last
+  /// `session_info` record sits outside a windowed storage's resident
+  /// tail (a name written long before the newest records). [maxPages]
+  /// bounds the scan for pathological files.
+  Future<String?> resolveSessionName({int maxPages = 64}) async {
+    var name = await getSessionName();
+    final storage = _storage;
+    var pages = 0;
+    while (name == null && pages < maxPages) {
+      if (storage is! WindowedSessionStorage) break;
+      if (!storage.hasOlder) break;
+      pages++;
+      await storage.loadOlder();
+      name = await getSessionName();
+    }
+    return name;
   }
 
   Future<String> _append(
@@ -436,6 +455,7 @@ final class Session {
       projectEntry: _entryToMessages,
     );
   }
+
   ({
     String thinkingLevel,
     ({String provider, String modelId})? model,

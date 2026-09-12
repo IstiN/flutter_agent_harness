@@ -2804,6 +2804,18 @@ abstract class AppLocalizations {
   /// **'Sessions'**
   String get sidebarSessionsHeader;
 
+  /// No description provided for @sidebarSubagentSessionCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 agent} other{{count} agents}}'**
+  String sidebarSubagentSessionCount(int count);
+
+  /// No description provided for @sidebarSubagentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'subagent {id}'**
+  String sidebarSubagentTitle(String id);
+
   /// No description provided for @tjsCacheTitle.
   ///
   /// In en, this message translates to:

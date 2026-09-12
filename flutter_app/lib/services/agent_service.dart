@@ -15,6 +15,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'app_log.dart';
 import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
@@ -144,6 +145,7 @@ class AgentService extends ChangeNotifier
     // endpoint-aware UI never reads an uninitialized late field.
     _activeBaseUrl = _agent.state.model.baseUrl;
     _activeApiKey = '';
+    _wireImageDropNotice();
     _redactor = redactor;
     _attachRedactor(redactor);
     _attachApproval();
@@ -161,6 +163,19 @@ class AgentService extends ChangeNotifier
       registry: null,
       rebuildPrompt: () {},
     );
+  }
+
+  /// F4: cap drops must never be silent — same rule as the CLI's dim
+  /// line, surfaced through the app debug log (logs/app.log). Armed from
+  /// every constructor (public, `_withEnv`, relay base delegates here).
+  static void _wireImageDropNotice() {
+    imageDropNotice = (index, keyPreview) {
+      AppLog.i(
+        'images',
+        'dropping [Image $index] (key $keyPreview…) '
+            '— per-request cap reached',
+      );
+    };
   }
 
   /// Relay-mode base construction (issue #34 item 1): builds the shell the
@@ -360,6 +375,7 @@ class AgentService extends ChangeNotifier
         formatSkillsForPrompt(skills),
     ].join('\n\n');
   }
+
   AgentService._withEnv({
     Map<String, String> bootSecrets = const {},
     required this.env,
@@ -396,11 +412,13 @@ class AgentService extends ChangeNotifier
          // attacker-controlled bytes and insert_draft_body rewrites the
          // user's draft — both prompt on EVERY call in EVERY session mode
          // (the override outranks mode, turn grants and always-allow).
-         overrides:
-             officeApi == null ? const {} : officeToolApprovalOverrides(),
+         overrides: officeApi == null
+             ? const {}
+             : officeToolApprovalOverrides(),
        ),
        sessionsRoot = sessionsRoot,
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
+    _wireImageDropNotice();
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
     _activeApiKey = config.apiKey;
@@ -1801,7 +1819,8 @@ class AgentService extends ChangeNotifier
     final windowed = _windowed;
     if (windowed == null) {
       final index = _positionalRow(messageId);
-      return index != null && index < messages.length;
+      if (index == null) return _jumpLoadedRecord(messageId);
+      return index >= 0 && index < messages.length;
     }
     if (!messageId.startsWith('msg-')) {
       return _jumpToRecord(windowed, messageId);
@@ -1832,6 +1851,30 @@ class AgentService extends ChangeNotifier
   int? _positionalRow(String messageId) {
     final index = int.tryParse(messageId.replaceFirst('msg-', ''));
     return index == null || index < 0 ? null : index;
+  }
+
+  /// A record-id jump on a FULL-OPEN session (the windowed-open
+  /// fallback, issue #197 defect 4): everything is already loaded, so
+  /// the jump is a scroll — resolve the record's transcript row and
+  /// hand it to the scroll surface. `false` on an unknown record or one
+  /// that projects no row. Fallback-open sessions are small by
+  /// definition (that is why the full open won), so the prefix
+  /// projection that finds the row costs nothing.
+  Future<bool> _jumpLoadedRecord(String recordId) async {
+    final session = _session;
+    if (session == null) return false;
+    try {
+      final branch = await session.getBranch();
+      final pos = branch.indexWhere((record) => record.id == recordId);
+      if (pos < 0) return false;
+      final index =
+          session.projectPath(branch.take(pos + 1).toList()).length - 1;
+      if (index < 0) return false;
+      scrollToMessageHandler?.call('msg-$index');
+      return true;
+    } on Object {
+      return false;
+    }
   }
 
   /// The AC6 byte-offset seek: hit id → window re-center → view sync.

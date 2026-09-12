@@ -963,10 +963,10 @@ void main() {
     /// finalized records (runAsync: the fake provider stream completes on
     /// the real event loop, not on FakeAsync pumps).
     Future<void> driveTurn(
-        WidgetTester tester,
-        AgentService service,
-        String text,
-      ) async {
+      WidgetTester tester,
+      AgentService service,
+      String text,
+    ) async {
       await tester.runAsync(() async {
         await service.initialize();
         await service.sendText(text);
@@ -977,9 +977,9 @@ void main() {
     /// Opens the panel and pushes the trajectory page; settles the
     /// controller's snapshot debounce.
     Future<AgentService> openTrajectoryPage(
-        WidgetTester tester,
-        _Harness harness,
-      ) async {
+      WidgetTester tester,
+      _Harness harness,
+    ) async {
       await _openPanelViaDrawer(tester, 'sess-b');
       await tester.tap(find.byKey(trajectoryButtonKey));
       await tester.pump(); // route push
@@ -988,10 +988,15 @@ void main() {
     }
 
     testWidgets('the panel header timeline button pushes the ledger page '
-        'rendering the session through the shared fa_ui widgets (AC1)',
-        (tester) async {
+        'rendering the session through the shared fa_ui widgets (AC1)', (
+      tester,
+    ) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       await openTrajectoryPage(tester, harness);
 
       expect(find.byType(TrajectoryScreen), findsOneWidget);
@@ -1030,7 +1035,11 @@ void main() {
     testWidgets('a turn landing while the page stays open appears without '
         'manual refresh (AC2)', (tester) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       final service = await openTrajectoryPage(tester, harness);
 
       await driveTurn(tester, service, 'check the logs');
@@ -1049,7 +1058,11 @@ void main() {
     testWidgets('a ledger row tap opens the details sheet; back returns to '
         'the page, back again to the sheet (AC3)', (tester) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       await openTrajectoryPage(tester, harness);
 
       await tester.tap(
@@ -1080,7 +1093,11 @@ void main() {
     testWidgets('a session switch while the page stays open follows the '
         'newly active session (E2: follow, pinned)', (tester) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       await driveTurn(tester, harness.services['sess-a']!, 'review the diff');
       await openTrajectoryPage(tester, harness);
       expect(
@@ -1241,6 +1258,119 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
       expect(find.byKey(orbitKey), findsOneWidget); // status row visible
+    });
+  });
+}
+  });
+  group('SessionChatSheet session tree (issue #198)', () {
+    /// Seeds a main + subagent child pair on disk (the header metadata
+    /// both hosts' childSessionFactory writes) and returns their
+    /// metadata.
+    Future<(SessionMetadata, SessionMetadata)> seedFamily(
+      JsonlSessionRepo repo,
+    ) async {
+      final parentSession = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work/proj'),
+      );
+      final parent = await parentSession.getMetadata();
+      final childSession = await repo.create(
+        JsonlSessionCreateOptions(
+          cwd: '/work/proj',
+          metadata: {'agent': 'subagent', 'parent': parent.id},
+        ),
+      );
+      return (parent, await childSession.getMetadata());
+    }
+
+    Future<void> pumpTreeSheet(
+      WidgetTester tester, {
+      required MemoryExecutionEnv env,
+      required FlutterSessionManager manager,
+      SessionNamesStore? namesStore,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SessionChatSheet(
+              manager: manager,
+              sessionNamesStore: namesStore,
+              asr: _FakeAsrApi(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the drawer collapses subagent sessions under their parent '
+        'and expanding reveals them', (tester) async {
+      final env = MemoryExecutionEnv();
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final (parent, child) = await seedFamily(repo);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession(parent.id, _fakeService(env));
+      await pumpTreeSheet(
+        tester,
+        env: env,
+        manager: manager,
+        namesStore: SessionNamesStore.inMemory({
+          parent.id: 'Main chat',
+          child.id: 'goal_builder',
+        }),
+      );
+
+      await _openDrawer(tester);
+      // Collapsed by default: the parent's count badge shows, the child
+      // row does not.
+      expect(find.text('Main chat'), findsOneWidget);
+      expect(find.text('1 agent'), findsOneWidget);
+      expect(find.text('goal_builder'), findsNothing);
+
+      // Expanding from the drawer reveals the child with the SAME key
+      // scheme as before the tree.
+      await tester.tap(find.text('1 agent'));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsOneWidget);
+      expect(
+        find.byKey(ValueKey('sessionChatDrawerEntry:${child.id}')),
+        findsOneWidget,
+      );
+
+      // Tapping the child row opens the panel on it.
+      await tester.tap(
+        find.byKey(ValueKey('sessionChatDrawerEntry:${child.id}')),
+      );
+      await tester.pumpAndSettle();
+      expect(manager.activeId, child.id);
+      expect(find.byKey(_panelKey), findsOneWidget);
+      expect(find.byKey(_drawerKey), findsNothing);
+    });
+
+    testWidgets('an active descendant forces its parent group open in the '
+        'drawer (same rule as the wide sidebar)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final (parent, child) = await seedFamily(repo);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession(child.id, _fakeService(env));
+      await pumpTreeSheet(
+        tester,
+        env: env,
+        manager: manager,
+        namesStore: SessionNamesStore.inMemory({
+          parent.id: 'Main chat',
+          child.id: 'goal_builder',
+        }),
+      );
+
+      await _openDrawer(tester);
+      expect(find.text('Main chat'), findsOneWidget);
+      expect(find.text('1 agent'), findsOneWidget);
+      // No tap needed: the child IS the active session.
+      expect(find.text('goal_builder'), findsOneWidget);
     });
   });
 }

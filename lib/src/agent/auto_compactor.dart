@@ -25,6 +25,7 @@ import 'dart:async';
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
 import '../compaction/structured/engine.dart';
+import '../compaction/structured/markers.dart' show localTrimMarkerPrefix;
 import '../compaction/structured/judge.dart';
 import '../context.dart';
 import '../model.dart';
@@ -207,12 +208,23 @@ final class AutoCompactor {
     caseSensitive: false,
   );
 
+  /// The live request-size estimate in the ONE basis the ctx meter and
+  /// the loop's over-window guard also enforce: transcript estimate plus
+  /// the system-prompt / tool-schema overhead whenever no provider-usage
+  /// anchor prices them in (post-compaction transcripts are unanchored by
+  /// design — their next request still carries that overhead).
+  int _requestTokens() => estimateRequestTokens(
+    state.messages,
+    systemPrompt: state.systemPrompt,
+    tools: state.tools,
+  );
+
   /// Drives the multi-pass loop. Returns `true` on success (the
   /// transcript fits in [window]), `false` when the loop gave up or
   /// every summarizer failed.
   Future<bool> run() async {
     if (window <= 0) return true;
-    final initial = estimateContextTokens(state.messages).tokens;
+    final initial = _requestTokens();
     if (!force && !shouldCompact(initial, window, settings)) return true;
 
     final runFallback = _shouldRunFallback();
@@ -226,7 +238,7 @@ final class AutoCompactor {
       );
       if (result.done) return result.success;
     }
-    final tokens = estimateContextTokens(state.messages).tokens;
+    final tokens = _requestTokens();
     hooks.onDone(maxPasses, tokens);
     return false;
   }
@@ -248,7 +260,7 @@ final class AutoCompactor {
     required bool runFallback,
     required Stopwatch clock,
   }) async {
-    final tokensBefore = estimateContextTokens(state.messages).tokens;
+    final tokensBefore = _requestTokens();
     final mainModel = state.model;
     final smolModel = this.smolModel;
 
@@ -268,7 +280,7 @@ final class AutoCompactor {
       final trimmed = _localTrimFallback();
       if (trimmed != null) {
         state.messages = trimmed;
-        final tokensAfter = estimateContextTokens(state.messages).tokens;
+        final tokensAfter = _requestTokens();
         hooks.onPass(
           AutoCompactorPass(
             pass: pass,
@@ -295,7 +307,7 @@ final class AutoCompactor {
           error: attempt.error,
         ),
       );
-      hooks.onDone(pass, estimateContextTokens(state.messages).tokens);
+      hooks.onDone(pass, _requestTokens());
       return (done: true, success: false);
     }
 
@@ -328,7 +340,7 @@ final class AutoCompactor {
         else
           message,
     ];
-    final tokensAfter = estimateContextTokens(state.messages).tokens;
+    final tokensAfter = _requestTokens();
     hooks.onPass(
       AutoCompactorPass(
         pass: pass,
@@ -380,7 +392,7 @@ final class AutoCompactor {
     // the session file keeps every record.
     final rebuilt = repairToolPairing([
       UserMessage.text(
-        '[context trimmed locally: the summarizer endpoint was unavailable, '
+        '$localTrimMarkerPrefix the summarizer endpoint was unavailable, '
         '$cut older message(s) were dropped from the live context at '
         '${DateTime.now().toUtc().toIso8601String()} — the full history '
         'stays in the session file]',

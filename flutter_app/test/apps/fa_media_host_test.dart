@@ -80,6 +80,22 @@ void main() {
     expect(const FaMediaHost(), isA<JsMediaHost>());
   });
 
+  test(
+    'video controllers are built with mixWithOthers: false so the iOS '
+    'audio session is re-asserted to .playback at every creation (a '
+    'post-mic .record category would otherwise mute every video node)',
+    () {
+      final network = VideoPlayerJsController.buildPlayer(
+        'https://example.com/clip.mp4',
+      );
+      expect(network.videoPlayerOptions, isNotNull);
+      expect(network.videoPlayerOptions!.mixWithOthers, isFalse);
+
+      final asset = VideoPlayerJsController.buildPlayer('assets/x.mp4');
+      expect(asset.videoPlayerOptions!.mixWithOthers, isFalse);
+    },
+  );
+
   test('JsAppView accepts a mediaHost override (defaults to FaMediaHost)', () {
     final env = MemoryExecutionEnv();
     final view = JsAppView(

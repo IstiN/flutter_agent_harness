@@ -51,6 +51,17 @@ OPTIONS
   -f, --prompt-file <path>     Read the headless prompt from a file (UTF-8,
                                sent verbatim). Cannot be combined with
                                --prompt or positional arguments.
+  --attach <path>              Attach a file to the headless prompt
+                               (repeatable). Images (png/jpeg/gif/webp,
+                               sniffed from the magic bytes) ride inline
+                               as base64 blocks; anything else passes
+                               through as a path reference the agent
+                               opens with its tools. Requires a prompt.
+  --output <mode>              Headless stdout mode: `events` streams the
+                               HEP v1 JSONL protocol for supervisors
+                               (docs/hep.md; `events=full` adds raw
+                               tool-call arguments); `json` pairs with
+                               --version. Default: the reply text.
   --model <id>                 Model id (default per provider, see PROVIDERS)
   --provider <kind>            openai-completions | anthropic | google | dial
                                | minimax | zai
@@ -90,7 +101,9 @@ OPTIONS
                                tool trace, diagnostics) to <path> as it
                                is produced — a live, `tail -f`-able
                                session trace even when a parent CLI
-                               captures stdout; truncated on start
+                               captures stdout; truncated on start; the
+                               FA_LOG_FILE env var is the default when
+                               the flag is absent
   --help, -h                   Show this help
   --version                    Print the version
 
