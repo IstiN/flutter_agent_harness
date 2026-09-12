@@ -1040,7 +1040,7 @@ class _AppTile extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            app.name,
+            app.displayName(Localizations.localeOf(context).toLanguageTag()),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(
