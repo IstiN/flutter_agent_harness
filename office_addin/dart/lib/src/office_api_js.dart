@@ -100,6 +100,15 @@ Future<Object?> _invokeAsyncResult(
 /// generic resolver above. The constructor never throws — a missing Office
 /// global surfaces through [onReady] as 'office_unavailable'.
 final class JsOfficeApi implements OfficeApi {
+  JsOfficeApi() {
+    // Production readiness path (round-1 CR): nothing else in the app
+    // awaits onReady() — the constructor must start the handshake or
+    // every tool would answer 'not_ready' forever. Fire-and-forget:
+    // failures (missing Office global, 60s timeout) stay memoized in
+    // [_readyFuture] and surface per tool call as the clean notes.
+    unawaited(onReady().catchError((Object e) {}));
+  }
+
   Future<void>? _readyFuture;
   bool _readyFired = false;
   String? _hostName;
