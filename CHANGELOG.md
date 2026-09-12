@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- ci(177): PR-level CI speed restructure — a pull request now pays only for
+  what it touched. Path-aware gating (`changes` job), the sequential
+  "Quality gates" monolith split into parallel jobs (`static`, `test-core`
+  ×3 duration-balanced shards with merged coverage, `coverage-gate`,
+  `guards`, `flutter-tests` on ubuntu), pub/flutter caching everywhere,
+  concurrency cancel-in-progress on all PR workflows, and one aggregate
+  `Quality gate` required check. PRs ratchet coverage on CHANGED lines
+  (`scripts/diff_coverage.py`); main/tags/nightly keep the full 80%
+  ratchet. The pre-commit hook is now a thin wrapper over the SAME
+  `scripts/ci_fast_gate.sh` CI runs, with the same path filters.
+- ci(177): nightly full-matrix workflow (`nightly.yml`) — the original
+  monolith gates + the PTY/CLI integration suites (never gated on PRs
+  before; live-provider tests self-skip without keys) + the terminal-visual
+  screenshot suite (never ran in CI at all) — with a deduped `nightly-red`
+  auto-issue. `packages/fa_ui` non-golden tests join CI for the first time.
+- ci(177): automatically growing terminal-test coverage — weekly
+  `coverage-gardener.yml` re-measures PTY-suite coverage of
+  `lib/src/cli/**` and commits the higher baseline;
+  `scripts/check_cli_coverage.py` enforces it nightly (ratchet only up).
+- ci(177): duration-balanced test sharding — `scripts/test_shards.json` +
+  `scripts/rebalance_shards.py` (junit timing or file-count fallback),
+  rebalanced weekly by `shard-rebalance.yml`.
+
 ## 0.1.344
 
 

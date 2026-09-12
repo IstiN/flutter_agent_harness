@@ -15,10 +15,88 @@ on:
     # window, this releases the pending commits (pub.dev caps ~12 publishes/day).
     - cron: '23 */2 * * *'
 
+# Superseded PR runs die instantly (issue #177 wave 1). Main/tag runs are
+# never cancelled mid-flight — release flow must not be preempted.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Issue #177 — a pull request pays only for what it touched:
+#   changes  → path classification (union semantics, shared files = full gate)
+#   static   → size guard + analyze + publish dry-run        (always, ~1-2 min)
+#   test-core→ dart test sharded ×3 with per-shard coverage  (core/shared)
+#   coverage-gate → merge shard coverage; PR: diff-coverage, main: full ratchet
+#   guards   → CRAP + jscpd                                   (core/shared)
+#   flutter-tests → flutter_app analyze + tests on ubuntu     (app/core/shared;
+#                   golden suite stays in build-macos.yml — goldens are
+#                   host-locked, see issue #177 E5 discussion)
+#   quality-gate → ONE aggregate required check (skip-tolerant)
+# Tag-only / main-only jobs (publish, binaries, installer-smoke, release,
+# integration) are unchanged in semantics — they just need the new aggregate.
+# ─────────────────────────────────────────────────────────────────────────────
+
 jobs:
-  quality:
-    name: Quality gates
+  changes:
+    name: Classify changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      core: ${{ steps.paths.outputs.core || steps.filter.outputs.core }}
+      app: ${{ steps.paths.outputs.app || steps.filter.outputs.app }}
+      docs: ${{ steps.paths.outputs.docs || steps.filter.outputs.docs }}
+      shared: ${{ steps.paths.outputs.shared || steps.filter.outputs.shared }}
+    steps:
+      - uses: actions/checkout@v4
+      # Non-PR events (main push, tags, schedule, dispatch): everything is
+      # affected — the full gate always guards main and releases.
+      - id: filter
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "core=true" >> "$GITHUB_OUTPUT"
+          echo "app=true" >> "$GITHUB_OUTPUT"
+          echo "docs=true" >> "$GITHUB_OUTPUT"
+          echo "shared=true" >> "$GITHUB_OUTPUT"
+      - uses: dorny/paths-filter@v3
+        if: github.event_name == 'pull_request'
+        id: paths
+        with:
+          filters: |
+            shared:
+              - '.github/**'
+              - 'scripts/**'
+              - 'crap4dart.yaml'
+              - 'analysis_options.yaml'
+            core:
+              - 'lib/**'
+              - 'bin/**'
+              - 'test/**'
+              - 'example/**'
+              - 'pubspec.yaml'
+              - 'pubspec.lock'
+            app:
+              - 'flutter_app/**'
+              - 'packages/**'
+            docs:
+              - 'docs/**'
+              - 'prompts/**'
+              - '**/*.md'
+      # Re-publish under stable output names (paths-filter emits them, but
+      # keeping one indirection lets the fallback above share the shape).
+      - id: rename
+        if: github.event_name == 'pull_request'
+        run: |
+          for k in core app docs shared; do
+            v=$(jq -r ".$k" <<< '${{ toJSON(steps.paths.outputs) }}')
+            echo "$k=$v" >> "$GITHUB_OUTPUT"
+          done
+
+  static:
+    name: Static gates
+    runs-on: ubuntu-latest
+    needs: changes
     permissions:
       contents: read
     steps:
@@ -28,15 +106,46 @@ jobs:
         with:
           sdk: stable
 
-      - uses: subosito/flutter-action@v2
+      - name: Pub cache
+        uses: actions/cache@v4
         with:
-          channel: stable
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
 
       - run: dart pub get
+
+      - name: File size guard (no dart file over 2800 lines)
+        run: |
+          violations=$(find lib test example -name '*.dart' \
+            ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
+            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
+          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
+
+      # Full analyze needs the example app's package config (Flutter imports);
+      # a docs-only PR skips the flutter setup entirely and analyzes the pure
+      # Dart scopes only — it cannot have changed resolution anyway.
+      - name: Example app setup (full analyze only)
+        if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: |
+          flutter --version >/dev/null
+          cd flutter_app && flutter pub get
+          touch flutter_app/.env
+          cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+        # flutter-action only where needed:
+      - uses: subosito/flutter-action@v2
+        if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        with:
+          channel: stable
+          cache: true
+
+      - name: dart analyze (full)
+        if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: dart analyze
+
+      - name: dart analyze (docs-only scope)
+        if: needs.changes.outputs.app != 'true' && needs.changes.outputs.core != 'true' && needs.changes.outputs.shared != 'true'
+        run: dart analyze lib test bin
 
       # Publish gate at PR time: publish-blocking problems (undeclared lib/
       # imports, stray PEM-like strings) used to surface only in the tag-time
@@ -50,48 +159,134 @@ jobs:
       # resolve unauthenticated (same pattern as the publish job);
       # --dry-run never uploads.
       - name: Publish dry-run (unauthenticated)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: |
           dart pub token remove https://pub.dev || true
           dart pub publish --dry-run --ignore-warnings
 
-      # The example Flutter app lives in this repo; without its package
-      # config the repo-wide `dart analyze` cannot resolve Flutter imports.
-      - name: Example app pub get (for repo-wide analyze)
-        run: cd flutter_app && flutter pub get
+  test-core:
+    name: Core tests (shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
 
-      # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
-      # without it the analyzer fails with asset_does_not_exist (a fresh
-      # clone hits the same warning locally).
-      - name: Create placeholder .env for the example app
-        run: touch flutter_app/.env
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
 
-      # firebase_options.dart is gitignored (real keys stay local); the
-      # repo-wide analyze fails on the unresolved import without it. The
-      # tracked placeholder makes it compile (Firebase init is skipped for
-      # YOUR_* values at runtime).
-      - name: Create placeholder firebase_options.dart for the example app
-        run: >-
-          cp flutter_app/firebase_options.template.dart
-          flutter_app/lib/firebase_options.dart
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-      - name: File size guard (no dart file over 2800 lines)
+      - name: Pub cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - run: dart pub get
+
+      # Duration-balanced shards (issue #177 AC3): scripts/test_shards.json
+      # maps test dirs to shards; rebalanced weekly by shard-rebalance.yml.
+      # Unknown tests land in the default bucket (E4).
+      - name: dart test --coverage (shard ${{ matrix.shard }})
         run: |
-          violations=$(find lib test example -name '*.dart' \
-            ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
-            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
-          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
-
-      - name: dart analyze
-        run: dart analyze
-
-      - name: dart test --coverage (excluding integration)
-        run: dart test --coverage=coverage --exclude-tags integration
+          targets=$(python3 scripts/shard_files.py scripts/test_shards.json ${{ matrix.shard }})
+          echo "shard targets: $targets"
+          dart test --coverage=coverage --exclude-tags integration $targets
 
       - name: Format coverage to lcov
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
 
-      - name: Coverage ratchet (lib/ >= 80%)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: coverage/lcov.info
+          retention-days: 2
+
+  coverage-gate:
+    name: Coverage ratchet
+    runs-on: ubuntu-latest
+    needs: [changes, test-core]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-shard-*
+          path: coverage-shards
+
+      - name: Merge shard coverage (lcov concat is append-safe)
+        run: cat coverage-shards/*/lcov.info > coverage/lcov.info
+
+      # PRs pay the ratchet on CHANGED lines only (issue #177 wave 2): the
+      # 80% bar applies to the diff; main/tags keep the full-suite ratchet.
+      - name: Diff coverage ratchet (PR, changed lines >= 80%)
+        if: github.event_name == 'pull_request'
+        run: >-
+          python3 scripts/diff_coverage.py
+          --lcov coverage/lcov.info
+          --base ${{ github.event.pull_request.base.sha }}
+          --head ${{ github.event.pull_request.head.sha }}
+          --min 80
+
+      - name: Full coverage ratchet (main/tags, lib/ >= 80%)
+        if: github.event_name != 'pull_request'
         run: python3 scripts/check_coverage.py 80
+
+  guards:
+    name: CRAP + duplication
+    runs-on: ubuntu-latest
+    needs: [changes, test-core]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Pub cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - run: dart pub get
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-shard-*
+          path: coverage-shards
+
+      - run: mkdir -p coverage && cat coverage-shards/*/lcov.info > coverage/lcov.info
 
       - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
         run: |
@@ -113,10 +308,90 @@ jobs:
           sys.exit(0 if float(pct) < 1.0 else 1)
           EOF
 
+  flutter-tests:
+    name: Flutter app tests (ubuntu)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: cd flutter_app && flutter pub get
+
+      # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
+      # without it the analyzer fails with asset_does_not_exist.
+      - run: touch [REDACTED:Credential File]
+
+      # firebase_options.dart is gitignored; the tracked placeholder makes it
+      # compile (Firebase init is skipped for YOUR_* values at runtime).
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - name: flutter analyze
+        run: cd flutter_app && flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      # Golden suite is intentionally NOT here: goldens are host-locked
+      # (same macOS host renders them differently across minor SDKs — see the
+      # dynamic_messages saga) and would all redden on ubuntu. Widget/unit
+      # tests run here on a cheap runner; goldens stay guarded by
+      # build-macos.yml and the nightly full matrix (issue #177 E5/OQ3:
+      # pinned-font golden migration is a follow-up, not this card).
+      - name: flutter test (excluding integration + golden suites)
+        run: |
+          cd flutter_app
+          dirs=$(ls -d test/*/ | grep -v -E 'test/(golden|cli_visual)/' || true)
+          flutter test --exclude-tags integration $dirs $(find test -maxdepth 1 -name '*_test.dart')
+
+      # packages/fa_ui had NO CI coverage at all before issue #177 (not in
+      # any workflow, not in the pre-commit hook) — gate its non-golden
+      # suites here; its goldens are host-locked like flutter_app's and stay
+      # out until the pinned-font migration.
+      - name: fa_ui package tests (excluding goldens)
+        run: |
+          cd packages/fa_ui
+          flutter pub get
+          flutter test --exclude-tags integration $(find test -name '*_test.dart' ! -path '*/golden/*')
+
+  # Aggregate required check: branch protection requires ONE stable context.
+  # Skipped legs (path-filtered out) count as pass — a docs PR must go green
+  # on static alone.
+  quality-gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests]
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - name: Report leg results
+        run: |
+          echo "static        = ${{ needs.static.result }}"
+          echo "test-core     = ${{ needs.test-core.result }}"
+          echo "coverage-gate = ${{ needs.coverage-gate.result }}"
+          echo "guards        = ${{ needs.guards.result }}"
+          echo "flutter-tests = ${{ needs.flutter-tests.result }}"
+      - name: Fail on any real failure
+        run: |
+          for r in "${{ needs.static.result }}" "${{ needs.test-core.result }}" \
+                   "${{ needs.coverage-gate.result }}" "${{ needs.guards.result }}" \
+                   "${{ needs.flutter-tests.result }}"; do
+            if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
+              echo "Quality gate FAILED (a leg is $r)"
+              exit 1
+            fi
+          done
+          echo "Quality gate OK"
+
   integration:
     name: Integration tests (LLM)
     runs-on: ubuntu-latest
-    needs: quality
+    needs: quality-gate
     permissions:
       contents: read
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -135,18 +410,15 @@ jobs:
       # dedicated workflow (browser-ext.yml) which builds sw/agent.js and
       # supplies Chrome for Testing — this job has neither, so running the
       # suite here always failed (every tag since the suite landed).
-      - name: dart test --tags integration, excluding browser-ext (skipped without keys)
-        run: |
-          if [ -z "${OPENROUTER_API_KEY}${ANTHROPIC_API_KEY}${GOOGLE_API_KEY}${OLLAMA_API_KEY}" ]; then
-            echo "No LLM API keys configured, skipping integration tests."
-            exit 0
-          fi
-          dart test --tags integration --exclude-tags browser-ext
+      - name: dart test --tags integration, excluding browser-ext
+        # Live-provider tests self-skip without keys (their own skip guards);
+        # mock-endpoint PTY tests always run — no blanket skip.
+        run: dart test --tags integration --exclude-tags browser-ext
 
   js-ext-integration:
     name: JS engine integration (quickjs-ng)
     runs-on: ubuntu-latest
-    needs: quality
+    needs: quality-gate
     permissions:
       contents: read
     steps:
@@ -167,7 +439,7 @@ jobs:
   publish:
     name: Publish to pub.dev
     runs-on: ubuntu-latest
-    needs: quality
+    needs: quality-gate
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       id-token: write # OIDC — pub.dev verifies the GitHub identity, no secrets
@@ -229,7 +501,7 @@ jobs:
   binaries:
     name: Build native binaries
     runs-on: ${{ matrix.runner }}
-    needs: quality
+    needs: quality-gate
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write # attach assets to the GitHub Release
@@ -393,7 +665,7 @@ jobs:
   release:
     name: Auto-release (patch bump + tag)
     runs-on: ubuntu-latest
-    needs: quality
+    needs: quality-gate
     # Every push to main gets a release with an auto-incremented patch version
     # (0.1.x -> 0.1.y), coalesced to <=1 per 2h — pub.dev rate-limits publishes
     # (~12/day; hit on 2026-07-18). Release commits are skipped (loop guard).
@@ -423,12 +695,13 @@ jobs:
 
   # PR-gate twin of the release `binaries` job: the CLI bundle must compile
   # on every supported platform and actually run (`fa --help`) BEFORE a PR
-  # can merge. Required check: "Binaries smoke gate" (aggregate below).
+  # can merge — but only when the CLI surface could have changed (issue
+  # #177: a docs/app PR must not pay for five platform builds).
   binaries-pr:
     name: Binaries (PR)
     runs-on: ${{ matrix.runner }}
-    needs: quality
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -454,6 +727,13 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: stable
+
+      - name: Pub cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
 
       - run: dart pub get
 
@@ -489,7 +769,7 @@ jobs:
   binaries-smoke-gate:
     name: Binaries smoke gate
     needs: binaries-pr
-    if: always()
+    if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: All platforms built and smoked
