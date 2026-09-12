@@ -221,6 +221,7 @@ extension AgentCliCompactionRun on AgentCli {
       ),
       hooks: _AutoCompactorCliHooks(this),
       prompts: CompactionPrompts.fromOverrides(config.promptOverrides),
+      engine: config.compactionEngine ?? CompactionEngine.classic,
       memoryExtractionHook: (text) async {
         final tui = _tuiController;
         tui?.setBusyPhase('Extracting memory…');
