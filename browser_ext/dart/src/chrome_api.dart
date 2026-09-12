@@ -50,6 +50,7 @@ abstract interface class ChromeApi {
   ReadingListApi get readingList;
   PageCaptureApi get pageCapture;
   PermissionsApi get permissions;
+  BridgeApi get bridge;
 }
 
 /// The only error type this facade (and its fake) ever throws.
@@ -952,4 +953,34 @@ abstract interface class PermissionsApi {
 
   /// Permission set revoked since the last event.
   Stream<List<String>> get onRemoved;
+}
+
+// ---------------------------------------------------------------------------
+// Generic bridge (issue #137) — reflective access to the WHOLE chrome.* map
+// ---------------------------------------------------------------------------
+
+/// Reflective chrome.* access for the `browser_api` / `browser_api_catalog`
+/// tools (issue #137): runtime reflection + path-based calls over namespaces
+/// the typed sub-facades above never wrapped. The real adapter walks the
+/// live chrome global (`Object.getOwnPropertyNames`), so the surface is
+/// truthful by construction — MV3 hides namespaces whose permission the
+/// manifest did not declare. The fake mirrors the same contract over its
+/// own modeled graph.
+abstract interface class BridgeApi {
+  /// Namespaces present on the chrome root, sorted. Presence == callable
+  /// surface; absence == undeclared permission (or a browser without the
+  /// API — E6: report reality, the agent adapts).
+  Future<List<String>> namespaces();
+
+  /// One namespace's surface:
+  /// `{methods: {name: arity}, events: [names], children: [sub-namespaces]}`
+  /// (`storage` → children `local`; `tabs` → events `onUpdated`, …).
+  /// Throws [ChromeApiException] `api_missing` for an absent namespace.
+  Future<Map<String, Object?>> namespace(String ns);
+
+  /// Executes `chrome.<path>(...args)` — [path] WITHOUT the `chrome.`
+  /// prefix (`bookmarks.search`). MV3 promise returns are awaited; the
+  /// callback-era stragglers settle through a trailing callback with
+  /// `runtime.lastError` mapped into the thrown [ChromeApiException].
+  Future<Object?> call(String path, List<Object?> args);
 }
