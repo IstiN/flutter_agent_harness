@@ -57,6 +57,20 @@ factual: paths, commands, invariants — no essays.
   trail); `_finishStreamed` stamps per-run position-counter ids
   session-unique; `auto_compactor.dart`'s `_localTrimFallback` routes the
   kept region through the same repairer.
+- `lib/src/agent/image_registry.dart` — session image registry (issue
+  #171): unique images ride a provider request exactly once; every other
+  occurrence becomes a `[Image N]` text ref. `rewriteHistoryImages`
+  rewrites the OUTBOUND payload only (session JSONL byte-identical);
+  carriers `[{text:"[Image N]"},{image}]` anchor before the first
+  referencing user message or after the tool-result run (never inside
+  call/result pairs); the current user message rides images in place
+  (I3); the per-request cap (`images.maxPerRequest`, default 20) drops
+  current-first-then-newest with a drop notice (never silent); dangling
+  refs (compaction, cap) resolve to `(image no longer available)`.
+  Stateless per-request rebuild — determinism, compaction eviction and
+  resume come free. Kill switch `images.registry: false` → byte-for-byte
+  legacy shape. `agent_loop.dart` applies it in `_buildRequestContext`
+  after `transformContext`, before tool-pairing repair.
 - `lib/src/trajectory/` — the trajectory ledger core (issue #10): finalized
   session records project into an immutable `TrajectorySnapshot` through
   `TrajectorySnapshotBuilder.append`/`applyEvent` — streamed agent events

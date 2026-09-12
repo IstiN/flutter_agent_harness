@@ -153,14 +153,22 @@ class ChatComposer extends StatelessWidget {
 /// provider) so slot edits and provider switches are picked up.
 final class _AsrVoiceInput implements fa_ui.FaChatVoiceInput {
   _AsrVoiceInput({required this.service, AsrApi? asr, this.transcriber})
-    : _asr = asr ?? createAsrService();
+    : _asr = asr ?? createAsrService(),
+      _injectedAsr = asr != null;
 
   final AgentService service;
   final AsrApi _asr;
   final AsrTranscriber? transcriber;
 
+  /// Whether the host passed its own [AsrApi] (tests, embedders). An
+  /// injected backend IS the availability statement — gating it on
+  /// [asrPlatformSupported] would hide the mic on hosts where the injected
+  /// backend works (and made widget tests with a fake [AsrApi] fail
+  /// everywhere but macOS/iOS — issue #184).
+  final bool _injectedAsr;
+
   @override
-  bool get isAvailable => asrPlatformSupported;
+  bool get isAvailable => _injectedAsr || asrPlatformSupported;
 
   @override
   String? get unavailableReason => null;

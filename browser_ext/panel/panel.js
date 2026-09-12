@@ -28,7 +28,10 @@ function render(s) {
     const p = agent.provider;
     $('agentStatus').textContent =
       `${p?.configured ? p.model : 'no provider configured (fake echoes)'} · approval: ${agent.approval} · ` +
-      `session: ${agent.session?.messages ?? 0} msgs${agent.running ? ' · running…' : ''}`;
+      `session: ${agent.session?.messages ?? 0} msgs${agent.running ? ' · running…' : ''}` +
+      // Issue #137: in yolo the chrome.* bridge never prompts — a
+      // persistent indicator keeps that visible.
+      `${agent.approval === 'yolo' ? ' · bridge: yolo — no prompts' : ''}`;
   } else {
     $('agentStatus').textContent = 'embedded agent not built — run scripts/build_browser_ext.sh';
   }

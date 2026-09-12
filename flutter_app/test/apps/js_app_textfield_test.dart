@@ -8,88 +8,95 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
+import '../native_test_guard.dart';
+
+/// Skip value stamped on this file's engine-dependent tests: every one
+/// boots a real JS engine (issue #184). Resolved once per isolate.
+final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 
 /// Typing in a textField node must fire the app's onChange action with the
 /// current text on every keystroke.
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  group('JS engine (native quickjs/JavaScriptCore bridge)', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('textField onChange reaches JS with the typed text', (
-    tester,
-  ) async {
-    const widgetJs = '''
-(function() {
-  var text = '';
-  function render() {
-    jsr.render({
-      type: 'textField',
-      hint: 'Write…',
-      value: text,
-      onChange: 'typed',
-    });
-  }
-  jsr.onEvent(function(actionId, payload) {
-    if (actionId === 'typed') {
-      text = payload.value || '';
-      jsr.exportState({text: text});
-      render();
+    testWidgets('textField onChange reaches JS with the typed text', (
+      tester,
+    ) async {
+      const widgetJs = '''
+  (function() {
+    var text = '';
+    function render() {
+      jsr.render({
+        type: 'textField',
+        hint: 'Write…',
+        value: text,
+        onChange: 'typed',
+      });
     }
-  });
-  render();
-})();
-''';
-    final env = MemoryExecutionEnv();
-    await env.writeFile('apps/notes/widget.js', widgetJs);
-    late final JsAppEngine engine;
-    await tester.runAsync(() async {
-      engine = JsAppEngine(
-        app: JsAppInfo.fromManifest(
-          const {'id': 'notes', 'name': 'Notes'},
-          bundled: false,
-          fallbackId: 'notes',
-        ),
-        env: env,
-        permissions: const AppPermissions(),
-      );
-      await engine.start();
-      for (var i = 0; i < 20 && engine.tree.value == null; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+    jsr.onEvent(function(actionId, payload) {
+      if (actionId === 'typed') {
+        text = payload.value || '';
+        jsr.exportState({text: text});
+        render();
       }
     });
-    addTearDown(() async {
-      await tester.runAsync(engine.dispose);
-    });
+    render();
+  })();
+  ''';
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/notes/widget.js', widgetJs);
+      late final JsAppEngine engine;
+      await tester.runAsync(() async {
+        engine = JsAppEngine(
+          app: JsAppInfo.fromManifest(
+            const {'id': 'notes', 'name': 'Notes'},
+            bundled: false,
+            fallbackId: 'notes',
+          ),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        await engine.start();
+        for (var i = 0; i < 20 && engine.tree.value == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      });
+      addTearDown(() async {
+        await tester.runAsync(engine.dispose);
+      });
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: ValueListenableBuilder<Map<String, dynamic>?>(
-            valueListenable: engine.tree,
-            builder: (context, tree, _) {
-              if (tree == null) return const SizedBox.shrink();
-              return JsonWidgetRenderer(
-                theme: JsonWidgetTheme.fromAccent(
-                  Theme.of(context).colorScheme.primary,
-                ),
-                onEvent: (id, payload) => engine.callEvent(id, payload),
-              ).build(tree, context);
-            },
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ValueListenableBuilder<Map<String, dynamic>?>(
+              valueListenable: engine.tree,
+              builder: (context, tree, _) {
+                if (tree == null) return const SizedBox.shrink();
+                return JsonWidgetRenderer(
+                  theme: JsonWidgetTheme.fromAccent(
+                    Theme.of(context).colorScheme.primary,
+                  ),
+                  onEvent: (id, payload) => engine.callEvent(id, payload),
+                ).build(tree, context);
+              },
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    await tester.enterText(find.byType(TextField), 'hello');
+      await tester.enterText(find.byType(TextField), 'hello');
 
-    var state = '';
-    for (var i = 0; i < 20; i++) {
-      await tester.runAsync(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      });
-      state = '${engine.exportedState?['text'] ?? ''}';
-      if (state == 'hello') break;
-      await tester.pump();
-    }
-    expect(state, 'hello');
-  });
+      var state = '';
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        state = '${engine.exportedState?['text'] ?? ''}';
+        if (state == 'hello') break;
+        await tester.pump();
+      }
+      expect(state, 'hello');
+    });
+  }, skip: _engineSkip);
 }
