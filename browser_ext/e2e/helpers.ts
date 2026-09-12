@@ -141,6 +141,29 @@ export function extensionId(): string {
     .join('');
 }
 
+/**
+ * Whether build_browser_ext.sh --with-app left a real fa app bundle in
+ * panel/app/ (gitignored, so lean checkouts say false). panel.js keys its
+ * redirect on exactly this file — tests must too, not on FA_E2E_WITH_APP
+ * (a local --with-app build without the env var still redirects).
+ */
+export const appBundlePresent = fs.existsSync(
+  path.join(extDir, 'panel', 'app', 'index.html'),
+);
+
+/**
+ * Waits out panel.js's app-hosting decision (issue #152): the HEAD probe
+ * fires AFTER goto() resolved, and with an app bundle it navigates via
+ * location.replace — any evaluate in flight then dies with "Execution
+ * context was destroyed, most likely because of a navigation". Waiting for
+ * the final URL once here settles the page for every later eval. Without
+ * the bundle the probe keeps panel.html; nothing to wait for.
+ */
+export async function awaitPanelSettled(page: Page): Promise<void> {
+  if (!appBundlePresent) return;
+  await page.waitForURL('**/panel/app/index.html', { timeout: 30_000 });
+}
+
 /** Tiny loopback static server for test/browser_ext/fixture/. */
 export class FixtureServer {
   private server: http.Server | null = null;
@@ -235,6 +258,7 @@ export class FaHarness {
     );
     const panel = context.pages()[0] ?? (await context.newPage());
     await panel.goto(`chrome-extension://${extensionId()}/panel/panel.html`);
+    await awaitPanelSettled(panel);
     return new FaHarness(context, extensionId(), fixture, panel, userDataDir);
   }
 
@@ -256,22 +280,27 @@ export class FaHarness {
     await this._panel.goto(
       `chrome-extension://${this.extId}/panel/panel.html`,
     );
+    await awaitPanelSettled(this._panel);
   }
 
-  /** The extension SW target, waking it first (it only exists while it runs). */
+  /**
+   * The extension SW target, waking it first (it only exists while it runs).
+   * Subscription-order matters (#152): the worker can register while the
+   * wake call is still in flight — its `serviceworker` event then predates
+   * the waitForEvent subscription and the wait would hang to timeout. So:
+   * subscribe FIRST, wake, then re-check serviceWorkers() — whichever path
+   * the registration took, the winner is returned.
+   */
   async sw(timeout = 45_000): Promise<Worker> {
-    const alive = this.context
-      .serviceWorkers()
-      .find((w) => w.url().endsWith('/sw/main.js'));
+    const byUrl = (w: Worker) => w.url().endsWith('/sw/main.js');
+    const alive = this.context.serviceWorkers().find(byUrl);
     if (alive) return alive;
-    // Arm the listener BEFORE the wake call: the sendMessage below can
-    // boot the SW and emit "serviceworker" between the two awaits — a
-    // check-then-wait would miss the event and ride out the timeout
-    // (seen on CI's slower runners: AC7 45s timeout, next test green).
-    const waiter = this.context.waitForEvent('serviceworker', {
-      predicate: (w) => w.url().endsWith('/sw/main.js'),
-      timeout,
-    });
+    const spawned = this.context
+      .waitForEvent('serviceworker', { predicate: byUrl, timeout })
+      .then(
+        (w) => w,
+        () => null, // timeout/context-close: fall through to the re-check
+      );
     try {
       // Fire-and-forget on purpose (mirrors wakeServiceWorker): awaiting the
       // sendMessage promise can hang while the worker boots.
@@ -284,7 +313,15 @@ export class FaHarness {
     } catch {
       // Panel may be closed (residency spec); waitForEvent still sees revival.
     }
-    return waiter;
+    const again = this.context.serviceWorkers().find(byUrl);
+    if (again) return again;
+    const worker = await spawned;
+    if (!worker) {
+      throw new Error(
+        `extension service worker /sw/main.js did not start within ${timeout}ms`,
+      );
+    }
+    return worker;
   }
 
   /**
