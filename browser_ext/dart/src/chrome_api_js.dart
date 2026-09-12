@@ -1372,8 +1372,12 @@ final class _Bridge implements BridgeApi {
     // callback-era stragglers can settle; MV3 promise-native APIs accept
     // the same optional callback (Chrome's binding contract), return their
     // promise, and whichever settles first wins. runtime.lastError is only
-    // readable inside the callback — check it there (E5).
-    final callback = ((JSAny? v) {
+    // readable inside the callback — check it there (E5). The parameter is
+    // OPTIONAL: void-callback APIs (debugger.attach/detach, sendMessage)
+    // invoke it with zero arguments, and dart2js Function.toJS dispatches
+    // on arguments.length — a required-param closure has no $0, so the
+    // adapter throws inside Chrome's binding and the call never settles.
+    final callback = (([JSAny? v]) {
       final runtime = _prop(_chromeRoot, 'runtime');
       Object? lastError;
       if (runtime != null && runtime.isA<JSObject>()) {

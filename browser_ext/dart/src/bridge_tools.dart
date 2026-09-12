@@ -22,7 +22,6 @@ import 'package:flutter_agent_harness/src/agent/agent_tool.dart';
 import 'package:flutter_agent_harness/src/agent/tool_registry.dart';
 import 'package:flutter_agent_harness/src/approval/approval.dart';
 import 'package:flutter_agent_harness/src/redact/redaction_pipeline.dart';
-import 'package:flutter_agent_harness/src/types.dart';
 
 import 'browser_api_tools.dart' show truncateResult;
 import 'chrome_api.dart';

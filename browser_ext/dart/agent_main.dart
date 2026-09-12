@@ -300,7 +300,11 @@ void _bindV2Surface() {
 
 /// faAgentV2.bridgeCatalog() → {ok, namespaces} | {ok, namespace, methods,
 /// events, children?}; faAgentV2.bridgeCatalog(ns) for one namespace.
-JSPromise<JSAny?> _bridgeCatalogImpl(JSAny? ns) =>
+/// Parameters are OPTIONAL on purpose: dart2js `Function.toJS` dispatches
+/// on the JS arguments.length (call$0 for a 0-arg JS call) and a
+/// required-parameter closure has no call$0 — the seam would throw
+/// "a.$0 is not a function" for bare `bridgeCatalog()`.
+JSPromise<JSAny?> _bridgeCatalogImpl([JSAny? ns]) =>
     _bridgeCatalog(ns).toJS;
 
 Future<JSAny?> _bridgeCatalog(JSAny? ns) async {
@@ -324,14 +328,17 @@ Future<JSAny?> _bridgeCatalog(JSAny? ns) async {
 }
 
 /// faAgentV2.bridgeCall(path, args) → {ok, result} | {ok:false, error}.
-JSPromise<JSAny?> _bridgeCallImpl(JSAny? path, JSAny? args) =>
+/// path accepts both "chrome.ns.method" and bare "ns.method" (the tool
+/// layer sends the bare form; humans type the chrome. one).
+JSPromise<JSAny?> _bridgeCallImpl([JSAny? path, JSAny? args]) =>
     _bridgeCall(path, args).toJS;
 
 Future<JSAny?> _bridgeCall(JSAny? path, JSAny? args) async {
   final chrome = _chromeApi;
   if (chrome == null) return _bridgeErr('api_missing', 'no chrome surface');
   try {
-    final p = (path?.dartify() as String?) ?? '';
+    var p = (path?.dartify() as String?) ?? '';
+    if (p.startsWith('chrome.')) p = p.substring('chrome.'.length);
     final list = (args?.dartify() as List?) ?? const [];
     return {'ok': true, 'result': await chrome.bridge.call(p, list)}.jsify();
   } on ChromeApiException catch (e) {

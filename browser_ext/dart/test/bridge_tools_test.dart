@@ -7,7 +7,6 @@ import 'package:test/test.dart';
 
 import '../src/browser_api_tools.dart';
 import '../src/bridge_tools.dart';
-import '../src/chrome_api.dart';
 import '../src/fake_chrome.dart';
 
 /// Drives one tool call and returns its text result (the model's view).

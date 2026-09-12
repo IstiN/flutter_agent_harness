@@ -79,28 +79,39 @@ const Set<String> _alwaysPresentNamespaces = {
   'action', // manifest `action` key, not a permission
   'commands', // manifest `commands` key
   'omnibox', // manifest `omnibox` key
+  'dom', // DOM response headers, permissionless
+  'permissions', // optional-permission machinery, permissionless
 };
 
 /// Declared permissions that enable no `chrome.<root>` namespace of their
 /// own (capability flags or sub-namespace transports).
 const Set<String> _permissionsWithoutNamespace = {
   'unlimitedStorage', // quota lift only
-  'clipboardRead', // navigator.clipboard + content scripts
-  'clipboardWrite',
   'nativeMessaging', // rides chrome.runtime.sendNativeMessage
 };
 
-/// The catalog root a declared permission must surface as, or null when
-/// the permission owns no namespace.
-String? _rootOf(String permission) => switch (permission) {
-  'system.cpu' ||
-  'system.memory' ||
-  'system.display' ||
-  'system.storage' => 'system',
-  _ => _permissionsWithoutNamespace.contains(permission)
-      ? null
-      : permission,
+/// The catalog root(s) a declared permission must surface as — empty when
+/// the permission owns no namespace. `tabs` also materializes
+/// chrome.windows; clipboardRead/Write own chrome.clipboard.
+const Map<String, Set<String>> _extraRootsOf = {
+  'tabs': {'tabs', 'windows'},
+  'clipboardRead': {'clipboard'},
+  'clipboardWrite': {'clipboard'},
 };
+
+Set<String> _rootsOf(String permission) {
+  if (_permissionsWithoutNamespace.contains(permission)) return const {};
+  if (_extraRootsOf.containsKey(permission)) return _extraRootsOf[permission]!;
+  return {
+    switch (permission) {
+      'system.cpu' ||
+      'system.memory' ||
+      'system.display' ||
+      'system.storage' => 'system',
+      _ => permission,
+    },
+  };
+}
 
 // -- bridge seams -------------------------------------------------------------
 
@@ -182,22 +193,25 @@ void main() {
       () async {
     final catalog = (await bridgeCatalog(chrome))['namespaces'] as List;
     final roots = {for (final n in catalog) n as String};
-    final declared = _manifestPermissions();
+    final expectedRoots = <String>{
+      for (final p in _manifestPermissions()) ..._rootsOf(p),
+      ..._alwaysPresentNamespaces,
+    };
 
-    // reflection ⊆ declared (modulo the always-present surfaces)
-    final undeclared = roots
-        .difference(declared)
-        .difference(_alwaysPresentNamespaces);
-    expect(undeclared, isEmpty,
-        reason: 'catalog advertises undeclared namespaces: $undeclared');
-
-    // declared ⊆ reflection (for permissions that own a namespace)
-    final missing = [
-      for (final p in declared)
-        if (_rootOf(p) != null && !roots.contains(_rootOf(p))) p,
-    ];
-    expect(missing, isEmpty,
-        reason: 'declared permissions absent from the catalog: $missing');
+    // reflection ⊆ declared ∪ always-present, and the converse: the
+    // catalog is EXACTLY what this manifest + browser materialize.
+    expect(
+      roots.difference(expectedRoots),
+      isEmpty,
+      reason: 'catalog advertises undeclared namespaces: '
+          '${roots.difference(expectedRoots)}',
+    );
+    expect(
+      expectedRoots.difference(roots),
+      isEmpty,
+      reason: 'declared permissions absent from the catalog: '
+          '${expectedRoots.difference(roots)}',
+    );
   });
 
   test('AC2: a namespace query lists methods + arity + events', () async {
@@ -215,8 +229,9 @@ void main() {
     final envelope = await bridgeCall(chrome, 'idle.queryState', [60]);
     expect(envelope['ok'], isTrue,
         reason: 'bridge call failed: ${envelope['error']}');
-    final result = envelope['result'] as Map<String, dynamic>;
-    expect(result.containsKey('state'), isTrue);
+    // queryState's result is the state STRING ("active"/"locked"), not a
+    // map — the seam returns it verbatim.
+    expect(envelope['result'], anyOf('active', 'locked'));
   });
 
   test('AC6: a bad method path is a structured error, never a throw',
@@ -282,7 +297,10 @@ void main() {
 void _copyTree(Directory from, Directory to) {
   to.createSync(recursive: true);
   for (final entity in from.listSync()) {
-    final dest = '${to.path}/${entity.uri.pathSegments.last}';
+    // Directory URIs end with '/', so pathSegments.last is '' — filter
+    // empties or the tree flattens into the destination root.
+    final name = entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
+    final dest = '${to.path}/$name';
     switch (entity) {
       case File():
         entity.copySync(dest);
