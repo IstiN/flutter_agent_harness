@@ -61,7 +61,7 @@ abstract interface class SessionRepo {
   Future<Session> create(JsonlSessionCreateOptions options);
 
   /// Opens an existing session from its metadata.
-  Future<Session> open(SessionMetadata metadata);
+  Future<Session> open(SessionMetadata metadata, {bool windowed = false});
 
   /// Lists stored sessions, newest first; [cwd] filters to one directory.
   Future<List<SessionMetadata>> list({String? cwd});
@@ -410,6 +410,32 @@ final class JsonlSessionRepo implements SessionRepo {
       if (!chunk.hasOlder || chunk.isEmpty) return null;
       chunk = await reader.readBefore(chunk.firstOffset);
     }
+  }
+
+  /// Batch form of [sessionNameQuick]: bounded 16-way fan-out, results
+  /// keyed by session id; a session that fails to scan contributes no
+  /// name (the caller's row degrades to the id).
+  Future<Map<String, String>> sessionNamesQuick(
+    List<SessionMetadata> sessions,
+  ) async {
+    final names = <String, String>{};
+    var next = 0;
+    Future<void> worker() async {
+      while (next < sessions.length) {
+        final metadata = sessions[next++];
+        try {
+          final name = await sessionNameQuick(metadata);
+          if (name != null) names[metadata.id] = name;
+        } on Object {
+          // Broken or foreign session file: skip, never break the caller.
+        }
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < _listConcurrency && i < sessions.length; i++) worker(),
+    ]);
+    return names;
   }
 
   Future<List<SessionMetadata>> _collectRootSessions() async {

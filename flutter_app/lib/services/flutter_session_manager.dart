@@ -215,27 +215,9 @@ final class FlutterSessionManager extends ChangeNotifier {
   Future<Map<String, String>> readSessionNames(
     List<SessionMetadata> sessions,
   ) async {
-    final names = <String, String>{};
-    // Bounded fan-out (issue #199 AC3): the quick name probes run 16 at a
-    // time instead of sequentially. Results key by metadata.id, so map
-    // identity is per session regardless of completion order.
-    var next = 0;
-    Future<void> worker() async {
-      while (next < sessions.length) {
-        final metadata = sessions[next++];
-        try {
-          final name = await _repo.sessionNameQuick(metadata);
-          if (name != null) names[metadata.id] = name;
-        } on Object {
-          // Broken or foreign session file: skip, never break the sidebar.
-        }
-      }
-    }
-
-    await Future.wait([
-      for (var i = 0; i < 16 && i < sessions.length; i++) worker(),
-    ]);
-    return names;
+    // Bounded fan-out lives on the repo (issue #199 AC3): quick tail
+    // scans, 16 at a time; results key by metadata.id.
+    return _repo.sessionNamesQuick(sessions);
   }
 
   /// The active session id, if any.

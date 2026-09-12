@@ -162,7 +162,8 @@ extension on AgentCli {
   Future<void> _listSessions() async {
     // List every session in the shared root, across workspaces, so sessions
     // created in the Fa app or in another `fa` run are visible here. The
-    // current folder's sessions lead the list (issue #83).
+    // current folder's sessions lead the list (issue #83). Children render
+    // nested under their parent (issue #198).
     final sessions = sortSessionsCurrentFolderFirst(
       await _repo.list(),
       _env.cwd,
@@ -171,19 +172,17 @@ extension on AgentCli {
       io.writeln('no sessions');
       return;
     }
-    final current = await _session?.getMetadata();
     io.writeln('sessions:');
-    for (var i = 0; i < sessions.length; i++) {
-      final metadata = sessions[i];
-      final sessionName = await _sessionNameQuick(metadata);
-      final label = sessionName ?? metadata.id;
-      final marker = current?.path == metadata.path ? '*' : ' ';
-      final folder = _pathBasename(metadata.cwd);
-      final folderTag = folder.isEmpty ? '' : ' [$folder]';
-      io.writeln(
-        '  $marker${i + 1}) $label$folderTag  '
-        '${_style.dim(metadata.createdAt.toLocal().toIso8601String())}',
-      );
+    for (final line in formatSessionListLines(
+      buildSessionListRows(
+        sessions: sessions,
+        flat: false,
+        names: await sessionDisplayNames(_repo, sessions),
+        currentSessionPath: (await _session?.getMetadata())?.path,
+      ),
+      dim: _style.dim,
+    )) {
+      io.writeln(line);
     }
     io.writeln(
       _style.dim('switch: /session <name> · rename: /rename-session <name>'),
