@@ -8,7 +8,9 @@
 library;
 
 import '../env/execution_env.dart';
+import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
+import 'session_chunk_reader.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
 import 'windowed_session_storage.dart';
@@ -147,12 +149,23 @@ List<SessionMetadata> sortSessionsCurrentFolderFirst(
 /// while preserving its project scope.
 final class JsonlSessionRepo implements SessionRepo {
   /// Creates a [JsonlSessionRepo] storing sessions under [sessionsRoot].
-  JsonlSessionRepo({required this._fs, required String sessionsRoot})
-    : _sessionsRootInput = sessionsRoot;
+  /// [parseExecutor] moves record parsing off the calling isolate for
+  /// [open] (issue #199); `null` keeps the inline batched path (web).
+  JsonlSessionRepo({
+    required this._fs,
+    required String sessionsRoot,
+    this._parseExecutor,
+  }) : _sessionsRootInput = sessionsRoot;
 
   final FileSystem _fs;
   final String _sessionsRootInput;
   String? _sessionsRoot;
+  final SessionParseExecutor? _parseExecutor;
+
+  /// Header-read concurrency for [list] (issue #199): bounded so 500+
+  /// sessions never exhaust fds; ≥ 2 so latency overlaps (E4 pins the VM
+  /// floor at 2 cores).
+  static const int _listConcurrency = 16;
 
   Future<String> _getSessionsRoot() async {
     final cached = _sessionsRoot;
@@ -245,8 +258,16 @@ final class JsonlSessionRepo implements SessionRepo {
     }
     return Session(
       windowed
-          ? await WindowedSessionStorage.open(_fs, metadata.path)
-          : await JsonlSessionStorage.open(_fs, metadata.path),
+          ? await WindowedSessionStorage.open(
+              _fs,
+              metadata.path,
+              parseExecutor: _parseExecutor,
+            )
+          : await JsonlSessionStorage.open(
+              _fs,
+              metadata.path,
+              parseExecutor: _parseExecutor,
+            ),
     );
   }
 
@@ -364,6 +385,33 @@ final class JsonlSessionRepo implements SessionRepo {
     return Session(storage);
   }
 
+  /// The session's display name WITHOUT a full open (issue #199): scans
+  /// the tail backward through the chunk reader until the newest
+  /// `session_info` record surfaces — the same record `(await open(m))
+  /// .getSessionName()` reports (last one in file order wins; an
+  /// empty/whitespace name clears it). Read-only: unlike a full open it
+  /// never rewrites torn lines. Throws [SessionException] like [open]
+  /// when the file is missing/unreadable — callers already guard.
+  Future<String?> sessionNameQuick(SessionMetadata metadata) async {
+    final reader = SessionChunkReader(
+      fs: _fs,
+      path: metadata.path,
+      parseExecutor: _parseExecutor,
+    );
+    SessionChunk chunk = await reader.readTail();
+    while (true) {
+      for (final entry in chunk.entries.reversed) {
+        final record = entry.record;
+        if (record is SessionInfoRecord) {
+          final name = record.name?.trim();
+          return name != null && name.isNotEmpty ? name : null;
+        }
+      }
+      if (!chunk.hasOlder || chunk.isEmpty) return null;
+      chunk = await reader.readBefore(chunk.firstOffset);
+    }
+  }
+
   Future<List<SessionMetadata>> _collectRootSessions() async {
     final root = await _getSessionsRoot();
     final exists = _fsOrThrow(
@@ -371,29 +419,64 @@ final class JsonlSessionRepo implements SessionRepo {
       'Failed to check sessions root $root',
     );
     if (!exists) return [];
-    final sessions = <SessionMetadata>[];
-    await _collectSessionsInDir(root, sessions);
-    return sessions;
+    return _collectSessionsInDir(root);
   }
 
-  Future<void> _collectSessionsInDir(
-    String dirPath,
-    List<SessionMetadata> out,
-  ) async {
-    final entries = _fsOrThrow(
-      await _fs.listDir(dirPath),
-      'Failed to list session directory $dirPath',
-    );
-    for (final entry in entries) {
-      if (entry.kind == FileKind.directory) {
-        await _collectSessionsInDir(entry.path, out);
-        continue;
+  /// Collects every session file under the root: the directory tree is
+  /// walked breadth-first with bounded parallel [listDir] calls, then all
+  /// header reads fan out through ONE bounded pool (issue #199 AC3 —
+  /// sequential listing makes app boot O(sessions × header latency)).
+  Future<List<SessionMetadata>> _collectSessionsInDir(String dirPath) async {
+    final files = <FileInfo>[];
+    final pending = <String>[dirPath];
+    while (pending.isNotEmpty) {
+      final level = List.of(pending);
+      pending.clear();
+      final discovered = await _mapBounded(level, _listDir);
+      for (final entries in discovered) {
+        for (final entry in entries) {
+          if (entry.kind == FileKind.directory) {
+            pending.add(entry.path);
+          } else if (entry.name.endsWith('.jsonl')) {
+            files.add(entry);
+          }
+        }
       }
-      if (!entry.name.endsWith('.jsonl')) continue;
-      final metadata = await _tryLoadSessionMetadata(entry);
-      if (metadata != null) out.add(metadata);
     }
+    final loaded = await _mapBounded<FileInfo, SessionMetadata?>(
+      files,
+      _tryLoadSessionMetadata,
+    );
+    return [for (final m in loaded) ?m];
   }
+
+  /// Runs [task] over [items] with at most [_listConcurrency] in flight;
+  /// results keep input order. A failing task fails the whole batch (the
+  /// caller's error text names its item).
+  Future<List<R>> _mapBounded<T, R>(
+    List<T> items,
+    Future<R> Function(T) task,
+  ) async {
+    final results = List<R?>.filled(items.length, null);
+    var next = 0;
+    Future<void> worker() async {
+      while (true) {
+        final i = next++;
+        if (i >= items.length) return;
+        results[i] = await task(items[i]);
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < _listConcurrency && i < items.length; i++) worker(),
+    ]);
+    return [for (final r in results) r as R];
+  }
+
+  Future<List<FileInfo>> _listDir(String dir) async => _fsOrThrow(
+    await _fs.listDir(dir),
+    'Failed to list session directory $dir',
+  );
 
   Future<SessionMetadata?> _tryLoadSessionMetadata(FileInfo entry) async {
     try {
