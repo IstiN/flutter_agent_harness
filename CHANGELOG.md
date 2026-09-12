@@ -3285,6 +3285,14 @@
 
 - docs(159): KB — clean no-op for content=none dispatch of build-mobile.yml (#165)
 
+## 0.1.355
+
+- docs(144): KB — real Outlook add-in installation guide (#154)
+- docs(168): KB — mobile trajectory view (parity desktop) (#180)
+- feat(166): apps grid custom cell spans (1×2, 2×1, 1×3, 3×1) (#176)
+- feat(168): mobile trajectory view — parity with desktop (#175)
+- docs(157): KB — DAP e2e family triage (two cases were #158 races) (#163)
+
 ## Unreleased
 
 ## Unreleased
