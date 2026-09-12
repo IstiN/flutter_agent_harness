@@ -27,6 +27,7 @@ import '../theme/app_theme.dart';
 import '../theme/fa_ui_theme.dart';
 import '../trajectory/trajectory_controller.dart';
 import '../trajectory/trajectory_panel.dart';
+import '../trajectory/trajectory_view.dart';
 import '../trajectory/trajectory_strings.dart';
 import 'approval_ui.dart';
 import 'ask_ui.dart';
@@ -57,7 +58,6 @@ typedef FaChatComposerBuilder =
 ///
 /// Text messages are rendered as Markdown, tool calls/results are shown as
 /// distinct cards, and image attachments are supported. Multi-session
-/// management is the host's job: hand a different [service] and the screen
 /// re-subscribes and re-syncs in place. The optional affordances (files
 /// panel, settings gear, composer pickers/voice) come from [features], the
 /// constructor overrides, and the [FaChatHost] hooks.
@@ -298,6 +298,13 @@ class _FaChatScreenState extends State<FaChatScreen>
       builder: (_) => TrajectoryScreen(
         controller: _trajectory,
         loaded: _trajectoryLoaded,
+        scope: TrajectoryProjectionScope(
+          above: widget.service.historyAboveCount,
+          below: widget.service.historyBelowCount,
+          total: widget.service.historyTotalCount,
+        ),
+        onRecordActivate: (record) =>
+            widget.service.jumpToMessage(record.recordId),
         onClose: () => Navigator.pop(context),
       ),
     );
@@ -1077,6 +1084,13 @@ class _FaChatScreenState extends State<FaChatScreen>
                   TrajectoryScreen(
                     controller: _trajectory,
                     loaded: _trajectoryLoaded,
+                    scope: TrajectoryProjectionScope(
+                      above: widget.service.historyAboveCount,
+                      below: widget.service.historyBelowCount,
+                      total: widget.service.historyTotalCount,
+                    ),
+                    onRecordActivate: (record) =>
+                        widget.service.jumpToMessage(record.recordId),
                     onClose: () => setState(() => _showTrajectory = false),
                   ),
                 ],

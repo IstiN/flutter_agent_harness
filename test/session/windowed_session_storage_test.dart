@@ -506,9 +506,15 @@ void main() {
         }
         // The id index and the branch walk stop at the window edge: the
         // evicted newest records hold no strong reference (round-2
-        // review: monotonic map growth).
-        expect(await storage.getEntry('e2999'), isNull);
+        // review: monotonic map growth). getEntry may still READ an
+        // evicted record straight from the file (AC10 branch-switch
+        // locate) — the residency itself must not keep it.
+        expect(idsOf(await storage.getEntries()), isNot(contains('e2999')));
         expect(await storage.getLabel('e2999'), isNull);
+        expect(
+          idsOf(await storage.getPathToRoot('e1399')),
+          isNot(contains('e2999')),
+        );
         expect(idsOf(await storage.getPathToRoot('e1399')), [
           for (var i = 800; i <= 1399; i++) 'e$i',
         ]);
@@ -545,9 +551,9 @@ void main() {
         // tail can never silently vanish).
         final ids = idsOf(await storage.getEntries());
         expect(ids.last, 'e399');
+        expect(ids, isNot(contains('e50')));
         expect(await storage.getEntry('e399'), isNotNull);
         expect(await storage.getLeafId(), 'e399');
-        expect(await storage.getEntry('e50'), isNull);
         expect(await storage.countAbove(), 340);
         expect(storage.countBelow, 0);
       },
@@ -724,6 +730,101 @@ void main() {
       // order, open tail included.
       final ids = [for (final record in await storage.getEntries()) record.id];
       expect(ids, [for (var i = 0; i < 777; i++) 'e$i']);
+    });
+  });
+
+  group('round 4', () {
+    test('AC6: jumpToRecord through the offset map scans nothing', () async {
+      await seedRaw(3000);
+      final storage = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 200,
+        residentRecords: 600,
+        residentBytes: 1 << 30,
+      );
+      // Explore upward far enough that the open-tail records were
+      // evicted from residency (they stay in the sparse offset map).
+      for (var i = 0; i < 8; i++) {
+        await storage.loadOlder();
+      }
+      expect(idsOf(await storage.getEntries()), isNot(contains('e2999')));
+      expect(storage.offsetOf('e2999'), isNotNull);
+      final passesBefore = storage.reader.locatePassCount;
+      final branch = await storage.jumpToRecord('e2999');
+      // Instant: the offset map served the jump — the locate scanner
+      // read nothing (issue #135 AC6, instrumented).
+      expect(storage.reader.locatePassCount, passesBefore);
+      expect(idsOf(branch), contains('e2999'));
+      expect(idsOf(await storage.getEntries()), contains('e2999'));
+      // An UNEXPLORED record pays exactly one seek pass.
+      final unexplored = await storage.jumpToRecord('e5');
+      expect(idsOf(unexplored), contains('e5'));
+      expect(storage.reader.locatePassCount, greaterThan(passesBefore));
+    });
+
+    test('AC10: branch switch re-centers on the new branch tail', () async {
+      // One trunk e0..e99, then two forks: B (e100b..e199b) first in
+      // file order, A (e100a..e299a) after — the open tail lands on A.
+      const iso = '2026-01-01T00:00:00.000Z';
+      String line(String id, String? parent, [String tag = 'a']) =>
+          '{"type":"message","id":"$id","parentId":'
+          '${parent == null ? 'null' : '"$parent"'},"timestamp":"$iso",'
+          '"message":{"role":"user","content":[{"type":"text","text":'
+          '"message $id $tag"}]}}\n';
+      final buffer = StringBuffer(
+        '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
+        '"cwd":"/work"}\n',
+      );
+      for (var i = 0; i < 100; i++) {
+        buffer.write(line('e$i', i == 0 ? null : 'e${i - 1}'));
+      }
+      for (var i = 0; i < 100; i++) {
+        buffer.write(line('e${100 + i}b', i == 0 ? 'e99' : 'e${99 + i}b', 'b'));
+      }
+      for (var i = 0; i < 200; i++) {
+        buffer.write(line('e${100 + i}a', i == 0 ? 'e99' : 'e${99 + i}a'));
+      }
+      await fs.writeFile(path, buffer.toString());
+      final storage = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 150,
+        residentBytes: 1 << 30,
+      );
+      expect(await storage.getLeafId(), 'e299a');
+      // The foreign-branch target resolves even though it never was
+      // resident (the moveTo existence check).
+      expect((await storage.getEntry('e150b'))?.id, 'e150b');
+      await storage.setLeafId('e150b');
+      // The window re-centered on B's tail: the leaf is the target, no
+      // A-branch record renders (issue #135 AC10).
+      expect(await storage.getLeafId(), 'e150b');
+      final resident = idsOf(await storage.getEntries());
+      expect(resident, contains('e150b'));
+      expect(resident, isNot(contains('e299a')));
+      // The branch walk climbs B's chain to the trunk — never through A.
+      final branch = idsOf(await storage.currentBranch());
+      expect(branch.last, 'e150b');
+      expect(branch, isNot(contains('e100a')));
+      // Paging up continues B's own chain.
+      final older = await storage.loadOlder();
+      expect(idsOf(older), isNot(contains('e299a')));
+      expect(idsOf(older).first, isNot('e100a'));
+    });
+
+    test('AC7: a same-size rewrite (mtime) re-anchors to tail', () async {
+      await seedRaw(100);
+      fs.setMtime(path, 1_000);
+      final storage = await WindowedSessionStorage.open(fs, path);
+      expect((await storage.ingestAppended()).reanchored, isFalse);
+      // External rewrite: same size, different bytes, newer mtime.
+      fs.setMtime(path, 2_000);
+      final ingest = await storage.ingestAppended();
+      expect(ingest.reanchored, isTrue);
+      // The window re-anchored on the (rewritten) tail.
+      expect(idsOf(await storage.getEntries()).last, 'e99');
     });
   });
 }

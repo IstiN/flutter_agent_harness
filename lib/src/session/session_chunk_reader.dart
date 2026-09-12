@@ -225,6 +225,56 @@ final class SessionChunkReader {
     );
   }
 
+  /// Streaming id seek (issue #135 AC6): scans the file block-wise for
+  /// the line whose record id is [recordId] and returns its byte
+  /// offset; `null` when absent. Cost is one pass — callers jump through
+  /// the sparse offset map instead whenever the record was read before
+  /// ([locatePassCount] instruments the difference).
+  Future<int?> locateRecord(String recordId) async {
+    final info = await stat();
+    if (info == null) return null;
+    const block = 1 << 20;
+    var offset = 0;
+    final needle = '"id":"$recordId"';
+    while (offset < info.size) {
+      _locatePassCount++;
+      final end = (offset + block) < info.size ? offset + block : info.size;
+      final bytes = await _readRange(offset, end);
+      // Cheap substring gate before any JSON decode.
+      if (!_containsAscii(bytes, needle)) {
+        offset = end;
+        continue;
+      }
+      final lines = _splitLines(bytes, offset);
+      for (final (lineOffset, lineBytes) in lines) {
+        final text = utf8.decode(lineBytes, allowMalformed: true);
+        if (!text.contains(needle)) continue;
+        final record = parseSessionEntryLine(text, '', lineOffset);
+        if (record.id == recordId) return lineOffset;
+      }
+      offset = end;
+    }
+    return null;
+  }
+
+  /// Blocks read by [locateRecord] this open (AC6 instrumentation: a
+  /// jump through the sparse offset map adds none).
+  int get locatePassCount => _locatePassCount;
+  int _locatePassCount = 0;
+
+  /// Case-sensitive ASCII substring match without decoding.
+  bool _containsAscii(Uint8List haystack, String needle) {
+    final pattern = ascii.encode(needle);
+    outer:
+    for (var i = 0; i + pattern.length <= haystack.length; i++) {
+      for (var j = 0; j < pattern.length; j++) {
+        if (haystack[i + j] != pattern[j]) continue outer;
+      }
+      return true;
+    }
+    return false;
+  }
+
   /// Forward scan bounded by both caps: 1 MiB blocks, the torn tail line
   /// carries into the next block, unparseable lines are skipped (never
   /// fatal in a windowed read).

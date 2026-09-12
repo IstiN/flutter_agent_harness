@@ -54,6 +54,7 @@ final class WindowedSessionStorage
        _windowTopOffset = chunk.isEmpty ? null : chunk.firstOffset,
        _knownFileBytes = chunk.endOffset,
        _fileSize = chunk.fileSize,
+       _fileMtimeMs = chunk.fileMtimeMs,
        _residentRecordCap = residentRecords,
        _residentByteCap = residentBytes {
     _indexChunk(chunk);
@@ -124,6 +125,10 @@ final class WindowedSessionStorage
 
   /// Last-seen file size (truncation guard, append offset math).
   int _fileSize;
+
+  /// Last-seen mtime (same-size rewrite guard, issue #135 AC7); `0`
+  /// until the first stat — never triggers a spurious re-anchor.
+  int _fileMtimeMs;
 
   bool _hasOlder = false;
   int? _totalRecords;
@@ -314,6 +319,7 @@ final class WindowedSessionStorage
     final info = await _reader.stat();
     if (info == null) return const [];
     _fileSize = info.size;
+    _fileMtimeMs = info.mtimeMs;
     if (byteOffset < 0 || byteOffset >= info.size) return const [];
     final chunk = await _reader.readAround(
       byteOffset,
@@ -326,14 +332,29 @@ final class WindowedSessionStorage
     return _branchWithinChunk(chunk, byteOffset);
   }
 
-  /// Streams externally-appended records (a running fa CLI) into the
-  /// window. Returns the records that joined the active branch at the
-  /// tail, oldest-first — the transcript delta to append — and whether
-  /// the window was RE-ANCHORED (the file shrank: truncation or
-  /// rotation; issue #135 E5): the delta is then the new window's whole
-  /// branch and the caller must replace, not append. While the user is
-  /// deep-paged (window bottom above the file tail) appends only
-  /// advance the below-count — they page in through [loadNewer].
+  /// Jump-to-record (issue #135 AC6, the mechanism the review asked
+  /// for): the offset comes from the sparse map when the record was
+  /// ever read this open — [SessionChunkReader.locatePassCount] then
+  /// stays flat, the "instant" AC6 jump — and only unexplored records
+  /// pay the one-pass [SessionChunkReader.locateRecord] seek. Returns
+  /// the re-centered branch (root-first) or an empty list on a miss.
+  Future<List<SessionRecord>> jumpToRecord(
+    String recordId, {
+    int maxRecords = defaultChunkRecords,
+    int maxBytes = defaultChunkBytes,
+  }) async {
+    final offset =
+        _offsetById[recordId] ?? await _reader.locateRecord(recordId);
+    if (offset == null) return const [];
+    return jumpToOffset(offset, maxRecords: maxRecords, maxBytes: maxBytes);
+  }
+
+  /// The active branch as currently RESIDENT, root-first — the view
+  /// baseline. Bounded by the residency cap by construction (issue
+  /// #135 round 4: the app layer must not re-accumulate what the
+  /// storage evicted).
+  Future<List<SessionRecord>> currentBranch() => _windowBranch();
+
   Future<({bool reanchored, List<SessionRecord> delta})>
   ingestAppended() async {
     final info = await _reader.stat();
@@ -345,10 +366,18 @@ final class WindowedSessionStorage
       await _reAnchorToTail();
       return (reanchored: true, delta: await _windowBranch());
     }
+    // Same size but the file was REWRITTEN (mtime moved — issue #135
+    // AC7): bytes under the window may differ; re-anchor to the tail
+    // with the truncation notice rather than trust stale residency.
     if (info.size == previousSize) {
+      if (info.mtimeMs != _fileMtimeMs && _fileMtimeMs != 0) {
+        await _reAnchorToTail();
+        return (reanchored: true, delta: await _windowBranch());
+      }
       return (reanchored: false, delta: const <SessionRecord>[]);
     }
     _fileSize = info.size;
+    _fileMtimeMs = info.mtimeMs;
     if (_knownFileBytes != previousSize) {
       return _ingestBelowWindow();
     }
@@ -402,6 +431,7 @@ final class WindowedSessionStorage
   Future<void> _reAnchorToTail() async {
     final chunk = await _reader.readTail();
     _fileSize = chunk.fileSize;
+    _fileMtimeMs = chunk.fileMtimeMs;
     _totalRecords = null;
     _aboveCount = null;
     _belowCount = 0;
@@ -642,13 +672,16 @@ final class WindowedSessionStorage
   @override
   Future<void> setLeafId(String? leafId) async {
     if (leafId != null &&
-        !_byId.containsKey(leafId) &&
+        !(_byId.containsKey(leafId) ||
+            _appendedBelow.containsKey(leafId) ||
+            await _locateEntryOrNull(leafId) != null) &&
         leafId != _currentLeafId) {
       throw SessionException(
         'Entry $leafId not found',
         code: SessionErrorCode.notFound,
       );
     }
+    final previousLeaf = _currentLeafId;
     final record = LeafRecord(
       id: generateSessionEntryId(_byId),
       parentId: _currentLeafId,
@@ -657,6 +690,33 @@ final class WindowedSessionStorage
     );
     await appendEntry(record);
     _branchBottomId = _currentLeafId;
+    // Branch switch (issue #135 AC10): the window re-centers on the
+    // TARGET branch's tail — the previous branch's resident records
+    // must not render. A null target (move to root) keeps the window;
+    // the branch walk from the root re-derives the first branch.
+    if (leafId != null && leafId != previousLeaf) {
+      await _recentreOnBranch(leafId);
+    }
+  }
+
+  /// Re-centers the window on [leafId]'s own branch tail (the AC10
+  /// branch-switch re-center): previous-branch residency is dropped, so
+  /// no foreign-branch record can render.
+  Future<void> _recentreOnBranch(String leafId) async {
+    final known =
+        _byId.containsKey(leafId) || _appendedBelow.containsKey(leafId);
+    final offset = known
+        ? _offsetById[leafId] ?? await _reader.locateRecord(leafId)
+        : await _reader.locateRecord(leafId);
+    if (offset == null) return;
+    final chunk = await _reader.readAround(offset);
+    if (chunk.isEmpty) return;
+    _replaceWindowWithChunk(chunk);
+    _hasOlder = chunk.hasOlder;
+    _branchBottomId = leafId;
+    _currentLeafId = leafId;
+    _aboveCount = null;
+    _belowCount = null;
   }
 
   @override
@@ -664,42 +724,61 @@ final class WindowedSessionStorage
 
   @override
   Future<void> appendEntry(SessionRecord record) async {
-    // Serialize with every other writer of this file (a full-open CLI or a
-    // second app instance) so concurrent bursts never interleave bytes
-    // mid-record — same contract as [JsonlSessionStorage].
+    // Serialize with every other in-process writer of this file (a
+    // full-open JsonlSessionStorage on the same path — issue #135
+    // round-4 review): concurrent bursts must never interleave bytes
+    // mid-record. Same contract as [JsonlSessionStorage].
     final line = jsonEncode(record.toJson());
-    _fsOrThrow(
-      await _fs.appendFile(_filePath, '$line\n'),
-      'Failed to append session entry ${record.id}',
-    );
-    // ponytail: stat-then-append still has a tiny race with an external
-    // writer between the two calls; the file lock-free append contract is
-    // the same as JsonlSessionStorage's, and the next ingest re-anchors.
-    final info = await _reader.stat();
-    final start = info == null ? _knownFileBytes : info.size - line.length - 1;
-    _fileSize = start + line.length + 1;
-    _offsetById[record.id] = start;
-    final leaf = leafIdAfterSessionRecord(record);
-    if (_knownFileBytes == start) {
-      // Window bottom is the file tail: the record extends it.
-      final chained =
-          record.parentId == _branchBottomId ||
-          record is LeafRecord && record.parentId == _branchBottomId;
-      _indexEntry(record, start: start, end: _fileSize);
-      _knownFileBytes = _fileSize;
-      if (chained) _branchBottomId = leaf;
-    } else if (_belowCount != null) {
-      // Deep-paged: the record lands below the window and pages in later.
-      _belowCount = _belowCount! + 1;
-      _appendedBelow[record.id] = record;
-    }
-    _currentLeafId = leaf;
+    await withSessionFileLock(_filePath, () async {
+      _fsOrThrow(
+        await _fs.appendFile(_filePath, '$line\n'),
+        'Failed to append session entry ${record.id}',
+      );
+      final info = await _reader.stat();
+      final start = info == null
+          ? _knownFileBytes
+          : info.size - line.length - 1;
+      _fileSize = start + line.length + 1;
+      _fileMtimeMs = info?.mtimeMs ?? _fileMtimeMs;
+      _offsetById[record.id] = start;
+      final leaf = leafIdAfterSessionRecord(record);
+      if (_knownFileBytes == start) {
+        // Window bottom is the file tail: the record extends it.
+        final chained =
+            record.parentId == _branchBottomId ||
+            record is LeafRecord && record.parentId == _branchBottomId;
+        _indexEntry(record, start: start, end: _fileSize);
+        _knownFileBytes = _fileSize;
+        if (chained) _branchBottomId = leaf;
+      } else if (_belowCount != null) {
+        // Deep-paged: the record lands below the window and pages in later.
+        _belowCount = _belowCount! + 1;
+        _appendedBelow[record.id] = record;
+      }
+      _currentLeafId = leaf;
+    });
     _evictToBound(newestSide: false);
   }
 
   @override
-  Future<SessionRecord?> getEntry(String id) async =>
-      _byId[id] ?? _appendedBelow[id];
+  Future<SessionRecord?> getEntry(String id) async {
+    final resident = _byId[id] ?? _appendedBelow[id];
+    if (resident != null) return resident;
+    return _locateEntryOrNull(id);
+  }
+
+  /// Reads [id] straight from the file when it is not resident (a
+  /// foreign-branch target of [setLeafId] — issue #135 AC10): one
+  /// bounded seek, no window change.
+  Future<SessionRecord?> _locateEntryOrNull(String id) async {
+    final offset = await _reader.locateRecord(id);
+    if (offset == null) return null;
+    final chunk = await _reader.readForward(offset, maxRecords: 1);
+    for (final entry in chunk.entries) {
+      if (entry.record.id == id) return entry.record;
+    }
+    return null;
+  }
 
   @override
   Future<List<SessionRecord>> findEntries(String type) async {

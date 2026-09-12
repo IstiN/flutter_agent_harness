@@ -129,14 +129,15 @@ abstract class TrajectoryStrings {
   String get historyLoadingTrajectory;
   String get historyLoadingEarlier;
   String get historyLoadEarlier;
-
+  String historyScopeWindowed(int above, int below);
+  String historyScopeShownOf(int shown, int total);
   String requestLabel(int request);
   String requestLabelCompaction(int request);
 
   String summaryToolCalls(int count);
   String summarySteps(int count);
-
   String get detailsEvent;
+  String get detailsJumpToChat;
   String get detailsStatus;
   String get detailsProvider;
   String get detailsModel;
@@ -399,6 +400,11 @@ class TrajectoryStringsEn extends TrajectoryStrings {
   String get historyLoadingEarlier => 'Loading earlier history…';
   @override
   String get historyLoadEarlier => 'Load earlier history';
+  @override
+  String historyScopeWindowed(int above, int below) =>
+      'Windowed projection — $above earlier · $below later records outside the window';
+  @override
+  String historyScopeShownOf(int shown, int total) => '$shown of $total shown';
 
   @override
   String requestLabel(int request) => 'Request #$request';
@@ -414,6 +420,8 @@ class TrajectoryStringsEn extends TrajectoryStrings {
 
   @override
   String get detailsEvent => 'Event details';
+  @override
+  String get detailsJumpToChat => 'Jump in chat';
   @override
   String get detailsStatus => 'Status';
   @override
@@ -739,7 +747,12 @@ class TrajectoryStringsRu extends TrajectoryStrings {
   String get historyLoadingEarlier => 'Загрузка ранней истории…';
   @override
   String get historyLoadEarlier => 'Загрузить раннюю историю';
-
+  @override
+  String historyScopeWindowed(int above, int below) =>
+      'Оконная проекция — $above ранних · $below поздних записей вне окна';
+  @override
+  String historyScopeShownOf(int shown, int total) =>
+      'показано $shown из $total';
   @override
   String requestLabel(int request) => 'Запрос #$request';
   @override
@@ -759,6 +772,8 @@ class TrajectoryStringsRu extends TrajectoryStrings {
   String get detailsEvent => 'Детали события';
   @override
   String get detailsStatus => 'Статус';
+  @override
+  String get detailsJumpToChat => 'Перейти в чат';
   @override
   String get detailsProvider => 'Провайдер';
   @override

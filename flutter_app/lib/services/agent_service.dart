@@ -1690,22 +1690,14 @@ class AgentService extends ChangeNotifier
   /// sessions (rows come straight from the loaded context).
   List<SessionRecord>? _viewBranch;
 
-  /// Merges a page delta into the view, skipping records the view
-  /// already holds ([above] prepends at the head, else appends at the
-  /// tail). Residency paging re-reads records the view never lost
-  /// (page-down after page-up, re-ascending after a jump) - the view
-  /// never gains a gap, a duplicate, or a reorder.
-  void _mergeIntoView(List<SessionRecord> joined, {required bool above}) {
-    final view = _viewBranch;
-    if (view == null || joined.isEmpty) return;
-    final have = view.map((r) => r.id).toSet();
-    final fresh = joined.where((r) => !have.contains(r.id)).toList();
-    if (fresh.isEmpty) return;
-    if (above) {
-      view.insertAll(0, fresh);
-    } else {
-      view.addAll(fresh);
-    }
+  /// Re-syncs the VIEW branch to the storage's CURRENT resident branch
+  /// (issue #135 round 4, end-to-end memory bound): the view never
+  /// re-accumulates records the residency cap evicted — transcript and
+  /// ledger stay bounded by the same cache the storage enforces. The
+  /// banners re-derive "more above/below" from the storage counts.
+  Future<void> _syncViewToWindow(WindowedSessionStorage windowed) async {
+    final branch = await windowed.currentBranch();
+    if (branch.isNotEmpty) _viewBranch = branch;
   }
 
   /// Pages one chunk of records above the window into the transcript
@@ -1721,7 +1713,7 @@ class AgentService extends ChangeNotifier
     try {
       final joined = await windowed.loadOlder();
       if (joined.isNotEmpty) {
-        _mergeIntoView(joined, above: true);
+        await _syncViewToWindow(windowed);
         await _applyViewBranch();
       }
       await _refreshHistoryAbove();
@@ -1751,7 +1743,7 @@ class AgentService extends ChangeNotifier
     try {
       final joined = await windowed.loadNewer();
       if (joined.isNotEmpty) {
-        _mergeIntoView(joined, above: false);
+        await _syncViewToWindow(windowed);
         await _applyViewBranch();
       }
       await _refreshHistoryAbove();
@@ -1767,16 +1759,26 @@ class AgentService extends ChangeNotifier
   }
 
   /// Jump-to-message (issue #135 AC6,
-  /// [FaChatService.jumpToMessage]): pages older history in until the
-  /// positional `msg-<index>` target is loaded, then reports whether it
-  /// landed. Bounded — a jump past the file top resolves as a miss, not
-  /// a full read.
+  /// [FaChatService.jumpToMessage]). Two mechanisms:
+  ///
+  /// - a RECORD id (search / ✦-list / trajectory-link hits): seeks by
+  ///   byte offset through the storage's sparse offset map — explored
+  ///   history jumps without a re-scan — and re-centers the window;
+  /// - a positional `msg-<index>` (transcript row keys): pages older
+  ///   history in until the target row is loaded. Bounded — a miss
+  ///   resolves as `false`, never a full read.
   @override
   Future<bool> jumpToMessage(String messageId) async {
-    final index = int.tryParse(messageId.replaceFirst('msg-', ''));
-    if (index == null || index < 0) return false;
     final windowed = _windowed;
-    if (windowed == null) return index < messages.length;
+    if (windowed == null) {
+      final index = _positionalRow(messageId);
+      return index != null && index < messages.length;
+    }
+    if (!messageId.startsWith('msg-')) {
+      return _jumpToRecord(windowed, messageId);
+    }
+    final index = _positionalRow(messageId);
+    if (index == null) return false;
     if (_loadingHistory || isStreaming) return index < messages.length;
     _loadingHistory = true;
     notifyListeners();
@@ -1785,7 +1787,7 @@ class AgentService extends ChangeNotifier
       for (var pass = 0; !reached && pass < 100 && windowed.hasOlder; pass++) {
         final joined = await windowed.loadOlder();
         if (joined.isEmpty) break;
-        _mergeIntoView(joined, above: true);
+        await _syncViewToWindow(windowed);
         await _applyViewBranch();
         reached = index < messages.length;
       }
@@ -1796,6 +1798,36 @@ class AgentService extends ChangeNotifier
       notifyListeners();
     }
     return reached;
+  }
+
+  int? _positionalRow(String messageId) {
+    final index = int.tryParse(messageId.replaceFirst('msg-', ''));
+    return index == null || index < 0 ? null : index;
+  }
+
+  /// The AC6 byte-offset seek: hit id → window re-center → view sync.
+  Future<bool> _jumpToRecord(
+    WindowedSessionStorage windowed,
+    String recordId,
+  ) async {
+    if (_loadingHistory || isStreaming) return false;
+    _loadingHistory = true;
+    notifyListeners();
+    try {
+      final branch = await windowed.jumpToRecord(recordId);
+      if (branch.isEmpty) return false;
+      await _syncViewToWindow(windowed);
+      await _applyViewBranch();
+      await _refreshHistoryAbove();
+      _historyLoadError = null;
+      return true;
+    } on Object catch (e) {
+      _historyLoadError = e is StateError ? e.message : e.toString();
+      return false;
+    } finally {
+      _loadingHistory = false;
+      notifyListeners();
+    }
   }
 
   /// Recomputes [historyAboveCount] from the window's own above-count
@@ -2639,8 +2671,16 @@ class AgentService extends ChangeNotifier
     await waitForIdle();
     // Windowed open (issue #135): header + newest chunk only; older
     // records page in through loadOlderHistory. Small sessions load
-    // completely either way.
-    final session = await _repo.open(metadata, windowed: true);
+    // completely either way. A windowed-open failure (a corrupt tail,
+    // an IO hiccup on the ranged-read path) falls back to the FULL
+    // open rather than failing the session — the compatibility path
+    // (round-4 review); paging surfaces stay null for full-open.
+    Session session;
+    try {
+      session = await _repo.open(metadata, windowed: true);
+    } on Object {
+      session = await _repo.open(metadata);
+    }
     // The count belongs to the session being opened; the background
     // refresh at the end of this method fills it in.
     _historyAboveCount = null;

@@ -5,9 +5,14 @@
 // followed by `message` record lines chained by `parentId`, each ~3 KB of
 // text so byte volume scales with record count.
 //
+// Realistic-session knobs (AC1 evidence fixture):
+//   --branches 3    trunk + 2 forks (forks chain off the trunk tail)
+//   --images        every 500th record carries a 48 KB base64 image block
+//   --compactions   every 10000th record is a compaction summary
+//
 // Usage:
 //   dart run scripts/gen_session_fixture.dart --records 100000 \
-//       --out /tmp/big-session.jsonl
+//       --out /tmp/big-session.jsonl --branches 3 --images --compactions
 //   dart run scripts/gen_session_fixture.dart --records 100000 \
 //       --out /tmp/big-session.jsonl --measure
 //
@@ -31,6 +36,9 @@ Future<void> main(List<String> args) async {
   int records = 100000;
   String out = '/tmp/big-session.jsonl';
   var measure = false;
+  var branches = 1;
+  var images = false;
+  var compactions = false;
   for (var i = 0; i < args.length; i++) {
     final arg = args[i];
     String? next = i + 1 < args.length ? args[i + 1] : null;
@@ -45,6 +53,15 @@ Future<void> main(List<String> args) async {
     } else if (arg == '--out' && next != null) {
       out = next;
       i++;
+    } else if (arg.startsWith('--branches=')) {
+      branches = int.parse(arg.substring('--branches='.length));
+    } else if (arg == '--branches' && next != null) {
+      branches = int.parse(next);
+      i++;
+    } else if (arg == '--images') {
+      images = true;
+    } else if (arg == '--compactions') {
+      compactions = true;
     } else if (arg == '--measure') {
       measure = true;
     } else {
@@ -53,9 +70,14 @@ Future<void> main(List<String> args) async {
       return;
     }
   }
-
   final sw = Stopwatch()..start();
-  await _generate(out, records);
+  await _generate(
+    out,
+    records,
+    branches: branches,
+    images: images,
+    compactions: compactions,
+  );
   final file = File(out);
   final mb = (file.lengthSync() / (1024 * 1024)).toStringAsFixed(1);
   stdout.writeln(
@@ -66,19 +88,83 @@ Future<void> main(List<String> args) async {
   if (measure) await _measure(out);
 }
 
-Future<void> _generate(String out, int records) async {
+/// Deterministic base64 "image" payload (48 KB) for `--images`.
+final String _imageData = 'A' * (48 * 1024);
+
+String _messageLine({
+  required String id,
+  required String? parentId,
+  required int index,
+  required bool withImage,
+}) =>
+    '{"type":"message","id":"$id","parentId":'
+    '${parentId == null ? 'null' : '"$parentId"'},"timestamp":"$_iso",'
+    '"message":{"role":"${index.isEven ? 'user' : 'assistant'}","content":'
+    '[{"type":"text","text":"message $index: $_filler"}'
+    '${withImage ? ',{"type":"image","data":"$_imageData","mimeType":"image/png"}' : ''}]}}\n';
+
+String _compactionLine({
+  required String id,
+  required String? parentId,
+  required String firstKeptEntryId,
+}) =>
+    '{"type":"compaction","id":"$id","parentId":'
+    '${parentId == null ? 'null' : '"$parentId"'},"timestamp":"$_iso",'
+    '"summary":"compaction checkpoint: $_filler",'
+    '"firstKeptEntryId":"$firstKeptEntryId","tokensBefore":120000}\n';
+
+Future<void> _generate(
+  String out,
+  int records, {
+  int branches = 1,
+  bool images = false,
+  bool compactions = false,
+}) async {
   final sink = File(out).openWrite();
   sink.write(
     '{"type":"session","version":3,"id":"fixture","timestamp":"$_iso",'
     '"cwd":"/work"}\n',
   );
-  for (var i = 0; i < records; i++) {
-    sink.write(
-      '{"type":"message","id":"e$i","parentId":'
-      '${i == 0 ? 'null' : '"e${i - 1}"'},"timestamp":"$_iso",'
-      '"message":{"role":"${i.isEven ? 'user' : 'assistant'}","content":'
-      '[{"type":"text","text":"message $i: $_filler"}]}}\n',
-    );
+  // Trunk takes half the records; each fork shares the other half and
+  // chains off the trunk tail (issue #135 AC1: 3 branches).
+  final forkCount = branches - 1;
+  final trunk = forkCount == 0 ? records : records - (records ~/ 2);
+  final fork = forkCount == 0 ? 0 : (records - trunk) ~/ forkCount;
+
+  String? writeChain(
+    int count,
+    String Function(int i) idOf,
+    String? parent,
+    int offset,
+  ) {
+    for (var i = 0; i < count; i++) {
+      final index = offset + i;
+      final id = idOf(i);
+      if (compactions && index > 0 && index % 10000 == 0) {
+        sink.write(
+          _compactionLine(
+            id: 'c$index',
+            parentId: parent,
+            firstKeptEntryId: idOf(i + 1 < count ? i + 1 : i),
+          ),
+        );
+      }
+      sink.write(
+        _messageLine(
+          id: id,
+          parentId: parent,
+          index: index,
+          withImage: images && index % 500 == 0,
+        ),
+      );
+      parent = id;
+    }
+    return parent;
+  }
+
+  final trunkTail = writeChain(trunk, (i) => 'e$i', null, 0);
+  for (var b = 1; b <= forkCount; b++) {
+    writeChain(fork, (i) => 'b$b-e$i', trunkTail, trunk + (b - 1) * fork);
   }
   await sink.flush();
   await sink.close();
@@ -103,6 +189,14 @@ Future<void> _measure(String out) async {
   );
 
   sw = Stopwatch()..start();
+  final leaf = await storage.getLeafId();
+  final path = leaf == null ? <String>[] : await storage.getPathToRoot(leaf);
+  stdout.writeln(
+    'getPathToRoot(tail): ${path.length} resident records in '
+    '${sw.elapsedMilliseconds}ms',
+  );
+
+  sw = Stopwatch()..start();
   var loaded = 0;
   for (var page = 0; page < 5; page++) {
     loaded += (await storage.loadOlder()).length;
@@ -112,12 +206,4 @@ Future<void> _measure(String out) async {
     'resident now ${storage.residentCount} / '
     '${storage.residentWindowBytes ~/ 1024} KiB',
   );
-
-  sw = Stopwatch()..start();
-  final leaf = await storage.getLeafId();
-  final path = leaf == null ? <String>[] : await storage.getPathToRoot(leaf);
-  stdout.writeln(
-    'getPathToRoot: ${path.length} records in ${sw.elapsedMilliseconds}ms',
-  );
 }
-

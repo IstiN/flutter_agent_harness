@@ -52,7 +52,6 @@ final class CountingFileSystem implements FileSystem, RangedReadFileSystem {
 
   /// Bytes moved by whole-file reads — must stay 0 while windowed.
   int bulkBytes = 0;
-
   @override
   String get cwd => delegate.cwd;
 
@@ -214,8 +213,7 @@ void main() {
 
   test('loadOlderHistory pages the next chunk into the transcript', () async {
     // 5000 records: big enough to force many pages, small enough that
-    // paging to the top (25 chunks, each reprojecting a growing
-    // transcript) stays comfortably inside the test timeout.
+    // paging to the top stays comfortably inside the test timeout.
     final (service, _) = await loadedService(5000);
     addTearDown(service.dispose);
     await waitForCount(service, 4800);
@@ -229,14 +227,17 @@ void main() {
     );
     expect(service.historyAboveCount, 4600);
 
-    // Paging to the file top loads EVERYTHING into the VIEW (the
-    // transcript the user reads); residency inside the storage stays
-    // bounded, and the newest side that slid out is reported BELOW.
+    // Paging to the file top: the VIEW stays bounded by the residency
+    // cap (round-4 end-to-end memory bound — the transcript never
+    // re-accumulates what the storage evicted); the newest side that
+    // slid out is reported BELOW and pages back in.
     while (service.historyAboveCount! > 0) {
       await service.loadOlderHistory();
     }
     expect(service.historyAboveCount, 0);
-    expect(service.messages, hasLength(5000));
+    expect(service.messages, hasLength(600));
+    // Deep paging at the file top: the window holds the OLDEST side;
+    // the newest slid out and is reported below (the page-down path).
     expect(
       service.messages.first.content,
       'message 0 with a bit of body to be realistic',
@@ -244,45 +245,63 @@ void main() {
     expect(service.historyHasNewer, isTrue);
     expect(service.historyBelowCount, 4400);
 
-    // The page-down path (round-2 review): residency slides back to the
-    // tail chunk by chunk; the VIEW already holds everything, so the
-    // transcript only settles - it never shrinks or reorders.
+    // The page-down path: residency slides back to the tail chunk by
+    // chunk; the view follows the window exactly — contiguous, in
+    // order, never a duplicate or a gap.
     while (service.historyHasNewer) {
       await service.loadNewerHistory();
     }
     expect(service.historyBelowCount, 0);
-    expect(service.messages, hasLength(5000));
+    expect(service.messages, hasLength(600));
+    expect(
+      service.messages.first.content,
+      'message 4400 with a bit of body to be realistic',
+    );
     expect(
       service.messages.last.content,
       'message 4999 with a bit of body to be realistic',
     );
-    // And a further tap is a clean no-op.
+    // And a further tap pages up one chunk — the window slides, the
+    // view stays capped and contiguous.
     await service.loadOlderHistory();
-    expect(service.messages, hasLength(5000));
-  }, timeout: const Timeout(Duration(minutes: 3)));
-
-  test('jumpToMessage pages history in until the target lands', () async {
-    final (service, _) = await loadedService(3000);
-    addTearDown(service.dispose);
-    await waitForCount(service, 2800);
-
-    expect(service.messages, hasLength(200));
-    // Target deep in the paged-out region: paging-in lands it.
-    final jumped = await service.jumpToMessage('msg-1500');
-    expect(jumped, isTrue);
-    // The row AT the index is loaded (that is the contract the chat
-    // screen scrolls to); rows stay ordered oldest-first.
-    expect(service.messages, hasLength(greaterThan(1500)));
+    expect(service.messages, hasLength(600));
     expect(
-      int.parse(service.messages[1500].content.split(' ')[1]),
-      lessThan(int.parse(service.messages[1501].content.split(' ')[1])),
+      service.messages.first.content,
+      'message 4200 with a bit of body to be realistic',
     );
-    // Out-of-range targets resolve as a miss without paging the whole
-    // file (bounded by the 100-pass cap).
-    expect(await service.jumpToMessage('msg-99999'), isFalse);
-    // Garbage ids are a plain miss.
-    expect(await service.jumpToMessage('nope'), isFalse);
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test(
+    'jumpToMessage: positional rows page in; record ids seek (AC6)',
+    () async {
+      final (service, _) = await loadedService(3000);
+      addTearDown(service.dispose);
+      await waitForCount(service, 2800);
+
+      expect(service.messages, hasLength(200));
+      // A positional target inside the reachable window pages in and
+      // lands (the bounded view can hold the residency cap, not more).
+      final jumped = await service.jumpToMessage('msg-350');
+      expect(jumped, isTrue);
+      expect(service.messages, hasLength(greaterThan(350)));
+      // AC6 mechanism: a RECORD id (search / ✦ / trajectory-link hit)
+      // seeks by byte offset and re-centers the window on the target.
+      final sought = await service.jumpToMessage('e600');
+      expect(sought, isTrue);
+      expect(
+        service.messages.map((m) => m.content),
+        contains('message 600 with a bit of body to be realistic'),
+      );
+      // Out-of-range positional targets resolve as a miss without paging
+      // the whole file (bounded by the residency cap, not a full read).
+      expect(await service.jumpToMessage('msg-99999'), isFalse);
+      // Unknown record ids are a plain miss.
+      expect(await service.jumpToMessage('e-nope'), isFalse);
+      // Garbage ids are a plain miss.
+      expect(await service.jumpToMessage('garbage'), isFalse);
+    },
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
 
   test('small sessions load whole: history count reports 0', () async {
     final (service, _) = await loadedService(5);
@@ -293,6 +312,36 @@ void main() {
     // Tapping with everything loaded is a no-op.
     await service.loadOlderHistory();
     expect(service.messages, hasLength(5));
+  });
+
+  test('a windowed-open failure falls back to the full open', () async {
+    // The ranged-read path dies on the very first read (an IO hiccup
+    // where the windowed storage opens): the session still loads —
+    // through the classic full open (round-4 review, F5b).
+    final tmp = await io.Directory.systemTemp.createTemp('fa_fallback');
+    addTearDown(() => tmp.delete(recursive: true));
+    await seedRaw('${tmp.path}/big.jsonl', 500);
+    final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
+    flaky.failNextReadRange = true;
+    final service = AgentService(
+      agent: _createAgent(),
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
+      watchExternalSessions: false,
+    );
+    addTearDown(service.dispose);
+    await service.initialize();
+    final stored = (await service.listSessions()).single;
+    await service.loadSession(stored);
+
+    // The FULL open read the whole file (bulk), everything is loaded,
+    // and the paging surfaces behave as a complete session.
+    expect(flaky.bulkBytes, greaterThan(0));
+    expect(service.messages, hasLength(500));
+    expect(service.historyAboveCount, isNull);
+    await service.loadOlderHistory();
+    expect(service.messages, hasLength(500));
   });
 
   test('a failed page load surfaces historyLoadError until a retry', () async {
