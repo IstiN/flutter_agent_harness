@@ -21,7 +21,7 @@ watches the run.
 | Leg | Runs | Publishes |
 | --- | --- | --- |
 | TestFlight | `build-mobile.yml` (`ios_content=all`, `android_content=none`) | iOS IPA → TestFlight + release asset. Android stays excluded (standing owner decision). |
-| pub.dev | in-job | Verifies pub.dev serves the pubspec version; if behind, runs the same dry-run gate as PR quality (#122/#128) and publishes via OIDC. Primary path stays the ci.yml tag publish job. |
+| pub.dev | in-job | **Verifier + recovery**, never publishes directly: pub.dev trusted publishing only accepts OIDC from tag-push runs, which a schedule/dispatch run can never be. When behind, it re-runs the failed ci.yml tag-publish run (a rerun keeps the original tag-push event/OIDC claims); unrecoverable states fail loudly → issue with a manual-publish instruction. |
 | CLI + desktop | `build-macos.yml` (`create_release=true`) | macOS DMG/ZIP (signed + notarized), macOS CLI bundles, `fa-extension.zip` → GitHub Release. |
 | Website | `pages.yml` | fa1.dev: landing + web demo + `/extension/` + `/outlook/` slice. |
 | Outlook add-in | `office-addin.yml` | Acceptance suite (manifest validation, dart2js taskpane, Node + Playwright e2e). The fa1.dev `/outlook` deploy itself rides the Website leg — `pages.yml` assembles the same add-in into the Pages artifact. |
@@ -35,13 +35,23 @@ The existing scheme is unchanged: `scripts/auto_release.sh` patch-bumps
 `pubspec.yaml`, tags and pushes on every push to `main` (2h coalesce), and
 the tag drives the ci.yml `publish`/`binaries` jobs. The daily:
 
-- passes the **next patch tag** explicitly to `build-mobile.yml` /
-  `build-macos.yml` (computed once in the `plan` job) so the mobile and
-  desktop legs attach to the **same** release instead of racing two
-  `version=auto` derivations into diverging tags;
-- publishes to pub.dev **only when `pubspec.yaml` version > the version on
-  pub.dev** (no dev/prerelease scheme — it would fight the 2h auto-release
-  cadence and the ~12 publishes/day pub.dev cap).
+- lets `build-mobile.yml` / `build-macos.yml` derive their version
+  themselves (`latest tag + 1` at the child's own dispatch moment). A tag
+  pinned once in the orchestrator would race `auto_release.sh` — the daily
+  could attach assets to a tag minted at a different commit than the built
+  code. Self-derivation keeps tag and code consistent; the two children
+  derive within minutes of each other and converge on the same tag
+  (`gh release create` attaches to an existing tag rather than moving it);
+- never publishes to pub.dev itself (see the pub.dev row above) — pub.dev
+  movement stays 100% in the auto_release → ci.yml tag job path, with the
+  daily as verifier and rerun-recovery.
+
+**Change baseline**: legs run only when `main` moved since the last green
+daily **that ran all legs** (schedule runs, or `legs=all` dispatches). A
+single-leg green dispatch never advances the baseline, so a partial smoke
+can't make the next scheduled run skip the legs it never exercised.
+A failing `plan` job (not just legs) files its own
+`[daily-publish] plan leg failed` issue — nothing escapes the loop.
 
 ## Self-healing issues
 
@@ -84,8 +94,9 @@ and auto-close cycle with zero publish side effects:
 
 ## Secrets
 
-No new secrets. Legs reuse each child workflow's own secrets and OIDC
-(`id-token: write` for pub.dev); the orchestrator itself only needs
-`github.token` with `actions`/`issues` write. Failed-step log excerpts are
-taken verbatim from the child run's log — the child workflows never echo
-secret values.
+No new secrets. The orchestrator never publishes anywhere itself — each
+child workflow uses its own secrets/OIDC (`id-token: write` lives only in
+the tag-triggered ci.yml publish job). The daily needs `github.token` with
+`actions`/`issues` write (dispatch + rerun + issue filing). Failed-step
+log excerpts are taken verbatim from the child run's log — the child
+workflows never echo secret values.

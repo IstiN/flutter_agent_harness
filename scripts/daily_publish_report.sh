@@ -8,10 +8,11 @@
 #   green leg -> auto-close that leg's still-open issue with a comment
 #
 # Inputs come from environment (set by the daily-publish.yml report job):
+#   PLAN_RESULT         needs.plan.result — a plan failure files its own issue
 #   LEG_<NAME>          needs result: success | failure | skipped | cancelled
-#   LEG_<NAME>_URL      child run URL (empty for pubdev / internal failures)
-#   LEG_PUBDEV_*        status, pubspec, published versions
-#   NEXT_TAG            the tag the mobile/desktop legs attached to
+#   LEG_<NAME>_URL      child run URL (empty on internal/skip paths)
+#   LEG_PUBDEV_*        status (up-to-date/private/recovered), versions, tag-run URL
+#   NEXT_TAG            estimated next tag (informational; legs derive latest+1 themselves)
 #   GITHUB_RUN_ID, GITHUB_REPOSITORY, GITHUB_SERVER_URL   runner defaults
 #
 # Exits non-zero when any leg failed or was cancelled (the daily run goes
@@ -161,18 +162,32 @@ process_leg() {
   echo "| $display | \`$version\` | $icon $status | $link_cell |" >> "$rows"
 }
 
-pubdev_status=""
-if [ "${LEG_PUBDEV:-}" = "success" ]; then
-  pubdev_status="${LEG_PUBDEV_STATUS:-success} (pub.dev serves ${LEG_PUBDEV_PUBLISHED:-?})"
+# Plan job: a failure here means legs never ran correctly — it gets its own
+# issue instead of escaping the self-healing loop.
+if [ "${PLAN_RESULT:-success}" != "success" ]; then
+  file_or_comment plan "Plan (change detection + versions)" ""
+  failed_legs+="plan "
+  echo "| Plan | - | ❌ ${PLAN_RESULT} | [daily run]($daily_url) |" >> "$rows"
+else
+  close_if_open plan
 fi
 
-process_leg testflight "TestFlight (iOS)" "${LEG_TESTFLIGHT:-}" "${LEG_TESTFLIGHT_URL:-}" \
-  "$next_tag" "[release](https://github.com/${repo}/releases/tag/${next_tag})"
-process_leg pubdev "pub.dev" "${LEG_PUBDEV:-}" "" \
-  "${LEG_PUBDEV_PUBSPEC:-}" "[pub.dev](https://pub.dev/packages/flutter_agent_harness)" "$pubdev_status"
+# pub.dev status override — display names MUST match the workflow job names
+# exactly ("Leg: <name>"): the log-prefix filter relies on them.
+pubdev_override=""
+case "${LEG_PUBDEV_STATUS:-}" in
+  private)    pubdev_override="private (publish_to: none)";;
+  recovered)  pubdev_override="recovered — tag-publish rerun, pub.dev serves ${LEG_PUBDEV_PUBLISHED:-?}";;
+  up-to-date) pubdev_override="up-to-date (pub.dev serves ${LEG_PUBDEV_PUBLISHED:-?})";;
+esac
+
+process_leg testflight "TestFlight" "${LEG_TESTFLIGHT:-}" "${LEG_TESTFLIGHT_URL:-}" \
+  "$next_tag (est.)" "[release](https://github.com/${repo}/releases/tag/${next_tag})"
+process_leg pubdev "pub.dev" "${LEG_PUBDEV:-}" "${LEG_PUBDEV_URL:-}" \
+  "${LEG_PUBDEV_PUBSPEC:-}" "[pub.dev](https://pub.dev/packages/flutter_agent_harness)" "$pubdev_override"
 process_leg cli "CLI + macOS desktop" "${LEG_CLI:-}" "${LEG_CLI_URL:-}" \
-  "$next_tag" "[release](https://github.com/${repo}/releases/tag/${next_tag})"
-process_leg website "Website (fa1.dev)" "${LEG_WEBSITE:-}" "${LEG_WEBSITE_URL:-}" \
+  "$next_tag (est.)" "[release](https://github.com/${repo}/releases/tag/${next_tag})"
+process_leg website "Website" "${LEG_WEBSITE:-}" "${LEG_WEBSITE_URL:-}" \
   "" "[fa1.dev](https://fa1.dev)"
 process_leg addin "Outlook add-in" "${LEG_ADDIN:-}" "${LEG_ADDIN_URL:-}" \
   "" "[manifest](https://fa1.dev/outlook/manifest.xml)"
@@ -181,8 +196,7 @@ process_leg addin "Outlook add-in" "${LEG_ADDIN:-}" "${LEG_ADDIN_URL:-}" \
 {
   echo "## Daily auto-publish"
   echo
-  echo "Run: $daily_url • next tag: \`$next_tag\`"
-  echo
+  echo "Run: $daily_url • est. next tag: \`$next_tag\` (each leg derives latest+1 at its own dispatch)"
   echo "| Leg | Version | Status | Links |"
   echo "| --- | --- | --- | --- |"
   cat "$rows"
