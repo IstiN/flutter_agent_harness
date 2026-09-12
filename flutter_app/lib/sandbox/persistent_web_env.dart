@@ -87,6 +87,26 @@ final class PersistentWebExecutionEnv
   }
 
   Future<String> _snapshot() async {
+    final delegate = _delegate;
+    if (delegate case final FsSnapshotExporter exporter) {
+      // Atomic path (issue #201): encode from a synchronous point-in-time
+      // deep copy. The async walk below yields to the event loop between
+      // every directory and file, so a concurrent write (e.g. an install
+      // loop landing widget.js after manifest.json) could interleave
+      // mid-walk and persist a torn tree that then failed to launch with
+      // FileError(notFound). A synchronous export has no yield points —
+      // a saved snapshot is always a consistent point-in-time view.
+      final snapshot = exporter.exportSnapshot();
+      return jsonEncode({
+        'version': snapshotVersion,
+        'dirs': snapshot.dirs,
+        'files': [
+          for (final file in snapshot.files.entries)
+            {'path': file.key, 'data': base64Encode(file.value)},
+        ],
+      });
+    }
+    // Fallback for non-memory delegates: the historical async walk.
     final dirs = <String>[];
     final files = <Map<String, String>>[];
     Future<void> walk(String dir) async {

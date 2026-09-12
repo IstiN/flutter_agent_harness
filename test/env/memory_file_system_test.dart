@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -170,6 +171,75 @@ void main() {
       expect(info.kind, FileKind.file);
       expect(info.size, 5);
       expect(info.mtimeMs, greaterThan(0));
+    });
+  });
+
+  group('MemoryFileSystem.exportSnapshot', () {
+    test('exports an empty tree', () {
+      final fs = MemoryFileSystem(cwd: '/');
+      final snapshot = fs.exportSnapshot();
+      expect(snapshot.dirs, isEmpty);
+      expect(snapshot.files, isEmpty);
+    });
+
+    test('exports the subtree below cwd, deep-first and name-sorted',
+        () async {
+      final fs = MemoryFileSystem(cwd: '/work');
+      await fs.writeFile('/work/b/2.txt', 'two');
+      await fs.writeFile('/work/a.txt', 'a');
+      await fs.writeFile('/work/b/1.txt', 'one');
+      await fs.createDir('/work/c/empty');
+      await fs.writeFile('/elsewhere/outside.txt', 'out');
+
+      final snapshot = fs.exportSnapshot();
+      expect(snapshot.dirs, ['/work/b', '/work/c', '/work/c/empty']);
+      expect(snapshot.files.keys, [
+        '/work/a.txt',
+        '/work/b/1.txt',
+        '/work/b/2.txt',
+      ]);
+      expect(
+        snapshot.files.entries.map((e) => utf8.decode(e.value)),
+        ['a', 'one', 'two'],
+      );
+    });
+
+    test('deep-copies file bytes (later writes cannot mutate the export)',
+        () async {
+      final fs = MemoryFileSystem(cwd: '/');
+      // writeBinaryFile stores the caller's buffer BY REFERENCE, so a
+      // shallow export would observe this later mutation.
+      final bytes = Uint8List.fromList(utf8.encode('before'));
+      await fs.writeBinaryFile('/f.bin', bytes);
+      final snapshot = fs.exportSnapshot();
+      bytes[0] = 'X'.codeUnitAt(0);
+      await fs.appendFile('/f.bin', '!');
+      expect(utf8.decode(snapshot.files['/f.bin']!), 'before');
+    });
+
+    test('export order matches an async listDir walk', () async {
+      final fs = MemoryFileSystem(cwd: '/');
+      await fs.writeFile('/x/y/z.txt', 'z');
+      await fs.writeFile('/x/a.txt', 'a');
+      await fs.createDir('/x/empty');
+
+      final walkedDirs = <String>[];
+      final walkedFiles = <String>[];
+      Future<void> walk(String dir) async {
+        for (final entry in (await fs.listDir(dir)).getOrThrow()) {
+          if (entry.kind == FileKind.directory) {
+            walkedDirs.add(entry.path);
+            await walk(entry.path);
+          } else {
+            walkedFiles.add(entry.path);
+          }
+        }
+      }
+
+      await walk('/');
+      final snapshot = fs.exportSnapshot();
+      expect(snapshot.dirs, walkedDirs);
+      expect(snapshot.files.keys.toList(), walkedFiles);
     });
   });
 
