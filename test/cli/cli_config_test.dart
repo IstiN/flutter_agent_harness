@@ -300,6 +300,67 @@ prompts:
       );
     });
 
+    test('parses the images section and round-trips it', () async {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('images:\n  registry: false\n  maxPerRequest: 4\n');
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.images?.enabled, isFalse);
+      expect(loaded.images?.maxPerRequest, 4);
+
+      await saveCliConfig(tmp.path, loaded);
+      final reloaded = loadCliConfig(tmp.path);
+      expect(reloaded.images?.enabled, isFalse);
+      expect(reloaded.images?.maxPerRequest, 4);
+    });
+
+    test('images defaults to null when absent', () {
+      expect(loadCliConfig(tmp.path).images, isNull);
+    });
+
+    test('rejects unknown images keys', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('images:\n  bogus: 1\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('images'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a malformed images section', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('images:\n  registry: "yes"\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('images.registry'),
+          ),
+        ),
+      );
+      file.writeAsStringSync('images:\n  maxPerRequest: 0\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('images.maxPerRequest'),
+          ),
+        ),
+      );
+    });
+
     group('skills section', () {
       test('defaults to granted and shell execution enabled', () {
         final loaded = loadCliConfig(tmp.path);

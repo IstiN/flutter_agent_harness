@@ -56,6 +56,8 @@ const _nestedKeySources = <String, String>{
   'cube.config': 'lib/src/cube/config/cube_settings.dart',
   'providerTimeouts.connectTimeoutMs': 'lib/src/cli/cli_config.dart',
   'providerTimeouts.streamIdleTimeoutMs': 'lib/src/cli/cli_config.dart',
+  'images.registry': 'lib/src/cli/cli_config.dart',
+  'images.maxPerRequest': 'lib/src/cli/cli_config.dart',
   'skills.access': 'lib/src/cli/cli_config.dart',
   'skills.disableShellExecution': 'lib/src/cli/cli_config.dart',
   'redact.enabled': 'lib/src/cli/cli_config.dart',

@@ -26,7 +26,8 @@ import 'package:fa/sandbox/fs_persistence.dart';
 /// yields a clean filesystem — persistence problems must never crash boot.
 /// Persistence errors after boot are swallowed the same way: the sandbox
 /// keeps working in memory and the next mutation retries the save.
-final class PersistentWebExecutionEnv implements ExecutionEnv, BackgroundShell {
+final class PersistentWebExecutionEnv
+    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   PersistentWebExecutionEnv._(this._delegate, this._store, this._persistDelay);
 
   /// Schema version of the JSON snapshot envelope. Snapshots with a
@@ -278,6 +279,27 @@ final class PersistentWebExecutionEnv implements ExecutionEnv, BackgroundShell {
   @override
   Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
       _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) {
+    final delegate = _delegate;
+    if (delegate case final RangedReadFileSystem ranged) {
+      return ranged.readRange(path, start, end);
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'readRange not supported by $delegate',
+          path: path,
+        ),
+      ),
+    );
+  }
 
   @override
   Future<Result<List<String>, FileError>> readTextLines(

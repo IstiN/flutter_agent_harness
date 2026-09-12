@@ -13,7 +13,8 @@ import 'execution_env.dart';
 /// construction. Used by the CLI when the user switches to a session that was
 /// created in a different project folder: the agent's tools continue to
 /// operate in the session's original directory without restarting the process.
-final class CwdOverrideEnv implements ExecutionEnv, BackgroundShell {
+final class CwdOverrideEnv
+    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   /// Creates a decorator over [delegate] whose effective cwd starts at
   /// [delegate.cwd].
   CwdOverrideEnv(this._delegate) : _cwd = _delegate.cwd;
@@ -115,6 +116,27 @@ final class CwdOverrideEnv implements ExecutionEnv, BackgroundShell {
   @override
   Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
       _delegate.readBinaryFile(_resolve(path));
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) {
+    final delegate = _delegate;
+    if (delegate case final RangedReadFileSystem ranged) {
+      return ranged.readRange(_resolve(path), start, end);
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'readRange not supported by $_delegate',
+          path: path,
+        ),
+      ),
+    );
+  }
 
   @override
   Future<Result<List<String>, FileError>> readTextLines(

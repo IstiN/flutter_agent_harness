@@ -15,6 +15,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
 import 'agent_tool_availability.dart';
@@ -486,6 +487,11 @@ class AgentService extends ChangeNotifier
     _childSessionFactory = childSessionFactory;
     // Project-level .fah/config.yaml memory: wins over the user one.
     final memoryConfig = loadAppMemoryConfig(env.sessionCwd);
+    // Session image registry (`images:` section, issue #171): process-wide
+    // like in the CLI; core default is on, user config honored where the
+    // config is readable.
+    imageRegistryConfig =
+        loadAppImageRegistryConfig() ?? const ImageRegistryConfig();
     _memoryController = MemoryController(
       env: env,
       // `memory:` section of ~/.fah/config.yaml — the same git-backed
@@ -1570,32 +1576,310 @@ class AgentService extends ChangeNotifier
 
   /// Pulls externally-appended rows into the visible transcript. Only
   /// while IDLE: mid-run the agent owns the state machine (streaming,
-  /// tool calls) and a concurrent reload would corrupt it. The session
-  /// storage parses the file ONCE at open — an external reload re-opens
-  /// it fresh (cheap: header + tree index).
+  /// tool calls) and a concurrent reload would corrupt it. A windowed
+  /// session ingests just the appended tail (any history the user paged
+  /// in stays put); a full-open session is re-opened fresh (cheap:
+  /// header + tree index).
   Future<void> _reloadExternalMessages() async {
     final session = _session;
     if (session == null || isStreaming) return;
     try {
+      if (session.getStorage() case final WindowedSessionStorage windowed) {
+        final ingest = await windowed.ingestAppended();
+        if (ingest.reanchored) {
+          // Truncation/rotation: the view (and the provider context)
+          // reset to the new tail — stale anything is never kept.
+          _viewBranch = ingest.delta;
+          await _applyViewBranch();
+          final context = await session.buildContext();
+          _agent.state.messages = context.messages;
+          _persistedCount = context.messages.length;
+        } else if (ingest.delta.isNotEmpty) {
+          _viewBranch?.addAll(ingest.delta);
+          await _applyViewBranch();
+          await _growProviderContext(session, ingest.delta);
+        }
+        unawaited(_refreshHistoryAbove());
+        return;
+      }
       final metadata = await session.getMetadata();
       final fresh = await _repo.open(metadata);
-      final context = await fresh.buildContext();
       _session = fresh;
-      _agent.state.messages = context.messages;
-      _persistedCount = context.messages.length;
-      messages
-        ..clear()
-        ..addAll(context.messages.map(_toChatMessage));
-      await _rebuildTrajectory();
-      notifyListeners();
+      await _reprojectLoadedWindow(fresh);
     } on Object {
       // A torn read (the CLI mid-append): the next poll retries.
     }
   }
 
+  /// Grows the provider context append-only by the ingested delta
+  /// (issue #135 round 2, provider-context full-fidelity: paging never
+  /// touches the context; external appends only ever ADD). A compaction
+  /// record inside the delta invalidates append-only growth — the
+  /// context is rebuilt from the full view branch instead.
+  Future<void> _growProviderContext(
+    Session session,
+    List<SessionRecord> delta,
+  ) async {
+    final hasCompaction = delta.any((r) => r is CompactionRecord);
+    final branch = _viewBranch;
+    if (hasCompaction || branch == null) {
+      final full = session.projectPath(branch ?? delta);
+      _agent.state.messages
+        ..clear()
+        ..addAll(full);
+      _persistedCount = full.length;
+      return;
+    }
+    final projected = session.projectPath(delta);
+    _agent.state.messages.addAll(projected);
+    _persistedCount += projected.length;
+  }
+
   void _stopSessionWatch() {
     _sessionWatchTimer?.cancel();
     _sessionWatchTimer = null;
+  }
+
+  /// The windowed storage when the open session was opened windowed
+  /// (issue #135); null for full-open sessions — no paging surface.
+  WindowedSessionStorage? get _windowed {
+    final storage = _session?.getStorage();
+    return storage is WindowedSessionStorage ? storage : null;
+  }
+
+  /// Transcript records sitting above the loaded window
+  /// ([FaChatService.historyAboveCount]): `null` while the background
+  /// count is still running or unknown (right after a jump), `0` once
+  /// the whole transcript is loaded, `N` — what the "Load earlier"
+  /// banner shows.
+  @override
+  int? get historyAboveCount => _historyAboveCount;
+  int? _historyAboveCount;
+
+  bool _loadingHistory = false;
+
+  /// Whether a history page ([FaChatService.loadOlderHistory] or
+  /// [loadNewerHistory]) is in flight — the banners' spinner state.
+  @override
+  bool get historyLoading => _loadingHistory;
+
+  /// The exact total record count once the background count landed —
+  /// the N of the terminal "Beginning of session (1 of N)" banner
+  /// (issue #135 E6); `null` until then and for full-open sessions.
+  @override
+  int? get historyTotalCount => _windowed?.cachedTotalRecords;
+
+  /// Transcript records BELOW the loaded window (deep paging evicted
+  /// the newest side): what the "Load newer" banner shows. `0` for
+  /// full-open sessions and at the live tail.
+  @override
+  bool get historyHasNewer => _windowed?.hasNewer ?? false;
+
+  /// Transcript records below the loaded window; `null` while unknown
+  /// (the UI keys banner visibility on [historyHasNewer]).
+  @override
+  int? get historyBelowCount => _windowed?.countBelow;
+
+  /// The last history-page failure, shown by the history banner
+  /// ([FaChatService.historyLoadError]); cleared by a successful retry.
+  /// Kept separate from [error] so a failed history page never touches
+  /// the live transcript's error line.
+  @override
+  String? get historyLoadError => _historyLoadError;
+  String? _historyLoadError;
+
+  /// The VIEW branch (issue #135 round 2): every loaded branch record,
+  /// root-first — what the transcript renders. Paging in either
+  /// direction only grows/sets this list; the provider context
+  /// ([_agent.state.messages]) is NEVER touched by paging (windowing
+  /// is a view concern, not a context concern). `null` for full-open
+  /// sessions (rows come straight from the loaded context).
+  List<SessionRecord>? _viewBranch;
+
+  /// Re-syncs the VIEW branch to the storage's CURRENT resident branch
+  /// (issue #135 round 4, end-to-end memory bound): the view never
+  /// re-accumulates records the residency cap evicted — transcript and
+  /// ledger stay bounded by the same cache the storage enforces. The
+  /// banners re-derive "more above/below" from the storage counts.
+  Future<void> _syncViewToWindow(WindowedSessionStorage windowed) async {
+    final branch = await windowed.currentBranch();
+    if (branch.isNotEmpty) _viewBranch = branch;
+  }
+
+  /// Pages one chunk of records above the window into the transcript
+  /// ([FaChatService.loadOlderHistory]). Re-entrant taps are ignored, as
+  /// is any tap mid-run.
+  @override
+  Future<void> loadOlderHistory() async {
+    if (_loadingHistory || isStreaming) return;
+    final windowed = _windowed;
+    if (windowed == null) return;
+    _loadingHistory = true;
+    notifyListeners();
+    try {
+      final joined = await windowed.loadOlder();
+      if (joined.isNotEmpty) {
+        await _syncViewToWindow(windowed);
+        await _applyViewBranch();
+      }
+      await _refreshHistoryAbove();
+      if (_historyLoadError != null) {
+        _historyLoadError = null;
+        notifyListeners();
+      }
+    } on Object catch (e) {
+      _historyLoadError = e is StateError ? e.message : e.toString();
+      notifyListeners();
+    } finally {
+      _loadingHistory = false;
+      notifyListeners();
+    }
+  }
+
+  /// Pages one chunk of records back in BELOW the window
+  /// ([FaChatService.loadNewerHistory]) — the page-down path after deep
+  /// paging slid the newest side out. Same guards as [loadOlderHistory].
+  @override
+  Future<void> loadNewerHistory() async {
+    if (_loadingHistory || isStreaming) return;
+    final windowed = _windowed;
+    if (windowed == null) return;
+    _loadingHistory = true;
+    notifyListeners();
+    try {
+      final joined = await windowed.loadNewer();
+      if (joined.isNotEmpty) {
+        await _syncViewToWindow(windowed);
+        await _applyViewBranch();
+      }
+      await _refreshHistoryAbove();
+      _historyLoadError = null;
+      notifyListeners();
+    } on Object catch (e) {
+      _historyLoadError = e is StateError ? e.message : e.toString();
+      notifyListeners();
+    } finally {
+      _loadingHistory = false;
+      notifyListeners();
+    }
+  }
+
+  /// Jump-to-message (issue #135 AC6,
+  /// [FaChatService.jumpToMessage]). Two mechanisms:
+  ///
+  /// - a RECORD id (search / ✦-list / trajectory-link hits): seeks by
+  ///   byte offset through the storage's sparse offset map — explored
+  ///   history jumps without a re-scan — and re-centers the window;
+  /// - a positional `msg-<index>` (transcript row keys): pages older
+  ///   history in until the target row is loaded. Bounded — a miss
+  ///   resolves as `false`, never a full read.
+  @override
+  Future<bool> jumpToMessage(String messageId) async {
+    final windowed = _windowed;
+    if (windowed == null) {
+      final index = _positionalRow(messageId);
+      return index != null && index < messages.length;
+    }
+    if (!messageId.startsWith('msg-')) {
+      return _jumpToRecord(windowed, messageId);
+    }
+    final index = _positionalRow(messageId);
+    if (index == null) return false;
+    if (_loadingHistory || isStreaming) return index < messages.length;
+    _loadingHistory = true;
+    notifyListeners();
+    var reached = index < messages.length;
+    try {
+      for (var pass = 0; !reached && pass < 100 && windowed.hasOlder; pass++) {
+        final joined = await windowed.loadOlder();
+        if (joined.isEmpty) break;
+        await _syncViewToWindow(windowed);
+        await _applyViewBranch();
+        reached = index < messages.length;
+      }
+    } on Object catch (e) {
+      _historyLoadError = e is StateError ? e.message : e.toString();
+    } finally {
+      _loadingHistory = false;
+      notifyListeners();
+    }
+    return reached;
+  }
+
+  int? _positionalRow(String messageId) {
+    final index = int.tryParse(messageId.replaceFirst('msg-', ''));
+    return index == null || index < 0 ? null : index;
+  }
+
+  /// The AC6 byte-offset seek: hit id → window re-center → view sync.
+  Future<bool> _jumpToRecord(
+    WindowedSessionStorage windowed,
+    String recordId,
+  ) async {
+    if (_loadingHistory || isStreaming) return false;
+    _loadingHistory = true;
+    notifyListeners();
+    try {
+      final branch = await windowed.jumpToRecord(recordId);
+      if (branch.isEmpty) return false;
+      await _syncViewToWindow(windowed);
+      await _applyViewBranch();
+      await _refreshHistoryAbove();
+      _historyLoadError = null;
+      return true;
+    } on Object catch (e) {
+      _historyLoadError = e is StateError ? e.message : e.toString();
+      return false;
+    } finally {
+      _loadingHistory = false;
+      notifyListeners();
+    }
+  }
+
+  /// Recomputes [historyAboveCount] from the window's own above-count
+  /// (maintained incrementally by the storage; `null` = unknown — right
+  /// after a jump until an edge is walked). Also lands the total record
+  /// count (the terminal banner's N) through the same lazy memo.
+  Future<void> _refreshHistoryAbove() async {
+    final windowed = _windowed;
+    if (windowed == null) return;
+    final count = await windowed.countAbove();
+    if (_historyAboveCount != count || windowed.cachedTotalRecords != null) {
+      _historyAboveCount = count;
+      notifyListeners();
+    }
+  }
+
+  /// Rebuilds the visible transcript rows and the trajectory ledger
+  /// from the VIEW branch (paging changes the view, never the provider
+  /// context). Dynamic-message markers splice at [loadSession] only —
+  /// widget records deep in paged history are rare enough that
+  /// re-adopting the branch per page-in costs more than it buys.
+  Future<void> _applyViewBranch() async {
+    final session = _session;
+    final branch = _viewBranch;
+    if (session == null || branch == null) return;
+    final projected = session.projectPath(branch);
+    messages
+      ..clear()
+      ..addAll(projected.map(_toChatMessage));
+    await _rebuildTrajectory(records: branch);
+    notifyListeners();
+  }
+
+  /// Rebuilds the agent context, the visible transcript, and the ledger
+  /// from [session]'s active branch as currently loaded. Everything
+  /// loaded is by definition already on disk, so the persist cursor rides
+  /// to the full length (nothing re-appends on the next persist).
+  Future<void> _reprojectLoadedWindow(Session session) async {
+    final context = await session.buildContext();
+    _agent.state.messages = context.messages;
+    _persistedCount = context.messages.length;
+    messages
+      ..clear()
+      ..addAll(context.messages.map(_toChatMessage));
+    await _rebuildTrajectory();
+    notifyListeners();
   }
 
   Session? _session;
@@ -2233,6 +2517,10 @@ class AgentService extends ChangeNotifier
     await dynamicMessages.forgetAll();
     error = null;
     _persistedCount = 0;
+    _historyAboveCount = null;
+    _viewBranch = null;
+    _historyLoadError = null;
+    _loadingHistory = false;
     _trajectory.reset();
     _currentAssistantMessage = null;
     await initialize();
@@ -2387,7 +2675,22 @@ class AgentService extends ChangeNotifier
   Future<void> loadSession(SessionMetadata metadata) async {
     abort();
     await waitForIdle();
-    final session = await _repo.open(metadata);
+    // Windowed open (issue #135): header + newest chunk only; older
+    // records page in through loadOlderHistory. Small sessions load
+    // completely either way. A windowed-open failure (a corrupt tail,
+    // an IO hiccup on the ranged-read path) falls back to the FULL
+    // open rather than failing the session — the compatibility path
+    // (round-4 review); paging surfaces stay null for full-open.
+    Session session;
+    try {
+      session = await _repo.open(metadata, windowed: true);
+    } on Object {
+      session = await _repo.open(metadata);
+    }
+    // The count belongs to the session being opened; the background
+    // refresh at the end of this method fills it in.
+    _historyAboveCount = null;
+    _viewBranch = await session.getBranch();
     final context = await session.buildContext();
     final contextMessages = context.messages;
     _agent.reset();
@@ -2401,7 +2704,7 @@ class AgentService extends ChangeNotifier
     _startSessionWatch();
     // The ledger re-projects the active branch (records carry richer
     // structure than the rebuilt message list).
-    await _rebuildTrajectory();
+    await _rebuildTrajectory(records: _viewBranch);
     // Restore the session's own model: same wire kind → modelId override;
     // the provider itself stays the configured connection (its key lives
     // in the Keychain, not in the session). An unresolvable or
@@ -2474,6 +2777,9 @@ class AgentService extends ChangeNotifier
       ..clear()
       ..addAll(rebuilt);
     notifyListeners();
+    // Background count of the records above the window (newline stream,
+    // no decode): fills in the banner count without blocking the load.
+    unawaited(_refreshHistoryAbove());
   }
 
   /// Deletes a persisted session. Deleting the ACTIVE session starts a new
@@ -2615,7 +2921,13 @@ class AgentService extends ChangeNotifier
       // The finalized record replaces the streamed synthetic rows in the
       // trajectory ledger (builder keys them by turn/step).
       final record = await session.getEntry(id);
-      if (record != null) _trajectory.append(record);
+      if (record != null) {
+        _trajectory.append(record);
+        // The view branch accumulates own-run records too — a rebuild
+        // while deep-paged must not drop the tail rows the user just
+        // watched stream in (issue #135 round 2).
+        _viewBranch?.add(record);
+      }
     }
     // Leftovers (a run aborted before its assistant reply) flush at the
     // tail; the next assistant step re-attaches them or they stay an
@@ -2656,12 +2968,14 @@ class AgentService extends ChangeNotifier
   }
 
   /// Rebuilds the trajectory ledger from the active session branch
-  /// (session open/switch/external reload).
-  Future<void> _rebuildTrajectory() async {
+  /// (session open/switch/external reload); windowed callers pass the
+  /// VIEW branch so paged-in history feeds the ledger without a storage
+  /// walk.
+  Future<void> _rebuildTrajectory({List<SessionRecord>? records}) async {
     final session = _session;
     if (session == null) return;
     _trajectory.reset();
-    for (final record in await session.getBranch()) {
+    for (final record in records ?? await session.getBranch()) {
       _trajectory.append(record);
     }
   }

@@ -76,21 +76,28 @@ final class Session {
   Future<SessionMetadata> getMetadata() => _storage.getMetadata();
 
   /// The session id when the storage caches the header synchronously
-  /// ([JsonlSessionStorage] always does); `null` otherwise. Used as the
-  /// prompt-cache affinity key, where a synchronous read lets provider
-  /// stream functions resolve it per call without an async hop.
+  /// ([SessionHeaderCache] — the full [JsonlSessionStorage] and the
+  /// windowed [WindowedSessionStorage] always do); `null` otherwise. Used
+  /// as the prompt-cache affinity key, where a synchronous read lets
+  /// provider stream functions resolve it per call without an async hop.
   String? get cachedId {
     final storage = _storage;
-    return storage is JsonlSessionStorage ? storage.cachedMetadata.id : null;
+    if (storage case final SessionHeaderCache cached) {
+      return cached.cachedMetadata.id;
+    }
+    return null;
   }
 
   /// The session metadata when the storage caches the header synchronously
-  /// ([JsonlSessionStorage] always does) — used for the session-scoped
+  /// ([SessionHeaderCache]) — used for the session-scoped
   /// `.tools/<sessionId>.yaml` path, which is derived from the session
   /// file's location; `null` otherwise.
   SessionMetadata? get cachedMetadata {
     final storage = _storage;
-    return storage is JsonlSessionStorage ? storage.cachedMetadata : null;
+    if (storage case final SessionHeaderCache cached) {
+      return cached.cachedMetadata;
+    }
+    return null;
   }
 
   /// The underlying storage.
@@ -383,6 +390,16 @@ final class Session {
     final path = await getBranch();
     return _projectMessages(_applyCompactionTransform(path));
   }
+
+  /// Projects an explicit record path (root-first) into messages — the
+  /// same fold [buildContext] applies to the storage-walked branch. The
+  /// windowed host keeps its own accumulated view path (storage residency
+  /// is tail-anchored and drops old records), so the transcript renders
+  /// through this instead of a second storage walk.
+  List<Message> projectPath(List<SessionRecord> path) => [
+    for (final entry in _applyCompactionTransform(path))
+      ..._entryToMessages(entry),
+  ];
 
   /// Rebuilds the full [SessionContext] (messages plus derived model state)
   /// for the active branch.

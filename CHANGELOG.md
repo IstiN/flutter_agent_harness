@@ -12,6 +12,26 @@
   `list`/`current`/`apply` behind the `theme` permission with a consent
   dialog per apply. Apps can never install or delete packs (no such API
   exists; pinned by a byte-scan test).
+
+## 0.1.357
+
+- feat(155): backend agent mode — `fah` as a server-side agent engine
+  for a Go supervisor. `--output events[=full]` switches stdout to a HEP
+  v1 JSONL stream (header + agent_start/turn lifecycle frames, message
+  and tool deltas, usage passthrough in turn_done; `events=full` also
+  caps tool args at 4000 chars instead of the 100-char summary);
+  prose mode is untouched. `--attach <path>` (repeatable) reads image
+  files, sniffs the type from magic bytes, and rides them as base64
+  data-URI image blocks on the first user message. SIGTERM (and SIGINT)
+  in headless mode now abort the run gracefully — partial transcript
+  persists (`persistAbortedPartials`), a `cancelled` frame closes the
+  HEP stream, stdout is flushed, exit code 130; a second SIGTERM forces
+  exit 143. An unknown `--session` key on a clean root starts a fresh
+  session instead of failing. `--version --output json` prints
+  `{"version":…,"hep":"v1"}`. (Per-request `[Image N]` image dedup was
+  also prototyped here and is superseded by the session image registry
+  from #190, which this change adopts instead.)
+
 ## 0.1.356
 
 - ci(177): PR-level CI speed restructure — a pull request now pays only for
@@ -36,6 +56,27 @@
 - ci(177): duration-balanced test sharding — `scripts/test_shards.json` +
   `scripts/rebalance_shards.py` (junit timing or file-count fallback),
   rebalanced weekly by `shard-rebalance.yml`.
+
+## 0.1.357
+
+
+- feat(171): session image registry — unique images ride a provider
+  request exactly once per window; every other occurrence becomes a
+  stable `[Image N]` text ref. `rewriteHistoryImages`
+  (`lib/src/agent/image_registry.dart`) rewrites the OUTBOUND payload
+  only (session JSONL byte-identical): carriers
+  `[{text:"[Image N]"},{image}]` anchor before the first referencing
+  user message or after the tool-result run (never inside call/result
+  pairs); the current user message rides images in place; the
+  per-request cap drops current-first-then-newest with a drop notice
+  (never silent); dangling refs (compaction, cap) resolve to
+  `(image no longer available)`. Stateless per-request rebuild —
+  determinism, eviction and resume come free. Config: `images.registry`
+  kill switch (false = byte-for-byte legacy shape) +
+  `images.maxPerRequest` (default 20), strict parse, CLI and app honor
+  it. Fixes #171.
+
+
 
 ## 0.1.354
 
@@ -3328,6 +3369,17 @@
 - feat(166): apps grid custom cell spans (1×2, 2×1, 1×3, 3×1) (#176)
 - feat(168): mobile trajectory view — parity with desktop (#175)
 - docs(157): KB — DAP e2e family triage (two cases were #158 races) (#163)
+
+## 0.1.357
+
+- feat(135): windowed session loading for app chat (#139)
+- feat(155): backend agent mode — HEP v1 events output, --attach, SIGTERM graceful abort, image registry (#193)
+- feat(137): generic chrome.* bridge — browser_api / browser_api_catalog (#172)
+- feat(171): session image registry — [Image N] send-once request assembly (#190)
+- fix(184): host-portable flutter_app tests — quickjs skip guard + injected-ASR fix (#191)
+- ci(161): daily auto-publish — TestFlight + pub.dev + CLI + website + add-in, self-filing fix issues (#170)
+- fix(152): root-cause the browser-ext e2e dispatch flake class (#158)
+- ci(177): drop the 'Quality gates' alias — protection switched to 'Quality gate' (#192)
 
 ## Unreleased
 

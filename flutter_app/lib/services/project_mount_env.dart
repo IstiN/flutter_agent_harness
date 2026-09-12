@@ -19,7 +19,8 @@ const projectMountSegment = '/project';
 /// Path mapping is idempotent: host paths already under the mounted
 /// directory pass through unchanged, so values the env itself hands out
 /// ([absolutePath]/[joinPath] results, [FileInfo.path]) stay valid input.
-final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
+final class ProjectMountEnv
+    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   /// Creates an env over [delegate] with no active mount.
   ProjectMountEnv(this._delegate);
 
@@ -144,6 +145,27 @@ final class ProjectMountEnv implements ExecutionEnv, BackgroundShell {
   @override
   Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
       _delegate.readBinaryFile(_map(path));
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) {
+    final delegate = _delegate;
+    if (delegate case final RangedReadFileSystem ranged) {
+      return ranged.readRange(_map(path), start, end);
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'readRange not supported by $delegate',
+          path: path,
+        ),
+      ),
+    );
+  }
 
   @override
   Future<Result<List<String>, FileError>> readTextLines(

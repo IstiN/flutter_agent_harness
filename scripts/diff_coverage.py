@@ -95,14 +95,18 @@ def main() -> int:
     total_covered = 0
     for path in sorted(changed):
         lines = changed[path]
-        if not lines:
-            continue  # pure deletions / zero changed lines: skipped
         file_hits = hits.get(path, {})
-        covered = sum(1 for n in lines if file_hits.get(n, 0) > 0)
-        total_changed += len(lines)
+        # Only lcov-instrumented (executable) lines count: doc comments
+        # and blanks carry no DA record and would cap any heavily
+        # documented new file below the bar no matter the real coverage.
+        executable = [n for n in lines if n in file_hits]
+        if not executable:
+            continue
+        covered = sum(1 for n in executable if file_hits[n] > 0)
+        total_changed += len(executable)
         total_covered += covered
-        pct = 100.0 * covered / len(lines)
-        print(f"  {path}: {pct:.1f}% ({covered}/{len(lines)} changed lines covered)")
+        pct = 100.0 * covered / len(executable)
+        print(f"  {path}: {pct:.1f}% ({covered}/{len(executable)} executable lines covered)")
 
     if total_changed == 0:
         print(f"Diff coverage: no changed lib/ lines in {args.base}...{args.head} — nothing to ratchet.")

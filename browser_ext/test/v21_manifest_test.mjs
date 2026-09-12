@@ -1,6 +1,10 @@
-// manifest.json v2.1 permission-profile tests (issue #30 AC): core permission
-// set exact + sorted, second tier in optional_permissions only, forbidden
-// permissions absent everywhere, commands/omnibox wired, anchor keys intact.
+// manifest.json v2.1 permission-profile tests (issue #30 AC; issue #137
+// maximized the set): core permission set exact + sorted, second tier in
+// optional_permissions only, Tier-3 permissions absent everywhere, commands/
+// omnibox wired, anchor keys intact.
+//
+// The manifest carries // comments (Chrome's parser is lenient, jsonDecode
+// is not) — strip them before parsing, same as chrome_driver.dart.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -8,20 +12,30 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const manifest = JSON.parse(readFileSync(join(here, '..', 'manifest.json'), 'utf8'));
+const raw = readFileSync(join(here, '..', 'manifest.json'), 'utf8');
+const manifest = JSON.parse(raw.replaceAll(/^\s*\/\/.*$/gm, ''));
 
 const CORE = [
-  'alarms', 'bookmarks', 'contextMenus', 'cookies', 'debugger',
-  'downloads', 'history', 'identity', 'idle', 'notifications', 'offscreen',
-  'power', 'scripting', 'sessions', 'sidePanel', 'storage',
-  'system.cpu', 'system.display', 'system.memory', 'system.storage',
-  'tabGroups', 'tabs', 'webNavigation',
+  'alarms', 'bookmarks', 'browsingData', 'clipboardRead', 'clipboardWrite',
+  'contentSettings', 'contextMenus', 'cookies', 'debugger',
+  'declarativeNetRequest', 'downloads', 'fontSettings', 'history',
+  'identity', 'idle', 'management', 'nativeMessaging', 'notifications',
+  'offscreen', 'power', 'privacy', 'proxy', 'readingList', 'scripting',
+  'search', 'sessions', 'sidePanel', 'storage', 'system.cpu',
+  'system.display', 'system.memory', 'system.storage', 'tabCapture',
+  'tabGroups', 'tabs', 'tts', 'unlimitedStorage', 'webNavigation',
+  'webRequest',
 ];
 const OPTIONAL = [
-  'desktopCapture', 'pageCapture', 'readingList', 'search', 'tabCapture',
-  'topSites', 'userScripts',
+  'desktopCapture', 'pageCapture', 'topSites', 'userScripts',
 ];
-const FORBIDDEN = ['browsingData', 'privacy', 'proxy', 'management', 'gcm', 'devtools', 'passwords'];
+// Issue #137 Tier 3 — excluded with reasons, pinned in
+// browser_ext/dart/src/permission_matrix.dart (excluded rows).
+const FORBIDDEN = [
+  'gcm', 'instanceID', 'platformKeys', 'fileSystemProvider', 'wallpaper',
+  'enterprise.deviceAttributes', 'enterprise.networkingAttributes',
+  'devtools', 'passwords',
+];
 
 test('permissions are exactly the core set, each once, sorted', () => {
   assert.deepEqual(manifest.permissions, CORE);

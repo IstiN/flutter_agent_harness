@@ -35,9 +35,9 @@ keys, verify after every edit, and report what changed and when it applies.
 1. **Never invent keys.** Unknown top-level keys are ignored silently; strict
    sections throw `ConfigException` on unknown keys or bad value types and can
    break startup — `mcp:`, `memory:`, `cube:`, `providerTimeouts:`, `skills:`,
-   `models.custom` fields, `ttsr:`. The `tools:` section throws on non-boolean
-   values; unknown TOOL ids only warn (and absent capabilities can never be
-   force-enabled). Every key you write must come from this document.
+   `images:`, `models.custom` fields, `ttsr:`. The `tools:` section throws on
+   non-boolean values; unknown TOOL ids only warn (and absent capabilities can
+   never be force-enabled). Every key you write must come from this document.
 2. **Never write API key VALUES into config.yaml.** Config carries key NAMES
    (`apiKeyName:`) only. Values live in the OS secure store (`/key set`) or the
    environment. A key value in YAML is a leaked secret.
@@ -134,8 +134,8 @@ final step of every edit:
 
 - **What check reports as errors** (non-zero exit / `config check: failed`):
   yaml syntax errors, strict-section schema errors (`mcp:`, `memory:`,
-  `cube:`, `tools:`, `providerTimeouts:`, `skills:`, `roles:`, `ttsr:`,
-  `models.custom`), and bad scalar types — each naming file+section.
+  `cube:`, `tools:`, `providerTimeouts:`, `skills:`, `images:`, `roles:`,
+  `ttsr:`, `models.custom`), and bad scalar types — each naming file+section.
 - **Warnings**: unknown top-level keys (the runtime silently ignores them;
   the check does not — a typo must not survive) and dead project-file keys.
 - **At next boot, semantic errors in strict sections are FATAL**:
@@ -234,6 +234,9 @@ retry:                         # chain fallback policy
 providerTimeouts:              # strict: only these two keys
   connectTimeoutMs: 180000
   streamIdleTimeoutMs: 300000
+images:                        # session image registry (strict): send-once
+  registry: true               # kill switch — false = byte-for-byte legacy
+  maxPerRequest: 20            # per-request unique-image cap (default 20)
 models:                        # media slots + named custom models
   slots:
     vision:

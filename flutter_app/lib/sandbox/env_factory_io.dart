@@ -99,7 +99,8 @@ bool get isWebPlatform => false;
 /// is indistinguishable from an already-mapped host path and is treated as
 /// the latter; both readings stay inside the sandbox, so the sandbox
 /// boundary is preserved either way.
-final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
+final class SandboxedExecutionEnv
+    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   /// Creates an env mapping sandbox-absolute paths onto [_sandboxRoot],
   /// delegating everything else (relative paths, [exec]) to [_delegate].
   SandboxedExecutionEnv(this._delegate, this._sandboxRoot);
@@ -177,6 +178,27 @@ final class SandboxedExecutionEnv implements ExecutionEnv, BackgroundShell {
   @override
   Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
       _delegate.readBinaryFile(_map(path));
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) {
+    final delegate = _delegate;
+    if (delegate case final RangedReadFileSystem ranged) {
+      return ranged.readRange(_map(path), start, end);
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'readRange not supported by $delegate',
+          path: path,
+        ),
+      ),
+    );
+  }
 
   @override
   Future<Result<List<String>, FileError>> readTextLines(

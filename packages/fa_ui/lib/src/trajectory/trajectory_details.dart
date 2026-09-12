@@ -26,6 +26,7 @@ Future<void> showTrajectoryDetails(
   BuildContext context, {
   required TrajectoryRecord record,
   TrajectorySnapshot? snapshot,
+  VoidCallback? onJumpToChat,
 }) {
   final strings = TrajectoryStrings.of(context);
   return _showTabbedSheet(
@@ -33,6 +34,15 @@ Future<void> showTrajectoryDetails(
     historyKey: record.recordId,
     title: strings.detailsEvent,
     tabs: trajectoryDetailTabs(record, snapshot, strings),
+    actionLabel: onJumpToChat == null ? null : strings.detailsJumpToChat,
+    onAction: onJumpToChat == null
+        ? null
+        : (sheetContext) {
+            // The sheet pops first: the jump re-pages the transcript
+            // behind it, and the sheet's record may leave the window.
+            Navigator.of(sheetContext).pop();
+            onJumpToChat();
+          },
   );
 }
 
@@ -60,6 +70,8 @@ Future<void> _showTabbedSheet(
   required String historyKey,
   required String title,
   required List<TrajectoryDetailsTab> tabs,
+  String? actionLabel,
+  void Function(BuildContext sheetContext)? onAction,
 }) {
   final stored = _lastTabBySelection[historyKey];
   final initialIndex = tabs.indexWhere((tab) => tab.id == stored);
@@ -74,7 +86,13 @@ Future<void> _showTabbedSheet(
     builder: (sheetContext) => DefaultTabController(
       length: tabs.length,
       initialIndex: initialIndex < 0 ? 0 : initialIndex,
-      child: _DetailsSheet(historyKey: historyKey, title: title, tabs: tabs),
+      child: _DetailsSheet(
+        historyKey: historyKey,
+        title: title,
+        tabs: tabs,
+        actionLabel: actionLabel,
+        onAction: onAction,
+      ),
     ),
   );
 }
@@ -84,11 +102,18 @@ class _DetailsSheet extends StatelessWidget {
     required this.historyKey,
     required this.title,
     required this.tabs,
+    this.actionLabel,
+    this.onAction,
   });
 
   final String historyKey;
   final String title;
   final List<TrajectoryDetailsTab> tabs;
+
+  /// The optional header action (issue #135 AC6: "Jump in chat");
+  /// null renders nothing extra.
+  final String? actionLabel;
+  final void Function(BuildContext sheetContext)? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -114,6 +139,18 @@ class _DetailsSheet extends StatelessWidget {
             ],
           ),
         ),
+        if (actionLabel != null && onAction != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                icon: const Icon(Icons.gps_fixed, size: 16),
+                label: Text(actionLabel!),
+                onPressed: () => onAction!(context),
+              ),
+            ),
+          ),
         TabBar(
           isScrollable: true,
           tabAlignment: TabAlignment.start,
