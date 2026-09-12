@@ -3,6 +3,15 @@
 ## 0.1.358
 
 
+- fix(hub): boot online from the persisted DAP credential — with no
+  `DAP_MASTER_SECRET`/`DAP_CLIENT_SECRET` in the environment, the CLI now
+  seeds the hub kill switch from `~/.dap/config.json` `clientSecret`
+  (the explicit prior opt-in from `/dap start`), restoring the documented
+  "the next boot is online by itself" behavior: hub mail delivery and
+  hub peers in `agent_directory` (the browser extension, embedded hosts)
+  work on a fresh boot. The fabric gate also reads the mutable
+  environment overlay the plugin actually uses, not the read-only
+  process environment.
 - fix(195): images follow-up from the #190 review. F2: a stale
   `[Image N]` citation in history no longer silently rebinds to the
   WRONG image after compaction renumbering — once a renumbering boundary

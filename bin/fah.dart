@@ -44,12 +44,15 @@ import 'package:fa_hub_client/fa_hub_client.dart'
         HubConfig,
         HubPlugin,
         defaultDapConfigFile,
+        envClientSecret,
         envMasterSecret,
         persistDapConfig,
+        readDapConfig,
         resolveDapSettings;
 import 'fah_hub_plugin.dart';
 import 'fah_hub_serve.dart';
 import 'hub_fabric_repository.dart';
+import 'package:flutter_agent_harness/src/hub/hub_boot_credential.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 import 'serve_bridge.dart';
@@ -378,7 +381,7 @@ _resolvePlugins(
   final enabled = resolveEnabledPlugins(args.plugins, config);
   final hubEnabled =
       enabled.contains('hub') &&
-      (Platform.environment[envMasterSecret] ?? '').isNotEmpty;
+      (dapEnvironment[envMasterSecret] ?? '').isNotEmpty;
   final hubFabric = hubEnabled ? HubFabricRepository(hubPlugin) : null;
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
@@ -1527,6 +1530,18 @@ Future<void> _runApp(List<String> args) async {
   // "Set master secret" flow enables DAP at runtime by writing into
   // this map (the hub plugin re-reads it on every access).
   final dapEnvironment = Map<String, String>.of(Platform.environment);
+  // "The next boot is online by itself" (docs/dap.md): with no explicit
+  // env credential, seed the hub kill-switch key from the persisted
+  // `~/.dap/config.json` `clientSecret` (the explicit prior opt-in from
+  // `/dap start`). Without this the hub plugin never connects on a fresh
+  // boot and `agent_directory` shows file inboxes only — hub peers (the
+  // browser extension, embedded hosts) stay invisible from the CLI.
+  seedHubBootCredential(
+    dapEnvironment,
+    masterSecretKey: envMasterSecret,
+    clientSecretKey: envClientSecret,
+    dapConfig: readDapConfig(defaultDapConfigFile(null, dapEnvironment)),
+  );
   final hubPlugin = HubPlugin(environment: dapEnvironment);
   final resolved = await _resolvePlugins(
     effective,
