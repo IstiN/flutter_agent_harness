@@ -9,6 +9,7 @@
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
 
 AssistantMessage _assistant(String text, {List<ToolCall>? calls}) {
   return AssistantMessage(
@@ -238,5 +239,125 @@ void main() {
       [for (final m in after) m.toJson()],
       [for (final m in before) m.toJson()],
     );
+  });
+
+  test('hidden legacy and branch records render as markers', () {
+    final records = <SessionRecord>[
+      MessageRecord(
+        id: 'r1',
+        parentId: null,
+        timestamp: DateTime.utc(2026),
+        message: UserMessage.text('ask'),
+      ),
+      CompactionRecord(
+        id: 'r2',
+        parentId: 'r1',
+        timestamp: DateTime.utc(2026),
+        summary: 'visible legacy summary',
+        firstKeptEntryId: 'r1',
+        tokensBefore: 100,
+      ),
+      MessageRecord(
+        id: 'r3',
+        parentId: 'r2',
+        timestamp: DateTime.utc(2026),
+        message: UserMessage.text('more'),
+      ),
+      CompactionRecord(
+        id: 'r4',
+        parentId: 'r3',
+        timestamp: DateTime.utc(2026),
+        summary: 'hidden legacy summary',
+        firstKeptEntryId: 'r3',
+        tokensBefore: 50,
+      ),
+      BranchSummaryRecord(
+        id: 'r5',
+        parentId: 'r4',
+        timestamp: DateTime.utc(2026),
+        fromId: 'r4',
+        summary: 'old branch text',
+      ),
+      BranchSummaryRecord(
+        id: 'r6',
+        parentId: 'r5',
+        timestamp: DateTime.utc(2026),
+        fromId: 'r5',
+        summary: '',
+      ),
+      HiddenRangeRecord(
+        id: 'r7',
+        parentId: 'r6',
+        timestamp: DateTime.utc(2026),
+        recordIds: ['r4', 'r5', 'r6'],
+      ),
+    ];
+    final projected = renderStructuredMessages(
+      path: records,
+      seqs: RecordSeqIndex(records),
+      projectEntry: (record) => [UserMessage.text('PROJECTED ${record.id}')],
+    );
+    final text = projected
+        .map((m) => m is UserMessage && m.content is String
+            ? m.content as String
+            : '')
+        .join('\n');
+    // Visible legacy projects through the classic projection.
+    expect(text, contains('PROJECTED r2'));
+    // Hidden legacy/branch records never leak their summaries.
+    expect(text, isNot(contains('hidden legacy summary')));
+    expect(text, isNot(contains('old branch text')));
+    // And render as one-line markers with their kind.
+    expect(text, matches(RegExp(r'\[5:hidden·legacy-ckpt·\d+\]')));
+    expect(text, contains('[6:hidden·branch-summary·'));
+    expect(text, contains('[7:hidden·branch-summary·0]'),
+        reason: 'empty branch summary tokenizes to zero');
+  });
+
+  test('checkpoint markers count tokens across covered record kinds', () {
+    final records = <SessionRecord>[
+      MessageRecord(
+        id: 'r1',
+        parentId: null,
+        timestamp: DateTime.utc(2026),
+        message: UserMessage.text('cover me please'),
+      ),
+      CustomMessageRecord(
+        id: 'r2',
+        parentId: 'r1',
+        timestamp: DateTime.utc(2026),
+        customType: 'notice',
+        content: 'custom payload text',
+        display: true,
+      ),
+      HiddenRangeRecord(
+        id: 'r3',
+        parentId: 'r2',
+        timestamp: DateTime.utc(2026),
+        recordIds: ['r1'],
+      ),
+      CompactCheckpointRecord(
+        id: 'r4',
+        parentId: 'r3',
+        timestamp: DateTime.utc(2026),
+        firstRecordId: 'r1',
+        lastRecordId: 'r2',
+        text: 'the arc in one line',
+        coversRecordIds: ['r1', 'r2', 'r3'],
+        flattenedRecordIds: const [],
+      ),
+    ];
+    final projected = renderStructuredMessages(
+      path: records,
+      seqs: RecordSeqIndex(records),
+      projectEntry: (record) => throw StateError('nothing should project'),
+    );
+    // The whole range swallows into one checkpoint marker (r3 contributes
+    // zero tokens — hidden state carries no content).
+    expect(projected, hasLength(1));
+    final marker = (projected.single as UserMessage).content as String;
+    expect(marker, startsWith('[2-3:ckpt·'));
+    expect(marker, contains('covers:2-4'));
+    expect(marker, contains('the arc in one line'));
   });
 }

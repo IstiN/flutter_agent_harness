@@ -2,8 +2,7 @@ library;
 
 import 'dart:convert';
 
-import '../../agent/agent_loop.dart'
-    show StreamCacheRouting, StreamFunction;
+import '../../agent/agent_loop.dart' show StreamCacheRouting, StreamFunction;
 import '../../context.dart';
 import '../../model.dart' show Model;
 import '../../session/uuid.dart' show uuidv7;
@@ -23,35 +22,46 @@ Set<int>? parseHidePicks(String output) {
   final start = output.indexOf('[');
   final end = output.lastIndexOf(']');
   if (start < 0 || end <= start) return null;
-  final String arrayText;
   try {
-    arrayText = output.substring(start, end + 1);
-    final decoded = jsonDecode(arrayText);
+    final decoded = jsonDecode(output.substring(start, end + 1));
     if (decoded is! List) return null;
     final ids = <int>{};
     for (final item in decoded) {
-      int? single;
-      if (item is int) {
-        single = item;
-      } else if (item is String) {
-        final trimmed = item.trim();
-        final range = RegExp(r'^(\d+)\s*-\s*(\d+)$').firstMatch(trimmed);
-        if (range != null) {
-          final lo = int.parse(range.group(1)!);
-          final hi = int.parse(range.group(2)!);
-          if (lo <= hi && hi - lo < 10000) {
-            ids.addAll([for (var i = lo; i <= hi; i++) i]);
-          }
-          continue;
-        }
-        single = int.tryParse(trimmed);
-      }
-      if (single != null && single > 0) ids.add(single);
+      ids.addAll(_parsePickItem(item));
     }
     return ids;
   } catch (_) {
     return null;
   }
+}
+
+/// A judge range pick, e.g. `"7-8"`.
+final RegExp _pickRangePattern = RegExp(r'^(\d+)\s*-\s*(\d+)$');
+
+/// One array item to ids: an int, a numeric string, or a range string
+/// (bounded at 10k so a degenerate `"1-99999999"` cannot explode).
+/// Anything else (junk, non-positive, over-long ranges) contributes
+/// nothing.
+Set<int> _parsePickItem(Object? item) {
+  int? single;
+  if (item is int) {
+    single = item;
+  } else if (item is String) {
+    final trimmed = item.trim();
+    final range = _pickRangePattern.firstMatch(trimmed);
+    if (range != null) {
+      final lo = int.parse(range.group(1)!);
+      final hi = int.parse(range.group(2)!);
+      if (lo <= hi && hi - lo < 10000) {
+        return {for (var i = lo; i <= hi; i++) i};
+      }
+      return const {};
+    }
+    single = int.tryParse(trimmed);
+  } else {
+    return const {};
+  }
+  return single != null && single > 0 ? {single} : const {};
 }
 
 /// Narrows judge picks to ids that are safe to hide.

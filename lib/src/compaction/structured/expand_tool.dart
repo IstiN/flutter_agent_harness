@@ -121,15 +121,14 @@ final class CompactExpandController {
     if (live == null) {
       return ToolExecutionResult.text('no active session to expand from');
     }
-    final match = _targetPattern.firstMatch('${args['target'] ?? ''}');
-    if (match == null) {
+    final range = _parseTarget(args['target']);
+    if (range == null) {
       return ToolExecutionResult.text(
         'target must be a numeric id or range from a marker, '
         'e.g. "5" or "2-6" (got: ${args['target']})',
       );
     }
-    final start = int.parse(match.group(1)!);
-    final end = match.group(2) == null ? start : int.parse(match.group(2)!);
+    final (start, end) = range;
     if (end < start) {
       return ToolExecutionResult.text(
         'inverted range $start-$end — use "min-max"',
@@ -137,40 +136,24 @@ final class CompactExpandController {
     }
 
     final seqs = RecordSeqIndex(await live.getEntries());
-    final blocks = <String>[];
-    final skipped = <int>[];
-    for (var seq = start; seq <= end; seq++) {
-      final record = seqs.recordAt(seq);
-      if (record == null) {
-        skipped.add(seq);
-        continue;
-      }
-      final block = _renderRecord(seq, record);
-      if (block != null) blocks.add(block);
-    }
+    final (blocks, skipped) = _gatherBlocks(seqs, start, end);
+    final label = _rangeLabel(start, end);
     if (blocks.isEmpty) {
       return ToolExecutionResult.text(
-        'no expandable records at ${start == end ? '$start' : '$start-$end'} '
-        '(valid ids: 2-${seqs.entries.length + 1})'
+        'no expandable records at $label (valid ids: 2-${seqs.entries.length + 1})'
         '${skipped.isEmpty ? '' : '; out of range: ${idsToRanges(skipped)}'}',
       );
     }
 
-    var content = blocks.join('\n\n');
+    final content = blocks.join('\n\n');
     final pages = (content.length / pageChars).ceil();
     final page = (args['page'] as num?)?.toInt() ?? 1;
     if (page < 1 || page > pages) {
       return ToolExecutionResult.text(
-        'page $page out of range (1-$pages) for target '
-        '${start == end ? '$start' : '$start-$end'}',
+        'page $page out of range (1-$pages) for target $label',
       );
     }
-    final slice = pages == 1
-        ? content
-        : content.substring(
-            (page - 1) * pageChars,
-            page == pages ? content.length : page * pageChars,
-          );
+    final slice = _pageSlice(content, page, pages, pageChars);
     // Budget counts the REQUESTED segment (not just this page's slice):
     // re-paging a giant segment must not multiply the budget.
     final cost = _tokensForChars(content.length);
@@ -182,21 +165,63 @@ final class CompactExpandController {
     }
     _spentTokens += cost;
 
-    final header = StringBuffer(
-      '[expand ${start == end ? '$start' : '$start-$end'}',
-    );
+    final header = StringBuffer('[expand $label');
     if (skipped.isNotEmpty) {
       header.write(' · out of range: ${idsToRanges(skipped)}');
     }
     header.write(']');
     final footer = pages > 1
-        ? '\n\n[page $page/$pages — compact_expand target='
-              '${start == end ? '$start' : '$start-$end'}, page: ${page + 1} '
-              'continues]'
+        ? '\n\n[page $page/$pages — compact_expand '
+              'target=$label, page: ${page + 1} continues]'
         : '';
     return ToolExecutionResult.text('$header\n$slice$footer');
   }
 }
+
+/// Parses the target arg (`5`, `2-6`, or a pasted marker) into its
+/// inclusive id range; null when no numeric target is present.
+(int, int)? _parseTarget(Object? raw) {
+  final match = _targetPattern.firstMatch('$raw');
+  if (match == null) return null;
+  final start = int.parse(match.group(1)!);
+  final end = match.group(2) == null ? start : int.parse(match.group(2)!);
+  return (start, end);
+}
+
+/// Renders every expandable record in `start..end`; ids with no record
+/// land in the skipped list for the out-of-range note.
+(List<String>, List<int>) _gatherBlocks(
+  RecordSeqIndex seqs,
+  int start,
+  int end,
+) {
+  final blocks = <String>[];
+  final skipped = <int>[];
+  for (var seq = start; seq <= end; seq++) {
+    final record = seqs.recordAt(seq);
+    if (record == null) {
+      skipped.add(seq);
+      continue;
+    }
+    final block = _renderRecord(seq, record);
+    if (block != null) blocks.add(block);
+  }
+  return (blocks, skipped);
+}
+
+/// `'5'` or `'2-6'` — the range label used in every expand string.
+String _rangeLabel(int start, int end) =>
+    start == end ? '$start' : '$start-$end';
+
+/// The 1-based [page] slice of a paged segment (the whole content when
+/// it fits one page).
+String _pageSlice(String content, int page, int pages, int pageChars) =>
+    pages == 1
+    ? content
+    : content.substring(
+        (page - 1) * pageChars,
+        page == pages ? content.length : page * pageChars,
+      );
 
 /// Renders one record's clean content (the record wrapper stripped), or
 /// null for pure state records ([HiddenRangeRecord]) that carry none.

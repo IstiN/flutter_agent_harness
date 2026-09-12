@@ -73,7 +73,9 @@ final class StructuredViewState {
 
   /// Whether no structured state exists on the path.
   bool get isEmpty =>
-      hiddenRecordIds.isEmpty && checkpoints.isEmpty && coveredRecordIds.isEmpty;
+      hiddenRecordIds.isEmpty &&
+      checkpoints.isEmpty &&
+      coveredRecordIds.isEmpty;
 
   /// Whether [recordId] is swallowed by a checkpoint (hidden-and-covered
   /// counts as covered — the checkpoint's marker owns the position).
@@ -122,80 +124,140 @@ List<Message> renderStructuredMessages({
 }) {
   final state = buildStructuredViewState(path);
   final byId = {for (final record in path) record.id: record};
-  final messages = <Message>[];
-  final emitted = <String>{};
   // Tool calls whose assistant carrier is itself hidden: hiding the
   // carrier downgrades its results to user-role markers too, or the wire
   // would carry tool_results whose tool_use no longer exists (the #85
   // orphan bug wearing a marker).
-  final hiddenCallIds = <String>{};
+  final hiddenCallIds = _hiddenToolCallIds(path, state);
+  final messages = <Message>[];
+  final emitted = <String>{};
+  for (final record in path) {
+    messages.addAll(
+      _projectRecord(
+        record,
+        state: state,
+        byId: byId,
+        seqs: seqs,
+        emitted: emitted,
+        hiddenCallIds: hiddenCallIds,
+        projectEntry: projectEntry,
+      ),
+    );
+  }
+  return messages;
+}
+
+/// Tool-call ids on hidden (or checkpoint-covered) assistant carriers —
+/// their results are orphaned the moment the carrier leaves the wire.
+Set<String> _hiddenToolCallIds(
+  List<SessionRecord> path,
+  StructuredViewState state,
+) {
+  final callIds = <String>{};
   for (final record in path) {
     final message = record is MessageRecord ? record.message : null;
     if (message is AssistantMessage &&
         (state.hiddenRecordIds.contains(record.id) ||
             state.isCovered(record.id))) {
       for (final block in message.content) {
-        if (block is ToolCall) hiddenCallIds.add(block.id);
+        if (block is ToolCall) callIds.add(block.id);
       }
     }
   }
+  return callIds;
+}
 
-  for (final record in path) {
-    // A covering checkpoint renders at the position of its first visible
-    // path record (D2: markers sit where the content sat).
-    final cover = state.coveredRecordIds[record.id];
-    if (cover != null) {
-      if (emitted.add(cover.id) && !state.isCovered(cover.id)) {
-        messages.add(_checkpointMessage(cover, byId: byId, seqs: seqs));
-      }
-      continue; // Swallowed by the checkpoint.
-    }
-    switch (record) {
-      case HiddenRangeRecord():
-        continue;
-      case CompactCheckpointRecord():
-        // Renders in place only when its range sits fully off-branch
-        // (nothing visible triggered the in-place emission above).
-        if (emitted.add(record.id)) {
-          messages.add(_checkpointMessage(record, byId: byId, seqs: seqs));
-        }
-      case MessageRecord(:final message, :final id):
-        final seq = seqs.seqOf(id);
-        final hidden = state.hiddenRecordIds.contains(id) && seq != null;
-        // A visible result whose call was hidden or swallowed by a
-        // checkpoint cannot stay a tool_result on the wire — it renders
-        // as a user-role marker (its content stays expandable).
-        final orphaned = message is ToolResultMessage &&
-            hiddenCallIds.contains(message.toolCallId);
-        messages.add(
-          hidden || orphaned
-              ? _hiddenMessage(record, message, seq ?? 0, orphaned: orphaned)
-              : message,
-        );
-      case CompactionRecord() || BranchSummaryRecord():
-        final seq = seqs.seqOf(record.id);
-        if (state.hiddenRecordIds.contains(record.id) && seq != null) {
-          final kind = record is CompactionRecord
-              ? markerKinds.legacyCheckpoint
-              : markerKinds.branchSummary;
-          messages.add(
-            UserMessage.text(
-              hiddenMarker(
-                seq: seq,
-                kind: kind,
-                tokens: _recordTokens(record),
-              ),
-              timestamp: record.timestamp,
-            ),
-          );
-        } else {
-          messages.addAll(projectEntry(record));
-        }
-      default:
-        break;
-    }
+/// One path record to its wire messages.
+List<Message> _projectRecord(
+  SessionRecord record, {
+  required StructuredViewState state,
+  required Map<String, SessionRecord> byId,
+  required RecordSeqIndex seqs,
+  required Set<String> emitted,
+  required Set<String> hiddenCallIds,
+  required List<Message> Function(SessionRecord record) projectEntry,
+}) {
+  // A covering checkpoint renders at the position of its first visible
+  // path record (D2: markers sit where the content sat).
+  final cover = state.coveredRecordIds[record.id];
+  if (cover != null) {
+    return emitted.add(cover.id) && !state.isCovered(cover.id)
+        ? [_checkpointMessage(cover, byId: byId, seqs: seqs)]
+        : const [];
   }
-  return messages;
+  switch (record) {
+    case HiddenRangeRecord():
+      return const [];
+    case CompactCheckpointRecord():
+      // Renders in place only when its range sits fully off-branch
+      // (nothing visible triggered the in-place emission above).
+      return emitted.add(record.id)
+          ? [_checkpointMessage(record, byId: byId, seqs: seqs)]
+          : const [];
+    case MessageRecord():
+      return [
+        _messageAt(
+          record,
+          state: state,
+          seqs: seqs,
+          hiddenCallIds: hiddenCallIds,
+        ),
+      ];
+    case CompactionRecord() || BranchSummaryRecord():
+      return _legacyAt(
+        record,
+        state: state,
+        seqs: seqs,
+        projectEntry: projectEntry,
+      );
+    default:
+      return const [];
+  }
+}
+
+/// A [MessageRecord] to its wire message: hidden and orphaned records
+/// become markers, everything else passes through untouched.
+Message _messageAt(
+  MessageRecord record, {
+  required StructuredViewState state,
+  required RecordSeqIndex seqs,
+  required Set<String> hiddenCallIds,
+}) {
+  final message = record.message;
+  final seq = seqs.seqOf(record.id);
+  final hidden = state.hiddenRecordIds.contains(record.id) && seq != null;
+  // A visible result whose call was hidden or swallowed by a
+  // checkpoint cannot stay a tool_result on the wire — it renders
+  // as a user-role marker (its content stays expandable).
+  final orphaned =
+      message is ToolResultMessage &&
+      hiddenCallIds.contains(message.toolCallId);
+  return hidden || orphaned
+      ? _hiddenMessage(record, message, seq ?? 0, orphaned: orphaned)
+      : message;
+}
+
+/// A classic compaction or branch-summary record: hidden → marker,
+/// visible → the classic projection.
+List<Message> _legacyAt(
+  SessionRecord record, {
+  required StructuredViewState state,
+  required RecordSeqIndex seqs,
+  required List<Message> Function(SessionRecord record) projectEntry,
+}) {
+  final seq = seqs.seqOf(record.id);
+  if (state.hiddenRecordIds.contains(record.id) && seq != null) {
+    final kind = record is CompactionRecord
+        ? markerKinds.legacyCheckpoint
+        : markerKinds.branchSummary;
+    return [
+      UserMessage.text(
+        hiddenMarker(seq: seq, kind: kind, tokens: _recordTokens(record)),
+        timestamp: record.timestamp,
+      ),
+    ];
+  }
+  return projectEntry(record);
 }
 
 Message _checkpointMessage(
@@ -227,6 +289,7 @@ Message _checkpointMessage(
     timestamp: record.timestamp,
   );
 }
+
 /// Builds the marker replacement for a hidden [MessageRecord].
 Message _hiddenMessage(
   MessageRecord record,
@@ -290,7 +353,12 @@ int _recordTokens(SessionRecord record) {
     case MessageRecord(:final message):
       return estimateTokens(message);
     case CustomMessageRecord(:final content):
-      return estimateTokens(UserMessage(content: content, timestamp: DateTime.fromMillisecondsSinceEpoch(0)));
+      return estimateTokens(
+        UserMessage(
+          content: content,
+          timestamp: DateTime.fromMillisecondsSinceEpoch(0),
+        ),
+      );
     case CompactCheckpointRecord(:final text):
       return estimateTokens(UserMessage.text(text));
     case CompactionRecord(:final summary):

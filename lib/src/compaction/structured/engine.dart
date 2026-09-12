@@ -167,7 +167,11 @@ final class StructuredCompactor {
       if (answer == null) break;
       final picks = parseHidePicks(answer);
       if (picks == null || picks.isEmpty) break;
-      final ids = validateHidePicks(picks, view.ledger, protectLastN: protectLastN);
+      final ids = validateHidePicks(
+        picks,
+        view.ledger,
+        protectLastN: protectLastN,
+      );
       if (ids.isEmpty) break;
 
       await session.appendHiddenRange(recordIds: ids.toList()..sort());
@@ -204,9 +208,7 @@ final class StructuredCompactor {
         lastRecordId: range.lastRecordId,
         text: text,
         coversRecordIds: range.coveredRecordIds,
-        flattenedRecordIds: [
-          for (final ckpt in flattened) ckpt.id,
-        ],
+        flattenedRecordIds: [for (final ckpt in flattened) ckpt.id],
       );
       final after = await _refreshState();
       hooks?.onPass(
@@ -224,10 +226,9 @@ final class StructuredCompactor {
   }
 
   List<LedgerEntry> _hideableEntries(ContextLedger ledger) {
-    final tailStart =
-        ledger.entries.length - protectLastN < 0
-            ? 0
-            : ledger.entries.length - protectLastN;
+    final tailStart = ledger.entries.length - protectLastN < 0
+        ? 0
+        : ledger.entries.length - protectLastN;
     return [
       for (var i = 0; i < tailStart; i++)
         if (!ledger.entries[i].exempt) ledger.entries[i],
@@ -235,7 +236,7 @@ final class StructuredCompactor {
   }
 
   Future<_LedgerView?> _buildView() async {
-    final path = _classicTransform(await session.getBranch());
+    final path = classicTransform(await session.getBranch());
     final viewState = buildStructuredViewState(path);
     final visible = _visiblePath(path, viewState);
     if (visible.isEmpty) return null;
@@ -246,25 +247,6 @@ final class StructuredCompactor {
       visible,
       seqs,
     );
-  }
-
-  List<SessionRecord> _classicTransform(List<SessionRecord> path) {
-    CompactionRecord? compaction;
-    for (final entry in path) {
-      if (entry is CompactionRecord) compaction = entry;
-    }
-    if (compaction == null) return [...path];
-    final entries = <SessionRecord>[compaction];
-    final index = path.indexOf(compaction);
-    var foundFirstKept = false;
-    for (var i = 0; i < index; i++) {
-      if (path[i].id == compaction.firstKeptEntryId) foundFirstKept = true;
-      if (foundFirstKept) entries.add(path[i]);
-    }
-    for (var i = index + 1; i < path.length; i++) {
-      entries.add(path[i]);
-    }
-    return entries;
   }
 
   List<SessionRecord> _visiblePath(
@@ -354,14 +336,11 @@ final class StructuredCompactor {
   /// their text into the new prompt; their ids persist as flattened and
   /// become dead nodes for future depth computation.
   List<CompactCheckpointRecord> _flattenForDepthCap(_CkptRange range) {
-    final byId = {
-      for (final ckpt in range.state.checkpoints) ckpt.id: ckpt,
-    };
+    final byId = {for (final ckpt in range.state.checkpoints) ckpt.id: ckpt};
     final covered = range.coveredRecordIds.toSet();
     return [
       for (final ckpt in range.state.checkpoints)
-        if (covered.contains(ckpt.id) &&
-            _depthOf(ckpt, byId, {}) >= depthCap)
+        if (covered.contains(ckpt.id) && _depthOf(ckpt, byId, {}) >= depthCap)
           ckpt,
     ];
   }
@@ -390,7 +369,8 @@ final class StructuredCompactor {
   ) async {
     final rangeRecords = <MessageRecord>[
       for (final record in range.visible)
-        if (range.coveredRecordIds.contains(record.id) && record is MessageRecord)
+        if (range.coveredRecordIds.contains(record.id) &&
+            record is MessageRecord)
           record,
     ];
     final messages = [for (final record in rangeRecords) record.message];
@@ -427,7 +407,10 @@ final class StructuredCompactor {
     prompt.writeln(checkpointPrompt);
     try {
       final result = await summarize(
-        SummarizationRequest(prompt: prompt.toString(), cancelToken: cancelToken),
+        SummarizationRequest(
+          prompt: prompt.toString(),
+          cancelToken: cancelToken,
+        ),
       );
       final text = result.text?.trim();
       return (text == null || text.isEmpty) ? null : text;
@@ -435,6 +418,29 @@ final class StructuredCompactor {
       return null;
     }
   }
+}
+
+/// Applies the classic compaction cut to a branch path: everything before
+/// the LAST [CompactionRecord]'s first-kept entry drops away, the
+/// [CompactionRecord] itself (its summary) heads the result. A path with
+/// no classic compaction passes through unchanged.
+List<SessionRecord> classicTransform(List<SessionRecord> path) {
+  CompactionRecord? compaction;
+  for (final entry in path) {
+    if (entry is CompactionRecord) compaction = entry;
+  }
+  if (compaction == null) return [...path];
+  final entries = <SessionRecord>[compaction];
+  final index = path.indexOf(compaction);
+  var foundFirstKept = false;
+  for (var i = 0; i < index; i++) {
+    if (path[i].id == compaction.firstKeptEntryId) foundFirstKept = true;
+    if (foundFirstKept) entries.add(path[i]);
+  }
+  for (var i = index + 1; i < path.length; i++) {
+    entries.add(path[i]);
+  }
+  return entries;
 }
 
 final class _LedgerView {

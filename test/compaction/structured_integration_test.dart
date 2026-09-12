@@ -7,6 +7,7 @@
 /// budget, pair integrity, two-pass relief, agent recall (incl. nesting),
 /// wire shape, replay, and classic/structured coexistence.
 
+import 'dart:io';
 import 'dart:convert';
 import 'dart:math';
 
@@ -258,6 +259,32 @@ void main() {
         ),
         CompactionEngine.structured,
       );
+    });
+
+    test('loadProjectCompactionEngine: absent/valid/invalid project file', () {
+      final dir = Directory.systemTemp.createTempSync('fa_compcfg_');
+      try {
+        // Absent file → null (global config applies).
+        expect(loadProjectCompactionEngine(dir.path), isNull);
+
+        // Valid section parses; project wins over the global default.
+        final file = File('${dir.path}/.fah/config.yaml')
+          ..createSync(recursive: true);
+        file.writeAsStringSync('compaction:\n  engine: structured\n');
+        expect(
+          loadProjectCompactionEngine(dir.path),
+          CompactionEngine.structured,
+        );
+
+        // Present-but-invalid throws (strict, like the user config).
+        file.writeAsStringSync('compaction:\n  engine: turbo\n');
+        expect(
+          () => loadProjectCompactionEngine(dir.path),
+          throwsA(isA<ConfigException>()),
+        );
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
     });
 
     test(

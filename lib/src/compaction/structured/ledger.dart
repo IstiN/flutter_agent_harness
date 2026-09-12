@@ -115,45 +115,7 @@ LedgerEntry? _entryFor(SessionRecord record, RecordSeqIndex seqs) {
   if (seq == null) return null;
   switch (record) {
     case MessageRecord(:final message):
-      switch (message) {
-        case AssistantMessage assistant:
-          final calls = assistant.content.whereType<ToolCall>().toList();
-          return LedgerEntry._(
-            seq: seq,
-            recordId: record.id,
-            record: record,
-            kind: calls.isEmpty
-                ? 'assistant-TEXT'
-                : 'assistant-TOOLCALL(${calls.map((c) => c.name).join(',')})',
-            tokens: estimateTokens(message),
-            preview: _flattenAssistant(assistant),
-            toolNames: calls.map((c) => c.name).join(','),
-          );
-        case ToolResultMessage result:
-          return LedgerEntry._(
-            seq: seq,
-            recordId: record.id,
-            record: record,
-            kind: 'toolResult(${result.toolName})',
-            tokens: estimateTokens(message),
-            preview: _flattenBlocks(result.content),
-            toolNames: result.toolName,
-          );
-        case UserMessage user:
-          final text = _flattenUser(user.content);
-          final synthetic = isSyntheticUserText(text);
-          return LedgerEntry._(
-            seq: seq,
-            recordId: record.id,
-            record: record,
-            kind: synthetic ? 'notice' : 'user',
-            tokens: estimateTokens(message),
-            preview: _clip(text),
-            toolNames: '',
-          );
-        default:
-          return null;
-      }
+      return _messageEntry(record, message, seq);
     case CustomMessageRecord():
       return LedgerEntry._(
         seq: seq,
@@ -200,6 +162,51 @@ LedgerEntry? _entryFor(SessionRecord record, RecordSeqIndex seqs) {
       );
     default:
       return null; // Non-projecting records have no ledger line.
+  }
+}
+
+/// A message-carrying record to its ledger line, or null when the
+/// message kind never projects (the ledger lists only model-visible
+/// content).
+LedgerEntry? _messageEntry(MessageRecord record, Message message, int seq) {
+  switch (message) {
+    case AssistantMessage assistant:
+      final calls = assistant.content.whereType<ToolCall>().toList();
+      return LedgerEntry._(
+        seq: seq,
+        recordId: record.id,
+        record: record,
+        kind: calls.isEmpty
+            ? 'assistant-TEXT'
+            : 'assistant-TOOLCALL(${calls.map((c) => c.name).join(',')})',
+        tokens: estimateTokens(message),
+        preview: _flattenAssistant(assistant),
+        toolNames: calls.map((c) => c.name).join(','),
+      );
+    case ToolResultMessage result:
+      return LedgerEntry._(
+        seq: seq,
+        recordId: record.id,
+        record: record,
+        kind: 'toolResult(${result.toolName})',
+        tokens: estimateTokens(message),
+        preview: _flattenBlocks(result.content),
+        toolNames: result.toolName,
+      );
+    case UserMessage user:
+      final text = _flattenUser(user.content);
+      final synthetic = isSyntheticUserText(text);
+      return LedgerEntry._(
+        seq: seq,
+        recordId: record.id,
+        record: record,
+        kind: synthetic ? 'notice' : 'user',
+        tokens: estimateTokens(message),
+        preview: _clip(text),
+        toolNames: '',
+      );
+    default:
+      return null;
   }
 }
 
