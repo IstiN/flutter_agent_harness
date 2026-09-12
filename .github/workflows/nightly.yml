@@ -1,0 +1,248 @@
+# Nightly full-matrix quality run (issue #177, Wave 3 / AC6): the PR-level
+# ci.yml was slimmed down for speed, so this workflow preserves the original
+# monolith semantics — every gate, full thresholds — on a nightly schedule.
+# When a scheduled run goes red, the auto-issue job files (or updates) a
+# single deduped `nightly-red` issue.
+name: Nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  full-quality:
+    name: Full quality gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - run: dart pub get
+
+      # Publish gate at PR time: publish-blocking problems (undeclared lib/
+      # imports, stray PEM-like strings) used to surface only in the tag-time
+      # publish job — the v0.1.331 era: an undeclared package:cryptography
+      # import shipped red on ~26 consecutive tags. --ignore-warnings: the
+      # two known layout warnings (gitignored install_local.sh, docs/
+      # naming) must not redden every PR, while validation ERRORS — "does
+      # not have X in the dependencies section of pubspec.yaml" — still
+      # fail. setup-dart (sdk >= 3.13) registers a publish-scoped PUB_TOKEN
+      # job-wide and pub.dev rejects authenticated metadata reads, so
+      # resolve unauthenticated (same pattern as the publish job);
+      # --dry-run never uploads.
+      - name: Publish dry-run (unauthenticated)
+        run: |
+          dart pub token remove https://pub.dev || true
+          dart pub publish --dry-run --ignore-warnings
+
+      # The example Flutter app lives in this repo; without its package
+      # config the repo-wide `dart analyze` cannot resolve Flutter imports.
+      - name: Example app pub get (for repo-wide analyze)
+        run: cd flutter_app && flutter pub get
+
+      # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
+      # without it the analyzer fails with asset_does_not_exist (a fresh
+      # clone hits the same warning locally).
+      - name: Create placeholder .env for the example app
+        run: touch flutter_app/.env
+
+      # firebase_options.dart is gitignored (real keys stay local); the
+      # repo-wide analyze fails on the unresolved import without it. The
+      # tracked placeholder makes it compile (Firebase init is skipped for
+      # YOUR_* values at runtime).
+      - name: Create placeholder firebase_options.dart for the example app
+        run: >-
+          cp flutter_app/firebase_options.template.dart
+          flutter_app/lib/firebase_options.dart
+
+      - name: File size guard (no dart file over 2800 lines)
+        run: |
+          violations=$(find lib test example -name '*.dart' \
+            ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
+            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
+          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
+
+      - name: dart analyze
+        run: dart analyze
+
+      - name: dart test --coverage (excluding integration)
+        run: dart test --coverage=coverage --exclude-tags integration
+
+      - name: Format coverage to lcov
+        run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
+
+      - name: Coverage ratchet (lib/ >= 80%)
+        run: python3 scripts/check_coverage.py 80
+
+      - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
+        run: |
+          dart pub global activate crap4dart 0.2.1
+          dart pub global run crap4dart analyze
+
+      - name: Duplication guard (lib/ < 1%)
+        run: |
+          npx --yes jscpd@5 --min-tokens 50 --min-lines 5 --reporters json \
+            --output /tmp/jscpd-ci lib/ || true
+          python3 - <<'EOF'
+          import json, sys
+          try:
+              with open('/tmp/jscpd-ci/jscpd-report.json') as f:
+                  pct = json.load(f)['statistics']['total']['percentage']
+          except Exception:
+              pct = 0.0
+          print(f'Duplication: {pct}% (threshold < 1.0%)')
+          sys.exit(0 if float(pct) < 1.0 else 1)
+          EOF
+
+  # PTY/terminal integration suites (issue #177 follow-up): mock-endpoint
+  # tests need NO secrets and always run; live-provider tests self-skip
+  # gracefully without keys (their own `skip:` guards), so the blanket
+  # "no keys → skip everything" from the old CI job is gone. Coverage over
+  # lib/src/cli/** feeds the only-up ratchet (coverage-gardener.yml bumps
+  # the baseline weekly) — terminal-test coverage can never silently drop.
+  pty-integration:
+    name: PTY/CLI integration + cli coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: dart pub get
+      - name: dart test --tags integration (excluding browser-ext — it owns browser-ext.yml)
+        run: >-
+          dart test --tags integration --exclude-tags browser-ext
+          --coverage=coverage
+      - name: Format coverage to lcov
+        run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
+      - name: CLI coverage ratchet (lib/src/cli/**, baseline only up)
+        run: python3 scripts/check_cli_coverage.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-coverage-lcov
+          path: coverage/lcov.info
+          retention-days: 14
+
+  # Terminal-visual suite: the real CLI in a PTY screenshotted through the
+  # Flutter TerminalView. Never ran in CI before issue #177 (manual only) —
+  # it needs no LLM (local test-provider configs) but does need a real
+  # display stack, so it gets the macOS runner. Screenshots land as an
+  # artifact for eyeballing.
+  cli-visual:
+    name: Terminal visual (PTY screenshots)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: touch [REDACTED:Credential File]
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - run: cd flutter_app && flutter pub get
+      - name: flutter test test/cli_visual --tags integration
+        run: cd flutter_app && flutter test test/cli_visual --tags integration
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cli-visual-screenshots
+          path: test/integration/screenshots/
+          retention-days: 7
+
+
+  # Full flutter_app suite on macOS (issue #177): the ubuntu PR leg excludes
+  # native-dependent tests (scripts/flutter_test_ubuntu_exclude.txt —
+  # quickjs_c_bridge .so, mic channel) and goldens (host-locked). This leg
+  # runs EVERYTHING non-golden on macOS, where the native stack builds —
+  # closing the signal gap the ubuntu exclusions create.
+  flutter-app-macos:
+    name: flutter_app suite (macOS, non-golden)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - run: cd flutter_app && flutter pub get
+      - name: flutter test (all except integration + goldens)
+        run: |
+          cd flutter_app
+          files=$(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*')
+          flutter test --exclude-tags integration $files
+
+  # Files ONE deduped issue when the scheduled nightly run goes red: the
+  # open `nightly-red` issue is searched first and only commented on, so a
+  # persistent failure never spams duplicates.
+  auto-issue:
+    name: File nightly-red issue
+    needs: [full-quality, pty-integration, cli-visual, flutter-app-macos]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Create or update the nightly-red issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          date=$(date -u +%F)
+          title="Nightly full-matrix red: ${date}"
+          gh label create nightly-red --force \
+            --description "Nightly full-quality run is failing" \
+            --color B60205
+          # Failing job names of this run, plus the run URL.
+          failing=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')
+          [ -z "$failing" ] && failing="(unknown)"
+          body=$(printf 'Nightly full-matrix run is red.\n\nFailing jobs: %s\nRun: %s\n' \
+            "$failing" "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")
+          # Dedup: comment on the existing open nightly-red issue instead of
+          # opening a duplicate.
+          existing=$(gh issue list --state open --label nightly-red \
+            --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --label nightly-red --body "$body"
+          fi
