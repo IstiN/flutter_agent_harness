@@ -16,12 +16,25 @@
 /// the normal web app with no outlook.* tools at all.
 library;
 
+import 'dart:async' show unawaited;
+
 import 'package:fa/services/relay/relay_probe.dart' show kFaBuildHost;
 import 'package:fa_office_agent/fa_office_agent.dart'
     show createJsOfficeApi, OfficeApi;
 
 /// The [OfficeApi] for this run, or null when not office-hosted.
+///
+/// The pane's REAL boot path fires [OfficeApi.onReady] right here (round-1
+/// CR blocker): the adapter also self-starts in its constructor, but the
+/// handshake is started from the app layer so readiness is a property of
+/// the boot sequence, not of the adapter's internals. Fire-and-forget —
+/// failures (missing Office.js, 60s race loss) surface per tool call as
+/// the clean notes, never crash the pane.
 OfficeApi? bootOfficeApi() {
   if (kFaBuildHost != 'office') return null;
-  return createJsOfficeApi();
+  final api = createJsOfficeApi();
+  if (api != null) {
+    unawaited(api.onReady().catchError((Object e) {}));
+  }
+  return api;
 }
