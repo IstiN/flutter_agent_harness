@@ -67,23 +67,31 @@ ImageRegistryConfig? _parseImagesSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('images must be a map, got: $node');
   }
+  bool readBool(String key) {
+    final value = node[key];
+    if (value is! bool) {
+      throw ConfigException('"images.$key" must be a boolean');
+    }
+    return value;
+  }
+
+  int readPositiveInt(String key) {
+    final value = node[key];
+    if (value is! int || value <= 0) {
+      throw ConfigException(
+          '"images.$key" must be a positive integer');
+    }
+    return value;
+  }
+
   bool? registry;
   int? maxPerRequest;
   for (final key in node.keys) {
     switch (key) {
       case 'registry':
-        final value = node[key];
-        if (value is! bool) {
-          throw ConfigException('"images.registry" must be a boolean');
-        }
-        registry = value;
+        registry = readBool('$key');
       case 'maxPerRequest':
-        final value = node[key];
-        if (value is! int || value <= 0) {
-          throw ConfigException(
-              '"images.maxPerRequest" must be a positive integer');
-        }
-        maxPerRequest = value;
+        maxPerRequest = readPositiveInt('$key');
       default:
         throw ConfigException('unknown "images" key: $key');
     }

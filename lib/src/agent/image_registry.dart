@@ -161,7 +161,6 @@ String imageKeyPreview(String key) => key.substring(0, 8);
 /// Returns the SAME list instance when there is nothing to rewrite (no
 /// images and no `[Image N]` mentions), so image-free sessions pay
 /// nothing.
-// ignore: long-method
 List<Message> rewriteHistoryImages(
   List<Message> messages, {
   int? maxPerRequest,
@@ -177,10 +176,38 @@ List<Message> rewriteHistoryImages(
   if (!hasImages && !messages.any(_mentionsImageRef)) return messages;
 
   final cap = maxPerRequest ?? imageRegistryConfig.maxPerRequest;
-
-  // Scan: entries in first-seen order plus per-key occurrence positions.
   final entryByKey = <String, ImageRegistryEntry>{};
   final occurrences = <String, List<int>>{};
+  _scanImages(messages, entryByKey, occurrences);
+  final currentIdx = _lastUserMessageIndex(messages);
+  final riding = _selectRiding(
+    messages,
+    entryByKey,
+    occurrences,
+    currentIdx,
+    cap,
+    onDrop,
+  );
+  final carriers = _planCarriers(messages, entryByKey, occurrences, riding);
+
+  // Emit: rewritten history (image blocks → refs/notes), untouched
+  // current message, carriers at their anchors.
+  final out = _emitRewritten(messages, currentIdx, riding, carriers);
+
+  // Mention pass (I4): every `[Image N]` in any text that does not
+  // resolve to a riding index becomes the unavailable note.
+  final ridingIndexes = riding.indexByKey.values.toSet();
+  return [
+    for (final message in out) _resolveMentions(message, ridingIndexes),
+  ];
+}
+
+/// Scan pass: first-seen entries + per-key occurrence positions.
+void _scanImages(
+  List<Message> messages,
+  Map<String, ImageRegistryEntry> entryByKey,
+  Map<String, List<int>> occurrences,
+) {
   for (var i = 0; i < messages.length; i++) {
     for (final image in _imagesOf(messages[i])) {
       final key = imageContentKey(image);
@@ -197,24 +224,45 @@ List<Message> rewriteHistoryImages(
       occurrences.putIfAbsent(key, () => []).add(i);
     }
   }
+}
 
-  // The current user message: the LAST one in the window (I3 — a mid-run
-  // steering message is the newest thing the user said).
-  var currentIdx = -1;
+/// The current user message: the LAST one in the window (I3 — a mid-run
+/// steering message is the newest thing the user said).
+int _lastUserMessageIndex(List<Message> messages) {
   for (var i = messages.length - 1; i >= 0; i--) {
-    if (messages[i] is UserMessage) {
-      currentIdx = i;
-      break;
-    }
+    if (messages[i] is UserMessage) return i;
   }
+  return -1;
+}
 
-  // Riding set. Current-message keys ALWAYS ride (in place — I3 outranks
-  // the cap); the remaining slots go to the newest history keys, ties by
-  // first-seen order.
+/// The riding-set selection result.
+final class _RidingSelection {
+  const _RidingSelection(this.currentKeys, this.ridingKeys, this.indexByKey);
+
+  /// Keys occurring in the current message (always ride, in place).
+  final Set<String> currentKeys;
+
+  /// Every key riding the request (current + capped history).
+  final Set<String> ridingKeys;
+
+  /// `{key → [Image N] index}` for riding keys.
+  final Map<String, int> indexByKey;
+}
+
+/// Riding set. Current-message keys ALWAYS ride (in place — I3 outranks
+/// the cap); the remaining slots go to the newest history keys, ties by
+/// first-seen order. Every drop is reported — never silent.
+_RidingSelection _selectRiding(
+  List<Message> messages,
+  Map<String, ImageRegistryEntry> entryByKey,
+  Map<String, List<int>> occurrences,
+  int currentIdx,
+  int cap,
+  void Function(int index, String keyPreview)? onDrop,
+) {
   final currentKeys = <String>{
     if (currentIdx >= 0)
-      for (final image in _imagesOf(messages[currentIdx]))
-        imageContentKey(image),
+      for (final image in _imagesOf(messages[currentIdx])) imageContentKey(image),
   };
   final historyKeys = [
     for (final entry in entryByKey.values)
@@ -231,29 +279,42 @@ List<Message> rewriteHistoryImages(
     0,
     historyKeys.length,
   );
-  final ridingKeys = {...currentKeys, ...historyKeys.take(historySlots)};
-
-  // Every drop is reported — never silent (learn.ai's logged skips).
   for (final key in historyKeys.skip(historySlots)) {
     final entry = entryByKey[key]!;
     onDrop?.call(entry.index, imageKeyPreview(entry.key));
   }
-  final ridingIndexByKey = {
-    for (final key in ridingKeys) key: entryByKey[key]!.index,
-  };
-  final ridingIndexes = ridingIndexByKey.values.toSet();
+  final ridingKeys = {...currentKeys, ...historyKeys.take(historySlots)};
+  return _RidingSelection(
+    currentKeys,
+    ridingKeys,
+    {for (final key in ridingKeys) key: entryByKey[key]!.index},
+  );
+}
 
-  // Carrier plan: one carrier per riding key that never occurs in the
-  // current message, anchored at its FIRST occurrence — before the
-  // referencing user message, or after the tool-result run that holds it
-  // (never inside: nothing may sit between a tool call and its result).
-  final carriersBefore = <int, List<UserMessage>>{};
-  final carriersAfter = <int, List<UserMessage>>{};
-  final ridingByIndex = [...ridingKeys]..sort(
+/// The carrier insertion plan: index → carriers before/after that message.
+final class _CarrierPlan {
+  const _CarrierPlan(this.before, this.after);
+  final Map<int, List<UserMessage>> before;
+  final Map<int, List<UserMessage>> after;
+}
+
+/// One carrier per riding key that never occurs in the current message,
+/// anchored at its FIRST occurrence — before the referencing user
+/// message, or after the tool-result run that holds it (never inside:
+/// nothing may sit between a tool call and its result).
+_CarrierPlan _planCarriers(
+  List<Message> messages,
+  Map<String, ImageRegistryEntry> entryByKey,
+  Map<String, List<int>> occurrences,
+  _RidingSelection riding,
+) {
+  final before = <int, List<UserMessage>>{};
+  final after = <int, List<UserMessage>>{};
+  final ridingByIndex = [...riding.ridingKeys]..sort(
       (a, b) => entryByKey[a]!.index.compareTo(entryByKey[b]!.index),
     );
   for (final key in ridingByIndex) {
-    if (currentKeys.contains(key)) continue;
+    if (riding.currentKeys.contains(key)) continue;
     final entry = entryByKey[key]!;
     final firstIdx = occurrences[key]!.first;
     final carrier = UserMessage(
@@ -264,22 +325,30 @@ List<Message> rewriteHistoryImages(
       timestamp: messages[firstIdx].timestamp,
     );
     if (messages[firstIdx] is UserMessage) {
-      carriersBefore.putIfAbsent(firstIdx, () => []).add(carrier);
+      before.putIfAbsent(firstIdx, () => []).add(carrier);
     } else {
       var runEnd = firstIdx;
       while (runEnd + 1 < messages.length &&
           messages[runEnd + 1] is ToolResultMessage) {
         runEnd++;
       }
-      carriersAfter.putIfAbsent(runEnd, () => []).add(carrier);
+      after.putIfAbsent(runEnd, () => []).add(carrier);
     }
   }
+  return _CarrierPlan(before, after);
+}
 
-  // Emit: rewritten history (image blocks → refs/notes), untouched
-  // current message, carriers at their anchors.
+/// Emit pass: rewritten history (image blocks → refs/notes), untouched
+/// current message, carriers at their anchors.
+List<Message> _emitRewritten(
+  List<Message> messages,
+  int currentIdx,
+  _RidingSelection riding,
+  _CarrierPlan carriers,
+) {
   final out = <Message>[];
   for (var i = 0; i < messages.length; i++) {
-    out.addAll(carriersBefore[i] ?? const <Message>[]);
+    out.addAll(carriers.before[i] ?? const <Message>[]);
     final message = messages[i];
     if (i == currentIdx) {
       out.add(message);
@@ -287,22 +356,17 @@ List<Message> rewriteHistoryImages(
       final content = message.content;
       out.add(
         content is List<ContentBlock>
-            ? _rewriteUserBlocks(message, content, ridingIndexByKey)
+            ? _rewriteUserBlocks(message, content, riding.indexByKey)
             : message,
       );
     } else if (message is ToolResultMessage) {
-      out.add(_rewriteResultBlocks(message, ridingIndexByKey));
+      out.add(_rewriteResultBlocks(message, riding.indexByKey));
     } else {
       out.add(message);
     }
-    out.addAll(carriersAfter[i] ?? const <Message>[]);
+    out.addAll(carriers.after[i] ?? const <Message>[]);
   }
-
-  // Mention pass (I4): every `[Image N]` in any text that does not
-  // resolve to a riding index becomes the unavailable note.
-  return [
-    for (final message in out) _resolveMentions(message, ridingIndexes),
-  ];
+  return out;
 }
 
 Iterable<ImageContent> _imagesOf(Message message) sync* {
