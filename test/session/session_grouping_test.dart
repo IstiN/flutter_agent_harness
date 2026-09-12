@@ -97,6 +97,13 @@ void main() {
       expect(groups[1].children, isEmpty);
     });
 
+    test('a self-referential parent id degrades to an orphan too', () {
+      final groups = groupSessionsByParent([child('self', 'self')]);
+      expect(groups, hasLength(1));
+      expect(groups.single.main.id, 'self');
+      expect(groups.single.children, isEmpty);
+    });
+
     test('deep nesting is impossible: a child pointing at another child '
         'never nests below depth one', () {
       // Subagents cannot spawn subagents; a malformed child-of-child

@@ -131,7 +131,7 @@ Future<Map<String, String>> sessionDisplayNames(
       final name = await (await repo.open(
         metadata,
         windowed: true,
-      )).getSessionName();
+      )).resolveSessionName();
       if (name != null && name.isNotEmpty) names[metadata.id] = name;
     } on Object {
       // Unreadable session: its row degrades to the bare id.
@@ -236,13 +236,15 @@ Map<String, Object?> _sessionJsonRow(SessionMetadata m, String? name) => {
 List<MenuItem> sessionPickerItems(
   List<SessionListRow> rows, {
   required bool flat,
+  bool toggle = true,
 }) {
   return [
-    MenuItem(
-      key: flat ? 'tree' : 'flat',
-      label: flat ? '⟳ tree view' : '⟳ flat list',
-      description: 'switch the sessions listing layout',
-    ),
+    if (toggle)
+      MenuItem(
+        key: flat ? 'tree' : 'flat',
+        label: flat ? '⟳ tree view' : '⟳ flat list',
+        description: 'switch the sessions listing layout',
+      ),
     for (var i = 0; i < rows.length; i++)
       MenuItem(
         key: 'r$i',

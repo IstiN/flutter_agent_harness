@@ -163,8 +163,7 @@ extension on AgentCli {
     // List every session in the shared root, across workspaces, so sessions
     // created in the Fa app or in another `fa` run are visible here. The
     // current folder's sessions lead the list (issue #83). Children render
-    // nested under their parent (issue #198); /sessions --flat restores the
-    // legacy listing.
+    // nested under their parent (issue #198).
     final sessions = sortSessionsCurrentFolderFirst(
       await _repo.list(),
       _env.cwd,

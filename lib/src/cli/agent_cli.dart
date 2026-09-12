@@ -1986,7 +1986,11 @@ class AgentCli {
     _tuiController?.openPicker(
       'sessions',
       "Several sessions named '$name' — which one?",
-      sessionPickerItems(_lastSessionRows!, flat: _sessionPickerFlat),
+      sessionPickerItems(
+        _lastSessionRows!,
+        flat: _sessionPickerFlat,
+        toggle: false,
+      ),
     );
   }
 

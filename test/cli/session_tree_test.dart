@@ -319,4 +319,20 @@ void main() {
       expect(items[1].label, isNot(contains('↳')));
     });
   });
+
+  test('sessionDisplayNames resolves names paged out of the windowed '
+      'resident tail', () async {
+    final session = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+    );
+    await session.appendSessionName('early_bird');
+    // Push the name record out of the resident tail (600-record default
+    // window) so only chunk paging can still see it.
+    for (var i = 0; i < 650; i++) {
+      await session.appendMessage(testAssistant());
+    }
+    final metadata = await session.getMetadata();
+    final names = await sessionDisplayNames(repo, [metadata]);
+    expect(names[metadata.id], 'early_bird');
+  });
 }
