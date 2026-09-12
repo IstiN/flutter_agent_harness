@@ -757,6 +757,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherTileSizeSmall => 'Small (2×2)';
 
   @override
+  String get launcherTileSizeTall => 'Tall (1×2)';
+
+  @override
+  String get launcherTileSizeWide => 'Wide (2×1)';
+
+  @override
+  String get launcherTileSizeColumn => 'Column (1×3)';
+
+  @override
+  String get launcherTileSizeRow => 'Row (3×1)';
+
+  @override
   String get mediaFileMissing => 'Media file not found';
 
   @override
