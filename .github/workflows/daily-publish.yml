@@ -1,0 +1,506 @@
+# Daily auto-publish (issue #161): thin orchestrator over the existing
+# publish channels. Each channel is an isolated leg — one leg failing never
+# kills the others — and every failure self-files a deduplicated GitHub
+# issue (label `bug`, assigned to the owner) that auto-closes when the leg
+# goes green again. No publish logic is duplicated here: legs dispatch the
+# existing workflows via `gh workflow run` and watch them.
+#
+#   testflight  build-mobile.yml   ios_content=all, android_content=none
+#                                 (Android stays excluded — standing owner
+#                                 decision)
+#   pubdev      in-job OIDC publish, only when pubspec > pub.dev; otherwise
+#               a green up-to-date check. The tag-time OIDC publish job
+#               (ci.yml) stays the primary path; this leg is the catch-up +
+#               loud-failure detector (e.g. expired publish credentials)
+#   cli         build-macos.yml    desktop DMG + macOS CLI bundles +
+#                                 extension, attached to the next-tag
+#                                 release (version passed explicitly so
+#                                 mobile/desktop never mint diverging tags)
+#   website     pages.yml          fa1.dev (landing + web demo + extension
+#                                 + the /outlook add-in slice)
+#   addin       office-addin.yml   manifest/taskpane acceptance suite; the
+#                                 fa1.dev publish itself rides the website
+#                                 leg (pages.yml assembles /outlook)
+#
+# Legs run only when main moved since the last GREEN daily run — skip-no-
+# change is green-neutral, never red (#159 lesson). Versioning stays the
+# existing scheme: auto_release.sh patch-bumps + tags every main push
+# (2h coalesce); the daily attaches mobile/desktop artifacts to the next
+# tag and verifies/republishes pub.dev. See docs/ci.md.
+#
+# Pause: gh workflow disable daily-publish.yml -R IstiN/flutter_agent_harness
+
+name: Daily auto-publish
+
+run-name: "Daily auto-publish (${{ inputs.legs || 'all' }})"
+
+on:
+  schedule:
+    - cron: '17 5 * * *' # once daily, 05:17 UTC
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: 'Leg(s) to run'
+        type: choice
+        default: all
+        options:
+          - all
+          - testflight
+          - pubdev
+          - cli
+          - website
+          - addin
+      force:
+        description: 'Run even if main has not moved since the last green daily'
+        type: boolean
+        default: false
+      inject_failure:
+        description: 'TEST ONLY — fail this leg before any dispatch, to exercise the self-filing issue cycle'
+        type: choice
+        default: none
+        options:
+          - none
+          - testflight
+          - pubdev
+          - cli
+          - website
+          - addin
+
+permissions:
+  contents: read
+
+# One daily at a time; a queued run must not cancel an in-flight one.
+concurrency:
+  group: daily-publish
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan (change detection + versions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      changed: ${{ steps.plan.outputs.changed }}
+      next_tag: ${{ steps.plan.outputs.next_tag }}
+      latest_tag: ${{ steps.plan.outputs.latest_tag }}
+      pubspec_version: ${{ steps.plan.outputs.pubspec_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect main movement and derive versions
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+
+          # Baseline = last green run that exercised ALL legs. A single-leg
+          # green dispatch (legs=pubdev inject smoke etc.) must NOT advance
+          # the baseline — otherwise the next scheduled run would skip the
+          # legs that never ran for that sha.
+          last_green=$(gh run list --repo "$repo" --workflow daily-publish.yml \
+            --branch main --status success --limit 15 \
+            --json headSha,event,displayTitle \
+            --jq '[.[] | select(.event == "schedule" or (.event == "workflow_dispatch" and (.displayTitle | contains("(all)"))))][0].headSha // empty')
+          head=$(git rev-parse origin/main)
+          echo "last green daily: ${last_green:-<none>} — main: $head"
+
+          changed=true
+          if [ "$last_green" = "$head" ] && [ "$FORCE" != "true" ]; then
+            changed=false
+            echo "::notice::main has not moved since the last green daily — all legs skip (green-neutral, #159)"
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+          latest_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+          next_tag=v0.1.0
+          if [ -n "$latest_tag" ]; then
+            IFS='.' read -r major minor patch <<< "${latest_tag#v}"
+            next_tag="v${major}.${minor}.$((patch + 1))"
+          fi
+          {
+            echo "latest_tag=${latest_tag:-none}"
+            echo "next_tag=$next_tag"
+            echo "pubspec_version=$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          } >> "$GITHUB_OUTPUT"
+
+  # ── Dispatch legs ────────────────────────────────────────────────────────
+  # Shape per leg: dispatch the child workflow pinned to main, capture the
+  # new run id, watch it, fail on any non-success conclusion. The child run
+  # URL is exported even on failure so the report can excerpt its log.
+
+  testflight:
+    name: 'Leg: TestFlight'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      actions: write
+    if: >-
+      (needs.plan.outputs.changed == 'true' || inputs.force == true) &&
+      (inputs.legs == '' || inputs.legs == 'all' || inputs.legs == 'testflight')
+    outputs:
+      run_url: ${{ steps.dispatch.outputs.run_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Inject failure (test)
+        if: inputs.inject_failure == 'testflight'
+        run: |
+          echo "::error::injected failure (inject_failure=testflight) — exercising the self-filing issue path, nothing dispatched"
+          exit 1
+
+      - name: Dispatch build-mobile.yml and watch
+        id: dispatch
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          # Capture the run WE dispatched: poll for a workflow_dispatch run
+          # created after this moment, triggered by github-actions[bot] (our
+          epoch=$(date +%s)
+          gh workflow run build-mobile.yml --repo "$repo" --ref main \
+            -f android_content=none -f ios_content=all
+          run_id=""
+          for _ in $(seq 1 60); do
+            id=$(gh run list --repo "$repo" --workflow build-mobile.yml \
+              --event workflow_dispatch --limit 10 \
+              --json databaseId,createdAt,actor \
+              --jq "[.[] | select(.actor.login == \"github-actions[bot]\" and ((.createdAt | fromdateiso8601) >= $epoch - 60))][0].databaseId // 0")
+            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::dispatched build-mobile.yml run never appeared after 10 minutes"
+            exit 1
+          fi
+          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
+          echo "watching build-mobile.yml run $run_id (ios_content=all, android_content=none)"
+          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
+            tail -n 30 watch.log || true
+          fi
+          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
+          echo "build-mobile.yml conclusion: $conclusion"
+          [ "$conclusion" = "success" ] || exit 1
+
+  cli:
+    name: 'Leg: CLI + macOS desktop'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      actions: write
+    if: >-
+      (needs.plan.outputs.changed == 'true' || inputs.force == true) &&
+      (inputs.legs == '' || inputs.legs == 'all' || inputs.legs == 'cli')
+    outputs:
+      run_url: ${{ steps.dispatch.outputs.run_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Inject failure (test)
+        if: inputs.inject_failure == 'cli'
+        run: |
+          echo "::error::injected failure (inject_failure=cli) — exercising the self-filing issue path, nothing dispatched"
+          exit 1
+
+      - name: Dispatch build-macos.yml and watch
+        id: dispatch
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          # Children derive version themselves (latest tag + 1 at their own
+          # dispatch moment) — a tag pinned here would race auto_release and
+          # could attach assets to a tag pointing at a different commit.
+          # Capture the run WE dispatched: poll for a workflow_dispatch run
+          # created after this moment, triggered by github-actions[bot] —
+          # never adopt a human's concurrent dispatch.
+          epoch=$(date +%s)
+          gh workflow run build-macos.yml --repo "$repo" --ref main \
+            -f create_release=true
+          run_id=""
+          for _ in $(seq 1 60); do
+            id=$(gh run list --repo "$repo" --workflow build-macos.yml \
+              --event workflow_dispatch --limit 10 \
+              --json databaseId,createdAt,actor \
+              --jq "[.[] | select(.actor.login == \"github-actions[bot]\" and ((.createdAt | fromdateiso8601) >= $epoch - 60))][0].databaseId // 0")
+            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::dispatched build-macos.yml run never appeared after 10 minutes"
+            exit 1
+          fi
+          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
+          echo "watching build-macos.yml run $run_id (create_release=true)"
+          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
+            tail -n 30 watch.log || true
+          fi
+          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
+          echo "build-macos.yml conclusion: $conclusion"
+          [ "$conclusion" = "success" ] || exit 1
+
+  website:
+    name: 'Leg: Website'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: write
+    if: >-
+      (needs.plan.outputs.changed == 'true' || inputs.force == true) &&
+      (inputs.legs == '' || inputs.legs == 'all' || inputs.legs == 'website')
+    outputs:
+      run_url: ${{ steps.dispatch.outputs.run_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Inject failure (test)
+        if: inputs.inject_failure == 'website'
+        run: |
+          echo "::error::injected failure (inject_failure=website) — exercising the self-filing issue path, nothing dispatched"
+          exit 1
+
+      # pages.yml is path-filtered on push, so routine pushes (e.g. lib/
+      # changes outside its filters) never redeploy — the daily guarantees
+      # fa1.dev tracks main.
+      - name: Dispatch pages.yml and watch
+        id: dispatch
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          # Capture the run WE dispatched (actor + created-at filter) —
+          # never adopt a human's concurrent dispatch of the same workflow.
+          epoch=$(date +%s)
+          gh workflow run pages.yml --repo "$repo" --ref main
+          run_id=""
+          for _ in $(seq 1 60); do
+            id=$(gh run list --repo "$repo" --workflow pages.yml \
+              --event workflow_dispatch --limit 10 \
+              --json databaseId,createdAt,actor \
+              --jq "[.[] | select(.actor.login == \"github-actions[bot]\" and ((.createdAt | fromdateiso8601) >= $epoch - 60))][0].databaseId // 0")
+            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::dispatched pages.yml run never appeared after 10 minutes"
+            exit 1
+          fi
+          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
+          echo "watching pages.yml run $run_id"
+          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
+            tail -n 30 watch.log || true
+          fi
+          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
+          echo "pages.yml conclusion: $conclusion"
+          [ "$conclusion" = "success" ] || exit 1
+
+  addin:
+    name: 'Leg: Outlook add-in'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: write
+    if: >-
+      (needs.plan.outputs.changed == 'true' || inputs.force == true) &&
+      (inputs.legs == '' || inputs.legs == 'all' || inputs.legs == 'addin')
+    outputs:
+      run_url: ${{ steps.dispatch.outputs.run_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Inject failure (test)
+        if: inputs.inject_failure == 'addin'
+        run: |
+          echo "::error::injected failure (inject_failure=addin) — exercising the self-filing issue path, nothing dispatched"
+          exit 1
+
+      # Acceptance suite (manifest validation, dart2js taskpane, Node +
+      # Playwright e2e). The fa1.dev /outlook publish itself rides the
+      # website leg — pages.yml assembles the same add-in into the deploy.
+      - name: Dispatch office-addin.yml and watch
+        id: dispatch
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          # Capture the run WE dispatched (actor + created-at filter) —
+          # never adopt a human's concurrent dispatch of the same workflow.
+          epoch=$(date +%s)
+          gh workflow run office-addin.yml --repo "$repo" --ref main
+          run_id=""
+          for _ in $(seq 1 60); do
+            id=$(gh run list --repo "$repo" --workflow office-addin.yml \
+              --event workflow_dispatch --limit 10 \
+              --json databaseId,createdAt,actor \
+              --jq "[.[] | select(.actor.login == \"github-actions[bot]\" and ((.createdAt | fromdateiso8601) >= $epoch - 60))][0].databaseId // 0")
+            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::dispatched office-addin.yml run never appeared after 10 minutes"
+            exit 1
+          fi
+          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
+          echo "watching office-addin.yml run $run_id"
+          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
+            tail -n 30 watch.log || true
+          fi
+          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
+          echo "office-addin.yml conclusion: $conclusion"
+          [ "$conclusion" = "success" ] || exit 1
+
+  # ── pub.dev leg ──────────────────────────────────────────────────────────
+  # The ONLY publish path is the ci.yml tag job (pub.dev trusted publishing
+  # only accepts OIDC from tag-push runs — a schedule/dispatch run can never
+  # satisfy it). This leg VERIFIES pub.dev serves the pubspec version and,
+  # when behind, recovers by re-running the failed tag-push publish run —
+  # a rerun keeps the original push-tag event and OIDC claims, so the real
+  # publish path retries. Unrecoverable states fail loudly and self-file an
+  # issue with a manual-publish instruction instead of silently hanging.
+
+  pubdev:
+    name: 'Leg: pub.dev'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write # gh run rerun of the tag-publish run
+    if: >-
+      (needs.plan.outputs.changed == 'true' || inputs.force == true) &&
+      (inputs.legs == '' || inputs.legs == 'all' || inputs.legs == 'pubdev')
+    outputs:
+      status: ${{ steps.check.outputs.status }}
+      pubspec_version: ${{ steps.check.outputs.pubspec }}
+      published_version: ${{ steps.check.outputs.published }}
+      run_url: ${{ steps.check.outputs.run_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject failure (test)
+        if: inputs.inject_failure == 'pubdev'
+        run: |
+          echo "::error::injected failure (inject_failure=pubdev) — exercising the self-filing issue path, nothing published"
+          exit 1
+
+      - name: Verify pub.dev serves the pubspec version
+        id: check
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          pubspec=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          echo "pubspec=$pubspec" >> "$GITHUB_OUTPUT"
+          echo "published=" >> "$GITHUB_OUTPUT" # re-exported below after query
+
+          if grep -q '^publish_to: *none' pubspec.yaml; then
+            echo "status=private" >> "$GITHUB_OUTPUT"
+            echo "::notice::pubspec declares publish_to: none — package is private, nothing to verify on pub.dev"
+            exit 0
+          fi
+
+          published=$(curl -fsS --retry 3 \
+            https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+          echo "pubspec=$pubspec published=$published"
+          newest=$(printf '%s\n%s\n' "$pubspec" "$published" | sort -V | tail -1)
+          if [ "$newest" = "$published" ]; then
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+            echo "::notice::pub.dev already serves $published"
+            exit 0
+          fi
+
+          # Behind: recover via the real publish path. auto_release tags the
+          # commit whose pubspec it bumps, so the tag for $pubspec should
+          # exist and its ci.yml run carries the OIDC tag-push publish.
+          tag="v$pubspec"
+          tag_run=$(gh run list --repo "$repo" --workflow ci.yml \
+            --branch "$tag" --limit 1 \
+            --json databaseId,status,conclusion --jq '.[0] // empty')
+          if [ -z "$tag_run" ]; then
+            echo "::error::$tag has no ci.yml run — the tag-publish never triggered. Manual fix: re-push the tag (git push origin $tag --force) or run ci.yml on the tag ref."
+            exit 1
+          fi
+          run_id=$(jq -r '.databaseId' <<<"$tag_run")
+          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
+
+          status=$(jq -r '.status' <<<"$tag_run")
+          if [ "$status" != "completed" ]; then
+            echo "tag run $run_id still in progress — waiting for it to finish first"
+            gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 >/dev/null 2>&1 || true
+          fi
+          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
+
+          if [ "$conclusion" = "success" ]; then
+            # Publish job went green but pub.dev still serves $published —
+            # not recoverable by rerunning (e.g. publish skipped by a gate).
+            echo "::error::tag run for $tag succeeded but pub.dev still serves $published — publish did not upload. Manual publish needed (see issue)."
+            exit 1
+          fi
+
+          echo "tag run $run_id concluded $conclusion — re-running its failed jobs (keeps the original tag-push event/OIDC claims)"
+          gh run rerun "$run_id" --repo "$repo" --failed
+          sleep 20
+          gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 >/dev/null 2>&1 || true
+          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::rerun of the $tag publish run failed again ($conclusion) — see https://github.com/$repo/actions/runs/$run_id"
+          fi
+
+          published2=$(curl -fsS --retry 3 \
+            https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
+          echo "published=$published2" >> "$GITHUB_OUTPUT"
+          if [ "$published2" != "$pubspec" ]; then
+            echo "::error::rerun went green but pub.dev serves $published2, not $pubspec — manual publish needed"
+            exit 1
+          fi
+          echo "status=recovered" >> "$GITHUB_OUTPUT"
+          echo "::notice::recovered — re-ran the $tag publish run, pub.dev now serves $pubspec"
+
+  # ── Report + self-healing issues ─────────────────────────────────────────
+  report:
+    name: Summary + self-filed issues
+    needs: [plan, testflight, pubdev, cli, website, addin]
+    if: always() # runs even when plan failed, so plan failures enter the self-healing loop too
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Job summary table and issue lifecycle
+        env:
+          NEXT_TAG: ${{ needs.plan.outputs.next_tag }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          DAILY_PUBLISH_ASSIGNEE: vabhzw17eg2qu4m9-bit
+          LEG_TESTFLIGHT: ${{ needs.testflight.result }}
+          LEG_TESTFLIGHT_URL: ${{ needs.testflight.outputs.run_url }}
+          LEG_PUBDEV: ${{ needs.pubdev.result }}
+          LEG_PUBDEV_STATUS: ${{ needs.pubdev.outputs.status }}
+          LEG_PUBDEV_PUBSPEC: ${{ needs.pubdev.outputs.pubspec_version }}
+          LEG_PUBDEV_PUBLISHED: ${{ needs.pubdev.outputs.published_version }}
+          LEG_PUBDEV_URL: ${{ needs.pubdev.outputs.run_url }}
+          LEG_CLI: ${{ needs.cli.result }}
+          LEG_CLI_URL: ${{ needs.cli.outputs.run_url }}
+          LEG_WEBSITE: ${{ needs.website.result }}
+          LEG_WEBSITE_URL: ${{ needs.website.outputs.run_url }}
+          LEG_ADDIN: ${{ needs.addin.result }}
+          LEG_ADDIN_URL: ${{ needs.addin.outputs.run_url }}
+        run: bash scripts/daily_publish_report.sh
