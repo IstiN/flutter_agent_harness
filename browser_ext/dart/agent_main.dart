@@ -22,6 +22,7 @@ import 'src/background/alarms.dart';
 import 'src/background/badge.dart';
 import 'src/background/entry_points.dart';
 import 'src/bridge_relay.dart';
+import 'src/bridge_tools.dart' show BridgePathException, parseBridgePath;
 import 'src/chrome_api.dart' show ChromeApi, ChromeApiException;
 import 'src/chrome_api_js.dart';
 import 'src/run_script_tool.dart';
@@ -290,8 +291,74 @@ void _bindV2Surface() {
   _setProperty(faAgentV2, 'removeScheduled'.toJS, _removeScheduledImpl.toJS);
   _setProperty(faAgentV2, 'listScheduled'.toJS, _listScheduledImpl.toJS);
   _setProperty(faAgentV2, 'state'.toJS, _v2StateImpl.toJS);
+  // Generic bridge seam (issue #137): raw catalog/call for the
+  // integration harness — the AGENT-facing path (tiers, gates, hygiene)
+  // is the browser_api/browser_api_catalog tools.
+  _setProperty(faAgentV2, 'bridgeCatalog'.toJS, _bridgeCatalogImpl.toJS);
+  _setProperty(faAgentV2, 'bridgeCall'.toJS, _bridgeCallImpl.toJS);
   _setProperty(globalContext, 'faAgentV2'.toJS, faAgentV2);
 }
+
+/// faAgentV2.bridgeCatalog() → {ok, namespaces} | {ok, namespace, methods,
+/// events, children?}; faAgentV2.bridgeCatalog(ns) for one namespace.
+/// Parameters are OPTIONAL on purpose: dart2js `Function.toJS` dispatches
+/// on the JS arguments.length (call$0 for a 0-arg JS call) and a
+/// required-parameter closure has no call$0 — the seam would throw
+/// "a.$0 is not a function" for bare `bridgeCatalog()`.
+JSPromise<JSAny?> _bridgeCatalogImpl([JSAny? ns]) =>
+    _bridgeCatalog(ns).toJS;
+
+Future<JSAny?> _bridgeCatalog(JSAny? ns) async {
+  final chrome = _chromeApi;
+  if (chrome == null) return _bridgeErr('api_missing', 'no chrome surface');
+  try {
+    final name = ns == null ? null : (ns.dartify() as String?);
+    if (name == null || name.isEmpty) {
+      return {'ok': true, 'namespaces': await chrome.bridge.namespaces()}.jsify();
+    }
+    return {
+      'ok': true,
+      'namespace': name,
+      ...await chrome.bridge.namespace(name),
+    }.jsify();
+  } on ChromeApiException catch (e) {
+    return _bridgeErr(e.code, e.message);
+  } on Object catch (e) {
+    return _bridgeErr('bridge_error', '$e');
+  }
+}
+
+/// faAgentV2.bridgeCall(path, args) → {ok, result} | {ok:false, error}.
+/// path accepts both "chrome.ns.method" and bare "ns.method" (the tool
+/// layer sends the bare form; humans type the chrome. one).
+JSPromise<JSAny?> _bridgeCallImpl([JSAny? path, JSAny? args]) =>
+    _bridgeCall(path, args).toJS;
+
+Future<JSAny?> _bridgeCall(JSAny? path, JSAny? args) async {
+  final chrome = _chromeApi;
+  if (chrome == null) return _bridgeErr('api_missing', 'no chrome surface');
+  try {
+    var p = (path?.dartify() as String?) ?? '';
+    // The raw seam rides the tool layer's STATIC safety kernel too:
+    // path validation + the every-mode deny list (management, runtime,
+    // storage). The dynamic tier/exfil asks stay tool-layer (this seam
+    // is host machinery, not model-facing).
+    final guarded = p.startsWith('chrome.') ? 'chrome$p' : 'chrome.$p';
+    parseBridgePath(guarded);
+    if (p.startsWith('chrome.')) p = p.substring('chrome.'.length);
+    final list = (args?.dartify() as List?) ?? const [];
+    return {'ok': true, 'result': await chrome.bridge.call(p, list)}.jsify();
+  } on BridgePathException catch (e) {
+    return _bridgeErr(e.code, e.message);
+  } on ChromeApiException catch (e) {
+    return _bridgeErr(e.code, e.message);
+  } on Object catch (e) {
+    return _bridgeErr('bridge_error', '$e');
+  }
+}
+
+JSAny? _bridgeErr(String code, String message) =>
+    {'ok': false, 'error': {'code': code, 'message': message}}.jsify();
 
 /// faAgentV2.schedule(id, prompt, periodMinutes) — registers a persisted
 /// task; the alarm fires `prompt` into the agent (steers mid-run, AC4c).
