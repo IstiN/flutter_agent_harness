@@ -170,7 +170,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(AppPermissionsDialog), findsOneWidget);
-      expect(find.byType(SwitchListTile), findsNWidgets(10));
+      // One SwitchListTile per hardcoded toggle in AppPermissionsDialog
+      // (network, llm, homekit, health, contacts, calendar, microphone,
+      // notifications, media, keys, theme — the 11th added with the theme
+      // API in #188). Keep in sync with js_app_view.dart.
+      expect(find.byType(SwitchListTile), findsNWidgets(11));
 
       await tester.tap(find.text('Done'));
       await tester.pumpAndSettle();

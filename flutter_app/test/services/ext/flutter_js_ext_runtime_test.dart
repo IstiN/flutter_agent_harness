@@ -13,6 +13,7 @@ import 'dart:async';
 
 import 'package:fa/services/ext/flutter_js_ext_runtime.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_agent_harness/src/js_ext/ext_bootstrap_js.dart';
 import 'package:flutter_agent_harness/src/js_ext/ext_protocol.dart';
 import 'package:flutter_agent_harness/src/js_ext/jsr_runtime.dart';
 import 'package:flutter_js/flutter_js.dart';
@@ -37,13 +38,21 @@ const String _kBootstrapTransportOnly = '''
 })(globalThis);
 ''';
 
+/// Full test bootstrap: the verbatim transport above plus the shared core
+/// (`jsr`, `__extNextSeq`/`__extExpect`, commit/ping/invoke) exactly as
+/// AppExtensionService composes it for production. Without the core, main.js
+/// fails with "Can't find variable: jsr" — the tests only appeared green on
+/// hosts where the flutter_js engine probe failed and every test skipped.
+const String _kBootstrapJs =
+    '$_kBootstrapTransportOnly\n;\n$kExtBootstrapCoreJs';
+
 Future<FlutterJsExtRuntime> _start(
   String mainJs,
   ExtBridgeHandler bridges,
 ) async {
   final runtime = FlutterJsExtRuntime();
   await runtime.start(
-    bootstrapJs: _kBootstrapTransportOnly,
+    bootstrapJs: _kBootstrapJs,
     mainJs: mainJs,
     bridges: bridges,
   );
@@ -193,7 +202,7 @@ jsr.ext.registerTool({ name: 'hang', call: function () { return new Promise(func
       final runtime = FlutterJsExtRuntime();
       await expectLater(
         runtime.start(
-          bootstrapJs: _kBootstrapTransportOnly,
+          bootstrapJs: _kBootstrapJs,
           mainJs: 'throw new Error("boom-main");',
           bridges: _nullBridge,
         ),

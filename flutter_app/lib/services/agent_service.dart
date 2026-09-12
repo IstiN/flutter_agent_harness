@@ -124,9 +124,12 @@ class AgentService extends ChangeNotifier
     Duration? responseTimeout,
     ApprovalMode? initialApprovalMode,
     @visibleForTesting bool watchExternalSessions = true,
+    @visibleForTesting bool includeSharedSessionRoots = true,
   }) : _resolveSecretName = null,
        // ignore: prefer_initializing_formals
        _watchExternalSessions = watchExternalSessions,
+       // ignore: prefer_initializing_formals
+       _includeSharedSessionRoots = includeSharedSessionRoots,
        _secretsEnv = null,
        _sessionKeys = null,
        _taskModelsStore = null,
@@ -385,6 +388,7 @@ class AgentService extends ChangeNotifier
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
     bool watchExternalSessions = true,
+    bool includeSharedSessionRoots = true,
     MediaKeyResolver? resolveSecretName,
     OfficeApi? officeApi,
     this._secretsEnv,
@@ -403,6 +407,8 @@ class AgentService extends ChangeNotifier
     : _skillsHomeDir = skillsHomeDir,
        // ignore: prefer_initializing_formals
        _watchExternalSessions = watchExternalSessions,
+       // ignore: prefer_initializing_formals
+       _includeSharedSessionRoots = includeSharedSessionRoots,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
        _resolveSecretName = resolveSecretName,
@@ -1588,6 +1594,11 @@ class AgentService extends ChangeNotifier
   int _sessionWatchBytes = -1;
   final bool _watchExternalSessions;
 
+  /// Test-only escape hatch: on macOS dev machines [listSessions] merges the
+  /// shared App Group / `~/.fah/sessions` roots (host sessions leak into
+  /// hermetic tests); tests pass `includeSharedSessionRoots: false`.
+  final bool _includeSharedSessionRoots;
+
   void _startSessionWatch() {
     _stopSessionWatch();
     if (!_watchExternalSessions) return;
@@ -2675,6 +2686,7 @@ class AgentService extends ChangeNotifier
       streamFunction: _agent.streamFunction,
       // Clones inherit the external-watch setting (tests disable it).
       watchExternalSessions: _watchExternalSessions,
+      includeSharedSessionRoots: _includeSharedSessionRoots,
       resolveSecretName: _resolveSecretName,
       // Clones share the live secrets env and the Keys store, so a
       // `request_secret` grant in one session is live and persisted for all.
@@ -2698,7 +2710,9 @@ class AgentService extends ChangeNotifier
   /// under [sessionsRoot]). Cheap: reads only the JSONL headers.
   Future<List<SessionMetadata>> listSessions() async {
     try {
-      final roots = allSessionRoots(sessionsRoot);
+      final roots = _includeSharedSessionRoots
+          ? allSessionRoots(sessionsRoot)
+          : [sessionsRoot];
       if (roots.length <= 1) {
         return await _repo.list();
       }

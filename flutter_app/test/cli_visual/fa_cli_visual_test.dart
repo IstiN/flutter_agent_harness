@@ -890,8 +890,9 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       tempHome.deleteSync(recursive: true);
     });
 
-    testWidgets('request_secret sheet: Ctrl+U clears, dots mask, Ctrl+R '
-        'reveals, the saved secret never echoes', (tester) async {
+    testWidgets('request_secret sheet: placeholder name replaced in one '
+        'keystroke, dots mask, Ctrl+R reveals, the saved secret never '
+        'echoes', (tester) async {
       final server = await _startAnsweringServer(
         tester,
         18780,
@@ -911,13 +912,36 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       expect(harness.screenText, contains('SUDO_PASSWORD'));
       expect(harness.screenText, contains('Ctrl+R reveals'));
 
-      // Ctrl+U on name focus: one keystroke erases the suggested name
-      // (the 16-backspace nuisance).
-      harness.sendText('\x15');
+      // Name focus (Tab toggles): the suggestion is ghost text since
+      // #98, so ONE keystroke replaces it wholesale — the 16-backspace
+      // nuisance is gone by design. An invalid replacement explains
+      // itself; Ctrl+U restores the placeholder.
+      harness.sendText('\t');
+      await harness.settle(settleMs: 200);
+      expect(harness.screenText, contains('Type to replace it'));
+      harness.sendText('1');
       await harness.settle(settleMs: 300);
       await harness.screenshot(shotsDir, '104_secret_name_cleared');
-      expect(harness.screenText, isNot(contains('SUDO_PASSWORD')));
+      // The transcript keeps the `[request_secret] name="SUDO_PASSWORD"`
+      // tool-header line, so scope the assertions to the sheet's name row.
+      final sheetLines = harness.screenText.split('\n');
+      final nameLabel = sheetLines.indexWhere(
+        (line) => line.contains('Name (UPPER_SNAKE)'),
+      );
+      expect(nameLabel, isNonNegative);
+      expect(sheetLines[nameLabel + 1], contains('1'));
+      expect(sheetLines[nameLabel + 1], isNot(contains('SUDO_PASSWORD')));
       expect(harness.screenText, contains('Name must match'));
+      // Ctrl+U on name focus restores the suggested-name placeholder.
+      harness.sendText('\x15');
+      await harness.settle(settleMs: 300);
+      final restoredLines = harness.screenText.split('\n');
+      final restoredLabel = restoredLines.indexWhere(
+        (line) => line.contains('Name (UPPER_SNAKE)'),
+      );
+      expect(restoredLabel, isNonNegative);
+      expect(restoredLines[restoredLabel + 1], contains('SUDO_PASSWORD'));
+      expect(harness.screenText, isNot(contains('Name must match')));
 
       // A fresh name, then Tab into the value field.
       harness.sendText('SUDO_X');
