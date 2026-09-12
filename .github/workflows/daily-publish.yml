@@ -164,7 +164,12 @@ jobs:
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
           # Capture the run WE dispatched: poll for a workflow_dispatch run
-          # created after this moment, triggered by github-actions[bot] (our
+          # created after this moment. NOTE: `gh run list --json` does NOT
+          # support the `actor` field on the runner's gh version (fails with
+          # "Unknown JSON field: actor" — and `set -e` then kills the step in
+          # seconds, while the dispatched run IS created). Filter by
+          # createdAt only; build-mobile.yml is dispatched solely by this leg
+          # and manually, so a same-minute collision is not a real risk.
           epoch=$(date +%s)
           gh workflow run build-mobile.yml --repo "$repo" --ref main \
             -f android_content=none -f ios_content=all
@@ -172,8 +177,8 @@ jobs:
           for _ in $(seq 1 60); do
             id=$(gh run list --repo "$repo" --workflow build-mobile.yml \
               --event workflow_dispatch --limit 10 \
-              --json databaseId,createdAt,actor \
-              --jq "[.[] | select(.actor.login == \"github-actions[bot]\" and ((.createdAt | fromdateiso8601) >= $epoch - 60))][0].databaseId // 0")
+              --json databaseId,createdAt \
+              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
             if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
             sleep 10
           done
@@ -230,8 +235,8 @@ jobs:
           for _ in $(seq 1 60); do
             id=$(gh run list --repo "$repo" --workflow build-macos.yml \
               --event workflow_dispatch --limit 10 \
-              --json databaseId,createdAt,actor \
-              --jq "[.[] | select(.actor.login == \"github-actions[bot]\" and ((.createdAt | fromdateiso8601) >= $epoch - 60))][0].databaseId // 0")
+              --json databaseId,createdAt \
+              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
             if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
             sleep 10
           done
@@ -278,7 +283,7 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          # Capture the run WE dispatched (actor + created-at filter) —
+          # Capture the run WE dispatched (created-at filter) —
           # never adopt a human's concurrent dispatch of the same workflow.
           epoch=$(date +%s)
           gh workflow run pages.yml --repo "$repo" --ref main
@@ -286,8 +291,8 @@ jobs:
           for _ in $(seq 1 60); do
             id=$(gh run list --repo "$repo" --workflow pages.yml \
               --event workflow_dispatch --limit 10 \
-              --json databaseId,createdAt,actor \
-              --jq "[.[] | select(.actor.login == \"github-actions[bot]\" and ((.createdAt | fromdateiso8601) >= $epoch - 60))][0].databaseId // 0")
+              --json databaseId,createdAt \
+              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
             if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
             sleep 10
           done
@@ -334,7 +339,7 @@ jobs:
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY}"
-          # Capture the run WE dispatched (actor + created-at filter) —
+          # Capture the run WE dispatched (created-at filter) —
           # never adopt a human's concurrent dispatch of the same workflow.
           epoch=$(date +%s)
           gh workflow run office-addin.yml --repo "$repo" --ref main
@@ -342,8 +347,8 @@ jobs:
           for _ in $(seq 1 60); do
             id=$(gh run list --repo "$repo" --workflow office-addin.yml \
               --event workflow_dispatch --limit 10 \
-              --json databaseId,createdAt,actor \
-              --jq "[.[] | select(.actor.login == \"github-actions[bot]\" and ((.createdAt | fromdateiso8601) >= $epoch - 60))][0].databaseId // 0")
+              --json databaseId,createdAt \
+              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
             if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
             sleep 10
           done
