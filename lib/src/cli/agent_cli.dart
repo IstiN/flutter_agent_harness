@@ -856,8 +856,19 @@ class AgentCli {
 
   /// Memoized settled-part context estimate for the status line
   /// (see `_liveContextTokens` in approval_commands.dart): keyed on the
-  /// transcript list identity + length only — never on stream content.
+  /// transcript length + last message instance — never on stream content.
   final SettledContextEstimate _ctxEstimate = SettledContextEstimate();
+
+  /// Memo fields for the status line's request overhead (system prompt +
+  /// tool schemas, [estimateRequestOverheadTokens] — the method lives in
+  /// approval_commands.dart next to its only caller): keyed on the prompt
+  /// instance and the tool ELEMENT identities — the [AgentState] getters
+  /// copy their lists on every read, so list identity would miss every
+  /// frame while the Tool objects themselves stay stable across copies.
+  String? _overheadPromptKey;
+  List<int>? _overheadToolKey;
+  int _overheadTokens = 0;
+
   late SessionRepo _repo = JsonlSessionRepo(
     fs: _env,
     sessionsRoot: config.sessionRoot,
@@ -1036,6 +1047,11 @@ class AgentCli {
   /// automatic window correction so the catalog default (200k) stops lying
   /// for custom endpoints.
   Map<String, int> _modelContextWindows = const {};
+
+  /// Model ids the "endpoint reported no window" note already fired for
+  /// (see `_noteUndetectedContextWindow` in provider_models.dart) — once
+  /// per id per process, never a per-refresh spam.
+  final Set<String> _undetectedWindowNoteIds = <String>{};
 
   /// Max-output-token caps reported by the endpoint's `/models` payload
   /// (same source as [_modelContextWindows]); drives automatic `maxTokens`
@@ -2101,7 +2117,11 @@ class AgentCli {
   /// turn (including auto-compaction). The host's [CliIO] should be
   /// non-interactive and route [CliIO.writeln] diagnostics to stderr so
   /// [CliIO.write] (the assistant text) is the only stdout content.
-  Future<int> runHeadless(String prompt, {List<ImageContent> images = const [], HepWriter? hep}) async {
+  Future<int> runHeadless(
+    String prompt, {
+    List<ImageContent> images = const [],
+    HepWriter? hep,
+  }) async {
     _hep = hep;
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
     // same cached trees a REPL session would).

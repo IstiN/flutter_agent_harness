@@ -106,6 +106,14 @@ final class ContextUsageEstimate {
     required this.lastUsageIndex,
   });
 
+  /// An empty estimate (no messages, no anchor).
+  static const empty = ContextUsageEstimate(
+    tokens: 0,
+    usageTokens: 0,
+    trailingTokens: 0,
+    lastUsageIndex: null,
+  );
+
   /// Estimated total context tokens.
   final int tokens;
 
@@ -184,6 +192,45 @@ ContextUsageEstimate estimateContextTokens(List<Message> messages) {
   );
 }
 
+/// Estimated token cost of the request parts that are NOT transcript
+/// messages: the system prompt and the tool schemas (name + description +
+/// JSON-encoded parameters), at pi's 4-chars-per-token heuristic.
+///
+/// Every wire request carries these, but [estimateContextTokens] never
+/// counts them — they only enter an ANCHORED estimate implicitly, through
+/// the provider-reported usage. An unanchored estimate (fresh or resumed
+/// session, provider without usage reporting) silently drops them: a
+/// 30 KB system prompt plus ~30 tool schemas is tens of thousands of
+/// tokens the ctx meter and the over-window guard then ignore.
+int estimateRequestOverheadTokens(String? systemPrompt, List<Tool> tools) {
+  var chars = systemPrompt?.length ?? 0;
+  for (final tool in tools) {
+    chars +=
+        tool.name.length +
+        tool.description.length +
+        _safeJsonEncode(tool.parameters).length;
+  }
+  return (chars / _charsPerToken).ceil();
+}
+
+/// Full next-request estimate — the ONE basis the ctx meter, the loop's
+/// over-window guard, and the compaction threshold all enforce.
+///
+/// [estimateContextTokens] over [messages], plus
+/// [estimateRequestOverheadTokens] when no provider-usage anchor prices
+/// the system prompt and tool schemas in. An anchored estimate already
+/// includes them (the reported usage is the whole previous request), so
+/// adding the overhead there would double-count.
+int estimateRequestTokens(
+  List<Message> messages, {
+  String? systemPrompt,
+  List<Tool> tools = const [],
+}) {
+  final estimate = estimateContextTokens(messages);
+  if (estimate.lastUsageIndex != null) return estimate.tokens;
+  return estimate.tokens + estimateRequestOverheadTokens(systemPrompt, tools);
+}
+
 /// [estimateTokens] against a first-seen set: repeated images charge the
 /// wire replacement, not a second payload. Per-message [estimateTokens]
 /// keeps charging every occurrence (no cross-message context there).
@@ -213,31 +260,42 @@ int _estimateTokensDedup(Message message, Set<String> seenImages) {
 /// Memoized context estimate for the SETTLED part of a transcript.
 ///
 /// The status line renders on every frame — including every keystroke while
-/// the user types over a run. Keying the memo on the message list identity
-/// and length ONLY (never on in-flight stream content) makes each streamed
-/// delta cost one O(stream) `estimateTokens` instead of a full O(context)
-/// re-scan: on a 200k-token transcript that is the difference between
-/// ~50 whole-transcript scans per second and none.
+/// the user types over a run. Keying the memo on the message list LENGTH
+/// and the LAST message's identity (never on in-flight stream content)
+/// makes each streamed delta cost one O(stream) `estimateTokens` instead
+/// of a full O(context) re-scan: on a 200k-token transcript that is the
+/// difference between ~50 whole-transcript scans per second and none.
+///
+/// The key deliberately survives list COPIES: `AgentState.messages`
+/// hands out a fresh `List.unmodifiable` wrapper on every read, so a
+/// whole-list identity key would miss on every single frame. Settled
+/// messages are immutable once appended, so (length, last-instance)
+/// changes exactly when the settled estimate can change: appends grow
+/// the length, compaction/session switches replace the last instance.
 final class SettledContextEstimate {
   /// Creates a memo; [estimator] is injectable for tests.
-  SettledContextEstimate({int Function(List<Message>)? estimator})
-    : _estimator =
-          estimator ?? ((messages) => estimateContextTokens(messages).tokens);
+  SettledContextEstimate({
+    ContextUsageEstimate Function(List<Message>)? estimator,
+  }) : _estimator = estimator ?? estimateContextTokens;
 
-  final int Function(List<Message>) _estimator;
+  final ContextUsageEstimate Function(List<Message>) _estimator;
   Object? _cachedKey;
-  int _cachedValue = 0;
+  ContextUsageEstimate _cachedValue = ContextUsageEstimate.empty;
 
   /// How many times the underlying estimator actually ran (test seam).
   int get estimatorCalls => _estimatorCalls;
   int _estimatorCalls = 0;
 
   /// Estimate for the settled [messages], recomputed only when the list
-  /// identity or length changed (appends, compaction, session switches).
-  /// An in-place mutation that keeps both is deliberately NOT tracked —
-  /// settled messages are immutable once appended.
-  int settled(List<Message> messages) {
-    final key = (identityHashCode(messages), messages.length);
+  /// length or the last message instance changed (appends, compaction,
+  /// session switches). An in-place mutation that keeps both is
+  /// deliberately NOT tracked — settled messages are immutable once
+  /// appended.
+  ContextUsageEstimate settledEstimate(List<Message> messages) {
+    final key = (
+      messages.length,
+      messages.isEmpty ? null : identityHashCode(messages.last),
+    );
     if (key != _cachedKey) {
       _estimatorCalls++;
       _cachedValue = _estimator(messages);
@@ -245,6 +303,9 @@ final class SettledContextEstimate {
     }
     return _cachedValue;
   }
+
+  /// The token total of [settledEstimate].
+  int settled(List<Message> messages) => settledEstimate(messages).tokens;
 }
 
 /// Drops generation-time [AssistantMessage.usage] anchors from messages

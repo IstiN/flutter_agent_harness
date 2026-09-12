@@ -184,7 +184,11 @@ extension AgentCliCompactionRun on AgentCli {
     final session = _session;
     if (session == null) return false;
     if (_agent.state.messages.isEmpty) return false;
-    final tokens = estimateContextTokens(_agent.state.messages).tokens;
+    // The same request-size basis as the loop's over-window guard and the
+    // status-line meter (transcript + system-prompt/tool-schema overhead
+    // when unanchored) — the threshold must trip on what the next request
+    // actually carries.
+    final tokens = _liveRequestTokens();
     if (!shouldCompact(
       tokens,
       _agent.state.model.contextWindow,
@@ -200,9 +204,18 @@ extension AgentCliCompactionRun on AgentCli {
     _tuiController?.setBusyPhase('');
     // [_runAutoCompact] reports '[auto-compacted]' only on success; treat
     // the transcript size as the source of truth for the caller.
-    final after = estimateContextTokens(_agent.state.messages).tokens;
+    final after = _liveRequestTokens();
     return after < tokens;
   }
+
+  /// The shared request-size estimate for compaction decisions (see
+  /// [estimateRequestTokens]): identical basis to the status-line meter
+  /// and the loop guard.
+  int _liveRequestTokens() => estimateRequestTokens(
+    _agent.state.messages,
+    systemPrompt: _agent.state.systemPrompt,
+    tools: _agent.state.tools,
+  );
 
   /// `/compact` manual override: same AutoCompactor pipeline as the
   /// auto-trigger, but unconditional — honours the user's explicit ask

@@ -48,7 +48,8 @@ void main() {
     Future<List<String>> Function(String baseUrl, {required String apiKey})?
     modelsFetcher,
     http.Client? modelsHttpClient,
-    Future<void> Function(String providerKind, String apiKey)? onProviderChanged,
+    Future<void> Function(String providerKind, String apiKey)?
+    onProviderChanged,
     SecureKeyCache? secureKeys,
     CustomProviderRegistry? customProviders,
     void Function(String name, String value)? onSecretStored,
@@ -131,7 +132,9 @@ void main() {
         envVarValue: (_) => null,
         secureKeys: cache,
         customProviders: registry,
-        onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+        onProviderChanged: (kind, key) async {
+          changes.add((kind, key));
+        },
         copilotDeviceFlowFn: ({clientId, onStatus}) async {
           statuses.add('called');
           onStatus?.call('open the page, enter ABCD-1234');
@@ -580,6 +583,7 @@ void main() {
     AgentCli rolesCli(
       List<ModelRef> defaultChain, {
       required FakeStreamFunction fake,
+      http.Client? modelsHttpClient,
     }) {
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(
@@ -607,7 +611,7 @@ void main() {
           env: env,
           sessionRoot: '/sessions',
           modelRolesResolver: resolver,
-          modelsHttpClient: _copilotModelsMockClient,
+          modelsHttpClient: modelsHttpClient ?? _copilotModelsMockClient,
         ),
         io: io,
         streamFunction: fake.call,
@@ -653,6 +657,49 @@ void main() {
       await run;
 
       expect(cli.agent.state.model.contextWindow, 123456);
+      expect(io.out.toString(), isNot(contains('(from endpoint)')));
+    });
+
+    test('an endpoint without window data gets an explicit fallback note '
+        'instead of silently trusting the carried default', () async {
+      // The payload lists the model but reports NO `capabilities.limits`
+      // for it (the copilot-enterprise shape from the ctx-meter report):
+      // the carried 1M catalog default must be flagged as unverified, not
+      // trusted in silence.
+      final noLimitsClient = http_testing.MockClient((request) async {
+        if (request.url.host == 'api.github.com') {
+          return http.Response(
+            '{"token":"tid=fake;proxy-ep=proxy.individual.githubcopilot.com",'
+            '"expires_at":9999999999,"refresh_in":1500}',
+            200,
+          );
+        }
+        if (request.url.path.endsWith('/models')) {
+          return http.Response(
+            '{"data":[{"id":"kimi-k2.7-code","model_picker_enabled":true,'
+            '"capabilities":{"supports":{"tool_calls":true}}}]}',
+            200,
+          );
+        }
+        return http.Response('not found', 404);
+      });
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = rolesCli(
+        [ModelRef(provider: 'copilot', modelId: 'kimi-k2.7-code')],
+        fake: fake,
+        modelsHttpClient: noLimitsClient,
+      );
+      final run = cli.run();
+
+      await waitForIt(
+        () => io.out.toString().contains('not reported by the endpoint'),
+        reason: 'explicit fallback note for the unverified window',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      // The carried catalog default stays — flagged, not silently trusted.
+      expect(cli.agent.state.model.contextWindow, 1000000);
       expect(io.out.toString(), isNot(contains('(from endpoint)')));
     });
   });
