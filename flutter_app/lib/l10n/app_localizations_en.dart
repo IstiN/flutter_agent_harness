@@ -1859,5 +1859,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get themePackWallpaperChip => 'wallpaper';
 
   @override
+  String themePackImported(String name) {
+    return 'Theme pack \"$name\" installed';
+  }
+
+  @override
   String get themePackImportFailed => 'Theme pack rejected';
 }

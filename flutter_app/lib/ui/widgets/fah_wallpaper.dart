@@ -13,6 +13,10 @@ import 'package:fa/services/theme_pack_store.dart';
 /// pack/wallpaper — or when the asset went missing after install (E2), in
 /// which case the themed color background simply shows through.
 ///
+/// E4: a colors-only pack keeps the previous wallpaper, so the layer
+/// resolves through [ThemeController.wallpaperPackId] (the last pack that
+/// DID ship one) instead of only the active pack.
+///
 /// Re-builds on both the theme controller (active pack choice) and the pack
 /// store (install/update/remove), so an apply or a revert is instant.
 class FahWallpaper extends StatelessWidget {
@@ -26,7 +30,13 @@ class FahWallpaper extends StatelessWidget {
     return ListenableBuilder(
       listenable: Listenable.merge([controller, store]),
       builder: (context, _) {
-        final pack = store.byId(controller.packId);
+        final active = store.byId(controller.packId);
+        // E4: the wallpaper outlives a switch to a colors-only pack —
+        // fall back to the last pack that shipped one.
+        final pack =
+            active?.spec.wallpaper != null
+            ? active
+            : store.byId(controller.wallpaperPackId) ?? active;
         final wallpaper = pack?.spec.wallpaper;
         final bytes = pack?.wallpaperBytes;
         if (pack == null || wallpaper == null || bytes == null) {

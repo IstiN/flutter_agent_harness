@@ -673,5 +673,7 @@
   "themePackDelete": "Remove",
   "themePackActiveChip": "active",
   "themePackWallpaperChip": "wallpaper",
+  "themePackImported": "Theme pack \"{name}\" installed",
+  "@themePackImported": { "placeholders": { "name": { "type": "String" } } },
   "themePackImportFailed": "Theme pack rejected"
 }

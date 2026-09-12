@@ -77,5 +77,32 @@ void main() {
       expect(reloaded.mode, FahThemeMode.light);
       expect(reloaded.themeMode, ThemeMode.light);
     });
+
+    test('E4: a colors-only pack keeps the current wallpaper choice', () async {
+      final controller = ThemeController.inMemory();
+      await controller.setPack('a', hasWallpaper: true);
+      expect(controller.wallpaperPackId, 'a');
+
+      // Switch to a colors-only pack: the wallpaper source stays 'a'.
+      await controller.setPack('b', hasWallpaper: false);
+      expect(controller.packId, 'b');
+      expect(controller.wallpaperPackId, 'a');
+
+      // Reverting to the stock look clears both (AC5 atomic revert).
+      await controller.setPack(null);
+      expect(controller.packId, isNull);
+      expect(controller.wallpaperPackId, isNull);
+    });
+
+    test('the pack and wallpaper ids round-trip through the env', () async {
+      final env = MemoryExecutionEnv();
+      final controller = await ThemeController.load(env);
+      await controller.setPack('forest-walk', hasWallpaper: true);
+      await controller.setPack('mono', hasWallpaper: false);
+
+      final reloaded = await ThemeController.load(env);
+      expect(reloaded.packId, 'mono');
+      expect(reloaded.wallpaperPackId, 'forest-walk');
+    });
   });
 }

@@ -75,7 +75,10 @@ final class FaThemeBridgeHost implements FaThemeBridge {
     // must not wedge the next apply).
     _gate = _gate.then((_) {}, onError: (_) {});
     if (!granted) return {'applied': false, 'reason': 'denied'};
-    await _controller.setPack(id);
+    await _controller.setPack(
+      id,
+      hasWallpaper: pack.spec.wallpaper != null,
+    );
     return {'applied': true, 'pack': descriptorOf(pack)};
   }
 }

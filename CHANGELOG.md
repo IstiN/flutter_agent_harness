@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.356
+
+- feat(169): declarative-only secured theme API — theme packs
+  (`theme.json` + optional wallpaper image in a `.zip`; strict schema
+  validation with unknown-key rejection, path-traversal/symlink/size
+  screens, WCAG contrast warnings), a Settings section to import, switch
+  and remove packs (a colors-only apply keeps the current wallpaper;
+  removing the active pack reverts atomically), wallpaper layers in the
+  chat, apps grid and launcher screens, and the `jsr.fa.theme` bridge —
+  `list`/`current`/`apply` behind the `theme` permission with a consent
+  dialog per apply. Apps can never install or delete packs (no such API
+  exists; pinned by a byte-scan test).
+
 ## 0.1.344
 
 

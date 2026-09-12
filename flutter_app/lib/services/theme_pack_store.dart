@@ -92,9 +92,12 @@ class ThemePackStore extends ChangeNotifier {
           (await _env.readBinaryFile('$rootDir/$id/$declared')).valueOrNull;
       if (bytes == null) {
         // E2: wallpaper asset deleted after install — the pack stays
-        // usable, colors-only (the bytes slot reads null).
-        final validation = validateThemePack(decoded, const {});
-        final spec = validation.spec;
+        // usable as colors-only. Re-validate WITHOUT the wallpaper
+        // declaration: a spec must never promise an asset that is not on
+        // disk (the colors still apply; the layer renders nothing).
+        decoded.remove('wallpaper');
+        final fallback = validateThemePack(decoded, const {});
+        final spec = fallback.spec;
         if (spec == null) return null;
         return InstalledThemePack(spec: spec, wallpaperBytes: null);
       }

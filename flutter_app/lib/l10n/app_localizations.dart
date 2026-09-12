@@ -3326,6 +3326,12 @@ abstract class AppLocalizations {
   /// **'wallpaper'**
   String get themePackWallpaperChip;
 
+  /// No description provided for @themePackImported.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme pack \"{name}\" installed'**
+  String themePackImported(String name);
+
   /// No description provided for @themePackImportFailed.
   ///
   /// In en, this message translates to:

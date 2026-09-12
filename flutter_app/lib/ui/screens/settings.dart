@@ -43,6 +43,10 @@ import 'package:fa/ui/screens/settings_key_dialogs.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
+import 'package:fa/services/theme_pack_store.dart';
+import 'package:fa/services/upload.dart';
+import 'package:fa/services/upload_picker_stub.dart'
+    if (dart.library.html) 'package:fa/services/upload_picker_web.dart';
 import 'package:fa/transformers_js/transformers_js_cache_section.dart';
 import 'package:fa/transformers_js/transformers_js_service.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
@@ -1492,6 +1496,134 @@ class ThemeModeSection extends StatelessWidget {
   }
 }
 
+/// The settings "Theme packs" section (issue #169): the stock look plus
+/// every installed pack as a radio group, `.zip` import through the
+/// platform [UploadPicker], and per-pack removal. Removing the ACTIVE
+/// pack reverts the app to the default look in the same tap. Hides when
+/// the scopes are absent (tests pump the bare settings form).
+class ThemePacksSection extends StatelessWidget {
+  const ThemePacksSection({super.key, this.picker});
+
+  /// File chooser for the `.zip` import; `null` falls back to the
+  /// platform picker, which exists only on the web (the same contract as
+  /// the attach sheet) — elsewhere the import button hides. Tests inject
+  /// a fake.
+  final UploadPicker? picker;
+
+  Future<void> _import(BuildContext context, ThemePackStore store) async {
+    final files =
+        await (picker ?? createUploadPicker())?.pick() ??
+        const <UploadFile>[];
+    if (files.isEmpty) return;
+    final result = await store.installFromZip(files.first.bytes);
+    if (!context.mounted) return;
+    final l10n = context.l10n;
+    final message =
+        result.spec == null
+            ? '${l10n.themePackImportFailed}:\n${result.reasons.join('\n')}'
+            : result.warnings.isEmpty
+            ? l10n.themePackImported(result.spec!.name)
+            : '${l10n.themePackImported(result.spec!.name)}\n'
+                '${result.warnings.join('\n')}';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 6),
+      ),
+    );
+  }
+
+  Future<void> _remove(
+    BuildContext context,
+    ThemePackStore store,
+    ThemeController controller,
+    InstalledThemePack pack,
+  ) async {
+    await store.uninstall(pack.id);
+    // The active choice reverts with the pack (never a dangling id).
+    if (controller.packId == pack.id) {
+      await controller.setPack(null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final store = ThemePackScope.maybeOf(context);
+    final controller = FahThemeScope.maybeOf(context);
+    if (store == null || controller == null) return const SizedBox.shrink();
+    final canPick = picker != null || createUploadPicker() != null;
+    return ListenableBuilder(
+      listenable: Listenable.merge([store, controller]),
+      builder: (context, _) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    context.l10n.themePacksTitle,
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ),
+                if (canPick)
+                  TextButton.icon(
+                    onPressed: () => _import(context, store),
+                    icon: const Icon(Icons.upload_file, size: 18),
+                    label: Text(context.l10n.themePackImport),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              context.l10n.themePacksSubtitle,
+              style: theme.textTheme.bodySmall,
+            ),
+            RadioGroup<String?>(
+              groupValue: controller.packId,
+              onChanged: (id) => controller.setPack(
+                id,
+                hasWallpaper:
+                    id != null && store.byId(id)?.spec.wallpaper != null,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  RadioListTile<String?>(
+                    value: null,
+                    title: Text(context.l10n.themePackDefault),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                  ),
+                  for (final pack in store.packs)
+                    RadioListTile<String?>(
+                      key: ValueKey('theme-pack-${pack.id}'),
+                      value: pack.id,
+                      title: Text(pack.name),
+                      subtitle: pack.spec.wallpaper == null
+                          ? null
+                          : Text(context.l10n.themePackWallpaperChip),
+                      secondary: IconButton(
+                        tooltip: context.l10n.themePackDelete,
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        onPressed: () =>
+                            _remove(context, store, controller, pack),
+                      ),
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 /// The settings "Chat text size" section: a live slider over the shared
 /// [ChatTextStore] (nearest [ChatTextScope]) — every open transcript
 /// re-renders at the new size immediately. Hides without a store.
@@ -2163,6 +2295,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ],
               const ThemeModeSection(),
+              const ThemePacksSection(),
 
               const SizedBox(height: 24),
               const Divider(),

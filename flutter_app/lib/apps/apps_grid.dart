@@ -14,6 +14,7 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_app_view.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatHost;
+import 'package:fa/ui/widgets/fah_wallpaper.dart';
 
 /// Grid launcher for the JS apps living in the env's `apps/` folder.
 ///
@@ -102,7 +103,12 @@ class _AppsGridViewState extends State<AppsGridView> {
           ),
         ],
       ),
-      body: _buildBody(theme),
+      body: Stack(
+        children: [
+          const Positioned.fill(child: FahWallpaper()),
+          Positioned.fill(child: _buildBody(theme)),
+        ],
+      ),
     );
   }
 

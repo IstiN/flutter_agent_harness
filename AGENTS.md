@@ -897,9 +897,11 @@ factual: paths, commands, invariants — no essays.
   routes by executing context and refuses post-dispose evaluate): apps live in env-shared `apps/<id>/
   {manifest.json, widget.js}`; permissions in `apps_permissions.json` (network/
   allowedCommands/llm/homekit/health/contacts/calendar/microphone/
-  notifications/media/keys — default denied);
+  notifications/media/keys/theme — default denied);
   `jsr.fa.*` bridge over exec (`fa.llm`, `fa.calendar`, `fa.home.*`,
-  `fa.health.*`, `fa.asr.*`, `fa.notify.*`, `fa.keys` — list/get/request the
+  `fa.health.*`, `fa.asr.*`, `fa.notify.*`, `fa.theme` — declarative-only
+  list/current/apply over installed theme packs, consent dialog per apply,
+  no install/delete surface (issue #169); `fa.keys` — list/get/request the
   host's merged secrets (AgentService.hostSecrets); `request` renders the
   shared secret_request sheet from JsAppView and persists via
   AgentService.acceptSecretGrant; contacts is a gated "not

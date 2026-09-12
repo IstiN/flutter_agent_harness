@@ -74,6 +74,7 @@ class FaChatScreen extends StatefulWidget {
     this.wallpaperBuilder,
     this.avatarBuilder,
     this.onAuthRecovery,
+    this.onPermissionAction,
     this.audioControllerFactory,
     this.videoControllerFactory,
   });

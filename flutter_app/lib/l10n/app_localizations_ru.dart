@@ -1880,5 +1880,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get themePackWallpaperChip => 'обои';
 
   @override
+  String themePackImported(String name) {
+    return 'Тема \"$name\" установлена';
+  }
+
+  @override
   String get themePackImportFailed => 'Тема отклонена';
 }

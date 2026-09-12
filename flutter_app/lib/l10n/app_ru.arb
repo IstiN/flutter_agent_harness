@@ -658,5 +658,7 @@
   "themePackDelete": "Удалить",
   "themePackActiveChip": "активна",
   "themePackWallpaperChip": "обои",
+  "themePackImported": "Тема \"{name}\" установлена",
+  "@themePackImported": { "placeholders": { "name": { "type": "String" } } },
   "themePackImportFailed": "Тема отклонена"
 }
