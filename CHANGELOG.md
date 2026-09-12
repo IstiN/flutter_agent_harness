@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.358
+
 
 - fix(195): images follow-up from the #190 review. F2: a stale
   `[Image N]` citation in history no longer silently rebinds to the
@@ -3398,6 +3399,8 @@
 - ci(161): daily auto-publish — TestFlight + pub.dev + CLI + website + add-in, self-filing fix issues (#170)
 - fix(152): root-cause the browser-ext e2e dispatch flake class (#158)
 - ci(177): drop the 'Quality gates' alias — protection switched to 'Quality gate' (#192)
+
+## Unreleased
 
 ## Unreleased
 
