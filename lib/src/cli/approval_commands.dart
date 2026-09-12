@@ -585,19 +585,28 @@ extension ApprovalCommands on AgentCli {
     return norm(a) == norm(b);
   }
 
-  /// Live context pressure for the status line: provider-reported usage up
-  /// to the last reported turn plus an estimate of the trailing messages
-  /// (what the NEXT request carries) — moves mid-run as tool results and
-  /// the stream land, instead of freezing at the last turn's prompt size.
-  /// The SETTLED part is memoized on the message list identity + length
-  /// ([SettledContextEstimate]); the in-flight stream message is estimated
-  /// per call and never touches the memo. Keying the settled memo on the
-  /// stream's growing length would invalidate it on EVERY delta — a full
-  /// O(context) re-scan dozens of times per second (the "typing lag").
+  /// Live context pressure for the status line: what the NEXT request
+  /// carries, in the SAME basis the loop's over-window guard and the
+  /// compaction threshold enforce ([estimateRequestTokens]) —
+  /// provider-reported usage up to the last reported turn plus an estimate
+  /// of the trailing messages, and, when no usage anchor prices them in
+  /// (fresh/resumed session, provider without usage reporting), the
+  /// system-prompt and tool-schema overhead every request carries.
+  /// The SETTLED part is memoized on the message list length + last
+  /// instance ([SettledContextEstimate]); the in-flight stream message is
+  /// estimated per call and never touches the memo. Keying the settled
+  /// memo on the stream's growing length would invalidate it on EVERY
+  /// delta — a full O(context) re-scan dozens of times per second (the
+  /// "typing lag").
   int _liveContextTokens() {
-    final messages = _agent.state.messages;
-    final streaming = _agent.state.streamingMessage;
-    var tokens = _ctxEstimate.settled(messages);
+    final state = _agent.state;
+    final messages = state.messages;
+    final streaming = state.streamingMessage;
+    final estimate = _ctxEstimate.settledEstimate(messages);
+    var tokens = estimate.tokens;
+    if (estimate.lastUsageIndex == null) {
+      tokens += _requestOverheadTokens(state.systemPrompt, state.tools);
+    }
     if (streaming != null) tokens += estimateTokens(streaming);
     return tokens;
   }

@@ -154,6 +154,78 @@ void main() {
       expect(isContextWindowExhaustedError('provider exploded'), isFalse);
       expect(isContextWindowExhaustedError(null), isFalse);
     });
+    test('the over-window guard counts the system prompt and tool schemas '
+        'when no usage anchor covers them', () async {
+      final tinyWindow = const Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 100,
+        maxTokens: 4096,
+      );
+      final fake = _FakeStreamFunction([_textTurn('never')]);
+      // 10 estimated transcript tokens — far under the window on its own…
+      final prompt = UserMessage.text('x' * 40);
+      // …but the wire request also carries a ~200-token system prompt plus
+      // the tool schema, which a transcript-only estimate drops (the
+      // resumed-session bug: the meter read 64% while the request was
+      // already over the window).
+      final stream = agentLoop(
+        prompts: [prompt],
+        context: Context(
+          systemPrompt: 's' * 800,
+          messages: const [],
+          tools: [
+            Tool(name: 'read', description: 'd' * 40, parameters: const {}),
+          ],
+        ),
+        config: AgentLoopConfig(model: tinyWindow),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      final messages = await stream.result as List<dynamic>;
+      expect(fake.calls, 0);
+      final assistant = messages.whereType<AssistantMessage>().single;
+      expect(assistant.stopReason, StopReason.error);
+      expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
+    });
+    test('the over-window guard does not double-count the system prompt '
+        'when provider usage anchors the estimate', () async {
+      final tinyWindow = const Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 100,
+        maxTokens: 4096,
+      );
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      // A 50-token anchor: the provider's reported total already includes
+      // the system prompt and tool schemas of that request. Adding the
+      // overhead again would push 50 + ~200 over the 100-token window and
+      // trip the guard on a request that fits.
+      final anchor = AssistantMessage(
+        content: [TextContent(text: 'hi')],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero.copyWith(input: 40, output: 10, totalTokens: 50),
+        stopReason: StopReason.stop,
+        timestamp: DateTime.utc(2026),
+      );
+      final stream = agentLoop(
+        prompts: [UserMessage.text('x' * 40)],
+        context: Context(systemPrompt: 's' * 800, messages: [anchor]),
+        config: AgentLoopConfig(model: tinyWindow),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      await stream.result;
+      expect(fake.calls, 1);
+    });
     test('single turn without tools emits full lifecycle in order', () async {
       final fake = _FakeStreamFunction([_textTurn('hello')]);
       final prompt = UserMessage.text('hi');
