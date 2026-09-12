@@ -581,12 +581,13 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   // --- tile menu (hold-release without movement) ---------------------------
 
-  /// The iOS-style tile context menu: live-tile apps get size choices
-  /// (Small 2x2 / Medium 4x2 / Large 4x4, persisted as a `tileSizes`
-  /// override) plus "Reset to default" while an override exists. Demo apps
-  /// additionally get "Restore reference version" — the escape hatch when
-  /// ownership-aware seeding skips user/agent-modified (possibly broken)
-  /// demo files; `storage.json` is never touched.
+  /// The iOS-style tile context menu: live-tile apps get the preset span
+  /// choices (issue #166: Icon 1x1 / Tall 1x2 / Wide 2x1 / Small 2x2 /
+  /// Column 1x3 / Row 3x1 / Medium 4x2 / Large 4x4, persisted as a
+  /// `tileSizes` override) plus "Reset to default" while an override
+  /// exists. Demo apps additionally get "Restore reference version" — the
+  /// escape hatch when ownership-aware seeding skips user/agent-modified
+  /// (possibly broken) demo files; `storage.json` is never touched.
   Future<void> _showTileMenu(String key, Offset globalPosition) async {
     if (!key.startsWith('app:')) return;
     final app = _appsById[key.substring(4)];
@@ -627,7 +628,11 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         : override ?? (w: tile.widthCells, h: tile.heightCells);
     final choices = <({String label, TileSize size})>[
       (label: context.l10n.launcherTileSizeIcon, size: (w: 1, h: 1)),
+      (label: context.l10n.launcherTileSizeTall, size: (w: 1, h: 2)),
+      (label: context.l10n.launcherTileSizeWide, size: (w: 2, h: 1)),
       (label: context.l10n.launcherTileSizeSmall, size: (w: 2, h: 2)),
+      (label: context.l10n.launcherTileSizeColumn, size: (w: 1, h: 3)),
+      (label: context.l10n.launcherTileSizeRow, size: (w: 3, h: 1)),
       (label: context.l10n.launcherTileSizeMedium, size: (w: 4, h: 2)),
       (label: context.l10n.launcherTileSizeLarge, size: (w: 4, h: 4)),
     ];
