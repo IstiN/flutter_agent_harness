@@ -235,7 +235,9 @@ jobs:
           else
             echo "seeding companion dylibs from flutter_gemma native-v0.16.0"
             mkdir -p "$GEMMA_CACHE"
-            curl -L --retry 3 --retry-delay 10 --max-time 600 \
+            # --retry alone skips transient mid-transfer resets (curl 56);
+            # --retry-all-errors retries them (sha256 below guards corruption)
+            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
               -o /tmp/litertlm-macos_arm64.tar.gz \
               https://github.com/DenisovAV/flutter_gemma/releases/download/native-v0.16.0/litertlm-macos_arm64.tar.gz
             echo "c597554a7a5cdf099658227099a54ef4916c5802b9182757e656e1788f9426b6  /tmp/litertlm-macos_arm64.tar.gz" | shasum -a 256 -c -
@@ -290,7 +292,8 @@ jobs:
             cp -R "$LOCAL_SRC" "$DEST/"
           else
             echo "Local framework not found, downloading from upstream release..."
-            curl -L --retry 3 --retry-delay 10 --max-time 600 \
+            # --retry alone skips transient mid-transfer resets (curl 56)
+            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
               -o /tmp/WasmRun.xcframework.zip \
               https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
             unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
