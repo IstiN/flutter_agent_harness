@@ -500,7 +500,13 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
         return sw.faAgent.getState().hub?.agentId ?? '';
       });
       expect(extAgentId).toMatch(/^[0-9a-f]{16}$/);
-      expect(phub.helloCount()).toBeGreaterThanOrEqual(1);
+      // Poll, not instant: the hub-side hello event reaches this process
+      // via hub_server's 100ms stdout ticker — an instant assert races it
+      // (green twice at c5b7ccd9, red twice at c017e22d with identical
+      // code — pure observability lag on a loaded runner).
+      await expect
+        .poll(() => phub.helloCount(), { timeout: 10_000 })
+        .toBeGreaterThanOrEqual(1);
       await fa.collectEvents();
 
       // 3. The CLI joins the SAME protected hub with the SAME password
@@ -517,7 +523,15 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
       mock.resetScript();
       const cli = CliProc.start(home, mock.port, pwd);
       try {
-        await new Promise((r) => setTimeout(r, 5_000));
+        // Gate the prompt on the CLI's hub enrollment (#152 flake class —
+        // same race the DM test fixed): the fixed 5s sleep loses the prompt
+        // or fires dap_dm before the handshake on a loaded runner.
+        await expect
+          .poll(
+            () => phub.agentIds().find((id) => id !== extAgentId) ?? null,
+            { timeout: 60_000 },
+          )
+          .not.toBeNull();
         cli.prompt('dm the extension agent');
 
         // 4. The hub routed CLI → ext and the extension answered; the
