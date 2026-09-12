@@ -350,6 +350,12 @@ abstract class AppLocalizations {
   /// **'Open full chat'**
   String get appsOpenFullChatTooltip;
 
+  /// No description provided for @appsOpenTrajectoryTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Open trajectory'**
+  String get appsOpenTrajectoryTooltip;
+
   /// No description provided for @appsPermissionCalendar.
   ///
   /// In en, this message translates to:

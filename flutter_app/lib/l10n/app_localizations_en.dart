@@ -154,6 +154,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appsOpenFullChatTooltip => 'Open full chat';
 
   @override
+  String get appsOpenTrajectoryTooltip => 'Open trajectory';
+
+  @override
   String get appsPermissionCalendar => 'Calendar';
 
   @override
