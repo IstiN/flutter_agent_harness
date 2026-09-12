@@ -33,6 +33,11 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs of the same ref (issue #177).
+concurrency:
+  group: Store Metadata & Screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ios:
     name: iOS App Store metadata & screenshots
