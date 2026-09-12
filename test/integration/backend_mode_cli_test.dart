@@ -195,6 +195,51 @@ void main() {
     expect(url, startsWith('data:image/png;base64,'));
   });
 
+  test('--attach of a non-image file passes through as a path reference',
+      () async {
+    final server = await MockLlmServer.start();
+    addTearDown(server.stop);
+    server.enqueueText('read it');
+
+    // Not sniffable as png/jpeg/gif/webp: no magic bytes. Must NOT ride
+    // the request as an application/octet-stream image block — it passes
+    // through as a path reference the agent opens with its tools.
+    final notes = File('${workspace.path}/notes.dat')
+      ..writeAsStringSync('plain payload');
+
+    final result = await runFah(server, [
+      '--attach',
+      notes.path,
+      '--output',
+      'events',
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+
+    expect(server.chatBodies, hasLength(1));
+    final body = jsonDecode(server.chatBodies.single) as Map<String, dynamic>;
+    final messages = body['messages'] as List;
+    final user = messages.firstWhere((m) => (m as Map)['role'] == 'user')
+        as Map<String, dynamic>;
+    final content = user['content'];
+    // With no image blocks the prompt rides as a plain string; typed
+    // parts appear only once an image block joins the message.
+    final text = content is String
+        ? content
+        : (content as List)
+              .where((part) => (part as Map)['type'] == 'text')
+              .map((part) => part['text'] as String)
+              .join('\n');
+    expect(text, contains('[attached file: ${notes.absolute.path}'));
+    expect(text, contains('read it with your tools]'));
+    // No binary image block was sent for the unknown mime.
+    if (content is List) {
+      expect(
+        content.where((part) => (part as Map)['type'] == 'image_url'),
+        isEmpty,
+      );
+    }
+  });
+
   test('SIGTERM mid-turn: cancelled frame, resumable JSONL, exit 130',
       () async {
     // An inline one-shot server that accepts the chat request and HOLDS

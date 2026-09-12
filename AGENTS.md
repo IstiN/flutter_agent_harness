@@ -413,6 +413,21 @@ factual: paths, commands, invariants — no essays.
   (uniform `task_status`/`task_send`); `/a2a` shows server status;
   `fa serve --a2a [--port N] [--token T]` mounts this agent as an endpoint
   (`bin/serve_a2a.dart`).
+- `lib/src/cli/hep.dart` + `agent_cli_hep_io.dart` — HEP v1, the Harness
+  Event Protocol (`fa --output events[=full]`, issue #155): strict JSONL
+  on stdout for server-side supervisors, one JSON object per line,
+  flushed per line. A TURN is one assistant LLM ROUND, not one user
+  message — a user turn that runs tools yields SEVERAL terminal frames
+  (`turn_done` per round, ids incrementing). `HepWriter` is
+  `AgentListener`-shaped (`agent.subscribe(hep.handleEvent)`); the
+  `HepEventsIO` decorator (a `part of agent_cli.dart`) drops
+  `CliIO.write` so stdout stays pure while diagnostics keep stderr.
+  Frame catalog, ordering/flush guarantees and versioning policy:
+  docs/hep.md; byte shape pinned by golden tests (test/cli/hep_test.dart).
+  `--attach` sniffs image mimes by magic bytes (png/jpeg/gif/webp ride
+  as base64 blocks); any other file passes through as an
+  `[attached file: …]` path reference appended to the prompt (issue
+  #196) — never an octet-stream image block.
 - `bin/fah.dart` — the `fah`/`fa` CLI. REPL (no args) or headless
   (`fa "prompt"` / `-p` / `--prompt-file <path>` (alias `-f`), mutually
   exclusive). First positional naming an EXISTING file is the prompt source
