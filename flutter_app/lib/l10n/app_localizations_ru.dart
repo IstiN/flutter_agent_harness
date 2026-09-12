@@ -156,6 +156,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsOpenFullChatTooltip => 'Открыть полный чат';
 
   @override
+  String get appsOpenTrajectoryTooltip => 'Открыть траекторию';
+
+  @override
   String get appsPermissionCalendar => 'Календарь';
 
   @override
