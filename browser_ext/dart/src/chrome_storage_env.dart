@@ -33,6 +33,15 @@ import 'chrome_api.dart' show StorageApi;
 /// mid-walk view. Persistence problems never crash boot; post-boot save
 /// failures stay dirty and retry on the next mutation or [flush].
 ///
+/// Two ordering guarantees pin the migration promise (issue #238): the v1
+/// envelope is replaced by the session-stripped v2 shape only in a pass
+/// that wrote EVERY session record — until then it is the only durable
+/// copy of the sessions, so a failed record write leaves it untouched —
+/// and stale-record eviction runs FIRST, so a later failure in the pass
+/// cannot resurrect a deleted session. Residual: an SW reaped between the
+/// fs removal and the eviction step resurrects that one session on next
+/// boot — deletion metadata, never chat data.
+///
 /// There is no shell in a browser extension: [exec] answers with a clean
 /// `shellUnavailable` error naming the sandbox — the `browser_*` tools are
 /// the action surface.
@@ -66,8 +75,7 @@ final class ChromeStorageEnv implements ExecutionEnv {
   /// session_reset.dart's sessionArchivePath). Keep in sync with both.
   static final _sessionPathPattern = RegExp(r'^/session(-.+)?\.jsonl$');
 
-  static bool _isSessionPath(String path) =>
-      _sessionPathPattern.hasMatch(path);
+  static bool _isSessionPath(String path) => _sessionPathPattern.hasMatch(path);
 
   static const _persistDelay = Duration(milliseconds: 800);
 
@@ -82,6 +90,11 @@ final class ChromeStorageEnv implements ExecutionEnv {
   /// session file the user deleted — never live session data (issue #228,
   /// eviction vector).
   Set<String> _knownSessionKeys = {};
+
+  /// True while the stored envelope is still the pre-migration v1 (sessions
+  /// inline): the only durable copy of the chat history until a save pass
+  /// writes every session record and replaces it with v2 (issue #238 F1).
+  bool _envelopeIsV1 = false;
 
   /// One console warning per failure burst; reset by the next successful
   /// save so a NEW outage is reported again.
@@ -163,6 +176,10 @@ final class ChromeStorageEnv implements ExecutionEnv {
       for (final (path, bytes) in files) {
         await _delegate.writeBinaryFile(path, bytes);
       }
+      // A v1 envelope just came back to life: until a save pass has
+      // written every session record and replaced it, it stays the only
+      // durable copy of the sessions (issue #238 F1).
+      _envelopeIsV1 = version == 1;
       return true;
     } on Object {
       // Corrupt snapshot → clean start, never crash boot.
@@ -245,11 +262,16 @@ final class ChromeStorageEnv implements ExecutionEnv {
     }
   }
 
-  /// One save pass: session records first (each its own storage item, so
-  /// an over-quota session fails ALONE and previously-saved records are
-  /// never touched), then the session-free envelope, then removal of
-  /// records whose session file was deleted. Throws when anything failed —
-  /// the caller re-arms the retry.
+  /// One save pass: eviction of records whose session file was deleted
+  /// FIRST (issue #238 F2 — a later failure in the pass must not
+  /// resurrect a deleted session), then session records (each its own
+  /// storage item, so an over-quota session fails ALONE and
+  /// previously-saved records are never touched), then the session-free
+  /// envelope — but never while the stored envelope is still the v1
+  /// migration source and a record write failed: until every session
+  /// record is durable, that envelope is the only durable copy of the
+  /// sessions (issue #238 F1). Throws when anything failed — the caller
+  /// re-arms the retry.
   Future<void> _saveOnce(StorageApi storage) async {
     // Synchronous point-in-time export (issues #201/#228): the old async
     // walk yielded between entries, so a mid-walk append could persist a
@@ -266,12 +288,36 @@ final class ChromeStorageEnv implements ExecutionEnv {
       }
     }
     var failed = false;
+    // Evict ONLY records whose session file is gone from the tree (user
+    // delete / session reset); live session data is never dropped. Runs
+    // before the writes so nothing later in the pass can skip it.
+    final stale = _knownSessionKeys.difference(sessionRecords.keys.toSet());
+    if (stale.isNotEmpty) {
+      try {
+        await storage.remove(stale.toList());
+        _knownSessionKeys.removeAll(stale);
+      } on Object {
+        failed = true; // retried by the next pass
+      }
+    }
     for (final record in sessionRecords.entries) {
       try {
         await storage.set({record.key: record.value});
       } on Object {
         failed = true; // This session stays dirty; the rest keep saving.
       }
+    }
+    if (failed && _envelopeIsV1) {
+      // Migration ordering (issue #238 F1): overwriting the v1 envelope
+      // with the session-stripped v2 shape while a record write failed
+      // would destroy the only durable copy of the sessions. Already-v2
+      // envelopes keep flowing below: their sessions live in their own
+      // records, so a failed record costs at most that session's
+      // unsaved tail (#228 vector 4).
+      throw StateError(
+        'a session record could not be saved (quota?); keeping the v1 '
+        'envelope as the only durable copy of the sessions',
+      );
     }
     await storage.set({
       storageKey: jsonEncode({
@@ -283,12 +329,7 @@ final class ChromeStorageEnv implements ExecutionEnv {
     if (failed) {
       throw StateError('a session record could not be saved (quota?)');
     }
-    // Evict ONLY records whose session file is gone from the tree (user
-    // delete / session reset); live session data is never dropped.
-    final stale = _knownSessionKeys.difference(
-      sessionRecords.keys.toSet(),
-    );
-    if (stale.isNotEmpty) await storage.remove(stale.toList());
+    _envelopeIsV1 = false;
     _knownSessionKeys = sessionRecords.keys.toSet();
   }
 
