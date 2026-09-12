@@ -113,6 +113,7 @@ import '../tools/availability_gate.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/builtin_tools.dart';
+import '../compaction/structured/expand_tool.dart';
 import '../tools/checkpoint_tool.dart';
 import '../tools/generate_image.dart';
 import '../tools/generate_video.dart';
@@ -520,6 +521,11 @@ class AgentCli {
     // the registry's executor consults the live registry, while the agent's
     // tool list was seeded at construction and needs the explicit update.
     _toolRegistry.registerAll(_checkpoints.tools);
+    _compactExpand = CompactExpandController(
+      agent: _agent,
+      session: () => _session,
+    );
+    _toolRegistry.register(_compactExpand.tool);
     _agent.state.tools = _toolRegistry.tools;
     // Capability-gated availability (issue #19): the gate hides/restores
     // tools per the tools: scope stack and tombstones disabled calls; the
@@ -825,6 +831,10 @@ class AgentCli {
   /// constructed; search is disabled when no LLM provider is injected.
   late final MemoryController _memory;
   late final CheckpointRewindController _checkpoints;
+
+  /// The `compact_expand` controller (issue #148): per-turn expand budget
+  /// reset + tool binding to the LIVE session.
+  late final CompactExpandController _compactExpand;
   TtsrController? _ttsr;
   final _Style _style;
   final bool _useTui;

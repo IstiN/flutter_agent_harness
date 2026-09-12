@@ -45,8 +45,12 @@ import '../session/uuid.dart';
 import '../types.dart';
 import 'token_estimation.dart';
 
+export '../compaction/compaction_engine.dart'
+    show CompactionEngine, resolveCompactionEngine;
 export '../prompts/prompts.g.dart'
     show
+        hideJudgeSystemPrompt,
+        structuredCheckpointPrompt,
         summarizationPrompt,
         summarizationSystemPrompt,
         turnPrefixSummarizationPrompt,
@@ -61,11 +65,12 @@ export '../prompts/prompts.g.dart'
 // `../prompts/prompts.g.dart` and re-exported here so existing imports keep
 // working.
 
-/// The four summarization prompts used by the compaction pipeline, bundled so
-/// CLI prompt overrides (the `prompts:` config section, see
-/// `lib/src/prompts/prompt_overrides.dart`) can replace them without changing
-/// the pipeline's shape. The defaults are the built-in prompts:
-/// [defaultCompactionPrompts] is byte-identical to the historical constants.
+/// The compaction prompts used by both engines, bundled so CLI prompt
+/// overrides (the `prompts:` config section, see
+/// `lib/src/prompts/prompt_overrides.dart`) can replace them without
+/// changing the pipeline's shape. The defaults are the built-in prompts:
+/// [defaultCompactionPrompts] is byte-identical to the historical
+/// constants.
 final class CompactionPrompts {
   /// Creates a prompt bundle; each field defaults to the built-in prompt.
   const CompactionPrompts({
@@ -73,6 +78,8 @@ final class CompactionPrompts {
     this.summary = summarizationPrompt,
     this.summaryUpdate = updateSummarizationPrompt,
     this.turnPrefix = turnPrefixSummarizationPrompt,
+    this.hideJudgeSystem = hideJudgeSystemPrompt,
+    this.structuredCheckpoint = structuredCheckpointPrompt,
   });
 
   /// Resolves the bundle against CLI prompt [overrides] (names mirror the
@@ -96,6 +103,14 @@ final class CompactionPrompts {
         'compaction/turn_prefix',
         turnPrefixSummarizationPrompt,
       ),
+      hideJudgeSystem: overrides.resolve(
+        'compaction/hide_judge',
+        hideJudgeSystemPrompt,
+      ),
+      structuredCheckpoint: overrides.resolve(
+        'compaction/structured_checkpoint',
+        structuredCheckpointPrompt,
+      ),
     );
   }
 
@@ -110,6 +125,12 @@ final class CompactionPrompts {
 
   /// Instructions for a split-turn prefix summary.
   final String turnPrefix;
+
+  /// System prompt of the structured-engine hide judge (issue #148).
+  final String hideJudgeSystem;
+
+  /// Instruction tail of the structured-engine checkpoint call (#148).
+  final String structuredCheckpoint;
 }
 
 /// The built-in compaction prompts (no overrides).

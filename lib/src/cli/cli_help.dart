@@ -309,6 +309,8 @@ PROMPTS
     compaction/summary        first-summary instructions
     compaction/summary_update summary-update instructions
     compaction/turn_prefix    split-turn prefix instructions
+    compaction/hide_judge     structured-engine hide-judge system prompt
+    compaction/structured_checkpoint structured checkpoint instructions
 
   Example:
 
@@ -346,6 +348,12 @@ SESSIONS AND COMPACTION
   older messages are summarized (via the smol role when configured) and
   replaced by the summary; /compact does it on demand. Compaction prompts
   are overridable (see PROMPTS).
+
+  Compaction engine (issue #148): compaction.engine = classic (default,
+  lossy prefix summary) or structured (hide → checkpoint + expand; markers
+  like [3:hidden·tool_result·4.2k] replace hidden content and compact_expand
+  restores it by id). Scope: --compaction-engine flag > project
+  .fah/config.yaml compaction: > ~/.fah/config.yaml compaction:.
 
   The checkpoint and rewind tools let the agent mark the session before an
   exploratory detour and later prune the transcript back to the mark,
