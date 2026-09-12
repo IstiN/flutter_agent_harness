@@ -81,6 +81,7 @@ class AppPermissions {
     this.notifications = false,
     this.media = false,
     this.keys = false,
+    this.theme = false,
   });
 
   factory AppPermissions.fromJson(Map<String, Object?> json) {
@@ -99,6 +100,7 @@ class AppPermissions {
       notifications: json['notifications'] == true,
       media: json['media'] == true,
       keys: json['keys'] == true,
+      theme: json['theme'] == true,
     );
   }
 
@@ -139,6 +141,10 @@ class AppPermissions {
   /// and request new ones through the host's secret prompt.
   final bool keys;
 
+  /// Theme-pack bridge (`jsr.fa.theme`) — list installed packs, read the
+  /// active one, apply one WITH user consent per call (issue #169).
+  final bool theme;
+
   AppPermissions copyWith({
     bool? network,
     bool? llm,
@@ -150,6 +156,7 @@ class AppPermissions {
     bool? notifications,
     bool? media,
     bool? keys,
+    bool? theme,
   }) {
     return AppPermissions(
       network: network ?? this.network,
@@ -163,6 +170,7 @@ class AppPermissions {
       notifications: notifications ?? this.notifications,
       media: media ?? this.media,
       keys: keys ?? this.keys,
+      theme: theme ?? this.theme,
     );
   }
 
@@ -178,6 +186,7 @@ class AppPermissions {
     'notifications': notifications,
     'media': media,
     'keys': keys,
+    'theme': theme,
   };
 }
 

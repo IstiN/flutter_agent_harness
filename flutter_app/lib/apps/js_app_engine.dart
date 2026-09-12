@@ -47,6 +47,24 @@ typedef FaPlatformHandler =
 /// map on every call.
 typedef FaHostKeysSource = Map<String, String> Function();
 
+/// Theme-pack bridge behind `jsr.fa.theme.list/current/apply` (issue #169).
+/// The host implements it; the apply leg ALWAYS renders a consent prompt —
+/// the security model is "declarative data + user consent per apply", so
+/// the interface exposes no install, no uninstall, no raw color writes.
+abstract interface class FaThemeBridge {
+  /// The installed packs as `{id, name, version, hasWallpaper,
+  /// contrastWarnings}` descriptors.
+  Future<List<Map<String, Object?>>> listPacks();
+
+  /// The active pack's descriptor, or null for the stock Fa look.
+  Future<Map<String, Object?>?> currentPack();
+
+  /// Applies one pack by id. An unknown id throws a StateError with
+  /// actionable text; a user decline resolves `{applied: false,
+  /// reason: 'denied'}`; a grant resolves `{applied: true, pack: ...}`.
+  Future<Map<String, Object?>> applyPack(String id);
+}
+
 /// Host-side engine for one JS app: owns the [JsWidgetEngine], wires every
 /// `jsr.*` I/O call through the shared [ExecutionEnv] and the app's
 /// [AppPermissions], and persists JS storage across reloads.
@@ -86,6 +104,9 @@ typedef FaHostKeysSource = Map<String, String> Function();
 ///   [FaHostKeysSource]; `request` opens the same native secret prompt the
 ///   agent's `request_secret` tool uses, via the injected
 ///   [RequestSecretCallback])
+/// - `jsr.fa.theme.list/current/apply` → [AppPermissions.theme] via
+///   [FaThemeBridge]; every `apply` prompts the user for consent (issue
+///   #169's declarative-only, secured theme channel)
 /// - other health actions → the matching flag (stubbed until the platform
 ///   implementations land — a granted call answers "not available").
 ///
@@ -118,6 +139,7 @@ class JsAppEngine {
     this.videoReader,
     this.keysSource,
     this.keyRequestHandler,
+    this.themeBridge,
     this.onEmit,
     this.hostLocale = 'en',
     this.initialTheme = const {},
@@ -195,6 +217,13 @@ class JsAppEngine {
   /// persists a grant; `null` answers with an actionable error, a `null`
   /// result (user declined) rejects the bridge call.
   final RequestSecretCallback? keyRequestHandler;
+
+  /// Theme-pack bridge behind `jsr.fa.theme.list/current/apply` (see
+  /// [FaThemeBridge]); `null` answers with an actionable "not available in
+  /// this session" error. The apply leg ALWAYS prompts the user — the host
+  /// implementation owns the consent dialog; there is no install/uninstall
+  /// bridge call by design (issue #169).
+  final FaThemeBridge? themeBridge;
 
   /// Host sink for the shared `emit` fa bridge — dynamic messages wire it to
   /// the agent back-channel (each emit surfaces as a user message); installed
@@ -617,6 +646,19 @@ jsr.fa.keys = {
   request: function(name, reason) { return jsr.fa.call('keys.request', {name: name, reason: reason}); },
 };
 
+// Theme packs (issue #169): declarative-only theme access, gated on the
+// `theme` manifest flag. list() → {packs: [{id, name, version,
+// hasWallpaper, contrastWarnings}]}; current() → {pack: {...} | null};
+// apply(id) ALWAYS prompts the user — a declined prompt resolves
+// {applied: false, reason: 'denied'}, an unknown id rejects. There is
+// deliberately no install/uninstall: packs enter Fa only through the
+// user's own file import, never through app code.
+jsr.fa.theme = {
+  list: function() { return jsr.fa.call('theme.list', {}); },
+  current: function() { return jsr.fa.call('theme.current', {}); },
+  apply: function(id) { return jsr.fa.call('theme.apply', {id: id}); },
+};
+
 // Widget->host event channel (dynamic messages): fire-and-forget emit of one
 // named event with a JSON payload; the host forwards it to the agent as a
 // user message. Resolves {emitted: true|false} — false when the host has no
@@ -863,6 +905,18 @@ Object.defineProperty(jsr, 'onBack', {
       }
       if (method == 'keys.get') {
         _resolve?.call(id, _keysGet(args));
+        return;
+      }
+      if (method == 'theme.list') {
+        _resolve?.call(id, await _themeList());
+        return;
+      }
+      if (method == 'theme.current') {
+        _resolve?.call(id, await _themeCurrent());
+        return;
+      }
+      if (method == 'theme.apply') {
+        _resolve?.call(id, await _themeApply(args));
         return;
       }
       if (method == 'keys.request') {
@@ -1760,6 +1814,43 @@ Object.defineProperty(jsr, 'onBack', {
       throw StateError('the user declined to provide $name');
     }
     return {'name': result.name, 'value': result.value};
+  }
+
+  /// The permission gate every `jsr.fa.theme.*` call shares: the `theme`
+  /// manifest flag plus a session theme bridge (the host injects one only
+  /// where it can render the consent prompt).
+  FaThemeBridge _gatedTheme() {
+    if (!permissions.theme) throw StateError(_denied('theme'));
+    final bridge = themeBridge;
+    if (bridge == null) {
+      throw StateError(
+        'theme packs are not available in this session — open a session '
+        'screen that supports them',
+      );
+    }
+    return bridge;
+  }
+
+  /// `jsr.fa.theme.list()` → `{packs: [...]}` — the installed packs as
+  /// declarative descriptors (id, name, version, hasWallpaper,
+  /// contrastWarnings). No colors cross the wire here; an app that wants
+  /// the active palette reads `jsr.theme` (pushed by the host).
+  Future<Map<String, Object?>> _themeList() async =>
+      {'packs': await _gatedTheme().listPacks()};
+
+  /// `jsr.fa.theme.current()` → `{pack: {...} | null}` — the active pack's
+  /// descriptor, null for the stock Fa look.
+  Future<Map<String, Object?>> _themeCurrent() async =>
+      {'pack': await _gatedTheme().currentPack()};
+
+  /// `jsr.fa.theme.apply({id})` → `{applied: true|false, reason?}` — asks
+  /// the user; the host ALWAYS prompts (issue #169 security model). A
+  /// declined prompt resolves `{applied: false, reason: 'denied'}` (a
+  /// normal outcome, not an error); an unknown id rejects.
+  Future<Map<String, Object?>> _themeApply(Map<String, Object?> args) async {
+    final id = (args['id'] ?? '').toString().trim();
+    if (id.isEmpty) throw StateError('id is required');
+    return _gatedTheme().applyPack(id);
   }
 
   /// Validates the `messages` argument of `llm.chat`/`llm.stream`:

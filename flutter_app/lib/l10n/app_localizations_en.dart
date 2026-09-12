@@ -192,6 +192,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'jsr.fa.keys — read the API keys saved in Fa and request new ones';
 
   @override
+  String get appsPermissionTheme => 'Theme packs';
+
+  @override
+  String get appsPermissionThemeDesc =>
+      'jsr.fa.theme — list theme packs and apply one (the user confirms every apply)';
+
+  @override
   String get appsPermissionLlm => 'LLM';
 
   @override
@@ -1813,4 +1820,52 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get dynamicTileRetry => 'Retry';
+
+  @override
+  String get themeConsentTitle => 'Apply theme pack?';
+
+  @override
+  String themeConsentBody(String app, String pack) {
+    return '$app wants to apply the theme pack \"$pack\".';
+  }
+
+  @override
+  String get themeConsentContrast =>
+      'Warning: some color pairs in this pack are below WCAG AA contrast (4.5:1).';
+
+  @override
+  String get themeConsentApply => 'Apply';
+
+  @override
+  String get themeConsentDeny => 'Keep current';
+
+  @override
+  String get themePacksTitle => 'Theme packs';
+
+  @override
+  String get themePacksSubtitle =>
+      'Install a .zip with theme.json, switch the active pack, or remove one';
+
+  @override
+  String get themePackDefault => 'Default Fa look';
+
+  @override
+  String get themePackImport => 'Import theme pack';
+
+  @override
+  String get themePackDelete => 'Remove';
+
+  @override
+  String get themePackActiveChip => 'active';
+
+  @override
+  String get themePackWallpaperChip => 'wallpaper';
+
+  @override
+  String themePackImported(String name) {
+    return 'Theme pack \"$name\" installed';
+  }
+
+  @override
+  String get themePackImportFailed => 'Theme pack rejected';
 }

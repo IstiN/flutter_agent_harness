@@ -71,9 +71,10 @@ class FaChatScreen extends StatefulWidget {
     this.settingsBuilder,
     this.fileBrowserBuilder,
     this.composerBuilder,
+    this.wallpaperBuilder,
     this.avatarBuilder,
-    this.onPermissionAction,
     this.onAuthRecovery,
+    this.onPermissionAction,
     this.audioControllerFactory,
     this.videoControllerFactory,
   });
@@ -105,6 +106,12 @@ class FaChatScreen extends StatefulWidget {
   /// Replacement composer; null builds the default [ChatComposer] with
   /// [features].
   final FaChatComposerBuilder? composerBuilder;
+
+  /// Wallpaper layer painted under the transcript (theme packs): when
+  /// non-null the chat surface paints transparent so the layer shows
+  /// through, and the builder decides what renders (image at the pack's
+  /// fit/opacity, color fallback). Null keeps the stock opaque surface.
+  final WidgetBuilder? wallpaperBuilder;
 
   /// Leading-avatar builder for transcript messages (see
   /// [ChatMessageTile.avatarBuilder]); null renders no avatars — the stock
@@ -836,7 +843,6 @@ class _FaChatScreenState extends State<FaChatScreen>
       ),
     );
   }
-
   Widget _buildChatBody(BuildContext context) {
     final composerBuilder = widget.composerBuilder;
     final strings = FaChatStrings.of(context);
@@ -848,7 +854,8 @@ class _FaChatScreenState extends State<FaChatScreen>
     // the top of the file is reached (E6).
     final historyAbove = _historyAbove;
     final historyBelow = _historyBelow;
-    return Column(
+    final wallpaper = widget.wallpaperBuilder;
+    Widget body = Column(
       children: [
         if (_error case final error?)
           Material(
@@ -885,6 +892,10 @@ class _FaChatScreenState extends State<FaChatScreen>
             currentUserId: 'user',
             resolveUser: _resolveUser,
             chatController: _chatController,
+            // With a wallpaper layer the transcript surface paints
+            // transparent so the layer underneath shows through (E2: the
+            // layer itself owns the color fallback when the image is gone).
+            backgroundColor: wallpaper == null ? null : const Color(0x00000000),
             builders: Builders(
               textMessageBuilder: _buildTextMessage,
               customMessageBuilder: _buildCustomMessage,
@@ -895,7 +906,7 @@ class _FaChatScreenState extends State<FaChatScreen>
                     scrollController: _chatScrollController,
                     // Reversed list (the learn.ai pattern): index 0 is the
                     // newest message, the list starts AT the bottom — no
-                    // initial scroll-to-end, no jump, no "stuck mid-list"
+                    // initial scroll-to-end, no jump, or "stuck mid-list"
                     // on long transcripts. New rows grow upwards, exactly
                     // like a chat.
                     reversed: true,
@@ -930,6 +941,13 @@ class _FaChatScreenState extends State<FaChatScreen>
         composerBuilder != null
             ? composerBuilder(context, widget.service)
             : ChatComposer(service: widget.service, features: widget.features),
+      ],
+    );
+    if (wallpaper == null) return body;
+    return Stack(
+      children: [
+        Positioned.fill(child: Builder(builder: wallpaper)),
+        Positioned.fill(child: body),
       ],
     );
   }

@@ -120,7 +120,8 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
   "microphone": false,
   "notifications": false,
   "media": false,
-  "keys": false
+  "keys": false,
+  "theme": false
 }
 ```
 
@@ -142,6 +143,7 @@ The engine is JavaScriptCore with no transpilation. Write **ES5-style code**:
 | `microphone` | ❌ | `true` to allow `jsr.fa.asr.*` — microphone recording + speech-to-text (default: false) | <!-- fa-platforms: ios,macos -->
 | `notifications` | ❌ | `true` to allow `jsr.fa.notify.*` — schedule/cancel local system notifications (default: false) | <!-- fa-platforms: ios,macos -->
 | `media` | ❌ | `true` to allow `jsr.fa.media.*` — image / TTS / music generation + video reading on the configured media endpoints (default: false) |
+| `theme` | ❌ | `true` to allow `jsr.fa.theme.*` — list/apply installed theme packs (declarative-only: apps cannot install or delete packs; default: false) |
 | `keys` | ❌ | `true` to allow `jsr.fa.keys.*` — read the user's saved host API keys and request new ones via the native secret prompt (default: false) |
 
 All permissions default to false/absent. The user can also toggle them at runtime in the app's permissions dialog — so when you create an app, set the permissions it needs in the manifest **and** tell the user they may need to enable them.
@@ -726,6 +728,37 @@ jsr.fa.media.readVideo({ path: 'generated/clip.mp4', question: 'What happens?' }
 ```
 
 The Fa agent has matching tools (`generate_image`, `speak`, `generate_music` — write-tier; `read_video` — read-tier), so users can also generate media and read videos by chatting — both surfaces resolve endpoints identically.
+
+### `jsr.fa.theme.*` → Promise
+Theme packs the user has installed: read the catalog, ask which pack is
+active, and switch packs. Requires `"theme": true` in the manifest (and the
+runtime permission toggle). This surface is **declarative-only** — apps can
+list and apply packs that already exist; they cannot install, modify or
+delete packs (there is no `install`/`delete` method, by design). Every
+`apply` shows the user a consent dialog naming your app and the pack; a
+denied consent resolves `{applied: false, reason: 'denied'}` and changes
+nothing.
+
+```javascript
+// List installed packs: [{id, name, version, hasWallpaper, contrastWarnings}]
+jsr.fa.theme.list().then(function(packs) {
+  // packs[0].contrastWarnings may list WCAG AA issues — surface them,
+  // don't silently apply a low-contrast palette.
+});
+
+// The active pack id, or null when the stock look is in use.
+jsr.fa.theme.current().then(function(cur) { /* cur.pack */ });
+
+// Switch (user confirms in a dialog). Resolves {applied, pack} — or
+// {applied: false, reason: 'denied'}.
+jsr.fa.theme.apply('forest-walk').then(function(result) {
+  if (!result.applied) jsr.showError('Theme change declined');
+});
+```
+
+The host's settings screen is the install surface: users import packs from
+`.zip` files there. If your app needs a pack that is not installed, tell the
+user — don't try to fetch or write theme files yourself.
 
 ### `jsr.fa.keys.*` → Promise
 Host keys: the API credentials the user saved in Fa (the settings Keys section / `.env`). This is THE way an app gets a key — never hardcode one. Requires `"keys": true` in the manifest (and the runtime permission toggle).

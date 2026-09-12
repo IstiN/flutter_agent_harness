@@ -43,6 +43,7 @@ import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/theme_controller.dart';
+import 'package:fa/services/theme_pack_store.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
@@ -174,6 +175,7 @@ Future<void> main() async {
   debugPrint('[fah] last connection loaded');
   final themeController = await ThemeController.load(env);
   final onboardingStore = await OnboardingStore.load(env);
+  final themePacks = await ThemePackStore.load(env);
   final skillsAccessStore = SkillsAccessStore(env);
   final mediaModels = await MediaModelsStore.load(env);
   final taskModels = await TaskModelsStore.load(env);
@@ -257,6 +259,7 @@ Future<void> main() async {
       registry: registry,
       lastConnectionStore: lastConnection,
       themeController: themeController,
+      themePackStore: themePacks,
       onboardingStore: onboardingStore,
       skillsAccessStore: skillsAccessStore,
       sessionKeysStore: sessionKeys,
@@ -292,6 +295,7 @@ class MyApp extends StatelessWidget {
     this.registry,
     this.lastConnectionStore,
     this.themeController,
+    this.themePackStore,
     this.onboardingStore,
     this.skillsAccessStore,
     this.sessionKeysStore,
@@ -320,6 +324,10 @@ class MyApp extends StatelessWidget {
   /// The persisted appearance choice; `null` falls back to a shared
   /// in-memory controller defaulting to [FahThemeMode.system] (tests).
   final ThemeController? themeController;
+
+  /// The installed theme packs; `null` skips the scope (the settings themes
+  /// section hides and the stock look stays, tests).
+  final ThemePackStore? themePackStore;
 
   /// The persisted first-launch onboarding flag; `null` skips onboarding
   /// entirely (tests, and any host that never shows it).
@@ -363,77 +371,87 @@ class MyApp extends StatelessWidget {
   /// shared in-memory controller so every [MyApp] build sees the same one.
   static final ThemeController _fallbackThemeController =
       ThemeController.inMemory();
-
   @override
   Widget build(BuildContext context) {
     final theme = themeController ?? _fallbackThemeController;
+    final packs = themePackStore;
     final sessionKeys = sessionKeysStore;
     final mediaModels = mediaModelsStore;
     final onDeviceConfig = onDeviceConfigStore;
     Widget child = ListenableBuilder(
-      listenable: theme,
+      listenable: packs == null ? theme : Listenable.merge([theme, packs]),
       builder: (context, _) {
-        return MaterialApp(
-          title: 'Fa',
-          theme: buildFahThemeLight(),
-          darkTheme: buildFahTheme(),
-          themeMode: theme.themeMode,
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          // Some embedded browsers (CI containers, stripped webviews) report
-          // an EMPTY navigator.language; resolving through intl then throws
-          // "Incorrect locale information provided" and the app never boots.
-          // Fall back to English for a bogus device locale.
-          localeResolutionCallback: (deviceLocale, supported) {
-            if (deviceLocale == null || deviceLocale.languageCode.isEmpty) {
-              return const Locale('en');
-            }
-            return basicLocaleListResolution([deviceLocale], supported);
-          },
-          navigatorObservers: analytics != null
-              ? [FirebaseAnalyticsObserver(analytics: analytics!)]
-              : const <NavigatorObserver>[],
-          // macOS desktop: the unified titlebar's traffic lights float over
-          // Flutter content (fullSizeContentView). The content fills the
-          // ENTIRE window — each screen handles its own traffic-light
-          // clearance. A transparent drag strip overlays the top so the
-          // window can still be moved.
-          builder: (context, navigatorChild) {
-            if (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) {
-              return navigatorChild ?? const SizedBox.shrink();
-            }
-            return Stack(
-              children: [
-                Positioned.fill(
-                  child: navigatorChild ?? const SizedBox.shrink(),
-                ),
-                // Transparent drag strip for window movement.
-                const Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  height: 28,
-                  child: _MacOSDragStrip(),
-                ),
-              ],
-            );
-          },
-          home: BootstrapScreen(
-            env: env,
-            registry: registry,
-            lastConnectionStore: lastConnectionStore,
-            onboardingStore: onboardingStore,
-            skillsAccessStore: skillsAccessStore,
-            sessionKeysStore: sessionKeys,
-            taskModelsStore: taskModelsStore,
-            webLlmEngine: webLlmEngine,
-            gemmaEngine: gemmaEngine,
-            transformersJsEngine: transformersJsEngine,
+        // The active theme pack (null → stock look). Stale ids (pack
+        // removed elsewhere) resolve to the stock FaUiTheme, never a crash.
+        final uiTheme = packs?.byId(theme.packId)?.spec.toFaUiTheme();
+        return FaUiThemeProvider(
+          data: uiTheme ?? const FaUiTheme(),
+          child: MaterialApp(
+            title: 'Fa',
+            theme: buildFahThemeLight(uiTheme: uiTheme),
+            darkTheme: buildFahTheme(uiTheme: uiTheme),
+            themeMode: theme.themeMode,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            // Some embedded browsers (CI containers, stripped webviews)
+            // report an EMPTY navigator.language; resolving through intl
+            // then throws "Incorrect locale information provided" and the
+            // app never boots. Fall back to English for a bogus device
+            // locale.
+            localeResolutionCallback: (deviceLocale, supported) {
+              if (deviceLocale == null || deviceLocale.languageCode.isEmpty) {
+                return const Locale('en');
+              }
+              return basicLocaleListResolution([deviceLocale], supported);
+            },
+            navigatorObservers: analytics != null
+                ? [FirebaseAnalyticsObserver(analytics: analytics!)]
+                : const <NavigatorObserver>[],
+            // macOS desktop: the unified titlebar's traffic lights float
+            // over Flutter content (fullSizeContentView). The content fills
+            // the ENTIRE window — each screen handles its own
+            // traffic-light clearance. A transparent drag strip overlays
+            // the top so the window can still be moved.
+            builder: (context, navigatorChild) {
+              if (kIsWeb || defaultTargetPlatform != TargetPlatform.macOS) {
+                return navigatorChild ?? const SizedBox.shrink();
+              }
+              return Stack(
+                children: [
+                  Positioned.fill(
+                    child: navigatorChild ?? const SizedBox.shrink(),
+                  ),
+                  // Transparent drag strip for window movement.
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: 28,
+                    child: _MacOSDragStrip(),
+                  ),
+                ],
+              );
+            },
+            home: BootstrapScreen(
+              env: env,
+              registry: registry,
+              lastConnectionStore: lastConnectionStore,
+              onboardingStore: onboardingStore,
+              skillsAccessStore: skillsAccessStore,
+              sessionKeysStore: sessionKeys,
+              taskModelsStore: taskModelsStore,
+              webLlmEngine: webLlmEngine,
+              gemmaEngine: gemmaEngine,
+              transformersJsEngine: transformersJsEngine,
+            ),
           ),
         );
       },
     );
     child = FahThemeScope(controller: theme, child: child);
+    if (packs != null) {
+      child = ThemePackScope(store: packs, child: child);
+    }
     if (sessionKeys != null) {
       child = SessionKeysScope(store: sessionKeys, child: child);
     }

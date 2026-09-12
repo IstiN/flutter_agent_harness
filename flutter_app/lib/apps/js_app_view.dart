@@ -8,12 +8,15 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/apps/js_theme_bridge_host.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_map/flutter_map.dart' show TileProvider;
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:fa/apps/fa_js3d_host.dart';
+import 'package:fa/services/theme_controller.dart';
+import 'package:fa/services/theme_pack_store.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'package:fa/services/agent_service.dart';
@@ -312,6 +315,7 @@ class _JsAppViewState extends State<JsAppView> {
         videoReader: widget.videoReader ?? widget.agentService?.videoReader,
         keysSource: widget.agentService?.hostSecrets,
         keyRequestHandler: _requestHostSecret,
+        themeBridge: _themeBridge(),
         // ignore: use_build_context_synchronously
         hostLocale: Localizations.localeOf(context).languageCode,
         initialTheme: initialTheme,
@@ -378,6 +382,28 @@ class _JsAppViewState extends State<JsAppView> {
     final result = await showSecretRequestSheet(context, name, reason);
     if (result == null) return null;
     return service.acceptSecretGrant(result);
+  }
+
+  /// The theme bridge for this app's engine: the installed packs + active
+  /// choice from the app scopes, with a consent prompt per apply (issue
+  /// #169). Null (no store/controller in scope, e.g. tests) leaves the
+  /// `jsr.fa.theme.*` calls answering "not available".
+  FaThemeBridge? _themeBridge() {
+    final store = ThemePackScope.maybeOf(context);
+    final controller = FahThemeScope.maybeOf(context);
+    if (store == null || controller == null) return null;
+    return FaThemeBridgeHost(
+      store: store,
+      controller: controller,
+      prompt: (pack) async {
+        if (!mounted) return false;
+        return showThemePackConsent(
+          context,
+          appName: widget.app.name,
+          pack: pack,
+        );
+      },
+    );
   }
 
   /// Shows the mini reply sheet when a run ENDS with a new assistant text
@@ -1134,6 +1160,12 @@ class AppPermissionsDialogState extends State<AppPermissionsDialog> {
             context.l10n.appsPermissionKeysDesc,
             _current.keys,
             (v) => _set(_current.copyWith(keys: v)),
+          ),
+          _toggle(
+            context.l10n.appsPermissionTheme,
+            context.l10n.appsPermissionThemeDesc,
+            _current.theme,
+            (v) => _set(_current.copyWith(theme: v)),
           ),
         ],
       ),

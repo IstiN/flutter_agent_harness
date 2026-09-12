@@ -1,7 +1,19 @@
 # Changelog
 
-## 0.1.357
+## Unreleased
 
+- feat(169): declarative-only secured theme API — theme packs
+  (`theme.json` + optional wallpaper image in a `.zip`; strict schema
+  validation with unknown-key rejection, path-traversal/symlink/size
+  screens, WCAG contrast warnings), a Settings section to import, switch
+  and remove packs (a colors-only apply keeps the current wallpaper;
+  removing the active pack reverts atomically), wallpaper layers in the
+  chat, apps grid and launcher screens, and the `jsr.fa.theme` bridge —
+  `list`/`current`/`apply` behind the `theme` permission with a consent
+  dialog per apply. Apps can never install or delete packs (no such API
+  exists; pinned by a byte-scan test).
+
+## 0.1.357
 
 - feat(155): backend agent mode — `fah` as a server-side agent engine
   for a Go supervisor. `--output events[=full]` switches stdout to a HEP
@@ -21,7 +33,6 @@
   from #190, which this change adopts instead.)
 
 ## 0.1.356
-
 
 - ci(177): PR-level CI speed restructure — a pull request now pays only for
   what it touched. Path-aware gating (`changes` job), the sequential

@@ -69,6 +69,8 @@
   "appsPermissionHomekitDesc": "jsr.fa.homekit — устройства умного дома (скоро)",
   "appsPermissionKeys": "Ключи хоста",
   "appsPermissionKeysDesc": "jsr.fa.keys — доступ к API-ключам, сохранённым в Fa, и запрос новых",
+  "appsPermissionTheme": "Темы оформления",
+  "appsPermissionThemeDesc": "jsr.fa.theme — список тем и применение (каждый запрос подтверждается пользователем)",
   "appsPermissionLlm": "LLM",
   "appsPermissionLlmDesc": "jsr.fa.llm — разрешить приложению обращаться к подключённой модели",
   "appsPermissionMedia": "Медиа",
@@ -643,5 +645,21 @@
   "dynamicTileRetry": "Повторить",
   "@dynamicTileRetry": {
     "description": "Retry button on the dynamic-message error tile (issue #102 AC9)"
-  }
+  },
+  "themeConsentTitle": "Применить тему?",
+  "themeConsentBody": "Приложение {app} просит применить тему \"{pack}\".",
+  "@themeConsentBody": { "placeholders": { "app": { "type": "String" }, "pack": { "type": "String" } } },
+  "themeConsentContrast": "Внимание: часть цветовых пар темы ниже контрастности WCAG AA (4,5:1).",
+  "themeConsentApply": "Применить",
+  "themeConsentDeny": "Оставить текущую",
+  "themePacksTitle": "Темы оформления",
+  "themePacksSubtitle": "Установка .zip с theme.json, выбор активной темы и удаление",
+  "themePackDefault": "Стандартный вид Fa",
+  "themePackImport": "Импортировать тему",
+  "themePackDelete": "Удалить",
+  "themePackActiveChip": "активна",
+  "themePackWallpaperChip": "обои",
+  "themePackImported": "Тема \"{name}\" установлена",
+  "@themePackImported": { "placeholders": { "name": { "type": "String" } } },
+  "themePackImportFailed": "Тема отклонена"
 }

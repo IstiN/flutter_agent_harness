@@ -416,6 +416,18 @@ abstract class AppLocalizations {
   /// **'jsr.fa.keys — read the API keys saved in Fa and request new ones'**
   String get appsPermissionKeysDesc;
 
+  /// No description provided for @appsPermissionTheme.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme packs'**
+  String get appsPermissionTheme;
+
+  /// No description provided for @appsPermissionThemeDesc.
+  ///
+  /// In en, this message translates to:
+  /// **'jsr.fa.theme — list theme packs and apply one (the user confirms every apply)'**
+  String get appsPermissionThemeDesc;
+
   /// No description provided for @appsPermissionLlm.
   ///
   /// In en, this message translates to:
@@ -3247,6 +3259,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Retry'**
   String get dynamicTileRetry;
+
+  /// No description provided for @themeConsentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply theme pack?'**
+  String get themeConsentTitle;
+
+  /// No description provided for @themeConsentBody.
+  ///
+  /// In en, this message translates to:
+  /// **'{app} wants to apply the theme pack \"{pack}\".'**
+  String themeConsentBody(String app, String pack);
+
+  /// No description provided for @themeConsentContrast.
+  ///
+  /// In en, this message translates to:
+  /// **'Warning: some color pairs in this pack are below WCAG AA contrast (4.5:1).'**
+  String get themeConsentContrast;
+
+  /// No description provided for @themeConsentApply.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply'**
+  String get themeConsentApply;
+
+  /// No description provided for @themeConsentDeny.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep current'**
+  String get themeConsentDeny;
+
+  /// No description provided for @themePacksTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme packs'**
+  String get themePacksTitle;
+
+  /// No description provided for @themePacksSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Install a .zip with theme.json, switch the active pack, or remove one'**
+  String get themePacksSubtitle;
+
+  /// No description provided for @themePackDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Default Fa look'**
+  String get themePackDefault;
+
+  /// No description provided for @themePackImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import theme pack'**
+  String get themePackImport;
+
+  /// No description provided for @themePackDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get themePackDelete;
+
+  /// No description provided for @themePackActiveChip.
+  ///
+  /// In en, this message translates to:
+  /// **'active'**
+  String get themePackActiveChip;
+
+  /// No description provided for @themePackWallpaperChip.
+  ///
+  /// In en, this message translates to:
+  /// **'wallpaper'**
+  String get themePackWallpaperChip;
+
+  /// No description provided for @themePackImported.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme pack \"{name}\" installed'**
+  String themePackImported(String name);
+
+  /// No description provided for @themePackImportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme pack rejected'**
+  String get themePackImportFailed;
 }
 
 class _AppLocalizationsDelegate

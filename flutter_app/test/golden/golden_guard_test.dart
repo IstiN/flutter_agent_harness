@@ -22,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 const _coverage = <String, String>{
   'lib/main.dart': 'test/golden/setup_golden_test.dart',
   'lib/ui/screens/settings.dart': 'test/golden/settings_golden_test.dart',
+  'lib/ui/widgets/fah_wallpaper.dart': 'test/golden/settings_golden_test.dart',
   'lib/ui/screens/settings_key_dialogs.dart':
       'test/golden/dialogs_golden_test.dart',
   'lib/ui/screens/provider_editor_page.dart':
