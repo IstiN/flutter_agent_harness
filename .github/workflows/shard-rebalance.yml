@@ -1,0 +1,123 @@
+# Weekly test-shard rebalancer (issue #177, AC3/E4): re-splits the unit-test
+# shards from downloaded JUnit timing artifacts when available (file counts
+# otherwise) and commits scripts/test_shards.json back to main ONLY when the
+# skew improved or the manifest was missing.
+name: Shard rebalance
+
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rebalance:
+    name: Rebalance test shards
+    runs-on: ubuntu-latest
+    # secrets.* is not allowed in job-level `if:`, so the PAT is exported as
+    # an env var and the push step below skips itself gracefully when empty.
+    env:
+      RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # PAT (not GITHUB_TOKEN) so the pushed manifest triggers downstream
+          # workflows; an unset secret falls back to GITHUB_TOKEN here and the
+          # push step skips itself.
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # Timing artifacts come from recent successful CI runs on main; their
+      # absence is fine — the rebalancer then falls back to file counts.
+      - name: Download recent JUnit timing artifacts (best effort)
+        id: timings
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p .shard-timings
+          for id in $(gh run list --workflow ci.yml --branch main \
+              --status success --limit 5 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" --dir ".shard-timings/$id" \
+              --pattern '*junit*' 2>/dev/null || true
+          done
+          if find .shard-timings -name '*.xml' -print -quit | grep -q .; then
+            echo "mode=junit" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=filecount" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skew before rebalance
+        id: before
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          try:
+              m = json.load(open('scripts/test_shards.json'))
+              shards = m.get('shards', m) if isinstance(m, dict) else m
+              seq = shards.values() if isinstance(shards, dict) else shards
+              sizes = [len(s) for s in seq]
+              avg = sum(sizes) / len(sizes) if sizes else 0
+              print(f"skew={max(sizes) / avg if avg else 0}")
+          except Exception:
+              print("skew=missing")
+          EOF
+
+      - name: Run the rebalancer
+        run: |
+          if [ "${{ steps.timings.outputs.mode }}" = "junit" ]; then
+            python3 scripts/rebalance_shards.py --from-junit .shard-timings
+          else
+            python3 scripts/rebalance_shards.py --from-filecount
+          fi
+
+      # Commit only when the manifest was missing or the skew (max shard
+      # size / mean shard size) strictly improved.
+      - name: Decide whether to commit
+        id: decide
+        run: |
+          after=$(python3 - <<'EOF'
+          import json
+          try:
+              m = json.load(open('scripts/test_shards.json'))
+              shards = m.get('shards', m) if isinstance(m, dict) else m
+              seq = shards.values() if isinstance(shards, dict) else shards
+              sizes = [len(s) for s in seq]
+              avg = sum(sizes) / len(sizes) if sizes else 0
+              print(max(sizes) / avg if avg else 0)
+          except Exception:
+              print("missing")
+          EOF
+          )
+          before="${{ steps.before.outputs.skew }}"
+          echo "skew before=$before after=$after"
+          if [ "$before" = "missing" ]; then
+            echo "commit=true" >> "$GITHUB_OUTPUT"
+          elif [ "$after" != "missing" ] && \
+               awk -v a="$after" -v b="$before" 'BEGIN{exit !(a < b)}'; then
+            echo "commit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "commit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push rebalanced manifest to main
+        if: steps.decide.outputs.commit == 'true'
+        run: |
+          if [ -z "$RELEASE_PAT" ]; then
+            echo "::notice::RELEASE_PAT not configured; skipping push of scripts/test_shards.json"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "418982+github-actions[bot]@users.noreply.github.com"
+          git add scripts/test_shards.json
+          if git diff --cached --quiet; then
+            echo "Manifest unchanged; nothing to push."
+            exit 0
+          fi
+          git commit -m "chore(ci): rebalance test shards (issue #177)"
+          git push origin HEAD:main

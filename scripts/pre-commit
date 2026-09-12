@@ -9,73 +9,22 @@
 # Canonical copy: scripts/pre-commit — install with:
 #   cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 # To skip (emergency only): git commit --no-verify
-
-detect_test_concurrency() {
-  local cores load1
-  if command -v sysctl >/dev/null 2>&1; then
-    cores=$(sysctl -n hw.ncpu 2>/dev/null)
-    load1=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print int($2)}')
-  elif [ -r /proc/loadavg ]; then
-    cores=$(nproc 2>/dev/null)
-    load1=$(awk '{print int($1)}' /proc/loadavg)
-  fi
-  if [ -n "$cores" ] && [ -n "$load1" ] && [ "$load1" -ge $((cores / 2)) ]; then
-    echo 2
-  fi
-  # Empty output on an idle box = no --concurrency flag (package defaults).
-}
+#
+# Issue #177 (AC7): the hook is a THIN WRAPPER over scripts/ci_fast_gate.sh —
+# the exact script CI runs — with the same path filters: a docs-only commit
+# no longer pays for the flutter suite, a lib-only commit skips flutter_app
+# stages. Hook-specific extras that stay here (they make no sense in CI):
+#   1. dart format SELF-HEAL of staged files (reformat + re-stage, blocking
+#      backstop when the formatter can't),
+#   2. the golden-coverage quick check (check_goldens.py --quick) — local
+#      golden hygiene; pixel goldens themselves run inside the gate's
+#      flutter stage.
+# Parity check: both callers print `GATE_STAGE <name> OK|SKIP <reason>`
+# markers; diffing the hook's markers against CI's must be empty.
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
-
-# Unset git env vars so test processes that spawn git subprocesses use the
-# correct working directory rather than the hook's environment.
-unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE 2>/dev/null || true
-
-COVERAGE_BASELINE=80.0
-DUP_THRESHOLD=1.0
-# flutter_app duplication ratchet: pre-existing clones (memory/wasm shells,
-# on-device cache sections + stream functions, settings connect flows) sit
-# at ~3.66% — only allowed DOWN from here. Real debt items to dedupe:
-# memory_shell/wasm_shell, transformers_js/webllm/gemma cache sections,
-# wasm_shell_git/web_git.
-DUP_THRESHOLD_APP=3.7
-MAX_LINES=2800
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 1. FILE SIZE GUARD
-# ═══════════════════════════════════════════════════════════════════════════
-VIOLATIONS=()
-while IFS= read -r file; do
-  case "$file" in
-    *.dart)
-      case "$file" in
-        *.g.dart|*.freezed.dart|*.mocks.dart|*bridge_generated*.dart|\
-*app_localizations*.dart|*localizations_*.dart) continue ;;
-      esac
-      lines=$(wc -l < "$file")
-      if (( lines > MAX_LINES )); then
-        VIOLATIONS+=("  $file: $lines lines (max $MAX_LINES)")
-      fi
-      ;;
-  esac
-done < <(git diff --cached --name-only --diff-filter=ACM)
-
-if ((${#VIOLATIONS[@]} > 0)); then
-  echo ""
-  echo "╔═══════════════════════════════════════════════════════════════════════════╗"
-  echo "║  ❌ QUALITY GATE FAILED — FILE SIZE                                       ║"
-  echo "╚═══════════════════════════════════════════════════════════════════════════╝"
-  printf '%s\n' "${VIOLATIONS[@]}"
-  exit 1
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 2. STATIC ANALYSIS
-# ═══════════════════════════════════════════════════════════════════════════
-echo "🔍 Running dart analyze..."
-dart analyze
 
 echo "🎨 Auto-formatting staged Dart files..."
 # Format is SELF-HEALING with a BLOCKING backstop: reformat exactly the
@@ -97,141 +46,25 @@ if [ -n "$STAGED_DART" ]; then
   fi
 fi
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 3. TESTS WITH COVERAGE
-# ═══════════════════════════════════════════════════════════════════════════
-# Integration tests call external LLM endpoints and are too slow/non-deterministic
-# for a pre-commit gate; they run in CI / manually instead.
-echo "🧪 Running dart test --coverage (excluding integration tests)..."
-rm -rf coverage
-DART_CONCURRENCY="${FA_DART_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
-dart test ${DART_CONCURRENCY:+--concurrency=$DART_CONCURRENCY} --coverage=coverage --exclude-tags integration
+# THE shared fast gate (same script, same path filters as CI). --hook makes
+# it derive the scope from the STAGED diff. It unsets GIT_* env itself
+# after reading hook mode.
+bash scripts/ci_fast_gate.sh --hook
 
-echo "📊 Formatting coverage to lcov..."
-dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 4. COVERAGE RATCHET (lib/ only)
-# ═══════════════════════════════════════════════════════════════════════════
-echo "🔍 Checking line coverage (baseline: >= ${COVERAGE_BASELINE}%)..."
-if python3 scripts/check_coverage.py "$COVERAGE_BASELINE"; then
-  echo "✅ Coverage gate OK"
-else
-  echo ""
-  echo "╔═══════════════════════════════════════════════════════════════════════════╗"
-  echo "║  ❌ QUALITY GATE FAILED — TEST COVERAGE                                   ║"
-  echo "╚═══════════════════════════════════════════════════════════════════════════╝"
-  echo "   Add tests for uncovered code, then retry."
-  exit 1
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 5. CRAP RATCHET (complexity × coverage; threshold pinned in crap4dart.yaml)
-# ═══════════════════════════════════════════════════════════════════════════
-if command -v dart >/dev/null 2>&1 && \
-   dart pub global run crap4dart --version >/dev/null 2>&1; then
-  echo "🔍 Checking CRAP scores (ratchet: only down from the pinned max)..."
-  # Reuses the fresh coverage/lcov.info produced above.
-  if dart pub global run crap4dart analyze; then
-    echo "✅ CRAP gate OK"
-  else
-    echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════════════╗"
-    echo "║  ❌ QUALITY GATE FAILED — CRAP RATCHET                                    ║"
-    echo "╚═══════════════════════════════════════════════════════════════════════════╝"
-    echo "   A method's CRAP score exceeded the pinned max in crap4dart.yaml."
-    echo "   Simplify it or add tests — the threshold only goes DOWN."
-    exit 1
+# Golden-coverage quick check — only when the staged diff can affect the
+# flutter_app (the gate's own markers already told us the flutter stage
+# ran or was skipped; recompute cheaply from the staged paths here).
+STAGED=$(git diff --cached --name-only || true)
+if echo "$STAGED" | grep -qE '^(flutter_app/|packages/|lib/|scripts/|\.github/|pubspec\.)' \
+   || ! echo "$STAGED" | grep -qE '\.(md)$|^docs/|^prompts/'; then
+  if command -v flutter >/dev/null 2>&1; then
+    echo "🔍 Checking golden coverage..."
+    if python3 scripts/check_goldens.py --quick; then
+      echo "✅ Golden gate OK"
+    else
+      exit 1
+    fi
   fi
-else
-  echo "⚠️  crap4dart not activated (dart pub global activate crap4dart 0.2.1) — skipping CRAP gate"
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 6. CODE DUPLICATION GUARD
-# ═══════════════════════════════════════════════════════════════════════════
-if command -v jscpd >/dev/null 2>&1; then
-  echo "🔍 Checking code duplication (thresholds: core < ${DUP_THRESHOLD}%, flutter_app < ${DUP_THRESHOLD_APP}%)..."
-  dup_pct() {
-    jscpd --min-tokens 50 --min-lines 5 --reporters json --output "$2" "$1" >/dev/null 2>&1 || true
-    python3 -c "
-import json
-try:
-    with open('$2/jscpd-report.json') as f:
-        d=json.load(f)
-    print(d['statistics']['total']['percentage'])
-except Exception:
-    print('0.0')
-" 2>/dev/null || echo "0.0"
-  }
-  CORE_DUP=$(dup_pct lib/ /tmp/jscpd-precommit-core)
-  APP_DUP=$(dup_pct flutter_app/lib/ /tmp/jscpd-precommit-app)
-  DUP_OK=1
-  if python3 -c "exit(0 if float('$CORE_DUP') < float('$DUP_THRESHOLD') else 1)"; then
-    echo "✅ Core duplication check OK ($CORE_DUP% < ${DUP_THRESHOLD}%)"
-  else
-    DUP_OK=0
-  fi
-  if python3 -c "exit(0 if float('$APP_DUP') < float('$DUP_THRESHOLD_APP') else 1)"; then
-    echo "✅ flutter_app duplication check OK ($APP_DUP% < ${DUP_THRESHOLD_APP}%)"
-  else
-    DUP_OK=0
-  fi
-  if (( DUP_OK == 0 )); then
-    echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════════════╗"
-    echo "║  ❌ QUALITY GATE FAILED — CODE DUPLICATION                                ║"
-    echo "╚═══════════════════════════════════════════════════════════════════════════╝"
-    echo "   Core: $CORE_DUP% (max ${DUP_THRESHOLD}%) · flutter_app: $APP_DUP% (max ${DUP_THRESHOLD_APP}%)"
-    echo "   Run: jscpd --min-tokens 50 --min-lines 5 lib/ flutter_app/lib/"
-    exit 1
-  fi
-else
-  echo "⚠️  jscpd not found, skipping duplication check (npm install -g jscpd)"
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Load-aware test concurrency: a busy box (other agents, IDE builds) makes
-# widget tests' runAsync() flake ("Reentrant call to runAsync() denied") and
-# real-timer hub tests miss windows at full parallelism. Override with
-# FA_FLUTTER_TEST_CONCURRENCY / FA_DART_TEST_CONCURRENCY; auto-throttle when
-# the 1-minute load reaches half the core count.
-
-# 6. EXAMPLE APP: flutter test (incl. golden suite) + golden gate
-# ═══════════════════════════════════════════════════════════════════════════
-if command -v flutter >/dev/null 2>&1; then
-  echo "🔍 Running flutter analyze (flutter_app)..."
-  if ! (cd flutter_app && flutter analyze --no-fatal-infos --no-fatal-warnings); then
-    echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════════════╗"
-    echo "║  ❌ QUALITY GATE FAILED — FLUTTER ANALYZE                                 ║"
-    echo "╚═══════════════════════════════════════════════════════════════════════════╝"
-    exit 1
-  fi
-  echo "🧪 Running flutter_app tests (incl. golden tests)..."
-  # integration-tagged tests (test/cli_visual — real CLI in a PTY) are
-  # excluded; run them manually: flutter test test/cli_visual --tags integration
-  FLUTTER_CONCURRENCY="${FA_FLUTTER_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
-  echo "   concurrency: ${FLUTTER_CONCURRENCY:-default}"
-  if ! (cd flutter_app && flutter test ${FLUTTER_CONCURRENCY:+--concurrency=$FLUTTER_CONCURRENCY} --exclude-tags integration); then
-    echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════════════╗"
-    echo "║  ❌ QUALITY GATE FAILED — FLUTTER APP TESTS                               ║"
-    echo "╚═══════════════════════════════════════════════════════════════════════════╝"
-    echo "   Fix the failing flutter_app tests, then retry."
-    echo "   UI change? Regenerate goldens:"
-    echo "   cd flutter_app && flutter test test/golden --update-goldens"
-    echo "   — and review every changed PNG before committing."
-    exit 1
-  fi
-  echo "🔍 Checking golden coverage..."
-  if python3 scripts/check_goldens.py --quick; then
-    echo "✅ Golden gate OK"
-  else
-    exit 1
-  fi
-else
-  echo "⚠️  flutter not found, skipping flutter_app tests + golden gate"
 fi
 
 echo ""

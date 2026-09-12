@@ -1,0 +1,67 @@
+# Weekly CLI-coverage gardener (issue #177 follow-up): re-measures the
+# terminal/PTY integration suites' coverage of lib/src/cli/** and, when it
+# grew, commits the higher baseline to main — the nightly ratchet
+# (check_cli_coverage.py) then enforces the new floor. Coverage can only
+# ratchet UP; a silent regression in terminal-test coverage reddens nightly.
+name: CLI coverage gardener
+
+on:
+  schedule:
+    - cron: '53 4 * * 1' # Monday, after the shard rebalance
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure-and-bump:
+    name: Measure CLI coverage, bump baseline if higher
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # RELEASE_PAT so the pushed commit triggers downstream workflows
+          # (GITHUB_TOKEN pushes never do). Absent → measure-only, no push.
+          token: ${{ secrets.RELEASE_PAT }}
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: dart pub get
+
+      - name: Run PTY/CLI integration suites with coverage
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: >-
+          dart test --tags integration --exclude-tags browser-ext
+          --coverage=coverage
+
+      - run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
+
+      - name: Bump baseline when coverage grew
+        env:
+          HAS_PAT: ${{ secrets.RELEASE_PAT != '' }}
+        run: |
+          measured=$(python3 scripts/check_cli_coverage.py --print | head -1 | grep -oE '[0-9]+\.[0-9]+')
+          baseline=$(cat scripts/cli_coverage_baseline.txt)
+          echo "measured=$measured baseline=$baseline"
+          if python3 -c "exit(0 if float('$measured') > float('$baseline') else 1)"; then
+            echo "$measured" > scripts/cli_coverage_baseline.txt
+            if [ "$HAS_PAT" = "true" ]; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add scripts/cli_coverage_baseline.txt
+              git commit -m "chore(coverage): CLI terminal-test baseline $baseline -> $measured (ratchet up)"
+              git push
+            else
+              echo "::notice::RELEASE_PAT not configured — baseline bump not pushed"
+              git checkout -- scripts/cli_coverage_baseline.txt || true
+            fi
+          else
+            echo "No growth — baseline stays $baseline"
+          fi
