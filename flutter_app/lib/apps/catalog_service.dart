@@ -3,11 +3,11 @@
 // in the LICENSE file.
 
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:fa/apps/manifest_i18n.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 
@@ -74,11 +74,14 @@ class CatalogEntry {
     this.nameText,
     this.descriptionText,
     this.platforms = const [],
+    this.previewManifestUrl,
+    this.previewJsUrl,
   });
 
   factory CatalogEntry.fromJson(Map<String, dynamic> json) {
     final permissions = json['permissions'];
     final zip = json['zip'];
+    final preview = json['preview'];
     final rawPlatforms = json['platforms'];
     // Localization comes from the additive nameI18n/descriptionI18n keys
     // (same schema as the widget manifest); file refs cannot resolve
@@ -115,6 +118,10 @@ class CatalogEntry {
           for (final platform in rawPlatforms)
             if (platform is String) platform,
       ],
+      previewManifestUrl: preview is Map
+          ? preview['manifest'] as String?
+          : null,
+      previewJsUrl: preview is Map ? preview['js'] as String? : null,
     );
   }
 
@@ -161,6 +168,15 @@ class CatalogEntry {
   final String zipSha256;
   final int zipSizeBytes;
 
+  /// Raw source URLs (CORS-friendly) for the manifest and the widget JS.
+  /// CORE widgets point at the fa_widgets repo mirror
+  /// (`raw.githubusercontent.com/IstiN/fa_widgets/main/widgets/…`);
+  /// EXTERNAL-kind widgets point at their origin repo pinned by commit
+  /// sha. This is the ONLY way to reach a widget's sources from a
+  /// browser — do NOT reconstruct them from the id.
+  final String? previewManifestUrl;
+  final String? previewJsUrl;
+
   /// Gallery download URL for this entry's archive.
   Uri get downloadUrl => catalogAssetUri(kDefaultWidgetsBaseUrl, zipFile);
 }
@@ -197,9 +213,25 @@ class CatalogService {
     this._env, {
     http.Client? httpClient,
     Uri? baseUrl,
+    Uri? rawBaseUrl,
+    bool? isWeb,
     DateTime Function()? clock,
   }) : _client = httpClient ?? http.Client(),
-       _baseUrl = baseUrl?.toString() ?? kDefaultWidgetsBaseUrl,
+       _isWeb = isWeb ?? kIsWeb,
+       // Platform-aware default: release-assets.githubusercontent.com (the
+       // redirect target of the rolling release) sends NO CORS headers, so
+       // the web build's BrowserClient dies with `ClientException:
+       // Load failed`. raw.githubusercontent.com sends
+       // `access-control-allow-origin: *` — on web BOTH the catalog and the
+       // widget sources come from the repo mirror that the fa_widgets
+       // publish workflow re-commits on every push to main ([skip ci]).
+       // Native keeps the rolling release (immutable-ish zips + sha256).
+       _baseUrl =
+           baseUrl?.toString() ??
+           ((isWeb ?? kIsWeb)
+               ? kDefaultWidgetsRawBaseUrl
+               : kDefaultWidgetsBaseUrl),
+       _rawBaseUrl = rawBaseUrl?.toString() ?? kDefaultWidgetsRawBaseUrl,
        _clock = clock ?? DateTime.now;
 
   /// Env-relative cache file (inside the shared `apps/` workspace folder).
@@ -212,7 +244,9 @@ class CatalogService {
 
   final ExecutionEnv _env;
   final http.Client _client;
+  final bool _isWeb;
   final String _baseUrl;
+  final String _rawBaseUrl;
   final DateTime Function() _clock;
 
   /// Fetches the catalog, consulting the TTL cache first. [force] skips the
@@ -267,10 +301,12 @@ class CatalogService {
     }
   }
 
-  /// Downloads and verifies one widget's archive, returning its files as
-  /// `<relative-path> → bytes` WITHOUT the leading `<id>/` root. Refuses to
-  /// serve anything whose extraction could escape `apps/<id>/`.
+  /// Downloads and verifies one widget, returning its files as
+  /// `<relative-path> → bytes`. Native downloads the release zip and
+  /// refuses anything whose extraction could escape `apps/<id>/`; web
+  /// fetches the raw per-id sources instead (see [_downloadWidgetFromSource]).
   Future<Map<String, Uint8List>> downloadWidget(CatalogEntry entry) async {
+    if (_isWeb) return _downloadWidgetFromSource(entry);
     if (entry.zipFile.isEmpty || entry.zipFile.contains('/')) {
       throw CatalogError('bad asset name "${entry.zipFile}"');
     }
@@ -315,6 +351,88 @@ class CatalogService {
     if (!files.containsKey('manifest.json') ||
         !files.containsKey('widget.js')) {
       throw CatalogError('${entry.id}: archive misses manifest/widget.js');
+    }
+    return files;
+  }
+
+  /// Web install path: fetches the widget's sources over the CORS-friendly
+  /// raw URLs the catalog carries in `preview.manifest` / `preview.js`,
+  /// because the release zip URL is unreachable from a browser (no CORS
+  /// headers on release-assets.githubusercontent.com). The preview URLs
+  /// MUST be used verbatim: EXTERNAL-kind widgets (user-repo submodules)
+  /// have NO sources under `fa_widgets/widgets/<id>/` at all — their
+  /// preview URLs point at the origin repo pinned by commit sha. The icon
+  /// is always mirrored into fa_widgets itself, so it joins against
+  /// [_rawBaseUrl] exactly like the in-app gallery already does.
+  ///
+  /// Integrity trade-off, stated plainly: the catalog's `zip.sha256` covers
+  /// the published ZIP BYTES, not the individual sources, so it CANNOT be
+  /// verified on this path — trust rests on the same catalog that already
+  /// vouches for the zip hash, plus the publish workflow building both from
+  /// one tree. To compensate, malformed content fails LOUDLY (never
+  /// installs): every file must be served with HTTP 200, the manifest must
+  /// decode to a JSON object, and widget.js must be non-empty.
+  Future<Map<String, Uint8List>> _downloadWidgetFromSource(
+    CatalogEntry entry,
+  ) async {
+    final id = entry.id;
+    bool unsafe(String segment) =>
+        segment.isEmpty ||
+        segment == '..' ||
+        segment.contains('/') ||
+        segment.contains('\\');
+
+    final urls = <String, Uri>{};
+    for (final pair in {
+      'manifest.json': entry.previewManifestUrl,
+      'widget.js': entry.previewJsUrl,
+    }.entries) {
+      final raw = pair.value;
+      final uri = raw == null ? null : Uri.tryParse(raw);
+      if (uri == null ||
+          !uri.isAbsolute ||
+          !(uri.isScheme('https') || uri.isScheme('http'))) {
+        throw CatalogError(
+          '$id: catalog entry has no usable preview URL for ${pair.key} '
+          '— cannot install from source on web',
+        );
+      }
+      urls[pair.key] = uri;
+    }
+    final icon = entry.iconFile;
+    if (icon != null) {
+      if (unsafe(id)) {
+        throw CatalogError('bad widget id "$id"');
+      }
+      if (unsafe(icon)) {
+        throw CatalogError('$id: unsafe icon name "$icon"');
+      }
+      urls[icon] = catalogAssetUri(_rawBaseUrl, 'widgets/$id/$icon');
+    }
+
+    final files = <String, Uint8List>{};
+    for (final source in urls.entries) {
+      final http.Response response;
+      try {
+        response = await _client.get(source.value);
+      } on Object catch (error) {
+        throw CatalogError('$id: ${source.key} fetch failed: $error');
+      }
+      if (response.statusCode != 200) {
+        throw CatalogError('$id: ${source.key} HTTP ${response.statusCode}');
+      }
+      files[source.key] = response.bodyBytes;
+    }
+    try {
+      final manifest = jsonDecode(utf8.decode(files['manifest.json']!));
+      if (manifest is! Map<String, dynamic>) {
+        throw const FormatException('not a JSON object');
+      }
+    } on Object {
+      throw CatalogError('$id: manifest.json is not a valid JSON object');
+    }
+    if (files['widget.js']!.isEmpty) {
+      throw CatalogError('$id: widget.js is empty');
     }
     return files;
   }
