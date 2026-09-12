@@ -10,77 +10,86 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
+import '../native_test_guard.dart';
+
+/// Skip value stamped on this file's engine-dependent tests: every one
+/// boots a real JS engine (issue #184). Resolved once per isolate.
+final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 
 /// Tap-path check: taps on the rendered calculator must reach the JS engine
 /// through JsonWidgetRenderer.onEvent and update the tree/state.
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  group('JS engine (native quickjs/JavaScriptCore bridge)', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('tapping a calculator key reaches the JS engine', (tester) async {
-    final env = MemoryExecutionEnv();
-    late final JsAppEngine engine;
-    await tester.runAsync(() async {
-      final source = await File(
-        'test/apps/fixtures/calculator_widget.js',
-      ).readAsString();
-      await env.writeFile('apps/calculator/widget.js', source);
-      engine = JsAppEngine(
-        app: JsAppInfo.fromManifest(
-          const {'id': 'calculator', 'name': 'Calculator', 'icon': '🧮'},
-          bundled: false,
-          fallbackId: 'calculator',
-        ),
-        env: env,
-        permissions: const AppPermissions(),
-      );
-      await engine.start();
-      for (var i = 0; i < 20 && engine.tree.value == null; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      }
-    });
-    addTearDown(() async {
-      await tester.runAsync(engine.dispose);
-    });
-    expect(engine.tree.value, isNotNull);
+    testWidgets('tapping a calculator key reaches the JS engine', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      late final JsAppEngine engine;
+      await tester.runAsync(() async {
+        final source = await File(
+          'test/apps/fixtures/calculator_widget.js',
+        ).readAsString();
+        await env.writeFile('apps/calculator/widget.js', source);
+        engine = JsAppEngine(
+          app: JsAppInfo.fromManifest(
+            const {'id': 'calculator', 'name': 'Calculator', 'icon': '🧮'},
+            bundled: false,
+            fallbackId: 'calculator',
+          ),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        await engine.start();
+        for (var i = 0; i < 20 && engine.tree.value == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      });
+      addTearDown(() async {
+        await tester.runAsync(engine.dispose);
+      });
+      expect(engine.tree.value, isNotNull);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: ValueListenableBuilder<Map<String, dynamic>?>(
-            valueListenable: engine.tree,
-            builder: (context, tree, _) {
-              if (tree == null) return const SizedBox.shrink();
-              final renderer = JsonWidgetRenderer(
-                theme: JsonWidgetTheme.fromAccent(
-                  Theme.of(context).colorScheme.primary,
-                ),
-                onEvent: (actionId, payload) {
-                  engine.callEvent(actionId, payload);
-                },
-              );
-              return renderer.build(tree, context);
-            },
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ValueListenableBuilder<Map<String, dynamic>?>(
+              valueListenable: engine.tree,
+              builder: (context, tree, _) {
+                if (tree == null) return const SizedBox.shrink();
+                final renderer = JsonWidgetRenderer(
+                  theme: JsonWidgetTheme.fromAccent(
+                    Theme.of(context).colorScheme.primary,
+                  ),
+                  onEvent: (actionId, payload) {
+                    engine.callEvent(actionId, payload);
+                  },
+                );
+                return renderer.build(tree, context);
+              },
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    expect(find.text('7'), findsOneWidget);
-    await tester.tap(find.text('7'));
+      expect(find.text('7'), findsOneWidget);
+      await tester.tap(find.text('7'));
 
-    // The tap fires through a microtask + async JS evaluation: let it land.
-    var expression = '';
-    for (var i = 0; i < 30; i++) {
-      await tester.runAsync(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      });
-      final state = engine.exportedState;
-      if (state != null) {
-        expression = '${state['expression']}';
-        if (expression.isNotEmpty) break;
+      // The tap fires through a microtask + async JS evaluation: let it land.
+      var expression = '';
+      for (var i = 0; i < 30; i++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        final state = engine.exportedState;
+        if (state != null) {
+          expression = '${state['expression']}';
+          if (expression.isNotEmpty) break;
+        }
+        await tester.pump();
       }
-      await tester.pump();
-    }
-    expect(expression, '7');
-  });
+      expect(expression, '7');
+    });
+  }, skip: _engineSkip);
 }
