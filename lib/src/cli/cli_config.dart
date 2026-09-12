@@ -58,6 +58,13 @@ ProviderTimeoutsOverride? _parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
+/// Whether a raw `customProviders:` list node is a ghost entry named
+/// after a built-in catalog provider (issue #221). Non-map nodes are NOT
+/// ghosts — they fall through to [CustomProviderEntry.fromYaml], which
+/// throws the usual strict [ConfigException].
+bool _isGhostProviderEntry(Object? node) =>
+    node is Map && isReservedCustomProviderName('${node['name']}');
+
 /// Parses the `images:` section (session image registry, issue #171):
 /// `registry` (kill switch) and `maxPerRequest` (per-request unique-image
 /// cap). Strict — a bad schema throws [ConfigException] instead of
@@ -167,10 +174,16 @@ final class CliConfig {
           ? null
           : RedactionConfig.fromYaml(map['redact']),
       // Saved custom providers; entry-level errors throw [ConfigException].
+      // Entries named after a built-in catalog provider are dropped (issue
+      // #221's ghost "openai"): they shadow `/provider <name>` routing and
+      // must never re-enter memory — a stale snapshot save would
+      // re-persist them after the user deleted them.
       customProviders: switch (map['customProviders']) {
         null => const [],
         final YamlList list => [
-          for (final entry in list) CustomProviderEntry.fromYaml(entry),
+          for (final entry in list)
+            if (!_isGhostProviderEntry(entry))
+              CustomProviderEntry.fromYaml(entry),
         ],
         final other => throw ConfigException(
           'customProviders must be a list, got: $other',
@@ -355,6 +368,39 @@ final class CliConfig {
   /// pipeline assembly happens in the host startup, see
   /// [buildRedactionPipeline]).
   final RedactionConfig? redact;
+
+  /// Returns a copy with [entries] as the custom-providers list; every
+  /// other field carries over. [saveCliConfig] uses it for its
+  /// merge-before-write union (issue #221) — keep this field list in sync
+  /// with the constructor when a section is added.
+  CliConfig withCustomProviders(List<CustomProviderEntry> entries) {
+    return CliConfig(
+      providerKind: providerKind,
+      modelId: modelId,
+      baseUrl: baseUrl,
+      mode: mode,
+      approvalMode: approvalMode,
+      allowedTools: allowedTools,
+      promptOverrides: promptOverrides,
+      modelRoles: modelRoles,
+      ttsr: ttsr,
+      customProviders: entries,
+      models: models,
+      mcp: mcp,
+      a2a: a2a,
+      providerTimeouts: providerTimeouts,
+      skillsAccess: skillsAccess,
+      skillsDisableShellExecution: skillsDisableShellExecution,
+      memory: memory,
+      fabric: fabric,
+      cube: cube,
+      tools: tools,
+      redact: redact,
+      compactionEngine: compactionEngine,
+      images: images,
+    );
+  }
+
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -556,13 +602,37 @@ CliConfig loadCliConfig(String homeDir) {
   try {
     final content = file.readAsStringSync();
     final doc = loadYaml(content);
-    if (doc is YamlMap) return CliConfig.fromYaml(doc);
+    if (doc is YamlMap) {
+      final config = CliConfig.fromYaml(doc);
+      _warnDroppedGhostProviders(doc, config);
+      return config;
+    }
   } on ConfigException {
     rethrow;
   } on Object {
     // Ignore corrupt config and fall back to defaults.
   }
   return CliConfig();
+}
+
+/// Loud note for the ghost cleanup (issue #221): entries named after
+/// built-in catalog providers were dropped from the loaded
+/// `customProviders:` list — they shadow `/provider <name>` routing and
+/// the next save removes them from the file for good.
+void _warnDroppedGhostProviders(YamlMap doc, CliConfig config) {
+  final raw = doc['customProviders'];
+  if (raw is! YamlList || raw.length == config.customProviders.length) {
+    return;
+  }
+  final names = [
+    for (final node in raw)
+      if (_isGhostProviderEntry(node)) '${(node as Map)['name']}',
+  ];
+  if (names.isEmpty) return;
+  stderr.writeln(
+    'warning: dropped customProviders entries named after built-in '
+    'providers (${names.join(', ')}) — reserved names, see issue #221',
+  );
 }
 
 /// Loads the PROJECT-level `memory:` section from
@@ -687,10 +757,86 @@ String? resolveStartupCubeSource({
   return null;
 }
 
+/// One write chain per config file path, shared by every [saveCliConfig]
+/// call in this isolate (the session layer's `_sessionFileOps` pattern):
+/// concurrent saves queue instead of interleaving their
+/// read-merge-write into a lost update.
+final Map<String, Future<void>> _configWriteOps = <String, Future<void>>{};
+
+/// Runs [op] after every previously queued write on [filePath] completes.
+/// A failure never poisons the chain for later callers.
+Future<T> _serializedConfigWrite<T>(String filePath, Future<T> Function() op) {
+  final result = (_configWriteOps[filePath] ?? Future<void>.value()).then(
+    (_) => op(),
+  );
+  _configWriteOps[filePath] = result.then<void>((_) {}, onError: (Object _) {});
+  return result;
+}
+
+int _configTmpCounter = 0;
+
 /// Saves [CliConfig] to `~/.fah/config.yaml`.
+///
+/// Merge-before-write (issue #221): several fa processes run concurrently
+/// on the same machine, each with a config parsed at boot. A whole-file
+/// rewrite from such a possibly-hours-old snapshot clobbers whatever the
+/// other processes saved since — this machine lost the `kimi_me` custom
+/// provider repeatedly to exactly that. So the save re-reads the on-disk
+/// file first and merges the `customProviders:` section as a name-keyed
+/// union (the caller's entries win per name; on-disk entries the caller
+/// never loaded survive). Every other section is caller-wins, as before.
+///
+/// An unparseable on-disk file makes the save REFUSE with a loud
+/// [ConfigException] instead of clobbering the file with defaults (E3).
+/// The write itself is atomic (unique temp file + rename): a concurrent
+/// reader never observes a torn document and a crash mid-write leaves the
+/// previous file intact.
 Future<void> saveCliConfig(String homeDir, CliConfig config) async {
   final dir = Directory('$homeDir/.fah');
   if (!dir.existsSync()) dir.createSync(recursive: true);
   final file = File('${dir.path}/config.yaml');
-  await file.writeAsString(config.toYaml());
+  await _serializedConfigWrite(file.path, () async {
+    final merged = _mergeWithOnDisk(file, config);
+    final tmp = File('${file.path}.tmp.$pid.${_configTmpCounter++}');
+    await tmp.writeAsString(merged.toYaml());
+    try {
+      await tmp.rename(file.path);
+    } on FileSystemException {
+      // Windows cannot rename over an existing file.
+      if (!Platform.isWindows) rethrow;
+      try {
+        await file.delete();
+      } on PathNotFoundException {
+        // Raced away — the rename below recreates it.
+      }
+      await tmp.rename(file.path);
+    }
+  });
+}
+
+/// Re-reads [file] and merges its `customProviders:` section into
+/// [config]'s intended save (name-keyed union, see [saveCliConfig]).
+/// A missing or empty file merges nothing; an unparseable one throws
+/// [ConfigException] — never merge onto (and thereby persist) defaults.
+CliConfig _mergeWithOnDisk(File file, CliConfig config) {
+  if (!file.existsSync()) return config;
+  final content = file.readAsStringSync();
+  if (content.trim().isEmpty) return config;
+  final Object? doc;
+  try {
+    doc = loadYaml(content);
+  } on Object catch (error) {
+    throw ConfigException(
+      'refusing to overwrite unparseable ${file.path}: $error',
+    );
+  }
+  if (doc is! YamlMap) {
+    throw ConfigException(
+      'refusing to overwrite ${file.path}: expected a yaml map, got: $doc',
+    );
+  }
+  final onDisk = CliConfig.fromYaml(doc);
+  return config.withCustomProviders(
+    mergeCustomProviderEntries(config.customProviders, onDisk.customProviders),
+  );
 }

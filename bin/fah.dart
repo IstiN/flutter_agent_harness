@@ -2031,7 +2031,14 @@ Future<void> _runApp(List<String> args) async {
     );
   };
 
-  await persistConfig();
+  try {
+    await persistConfig();
+  } on ConfigException catch (error) {
+    // Issue #221 E3: an unparseable config.yaml makes the save refuse
+    // loudly instead of clobbering the file with defaults. Keep running
+    // with the in-memory config; the user's file stays untouched.
+    stderr.writeln('warning: config not saved: $error');
+  }
 
   Future<void> resetTerminalForShell() async {
     if (!stdin.hasTerminal) return;

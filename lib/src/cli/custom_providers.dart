@@ -142,6 +142,35 @@ final class CustomProviderEntry {
   ProviderSpec get spec => providerCatalog[apiType]!;
 }
 
+/// Whether [name] is reserved for a built-in catalog provider
+/// (case-insensitive): an entry named `openai`/`anthropic`/… shadows
+/// `/provider <name>` routing — issue #221's ghost "openai". Reserved
+/// names are rejected at [CustomProviderRegistry.add], dropped at config
+/// load, and filtered out of every merged write.
+bool isReservedCustomProviderName(String name) =>
+    providerCatalog.containsKey(name.toLowerCase());
+
+/// The merge-before-write union for the `customProviders:` section (issue
+/// #221): [caller] is the saving process's intended list, [onDisk] the
+/// freshly re-read list. Caller's entries win per name (case-insensitive)
+/// — an in-flight edit lands — while on-disk entries the caller never
+/// loaded survive (no stale-snapshot clobber). Reserved (catalog-named)
+/// entries are dropped from the result so a ghost can never persist.
+List<CustomProviderEntry> mergeCustomProviderEntries(
+  List<CustomProviderEntry> caller,
+  List<CustomProviderEntry> onDisk,
+) {
+  final callerNames = {for (final e in caller) e.name.toLowerCase()};
+  return [
+    for (final e in caller)
+      if (!isReservedCustomProviderName(e.name)) e,
+    for (final e in onDisk)
+      if (!callerNames.contains(e.name.toLowerCase()) &&
+          !isReservedCustomProviderName(e.name))
+        e,
+  ];
+}
+
 /// The live list of saved custom providers (shared by the CLI, which
 /// mutates it, and the executable, which persists it).
 final class CustomProviderRegistry {
@@ -161,8 +190,20 @@ final class CustomProviderRegistry {
     return null;
   }
 
-  /// Adds (or replaces, on name clash) [entry].
+  /// Adds (or replaces, on name clash) [entry]. Throws [ConfigException]
+  /// when the entry is named after a built-in catalog provider — such an
+  /// entry shadows `/provider <name>` routing and is exactly the ghost
+  /// "openai" of issue #221; the interactive name prompts reject these
+  /// names already, this is the last line of defense for flows that
+  /// construct entries directly.
   void add(CustomProviderEntry entry) {
+    if (isReservedCustomProviderName(entry.name)) {
+      throw ConfigException(
+        '"${entry.name}" is a built-in provider name — a saved custom '
+        'entry with that name shadows /provider ${entry.name} routing; '
+        'pick another name',
+      );
+    }
     final existing = find(entry.name);
     if (existing != null) entries.remove(existing);
     entries.add(entry);
