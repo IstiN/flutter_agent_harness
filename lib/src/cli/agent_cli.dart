@@ -29,6 +29,7 @@ import 'agent_event_handler.dart';
 import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
 import 'headless_prompt.dart';
+import 'hep.dart';
 import 'key_event.dart';
 import 'key_status.dart';
 import 'provider_error_text.dart';
@@ -177,6 +178,7 @@ part 'agent_cli_inbox.dart';
 part 'agent_cli_steering.dart';
 part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
+part 'agent_cli_hep_io.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
@@ -861,6 +863,11 @@ class AgentCli {
     sessionsRoot: config.sessionRoot,
   );
   Session? _session;
+
+  /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
+  /// null in the REPL. Set by [runHeadless], read by the compaction pass
+  /// to bracket runs with frames.
+  HepWriter? _hep;
   var _persistedCount = 0;
   var _streamedText = false;
 
@@ -2094,11 +2101,17 @@ class AgentCli {
   /// turn (including auto-compaction). The host's [CliIO] should be
   /// non-interactive and route [CliIO.writeln] diagnostics to stderr so
   /// [CliIO.write] (the assistant text) is the only stdout content.
-  Future<int> runHeadless(String prompt) async {
+  Future<int> runHeadless(String prompt, {List<ImageContent> images = const [], HepWriter? hep}) async {
+    _hep = hep;
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
     // same cached trees a REPL session would).
     await _cubeBootRestore();
     _session = await _initializeSession();
+    if (hep != null) {
+      hep.writeHeader(
+        sessionId: _session!.cachedId ?? (await _session!.getMetadata()).id,
+      );
+    }
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
     // Warm the endpoint metadata (model list, dial features, reported
@@ -2114,8 +2127,23 @@ class AgentCli {
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
     );
+    final hepSub = hep == null ? null : _agent.subscribe(hep.handleEvent);
     try {
-      await _agent.prompt(_redactUserText(prompt));
+      if (images.isEmpty) {
+        await _agent.prompt(_redactUserText(prompt));
+      } else {
+        // --attach (issue #155): the files ride the first user message as
+        // image content blocks next to the (redacted) prompt text.
+        await _agent.promptMessage(
+          UserMessage(
+            content: [
+              TextContent(text: _redactUserText(prompt)),
+              ...images,
+            ],
+            timestamp: DateTime.now(),
+          ),
+        );
+      }
       // Awaits any in-flight TTSR retry chain, persists the messages, and
       // auto-compacts — the same end-of-turn sequence as a REPL run.
       await _afterRun();
@@ -2129,6 +2157,7 @@ class AgentCli {
       await _cubeCacheSaveQuietly();
       await interruptSub.cancel();
       await taskSub.cancel();
+      hepSub?.call();
     }
     return switch (_agent.state.messages.lastOrNull) {
       AssistantMessage(stopReason: StopReason.error) => 1,
@@ -2486,8 +2515,11 @@ class AgentCli {
     final message = event.message;
     // Aborted assistant streams are incomplete; TTSR's discard mode prunes
     // them from memory and they should not survive in the session either.
+    // EXCEPT backend agent mode (issue #155): a graceful SIGTERM cancel
+    // must leave a resumable partial transcript on disk.
     if (message is AssistantMessage &&
-        message.stopReason == StopReason.aborted) {
+        message.stopReason == StopReason.aborted &&
+        !config.persistAbortedPartials) {
       return;
     }
     final session = _session;

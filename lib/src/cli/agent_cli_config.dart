@@ -93,12 +93,20 @@ final class AgentCliConfig {
     this.hubFabric,
     this.agentCapabilities = const [],
     this.machineName,
+    this.persistAbortedPartials = false,
   });
 
   /// The user's home directory, when the host has one (used for user-level
   /// skill/context discovery: `~/.fah/skills`, `~/.fah/AGENTS.md`). Null on
   /// sandboxed hosts (web) where only the project FS exists.
   final String? homeDir;
+
+  /// Backend agent mode (issue #155): persist aborted assistant partials
+  /// so a SIGTERM/SIGINT graceful cancel leaves a resumable JSONL (the
+  /// `cancelled` HEP frame's counterpart on disk). Default false: the
+  /// REPL keeps discarding incomplete streams.
+  final bool persistAbortedPartials;
+
 
   /// Override for the compaction thresholds (ratio-based trigger, reserve
   /// and recent-token budgets). When `null`, `defaultCompactionSettings`
