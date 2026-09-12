@@ -929,6 +929,26 @@ class AppsStore {
     return true;
   }
 
+  /// Recorded files of a catalog install (per `apps/.installed.json`
+  /// hashes) that are MISSING on disk — the fingerprint of a torn
+  /// filesystem snapshot replaying only part of an install (issue #201:
+  /// manifest restored, widget.js lost, tile renders but launch dies with
+  /// FileError notFound). Empty when the install is intact or [id] is not
+  /// catalog-installed.
+  Future<List<String>> missingInstalledFiles(String id) async {
+    final meta = await _readInstalled();
+    final files = meta[id]?['files'];
+    if (files is! Map) return const [];
+    final missing = <String>[];
+    for (final rel in files.keys) {
+      final path = 'apps/$id/$rel';
+      if (!((await _env.exists(path)).valueOrNull ?? false)) {
+        missing.add(rel.toString());
+      }
+    }
+    return missing;
+  }
+
   Future<void> _writeInstalled(Map<String, Map<String, dynamic>> meta) async {
     await _env.writeFile(installedMetaFile, jsonEncode(meta));
   }
