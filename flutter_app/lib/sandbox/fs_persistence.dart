@@ -38,8 +38,7 @@ final class InMemoryFsRecordStore implements FsRecordStore {
   /// Creates an in-memory store. [quotaBytes] (test hook) caps the total
   /// stored payload: a [save] that would exceed it throws, like IndexedDB
   /// does under the per-origin quota.
-  InMemoryFsRecordStore({int? quotaBytes}) : _quotaBytes = quotaBytes;
-
+  InMemoryFsRecordStore({this._quotaBytes});
   final int? _quotaBytes;
 
   final Map<String, String> _records = {};
