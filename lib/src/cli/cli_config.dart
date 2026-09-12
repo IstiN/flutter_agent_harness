@@ -364,7 +364,23 @@ final class CliConfig {
       ..write('mode: $mode\n')
       ..write('approvalMode: $approvalMode\n')
       ..write(_allowedToolsYaml())
-      ..write(_promptOverridesYaml());
+      ..write(_promptOverridesYaml())
+      ..write(_optionalSectionsYaml());
+    return buffer.toString();
+  }
+
+  /// The optional config sections, only when explicitly configured; the
+  /// file stays minimal (defaults are never written).
+  String _optionalSectionsYaml() {
+    final buffer = StringBuffer()
+      ..write(_modelSectionsYaml())
+      ..write(_hostSectionsYaml());
+    return buffer.toString();
+  }
+
+  /// Model/provider-related optional sections.
+  String _modelSectionsYaml() {
+    final buffer = StringBuffer();
     final roles = modelRoles;
     if (roles != null) buffer.write(roles.toYaml());
     final ttsrConfig = ttsr;
@@ -378,6 +394,12 @@ final class CliConfig {
     if (mcpConfig != null) buffer.write(mcpConfig.toYaml());
     buffer.write(_providerTimeoutsYaml());
     buffer.write(_skillsYaml());
+    return buffer.toString();
+  }
+
+  /// Host/environment-related optional sections.
+  String _hostSectionsYaml() {
+    final buffer = StringBuffer();
     final fabricConfig = fabric;
     if (fabricConfig != null) buffer.write(fabricConfig.toYaml());
     final cubeConfig = cube;
