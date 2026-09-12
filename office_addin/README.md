@@ -120,10 +120,17 @@ flutter_app/lib/firebase_options.dart`).
   boot path: surface + override seeding with/without an api, and a full
   scripted-provider turn reading the poisoned mail body through the
   fence.
+- `flutter_app/test/web/owa_sandbox_boot_test.dart` (chrome platform,
+  `--dart-define=FA_HOST=office`) — the OWA sandbox reproduction
+  ([#202](https://github.com/IstiN/flutter_agent_harness/issues/202)):
+  a history-less iframe installs the no-op URL strategy, and the
+  onReady-first boot seam memoizes one handshake and fails cleanly into
+  `office_unavailable` when Office.js is absent.
 - `e2e/` — Playwright chromium + webkit over the assembled pane: app
   boot + office beacon + zero page errors, redirect shim, asset shape
   (no legacy agent, canvaskit mirror), CSP gates (CDN allowed, inline
-  refused), IndexedDB FS persistence across reloads.
+  refused), IndexedDB FS persistence across reloads, and the
+  history-less OWA iframe reaching the first frame.
 - CI: `.github/workflows/office-addin.yml` runs all of the above and
   uploads `build/pages/root/outlook/` as the `office-addin` artifact.
 
