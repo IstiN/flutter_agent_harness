@@ -1260,8 +1260,6 @@ void main() {
       expect(find.byKey(orbitKey), findsOneWidget); // status row visible
     });
   });
-}
-  });
   group('SessionChatSheet session tree (issue #198)', () {
     /// Seeds a main + subagent child pair on disk (the header metadata
     /// both hosts' childSessionFactory writes) and returns their
