@@ -7,6 +7,12 @@ import 'dart:convert';
 import 'package:fa/apps/dynamic_messages.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../native_test_guard.dart';
+
+/// Skip value for the tests booting real JS engines through the service
+/// (issue #184); the pure-Dart presentation/persistence tests in this file
+/// run on every host.
+final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 
 /// Integration tests for the dynamic-message host service (issue #102):
 /// presentation, replay-with-storage, the event back-channel, and the
@@ -326,7 +332,7 @@ jsr.onEvent(function(actionId, payload) {
         expect(sent, isEmpty);
       });
     });
-  });
+  }, skip: _engineSkip);
 
   group('replay hardening, caps, graduation', () {
     testWidgets('a hostile replayed widget id is skipped, never materialised', (
@@ -400,36 +406,41 @@ jsr.onEvent(function(actionId, payload) {
       },
     );
 
-    testWidgets('an oversized event payload is truncated in the back-channel', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = MemoryExecutionEnv();
-        final (dm, sent) = service(env);
-        final big = List.filled(5000, 'x').join();
-        final id = await dm.present(
-          DynamicMessageRequest(
-            title: 'Big',
-            jsSource:
-                '''
+    group('back-channel payload cap (native JS engine)', () {
+      testWidgets(
+        'an oversized event payload is truncated in the back-channel',
+        (tester) async {
+          await tester.runAsync(() async {
+            final env = MemoryExecutionEnv();
+            final (dm, sent) = service(env);
+            final big = List.filled(5000, 'x').join();
+            final id = await dm.present(
+              DynamicMessageRequest(
+                title: 'Big',
+                jsSource:
+                    '''
 jsr.render({type: 'text', data: 'big'});
 jsr.fa.emit('data', {blob: '$big'});
 ''',
-          ),
-        );
-        final engine = await dm.ensureEngine(dm.byId(id!)!);
-        expect(engine, isNotNull);
-        final delivered = await waitFor(() => sent.isNotEmpty);
-        expect(delivered, isTrue);
-        expect(sent.single, startsWith('[widget Big] data '));
-        expect(sent.single, endsWith('…[truncated]'));
-        expect(
-          sent.single.length,
-          lessThanOrEqualTo(DynamicMessagesService.maxEventPayloadChars + 32),
-        );
-        await engine!.dispose();
-      });
-    });
+              ),
+            );
+            final engine = await dm.ensureEngine(dm.byId(id!)!);
+            expect(engine, isNotNull);
+            final delivered = await waitFor(() => sent.isNotEmpty);
+            expect(delivered, isTrue);
+            expect(sent.single, startsWith('[widget Big] data '));
+            expect(sent.single, endsWith('…[truncated]'));
+            expect(
+              sent.single.length,
+              lessThanOrEqualTo(
+                DynamicMessagesService.maxEventPayloadChars + 32,
+              ),
+            );
+            await engine!.dispose();
+          });
+        },
+      );
+    }, skip: _engineSkip);
 
     test(
       'saveAsApp copies code and storage; a live slug is never overwritten',

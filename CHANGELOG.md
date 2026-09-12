@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.1.356
+
+
+- ci(177): PR-level CI speed restructure — a pull request now pays only for
+  what it touched. Path-aware gating (`changes` job), the sequential
+  "Quality gates" monolith split into parallel jobs (`static`, `test-core`
+  ×3 duration-balanced shards with merged coverage, `coverage-gate`,
+  `guards`, `flutter-tests` on ubuntu), pub/flutter caching everywhere,
+  concurrency cancel-in-progress on all PR workflows, and one aggregate
+  `Quality gate` required check. PRs ratchet coverage on CHANGED lines
+  (`scripts/diff_coverage.py`); main/tags/nightly keep the full 80%
+  ratchet. The pre-commit hook is now a thin wrapper over the SAME
+  `scripts/ci_fast_gate.sh` CI runs, with the same path filters.
+- ci(177): nightly full-matrix workflow (`nightly.yml`) — the original
+  monolith gates + the PTY/CLI integration suites (never gated on PRs
+  before; live-provider tests self-skip without keys) + the terminal-visual
+  screenshot suite (never ran in CI at all) — with a deduped `nightly-red`
+  auto-issue. `packages/fa_ui` non-golden tests join CI for the first time.
+- ci(177): automatically growing terminal-test coverage — weekly
+  `coverage-gardener.yml` re-measures PTY-suite coverage of
+  `lib/src/cli/**` and commits the higher baseline;
+  `scripts/check_cli_coverage.py` enforces it nightly (ratchet only up).
+- ci(177): duration-balanced test sharding — `scripts/test_shards.json` +
+  `scripts/rebalance_shards.py` (junit timing or file-count fallback),
+  rebalanced weekly by `shard-rebalance.yml`.
+
+## 0.1.357
+
+
+- feat(171): session image registry — unique images ride a provider
+  request exactly once per window; every other occurrence becomes a
+  stable `[Image N]` text ref. `rewriteHistoryImages`
+  (`lib/src/agent/image_registry.dart`) rewrites the OUTBOUND payload
+  only (session JSONL byte-identical): carriers
+  `[{text:"[Image N]"},{image}]` anchor before the first referencing
+  user message or after the tool-result run (never inside call/result
+  pairs); the current user message rides images in place; the
+  per-request cap drops current-first-then-newest with a drop notice
+  (never silent); dangling refs (compaction, cap) resolve to
+  `(image no longer available)`. Stateless per-request rebuild —
+  determinism, eviction and resume come free. Config: `images.registry`
+  kill switch (false = byte-for-byte legacy shape) +
+  `images.maxPerRequest` (default 20), strict parse, CLI and app honor
+  it. Fixes #171.
+
+
+
 ## 0.1.354
 
 
@@ -3291,6 +3338,8 @@
 - feat(166): apps grid custom cell spans (1×2, 2×1, 1×3, 3×1) (#176)
 - feat(168): mobile trajectory view — parity with desktop (#175)
 - docs(157): KB — DAP e2e family triage (two cases were #158 races) (#163)
+
+## Unreleased
 
 ## Unreleased
 

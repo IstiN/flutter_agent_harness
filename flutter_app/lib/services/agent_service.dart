@@ -15,6 +15,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
 import 'agent_tool_availability.dart';
@@ -486,6 +487,11 @@ class AgentService extends ChangeNotifier
     _childSessionFactory = childSessionFactory;
     // Project-level .fah/config.yaml memory: wins over the user one.
     final memoryConfig = loadAppMemoryConfig(env.sessionCwd);
+    // Session image registry (`images:` section, issue #171): process-wide
+    // like in the CLI; core default is on, user config honored where the
+    // config is readable.
+    imageRegistryConfig =
+        loadAppImageRegistryConfig() ?? const ImageRegistryConfig();
     _memoryController = MemoryController(
       env: env,
       // `memory:` section of ~/.fah/config.yaml — the same git-backed
