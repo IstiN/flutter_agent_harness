@@ -1,10 +1,12 @@
 # Outlook add-in (`office_addin/`)
 
-How to install and run [fa](../README.md) inside Outlook. The add-in is a
-taskpane chat ([fa1.dev/outlook/](https://fa1.dev/outlook/)) with three
+How to install and run [fa](../README.md) inside Outlook. The add-in is
+the full fa agent as a taskpane chat
+([fa1.dev/outlook/app/](https://fa1.dev/outlook/app/)) with
 approval-gated mail tools (`outlook.read_current_item`,
-`outlook.read_attachment`, `outlook.insert_draft_body`). The same guide
-lives on the web at
+`outlook.read_attachment`, `outlook.insert_draft_body`) — the same app
+that runs at fa1.dev, embedded in Outlook with the mail bridge wired in.
+The same guide lives on the web at
 [fa1.dev/outlook/support.html](https://fa1.dev/outlook/support.html) —
 the add-in's Support URL.
 
@@ -18,12 +20,15 @@ This page is the install guide. Architecture and the dev loop:
   [troubleshooting](#troubleshooting) if yours doesn't.
 - Any of: Outlook on the web (outlook.office.com / outlook.live.com),
   new Outlook for Windows, or classic Outlook for Windows / Mac.
-- The manifest: <https://fa1.dev/outlook/manifest.xml> — today 1.0.0.0,
-  which surfaces in classic Outlook (Windows/Mac) and classic Outlook
-  on the web. The *Apps*-flyout button in new Outlook for Windows needs
-  1.1.0.0, the VersionOverrides release from
-  [issue #143](https://github.com/IstiN/flutter_agent_harness/issues/143)
-  — until that deploys, new Outlook shows no fa entry at all.
+- The manifest: <https://fa1.dev/outlook/manifest.xml> — 1.2.0.0, the
+  release where the taskpane became the full fa app (issue #182). It
+  carries both the classic form settings and the VersionOverrides
+  command surface from
+  [issue #143](https://github.com/IstiN/flutter_agent_harness/issues/143),
+  so the «fa» button shows up in new Outlook for Windows and OWA as
+  well as classic clients. If you installed an older manifest
+  (≤ 1.1.0.0), re-download and re-add — old taskpane URLs keep working
+  for one release via a redirect, then disappear.
 
 ## 1. Download the manifest
 
@@ -69,15 +74,21 @@ Open (or select) any email message, then:
 
 - **New Outlook for Windows / Outlook on the web:** the message's
   *Apps* flyout (toolbar or ⋯ menu) → **fa**. In a compose window the
-  same flyout sits in the compose toolbar. *(Needs manifest 1.1.0.0 —
-  the VersionOverrides release, issue #143. Until it deploys, new
-  Outlook shows no fa entry; use classic Outlook or the steps below.)*
+  same flyout sits in the compose toolbar.
 - **Classic Outlook for Windows:** *Home* ribbon → **fa** button.
 - **Classic Outlook for Mac:** the message ribbon → **fa**.
 
-The taskpane is the fa chat. Configure a provider and API key inside
-the pane (BYOK — the key stays in the add-in's local storage), then
-ask; reading a mail body or attachment always prompts for approval.
+The taskpane is the fa app. Configure a provider and API key inside
+the pane (BYOK — the key stays in the pane's own partitioned storage,
+separate from fa1.dev and the browser extension), then ask. It has the
+full agent surface: the sandbox shell with Python and JS interpreters,
+files, apps — plus the three mail tools. Reading a mail body is
+pre-approved at the read tier; reading an attachment or inserting into
+a draft **always** prompts for approval, in every session mode.
+
+Note: network access from the pane is the provider endpoints you
+configure, called directly over HTTPS — nothing else (issue #182's
+T1-only decision).
 
 To remove: *My add-ins* → *Custom add-ins* → **⋯** on fa → *Remove*.
 
@@ -85,9 +96,9 @@ To remove: *My add-ins* → *Custom add-ins* → **⋯** on fa → *Remove*.
 
 | Symptom | Cause and fix |
 |---|---|
-| “Installation failed — Add-in installation failed.” on upload | The manifest failed validation. This was a real manifest defect before v1.0.0.0 finished deployment (#131/#133 — an XML comment bug, since fixed; Microsoft's validation gateway now accepts the manifest). Re-download `manifest.xml` and retry; make sure the file wasn't saved as `.txt` or truncated. |
+| “Installation failed — Add-in installation failed.” on upload | The manifest failed validation. Re-download `manifest.xml` and retry; make sure the file wasn't saved as `.txt` or truncated. Check `<Version>` — it should read `1.2.0.0`. |
 | No *Custom add-ins* section, or “installing from url is disabled” | Your tenant blocks custom add-ins (common in corporate tenants). An admin can deploy fa via the M365 admin center (*Settings → Integrated apps → Upload custom apps*), or install with a personal Outlook.com account instead. |
-| Installed but no **fa** button anywhere in new Outlook | Known gap: manifest 1.0.0.0 has no ribbon surface in new Outlook — that is exactly what [#143](https://github.com/IstiN/flutter_agent_harness/issues/143) fixes with the 1.1.0.0 VersionOverrides release. Until it deploys to fa1.dev, use classic Outlook (Windows/Mac) or classic Outlook on the web; once live, re-download the manifest (check `<Version>` — 1.1.0.0), remove the old add-in, re-add from file. |
-| Old version keeps running after an update | Outlook caches add-ins for up to 24 h (classic Windows). Remove the add-in, re-add from the new manifest, restart Outlook; worst case wait out the cache. |
-| “host API unavailable” banner in the taskpane | The Office.js runtime didn't load. Reload the taskpane; if it persists, the pane still works as a plain chat without the mail tools. |
-| Taskpane blank | Your network must reach `fa1.dev` and the Office.js CDN (`appsforoffice.microsoft.com`). Check proxies/corporate filters. |
+| Installed but no **fa** button anywhere in new Outlook | Your manifest predates 1.1.0.0 (the VersionOverrides release, issue #143). Re-download the manifest, remove the old add-in, re-add from file. |
+| Old pane (plain chat, no app UI) after updating to 1.2.0.0 | Outlook caches add-ins for up to 24 h (classic Windows). Remove the add-in, re-add from the new manifest, restart Outlook; worst case wait out the cache. |
+| Pane loads but the agent reports “office_unavailable” | The Office.js runtime didn't load (network filters can block `appsforoffice.microsoft.com`). Reload the taskpane; if it persists, the pane still works as the full fa chat without the mail tools. |
+| Taskpane blank | Your network must reach `fa1.dev`, the Office.js CDN (`appsforoffice.microsoft.com`) and `cdn.jsdelivr.net` (interpreter/model runtimes). Check proxies/corporate filters. On very old WebView2 builds the canvaskit renderer may fail — update Edge/WebView2. |

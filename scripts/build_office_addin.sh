@@ -135,7 +135,7 @@ csp = (
     "worker-src 'self' blob:; "
     'connect-src * data: blob:; '
     "media-src 'self' blob: data:; "
-    'frame-src \'self\' blob: data: about:\'" />'
+    "frame-src 'self' blob: data: about:\" />"
 )
 
 if 'appsforoffice.microsoft.com' in html:
