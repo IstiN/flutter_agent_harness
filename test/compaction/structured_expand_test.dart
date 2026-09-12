@@ -270,19 +270,54 @@ void main() {
     },
   );
 
-  test('budget: over-budget expands return a note, not a crash', () async {
-    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
-    await session.appendMessage(UserMessage.text(List.filled(400, 'y').join()));
-    final seqs = RecordSeqIndex(await session.getEntries());
-    final target = seqs.seqOf((await session.getEntries()).last.id)!;
-    // 400 chars ≈ 100 tokens; budget 40 denies on the first call.
-    final controller = await controllerFor(session, turnBudgetTokens: 40);
+  test(
+    'budget charges per delivered page, so giants stay expandable',
+    () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendMessage(
+        UserMessage.text(List.filled(400, 'y').join()),
+      );
+      final seqs = RecordSeqIndex(await session.getEntries());
+      final target = seqs.seqOf((await session.getEntries()).last.id)!;
 
-    expect(await expand(controller, target), contains('Expand selectively'));
-    expect(controller.spentTokens, 0, reason: 'denied expand spends nothing');
+      // Single page bigger than the whole budget: denied, nothing spent.
+      final tiny = await controllerFor(session, turnBudgetTokens: 10);
+      expect(await expand(tiny, target), contains('Expand selectively'));
+      expect(tiny.spentTokens, 0, reason: 'denied expand spends nothing');
 
-    final roomy = await controllerFor(session, turnBudgetTokens: 10 * 1024);
-    expect(await expand(roomy, target), contains('yyyy'));
-    expect(roomy.spentTokens, greaterThan(0));
-  });
+      // The same record pages through a small budget a page at a time
+      // (S6: paging a giant segment must stay possible).
+      final paged = await controllerFor(
+        session,
+        pageChars: 100,
+        turnBudgetTokens: 60,
+      );
+      final afterPage1 = await expand(paged, target, page: 1);
+      expect(afterPage1, contains('page 1/5'));
+      final firstCharge = paged.spentTokens;
+      expect(firstCharge, greaterThan(0), reason: 'one page = ~25 tokens');
+      expect(await expand(paged, target, page: 2), contains('page 2/5'));
+      expect(
+        paged.spentTokens,
+        firstCharge * 2,
+        reason: 'pages accumulate, page by page',
+      );
+      // Budget 60 fits two ~25-token pages; the third is denied.
+      expect(
+        await expand(paged, target, page: 3),
+        contains('Expand selectively'),
+      );
+      expect(
+        paged.spentTokens,
+        firstCharge * 2,
+        reason: 'denied page spends nothing',
+      );
+
+      final roomy = await controllerFor(session, turnBudgetTokens: 10 * 1024);
+      expect(await expand(roomy, target), contains('yyyy'));
+      expect(roomy.spentTokens, greaterThan(0));
+    },
+  );
 }

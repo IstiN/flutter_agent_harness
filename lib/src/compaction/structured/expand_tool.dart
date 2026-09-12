@@ -154,12 +154,13 @@ final class CompactExpandController {
       );
     }
     final slice = _pageSlice(content, page, pages, pageChars);
-    // Budget counts the REQUESTED segment (not just this page's slice):
-    // re-paging a giant segment must not multiply the budget.
-    final cost = _tokensForChars(content.length);
+    // Budget charges the DELIVERED page, not the whole segment: paging a
+    // 20 MB record through the turn must stay possible — the sum over all
+    // pages converges to the segment cost (S6).
+    final cost = _tokensForChars(slice.length + 1);
     if (_spentTokens + cost > turnBudgetTokens) {
       return ToolExecutionResult.text(
-        '($_spentTokens/$turnBudgetTokens tokens spent; this segment '
+        '($_spentTokens/$turnBudgetTokens tokens spent; page $page of $pages '
         'would add ~$cost). Expand selectively; smaller targets fit.',
       );
     }

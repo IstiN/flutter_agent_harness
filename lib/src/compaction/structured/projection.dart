@@ -178,9 +178,11 @@ List<Message> _projectRecord(
   required List<Message> Function(SessionRecord record) projectEntry,
 }) {
   // A covering checkpoint renders at the position of its first visible
-  // path record (D2: markers sit where the content sat).
+  // path record (D2: markers sit where the content sat) — unless the
+  // checkpoint itself was hidden by a later judge pick, in which case its
+  // range renders as if uncovered.
   final cover = state.coveredRecordIds[record.id];
-  if (cover != null) {
+  if (cover != null && !state.hiddenRecordIds.contains(cover.id)) {
     return emitted.add(cover.id) && !state.isCovered(cover.id)
         ? [_checkpointMessage(cover, byId: byId, seqs: seqs)]
         : const [];
@@ -190,7 +192,9 @@ List<Message> _projectRecord(
       return const [];
     case CompactCheckpointRecord():
       // Renders in place only when its range sits fully off-branch
-      // (nothing visible triggered the in-place emission above).
+      // (nothing visible triggered the in-place emission above). A judge
+      // hide targets the checkpoint itself: no marker, no swallow.
+      if (state.hiddenRecordIds.contains(record.id)) return const [];
       return emitted.add(record.id)
           ? [_checkpointMessage(record, byId: byId, seqs: seqs)]
           : const [];
@@ -210,6 +214,23 @@ List<Message> _projectRecord(
         seqs: seqs,
         projectEntry: projectEntry,
       );
+    case CustomMessageRecord():
+      // Host-injected context must never silently vanish on a structured
+      // branch: hidden customs render as notice markers, visible ones
+      // project through the classic per-record projection.
+      if (state.hiddenRecordIds.contains(record.id)) {
+        return [
+          UserMessage(
+            content: hiddenMarker(
+              seq: seqs.seqOf(record.id) ?? 0,
+              kind: markerKinds.notice,
+              tokens: _recordTokens(record),
+            ),
+            timestamp: record.timestamp,
+          ),
+        ];
+      }
+      return projectEntry(record);
     default:
       return const [];
   }
