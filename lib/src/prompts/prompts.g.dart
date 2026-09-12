@@ -52,6 +52,22 @@ const branchSummaryPrompt =
 const branchSummaryPreamble =
     'The user explored a different conversation branch before returning here.\nCheckpoint of that exploration:';
 
+/// System prompt for the structured-compaction hide judge (the smol-role LLM
+/// call that picks which context records to hide). Validated on a real 14.5 MB
+/// session (issue
+///
+/// Source: `prompts/compaction/hide_judge.md`.
+const hideJudgeSystemPrompt =
+    'You are the context-hygiene judge for an AI agent harness.\nThe agent\'s context is a numbered ledger of records (id = stable number).\nNear the context window edge you decide which records to HIDE.\nHiding is lossless (records stay on disk, expandable on demand), so be\naggressive — but NEVER hide:\n- user messages containing requests, questions, or instructions;\n- assistant text that answers the user or states decisions/conclusions;\n- the most recent ~8 records (the live edge);\n- unresolved errors the agent may still need.\nPRIME hide candidates:\n- tool results whose content was consumed (a file read followed by an edit\n  of that file; a fetched page already distilled into an assistant summary);\n- superseded re-reads and stale search/grep outputs;\n- thinking/reasoning blocks whose conclusions are already stated;\n- large one-off logs/listings.\nPAIR RULE: an assistant-TOOLCALL record and its toolResult records are\natomic — either hide ALL of them (call + every result) or NONE.\nASSISTANT-TEXT RULE: assistant-TEXT records are the visible conversation\nwith the user (decisions, conclusions, answers, plans). Keep them by\ndefault; hide one ONLY when its content is verifiably restated in a LATER\nassistant-TEXT record (a superseded intermediate update) — never hide the\nfinal answer on a topic.\nTHINKING RULE: thinking records are scratch reasoning — hide freely once\ntheir conclusion exists in a later assistant record.\nOutput ONLY a JSON array of ids and ranges, e.g. ["3","5","7-8","12"].';
+
+/// Instruction tail for the structured-compaction checkpoint LLM call (pass 2).
+/// The checkpoint text must list every covered expand id and carry open user
+/// requests verbatim (issue
+///
+/// Source: `prompts/compaction/structured_checkpoint.md`.
+const structuredCheckpointPrompt =
+    'Write a checkpoint of the conversation above. It replaces a range of\nrecords in the agent\'s context, so it must let the agent continue the work\nwithout the replaced records.\n\nRules:\n- Start with a `covers:` line listing EXACTLY the expand ids given in the\n  `<covers>` block, verbatim, comma-separated. Every replaced segment must\n  stay reachable through that line — never drop an id.\n- If an `<open-user-requests>` block is present, carry each listed request\n  VERBATIM at the top of the checkpoint, under a `open asks:` heading.\n- Keep decisions, conclusions, final answers, error causes, and file paths\n  the agent still needs. Preserve important tool outputs (test verdicts,\n  command results, error traces) with what produced them.\n- Keep it dense prose or tight bullets; no preamble, no restating these\n  instructions.';
+
 /// System prompt template for the Fa CLI default coding mode.
 ///
 /// Source: `prompts/cli/mode_code.md`.
@@ -155,6 +171,13 @@ const lspToolDescriptionPrompt =
 /// Source: `prompts/tools/rewind.md`.
 const rewindToolDescriptionPrompt =
     'End an active checkpoint. Rewind context to it, replacing intermediate exploration with your report.\n\nCall immediately after `checkpoint`-started investigative work.\n\nRequirements:\n- `report` MUST be concise, factual, and actionable.\n- Include key findings, decisions, and any unresolved risks.\n- AVOID raw scratch logs unless essential.\n- You MUST call this before finishing if a checkpoint is active.\n\nBehavior:\n- If no checkpoint is active, this tool errors. If the checkpoint already rewound, continue from the retained report instead of retrying.\n- On success, the session rewinds, keeps your report as retained context, and closes the checkpoint.\n- A successful rewind is final for that checkpoint; repeat calls error.';
+
+/// Description of the compact_expand tool that pulls a hidden or compacted
+/// context segment back into the conversation by its numeric marker id (issue
+///
+/// Source: `prompts/tools/compact_expand.md`.
+const compactExpandToolDescriptionPrompt =
+    'Expand a hidden or compacted context segment back into the conversation.\n\nContext markers like `[3:hidden·tool_result·4.2k]` or `[2-6:ckpt·38k→40tok·covers:3,5]` are doors, not gravestones: the underlying records stay on disk. Pass the marker\'s numeric id or range as `target` (e.g. `5` or `2-6`) to read the original content back.\n\n- Giant segments are paged: pass `page` (1-based) to continue past the first page.\n- Expanded content counts toward a per-turn budget; when exhausted the result says so — expand selectively instead.\n- The session file never changes; an expanded segment may be re-hidden later by compaction.\n\nPrefer a targeted expand over re-reading files when the fact was already in context once.';
 
 /// Tools section appended to the system prompt by the prompt-based tool-calling
 /// wrapper; lists the available tools and specifies the fenced

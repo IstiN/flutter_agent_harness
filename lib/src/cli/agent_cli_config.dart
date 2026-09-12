@@ -74,6 +74,7 @@ final class AgentCliConfig {
     this.codeMieSsoAuthenticateFn,
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
+    this.compactionEngine,
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -104,6 +105,11 @@ final class AgentCliConfig {
   /// is used (ratio 0.7, reserve 50000, keep 80000). Hosts plumb their
   /// `compaction:` yaml section through this field.
   final CompactionSettings? compactionSettings;
+
+  /// The effective compaction engine (issue #148), resolved by the host
+  /// (global < project < `--compaction-engine` runtime flag). `null` keeps
+  /// the classic engine — the default during structured incubation.
+  final CompactionEngine? compactionEngine;
 
   /// Optional fa_cube sandbox spec applied for the whole session (from the
   /// `--cube`/`--cube-config` flags or the `cube:` config section). The

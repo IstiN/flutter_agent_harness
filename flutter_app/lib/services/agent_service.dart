@@ -16,6 +16,7 @@ import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'memory_config_loader.dart';
+import 'compaction_engine_loader.dart';
 import 'agent_tool_availability.dart';
 import 'session_names_store.dart';
 
@@ -704,6 +705,18 @@ class AgentService extends ChangeNotifier
     };
     _attachRedactor(redactor, bootSecrets);
     _attachApproval();
+    // Structured compaction recall (issue #148 D3): `compact_expand`
+    // resolves numeric marker ids against the LIVE session; the per-turn
+    // expand budget resets on every new user message through the agent
+    // subscription. Registered after agent construction (the controller
+    // needs the agent), mirroring the CLI host.
+    final compactExpand = CompactExpandController(
+      agent: _agent,
+      session: () => _session,
+    );
+    _compactExpand = compactExpand;
+    registry.register(compactExpand.tool);
+    _agent.state.tools = registry.tools;
     _agent.subscribe(_onAgentEvent);
     // Capability-gated tool availability (issue #19): capabilities follow
     // the actual wiring above, the gate hides/restores per config, and the
@@ -930,6 +943,11 @@ class AgentService extends ChangeNotifier
   /// around a pre-constructed [Agent] (tests), where the registry is owned
   /// by the caller.
   ToolRegistry? _toolRegistry;
+
+  /// The `compact_expand` controller (issue #148): per-turn expand budget
+  /// + the tool bound to the live session. Built in [_withEnv] after the
+  /// agent exists; null on the pre-constructed-agent (test) path.
+  CompactExpandController? _compactExpand;
 
   /// Subagent manager (Phase 3a): tracks spawned children for the task tool.
   SubagentManager? _subagentManager;
@@ -2209,6 +2227,7 @@ class AgentService extends ChangeNotifier
     // watchdog would otherwise outlive the host by minutes (and wedge
     // widget tests' fake_async invariants on a pending timer).
     _agent.abort();
+    _compactExpand?.dispose();
     if (_subagentManager != null) _scheduledMessages.dispose();
     _inboxWatchTimer?.cancel();
     _idleWatchdog?.cancel();
