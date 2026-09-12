@@ -9,6 +9,7 @@
 /// branch from leaf to root.
 library;
 
+import '../compaction/structured/projection.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../types.dart';
@@ -157,6 +158,47 @@ final class Session {
         parentId: parentId,
         timestamp: DateTime.now(),
         message: message,
+      ),
+    );
+  }
+
+  /// Appends a structured-compaction hide event (issue #148 pass 1): the
+  /// records in [recordIds] keep living in the file but project as
+  /// one-line markers. Ids must be stable record ids of records already on
+  /// the append path — never positions.
+  Future<String> appendHiddenRange({required List<String> recordIds}) {
+    return _append(
+      (id, parentId) => HiddenRangeRecord(
+        id: id,
+        parentId: parentId,
+        timestamp: DateTime.now(),
+        recordIds: recordIds,
+      ),
+    );
+  }
+
+  /// Appends a structured-compaction checkpoint (issue #148 pass 2): the
+  /// range [firstRecordId, lastRecordId] stops rendering individually and
+  /// is replaced by [text]; [coversRecordIds] names every hidden segment
+  /// the checkpoint subsumes, [flattenedRecordIds] the inner checkpoints
+  /// folded in by the depth cap.
+  Future<String> appendCompactCheckpoint({
+    required String firstRecordId,
+    required String lastRecordId,
+    required String text,
+    required List<String> coversRecordIds,
+    required List<String> flattenedRecordIds,
+  }) {
+    return _append(
+      (id, parentId) => CompactCheckpointRecord(
+        id: id,
+        parentId: parentId,
+        timestamp: DateTime.now(),
+        firstRecordId: firstRecordId,
+        lastRecordId: lastRecordId,
+        text: text,
+        coversRecordIds: coversRecordIds,
+        flattenedRecordIds: flattenedRecordIds,
       ),
     );
   }
@@ -346,10 +388,7 @@ final class Session {
   /// projected per pi's `buildSessionContext` + `convertToLlm`.
   Future<List<Message>> buildContextMessages() async {
     final path = await getBranch();
-    return [
-      for (final entry in _applyCompactionTransform(path))
-        ..._entryToMessages(entry),
-    ];
+    return _projectMessages(_applyCompactionTransform(path));
   }
 
   /// Projects an explicit record path (root-first) into messages — the
@@ -368,16 +407,35 @@ final class Session {
     final path = await getBranch();
     final state = _deriveState(path);
     return SessionContext(
-      messages: [
-        for (final entry in _applyCompactionTransform(path))
-          ..._entryToMessages(entry),
-      ],
+      messages: await _projectMessages(_applyCompactionTransform(path)),
       thinkingLevel: state.thinkingLevel,
       model: state.model,
       activeToolNames: state.activeToolNames,
     );
   }
 
+  /// Projects a classic-transformed path into messages. Branches carrying
+  /// structured-compaction records render through the structured
+  /// projection (hidden markers + checkpoints); everything else keeps the
+  /// classic shape byte-for-byte.
+  ///
+  /// A structured record dropped by a later classic fallback compaction
+  /// (records before `firstKeptEntryId`) loses its effect on the kept
+  /// region — benign: the covered records simply render fully again, and
+  /// the next structured pass re-derives hides from scratch.
+  Future<List<Message>> _projectMessages(List<SessionRecord> path) async {
+    final hasStructured = path.any(
+      (entry) => entry is HiddenRangeRecord || entry is CompactCheckpointRecord,
+    );
+    if (!hasStructured) {
+      return [for (final entry in path) ..._entryToMessages(entry)];
+    }
+    return renderStructuredMessages(
+      path: path,
+      seqs: RecordSeqIndex(await getEntries()),
+      projectEntry: _entryToMessages,
+    );
+  }
   ({
     String thinkingLevel,
     ({String provider, String modelId})? model,
