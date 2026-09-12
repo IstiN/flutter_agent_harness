@@ -12,6 +12,7 @@ import '../env/execution_env.dart';
 import '../session/session_grouping.dart';
 import '../session/session_repo.dart';
 import '../session/session_storage.dart';
+import 'tui_repl.dart';
 
 /// One display row of a session listing: a main (numbered), an indented
 /// child (`↳`), or an orphaned child surfaced top-level.
@@ -223,3 +224,47 @@ Map<String, Object?> _sessionJsonRow(SessionMetadata m, String? name) => {
   'agent': m.metadata?['agent'],
   'parent': subagentParentId(m),
 };
+
+/// TUI sessions-picker items for [rows] (issue #198): the view toggle rides
+/// first (`flat`/`tree`), then one item per row — parents numbered, children
+/// indented with `↳`. Keys are `r<index>` into [rows], resolved by the
+/// host against its cached row list.
+List<MenuItem> sessionPickerItems(
+  List<SessionListRow> rows, {
+  required bool flat,
+}) {
+  return [
+    MenuItem(
+      key: flat ? 'tree' : 'flat',
+      label: flat ? '⟳ tree view' : '⟳ flat list',
+      description: 'switch the sessions listing layout',
+    ),
+    for (var i = 0; i < rows.length; i++)
+      MenuItem(
+        key: 'r$i',
+        label: rows[i].isChild
+            ? '   ↳ ${rows[i].label}'
+            : '${rows[i].number}) ${rows[i].label}'
+                  '${rows[i].agentCount > 0 ? '  [+${rows[i].agentCount} agents]' : ''}',
+        description: _sessionPickerDescription(rows[i]),
+      ),
+  ];
+}
+
+/// Folder + classification tags + last-update timestamp for one
+/// sessions-picker row.
+String _sessionPickerDescription(SessionListRow row) {
+  final metadata = row.metadata;
+  final tags = [
+    if (row.active) 'current',
+    if (row.orphaned) 'orphaned',
+    if (row.isChild || isSubagentSession(metadata)) 'subagent',
+  ];
+  final base = metadata.cwd.split('/').last;
+  final folder = base.isEmpty || base == '.' ? '' : base;
+  final timestamp = (metadata.lastUpdatedAt ?? metadata.createdAt)
+      .toLocal()
+      .toIso8601String();
+  final stamp = folder.isEmpty ? timestamp : '$folder · $timestamp';
+  return tags.isEmpty ? stamp : '${tags.join(' · ')} · $stamp';
+}

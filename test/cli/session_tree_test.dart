@@ -6,6 +6,27 @@ import 'package:test/test.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'agent_cli_test_support.dart';
 
+SessionMetadata mainSession(String id, {required DateTime at}) =>
+    SessionMetadata(
+      id: id,
+      createdAt: at,
+      cwd: '/work',
+      path: '/$id.jsonl',
+      metadata: const {'agent': 'cli'},
+    );
+
+SessionMetadata childSession(
+  String id, {
+  required String parent,
+  required DateTime at,
+}) => SessionMetadata(
+  id: id,
+  createdAt: at,
+  cwd: '/work',
+  path: '/$id.jsonl',
+  metadata: {'agent': 'subagent', 'id': 'ag-$id', 'parent': parent},
+);
+
 void main() {
   late MemoryFileSystem fs;
   late JsonlSessionRepo repo;
@@ -225,5 +246,77 @@ void main() {
         expect(flatIo.out.toString(), isNot(contains('[+2 agents]')));
       },
     );
+  });
+
+  group('parseCliArgs session subcommand', () {
+    test('list parses bare, --json, and --flat', () {
+      final bare = parseCliArgs(['session', 'list']) as CliArgs;
+      expect(bare.sessionList?.verb, 'list');
+      expect(bare.sessionList?.json, isFalse);
+      expect(bare.sessionList?.flat, isFalse);
+
+      final json = parseCliArgs(['session', 'list', '--json']) as CliArgs;
+      expect(json.sessionList?.json, isTrue);
+      expect(json.sessionList?.flat, isFalse);
+
+      final flat = parseCliArgs(['session', 'list', '--flat']) as CliArgs;
+      expect(flat.sessionList?.flat, isTrue);
+      expect(flat.sessionList?.json, isFalse);
+
+      final both =
+          parseCliArgs(['session', 'list', '--json', '--flat']) as CliArgs;
+      expect(both.sessionList?.json, isTrue);
+      expect(both.sessionList?.flat, isTrue);
+    });
+
+    test('help, empty args, unknown verb, unknown flag all fail fast', () {
+      expect(parseCliArgs(['session', 'list', '--help']), isA<CliArgsHelp>());
+      expect(() => parseCliArgs(['session']), throwsA(isA<CliArgsException>()));
+      expect(
+        () => parseCliArgs(['session', 'browse']),
+        throwsA(isA<CliArgsException>()),
+      );
+      expect(
+        () => parseCliArgs(['session', 'list', '--wat']),
+        throwsA(isA<CliArgsException>()),
+      );
+    });
+  });
+
+  group('sessionPickerItems', () {
+    test('toggle rides first; children indent; parents carry agent counts', () {
+      final parent = mainSession('p', at: DateTime.utc(2026, 9, 12, 15));
+      final child = childSession(
+        'c',
+        parent: 'p',
+        at: DateTime.utc(2026, 9, 12, 16),
+      );
+      final rows = buildSessionListRows(
+        sessions: [child, parent],
+        flat: false,
+        names: {'p': 'goal_builder'},
+      );
+      final items = sessionPickerItems(rows, flat: false);
+      expect(items.first.key, 'flat');
+      expect(items.first.label, contains('flat list'));
+      expect(items[1].label, contains('1) goal_builder'));
+      expect(items[1].label, contains('[+1 agents]'));
+      expect(items[2].label, contains('↳'));
+      expect(items[2].key, 'r1');
+      expect(items[2].description, contains('subagent'));
+    });
+
+    test('flat items renumber everything with the tree toggle offered', () {
+      final parent = mainSession('p', at: DateTime.utc(2026, 9, 12, 15));
+      final child = childSession(
+        'c',
+        parent: 'p',
+        at: DateTime.utc(2026, 9, 12, 16),
+      );
+      final rows = buildSessionListRows(sessions: [child, parent], flat: true);
+      final items = sessionPickerItems(rows, flat: true);
+      expect(items.first.key, 'tree');
+      expect(items[1].label, isNot(contains('↳')));
+    });
   });
 }

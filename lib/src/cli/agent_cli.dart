@@ -108,7 +108,6 @@ import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
 import '../session/session_tree.dart';
-import '../session/session_grouping.dart';
 import 'session_tree.dart';
 import '../trajectory/trajectory_snapshot.dart';
 import 'trajectory_tui.dart';
@@ -718,6 +717,20 @@ class AgentCli {
   @visibleForTesting
   Future<void> tuiPickAddProviderForTest(String key) =>
       _tuiPickAddProvider(key);
+
+  /// Test seam: opens the sessions picker (building its rows) without a
+  /// TUI; the built items land in [sessionPickerItemsForTest].
+  @visibleForTesting
+  Future<void> openSessionsPickerForTest() => _openSessionsPicker();
+
+  /// The items the most recent sessions picker opened with (see
+  /// [openSessionsPickerForTest]).
+  @visibleForTesting
+  List<MenuItem>? sessionPickerItemsForTest;
+
+  /// Test seam routing a sessions-picker selection in line mode.
+  @visibleForTesting
+  Future<void> tuiPickSessionForTest(String key) => _tuiPickSession(key);
 
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
@@ -1740,17 +1753,18 @@ class AgentCli {
       return;
     }
     _lastSessionRows = await _sessionPickerRows(sessions);
-    _tuiController?.openPicker('sessions', 'Sessions', [
+    _tuiController?.openPicker(
+      'sessions',
+      'Sessions',
       // The view toggle rides the first item (issue #198 open question:
       // remembered per run, not persisted).
-      MenuItem(
-        key: _sessionPickerFlat ? 'tree' : 'flat',
-        label: _sessionPickerFlat ? '⟳ tree view' : '⟳ flat list',
-        description: 'switch the sessions listing layout',
-      ),
-      for (var i = 0; i < _lastSessionRows!.length; i++)
-        _sessionPickerItem(i, _lastSessionRows![i]),
-    ]);
+      sessionPickerItems(_lastSessionRows!, flat: _sessionPickerFlat),
+    );
+    // For the picker tests: the items the picker opened with.
+    sessionPickerItemsForTest = sessionPickerItems(
+      _lastSessionRows!,
+      flat: _sessionPickerFlat,
+    );
   }
 
   /// Tree-grouped picker rows (children nested under their parent, issue
@@ -1764,37 +1778,6 @@ class AgentCli {
       names: await sessionDisplayNames(_repo, sessions),
       currentSessionPath: (await _session?.getMetadata())?.path,
     );
-  }
-
-  /// One sessions-picker row, marked when it is the active session.
-  /// Kept shallow so the CRAP score stays low without a TUI picker test
-  /// harness.
-  MenuItem _sessionPickerItem(int i, SessionListRow row) {
-    return MenuItem(
-      key: 'r$i',
-      label: row.isChild
-          ? '   ↳ ${row.label}'
-          : '${row.number}) ${row.label}'
-                '${row.agentCount > 0 ? '  [+${row.agentCount} agents]' : ''}',
-      description: _sessionPickerDescription(row),
-    );
-  }
-
-  /// Folder + last-update timestamp description for a sessions-picker row,
-  /// marking the active session, children, and orphaned subagents.
-  String _sessionPickerDescription(SessionListRow row) {
-    final metadata = row.metadata;
-    final tags = [
-      if (row.active) 'current',
-      if (row.orphaned) 'orphaned',
-      if (row.isChild || isSubagentSession(metadata)) 'subagent',
-    ];
-    final folder = _pathBasename(metadata.cwd);
-    final timestamp = (metadata.lastUpdatedAt ?? metadata.createdAt)
-        .toLocal()
-        .toIso8601String();
-    final base = folder.isEmpty ? timestamp : '$folder · $timestamp';
-    return tags.isEmpty ? base : '${tags.join(' · ')} · $base';
   }
 
   /// Last non-empty path segment, with a fallback for the filesystem root.
@@ -2003,10 +1986,7 @@ class AgentCli {
     _tuiController?.openPicker(
       'sessions',
       "Several sessions named '$name' — which one?",
-      [
-        for (var i = 0; i < _lastSessionRows!.length; i++)
-          _sessionPickerItem(i, _lastSessionRows![i]),
-      ],
+      sessionPickerItems(_lastSessionRows!, flat: _sessionPickerFlat),
     );
   }
 
