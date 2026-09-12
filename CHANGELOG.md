@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.354
+
+
+- feat(148): structured compaction engine — context hiding that is
+  structured, addressable, and expandable. New branch records
+  `hidden_range` / `compact_checkpoint` store hide/cover state keyed by
+  stable record ids (append-only; classic compaction's lossy summary is
+  untouched); the context projection replaces hidden records with one-line
+  markers (≤12 tokens each) at their original positions, hides tool pairs
+  atomically so the wire stays valid for both provider shapes, and keeps a
+  stable numeric alias per record (1-based JSONL line number — the
+  zero-tool fallback resolves to the same bytes). The two-pass engine
+  (`lib/src/compaction/structured/`) hides first via a cheap judge over
+  the context ledger and checkpoints only when hiding is insufficient
+  (nested checkpoints flatten at depth cap). The `compact_expand` tool
+  restores any id/range on demand under a per-turn token budget with
+  paging; the agent loop resets the budget per user turn. Engine choice:
+  `compaction.engine: classic|structured` in config (strict parse),
+  resolved session < project < global, default classic; CLI host flag and
+  settings entry included, the Flutter app honors the same chain through
+  `loadAppCompactionEngine` (config parity, no new settings screen).
+  Trajectory ledger folds both record kinds as collapsible `compacted`
+  rows. Fixes #148.
+
 ## 0.1.344
 
 

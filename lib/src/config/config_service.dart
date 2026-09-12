@@ -31,6 +31,7 @@ import 'package:yaml/yaml.dart';
 
 import '../a2a/a2a_config.dart';
 import '../cli/custom_providers.dart';
+import '../compaction/compaction_engine.dart';
 import '../cube/config/cube_settings.dart';
 import '../env/execution_env.dart';
 import '../exceptions.dart';
@@ -42,7 +43,7 @@ import '../tools/availability.dart';
 import '../ttsr/ttsr.dart';
 
 /// Sections the PROJECT file participates in (each wins over the user file).
-const _projectSections = {'memory', 'cube', 'tools'};
+const _projectSections = {'memory', 'cube', 'tools', 'compaction'};
 
 /// Every top-level key the runtime config actually reads (the keys
 /// `CliConfig.fromYaml` consumes, plus the `roles:` group members). The
@@ -64,6 +65,7 @@ const configTopLevelKeys = <String>{
   'cube',
   'tools',
   'redact',
+  'compaction',
   'customProviders',
   'models',
   'mcp',
@@ -934,6 +936,7 @@ String applicationNote(String section) => switch (section) {
         'the change)',
   'mcp' => 'applies live after /mcp reload',
   'cube' => 'applies live via /cube reload, otherwise at next boot',
+  'compaction' => 'applies at the next compaction (session override: flag)',
   _ => 'applies at next boot',
 };
 
@@ -1043,6 +1046,10 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'tools': (value, _) => ToolsConfig.fromYaml(value),
   'mcp': (value, _) => McpConfig.fromYaml(value),
   'redact': (value, _) => RedactionConfig.fromYaml(value),
+  'compaction': (value, label) => CompactionEngine.fromSection(
+    value,
+    label: label,
+  ),
   'models': (value, _) => ModelsConfig.fromYaml(value),
   'customProviders': (value, _) => _validateCustomProviders(value),
   'ttsr': (value, label) => TtsrConfig.fromYaml(value, sourcePath: label),

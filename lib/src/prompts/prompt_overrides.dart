@@ -54,6 +54,10 @@ const overridablePromptNames = <String, String>{
       'Compaction instructions for updating a previous summary.',
   'compaction/turn_prefix':
       'Compaction instructions for a split-turn prefix summary.',
+  'compaction/hide_judge':
+      'System prompt of the structured-engine hide judge (issue #148).',
+  'compaction/structured_checkpoint':
+      'Structured-engine checkpoint instructions (issue #148).',
 };
 
 /// Validates the raw `prompts:` yaml section into a prompt name → raw source

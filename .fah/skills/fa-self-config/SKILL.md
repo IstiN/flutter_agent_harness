@@ -368,6 +368,22 @@ CLI equivalent: `/redact on|off`, `/redact block on|off`, `/redact stats`,
 durable form written back when the CLI persists config. Redaction is
 live-mutable — no restart needed either way.
 
+## Compaction
+
+Context-hiding engine choice (issue #148). User or project file (project
+wins):
+
+```yaml
+compaction:
+  engine: structured           # classic | structured (default classic)
+```
+
+`classic` keeps the lossy summary compaction; `structured` hides records in
+place behind one-line addressable markers (`compact_expand` restores any id
+or range under a per-turn token budget). Runtime override:
+`fa --compaction-engine structured`; resolution is
+session < project < global < flag. Applies at session boot.
+
 ## Skills access
 
 <!-- parity: /skills -->
