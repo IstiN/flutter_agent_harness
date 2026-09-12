@@ -78,8 +78,7 @@ ImageRegistryConfig? _parseImagesSection(Object? node) {
   int readPositiveInt(String key) {
     final value = node[key];
     if (value is! int || value <= 0) {
-      throw ConfigException(
-          '"images.$key" must be a positive integer');
+      throw ConfigException('"images.$key" must be a positive integer');
     }
     return value;
   }
@@ -661,6 +660,15 @@ ToolsConfig? toolsSpecFromEnv(Map<String, String> env) {
   final spec = env['FA_TOOLS'];
   if (spec == null || spec.trim().isEmpty) return null;
   return parseToolsSpec(spec);
+}
+
+/// The `FA_LOG_FILE` env twin of the `--log-file` flag: the tee path, for
+/// Docker/headless hosts that cannot pass flags. Absent or blank yields
+/// null (no tee intent); the flag wins when both are set.
+String? logFileFromEnv(Map<String, String> env) {
+  final path = env['FA_LOG_FILE'];
+  if (path == null || path.trim().isEmpty) return null;
+  return path;
 }
 
 /// The startup cube source (fa_cube): explicit flags win, then the project
