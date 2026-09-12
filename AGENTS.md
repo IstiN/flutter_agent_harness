@@ -759,11 +759,16 @@ factual: paths, commands, invariants — no essays.
   `lib/ui/widgets/span_grid_delegate.dart`: 56px icon square + 20px label,
   16px gaps; default 4 columns < 600px, 6 above, clamped 3–8) as a
   `SingleChildScrollView` + `Stack` of `AnimatedPositioned` tiles
-  (`packTileSpans`/`layOutTileRects`), so reorders animate live while
-  dragging (center-band hover on an app = folder intent, edge halves =
-  insertion preview; drop persists; hold-release without movement opens the
-  tile-size menu). Folder tap opens a floating panel (rename/dissolve
-  buttons, drag-out-to-ungroup onto the barrier). Tile layout persists via
+  (`packTileSpans`/`layOutTileRects`; issue #166 made the packer
+  order-preserving row-wrap: tiles place strictly in list order, a span
+  that doesn't fit the remaining row cells wraps to the next row and the
+  trailing cells stay blank — no backfilling earlier rows, reading order
+  == tile order; spans clamp to the column count), so reorders animate
+  live while dragging (center-band hover on an app = folder intent, edge
+  halves = insertion preview; drop persists; hold-release without
+  movement opens the tile-size menu). Folder tap opens a floating panel
+  (rename/dissolve buttons, drag-out-to-ungroup onto the barrier). Tile
+  layout persists via
   `LauncherLayoutStore` (`lib/services/launcher_layout_store.dart`,
   `launcher_layout.json` v2: ordered keys `app:<id>`/`system:*`/`folder:<id>`
   + `grid.columns` + `tileSizes` {appId: "WxH"} overrides — agent-editable,
@@ -939,14 +944,16 @@ factual: paths, commands, invariants — no essays.
   (host callback navigates via `js_app_navigation.dart` `pushJsApp`).
   Live launcher tiles: a manifest `"widget"` section
   (`{entry: 'widget_tile.js', size: 'WxH', refreshSeconds?}` →
-  `JsAppInfo.tileWidget`; size in icon-slot cells, W 2–4 × H 1–4, default
-  2x2 — the iOS small/medium/large presets 2x2/4x2/4x4) makes the launcher
+  `JsAppInfo.tileWidget`; size in icon-slot cells, W 1–4 × H 1–4, default
+  2x2 — W 1 = icon-only; out-of-range values clamp to the range with an
+  AppLog note, never a crash) makes the launcher
   grid render `app_tile_host.dart`
   (a JsAppEngine on the tile entry, display-only — any tap opens the app)
   instead of the static icon tile; a WxH tile's edges align exactly with
   the WxH block of icon slots it replaces. Users resize tiles via the
-  hold-release menu (writes `tileSizes` into `launcher_layout.json`); the
-  same menu offers demo apps "Restore reference version"
+  hold-release menu (issue #166 preset list: 1×1/1×2/2×1/2×2/1×3/3×1
+  plus the iOS 4×2/4×4; writes `tileSizes` into `launcher_layout.json`);
+  the same menu offers demo apps "Restore reference version"
   (`AppsStore.resetDemoApp` — force-reseeds bundled code when
   ownership-aware seeding skips modified files, `storage.json` untouched).
 - `flutter_app/lib/services/home_service.dart` — smart home: `HomeApi` over

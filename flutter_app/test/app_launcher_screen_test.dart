@@ -575,6 +575,67 @@ void main() {
       expect(betaRect.height, moreOrLessEquals(cellMain, epsilon: 0.5));
     });
 
+    testWidgets('a manifest 1x3 span renders one cell wide, three tall', (
+      tester,
+    ) async {
+      // AC1 (issue #166): an app declaring a 1x3 span renders 1 wide × 3
+      // tall; apps WITHOUT span metadata stay 1x1 and pack beside it.
+      await _pumpLauncher(
+        tester,
+        tileApps: {'alpha': '1x3'},
+        tileEngineFactory: _fakeTileEngineFactory(),
+      );
+      const i = 56.0, cellMain = 76.0, gr = 16.0;
+      final hostRect = tester.getRect(find.byType(AppTileHost));
+      expect(hostRect.width, moreOrLessEquals(i, epsilon: 0.5));
+      expect(
+        hostRect.height,
+        moreOrLessEquals(3 * cellMain + 2 * gr, epsilon: 0.5),
+      );
+      // Beta (no span metadata → 1x1) packs in the SAME row, one slot
+      // to the right; the narrow tile never stretches.
+      final betaRect = tester.getRect(_cell('app:beta'));
+      expect(betaRect.top, moreOrLessEquals(hostRect.top, epsilon: 0.5));
+      expect(
+        betaRect.left,
+        moreOrLessEquals(hostRect.left + i + 44, epsilon: 0.5),
+      );
+      expect(betaRect.width, moreOrLessEquals(i, epsilon: 0.5));
+    });
+
+    testWidgets('picking Tall (1×2) in the tile menu persists the span', (
+      tester,
+    ) async {
+      // AC2 (issue #166): the resize menu offers the preset spans and the
+      // choice lands as a persisted `tileSizes` override; the live tile
+      // reflows (same tile host — no state loss, E1).
+      final harness = await _pumpLauncher(
+        tester,
+        tileApps: {'alpha': '2x2'},
+        tileEngineFactory: _fakeTileEngineFactory(),
+      );
+      final gesture = await tester.startGesture(
+        tester.getCenter(_cell('app:alpha')),
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      // The full preset list: the iOS-style quartet plus the issue #166
+      // custom spans.
+      expect(find.text('Tall (1×2)'), findsOneWidget);
+      expect(find.text('Wide (2×1)'), findsOneWidget);
+      expect(find.text('Column (1×3)'), findsOneWidget);
+      expect(find.text('Row (3×1)'), findsOneWidget);
+      await tester.tap(find.text('Tall (1×2)'));
+      await tester.pumpAndSettle();
+      expect(harness.layout.tileSizeFor('alpha'), (w: 1, h: 2));
+      // Reflowed geometry: one slot wide, two slots + one gap tall.
+      expect(find.byType(AppTileHost), findsOneWidget); // tile survived
+      final rect = tester.getRect(find.byType(AppTileHost));
+      expect(rect.width, moreOrLessEquals(56, epsilon: 0.5));
+      expect(rect.height, moreOrLessEquals(2 * 76 + 16, epsilon: 0.5));
+    });
+
     testWidgets('defaults to 4 icon columns on a phone-width screen', (
       tester,
     ) async {
