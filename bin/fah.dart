@@ -1272,6 +1272,16 @@ Future<void> _runApp(List<String> args) async {
     _fail(error.message);
   }
 
+  // Compaction engine (issue #148): `--compaction-engine` flag > the
+  // project `.fah/config.yaml` `compaction:` section > the saved user
+  // `compaction:` section > classic. Strict parse errors are hard startup
+  // errors (a typo must never silently downgrade the engine).
+  final compactionEngine = resolveCompactionEngine(
+    session: effective.compactionEngine,
+    project: loadProjectCompactionEngine(cwd),
+    global: saved.compactionEngine,
+  );
+
   // Remote provider catalog (fa1.dev/models-catalog.json): default model
   // ids and per-provider context-window tables for endpoints that don't
   // publish them. Preloaded once, non-blocking (a 10s timeout, never
@@ -1704,6 +1714,7 @@ Future<void> _runApp(List<String> args) async {
           approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
       alwaysAllowTools: saved.allowedTools.toSet(),
       runtimeTools: runtimeTools,
+      compactionEngine: compactionEngine,
       modelRolesResolver: rolesResolver,
       // The live models config (`models:` section): `/models set`/`remove`
       // mutate its media slot overrides and `/model <name>` resolves its

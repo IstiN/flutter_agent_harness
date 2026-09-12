@@ -24,6 +24,8 @@ import 'dart:async';
 
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
+import '../compaction/structured/engine.dart';
+import '../compaction/structured/judge.dart';
 import '../context.dart';
 import '../model.dart';
 import '../session/session_tree.dart' show Session;
@@ -581,6 +583,7 @@ class AutoCompactorFactory {
     this.force = false,
     this.attemptBudget = const Duration(seconds: 90),
     this.totalBudget = const Duration(minutes: 4),
+    this.engine = CompactionEngine.classic,
   });
 
   final Session session;
@@ -596,6 +599,12 @@ class AutoCompactorFactory {
   final Duration baseBackoff;
   final bool force;
 
+  /// Which engine compactions use (issue #148 D8): [CompactionEngine.classic]
+  /// (this factory's historical behavior) or [CompactionEngine.structured]
+  /// (judge-hide → checkpoint, with a classic fallback when it cannot get
+  /// the context under the window).
+  final CompactionEngine engine;
+
   /// Per-attempt wall-clock budget, forwarded to the built [AutoCompactor].
   final Duration attemptBudget;
 
@@ -605,7 +614,40 @@ class AutoCompactorFactory {
   /// Builds the [AutoCompactor] and runs it. Hosts that want to
   /// inspect the compactor before starting (e.g. for logging) can use
   /// [build] instead.
-  Future<bool> run() => build().run();
+  Future<bool> run() async {
+    if (engine == CompactionEngine.structured) {
+      if (await _runStructured()) return true;
+      // Fall through: the classic prefix compactor is the residual
+      // fallback (issue #148 flowchart S7/D4) — its summary then renders
+      // under structured projection as an opaque legacy-ckpt segment.
+    }
+    return build().run();
+  }
+
+  /// Runs the structured engine (issue #148): pass 1 judge-hides over the
+  /// ledger, pass 2 text checkpoints with covers. Judge and summarizer ride
+  /// the `smol` role (falling back to the main stream) exactly like the
+  /// classic summarizers.
+  Future<bool> _runStructured() async {
+    final smolStream = sources.smolStream ?? sources.mainStream;
+    final smolModel = sources.smolModel ?? sources.mainModel;
+    final compactor = StructuredCompactor(
+      session: session,
+      state: state,
+      window: window,
+      settings: settings,
+      judge: streamFunctionHideJudge(
+        smolStream,
+        smolModel,
+        system: prompts.hideJudgeSystem,
+        onDelta: hooks.onDelta,
+      ),
+      summarize: streamFunctionSummarizer(smolStream, smolModel),
+      checkpointPrompt: prompts.structuredCheckpoint,
+      hooks: _StructuredHooksAdapter(hooks),
+    );
+    return compactor.run(force: force);
+  }
 
   /// Builds the [AutoCompactor] from the factory's configuration without
   /// starting it. Useful for tests or for hosts that want to wrap the
@@ -642,4 +684,27 @@ class AutoCompactorFactory {
       totalBudget: totalBudget,
     );
   }
+}
+
+/// Adapts [StructuredCompactorHooks] onto [AutoCompactorHooks] so host UIs
+/// (CLI busy row, Flutter chat sheet) observe structured passes unchanged.
+final class _StructuredHooksAdapter implements StructuredCompactorHooks {
+  const _StructuredHooksAdapter(this._hooks);
+
+  final AutoCompactorHooks _hooks;
+
+  @override
+  void onDelta(String delta) => _hooks.onDelta(delta);
+
+  @override
+  void onPass(StructuredCompactionPass pass) => _hooks.onPass(
+    AutoCompactorPass(
+      pass: pass.pass,
+      tokensBefore: pass.tokensBefore,
+      tokensAfter: pass.tokensAfter,
+      fallback: 'smol',
+      ok: pass.ok,
+      error: pass.error,
+    ),
+  );
 }

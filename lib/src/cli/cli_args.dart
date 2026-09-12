@@ -12,6 +12,7 @@
 ///   `headless_prompt.dart`, exported from `lib/io.dart`).
 library;
 
+import '../compaction/compaction_engine.dart';
 import '../config/config_service.dart';
 import '../exceptions.dart';
 import '../redact/redaction_types.dart';
@@ -88,6 +89,7 @@ final class CliArgs extends CliArgsResult {
     this.cubeName,
     this.cubeConfigPath,
     this.tools,
+    this.compactionEngine,
     this.logFile,
     this.redact,
     this.trajectory,
@@ -167,6 +169,11 @@ final class CliArgs extends CliArgsResult {
   /// startup config error. Wins over the `FA_TOOLS` env twin; both stack
   /// over the config scopes at resolution.
   final ToolsConfig? tools;
+
+  /// `--compaction-engine <classic|structured>`: the RUNTIME scope of the
+  /// engine selector (issue #148) — wins over the project and global
+  /// `compaction:` sections, this invocation only.
+  final CompactionEngine? compactionEngine;
 
   /// `--log-file <path>`: tee every line the CLI prints (assistant text,
   /// tool trace, diagnostics) to [path] as it is produced, so a run nested
@@ -832,6 +839,7 @@ const _valueFlags = <String, _ValueFlag>{
   '-f': ('--prompt-file', _setPromptFile),
   '--prompt-file': ('--prompt-file', _setPromptFile),
   '--tools': ('--tools', _setTools),
+  '--compaction-engine': ('--compaction-engine', _setCompactionEngine),
   '--log-file': ('--log-file', _setLogFile),
 };
 
@@ -870,6 +878,17 @@ void _setTools(_CliArgValues v, String value) {
   }
 }
 
+void _setCompactionEngine(_CliArgValues v, String value) {
+  try {
+    v.compactionEngine = CompactionEngine.tryParse(
+      value,
+      label: '--compaction-engine',
+    );
+  } on ConfigException catch (error) {
+    throw CliArgsException(error.message);
+  }
+}
+
 void _setLogFile(_CliArgValues v, String value) => v.logFile = value;
 void _setPrompt(_CliArgValues v, String value) => v.prompt = value;
 void _setPromptFile(_CliArgValues v, String value) => v.promptFile = value;
@@ -896,6 +915,7 @@ final class _CliArgValues {
   String? cubeName;
   String? cubeConfigPath;
   ToolsConfig? tools;
+  CompactionEngine? compactionEngine;
   RedactionConfig? redact;
   String? prompt;
   String? promptFile;
@@ -945,6 +965,7 @@ final class _CliArgValues {
       cubeName: cubeName,
       cubeConfigPath: cubeConfigPath,
       tools: tools,
+      compactionEngine: compactionEngine,
       redact: redact,
       promptFile: promptFile,
       logFile: logFile,

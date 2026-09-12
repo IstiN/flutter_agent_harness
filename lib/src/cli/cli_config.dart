@@ -12,6 +12,7 @@ import 'dart:io';
 import 'package:yaml/yaml.dart';
 
 import '../a2a/a2a_config.dart';
+import '../compaction/compaction_engine.dart';
 import '../exceptions.dart';
 import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
@@ -80,6 +81,7 @@ final class CliConfig {
     this.cube,
     this.tools,
     this.redact,
+    this.compactionEngine,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -146,6 +148,12 @@ final class CliConfig {
       // The providerTimeouts section (provider watchdog overrides) is strict
       // too.
       providerTimeouts: _parseProviderTimeouts(map['providerTimeouts']),
+      // The compaction section (engine selector, issue #148) is strict: a
+      // typo throws instead of silently running the classic engine.
+      compactionEngine: CompactionEngine.fromSection(
+        map['compaction'],
+        label: '~/.fah/config.yaml',
+      ),
       // The fabric section (issue #27 phase 2 discovery announcements) is
       // strict too.
       fabric: map['fabric'] == null
@@ -284,12 +292,17 @@ final class CliConfig {
   /// separate for the deepest-wins resolution.
   final ToolsConfig? tools;
 
+  /// Optional `compaction:` section — the compaction engine selector
+  /// (issue #148): `classic` (lossy prefix summary) or `structured`
+  /// (hide → checkpoint + expand). `null` means the section is absent;
+  /// the effective engine resolves global < project < runtime.
+  final CompactionEngine? compactionEngine;
+
   /// Optional `redact:` section — layered secret redaction. `null` means
   /// the section is absent (redaction still runs with default config; the
   /// pipeline assembly happens in the host startup, see
   /// [buildRedactionPipeline]).
   final RedactionConfig? redact;
-
   String toYaml() {
     final buffer = StringBuffer()
       ..write('provider: $providerKind\n')
@@ -321,6 +334,9 @@ final class CliConfig {
       buffer.write(toolsConfig.toYaml());
     }
     buffer.write(_redactYaml());
+    if (compactionEngine != null) {
+      buffer.write('compaction:\n  engine: ${compactionEngine!.value}\n');
+    }
     return buffer.toString();
   }
 
@@ -498,6 +514,29 @@ CubeSettings? loadProjectCubeSettings(String projectDir) {
     if (doc is! YamlMap) return null;
     final node = doc['cube'];
     return node == null ? null : CubeSettings.fromYaml(node);
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
+/// Loads the PROJECT-level `compaction:` section from
+/// `<projectDir>/.fah/config.yaml` — the engine choice travels with the
+/// repo (issue #148). Project wins over the user-level `compaction:`
+/// section; the runtime flag wins over both. Null when the file or the
+/// section is absent/unreadable; a present-but-invalid section throws
+/// [ConfigException] (strict, like the user config).
+CompactionEngine? loadProjectCompactionEngine(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    return CompactionEngine.fromSection(
+      doc['compaction'],
+      label: '$projectDir/.fah/config.yaml',
+    );
   } on ConfigException {
     rethrow;
   } on Object {
