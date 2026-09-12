@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.356
+## Unreleased
 
 - feat(169): declarative-only secured theme API — theme packs
   (`theme.json` + optional wallpaper image in a `.zip`; strict schema
@@ -12,7 +12,7 @@
   `list`/`current`/`apply` behind the `theme` permission with a consent
   dialog per apply. Apps can never install or delete packs (no such API
   exists; pinned by a byte-scan test).
-## Unreleased
+## 0.1.356
 
 - ci(177): PR-level CI speed restructure — a pull request now pays only for
   what it touched. Path-aware gating (`changes` job), the sequential
@@ -3328,6 +3328,8 @@
 - feat(166): apps grid custom cell spans (1×2, 2×1, 1×3, 3×1) (#176)
 - feat(168): mobile trajectory view — parity with desktop (#175)
 - docs(157): KB — DAP e2e family triage (two cases were #158 races) (#163)
+
+## Unreleased
 
 ## Unreleased
 
