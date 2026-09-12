@@ -96,4 +96,50 @@ void main() {
       await cli.tuiPickSessionForTest('bogus');
     },
   );
+  test('picker row keys open and switch to the picked session', () async {
+    await seedTree();
+    final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+
+    await cli.openSessionsPickerForTest();
+    // r0: the parent row — opens it and switches to it.
+    await cli.tuiPickSessionForTest('r0');
+    expect(io.out.toString(), contains("switched to session 'goal_builder'"));
+
+    // r1: the nested child row (tree mode: parent first, child second).
+    await cli.tuiPickSessionForTest('r1');
+    expect(io.out.toString(), contains("switched to session 'explore'"));
+
+    // Out-of-range and malformed row keys are ignored, never throw.
+    await cli.tuiPickSessionForTest('r99');
+    await cli.tuiPickSessionForTest('rx');
+  });
+
+  test(
+    'a broken session file surfaces inline instead of killing the TUI',
+    () async {
+      await seedTree();
+      final cli = cliFor(FakeStreamFunction([textTurn('ok')]).call);
+
+      // The picker caches its rows; the file vanishing after the listing
+      // (another host deleted it) must not kill the TUI on selection.
+      await cli.openSessionsPickerForTest();
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final victim = (await repo.list()).firstWhere(
+        (m) => m.metadata?['parent'] != null,
+      );
+      (await env.remove(victim.path)).getOrThrow();
+
+      // Item 0 is the view toggle; the victim child is the item after its
+      // parent, so its row key is (itemIndex - 1).
+      final itemIndex = cli.sessionPickerItemsForTest!.indexWhere(
+        (item) => item.label.contains('explore'),
+      );
+      await cli.tuiPickSessionForTest('r${itemIndex - 1}');
+      expect(
+        io.out.toString(),
+        contains('failed to open session'),
+        reason: 'the broken file reports inline, the TUI survives',
+      );
+    },
+  );
 }
