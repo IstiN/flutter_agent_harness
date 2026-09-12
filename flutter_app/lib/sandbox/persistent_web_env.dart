@@ -30,6 +30,17 @@ final class PersistentWebExecutionEnv
     implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   PersistentWebExecutionEnv._(this._delegate, this._store, this._persistDelay);
 
+  /// Store key holding the versioned JSON snapshot envelope (issue #237:
+  /// session files will move to their own [sessionKeyPrefix] records).
+  static const storageKey = 'sandbox';
+
+  /// Store key an unreadable envelope is preserved under (issue #237).
+  static const backupKey = '$storageKey.bak';
+
+  /// Per-session-file record key prefix: `sandbox.session<path>` (issue
+  /// #237, mirroring the extension twin's `faFs.session`).
+  static const sessionKeyPrefix = '$storageKey.session';
+
   /// Schema version of the JSON snapshot envelope. Snapshots with a
   /// different version are ignored (clean start) rather than migrated.
   static const snapshotVersion = 1;
@@ -57,7 +68,7 @@ final class PersistentWebExecutionEnv
   Future<void> _restore() async {
     String? raw;
     try {
-      raw = await _store.load();
+      raw = (await _store.load())[storageKey];
     } on Object {
       return; // Storage unavailable (blocked, private mode) → clean start.
     }
@@ -159,7 +170,7 @@ final class PersistentWebExecutionEnv
     while (_dirty && !_disposed) {
       _dirty = false;
       try {
-        await _store.save(await _snapshot());
+        await _store.save({storageKey: await _snapshot()});
       } on Object {
         // Save failed (quota, blocked storage): stay dirty so the next
         // mutation or flush retries; never break the sandbox over it.
