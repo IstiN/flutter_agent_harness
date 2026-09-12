@@ -4,7 +4,7 @@
 // response, for BOTH send gestures (Enter key and Send-button click).
 import type { Page } from '@playwright/test';
 import { expect } from './helpers';
-import { skipWithoutChrome, test } from './helpers';
+import { appBundlePresent, skipWithoutChrome, test } from './helpers';
 
 /** Types one prompt into the panel composer and sends it via `how`. */
 async function ask(
@@ -22,6 +22,15 @@ async function ask(
 
 test.describe('panel composer focus (issue #39)', () => {
   skipWithoutChrome();
+  // The composer under test lives in the legacy fallback UI (#prompt,
+  // #sendPrompt, #legacy). With an app bundle the panel redirects to the
+  // Flutter app before that DOM can ever render — waiting for #legacy is a
+  // guaranteed 240s timeout (the deterministic half of the #152 flake).
+  // The app branch is covered by journey-sessions/panel-app specs.
+  test.skip(
+    appBundlePresent,
+    'legacy composer only — the app build redirects the panel to app/',
+  );
 
   for (const how of ['enter', 'click'] as const) {
     test(`focus returns to the prompt after the reply (${how})`, async ({

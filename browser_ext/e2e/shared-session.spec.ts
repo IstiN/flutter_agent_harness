@@ -5,7 +5,7 @@
 // the same conversation", app build or not).
 import type { Page } from '@playwright/test';
 import { expect } from './helpers';
-import { skipWithoutChrome, test } from './helpers';
+import { awaitPanelSettled, skipWithoutChrome, test } from './helpers';
 
 /** One wire frame of the fa-ui-v2 protocol (lib/src/ui_protocol.dart shapes). */
 interface PortMsg {
@@ -95,8 +95,12 @@ test.describe('shared session over fa-ui-v2 ports', () => {
     expect(attached1.sessionId).toBeTruthy();
 
     // Tab 2 (the panel-as-tab stand-in for a second panel): same negotiation.
+    // Settle the app-hosting redirect BEFORE installing the port — goto()
+    // resolves on panel.html's load, the HEAD probe redirects after, and an
+    // eval in flight dies with "Execution context was destroyed" (#152).
     const tab2 = await fa.context.newPage();
     await tab2.goto(`chrome-extension://${fa.extId}/panel/panel.html`);
+    await awaitPanelSettled(tab2);
     await attachPort(tab2);
     const ack2 = await portMsg(tab2, (m) => m.kind === 'hello_ack');
     await portSend(tab2, {
