@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:fa/apps/catalog_service.dart';
+import 'package:fa/apps/manifest_i18n.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -300,6 +301,8 @@ class JsAppInfo {
     required this.description,
     required this.icon,
     required this.declaredPermissions,
+    this.nameText,
+    this.descriptionText,
     this.version = '1.0.0',
     this.chrome = chromeHeader,
     this.tileWidget,
@@ -314,10 +317,20 @@ class JsAppInfo {
     required String fallbackId,
   }) {
     final widget = json['widget'];
+    // Localization lives ONLY in the additive nameI18n/descriptionI18n
+    // keys (locale -> string | {"file": ...}) — see manifest_i18n.dart.
+    // The legacy name/description keys stay scalar strings (JSR strict
+    // casts) and carry the default-locale value.
+    final nameText = LocalizedText.parse(json['name'], json['nameI18n']);
+    final descriptionText =
+        LocalizedText.parse(json['description'], json['descriptionI18n']);
+    final name = nameText.resolve(null);
     return JsAppInfo(
       id: (json['id'] ?? fallbackId).toString(),
-      name: (json['name'] ?? fallbackId).toString(),
-      description: (json['description'] ?? '').toString(),
+      name: name.isEmpty ? fallbackId : name,
+      description: descriptionText.resolve(null),
+      nameText: nameText,
+      descriptionText: descriptionText,
       icon: (json['icon'] ?? '📦').toString(),
       version: (json['version'] ?? '1.0.0').toString(),
       chrome: json['chrome'] == chromeFull ? chromeFull : chromeHeader,
@@ -335,6 +348,44 @@ class JsAppInfo {
   final String id;
   final String name;
   final String description;
+
+  /// The parsed localized manifest values behind [name]/[description]
+  /// (null when this instance was built directly with plain strings —
+  /// [displayName]/[displayDescription] then treat the plain strings as
+  /// the scalar fallback). Ref contents are attached by
+  /// [AppsStore.listApps] via [withI18nContents].
+  final LocalizedText? nameText;
+  final LocalizedText? descriptionText;
+
+  /// The manifest name resolved for [locale] (device locale tag like
+  /// `en` or `pt-BR`): exact tag → language → `en` → first declared →
+  /// scalar fallback.
+  String displayName(String? locale) =>
+      (nameText ?? LocalizedText.parse(name)).resolve(locale);
+
+  /// The manifest description resolved for [locale] (see [displayName]).
+  String displayDescription(String? locale) =>
+      (descriptionText ?? LocalizedText.parse(description)).resolve(locale);
+
+  /// Copy with ref file contents (ref path → text) attached, so
+  /// [displayName]/[displayDescription] can resolve `{"file": ...}`
+  /// entries synchronously at display time.
+  JsAppInfo withI18nContents(Map<String, String> contents) => JsAppInfo(
+    id: id,
+    name: name,
+    description: description,
+    icon: icon,
+    declaredPermissions: declaredPermissions,
+    nameText: nameText?.withContents(contents),
+    descriptionText: descriptionText?.withContents(contents),
+    version: version,
+    chrome: chrome,
+    tileWidget: tileWidget,
+    bundled: bundled,
+    platforms: platforms,
+    dirOverride: dirOverride,
+  );
+
   final String icon;
   final String version;
   final AppPermissions declaredPermissions;
@@ -528,11 +579,12 @@ class AppsStore {
       try {
         final decoded = jsonDecode(raw);
         if (decoded is Map<String, Object?>) {
-          final app = JsAppInfo.fromManifest(
+          var app = JsAppInfo.fromManifest(
             decoded,
             bundled: false,
             fallbackId: entry.name,
           );
+          app = await _withI18nContents(app);
           if (app.supportsPlatform(platform)) apps.add(app);
         }
       } on FormatException {
@@ -541,6 +593,30 @@ class AppsStore {
     }
     apps.sort((a, b) => a.name.compareTo(b.name));
     return apps;
+  }
+
+  /// Reads the `{"file": ...}` i18n ref files declared by [app]'s manifest
+  /// name/description and returns the app with their contents attached, so
+  /// display sites resolve localized strings synchronously. Missing or
+  /// unreadable ref files are skipped (resolution falls through to the
+  /// next locale candidate).
+  Future<JsAppInfo> _withI18nContents(JsAppInfo app) async {
+    final paths = {
+      ...?app.nameText?.refPaths,
+      ...?app.descriptionText?.refPaths,
+    };
+    if (paths.isEmpty) return app;
+    final contents = <String, String>{};
+    for (final path in paths) {
+      final content = (await _env.readTextFile('${app.dir}/$path'))
+          .valueOrNull;
+      if (content != null) {
+        contents[path] = content;
+      } else {
+        AppLog.i('apps', 'i18n ref ${app.dir}/$path missing — skipped');
+      }
+    }
+    return app.withI18nContents(contents);
   }
 
   /// Reads the JS source of [app].
@@ -728,11 +804,18 @@ class AppsStore {
   /// file the user or agent changed since OUR last write is never
   /// clobbered. `storage.json` is user data and is always skipped. The new
   /// version is recorded even when individual files were protected.
+  ///
+  /// When the manifest localizes name/description via `{"file": ...}`
+  /// refs, every referenced file must exist — in the archive itself or
+  /// (for updates) already on disk — otherwise the install fails BEFORE
+  /// anything is written, same all-or-nothing contract as the
+  /// write-verify below.
   Future<void> installWidget({
     required String id,
     required String version,
     required Map<String, Uint8List> files,
   }) async {
+    await _validateI18nRefs(id, files);
     final meta = await _readInstalled();
     final entry = meta.putIfAbsent(
       id,
@@ -772,6 +855,45 @@ class AppsStore {
     }
     entry['files'] = hashes;
     await _writeInstalled(meta);
+  }
+
+  /// Install-time existence check for manifest i18n ref files
+  /// (`{"file": "./i18n/..."}` under name/description): every referenced
+  /// path must ship in [files] or already exist under `apps/<id>/`
+  /// (an update archive may omit a file the previous install wrote).
+  /// Throws [StateError] before any byte is written when a ref dangles.
+  /// A manifest that does not parse is NOT rejected here — that stays
+  /// the launcher's broken-tile call, as before.
+  Future<void> _validateI18nRefs(
+    String id,
+    Map<String, Uint8List> files,
+  ) async {
+    final manifestBytes = files['manifest.json'];
+    if (manifestBytes == null) return;
+    Object? decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(manifestBytes));
+    } on Object {
+      return;
+    }
+    if (decoded is! Map<String, Object?>) return;
+    final refs = {
+      ...LocalizedText.parse(decoded['name'], decoded['nameI18n']).refs.values,
+      ...LocalizedText.parse(decoded['description'], decoded['descriptionI18n'])
+          .refs
+          .values,
+    };
+    for (final ref in refs) {
+      if (files.containsKey(ref)) continue;
+      final onDisk =
+          (await _env.exists('apps/$id/$ref')).valueOrNull ?? false;
+      if (!onDisk) {
+        throw StateError(
+          'install of $id rejected: manifest i18n ref "$ref" is missing '
+          'from the widget package',
+        );
+      }
+    }
   }
 
   /// Removes a catalog-installed widget's CODE files (`apps/<id>/` minus
