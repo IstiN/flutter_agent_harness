@@ -175,12 +175,47 @@ jobs:
           path: test/integration/screenshots/
           retention-days: 7
 
+
+  # Full flutter_app suite on macOS (issue #177): the ubuntu PR leg excludes
+  # native-dependent tests (scripts/flutter_test_ubuntu_exclude.txt —
+  # quickjs_c_bridge .so, mic channel) and goldens (host-locked). This leg
+  # runs EVERYTHING non-golden on macOS, where the native stack builds —
+  # closing the signal gap the ubuntu exclusions create.
+  flutter-app-macos:
+    name: flutter_app suite (macOS, non-golden)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - run: cd flutter_app && flutter pub get
+      - name: flutter test (all except integration + goldens)
+        run: |
+          cd flutter_app
+          files=$(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*')
+          flutter test --exclude-tags integration $files
+
   # Files ONE deduped issue when the scheduled nightly run goes red: the
   # open `nightly-red` issue is searched first and only commented on, so a
   # persistent failure never spams duplicates.
   auto-issue:
     name: File nightly-red issue
-    needs: [full-quality, pty-integration, cli-visual]
+    needs: [full-quality, pty-integration, cli-visual, flutter-app-macos]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:

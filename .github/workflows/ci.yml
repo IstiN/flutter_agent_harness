@@ -348,11 +348,17 @@ jobs:
       # tests run here on a cheap runner; goldens stay guarded by
       # build-macos.yml and the nightly full matrix (issue #177 E5/OQ3:
       # pinned-font golden migration is a follow-up, not this card).
-      - name: flutter test (excluding integration + golden suites)
+      - name: flutter test (excluding integration, goldens, native-dependent)
+        # Goldens: host-locked (see comment above). Native-dependent files
+        # (quickjs_c_bridge .so, mic platform channel, one pre-existing
+        # clean-main failure): scripts/flutter_test_ubuntu_exclude.txt —
+        # they run in the nightly macOS leg instead (nightly.yml
+        # flutter-app-macos). Before issue #177 this suite ran in NO CI job.
         run: |
           cd flutter_app
-          dirs=$(ls -d test/*/ | grep -v -E 'test/(golden|cli_visual)/' || true)
-          flutter test --exclude-tags integration $dirs $(find test -maxdepth 1 -name '*_test.dart')
+          files=$(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*' \
+            | grep -v -F -f ../scripts/flutter_test_ubuntu_exclude.txt)
+          flutter test --exclude-tags integration $files
 
       # packages/fa_ui had NO CI coverage at all before issue #177 (not in
       # any workflow, not in the pre-commit hook) — gate its non-golden
