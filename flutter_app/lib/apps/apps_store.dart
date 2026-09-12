@@ -758,6 +758,16 @@ class AppsStore {
         }
       }
       await _env.writeBinaryFile(path, bytes);
+      // Write-verify (issue #201, fix direction 4): a write that does not
+      // read back byte-identical must surface as an install FAILURE, not
+      // as a broken tile on the grid (manifest present, entry file bad).
+      final written = (await _env.readBinaryFile(path)).valueOrNull;
+      if (written == null || sha256.convert(written).toString() != digest) {
+        throw StateError(
+          'install of $id failed verification: $path did not read back '
+          'byte-identical',
+        );
+      }
       hashes[file.key] = digest;
     }
     entry['files'] = hashes;

@@ -106,6 +106,35 @@ void main() {
         reason: 'user data is not catalog content',
       );
     });
+
+    test(
+      'UT-verify: a write that does not read back fails the install '
+      '(no broken tile, issue #201)',
+      () async {
+        final env = _DroppingWriteEnv();
+        final store = AppsStore(env, readAsset: (_) async => '');
+        await expectLater(
+          store.installWidget(
+            id: 'calculator',
+            version: '1.0.1',
+            files: {
+              'manifest.json': utf8.encode('{"id":"calculator"}'),
+              'widget.js': utf8.encode('// calc'),
+            },
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('failed verification'),
+            ),
+          ),
+        );
+        // The failed install recorded nothing and left no launchable tile.
+        expect(await readMeta(env), isEmpty);
+        expect(await store.listApps(), isEmpty);
+      },
+    );
   });
 
   group('AppsStore.removeWidget', () {
@@ -187,3 +216,66 @@ CatalogEntry _entry(String id, String version) => CatalogEntry(
   zipSha256: '',
   zipSizeBytes: 0,
 );
+
+/// An env whose binary writes report success but never land — the
+/// dishonest-storage case UT-verify guards against (issue #201). The core
+/// envs are `final`, so this forwards to an inner [MemoryExecutionEnv].
+final class _DroppingWriteEnv implements ExecutionEnv {
+  final MemoryExecutionEnv _inner = MemoryExecutionEnv();
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) async => const Ok(null); // lies: nothing is persisted
+
+  @override
+  String get cwd => _inner.cwd;
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _inner.exec(command, options: options);
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _inner.absolutePath(path);
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _inner.joinPath(parts);
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _inner.readTextFile(path);
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _inner.readBinaryFile(path);
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _inner.readTextLines(path, maxLines: maxLines);
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _inner.fileInfo(path);
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _inner.listDir(path);
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _inner.exists(path);
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _inner.writeFile(path, content);
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _inner.appendFile(path, content);
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _inner.createDir(path, recursive: recursive);
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _inner.remove(path, recursive: recursive, force: force);
+}
