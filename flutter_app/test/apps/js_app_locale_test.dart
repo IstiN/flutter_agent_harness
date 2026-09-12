@@ -6,40 +6,47 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../native_test_guard.dart';
+
+/// Skip value stamped on this file's engine-dependent tests: every one
+/// boots a real JS engine (issue #184). Resolved once per isolate.
+final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 
 /// `jsr.locale` exposes the host UI locale to JS apps (they branch their
 /// strings on it — see the js-apps skill's localization section). One
 /// engine boot per file: repeated native boot/dispose cycles inside a
 /// single widget-test process can crash the native JS context.
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  group('JS engine (native quickjs/JavaScriptCore bridge)', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('the host locale reaches the JS app as jsr.locale', (
-    tester,
-  ) async {
-    final env = MemoryExecutionEnv();
-    await env.writeFile(
-      'apps/demo/widget.js',
-      '(function(){ jsr.exportState({locale: jsr.locale}); })();',
-    );
-    final engine = JsAppEngine(
-      app: JsAppInfo.fromManifest(
-        const {'id': 'demo', 'name': 'Demo'},
-        bundled: false,
-        fallbackId: 'demo',
-      ),
-      env: env,
-      permissions: const AppPermissions(),
-      hostLocale: 'ru',
-    );
-    try {
-      await tester.runAsync(() => engine.start());
-      for (var i = 0; i < 40 && engine.exportedState == null; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 150));
+    testWidgets('the host locale reaches the JS app as jsr.locale', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/demo/widget.js',
+        '(function(){ jsr.exportState({locale: jsr.locale}); })();',
+      );
+      final engine = JsAppEngine(
+        app: JsAppInfo.fromManifest(
+          const {'id': 'demo', 'name': 'Demo'},
+          bundled: false,
+          fallbackId: 'demo',
+        ),
+        env: env,
+        permissions: const AppPermissions(),
+        hostLocale: 'ru',
+      );
+      try {
+        await tester.runAsync(() => engine.start());
+        for (var i = 0; i < 40 && engine.exportedState == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 150));
+        }
+        expect(engine.exportedState?['locale'], 'ru');
+      } finally {
+        await tester.runAsync(() => engine.dispose());
       }
-      expect(engine.exportedState?['locale'], 'ru');
-    } finally {
-      await tester.runAsync(() => engine.dispose());
-    }
-  });
+    });
+  }, skip: _engineSkip);
 }

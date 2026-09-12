@@ -17,6 +17,11 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../native_test_guard.dart';
+
+/// Skip value for the groups that boot a real JS engine (issue #184); the
+/// pure-Dart groups in this file run on every host.
+final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 
 /// Coverage for the JS-app theme pipeline: the `jsr.theme` map built from
 /// the app theme ([jsThemeMap]), the engine's initialTheme/updateTheme
@@ -168,7 +173,7 @@ void main() {
         }
       });
     });
-  });
+  }, skip: _engineSkip);
 
   group('JsAppView live theme propagation', () {
     const themedWidgetJs = '''
@@ -269,7 +274,7 @@ void main() {
       });
       await tester.pump();
     });
-  });
+  }, skip: _engineSkip);
 
   group('agent message theme line', () {
     testWidgets('forwardAppMessageToAgent appends the Theme line after the '
