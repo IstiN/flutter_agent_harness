@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
+import 'package:fa/apps/manifest_i18n.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 
@@ -51,6 +52,8 @@ class CatalogEntry {
     required this.zipFile,
     required this.zipSha256,
     required this.zipSizeBytes,
+    this.nameText,
+    this.descriptionText,
     this.platforms = const [],
   });
 
@@ -58,11 +61,20 @@ class CatalogEntry {
     final permissions = json['permissions'];
     final zip = json['zip'];
     final rawPlatforms = json['platforms'];
+    // Localization comes from the additive nameI18n/descriptionI18n keys
+    // (same schema as the widget manifest); file refs cannot resolve
+    // before install, they simply fall through to the next locale
+    // candidate at display time.
+    final nameText = LocalizedText.parse(json['name'], json['nameI18n']);
+    final descriptionText =
+        LocalizedText.parse(json['description'], json['descriptionI18n']);
     return CatalogEntry(
       id: json['id'] as String? ?? '',
-      name: json['name'] as String? ?? '',
+      name: nameText.resolve(null),
       version: json['version'] as String? ?? '',
-      description: json['description'] as String? ?? '',
+      description: descriptionText.resolve(null),
+      nameText: nameText,
+      descriptionText: descriptionText,
       author: json['author'] as String? ?? '',
       tags: [
         for (final tag in (json['tags'] as List? ?? const []))
@@ -91,6 +103,21 @@ class CatalogEntry {
   final String name;
   final String version;
   final String description;
+
+  /// The parsed localized values behind [name]/[description] (null when
+  /// this entry was built directly with plain strings).
+  final LocalizedText? nameText;
+  final LocalizedText? descriptionText;
+
+  /// The catalog name resolved for [locale] (device locale → `en` →
+  /// first declared → scalar fallback).
+  String displayName(String? locale) =>
+      (nameText ?? LocalizedText.parse(name)).resolve(locale);
+
+  /// The catalog description resolved for [locale] (see [displayName]).
+  String displayDescription(String? locale) =>
+      (descriptionText ?? LocalizedText.parse(description)).resolve(locale);
+
   final String author;
   final List<String> tags;
 
