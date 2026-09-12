@@ -87,6 +87,16 @@ void main() {
       expect(isSubagentSession(groups.single.main), isTrue);
     });
 
+    test('a subagent with an empty parent id never vanishes: it surfaces '
+        'top-level with the subagent marker (both hosts wrote parent: '
+        "'' before the writers stamped real ids)", () {
+      final emptyParent = child('empty-parent', '');
+      final groups = groupSessionsByParent([mainSession('p'), emptyParent]);
+      expect(groups.map((g) => g.main.id), ['p', 'empty-parent']);
+      expect(isSubagentSession(groups[1].main), isTrue);
+      expect(groups[1].children, isEmpty);
+    });
+
     test('deep nesting is impossible: a child pointing at another child '
         'never nests below depth one', () {
       // Subagents cannot spawn subagents; a malformed child-of-child
@@ -121,6 +131,19 @@ void main() {
       ]);
       expect(groups.map((g) => g.main.id), ['newer', 'older']);
       expect(groups[1].children.map((m) => m.id), ['nc', 'oc']);
+    });
+
+    test('orphans sit at their own activity position in the top level, '
+        'not after every main', () {
+      final newest = child(
+        'newest-orphan',
+        'gone',
+        at: DateTime.utc(2026, 9, 12, 16),
+      );
+      final mid = mainSession('mid', at: DateTime.utc(2026, 9, 12, 12));
+      final oldest = mainSession('oldest', at: DateTime.utc(2026, 9, 10));
+      final groups = groupSessionsByParent([newest, mid, oldest]);
+      expect(groups.map((g) => g.main.id), ['newest-orphan', 'mid', 'oldest']);
     });
 
     test('every child attaches to exactly one group; none is dropped', () {

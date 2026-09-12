@@ -1730,8 +1730,8 @@ class AgentCli {
   /// a picker selection resolves to metadata without a second round trip.
   List<SessionListRow>? _lastSessionRows;
 
-  /// Whether the sessions picker shows the legacy flat list instead of the
-  /// tree (toggled from the picker's first item).
+  /// Whether the sessions picker shows the flat single-level list instead
+  /// of the tree (toggled from the picker's first item).
   bool _sessionPickerFlat = false;
 
   Future<void> _openSessionsPicker() async {
@@ -1768,7 +1768,7 @@ class AgentCli {
   }
 
   /// Tree-grouped picker rows (children nested under their parent, issue
-  /// #198), or the legacy flat rows while toggled.
+  /// #198), or the flat single-level rows while toggled.
   Future<List<SessionListRow>> _sessionPickerRows(
     List<SessionMetadata> sessions,
   ) async {

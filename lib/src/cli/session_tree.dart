@@ -54,9 +54,11 @@ final class SessionListRow {
 /// Builds the display rows for [sessions] (already in the caller's display
 /// order — the CLI passes current-folder-first activity order).
 ///
-/// [flat] restores the legacy listing: every session numbered in order, no
-/// nesting. Tree mode numbers top-level rows sequentially and nests the
-/// rest under their parent; [names] supplies resolved display names and
+/// [flat] renders a single-level list: every session numbered in input
+/// order, no tree classification or nesting (the toggle's non-tree view,
+/// not a byte-for-byte legacy output).
+/// Tree mode numbers top-level rows sequentially and nests the rest
+/// under their parent; [names] supplies resolved display names and
 /// [currentSessionPath] marks the active row.
 List<SessionListRow> buildSessionListRows({
   required List<SessionMetadata> sessions,
@@ -82,7 +84,7 @@ List<SessionListRow> buildSessionListRows({
         label: labelFor(group.main),
         number: 0,
         isChild: false,
-        // Flat mode is the legacy listing: no tree classification.
+        // Flat mode: no tree classification, nothing marks a subagent.
         orphaned: !flat && isSubagentSession(group.main),
         agentCount: group.children.length,
         active: group.main.path == currentSessionPath,
@@ -99,8 +101,7 @@ List<SessionListRow> buildSessionListRows({
         ),
     ],
   ];
-  // Number the top-level rows sequentially; flat mode numbers every row
-  // (the legacy output shape).
+  // Number the top-level rows sequentially; flat mode numbers every row.
   var next = 1;
   return [
     for (final row in rows)
@@ -127,7 +128,10 @@ Future<Map<String, String>> sessionDisplayNames(
   final names = <String, String>{};
   for (final metadata in sessions) {
     try {
-      final name = await (await repo.open(metadata)).getSessionName();
+      final name = await (await repo.open(
+        metadata,
+        windowed: true,
+      )).getSessionName();
       if (name != null && name.isNotEmpty) names[metadata.id] = name;
     } on Object {
       // Unreadable session: its row degrades to the bare id.
@@ -174,7 +178,7 @@ List<String> formatSessionListLines(
 /// session in the shared root (current folder first, issue #83) without
 /// booting the agent. `--json` writes one compact NDJSON row per session
 /// with the additive `agent`/`parent` fields; text mode prints the tree
-/// (`--flat` restores the legacy flat listing). [write]/[writeln] are the
+/// (`--flat` prints that single-level view). [write]/[writeln] are the
 /// host's output channel (a [CliIO] tear-off pair) so this file stays a
 /// standalone library.
 Future<int> runSessionListCliCommand({

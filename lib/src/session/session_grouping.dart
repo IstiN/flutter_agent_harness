@@ -49,27 +49,30 @@ final class SessionGroup {
 List<SessionGroup> groupSessionsByParent(List<SessionMetadata> sessions) {
   final byId = {for (final s in sessions) s.id: s};
   final childrenByParent = <String, List<SessionMetadata>>{};
-  final orphans = <SessionMetadata>[];
+  final orphans = <SessionMetadata>{};
   for (final session in sessions) {
+    if (!isSubagentSession(session)) continue;
     final parentId = subagentParentId(session);
-    if (parentId == null) continue; // A main heads its own group below.
-    final parent = byId[parentId];
+    final parent = parentId == null ? null : byId[parentId];
     if (parent == null || isSubagentSession(parent)) {
-      // No parent in this list, or the parent is itself a child (depth
-      // must never exceed one): render top-level with a subagent marker.
+      // Empty/missing parent id, parent absent from this list, or the
+      // parent is itself a child (depth must never exceed one): render
+      // top-level with a subagent marker — a subagent row can never
+      // vanish from a tree listing.
       orphans.add(session);
     } else {
-      childrenByParent.putIfAbsent(parentId, () => []).add(session);
+      childrenByParent.putIfAbsent(parentId!, () => []).add(session);
     }
   }
   return [
+    // Top level follows the input order (the caller's activity sort), so
+    // orphans sit at their own activity position instead of being dumped
+    // after the mains.
     for (final session in sessions)
-      if (!isSubagentSession(session))
+      if (!isSubagentSession(session) || orphans.contains(session))
         SessionGroup(
           main: session,
           children: childrenByParent[session.id] ?? const [],
         ),
-    // Orphans follow the mains, in input order.
-    for (final session in orphans) SessionGroup(main: session),
   ];
 }
