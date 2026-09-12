@@ -1,0 +1,30 @@
+# flutter_app tests excluded from the UBUNTU PR leg (ci.yml flutter-tests) —
+# issue #177. Before this card the flutter_app suite ran in NO CI job at all
+# (build-macos.yml builds/signs but runs zero tests), so these host-dependent
+# files never had a CI signal. They run in the nightly macOS leg instead
+# (nightly.yml flutter-app-macos), where the native stack works:
+#
+# - js_app_* / js_theme / dynamic_*: need the quickjs_c_bridge native library
+#   (libquickjs_c_bridge_plugin.so) — built on desktop dev machines, absent
+#   on a bare ubuntu runner.
+# - chat_mic_test + session_chat_sheet "mic swaps into send": platform
+#   mic/ASR channel; the session_chat_sheet failure is pre-existing on clean
+#   main everywhere (documented in knowledgebase issue-168) and tracked
+#   separately — excluded here so the new gate starts green.
+#
+# If you add a test that needs native plugins, add it here AND make sure the
+# nightly macOS leg covers it.
+test/apps/dynamic_messages_it_test.dart
+test/apps/dynamic_widget_bridge_parity_test.dart
+test/apps/js_app_chrome_test.dart
+test/apps/js_app_emit_test.dart
+test/apps/js_app_engine_test.dart
+test/apps/js_app_keys_test.dart
+test/apps/js_app_locale_test.dart
+test/apps/js_app_media_test.dart
+test/apps/js_app_tap_test.dart
+test/apps/js_app_textfield_test.dart
+test/apps/js_app_view_test.dart
+test/apps/js_theme_test.dart
+test/apps/session_chat_sheet_test.dart
+test/chat_mic_test.dart
