@@ -497,6 +497,22 @@
   "sidebarRetry": "Повторить",
   "sidebarSessionTitle": "сессия {id}",
   "sidebarSessionsHeader": "Сессии",
+  "sidebarSubagentSessionCount": "{count, plural, one{{count} агент} few{{count} агента} many{{count} агентов} other{{count} агентов}}",
+  "@sidebarSubagentSessionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sidebarSubagentTitle": "субагент {id}",
+  "@sidebarSubagentTitle": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
   "tjsCacheTitle": "Загруженные модели (transformers.js)",
   "tjsCacheWebOnly": "On-device модели (transformers.js) доступны только в веб-сборке.",
   "uploadTooLarge": "Загрузка слишком большая: {total} превышает лимит {max} на один пакет.",

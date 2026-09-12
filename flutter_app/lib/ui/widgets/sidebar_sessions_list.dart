@@ -7,7 +7,7 @@ import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show SessionMetadata;
+    show SessionMetadata, groupSessionsByParent, isSubagentSession;
 import 'package:path/path.dart' as p;
 
 /// The sessions list for the wide-screen sidebar: shows every live session
@@ -120,10 +120,27 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     super.dispose();
   }
 
-  String _titleFor(_SessionEntry entry) {
-    return widget.sessionNamesStore?.titleFor(entry.id) ??
-        widget.sessionInfoNames[entry.id] ??
-        derivedSessionTitle(context, id: entry.id, createdAt: entry.createdAt);
+  /// Parent session ids the user expanded (issue #198 tree): groups start
+  /// collapsed; a parent whose ACTIVE descendant lives under it is forced
+  /// open regardless (see [sessionTreeRows]).
+  // ponytail: one set, no negative overrides — the active parent can't be
+  // hand-collapsed while its child is the active session.
+  final Set<String> _expandedParents = {};
+
+  void _toggleExpanded(String parentId) {
+    setState(() {
+      if (!_expandedParents.remove(parentId)) _expandedParents.add(parentId);
+    });
+  }
+
+  String _titleFor(SessionEntry entry, {bool subagent = false}) {
+    return sessionEntryTitle(
+      context,
+      entry,
+      namesStore: widget.sessionNamesStore,
+      sessionInfoNames: widget.sessionInfoNames,
+      subagent: subagent,
+    );
   }
 
   @override
@@ -150,9 +167,9 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     // Live sessions plus the persisted ones not currently open — the full
     // on-disk history stays reachable from the sidebar, like the mobile
     // chat sheet's persisted tail.
-    final entries = <_SessionEntry>[
+    final entries = <SessionEntry>[
       for (final session in live)
-        _SessionEntry(
+        SessionEntry(
           id: session.id,
           // Hosted sessions: the manager slot's stamps are pinned at boot;
           // after a broadcast session switch the persisted metadata (the
@@ -166,7 +183,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
         ),
       for (final metadata in widget.persistedSessions)
         if (!liveIds.contains(metadata.id))
-          _SessionEntry(
+          SessionEntry(
             id: metadata.id,
             createdAt: metadata.createdAt,
             lastUpdatedAt: metadata.lastUpdatedAt ?? metadata.createdAt,
@@ -182,9 +199,12 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     // The click highlights the row IN PLACE (selection =
     // selectedSessionId); the list never reorders under the finger.
-    final grouped = _groupEntriesByFolder(
+    final rows = sessionTreeRows(
       entries,
-      context.l10n.sessionFolderPersonal,
+      metadataById: persistedById,
+      personalLabel: context.l10n.sessionFolderPersonal,
+      activeSessionId: widget.selectedSessionId,
+      expandedIds: _expandedParents,
     );
     return Column(
       children: [
@@ -215,28 +235,16 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
           ),
         ),
         Expanded(
-          child: grouped.isEmpty
+          child: rows.isEmpty
               ? const SizedBox.shrink()
               : ListView(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   children: [
-                    for (final group in grouped) ...[
-                      _DateHeader(label: group.label, colors: colors),
-                      for (final entry in group.entries)
-                        SessionTile(
-                          title: _titleFor(entry),
-                          subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
-                          // The folder basename IS the group header — a
-                          // per-tile cwd label would duplicate it.
-                          cwd: null,
-                          isActive: entry.id == widget.selectedSessionId,
-                          hubBound:
-                              widget.hubBoundSessionId != null &&
-                              widget.hubBoundSessionId == entry.id,
-                          onTap: () => _openEntry(entry),
-                          onMenu: (anchor) => _showSessionMenu(entry, anchor),
-                        ),
-                    ],
+                    for (final row in rows)
+                      if (row.isHeader)
+                        _DateHeader(label: row.label!, colors: colors)
+                      else
+                        _sessionTile(row),
                   ],
                 ),
         ),
@@ -244,7 +252,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     );
   }
 
-  void _openEntry(_SessionEntry entry) {
+  void _openEntry(SessionEntry entry) {
     final live = entry.live;
     if (live != null) {
       // Hosted: the slot is just the boot attach keyholder — re-dispatch
@@ -263,35 +271,38 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     if (persisted != null) widget.onOpenPersisted?.call(persisted);
   }
 
-  /// Groups entries by their project folder (the session's origin cwd):
-  /// the label is the folder basename — sessions of one project stay
-  /// together, the most recently active project first.
-  List<_SessionGroup> _groupEntriesByFolder(
-    List<_SessionEntry> entries,
-    String personalLabel,
-  ) {
-    if (entries.isEmpty) return const [];
-    final groups = <String, List<_SessionEntry>>{};
-    final order = <String>[];
-    for (final entry in entries) {
-      final label = sessionFolderGroupLabel(entry.cwd, personalLabel);
-      if (!groups.containsKey(label)) {
-        groups[label] = [];
-        order.add(label);
-      }
-      groups[label]!.add(entry);
-    }
-    return [
-      for (final label in order)
-        _SessionGroup(label: label, entries: groups[label]!),
-    ];
+  /// One tree row → tile: parents get the collapse chevron + agent count
+  /// badge; child rows indent with the agent glyph (orphans surface
+  /// top-level, marked but not indented).
+  Widget _sessionTile(SessionListRow row) {
+    final entry = row.entry!;
+    return SessionTile(
+      title: _titleFor(entry, subagent: row.isChild),
+      subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
+      // The folder basename IS the group header — a per-tile cwd label
+      // would duplicate it.
+      cwd: null,
+      isActive: entry.id == widget.selectedSessionId,
+      hubBound:
+          widget.hubBoundSessionId != null &&
+          widget.hubBoundSessionId == entry.id,
+      onTap: () => _openEntry(entry),
+      onMenu: (anchor) => _showSessionMenu(entry, anchor),
+      childCount: row.childCount,
+      expanded: row.expanded,
+      onToggleExpand: row.childCount > 0
+          ? () => _toggleExpanded(entry.id)
+          : null,
+      subagent: row.isChild,
+      indent: row.isChild && !row.orphaned ? sessionChildIndent : 0,
+    );
   }
 
   /// The 3-dot tile menu: rename (via the shared rename dialog, like the
   /// CLI `/rename`) and delete (with confirmation). Works for live and
   /// persisted-only sessions alike — the implementation is shared with the
   /// mobile chat sheet's sessions drawer (see [showSessionActionsMenu]).
-  Future<void> _showSessionMenu(_SessionEntry entry, Rect anchor) =>
+  Future<void> _showSessionMenu(SessionEntry entry, Rect anchor) =>
       showSessionActionsMenu(
         context,
         anchor: anchor,
@@ -331,7 +342,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
                     final isActive = session.id == widget.selectedSessionId;
                     return Tooltip(
                       message: _titleFor(
-                        _SessionEntry(
+                        SessionEntry(
                           id: session.id,
                           createdAt: session.createdAt,
                           lastUpdatedAt: session.lastUpdatedAt,
@@ -369,9 +380,11 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
 }
 
 /// One row in the expanded list: a live [FlutterManagedSession] or a
-/// persisted-only [SessionMetadata] still sitting on disk.
-final class _SessionEntry {
-  const _SessionEntry({
+/// persisted-only [SessionMetadata] still sitting on disk. Shared by the
+/// wide sidebar and the mobile sessions drawer (issue #198: both hosts
+/// render the SAME tree row model — see [sessionTreeRows]).
+final class SessionEntry {
+  const SessionEntry({
     required this.id,
     required this.createdAt,
     required this.lastUpdatedAt,
@@ -396,12 +409,140 @@ final class _SessionEntry {
   final SessionMetadata? persisted;
 }
 
-/// A group of sessions under one date header.
-final class _SessionGroup {
-  const _SessionGroup({required this.label, required this.entries});
+/// Left indent of a subagent child tile under its parent (both hosts).
+const sessionChildIndent = 20.0;
 
-  final String label;
-  final List<_SessionEntry> entries;
+/// One rendered row of a session list — the wide sidebar and the mobile
+/// drawer consume the SAME model (issue #198): a folder header, a main
+/// tile (a parent heads its subagent children: [childCount] > 0 plus the
+/// group's [expanded] state), or a subagent child tile ([isChild]; an
+/// [orphaned] child renders top-level with the agent glyph).
+final class SessionListRow {
+  const SessionListRow({
+    this.label,
+    this.entry,
+    this.childCount = 0,
+    this.expanded = false,
+    this.isChild = false,
+    this.orphaned = false,
+  });
+
+  /// Folder-header label (set iff this is a header row).
+  final String? label;
+
+  /// The session this tile renders (null for headers).
+  final SessionEntry? entry;
+
+  /// Subagent children under [entry]; > 0 renders the collapse badge.
+  final int childCount;
+
+  /// Whether the child group renders expanded (parent rows only).
+  final bool expanded;
+
+  /// A subagent child tile (agent glyph; indented unless [orphaned]).
+  final bool isChild;
+
+  /// A subagent whose parent is missing from the listed set.
+  final bool orphaned;
+
+  bool get isHeader => label != null;
+}
+
+/// Folder-grouped, parent-nested rows for a session list (issue #198's
+/// app surface): folder headers stay the top level; under each header the
+/// mains render with their subagent children nested behind a count badge
+/// — collapsed unless [expandedIds] opts in or the ACTIVE session is one
+/// of the group's children (E2: the group forces open so the active row
+/// stays visible). Orphaned subagents surface top-level with the glyph.
+/// Pure projection over [metadataById] — no extra I/O (AC5): entries
+/// missing from it (presence-only rows, pre-feature headers) are mains.
+List<SessionListRow> sessionTreeRows(
+  List<SessionEntry> entries, {
+  required Map<String, SessionMetadata> metadataById,
+  required String personalLabel,
+  String? activeSessionId,
+  Set<String> expandedIds = const {},
+}) {
+  // Folder groups in first-appearance order (entries arrive pre-sorted).
+  final byFolder = <String, List<SessionEntry>>{};
+  final order = <String>[];
+  for (final entry in entries) {
+    final label = sessionFolderGroupLabel(entry.cwd, personalLabel);
+    if (byFolder.putIfAbsent(label, () => []).isEmpty) order.add(label);
+    byFolder[label]!.add(entry);
+  }
+  // The on-disk header is the `agent`/`parent` classification source.
+  SessionMetadata classify(SessionEntry e) =>
+      metadataById[e.id] ??
+      // No header on disk yet — classify as a main, like the CLI does.
+      SessionMetadata(
+        id: e.id,
+        createdAt: e.createdAt,
+        cwd: e.cwd ?? '',
+        path: '',
+      );
+  // The shared core grouping runs per folder group: a child whose parent
+  // sits in another folder degrades to an orphan marker (the same-cwd
+  // rule as the CLI listing).
+  List<SessionListRow> treeFolder(List<SessionEntry> folderEntries) {
+    final entryById = {for (final e in folderEntries) e.id: e};
+    final rows = <SessionListRow>[];
+    for (final group in groupSessionsByParent([
+      for (final e in folderEntries) classify(e),
+    ])) {
+      final entry = entryById[group.main.id]!;
+      if (group.children.isEmpty) {
+        final orphaned = isSubagentSession(group.main);
+        rows.add(
+          SessionListRow(entry: entry, isChild: orphaned, orphaned: orphaned),
+        );
+        continue;
+      }
+      final expanded =
+          expandedIds.contains(entry.id) ||
+          group.children.any((child) => child.id == activeSessionId);
+      rows.add(
+        SessionListRow(
+          entry: entry,
+          childCount: group.children.length,
+          expanded: expanded,
+        ),
+      );
+      if (expanded) {
+        for (final child in group.children) {
+          rows.add(SessionListRow(entry: entryById[child.id], isChild: true));
+        }
+      }
+    }
+    return rows;
+  }
+
+  return [
+    for (final label in order) ...[
+      SessionListRow(label: label),
+      ...treeFolder(byFolder[label]!),
+    ],
+  ];
+}
+
+/// The display title for a session row — the app-local rename over the
+/// CLI-written `session_info` name over the derived date title. Unnamed
+/// subagent children degrade to `subagent <short-id>` (never a bare
+/// timestamp), matching the CLI's tree rows.
+String sessionEntryTitle(
+  BuildContext context,
+  SessionEntry entry, {
+  SessionNamesStore? namesStore,
+  Map<String, String> sessionInfoNames = const {},
+  bool subagent = false,
+}) {
+  final named = namesStore?.titleFor(entry.id) ?? sessionInfoNames[entry.id];
+  if (named != null) return named;
+  if (subagent) {
+    final shortId = entry.id.length < 8 ? entry.id : entry.id.substring(0, 8);
+    return context.l10n.sidebarSubagentTitle(shortId);
+  }
+  return derivedSessionTitle(context, id: entry.id, createdAt: entry.createdAt);
 }
 
 /// A small date header label (Today, Yesterday, May 7, ...).
@@ -623,7 +764,10 @@ Future<void> _deleteSession(
 
 /// One row in a session list — the wide sidebar and the mobile sessions
 /// drawer render the SAME tile: an active dot, the title, a relative-time
-/// subtitle, the working-folder label, and a 3-dot actions menu.
+/// subtitle, the working-folder label, and a 3-dot actions menu. Tree
+/// rows (issue #198) extend it: a parent heads its collapsed subagent
+/// children behind a chevron + count badge, children indent with the
+/// agent glyph.
 class SessionTile extends StatelessWidget {
   const SessionTile({
     super.key,
@@ -633,6 +777,11 @@ class SessionTile extends StatelessWidget {
     this.cwd,
     this.live = false,
     this.hubBound = false,
+    this.childCount = 0,
+    this.expanded = false,
+    this.onToggleExpand,
+    this.subagent = false,
+    this.indent = 0,
     required this.onTap,
     this.onMenu,
   });
@@ -658,6 +807,21 @@ class SessionTile extends StatelessWidget {
   /// is tapped (the popup anchors to it). When null, the menu is hidden.
   final ValueChanged<Rect>? onMenu;
 
+  /// Subagent children nested under this session (issue #198): > 0
+  /// renders the collapse chevron + "N agents" badge; taps fire
+  /// [onToggleExpand]. The tile body itself still opens the session.
+  final int childCount;
+
+  /// Whether the child group renders expanded (chevron rotation).
+  final bool expanded;
+  final VoidCallback? onToggleExpand;
+
+  /// A subagent child row: the agent glyph marks machinery sessions.
+  final bool subagent;
+
+  /// Left indent (child rows nest under their parent).
+  final double indent;
+
   @override
   Widget build(BuildContext context) {
     final colors = FahColors.of(context);
@@ -676,6 +840,7 @@ class SessionTile extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               children: [
+                if (indent > 0) SizedBox(width: indent),
                 if (live)
                   // A live CLI process owns the session — green dot, the
                   // clearest "running right now" marker.
@@ -705,6 +870,14 @@ class SessionTile extends StatelessWidget {
                 else
                   const SizedBox(width: 8),
                 const SizedBox(width: 10),
+                if (subagent) ...[
+                  Icon(
+                    Icons.smart_toy_outlined,
+                    size: 12,
+                    color: colors.dim.withValues(alpha: 0.8),
+                  ),
+                  const SizedBox(width: 6),
+                ],
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -763,6 +936,38 @@ class SessionTile extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (childCount > 0 && onToggleExpand != null)
+                  InkWell(
+                    onTap: onToggleExpand,
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          AnimatedRotation(
+                            turns: expanded ? 0.25 : 0,
+                            duration: const Duration(milliseconds: 120),
+                            child: Icon(
+                              Icons.keyboard_arrow_right,
+                              size: 14,
+                              color: colors.dim,
+                            ),
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            context.l10n.sidebarSubagentSessionCount(
+                              childCount,
+                            ),
+                            style: TextStyle(color: colors.dim, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 if (hubBound)
                   Tooltip(
                     message: context.l10n.settingsDapInboundBadgeTooltip,

@@ -616,4 +616,188 @@ void main() {
     expect(opened, isNotNull);
     expect(opened.id, older.id);
   });
+  group('session tree (issue #198)', () {
+    // A subagent child: the header metadata both hosts' child session
+    // factories write (`agent: subagent, parent: <mainSessionId>`).
+    Future<SessionMetadata> persistChild({
+      required String parentId,
+      String cwd = 'test',
+    }) async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(
+          cwd: cwd,
+          metadata: {'agent': 'subagent', 'parent': parentId},
+        ),
+      );
+      return session.getMetadata();
+    }
+
+    testWidgets('subagent sessions collapse under a count badge by '
+        'default', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final childA = await persistChild(parentId: main.id);
+      final childB = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'Main chat',
+            childA.id: 'goal_builder',
+            childB.id: 'scout',
+          }),
+          persisted: [main, childA, childB],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Main chat'), findsOneWidget);
+      expect(find.text('2 agents'), findsOneWidget);
+      // Collapsed: the children stay hidden until the badge is tapped.
+      expect(find.text('goal_builder'), findsNothing);
+      expect(find.text('scout'), findsNothing);
+    });
+
+    testWidgets('the badge expands the child list and collapses it back', (
+      tester,
+    ) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'Main chat',
+            child.id: 'goal_builder',
+          }),
+          persisted: [main, child],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('1 agent'));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsOneWidget);
+      // Children indent under their parent.
+      expect(
+        tester.getTopLeft(find.text('goal_builder')).dx,
+        greaterThan(tester.getTopLeft(find.text('Main chat')).dx),
+      );
+
+      await tester.tap(find.text('1 agent'));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsNothing);
+    });
+
+    testWidgets('an active child auto-expands its parent group', (
+      tester,
+    ) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'Main chat',
+            child.id: 'goal_builder',
+          }),
+          persisted: [main, child],
+          selectedSessionId: child.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // No tap needed: the group forces open so the active row shows
+      // (E2) — and no badge double-renders over it.
+      expect(find.text('goal_builder'), findsOneWidget);
+      expect(find.text('1 agent'), findsOneWidget);
+    });
+
+    testWidgets('unnamed children show as subagent <short-id>', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({main.id: 'Main chat'}),
+          persisted: [main, child],
+          selectedSessionId: child.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('subagent ${child.id.substring(0, 8)}'), findsOneWidget);
+    });
+
+    testWidgets('an orphaned subagent renders top-level, marked', (
+      tester,
+    ) async {
+      // E1: the parent was deleted (or lives in another cwd) — the child
+      // stays visible, marked, and never crashes or cascades.
+      final orphan = await persistChild(parentId: 'deleted-parent');
+
+      await tester.pumpWidget(harness(persisted: [orphan]));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('subagent ${orphan.id.substring(0, 8)}'),
+        findsOneWidget,
+      );
+      // Top-level: no count badge anywhere.
+      expect(find.text('1 agent'), findsNothing);
+    });
+
+    testWidgets('pre-feature sessions (no header metadata) stay mains and '
+        'the tree nests inside folder groups', (tester) async {
+      final plainSession = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work/proj'),
+      );
+      final plain = await plainSession.getMetadata();
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            plain.id: 'Plain chat',
+            main.id: 'Main chat',
+            child.id: 'goal_builder',
+          }),
+          persisted: [plain, main, child],
+          selectedSessionId: child.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The metadata-less session heads its own (badge-less) row inside
+      // the same folder group as the family.
+      expect(find.text('Plain chat'), findsOneWidget);
+      expect(find.text('1 agent'), findsOneWidget);
+      expect(find.text('goal_builder'), findsOneWidget);
+    });
+
+    testWidgets('child tiles carry the same 3-dot actions', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+      final names = SessionNamesStore.inMemory({
+        main.id: 'Main chat',
+        child.id: 'goal_builder',
+      });
+
+      await tester.pumpWidget(harness(names: names, persisted: [main, child]));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1 agent'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.more_horiz).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rename session'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Renamed child');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(names.titleFor(child.id), 'Renamed child');
+      expect(find.text('Renamed child'), findsOneWidget);
+    });
+  });
 }

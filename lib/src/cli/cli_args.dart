@@ -99,6 +99,7 @@ final class CliArgs extends CliArgsResult {
     this.trajectory,
     this.config,
     this.ext,
+    this.sessionList,
     this.positionals = const [],
     this.output,
     this.attachments = const [],
@@ -221,6 +222,10 @@ final class CliArgs extends CliArgsResult {
   /// extension manager instead of a prompt run.
   final ExtCliCommand? ext;
 
+  /// The `fa session <verb>` subcommand (issue #198), when the invocation
+  /// routed to the session lister instead of a prompt run.
+  final SessionCliCommand? sessionList;
+
   /// `--output <mode>` (issue #155): 'events' (HEP v1 JSONL on stdout) or
   /// 'events=full' (full tool arguments). 'json' only rides `--version`.
   final String? output;
@@ -247,6 +252,7 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
   'trajectory': _parseTrajectoryArgs,
   'config': _parseConfigArgs,
   'ext': _parseExtArgs,
+  'session': _parseSessionArgs,
 };
 
 CliArgsResult parseCliArgs(List<String> args) {
@@ -1050,4 +1056,63 @@ final class _CliArgValues {
       );
     }
   }
+}
+
+/// The `fa session` subcommand (issue #198): tree-grouped session listing.
+///
+/// `list` prints every session in the shared root — the tree view (children
+/// nested under their parent) by default, the legacy flat list under
+/// `--flat`; `--json` emits one NDJSON row per session with the additive
+/// `agent`/`parent` fields for scripts.
+final class SessionCliCommand {
+  /// Creates a [SessionCliCommand].
+  const SessionCliCommand({
+    required this.verb,
+    this.json = false,
+    this.flat = false,
+  });
+
+  /// The subcommand verb. Only `list` exists today.
+  final String verb;
+
+  /// `--json`: NDJSON rows instead of the rendered tree.
+  final bool json;
+
+  /// `--flat`: the legacy flat listing, no nesting.
+  final bool flat;
+}
+
+const String _sessionUsage = 'usage: fa session list [--json] [--flat]';
+
+const Set<String> sessionVerbs = {'list'};
+
+CliArgsResult _parseSessionArgs(List<String> args) {
+  if (args.contains('--help') || args.contains('-h')) {
+    return const CliArgsHelp();
+  }
+  if (args.isEmpty) {
+    throw const CliArgsException(_sessionUsage);
+  }
+  final verb = args.first;
+  if (!sessionVerbs.contains(verb)) {
+    throw CliArgsException(
+      'unknown session verb: $verb '
+      '(expected ${sessionVerbs.join('|')})\n$_sessionUsage',
+    );
+  }
+  var json = false;
+  var flat = false;
+  for (var i = 1; i < args.length; i++) {
+    switch (args[i]) {
+      case '--json':
+        json = true;
+      case '--flat':
+        flat = true;
+      default:
+        throw CliArgsException('unknown argument: ${args[i]}\n$_sessionUsage');
+    }
+  }
+  return CliArgs(
+    sessionList: SessionCliCommand(verb: verb, json: json, flat: flat),
+  );
 }
