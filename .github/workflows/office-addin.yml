@@ -71,6 +71,13 @@ jobs:
           touch flutter_app/.env
           cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
+      # The office boot seam compiles web-only code, so its guard tests run
+      # on the chrome platform (VM suite can't import them). FA_HOST=office
+      # compiles the real boot branch in; Office.js is absent in the test
+      # browser, pinning the clean office_unavailable failure path.
+      - name: Chrome boot tests (flutter_app/test/web)
+        run: cd flutter_app && flutter test test/web --platform chrome --dart-define=FA_HOST=office
+
       - name: Office wiring tests (flutter_app)
         run: cd flutter_app && flutter pub get && flutter test test/services/office_wiring_test.dart
 

@@ -24,17 +24,21 @@ import 'package:fa_office_agent/fa_office_agent.dart'
 
 /// The [OfficeApi] for this run, or null when not office-hosted.
 ///
-/// The pane's REAL boot path fires [OfficeApi.onReady] right here (round-1
-/// CR blocker): the adapter also self-starts in its constructor, but the
-/// handshake is started from the app layer so readiness is a property of
-/// the boot sequence, not of the adapter's internals. Fire-and-forget —
-/// failures (missing Office.js, 60s race loss) surface per tool call as
-/// the clean notes, never crash the pane.
+/// ONREADY-FIRST (issue #202): the pane calls this at the very top of
+/// `main()`, so the Office.js handshake is in flight before any later
+/// boot step can die — a dead boot chain used to leave Office.js spamming
+/// "must call Office.onReady()" over a gray pane. Memoized: later callers
+/// (AgentService.create) get the SAME instance, never a second handshake.
+/// Fire-and-forget — failures (missing Office.js, 60s race loss) surface
+/// per tool call as the clean notes, never crash the pane.
+OfficeApi? _booted;
 OfficeApi? bootOfficeApi() {
   if (kFaBuildHost != 'office') return null;
+  final ready = _booted;
+  if (ready != null) return ready;
   final api = createJsOfficeApi();
   if (api != null) {
     unawaited(api.onReady().catchError((Object e) {}));
   }
-  return api;
+  return _booted = api;
 }
