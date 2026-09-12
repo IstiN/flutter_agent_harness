@@ -156,6 +156,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsOpenFullChatTooltip => 'Открыть полный чат';
 
   @override
+  String get appsOpenTrajectoryTooltip => 'Открыть траекторию';
+
+  @override
   String get appsPermissionCalendar => 'Календарь';
 
   @override
@@ -765,6 +768,18 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get launcherTileSizeSmall => 'Маленький (2×2)';
+
+  @override
+  String get launcherTileSizeTall => 'Высокий (1×2)';
+
+  @override
+  String get launcherTileSizeWide => 'Широкий (2×1)';
+
+  @override
+  String get launcherTileSizeColumn => 'Столбик (1×3)';
+
+  @override
+  String get launcherTileSizeRow => 'Строка (3×1)';
 
   @override
   String get mediaFileMissing => 'Медиафайл не найден';

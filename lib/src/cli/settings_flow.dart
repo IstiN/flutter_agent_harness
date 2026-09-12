@@ -614,6 +614,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('cube: ${_cubeStatusLabel()}');
     io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln('tools: ${_toolsStatusLabel()}');
+    io.writeln('compaction: ${config.compactionEngine?.value ?? 'classic'}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
       '/tools (agent models: the /settings hub)',

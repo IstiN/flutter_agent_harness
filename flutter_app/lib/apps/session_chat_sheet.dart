@@ -12,7 +12,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa_ui/fa_ui.dart'
-    show FaAuthRecoveryCallback, FaChatSurfaceHandlers;
+    show
+        FaAuthRecoveryCallback,
+        FaChatSurfaceHandlers,
+        TrajectoryController,
+        TrajectoryScreen;
 
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
@@ -43,12 +47,12 @@ import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
 
 /// The session chat overlay floating over the apps launcher, iMessage-style.
 /// Three layers bottom→top (above the app grid):
-///
-/// - **Session panel**: the active session's transcript (the shared
 ///   [ChatMessageTile] renderer) under a slim header (drag handle, a
 ///   sessions-drawer button with the stacked-bubbles glyph, title via
-///   [SessionNamesStore], 3-dots menu: New session / Rename / Open full
-///   chat / Copy / Close). Slides up from the bottom to 92% and parks
+///   [SessionNamesStore], a timeline button opening the session's
+///   trajectory ledger page (issue #168), and a 3-dots menu: New session /
+///   Rename / Open full chat / Copy / Close). Slides up from the bottom to
+///   92% and parks
 ///   UNDER the input bar; a pull-down on the header zone or the menu's
 ///   Close dismisses it. Focusing the input field opens the panel
 ///   immediately (typing never happens blind).
@@ -681,6 +685,19 @@ class SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
+  /// Opens the active session's trajectory ledger (mobile parity,
+  /// issue #168): a full-screen pushed page over the shared fa_ui
+  /// surface. A route, not a sheet — a deep ledger reads wrong in a
+  /// bottom sheet and the route keeps the platform back gesture.
+  Future<void> _openTrajectory() async {
+    if (_activeService == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _SessionTrajectoryPage(manager: widget.manager),
+      ),
+    );
+  }
+
   // --- build -----------------------------------------------------------------
 
   @override
@@ -1297,6 +1314,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 onTap: () => unawaited(_openModelPicker(service)),
                 onLongPress: () => unawaited(_openModelSettings(service)),
               ),
+              // The trajectory entry (issue #168): pushes the ledger page
+              // — the same fa_ui surface the desktop chat exposes, so
+              // mobile gets run/tool/compaction inspection in place.
+              IconButton(
+                key: const ValueKey('sessionChatPanelTrajectory'),
+                icon: const Icon(Icons.timeline, size: 20),
+                tooltip: context.l10n.appsOpenTrajectoryTooltip,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => unawaited(_openTrajectory()),
+              ),
               PopupMenuButton<String>(
                 key: const ValueKey('sessionChatMenu'),
                 icon: const Icon(Icons.more_vert, size: 20),
@@ -1587,4 +1614,89 @@ final class _DrawerRow {
   final String? label;
   final dynamic entry;
   final bool isHeader;
+}
+
+/// The mobile trajectory ledger page (issue #168): the shared fa_ui
+/// [TrajectoryScreen] over a page-owned [TrajectoryController]
+/// subscribed to the ACTIVE session's snapshot stream. The page listens
+/// to the manager, so a session switch while it stays open re-binds to
+/// the newly active session's ledger (pinned E2 choice: follow, don't
+/// close). The feed is a broadcast stream replaying the latest snapshot,
+/// so a page opened mid-run renders the run in progress and live turns
+/// keep arriving without manual refresh.
+class _SessionTrajectoryPage extends StatefulWidget {
+  const _SessionTrajectoryPage({required this.manager});
+
+  final FlutterSessionManager manager;
+
+  @override
+  State<_SessionTrajectoryPage> createState() => _SessionTrajectoryPageState();
+}
+
+class _SessionTrajectoryPageState extends State<_SessionTrajectoryPage> {
+  TrajectoryController? _controller;
+  StreamSubscription<TrajectorySnapshot>? _subscription;
+  AgentService? _service;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.manager.addListener(_onManagerChanged);
+    final service = widget.manager.active?.service;
+    if (service != null) _bind(service);
+  }
+
+  @override
+  void dispose() {
+    widget.manager.removeListener(_onManagerChanged);
+    _subscription?.cancel();
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  void _onManagerChanged() {
+    final service = widget.manager.active?.service;
+    if (service == null || service == _service) return;
+    _bind(service);
+    setState(() {});
+  }
+
+  /// (Re)binds to [service]: fresh controller + subscription, so no
+  /// scroll/selection/filter state leaks across sessions. The previous
+  /// controller is disposed post-frame — the in-flight build may still
+  /// render it until [TrajectoryScreen.didUpdateWidget] detaches.
+  void _bind(AgentService service) {
+    _service = service;
+    _subscription?.cancel();
+    final old = _controller;
+    _controller = TrajectoryController();
+    _loaded = false;
+    _subscription = service.trajectory.listen(_onSnapshot);
+    if (old != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    }
+  }
+
+  void _onSnapshot(TrajectorySnapshot snapshot) {
+    _controller?.updateSnapshot(snapshot);
+    if (_loaded) return;
+    _loaded = true;
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    if (controller == null) {
+      // No active session left; the header entry is guarded, so this
+      // only renders a transient frame — pop straight back.
+      return const Scaffold(body: SizedBox.shrink());
+    }
+    return TrajectoryScreen(
+      controller: controller,
+      loaded: _loaded,
+      onClose: () => Navigator.of(context).pop(),
+    );
+  }
 }

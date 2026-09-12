@@ -350,6 +350,12 @@ abstract class AppLocalizations {
   /// **'Open full chat'**
   String get appsOpenFullChatTooltip;
 
+  /// No description provided for @appsOpenTrajectoryTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Open trajectory'**
+  String get appsOpenTrajectoryTooltip;
+
   /// No description provided for @appsPermissionCalendar.
   ///
   /// In en, this message translates to:
@@ -1369,6 +1375,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Small (2×2)'**
   String get launcherTileSizeSmall;
+
+  /// No description provided for @launcherTileSizeTall.
+  ///
+  /// In en, this message translates to:
+  /// **'Tall (1×2)'**
+  String get launcherTileSizeTall;
+
+  /// No description provided for @launcherTileSizeWide.
+  ///
+  /// In en, this message translates to:
+  /// **'Wide (2×1)'**
+  String get launcherTileSizeWide;
+
+  /// No description provided for @launcherTileSizeColumn.
+  ///
+  /// In en, this message translates to:
+  /// **'Column (1×3)'**
+  String get launcherTileSizeColumn;
+
+  /// No description provided for @launcherTileSizeRow.
+  ///
+  /// In en, this message translates to:
+  /// **'Row (3×1)'**
+  String get launcherTileSizeRow;
 
   /// No description provided for @mediaFileMissing.
   ///

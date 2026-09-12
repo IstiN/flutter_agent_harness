@@ -149,7 +149,10 @@ Map<String, List<String>> get _apps => {
   ],
 };
 
-Future<MemoryExecutionEnv> _seededEnv({bool liveTiles = false}) async {
+Future<MemoryExecutionEnv> _seededEnv({
+  bool liveTiles = false,
+  Map<String, String> extraTiles = const {},
+}) async {
   final env = MemoryExecutionEnv();
   for (final entry in _apps.entries) {
     await env.writeFile(
@@ -193,8 +196,29 @@ Future<MemoryExecutionEnv> _seededEnv({bool liveTiles = false}) async {
           '"icon": ${_jsonString(bellIcon)}, '
           '"widget": {"entry": "widget_tile.js", "size": "2x2"}}',
     );
-    await env.writeFile('apps/reminders/widget.js', '(function(){})();');
-    await env.writeFile('apps/reminders/widget_tile.js', '(function(){})();');
+    await env.writeFile('apps/reminders/widget.js', '(function(){});');
+    await env.writeFile('apps/reminders/widget_tile.js', '(function(){});');
+  }
+  // Extra live-tile apps (issue #166 span goldens): id → `"WxH"` size.
+  final chartIcon = _badgeIcon(
+    '#22c55e',
+    "<rect x='4' y='12' width='3' height='8' rx='1' fill='$_fg'/>"
+        "<rect x='10' y='8' width='3' height='12' rx='1' fill='$_fg'/>"
+        "<rect x='16' y='4' width='3' height='16' rx='1' fill='$_fg'/>",
+  );
+  for (final entry in extraTiles.entries) {
+    await env.writeFile(
+      'apps/${entry.key}/manifest.json',
+      '{"id": "${entry.key}", "name": "Steps", '
+          '"description": "Steps app", '
+          '"icon": ${_jsonString(chartIcon)}, '
+          '"widget": {"entry": "widget_tile.js", "size": "${entry.value}"}}',
+    );
+    await env.writeFile('apps/${entry.key}/widget.js', '(function(){});');
+    await env.writeFile(
+      'apps/${entry.key}/widget_tile.js',
+      '(function(){});',
+    );
   }
   return env;
 }
@@ -329,11 +353,57 @@ final class _FakeTileEngine extends JsAppEngine {
     },
   };
 
+  /// The 1x3 tall tile's content: a compact stat list fitting the narrow
+  /// one-cell width (only node types the other fake trees already use).
+  static const _stepsTree = <String, dynamic>{
+    'type': 'container',
+    'padding': [10, 6, 10, 6],
+    'child': {
+      'type': 'column',
+      'mainAxisAlignment': 'center',
+      'crossAxisAlignment': 'stretch',
+      'children': [
+        {
+          'type': 'text',
+          'data': 'Steps',
+          'maxLines': 1,
+          'overflow': 'ellipsis',
+          'style': {'fontSize': 11, 'fontWeight': 'w700'},
+        },
+        {'type': 'sizedBox', 'height': 6},
+        {'type': 'text', 'data': 'Mon', 'maxLines': 1, 'style': {'fontSize': 10}},
+        {
+          'type': 'text',
+          'data': '8.2k',
+          'maxLines': 1,
+          'style': {'fontSize': 11, 'fontWeight': 'w600'},
+        },
+        {'type': 'sizedBox', 'height': 5},
+        {'type': 'text', 'data': 'Tue', 'maxLines': 1, 'style': {'fontSize': 10}},
+        {
+          'type': 'text',
+          'data': '11k',
+          'maxLines': 1,
+          'style': {'fontSize': 11, 'fontWeight': 'w600'},
+        },
+        {'type': 'sizedBox', 'height': 5},
+        {'type': 'text', 'data': 'Wed', 'maxLines': 1, 'style': {'fontSize': 10}},
+        {
+          'type': 'text',
+          'data': '9.7k',
+          'maxLines': 1,
+          'style': {'fontSize': 11, 'fontWeight': 'w600'},
+        },
+      ],
+    },
+  };
+
   @override
   Future<void> start() async {
     tree.value = switch (app.id) {
       'weather' => _weatherTree,
       'reminders' => _remindersTree,
+      'steps' => _stepsTree,
       _ => const {'type': 'text', 'data': 'TILE'},
     };
   }
@@ -392,8 +462,13 @@ Future<void> _pumpLauncher(
   EdgeInsets? viewPadding,
   Size size = goldenSizePhone,
   String modelId = 'test-model',
+  int? gridColumns,
+  Map<String, String> extraTiles = const {},
 }) async {
-  final env = await _seededEnv(liveTiles: liveTiles);
+  final env = await _seededEnv(
+    liveTiles: liveTiles,
+    extraTiles: extraTiles,
+  );
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   for (final entry
       in (sessions ?? const {'fake-session': <FahChatMessage>[]}).entries) {
@@ -430,6 +505,7 @@ Future<void> _pumpLauncher(
             LauncherLayoutStore.filesKey,
           ],
       folders: folders,
+      gridColumns: gridColumns,
     ),
     appsStore: _appsStore(env),
     tileEngineFactory: tileEngineFactory,
@@ -542,6 +618,56 @@ void main() {
         ],
       );
       await expectGolden(tester, 'launcher/grid_ios_alignment_dark');
+    });
+
+    /// AC4 of issue #166 (clamp, narrow): a 4x2 span on a 3-column grid
+    /// renders full-width without overflow, the 1x3 steps widget stretches
+    /// one cell wide and three tall beside the 2x2 reminders widget.
+    testWidgets('custom spans clamp on a narrow grid — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        liveTiles: true,
+        extraTiles: {'steps': '1x3'},
+        gridColumns: 3,
+        tileEngineFactory: _fakeTileEngineFactory(),
+        order: [
+          'app:weather',
+          'app:steps',
+          'app:reminders',
+          'app:notes',
+          'app:pomodoro',
+          'app:habits',
+          'app:dice',
+          LauncherLayoutStore.settingsKey,
+          LauncherLayoutStore.filesKey,
+        ],
+      );
+      await expectGolden(tester, 'launcher/grid_span_clamp_narrow_dark');
+    });
+
+    /// AC4 of issue #166 (wide): the same span set on a wide 6-column
+    /// desktop layout — nothing clamps, the 4x2 weather keeps 4 columns,
+    /// the 1x3 steps widget stays one cell wide.
+    testWidgets('custom spans on a wide grid — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        liveTiles: true,
+        extraTiles: {'steps': '1x3'},
+        size: goldenSizeDesktop,
+        tileEngineFactory: _fakeTileEngineFactory(),
+        order: [
+          'app:weather',
+          'app:steps',
+          'app:reminders',
+          'app:notes',
+          'app:pomodoro',
+          'app:habits',
+          'app:dice',
+          LauncherLayoutStore.settingsKey,
+          LauncherLayoutStore.filesKey,
+        ],
+      );
+      await expectGolden(tester, 'launcher/grid_span_wide_dark');
     });
   });
 
