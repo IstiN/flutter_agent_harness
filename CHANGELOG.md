@@ -26,6 +26,27 @@
   `scripts/rebalance_shards.py` (junit timing or file-count fallback),
   rebalanced weekly by `shard-rebalance.yml`.
 
+## 0.1.357
+
+
+- feat(171): session image registry — unique images ride a provider
+  request exactly once per window; every other occurrence becomes a
+  stable `[Image N]` text ref. `rewriteHistoryImages`
+  (`lib/src/agent/image_registry.dart`) rewrites the OUTBOUND payload
+  only (session JSONL byte-identical): carriers
+  `[{text:"[Image N]"},{image}]` anchor before the first referencing
+  user message or after the tool-result run (never inside call/result
+  pairs); the current user message rides images in place; the
+  per-request cap drops current-first-then-newest with a drop notice
+  (never silent); dangling refs (compaction, cap) resolve to
+  `(image no longer available)`. Stateless per-request rebuild —
+  determinism, eviction and resume come free. Config: `images.registry`
+  kill switch (false = byte-for-byte legacy shape) +
+  `images.maxPerRequest` (default 20), strict parse, CLI and app honor
+  it. Fixes #171.
+
+
+
 ## 0.1.354
 
 

@@ -46,6 +46,7 @@ import '../types.dart';
 import '../trajectory/event_projection.dart' show textPayloadOf;
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
+import 'image_registry.dart';
 import 'tool_pairing.dart';
 
 /// Marker embedded in the over-window guard's error message (see
@@ -1260,6 +1261,23 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       messages: await transformContext(List.of(context.messages), cancelToken),
       tools: context.tools,
     );
+  }
+  // Session image registry (#171): unique history images ride once as
+  // `[Image N]` carriers; every other occurrence becomes a text ref.
+  // Payload-only rewrite — the transcript is never touched, and the
+  // kill switch (`images.registry: false`) skips it entirely.
+  if (imageRegistryConfig.enabled) {
+    final rewritten = rewriteHistoryImages(
+      requestContext.messages,
+      onDrop: imageDropNotice,
+    );
+    if (!identical(rewritten, requestContext.messages)) {
+      requestContext = Context(
+        systemPrompt: requestContext.systemPrompt,
+        messages: rewritten,
+        tools: requestContext.tools,
+      );
+    }
   }
   // Broken tool pairing (orphan results at any position, displaced results,
   // duplicate ids, unanswered calls) makes providers hard-400 EVERY
