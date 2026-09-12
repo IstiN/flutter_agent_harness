@@ -174,6 +174,9 @@ void main() {
       sessionsRoot: tmp.path,
       repo: JsonlSessionRepo(fs: counting, sessionsRoot: tmp.path),
       watchExternalSessions: false,
+      // Hermetic: the host's shared macOS session roots (App Group,
+      // ~/.fah/sessions) must not leak extra sessions into listSessions.
+      includeSharedSessionRoots: false,
     );
     await service.initialize();
     final stored = (await service.listSessions()).single;
@@ -329,6 +332,7 @@ void main() {
       sessionsRoot: tmp.path,
       repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
       watchExternalSessions: false,
+      includeSharedSessionRoots: false,
     );
     addTearDown(service.dispose);
     await service.initialize();
@@ -358,6 +362,7 @@ void main() {
       sessionsRoot: tmp.path,
       repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
       watchExternalSessions: false,
+      includeSharedSessionRoots: false,
     );
     addTearDown(service.dispose);
     await service.initialize();
