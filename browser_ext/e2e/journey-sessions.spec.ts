@@ -3,15 +3,11 @@
 // fa-ui-v2 protocol on the BUILT panel (app bundle present; the page
 // lands on app/index.html).
 import fs from 'node:fs';
-import path from 'node:path';
-import { repoRoot, test, expect } from './helpers';
+import { appBundlePresent, expect, test } from './helpers';
 
-// Needs the --with-app build: the bundle lives at browser_ext/panel/app/
-// (gitignored), so lean CI checkouts have no app page to drive. Runs
-// locally and in the FA_E2E_WITH_APP job, skips otherwise.
-const appBundlePresent = fs.existsSync(
-  path.join(repoRoot, 'browser_ext', 'panel', 'app', 'index.html'),
-);
+// Needs the --with-app build: helpers.appBundlePresent probes the bundle
+// (gitignored browser_ext/panel/app/); lean CI checkouts have no app page
+// to drive. Runs locally and in the FA_E2E_WITH_APP job, skips otherwise.
 
 type Msg = Record<string, unknown>;
 
@@ -115,10 +111,14 @@ test.describe('user journey: two sessions, switch, history intact', () => {
     const doneMsg = (doneA?.['message'] ?? doneA) as Msg | undefined;
     expect(String(doneMsg?.['text'] ?? '')).toContain('привет');
 
-    // Session B: "какие вкладки ты видишь".
+    // Session B: "какие вкладки ты видишь". Fresh collector FIRST — the
+    // accumulated one still holds A's `attached`, a stale match returns
+    // before host.newSession() lands, and the attach below then re-adopts
+    // A (flaky sessionB==sessionA, #152). Both `attached` rows carry the
+    // same sessionId+replay, so whichever find() sees first is correct.
+    await attachPort(page);
     await portSend(page, { kind: 'session_new' });
     await portMsg(page, 'attached');
-    await attachPort(page); // fresh collector for B's negotiation
     await portMsg(page, 'hello_ack');
     await portSend(page, { kind: 'attach', sessionId: null, lastEventId: null });
     const b = await portMsg(page, 'attached');
@@ -133,11 +133,11 @@ test.describe('user journey: two sessions, switch, history intact', () => {
     await waitAssistantEcho(page);
 
     // ── Switch back to A ──
+    // Fresh collector BEFORE the op (stale-row race, #152): portMsg must
+    // await THIS switch's ack, not an earlier `attached`.
+    await attachPort(page);
     await portSend(page, { kind: 'session_open', sessionId: sessionA });
     await portMsg(page, 'attached');
-    // Fresh collector: the accumulated one still holds every earlier
-    // `attached` and a plain find() would match a stale row.
-    await attachPort(page);
     await portMsg(page, 'hello_ack');
     await portSend(page, { kind: 'attach', sessionId: null, lastEventId: null });
     const ra = await portMsg(page, 'attached');
@@ -146,9 +146,9 @@ test.describe('user journey: two sessions, switch, history intact', () => {
     expect(replayA).not.toContain('вкладки');
 
     // ── Switch to B ──
+    await attachPort(page); // fresh collector FIRST (stale-row race, #152)
     await portSend(page, { kind: 'session_open', sessionId: sessionB });
     await portMsg(page, 'attached');
-    await attachPort(page);
     await portMsg(page, 'hello_ack');
     await portSend(page, { kind: 'attach', sessionId: null, lastEventId: null });
     const rb = await portMsg(page, 'attached');
@@ -158,6 +158,7 @@ test.describe('user journey: two sessions, switch, history intact', () => {
 
     // The APP UI itself: reload on A → its relay attaches to the live
     // session and renders the transcript visually.
+    await attachPort(page); // fresh collector FIRST (stale-row race, #152)
     await portSend(page, { kind: 'session_open', sessionId: sessionA });
     await portMsg(page, 'attached');
     await page.reload();
