@@ -58,6 +58,7 @@ typedef FaChatComposerBuilder =
 ///
 /// Text messages are rendered as Markdown, tool calls/results are shown as
 /// distinct cards, and image attachments are supported. Multi-session
+/// management is the host's job: hand a different [service] and the screen
 /// re-subscribes and re-syncs in place. The optional affordances (files
 /// panel, settings gear, composer pickers/voice) come from [features], the
 /// constructor overrides, and the [FaChatHost] hooks.
