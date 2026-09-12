@@ -56,6 +56,10 @@ enum SharedSetting {
 
   /// Capability-gated tool availability (hide unavailable/disabled tools).
   tools,
+
+  /// Compaction engine choice (classic prefix summary vs structured
+  /// hide/checkpoint, issue #148).
+  compactionEngine,
 }
 
 /// Settings that are currently CLI-only.
@@ -155,6 +159,11 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     description:
         'Capability-gated tool availability (hide unavailable/disabled '
         'tools).',
+  ),
+  SharedSetting.compactionEngine: _SettingMeta(
+    cliRef: 'compactionEngine',
+    appRef: 'loadAppCompactionEngine',
+    description: 'Compaction engine (classic | structured).',
   ),
 };
 

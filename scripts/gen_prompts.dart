@@ -91,6 +91,14 @@ const rootSpecs = <PromptSpec>[
     constName: 'branchSummaryPreamble',
   ),
   PromptSpec(
+    source: 'prompts/compaction/hide_judge.md',
+    constName: 'hideJudgeSystemPrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/compaction/structured_checkpoint.md',
+    constName: 'structuredCheckpointPrompt',
+  ),
+  PromptSpec(
     source: 'prompts/cli/mode_code.md',
     constName: 'cliCodeModePrompt',
     requiredToken: '{{cwd}}',
@@ -150,6 +158,10 @@ const rootSpecs = <PromptSpec>[
   PromptSpec(
     source: 'prompts/tools/rewind.md',
     constName: 'rewindToolDescriptionPrompt',
+  ),
+  PromptSpec(
+    source: 'prompts/tools/compact_expand.md',
+    constName: 'compactExpandToolDescriptionPrompt',
   ),
   PromptSpec(
     source: 'prompts/tools/tool_calling.md',
