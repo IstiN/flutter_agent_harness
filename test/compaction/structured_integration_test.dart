@@ -14,8 +14,6 @@ import 'dart:math';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/expand_tool.dart';
-import 'package:flutter_agent_harness/src/compaction/structured/judge.dart';
-import 'package:flutter_agent_harness/src/compaction/structured/ledger.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/markers.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
 import 'package:flutter_agent_harness/src/trajectory/trajectory_snapshot_builder.dart';
@@ -1062,7 +1060,6 @@ void main() {
     test(
       'a hidden/compacted/nested session reloads to the identical view',
       () async {
-        final random = Random(31);
         final session = await repo.create(
           JsonlSessionCreateOptions(cwd: '/work'),
         );

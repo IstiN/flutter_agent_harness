@@ -114,7 +114,7 @@ void main() {
           SummarizationResult.failure('must not summarize in this test'),
       checkpointPrompt: 'SUMMARY INSTRUCTIONS',
     );
-    final ok = await compactor.run();
+    final hid = await compactor.run();
 
     final messages = state.messages;
     // The whole read pair is hidden: the carrier became a user-role
@@ -133,6 +133,8 @@ void main() {
     // Nothing was checkpointed: hides alone relieved the pressure.
     final records = await session.getEntries();
     expect(records.whereType<CompactCheckpointRecord>(), isEmpty);
+    expect(hid, isTrue, reason: 'hides alone relieved the pressure');
+    expect(judgeCalls, 1);
   });
 
   test('judge failure is a no-op for hides — pass 2 still engages', () async {
