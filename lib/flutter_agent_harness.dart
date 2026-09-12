@@ -120,6 +120,7 @@ export 'src/session/attach/session_presence.dart';
 export 'src/session/session_record.dart';
 export 'src/session/session_repo.dart';
 export 'src/session/session_storage.dart';
+export 'src/session/session_grouping.dart';
 export 'src/session/session_tree.dart';
 export 'src/session/session_chunk_reader.dart';
 export 'src/session/windowed_session_storage.dart';

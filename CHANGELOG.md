@@ -3435,6 +3435,14 @@
 - feat(apps): widget manifest i18n — additive nameI18n/descriptionI18n keys (#226)
 - fix(catalog): single-slash URL join for all release-asset fetches (#219)
 
+## 0.1.364
+
+- feat(198): tree-grouped session listings (core + CLI) (#220)
+- fix(ext): sessions survive reload/update/restart — issue #228 persistence vectors (#236)
+- fix(config): merge-before-write + atomic save for ~/.fah/config.yaml (#221) (#235)
+- fix(catalog): web installs widgets from CORS-friendly raw URLs (#231)
+- fix(ctx): footer meter, over-window guard and compaction share one request-size basis (#217)
+
 ## Unreleased
 
 ## Unreleased

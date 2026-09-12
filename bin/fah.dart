@@ -33,6 +33,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/cli/config_command.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
+import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
@@ -1187,6 +1188,28 @@ Future<void> _runApp(List<String> args) async {
         env: extEnv,
         projectDir: extEnv.cwd,
         userDir: _homeDir(),
+      ),
+    );
+  }
+
+  // `fa session list [--json] [--flat]` (issue #198) — the tree-grouped
+  // session listing, intercepted like trajectory: no agent boot.
+  final sessionList = parsed.sessionList;
+  if (sessionList != null) {
+    final io = _TerminalCliIO(headless: true);
+    final listEnv = LocalExecutionEnv(
+      cwd: parsed.cwd ?? Directory.current.path,
+    );
+    exit(
+      await runSessionListCliCommand(
+        write: io.write,
+        writeln: io.writeln,
+        env: listEnv,
+        sessionRoot:
+            parsed.sessionRoot ?? _defaultSessionRoot(),
+        cwd: listEnv.cwd,
+        json: sessionList.json,
+        flat: sessionList.flat,
       ),
     );
   }

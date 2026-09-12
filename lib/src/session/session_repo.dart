@@ -59,7 +59,7 @@ abstract interface class SessionRepo {
   Future<Session> create(JsonlSessionCreateOptions options);
 
   /// Opens an existing session from its metadata.
-  Future<Session> open(SessionMetadata metadata);
+  Future<Session> open(SessionMetadata metadata, {bool windowed = false});
 
   /// Lists stored sessions, newest first; [cwd] filters to one directory.
   Future<List<SessionMetadata>> list({String? cwd});

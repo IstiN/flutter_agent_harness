@@ -1543,6 +1543,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarSessionsHeader => 'Sessions';
 
   @override
+  String sidebarSubagentSessionCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count agents',
+      one: '1 agent',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String sidebarSubagentTitle(String id) {
+    return 'subagent $id';
+  }
+
+  @override
   String get tjsCacheTitle => 'Downloaded models (transformers.js)';
 
   @override
