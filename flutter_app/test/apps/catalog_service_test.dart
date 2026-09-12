@@ -94,7 +94,7 @@ Future<Uint8List> _captureZip(String id) async {
   // Rebuild deterministically via a one-off client hit.
   final client = fakeServer(goodCatalog());
   final response = await client.get(
-    Uri.parse('$kDefaultWidgetsBaseUrl/calculator-1.2.0.zip'),
+    catalogAssetUri(kDefaultWidgetsBaseUrl, 'calculator-1.2.0.zip'),
   );
   if (id != 'calculator') return response.bodyBytes;
   captured.clear();
