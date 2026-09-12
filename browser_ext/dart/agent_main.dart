@@ -22,6 +22,7 @@ import 'src/background/alarms.dart';
 import 'src/background/badge.dart';
 import 'src/background/entry_points.dart';
 import 'src/bridge_relay.dart';
+import 'src/bridge_tools.dart' show BridgePathException, parseBridgePath;
 import 'src/chrome_api.dart' show ChromeApi, ChromeApiException;
 import 'src/chrome_api_js.dart';
 import 'src/run_script_tool.dart';
@@ -338,9 +339,17 @@ Future<JSAny?> _bridgeCall(JSAny? path, JSAny? args) async {
   if (chrome == null) return _bridgeErr('api_missing', 'no chrome surface');
   try {
     var p = (path?.dartify() as String?) ?? '';
+    // The raw seam rides the tool layer's STATIC safety kernel too:
+    // path validation + the every-mode deny list (management, runtime,
+    // storage). The dynamic tier/exfil asks stay tool-layer (this seam
+    // is host machinery, not model-facing).
+    final guarded = p.startsWith('chrome.') ? 'chrome$p' : 'chrome.$p';
+    parseBridgePath(guarded);
     if (p.startsWith('chrome.')) p = p.substring('chrome.'.length);
     final list = (args?.dartify() as List?) ?? const [];
     return {'ok': true, 'result': await chrome.bridge.call(p, list)}.jsify();
+  } on BridgePathException catch (e) {
+    return _bridgeErr(e.code, e.message);
   } on ChromeApiException catch (e) {
     return _bridgeErr(e.code, e.message);
   } on Object catch (e) {

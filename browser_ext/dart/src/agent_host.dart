@@ -245,6 +245,13 @@ final class AgentHost implements UiHostBackend {
         chrome,
         riskAsk: _askBridgeRisk,
         onFirstCall: _onFirstBridgeCall,
+        // The SAME visited-origins gate the curated tabs_open /
+        // downloads_start ride — a bridge tabs.create/downloads.download
+        // to an unvisited origin must ask exactly like the curated
+        // equivalent would (review M1: no exfil bypass through the
+        // read-tier roots).
+        visitedOrigins: visitedOrigins,
+        exfilAsk: _askOutbound,
       );
     }
     _visitedOrigins = visitedOrigins;

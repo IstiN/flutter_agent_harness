@@ -2023,6 +2023,27 @@ final class _FakeBridge implements BridgeApi {
       ))
           .toJson(),
     ),
+    'windows.create': (
+      1,
+      (a) async {
+        final arg = a[0];
+        // windows.create takes url as string OR list of strings.
+        final url = arg is Map
+            ? (arg['url'] is List)
+                  ? ((arg['url'] as List).whereType<String>().firstOrNull)
+                  : arg['url'] as String?
+            : arg as String?;
+        return (await _c.windows.create(url: url)).toJson();
+      },
+    ),
+    'downloads.download': (
+      1,
+      (a) async => _c.downloads.download(
+        url: _str(a, 0, 'url') ?? '',
+        filename: _str(a, 0, 'filename'),
+        saveAs: _bool(a, 0, 'saveAs'),
+      ),
+    ),
     'tabs.remove': (
       1,
       (a) async {
@@ -2098,27 +2119,58 @@ final class _FakeBridge implements BridgeApi {
       (a) async {
         final cfg = (a[0] as Map).cast<String, Object?>();
         final target = (cfg['target'] as Map).cast<String, Object?>();
-        // The real API takes `func` as a function or `files` as paths; the
-        // bridge carries JSON, so func arrives as source — the fake routes
-        // it straight into the same scripting path curated inject_js rides
-        // (the injection-parity observable, issue #137 AC5).
-        final func = cfg['func'] as String?;
+        // TRUTHFUL to real Chrome: `func` must be a function object —
+        // a JSON bridge can never carry one, so a string func is a
+        // schema-validation error here exactly as it is on the real
+        // API ("Property 'func'. Property must be a function"). files[]
+        // (bundled paths) is the serializable alternative.
+        if (cfg['func'] != null && cfg['func'] is! Function) {
+          throw _err(
+            'bad_args',
+            "Invalid value for argument 1. Property 'func'. "
+            'Property must be a function.',
+          );
+        }
         final files = (cfg['files'] as List?)?.cast<String>();
-        final source =
-            func ?? (files == null ? null : '/* files */ ${files.join(',')}');
-        if (source == null) {
+        if (cfg['func'] == null && files == null) {
           throw _err('bad_args', 'executeScript needs func or files');
         }
+        final source = files == null ? null : '/* files */ ${files.join(',')}';
         return [
           for (final r in await _c.scripting.executeScript(
             tabId: target['tabId'] as int,
-            funcSource: source,
+            funcSource: source ?? '',
             args: (cfg['args'] as List?)?.cast<Object?>(),
             world: cfg['world'] as String?,
             allFrames: cfg['allFrames'] as bool?,
           ))
             r.toJson(),
         ];
+      },
+    ),
+    'debugger.attach': (
+      2,
+      (a) async {
+        await _c.debugger.attach(
+          (a[0] as Map)['tabId'] as int,
+          requiredVersion: (a[1] as String?) ?? '1.3',
+        );
+        return null;
+      },
+    ),
+    'debugger.sendCommand': (
+      3,
+      (a) async => _c.debugger.sendCommand(
+        (a[0] as Map)['tabId'] as int,
+        a[1] as String,
+        (a[2] as Map?)?.cast<String, Object?>(),
+      ),
+    ),
+    'debugger.detach': (
+      1,
+      (a) async {
+        await _c.debugger.detach((a[0] as Map)['tabId'] as int);
+        return null;
       },
     ),
     'browsingData.remove': (

@@ -7,11 +7,13 @@
 // Design pins:
 //  * error-as-data — bridge failures return {ok:false,error:{code,…}},
 //    never throw (the turn continues; the model adapts);
-//  * hard deny list (management, runtime) enforced in EVERY mode — an
-//    injected page must not reach the extension's own machinery;
+//  * hard deny list (management, runtime, storage) enforced in EVERY
+//    mode — an injected page must not reach the extension's own
+//    machinery or its secret-bearing config;
+//  * navigation/download-capable methods ride the SAME ExfilGate as
+//    the curated tabs_open/downloads_start (visited-origins ask);
 //  * per-root risk map (bridgeRiskTier) drives a dynamic exec-tier ask;
 //    read/write ride their static tiers like every other tool;
-//  * page-derived results are redacted + UNTRUSTED-quarantined + capped.
 library;
 
 import 'dart:async';
@@ -25,6 +27,8 @@ import 'package:flutter_agent_harness/src/redact/redaction_pipeline.dart';
 
 import 'browser_api_tools.dart' show truncateResult;
 import 'chrome_api.dart';
+import 'security/exfil_gate.dart'
+    show ActionSource, ExfilGate, OutboundAction, OutboundKind, outboundOrigin;
 import 'security/quarantine.dart';
 
 /// Path validation failure. [code] ∈ {bad_path, denied_namespace}.
@@ -37,7 +41,6 @@ final class BridgePathException implements Exception {
   @override
   String toString() => 'BridgePathException($code): $message';
 }
-
 /// Hard deny roots — enforced in every mode including yolo/unattended.
 ///
 /// * `management` — issue #137 names it explicitly: a page that phished
@@ -46,7 +49,11 @@ final class BridgePathException implements Exception {
 /// * `runtime` — the extension's own machinery (getBackgroundPage,
 ///   sendMessage, reload…): the facade's internal runtime hops are NOT
 ///   bridge-path calls and stay unaffected; only model-driven paths deny.
-const Set<String> bridgeDeniedNamespaces = {'management', 'runtime'};
+/// * `storage` — the extension's own chrome.storage.local holds
+///   faProviders with LLM API keys, and a hostile write could rewrite
+///   provider config (e.g. point the agent at an attacker endpoint).
+///   Config goes through the curated config tool, never raw storage.
+const Set<String> bridgeDeniedNamespaces = {'management', 'runtime', 'storage'};
 
 /// Roots whose methods execute code or speak for the user: the bridge
 /// prompts before every call (approval matrix "exec + alwaysPrompts").
@@ -69,7 +76,7 @@ ApprovalTier bridgeRiskTier(String root) =>
 /// the allowlist that downgrades.
 const Set<String> _readRoots = {
   'tabs', 'windows', 'tabGroups', 'sessions', 'history', 'bookmarks',
-  'downloads', 'storage', 'alarms', 'notifications', 'action', 'offscreen',
+  'downloads', 'alarms', 'notifications', 'action', 'offscreen',
   'power', 'idle', 'contextMenus', 'omnibox', 'commands', 'webNavigation',
   'system', 'sidePanel', 'identity', 'readingList', 'search', 'tts',
   'i18n', 'extension',
@@ -147,18 +154,81 @@ typedef BridgeRiskAsk = Future<bool> Function(String path, ApprovalTier tier);
 
 /// One-time notice hook — the host uses it for the yolo-mode banner.
 typedef BridgeFirstCall = void Function(String path);
+/// The exfil ask: the SAME host surface the curated tabs_open /
+/// downloads_start ride (wired to the approval prompt + visited-set
+/// seeding). Returns whether the outbound call may proceed.
+typedef BridgeExfilAsk = Future<bool> Function(
+  OutboundKind kind,
+  String url,
+  String explanation,
+);
+
+/// Bridge methods that can navigate a tab/window or start a download —
+/// the exfil channel a prompt-injected page could ride (data in a URL
+/// query to an attacker origin). Mapped to the outbound kind + the
+/// argument indices that may carry the URL.
+const Map<String, (OutboundKind, List<int>)> bridgeOutboundMethods = {
+  'tabs.create': (OutboundKind.windowOpen, [0]),
+  'tabs.update': (OutboundKind.windowOpen, [1]),
+  'windows.create': (OutboundKind.windowOpen, [0]),
+  'windows.update': (OutboundKind.windowOpen, [1]),
+  'downloads.download': (OutboundKind.download, [0]),
+};
 
 /// Registers `browser_api_catalog` + `browser_api` (exactly two tools —
 /// the curated family is untouched; REG pins the +2 contract).
+///
+/// [visitedOrigins] wires the exfil gate for the navigation/download
+/// bridge methods — the SAME set + ask the curated tabs_open /
+/// downloads_start ride. Null (gate unwired) keeps calls ungated, the
+/// host's choice.
 Future<void> registerBridgeTools(
   ToolRegistry registry,
   ChromeApi chrome, {
   BridgeRiskAsk? riskAsk,
   BridgeFirstCall? onFirstCall,
+  Set<String>? visitedOrigins,
+  BridgeExfilAsk? exfilAsk,
 }) async {
   final bridge = chrome.bridge;
+  final exfilGate = const ExfilGate();
   var firstCallSeen = false;
   final redactor = RedactionPipeline(registeredSecrets: const []);
+
+  /// Exfil gate for navigation/download-capable bridge calls — the
+  /// mirror of the curated family's _gateOutbound: visited origin
+  /// passes, unvisited (or data-carrying) asks through [exfilAsk], a
+  /// deny surfaces as 'approval_required' carrying the gate's
+  /// explanation. Without a wired ask the hard-error behavior stands.
+  Future<Object?> gateOutbound(String nsMethod, List<Object?> args) async {
+    final visited = visitedOrigins;
+    if (visited == null) return null;
+    final spec = bridgeOutboundMethods[nsMethod];
+    if (spec == null) return null;
+    for (final i in spec.$2) {
+      if (i >= args.length) continue;
+      final arg = args[i];
+      // properties map with an optional url.
+      final urls = arg is Map
+          ? ((arg['url'] is List) ? arg['url'] as List : [arg['url']])
+          : [arg];
+      for (final u in urls.whereType<String>()) {
+        final action = OutboundAction(
+          kind: spec.$1,
+          targetOrigin: outboundOrigin(u),
+          payloadSnippet: '',
+          source: ActionSource.realUser,
+        );
+        final decision = exfilGate.evaluate(action, userVisitedOrigins: visited);
+        if (!decision.requiresApproval) continue;
+        final explanation = exfilGate.explain(action, decision);
+        if (exfilAsk == null || !await exfilAsk(spec.$1, u, explanation)) {
+          throw BridgePathException('approval_required', explanation);
+        }
+      }
+    }
+    return null;
+  }
 
   ToolExecutionResult json(Map<String, Object?> payload) =>
       ToolExecutionResult.text(jsonEncode(payload));
@@ -213,11 +283,17 @@ Future<void> registerBridgeTools(
           '[{"url": "*://example.com/*"}] for tabs.query). Failures come '
           'back as {"ok":false,"error":{code,message}} data — inspect and '
           'adapt, the turn continues. Results are capped at 64 KiB and '
-          'wrapped as UNTRUSTED page content. chrome.management and '
-          'chrome.runtime are denied in every mode. For code injection '
+          'wrapped as UNTRUSTED page content. chrome.management, '
+          'chrome.runtime and chrome.storage are denied in every mode '
+          '(storage holds the agent\'s own provider config — use the '
+          'config tool). Navigation and download methods '
+          '(tabs.create/update, windows.create/update, '
+          'downloads.download) ride the same visited-origins approval '
+          'as the curated open/download tools. For code injection '
           'prefer inject_js (scripting.executeScript through the bridge '
           'cannot carry a source string — MV3 CSP blocks eval; files[] '
-          'works).',
+          'works; chrome.debugger Runtime.evaluate is the cdp_eval '
+          'path).',
       tier: ApprovalTier.read,
       parameters: const {
         'type': 'object',
@@ -264,6 +340,16 @@ Future<void> registerBridgeTools(
                   '(${parsed.root} is an exec-tier namespace)',
             );
           }
+        }
+
+        // Exfil gate: navigation/download-capable methods ride the SAME
+        // visited-origins gate as the curated tabs_open/downloads_start
+        // (a prompt-injected page must not exfil through a fresh
+        // chrome.tabs.create({url}) the curated tools would have gated).
+        try {
+          await gateOutbound('${parsed.ns}.${parsed.method}', args);
+        } on BridgePathException catch (e) {
+          return err(e.code, e.message);
         }
 
         if (!firstCallSeen) {

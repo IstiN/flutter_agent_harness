@@ -219,10 +219,19 @@ Safety kernel (`bridge_tools.dart`):
 
 - **Hard deny list, every mode (yolo included)**: `chrome.management.*`
   (an injected page must not be able to disable/uninstall the agent's
-  own extension) and `chrome.runtime.*` (the extension's own
-  machinery) plus path validation — only exact
-  `chrome.<ns>.<method>` paths, no events (`on*`), no prototype
-  tricks (`__proto__`/`constructor`/`prototype`).
+  own extension), `chrome.runtime.*` (the extension's own machinery),
+  and `chrome.storage.*` (the extension's own `chrome.storage.local`
+  holds `faProviders` with LLM API keys — provider config goes through
+  the curated config tool, never raw storage) plus path validation —
+  only exact `chrome.<ns>.<method>` paths, no events (`on*`), no
+  prototype tricks (`__proto__`/`constructor`/`prototype`). The raw
+  `faAgentV2.bridgeCall` seam rides the same static kernel.
+- **Exfil gate on navigation/download methods**:
+  `tabs.create/update`, `windows.create/update` and
+  `downloads.download` ride the SAME visited-origins ExfilGate as the
+  curated open/download tools — a URL to an origin the user never
+  visited asks once (allow seeds the visited set); a deny returns
+  `approval_required` as data.
 - **Per-root risk map**: read/write roots (`tabs`, `windows`,
   `bookmarks`, `history`, `idle`, `system`, …) ride their tier;
   exec roots (`scripting`, `debugger`, `cookies`, `browsingData`,

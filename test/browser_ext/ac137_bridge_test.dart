@@ -241,6 +241,13 @@ void main() {
     expect((envelope['error'] as Map)['code'], 'api_missing');
   });
 
+  test('AC5: denied namespaces reject at the seam — chrome.storage holds '
+      'the agent\'s own provider config', () async {
+    final envelope = await bridgeCall(chrome, 'storage.local.get', ['x']);
+    expect(envelope['ok'], isFalse);
+    expect((envelope['error'] as Map)['code'], 'denied_namespace');
+  });
+
   // E7/AC6: the trimmed-manifest build — MV3 hides ungranted namespaces,
   // so the catalog cannot advertise them and calls error as data.
   group('trimmed manifest (E7)', () {

