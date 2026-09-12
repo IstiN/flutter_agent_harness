@@ -3,6 +3,24 @@
 ## 0.1.358
 
 
+- fix(195): images follow-up from the #190 review. F2: a stale
+  `[Image N]` citation in history no longer silently rebinds to the
+  WRONG image after compaction renumbering — once a renumbering boundary
+  (compaction summary, structured marker, local-trim note) exists in the
+  window, authored history citations degrade to the
+  `(image no longer available)` note while generated content-keyed refs,
+  carrier labels and the current message stay intact. F3: the current
+  message's in-place images now carry their `[Image N]` label so the
+  model can cite what it sees. F4: the app logs per-request cap drops
+  through `AppLog` (`logs/app.log`) instead of silently dropping. F5:
+  `estimateContextTokens` charges repeated images at the wire-replacement
+  cost (first occurrence full, repeats ~32 chars), fixing the
+  transcript-vs-wire estimation asymmetry; per-message `estimateTokens`
+  is unchanged. F1: the `images:` config section gained the previously
+  claimed tests — CLI parse/round-trip/strictness (bad bools, unknown
+  keys, non-positive ints, malformed sections) and the config-service
+  validator dispatch pin.
+
 - feat(169): declarative-only secured theme API — theme packs
   (`theme.json` + optional wallpaper image in a `.zip`; strict schema
   validation with unknown-key rejection, path-traversal/symlink/size

@@ -15,13 +15,20 @@
 ///   (nothing may sit between a tool call and its result on the wire).
 /// - The CURRENT user message (the last one in the window) always rides
 ///   its images in place, never as references (I3) — the model must see
-///   what the user just sent.
+///   what the user just sent; each in-place image carries its `[Image N]`
+///   label so the model can cite it back (F3).
 /// - A per-request cap on unique images drops by priority (current >
 ///   newest history > older history); every drop is reported through the
 ///   drop notice — never silent.
 /// - No dangling refs (I4): an `[Image N]` mention whose original is not
 ///   in the request (compacted away, outside the window, or dropped by
 ///   the cap) resolves to the plain-text note [unavailableImageNote].
+///   Authored citations in history are trusted only while the window was
+///   never renumbered: once a compaction/trim boundary appears, history
+///   citations degrade to the note too — after eviction the number may
+///   name a DIFFERENT image, and a silent rebind would be wrong data
+///   (F2). The current message is authored after the last renumbering and
+///   stays trusted.
 ///
 /// Mechanics ported from learn.ai's production Go engine
 /// (`solution_chat/v2/core/workflow.go`): content-key dedup, first-seen
@@ -34,6 +41,10 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import '../context.dart';
+import '../compaction/structured/markers.dart'
+    show isCompactionMarkerText, localTrimMarkerPrefix;
+import '../session/session_tree.dart'
+    show branchSummaryPrefix, compactionSummaryPrefix;
 import '../types.dart';
 
 /// Default per-request cap on unique images (`images.maxPerRequest`).
@@ -138,8 +149,8 @@ final class ImageRegistry {
 
   /// The `{content key → index}` map (deterministic for one window).
   Map<String, int> get indexByKey => {
-        for (final entry in _entries) entry.key: entry.index,
-      };
+    for (final entry in _entries) entry.key: entry.index,
+  };
 }
 
 /// Content key of an image: SHA-256 over the canonical payload string
@@ -175,31 +186,72 @@ List<Message> rewriteHistoryImages(
   }
   if (!hasImages && !messages.any(_mentionsImageRef)) return messages;
 
+  // F2 pre-pass: when the window carries a renumbering boundary, history
+  // citations may name a different image than their number does now —
+  // degrade AUTHORED text mentions before assembly. Block rewrites,
+  // carrier labels and the current message are generated content-keyed
+  // (or provably fresh) and must survive.
+  final currentIdx0 = _lastUserMessageIndex(messages);
+  final degraded = messages.any(_isRenumberingBoundary)
+      ? [
+          for (var i = 0; i < messages.length; i++)
+            i == currentIdx0
+                ? messages[i]
+                : _resolveMentions(messages[i], const <int>{}, trusted: false),
+        ]
+      : messages;
   final cap = maxPerRequest ?? imageRegistryConfig.maxPerRequest;
   final entryByKey = <String, ImageRegistryEntry>{};
   final occurrences = <String, List<int>>{};
-  _scanImages(messages, entryByKey, occurrences);
-  final currentIdx = _lastUserMessageIndex(messages);
+  _scanImages(degraded, entryByKey, occurrences);
+  final currentIdx = _lastUserMessageIndex(degraded);
   final riding = _selectRiding(
-    messages,
+    degraded,
     entryByKey,
     occurrences,
     currentIdx,
     cap,
     onDrop,
   );
-  final carriers = _planCarriers(messages, entryByKey, occurrences, riding);
+  final carriers = _planCarriers(degraded, entryByKey, occurrences, riding);
 
-  // Emit: rewritten history (image blocks → refs/notes), untouched
-  // current message, carriers at their anchors.
-  final out = _emitRewritten(messages, currentIdx, riding, carriers);
+  // Emit: rewritten history (image blocks → refs/notes), the current
+  // message in place with fresh `[Image N]` labels (F3), carriers at
+  // their anchors.
+  final out = _emitRewritten(degraded, currentIdx, riding, carriers);
 
-  // Mention pass (I4): every `[Image N]` in any text that does not
-  // resolve to a riding index becomes the unavailable note.
+  // Mention pass (I4): every remaining `[Image N]` in text that does not
+  // resolve to a riding index becomes the unavailable note. Authored
+  // history citations were already degraded by the pre-pass; what
+  // survives here is generated content-keyed text.
   final ridingIndexes = riding.indexByKey.values.toSet();
-  return [
-    for (final message in out) _resolveMentions(message, ridingIndexes),
-  ];
+  return [for (final message in out) _resolveMentions(message, ridingIndexes)];
+}
+
+/// Whether [message] is a projected renumbering boundary: a classic
+/// compaction summary, a structured hidden/checkpoint marker, or the
+/// local trim valve note. Any of these means history was evicted at some
+/// point, so `[Image N]` citations authored before it may now bind to a
+/// different image (issue #195 F2).
+bool _isRenumberingBoundary(Message message) {
+  if (message is UserMessage) {
+    final content = message.content;
+    if (content is String) {
+      return content.startsWith(compactionSummaryPrefix) ||
+          content.startsWith(branchSummaryPrefix) ||
+          content.startsWith(localTrimMarkerPrefix) ||
+          isCompactionMarkerText(content);
+    }
+    return false;
+  }
+  if (message is ToolResultMessage) {
+    // Structured hide keeps the tool_use visible and projects the hidden
+    // result as a lone marker text — that is a renumbering boundary too.
+    return message.content.any(
+      (block) => block is TextContent && isCompactionMarkerText(block.text),
+    );
+  }
+  return false;
 }
 
 /// Scan pass: first-seen entries + per-key occurrence positions.
@@ -262,7 +314,8 @@ _RidingSelection _selectRiding(
 ) {
   final currentKeys = <String>{
     if (currentIdx >= 0)
-      for (final image in _imagesOf(messages[currentIdx])) imageContentKey(image),
+      for (final image in _imagesOf(messages[currentIdx]))
+        imageContentKey(image),
   };
   final historyKeys = [
     for (final entry in entryByKey.values)
@@ -275,20 +328,15 @@ _RidingSelection _selectRiding(
         ? byRecency
         : entryByKey[a]!.index.compareTo(entryByKey[b]!.index);
   });
-  final historySlots = (cap - currentKeys.length).clamp(
-    0,
-    historyKeys.length,
-  );
+  final historySlots = (cap - currentKeys.length).clamp(0, historyKeys.length);
   for (final key in historyKeys.skip(historySlots)) {
     final entry = entryByKey[key]!;
     onDrop?.call(entry.index, imageKeyPreview(entry.key));
   }
   final ridingKeys = {...currentKeys, ...historyKeys.take(historySlots)};
-  return _RidingSelection(
-    currentKeys,
-    ridingKeys,
-    {for (final key in ridingKeys) key: entryByKey[key]!.index},
-  );
+  return _RidingSelection(currentKeys, ridingKeys, {
+    for (final key in ridingKeys) key: entryByKey[key]!.index,
+  });
 }
 
 /// The carrier insertion plan: index → carriers before/after that message.
@@ -310,9 +358,8 @@ _CarrierPlan _planCarriers(
 ) {
   final before = <int, List<UserMessage>>{};
   final after = <int, List<UserMessage>>{};
-  final ridingByIndex = [...riding.ridingKeys]..sort(
-      (a, b) => entryByKey[a]!.index.compareTo(entryByKey[b]!.index),
-    );
+  final ridingByIndex = [...riding.ridingKeys]
+    ..sort((a, b) => entryByKey[a]!.index.compareTo(entryByKey[b]!.index));
   for (final key in ridingByIndex) {
     if (riding.currentKeys.contains(key)) continue;
     final entry = entryByKey[key]!;
@@ -351,7 +398,7 @@ List<Message> _emitRewritten(
     out.addAll(carriers.before[i] ?? const <Message>[]);
     final message = messages[i];
     if (i == currentIdx) {
-      out.add(message);
+      out.add(_labelCurrentImages(message, riding.indexByKey));
     } else if (message is UserMessage) {
       final content = message.content;
       out.add(
@@ -367,6 +414,29 @@ List<Message> _emitRewritten(
     out.addAll(carriers.after[i] ?? const <Message>[]);
   }
   return out;
+}
+
+/// F3: the current message's images ride in place AND carry their
+/// `[Image N]` label as a preceding text block — the model can cite the
+/// image it is looking at with the number the registry will honor.
+Message _labelCurrentImages(Message message, Map<String, int> indexByKey) {
+  if (message is! UserMessage) return message;
+  final content = message.content;
+  if (content is! List<ContentBlock>) return message;
+  if (!content.any((block) => block is ImageContent)) return message;
+  return UserMessage(
+    content: [
+      for (final block in content)
+        if (block is ImageContent) ...[
+          TextContent(
+            text: imageRefLabel(indexByKey[imageContentKey(block)] ?? 0),
+          ),
+          block,
+        ] else
+          block,
+    ],
+    timestamp: message.timestamp,
+  );
 }
 
 Iterable<ImageContent> _imagesOf(Message message) sync* {
@@ -442,20 +512,30 @@ List<ContentBlock> _replaceImageBlocks(
     for (final block in content)
       switch (block) {
         ImageContent() => switch (ridingIndexByKey[imageContentKey(block)]) {
-            final index? => TextContent(text: imageRefLabel(index)),
-            null => const TextContent(text: unavailableImageNote),
-          },
+          final index? => TextContent(text: imageRefLabel(index)),
+          null => const TextContent(text: unavailableImageNote),
+        },
         _ => block,
       },
   ];
 }
 
 /// Resolves `[Image N]` text mentions against the riding set (I4).
-Message _resolveMentions(Message message, Set<int> ridingIndexes) {
+///
+/// When [trusted] is false (history authored before a renumbering
+/// boundary — issue #195 F2), every mention degrades to the note: the
+/// number may name a different image now, and a silent rebind would feed
+/// the model wrong data.
+Message _resolveMentions(
+  Message message,
+  Set<int> ridingIndexes, {
+  bool trusted = true,
+}) {
   String fix(String text) => text.contains('[Image ')
       ? text.replaceAllMapped(
           imageRefPattern,
-          (match) => ridingIndexes.contains(int.parse(match.group(1)!))
+          (match) =>
+              trusted && ridingIndexes.contains(int.parse(match.group(1)!))
               ? match.group(0)!
               : unavailableImageNote,
         )
