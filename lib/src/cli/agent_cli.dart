@@ -1037,6 +1037,11 @@ class AgentCli {
   /// for custom endpoints.
   Map<String, int> _modelContextWindows = const {};
 
+  /// Model ids the "endpoint reported no window" note already fired for
+  /// (see `_noteUndetectedContextWindow` in provider_models.dart) — once
+  /// per id per process, never a per-refresh spam.
+  final Set<String> _undetectedWindowNoteIds = <String>{};
+
   /// Max-output-token caps reported by the endpoint's `/models` payload
   /// (same source as [_modelContextWindows]); drives automatic `maxTokens`
   /// correction so the conservative catalog floor stops truncating answers.
