@@ -45,6 +45,7 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/notify_service.dart';
 import 'package:fa/services/notify_tool.dart';
+import 'package:fa/services/office/office_boot.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/video_service.dart';
 import 'package:fa/services/video_tool.dart';
@@ -66,6 +67,8 @@ import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/webllm/webllm_service.dart';
 import 'package:fa/webllm/webllm_stream_function.dart';
+import 'package:fa_office_agent/fa_office_agent.dart'
+    show OfficeApi, officeToolApprovalOverrides, outlookTools;
 import 'package:fa/webllm/webllm_types.dart';
 
 part 'agent_service_compaction.dart';
@@ -203,6 +206,7 @@ class AgentService extends ChangeNotifier
     @visibleForTesting StreamFunction? streamFunction,
     @visibleForTesting bool watchExternalSessions = true,
     String? sessionsRoot,
+    OfficeApi? officeApi,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -249,6 +253,7 @@ class AgentService extends ChangeNotifier
       watchExternalSessions: watchExternalSessions,
       taskModelsStore: taskModelsStore,
       sessionsRoot: resolvedSessionsRoot,
+      officeApi: officeApi ?? bootOfficeApi(),
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
       initialApprovalMode: savedApprovalMode,
       approvalModeStore: approvalModeStore,
@@ -353,7 +358,6 @@ class AgentService extends ChangeNotifier
         formatSkillsForPrompt(skills),
     ].join('\n\n');
   }
-
   AgentService._withEnv({
     Map<String, String> bootSecrets = const {},
     required this.env,
@@ -364,6 +368,7 @@ class AgentService extends ChangeNotifier
     StreamFunction? streamFunction,
     bool watchExternalSessions = true,
     MediaKeyResolver? resolveSecretName,
+    OfficeApi? officeApi,
     this._secretsEnv,
     this._sessionKeys,
     this._taskModelsStore,
@@ -385,6 +390,12 @@ class AgentService extends ChangeNotifier
        _resolveSecretName = resolveSecretName,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
+         // Outlook taskpane (issue #182): read_attachment streams
+         // attacker-controlled bytes and insert_draft_body rewrites the
+         // user's draft — both prompt on EVERY call in EVERY session mode
+         // (the override outranks mode, turn grants and always-allow).
+         overrides:
+             officeApi == null ? const {} : officeToolApprovalOverrides(),
        ),
        sessionsRoot = sessionsRoot,
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
@@ -645,8 +656,20 @@ class AgentService extends ChangeNotifier
       // the approval mode.
       appsCatalogTool(env: env),
       appsCatalogWriteTool(env: env),
+      // Outlook taskpane (issue #182): the outlook.* mail surface over the
+      // OfficeHostBridge — present only in the office-hosted web build
+      // (FA_HOST=office) or when a test injects an api. Bodies enter
+      // context only through the quarantine fence (see outlook_tools);
+      // approval overrides for the always-prompting pair are seeded into
+      // the gate in the initializer above.
+      if (officeApi != null) ...outlookTools(officeApi),
     ]);
     _toolRegistry = registry;
+    // Boot beacon for the office pane e2e (issue #182): proves the app
+    // booted WITH the mail surface when running as the Outlook taskpane.
+    if (officeApi != null) {
+      debugPrint('[fah] office: outlook.* tools registered (office host)');
+    }
     // Wire the task tool's child surface: all tools except `task` itself.
     final childSurface = registry.tools
         .where((t) => t.name != taskToolName)

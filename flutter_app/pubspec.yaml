@@ -26,6 +26,12 @@ dependencies:
     path: ../browser_ext/dart
 
 
+  # The Office add-in bridge (issue #182): the outlook taskpane bundle
+  # (FA_HOST=office) embeds the OfficeHostBridge + outlook.* mail tools
+  # from this package; every other build tree-shakes them out.
+  fa_office_agent:
+    path: ../office_addin/dart
+
   # The local fa_llm package: the LLM config + Copilot device-flow types
   # the connect flow wires.
   fa_llm:

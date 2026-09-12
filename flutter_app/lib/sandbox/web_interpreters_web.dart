@@ -85,13 +85,32 @@ class WebInterpreters {
     return completer.future;
   }
 
-  static void _injectHelperScript(String id, String code) {
-    if (html.document.getElementById(id) != null) return;
+  /// Installs a runner script. The code rides a blob: URL, not inline
+  /// text — the Outlook taskpane page pins a CSP without 'unsafe-inline'
+  /// (issue #182), and a src-less <script> body would be blocked there.
+  /// Resolves when the script has EXECUTED (a src-based script is async,
+  /// unlike the old inline body — callers must not race the helper).
+  static Future<void> _injectHelperScript(String id, String code) {
+    if (html.document.getElementById(id) != null) return Future.value();
+    final completer = Completer<void>();
+    final blob = html.Blob([code], 'text/javascript');
+    final url = html.Url.createObjectUrlFromBlob(blob);
     final script = html.ScriptElement()
       ..id = id
       ..type = 'text/javascript'
-      ..text = code;
+      ..src = url;
+    script.onLoad.first.then((_) {
+      html.Url.revokeObjectUrl(url);
+      if (!completer.isCompleted) completer.complete();
+    });
+    script.onError.first.then((_) {
+      html.Url.revokeObjectUrl(url);
+      if (!completer.isCompleted) {
+        completer.completeError(StateError('failed to run helper $id'));
+      }
+    });
     html.document.head!.append(script);
+    return completer.future;
   }
 
   static Future<void> _ensureQuickJs() {
