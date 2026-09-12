@@ -9,6 +9,7 @@ on:
     paths:
       - 'site/**'
       - 'flutter_app/**'
+      - 'packages/**'
       - 'lib/**'
       - 'vendor/**'
       - 'browser_ext/**'
@@ -76,9 +77,10 @@ jobs:
 
       # The Office add-in ships on the site too (sideload from
       # fa1.dev/outlook/manifest.xml): the script validates the manifest,
-      # dart2js-compiles the taskpane agent and assembles
-      # build/pages/root/outlook/ in place — BEFORE the assemble step, so
-      # the artifact dir persists into the upload.
+      # builds the fa web app with the office host flag (the pane IS the
+      # app, outlook/app/) and assembles build/pages/root/outlook/ in
+      # place — BEFORE the assemble step, so the artifact dir persists
+      # into the upload.
       - name: Build Office add-in
         run: |
           cd office_addin/dart && dart pub get && cd ../..

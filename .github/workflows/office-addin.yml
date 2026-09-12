@@ -1,7 +1,8 @@
-# Office add-in (Outlook taskpane) acceptance suite (issue #89): validates
-# the manifest, compiles the embedded agent (dart2js), runs the Dart unit
-# tests, the Node vm-sandbox tests over the compiled office_agent.js, and
-# Playwright (chromium + webkit) against the assembled taskpane page.
+# Office add-in (Outlook taskpane) acceptance suite (issues #89, #182):
+# the taskpane IS the fa Flutter web app (outlook/app/) — validates the
+# manifest, builds the app bundle with the office host flag, runs the
+# office package Dart unit tests, the app's office wiring tests, and
+# Playwright (chromium + webkit) against the assembled pane pages.
 # Path-filtered so unrelated pushes skip it.
 name: Office add-in
 
@@ -10,12 +11,20 @@ on:
     branches: [main]
     paths:
       - 'office_addin/**'
+      - 'flutter_app/**'
+      - 'packages/**'
+      - 'lib/**'
+      - 'pubspec.lock'
       - 'scripts/build_office_addin.sh'
       - '.github/workflows/office-addin.yml'
   pull_request:
     branches: [main]
     paths:
       - 'office_addin/**'
+      - 'flutter_app/**'
+      - 'packages/**'
+      - 'lib/**'
+      - 'pubspec.lock'
       - 'scripts/build_office_addin.sh'
       - '.github/workflows/office-addin.yml'
   workflow_dispatch:
@@ -33,6 +42,11 @@ jobs:
         with:
           sdk: stable
 
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -45,19 +59,24 @@ jobs:
       - name: Dart unit tests (office_addin/dart)
         run: cd office_addin/dart && dart pub get && dart test
 
-      # Validates the manifest (fails loudly on any issue), compiles the
-      # embedded agent (dart2js) and assembles the site slice — the
-      # artifact under test AND the upload below.
+      # The app build needs the gitignored placeholders (.env asset and
+      # firebase_options.dart) — same dance pages.yml does.
+      - name: App placeholders (.env + firebase_options)
+        run: |
+          touch flutter_app/.env
+          cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - name: Office wiring tests (flutter_app)
+        run: cd flutter_app && flutter pub get && flutter test test/services/office_wiring_test.dart
+
+      # Validates the manifest (fails loudly on any issue), builds the
+      # fa web app with FA_HOST=office and assembles the site slice —
+      # the artifact under test AND the upload below.
       - name: Build Office add-in
         run: bash scripts/build_office_addin.sh
 
-      # Node 22's `node --test` does not glob arguments itself; bash
-      # expands the pattern (or pass the directory).
-      - name: Node unit tests (vm sandbox over office_agent.js)
-        run: node --test office_addin/test/*.test.mjs
-
       # chromium + webkit: Outlook on the web runs the taskpane in
-      # whichever engine the browser has, so both must boot the page.
+      # whichever engine the browser has, so both must boot the pane.
       - name: Playwright e2e (chromium + webkit)
         run: |
           cd office_addin/e2e
