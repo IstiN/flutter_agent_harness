@@ -249,7 +249,12 @@ final class SessionChunkReader {
       for (final (lineOffset, lineBytes) in lines) {
         final text = utf8.decode(lineBytes, allowMalformed: true);
         if (!text.contains(needle)) continue;
-        final record = parseSessionEntryLine(text, '', lineOffset);
+        final SessionRecord record;
+        try {
+          record = parseSessionEntryLine(text, '', lineOffset);
+        } on Object {
+          continue; // torn or foreign line: a locate degrades to a miss
+        }
         if (record.id == recordId) return lineOffset;
       }
       offset = end;

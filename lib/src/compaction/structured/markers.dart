@@ -1,4 +1,4 @@
-/// Placeholder markers for the structured compaction engine (issue #148).
+/// Placeholder markers for the compaction engines (issues #148, #195).
 ///
 /// Hidden/compacted segments render as one-line plain-text markers inline
 /// at their original position (`[3:hidden·tool_result·4.2k]`,
@@ -79,3 +79,18 @@ String idsToRanges(Iterable<int> ids) {
   flush();
   return parts.join(',');
 }
+
+/// The opener of the local trim valve's marker (issue #171/#195): the
+/// in-memory valve prepends this note when it drops older messages
+/// without a summarizer (see `AutoCompactor._localTrimFallback`).
+const localTrimMarkerPrefix = '[context trimmed locally:';
+
+final RegExp _markerTextPattern = RegExp(r'^\[\d+(?:-\d+)?:(?:hidden|ckpt)·');
+
+/// Whether [text] opens like a projected hidden/checkpoint marker line —
+/// `[3:hidden·user·12]` or `[2-6:ckpt·38k→40tok·covers:3,5]`.
+///
+/// The image registry uses this to detect that the window was renumbered
+/// at some point (issue #195 F2): hidden history may have carried images
+/// whose first-seen indexes the surviving citations still name.
+bool isCompactionMarkerText(String text) => _markerTextPattern.hasMatch(text);

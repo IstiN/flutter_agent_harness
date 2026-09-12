@@ -355,6 +355,14 @@ final class WindowedSessionStorage
   /// storage evicted).
   Future<List<SessionRecord>> currentBranch() => _windowBranch();
 
+  /// Streams externally-appended records (a running fa CLI) into the
+  /// window. Returns the records that joined the active branch at the
+  /// tail, oldest-first — the transcript delta to append — and whether
+  /// the window was RE-ANCHORED (the file shrank: truncation or
+  /// rotation; issue #135 E5): the delta is then the new window's whole
+  /// branch and the caller must replace, not append. While the user is
+  /// deep-paged (window bottom above the file tail) appends only
+  /// advance the below-count — they page in through [loadNewer].
   Future<({bool reanchored, List<SessionRecord> delta})>
   ingestAppended() async {
     final info = await _reader.stat();
@@ -713,10 +721,13 @@ final class WindowedSessionStorage
     if (chunk.isEmpty) return;
     _replaceWindowWithChunk(chunk);
     _hasOlder = chunk.hasOlder;
-    _branchBottomId = leafId;
-    _currentLeafId = leafId;
     _aboveCount = null;
-    _belowCount = null;
+    // The window re-centered at the target branch's HEAD: whatever
+    // bytes follow below in file order belong to other branches, so
+    // the load-newer banner stays off instead of falling back to the
+    // byte comparison (issue #197 defect 3). Knowing the below-count
+    // also lets [countAbove] resolve against the record total.
+    _belowCount = 0;
   }
 
   @override

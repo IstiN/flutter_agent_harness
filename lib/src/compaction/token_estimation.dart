@@ -11,12 +11,21 @@ library;
 
 import 'dart:convert';
 
+import '../agent/image_registry.dart' show imageContentKey;
 import '../context.dart';
 import '../types.dart';
 
 /// Estimated character cost of an image block (pi's `ESTIMATED_IMAGE_CHARS`:
 /// 4800 chars ≈ 1200 tokens at 4 chars/token).
 const estimatedImageChars = 4800;
+
+/// Wire-replacement charge for an image the registry already rides
+/// earlier in the request (an `[Image N]` label plus overhead).
+const estimatedRepeatImageChars = 32;
+
+/// The content key estimation dedups against — a public seam pinned to
+/// [imageContentKey] so the estimator and the registry never drift.
+String estimationImageKey(ImageContent image) => imageContentKey(image);
 
 /// Characters per token in pi's conservative heuristic.
 const _charsPerToken = 4;
@@ -138,10 +147,15 @@ ContextUsageEstimate estimateContextTokens(List<Message> messages) {
     }
   }
 
+  // F5: the registry dedups repeated images on the wire to short
+  // `[Image N]` labels — mirror that here, or the transcript-side
+  // estimate diverges from the request the provider actually prices.
+  final seenImages = <String>{};
+  int charged(Message message) => _estimateTokensDedup(message, seenImages);
   if (usageInfo == null) {
     var estimated = 0;
     for (final message in messages) {
-      estimated += estimateTokens(message);
+      estimated += charged(message);
     }
     return ContextUsageEstimate(
       tokens: estimated,
@@ -151,18 +165,49 @@ ContextUsageEstimate estimateContextTokens(List<Message> messages) {
     );
   }
 
-  final usageTokens = calculateContextTokens(usageInfo.usage);
+  // The anchor era still seeds the seen-set so trailing repeats stay
+  // cheap even when their first occurrence predates the anchor.
+  for (var i = 0; i <= usageInfo.index; i++) {
+    charged(messages[i]);
+  }
   var trailingTokens = 0;
   for (var i = usageInfo.index + 1; i < messages.length; i++) {
-    trailingTokens += estimateTokens(messages[i]);
+    trailingTokens += charged(messages[i]);
   }
 
+  final usageTokens = calculateContextTokens(usageInfo.usage);
   return ContextUsageEstimate(
     tokens: usageTokens + trailingTokens,
     usageTokens: usageTokens,
     trailingTokens: trailingTokens,
     lastUsageIndex: usageInfo.index,
   );
+}
+
+/// [estimateTokens] against a first-seen set: repeated images charge the
+/// wire replacement, not a second payload. Per-message [estimateTokens]
+/// keeps charging every occurrence (no cross-message context there).
+int _estimateTokensDedup(Message message, Set<String> seenImages) {
+  List<ContentBlock>? blocks;
+  if (message is UserMessage && message.content is List<ContentBlock>) {
+    blocks = message.content as List<ContentBlock>;
+  } else if (message is ToolResultMessage) {
+    blocks = message.content;
+  }
+  if (blocks == null) return estimateTokens(message);
+  var chars = 0;
+  for (final block in blocks) {
+    switch (block) {
+      case TextContent(:final text):
+        chars += text.length;
+      case ImageContent():
+        chars += seenImages.add(estimationImageKey(block))
+            ? estimatedImageChars
+            : estimatedRepeatImageChars;
+      default:
+    }
+  }
+  return (chars / _charsPerToken).ceil();
 }
 
 /// Memoized context estimate for the SETTLED part of a transcript.

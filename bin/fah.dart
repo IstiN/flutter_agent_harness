@@ -172,9 +172,13 @@ void _writeHepLine(String line) {
   stdout.flush();
 }
 
+/// The mime reported when the magic-byte sniff misses — callers treat it
+/// as "not an image" (issue #196 `--attach` passthrough).
+const _unknownAttachMime = 'application/octet-stream';
+
 /// Image type by magic bytes (issue #155 `--attach`): the file extension
 /// is untrusted; the first bytes are. png/jpeg/gif/webp covered, else
-/// application/octet-stream.
+/// [_unknownAttachMime].
 String _sniffMime(Uint8List bytes) {
   bool startsWith(List<int> magic) {
     if (bytes.length < magic.length) return false;
@@ -196,7 +200,7 @@ String _sniffMime(Uint8List bytes) {
       bytes[11] == 0x50) {
     return 'image/webp';
   }
-  return 'application/octet-stream';
+  return _unknownAttachMime;
 }
 
 Never _exitWithVersion(String version, {String? output}) {
@@ -1707,15 +1711,25 @@ Future<void> _runApp(List<String> args) async {
         )
       : null;
   final attachedImages = <ImageContent>[];
+  final attachReferences = <String>[];
   for (final attachment in parsed.attachments) {
     final file = File(attachment);
     if (!file.existsSync()) {
       _fail('--attach: no such file: $attachment');
     }
     final bytes = file.readAsBytesSync();
-    attachedImages.add(
-      ImageContent(data: base64Encode(bytes), mimeType: _sniffMime(bytes)),
-    );
+    final mime = _sniffMime(bytes);
+    if (mime == _unknownAttachMime) {
+      // Not an image (magic-byte sniff missed): pass through as a path
+      // reference — the same marker positional file-as-prompt uses — so
+      // the agent opens it with its tools instead of a provider-rejected
+      // octet-stream image block (issue #196).
+      attachReferences.add(attachPathReference(file.absolute.path));
+    } else {
+      attachedImages.add(
+        ImageContent(data: base64Encode(bytes), mimeType: mime),
+      );
+    }
   }
   if (eventsMode) {
     // Stdout purity: deltas ride frames; diagnostics keep their channel
@@ -2075,7 +2089,11 @@ Future<void> _runApp(List<String> args) async {
 
   if (headlessPrompt != null) {
     _headlessRun = cli.runHeadless(
-      headlessPrompt,
+      attachReferences.isEmpty
+          ? headlessPrompt
+          // Non-image --attach files pass through as path references
+          // appended to the prompt (issue #196).
+          : '$headlessPrompt\n\n${attachReferences.join('\n\n')}',
       images: attachedImages,
       hep: hep,
     );

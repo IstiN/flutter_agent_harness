@@ -34,6 +34,8 @@ void main() {
       '--cube-config',
       '--tools',
       '--log-file',
+      '--attach',
+      '--output',
       '--prompt',
       '-p',
       '--prompt-file',
