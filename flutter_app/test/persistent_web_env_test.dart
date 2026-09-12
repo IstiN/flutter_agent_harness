@@ -44,8 +44,9 @@ Map<String, Object> envelope({
 Map<String, dynamic> envelopeOf(
   Map<String, String> records,
   PersistentWebExecutionEnv env,
-) => jsonDecode(records[PersistentWebExecutionEnv.storageKey]!)
-    as Map<String, dynamic>;
+) =>
+    jsonDecode(records[PersistentWebExecutionEnv.storageKey]!)
+        as Map<String, dynamic>;
 
 List<String> envelopeFilePaths(
   Map<String, String> records,
@@ -170,143 +171,136 @@ void main() {
       );
     });
 
-    test(
-      'IT-atomic-snapshot: a persist pass racing an install never '
-      'persists a torn tree (issue #201)',
-      () async {
-        final store = InMemoryFsSnapshotStore();
-        final env = await PersistentWebExecutionEnv.restore(
-          _MidInstallEnv(),
-          store,
-        );
-        // Install begins: manifest in, widget.js about to land...
-        (await env.writeFile(
-          '/apps/calculator/manifest.json',
-          '{"id":"calculator"}',
-        )).getOrThrow();
-        // ...the debounced persist pass runs while the install is
-        // mid-flight (the harness lands widget.js mid-pass).
-        await env.flush();
-        // The panel unloads before another pass could complete.
-        env.dispose();
+    test('IT-atomic-snapshot: a persist pass racing an install never '
+        'persists a torn tree (issue #201)', () async {
+      final store = InMemoryFsSnapshotStore();
+      final env = await PersistentWebExecutionEnv.restore(
+        _MidInstallEnv(),
+        store,
+      );
+      // Install begins: manifest in, widget.js about to land...
+      (await env.writeFile(
+        '/apps/calculator/manifest.json',
+        '{"id":"calculator"}',
+      )).getOrThrow();
+      // ...the debounced persist pass runs while the install is
+      // mid-flight (the harness lands widget.js mid-pass).
+      await env.flush();
+      // The panel unloads before another pass could complete.
+      env.dispose();
 
-        // Reload: restore replays the persisted snapshot.
-        final reloaded = await _restoreEnv(store);
-        // The tile renders (manifest present)...
-        expect(
-          (await reloaded.exists('/apps/calculator/manifest.json'))
-              .getOrThrow(),
-          isTrue,
-        );
-        // ...and the launch must NOT hit the torn state:
-        // FileError(notFound, /apps/calculator/widget.js).
-        final launch = await reloaded.readTextFile(
-          '/apps/calculator/widget.js',
-        );
-        expect(
-          launch.valueOrNull,
-          _MidInstallEnv.widgetJs,
-          reason: 'torn snapshot persisted: ${launch.errorOrNull}',
-        );
-        reloaded.dispose();
-      },
-    );
+      // Reload: restore replays the persisted snapshot.
+      final reloaded = await _restoreEnv(store);
+      // The tile renders (manifest present)...
+      expect(
+        (await reloaded.exists('/apps/calculator/manifest.json')).getOrThrow(),
+        isTrue,
+      );
+      // ...and the launch must NOT hit the torn state:
+      // FileError(notFound, /apps/calculator/widget.js).
+      final launch = await reloaded.readTextFile('/apps/calculator/widget.js');
+      expect(
+        launch.valueOrNull,
+        _MidInstallEnv.widgetJs,
+        reason: 'torn snapshot persisted: ${launch.errorOrNull}',
+      );
+      reloaded.dispose();
+    });
 
-    test(
-      'UT-parity: the atomic export covers exactly the quiescent tree '
-      '(issue #201, split across envelope + session records)',
-      () async {
-        final store = InMemoryFsSnapshotStore();
-        final env = await _restoreEnv(store);
-        // Golden fixture tree: nested dirs, an empty dir, binary content,
-        // and a sessions log (the expensive real-world payload).
-        (await env.writeFile('/apps/calc/manifest.json', '{"id":"calc"}'))
-            .getOrThrow();
-        (await env.writeFile('/apps/calc/widget.js', 'code')).getOrThrow();
-        (await env.writeBinaryFile(
-          '/apps/calc/icon.bin',
-          Uint8List.fromList([0, 1, 254, 255]),
-        )).getOrThrow();
-        (await env.createDir('/apps/calc/assets/empty')).getOrThrow();
-        (await env.writeFile('/notes/todo.txt', 'one\ntwo')).getOrThrow();
-        (await env.writeFile(
-          '/sessions/s1.jsonl',
-          '{"role":"user"}\n',
-        )).getOrThrow();
-        await env.flush();
-        env.dispose();
+    test('UT-parity: the atomic export covers exactly the quiescent tree '
+        '(issue #201, split across envelope + session records)', () async {
+      final store = InMemoryFsSnapshotStore();
+      final env = await _restoreEnv(store);
+      // Golden fixture tree: nested dirs, an empty dir, binary content,
+      // and a sessions log (the expensive real-world payload).
+      (await env.writeFile(
+        '/apps/calc/manifest.json',
+        '{"id":"calc"}',
+      )).getOrThrow();
+      (await env.writeFile('/apps/calc/widget.js', 'code')).getOrThrow();
+      (await env.writeBinaryFile(
+        '/apps/calc/icon.bin',
+        Uint8List.fromList([0, 1, 254, 255]),
+      )).getOrThrow();
+      (await env.createDir('/apps/calc/assets/empty')).getOrThrow();
+      (await env.writeFile('/notes/todo.txt', 'one\ntwo')).getOrThrow();
+      (await env.writeFile(
+        '/sessions/s1.jsonl',
+        '{"role":"user"}\n',
+      )).getOrThrow();
+      await env.flush();
+      env.dispose();
 
-        // The stored envelope must NOT carry the session bytes (quota
-        // isolation, issue #237) — those ride their own records.
-        expect(
-          envelopeFilePaths(store.records, env).where(
-            (p) => p.startsWith('/sessions/'),
+      // The stored envelope must NOT carry the session bytes (quota
+      // isolation, issue #237) — those ride their own records.
+      expect(
+        envelopeFilePaths(
+          store.records,
+          env,
+        ).where((p) => p.startsWith('/sessions/')),
+        isEmpty,
+      );
+      expect(store.records[sessionKeyOf('/sessions/s1.jsonl')], isNotNull);
+
+      // Union of the envelope + session records == a quiescent async walk
+      // over the same tree (the consistency contract of #201, unchanged
+      // by the #237 split).
+      final reloaded = await _restoreEnv(store);
+      final legacy = await _legacyWalk(reloaded);
+      final stored = <String, Uint8List>{
+        for (final path in envelopeFilePaths(store.records, env))
+          path: base64Decode(
+            (envelopeOf(store.records, env)['files'] as List)
+                    .map((f) => f as Map)
+                    .firstWhere((f) => f['path'] == path)['data']
+                as String,
           ),
-          isEmpty,
-        );
-        expect(store.records[sessionKeyOf('/sessions/s1.jsonl')], isNotNull);
-
-        // Union of the envelope + session records == a quiescent async walk
-        // over the same tree (the consistency contract of #201, unchanged
-        // by the #237 split).
-        final reloaded = await _restoreEnv(store);
-        final legacy = await _legacyWalk(reloaded);
-        final stored = <String, Uint8List>{
-          for (final path in envelopeFilePaths(store.records, env))
-            path: base64Decode(
-              (envelopeOf(store.records, env)['files'] as List)
-                  .map((f) => f as Map)
-                  .firstWhere((f) => f['path'] == path)['data'] as String,
+        for (final entry in store.records.entries)
+          if (entry.key.startsWith(PersistentWebExecutionEnv.sessionKeyPrefix))
+            entry.key.substring(
+              PersistentWebExecutionEnv.sessionKeyPrefix.length,
+            ): base64Decode(
+              entry.value,
             ),
-            for (final entry in store.records.entries)
-              if (entry.key
-                  .startsWith(PersistentWebExecutionEnv.sessionKeyPrefix))
-                entry.key.substring(
-                  PersistentWebExecutionEnv.sessionKeyPrefix.length,
-                ): base64Decode(entry.value),
-        };
-        expect(stored.keys.toSet(), legacy.files.keys.toSet());
-        for (final path in legacy.files.keys) {
-          expect(stored[path], legacy.files[path], reason: path);
-        }
-        expect(
-          (envelopeOf(store.records, env)['dirs'] as List).toSet(),
-          legacy.dirs.toSet(),
-        );
-        reloaded.dispose();
-      },
-    );
+      };
+      expect(stored.keys.toSet(), legacy.files.keys.toSet());
+      for (final path in legacy.files.keys) {
+        expect(stored[path], legacy.files[path], reason: path);
+      }
+      expect(
+        (envelopeOf(store.records, env)['dirs'] as List).toSet(),
+        legacy.dirs.toSet(),
+      );
+      reloaded.dispose();
+    });
 
-    test(
-      'IT-unload-flush: a mutation followed immediately by page unload '
-      'persists (issue #201)',
-      () async {
-        final store = InMemoryFsSnapshotStore();
-        // A debounce the test never lets fire: only the unload hook may save.
-        final env = await _restoreEnv(
-          store,
-          persistDelay: const Duration(hours: 1),
-        );
-        (await env.writeFile('/apps/calculator/widget.js', 'code'))
-            .getOrThrow();
-        expect(env.hasPendingChanges, isTrue);
+    test('IT-unload-flush: a mutation followed immediately by page unload '
+        'persists (issue #201)', () async {
+      final store = InMemoryFsSnapshotStore();
+      // A debounce the test never lets fire: only the unload hook may save.
+      final env = await _restoreEnv(
+        store,
+        persistDelay: const Duration(hours: 1),
+      );
+      (await env.writeFile('/apps/calculator/widget.js', 'code')).getOrThrow();
+      expect(env.hasPendingChanges, isTrue);
 
-        // Simulated beforeunload / visibilitychange(hidden): the web
-        // bootstrap's bindUnloadFlush calls exactly this.
-        await env.onPageUnload();
-        expect(env.hasPendingChanges, isFalse);
-        expect(store.saveCount, greaterThan(0));
-        env.dispose();
+      // Simulated beforeunload / visibilitychange(hidden): the web
+      // bootstrap's bindUnloadFlush calls exactly this.
+      await env.onPageUnload();
+      expect(env.hasPendingChanges, isFalse);
+      expect(store.saveCount, greaterThan(0));
+      env.dispose();
 
-        final reloaded = await _restoreEnv(store);
-        expect(
-          (await reloaded.readTextFile('/apps/calculator/widget.js'))
-              .getOrThrow(),
-          'code',
-        );
-        reloaded.dispose();
-      },
-    );
+      final reloaded = await _restoreEnv(store);
+      expect(
+        (await reloaded.readTextFile(
+          '/apps/calculator/widget.js',
+        )).getOrThrow(),
+        'code',
+      );
+      reloaded.dispose();
+    });
 
     test('a store that throws on load starts clean', () async {
       final store = _ThrowingLoadStore();
@@ -317,218 +311,202 @@ void main() {
     });
 
     group('issue #237 persistence vectors (per-session records)', () {
-      test(
-        'vector 2 — an unreadable envelope is backed up BEFORE any save '
-        'overwrites it, then recovery proceeds',
-        () async {
-          final store = InMemoryFsSnapshotStore()
-            ..seed({PersistentWebExecutionEnv.storageKey: '{not json at all'});
-          final env = await _restoreEnv(store);
-          expect((await env.listDir('/')).getOrThrow(), isEmpty);
+      test('vector 2 — an unreadable envelope is backed up BEFORE any save '
+          'overwrites it, then recovery proceeds', () async {
+        final store = InMemoryFsSnapshotStore()
+          ..seed({PersistentWebExecutionEnv.storageKey: '{not json at all'});
+        final env = await _restoreEnv(store);
+        expect((await env.listDir('/')).getOrThrow(), isEmpty);
 
-          // Persistence keeps working afterwards and replaces the bad
-          // envelope — but the raw bytes survive under the backup key.
-          (await env.writeFile('/after.txt', 'ok')).getOrThrow();
+        // Persistence keeps working afterwards and replaces the bad
+        // envelope — but the raw bytes survive under the backup key.
+        (await env.writeFile('/after.txt', 'ok')).getOrThrow();
+        await env.flush();
+        expect(
+          store.records[PersistentWebExecutionEnv.backupKey],
+          '{not json at all',
+        );
+        expect(envelopeOf(store.records, env)['version'], isNot(1));
+        final restored = await _restoreEnv(store);
+        expect((await restored.readTextFile('/after.txt')).getOrThrow(), 'ok');
+      });
+
+      test('vector 2 — a newer-version envelope is backed up, and session '
+          'records restore regardless of the envelope', () async {
+        const sessionBody = '{"role":"user"}\n';
+        final newer = jsonEncode(
+          envelope(
+            version: 999,
+            files: [
+              {'path': '/future.txt', 'data': b64('from the future')},
+            ],
+          ),
+        );
+        final store = InMemoryFsSnapshotStore()
+          ..seed({
+            PersistentWebExecutionEnv.storageKey: newer,
+            sessionKeyOf('/sessions/s.jsonl'): b64(sessionBody),
+          });
+        final env = await _restoreEnv(store);
+        // The unreadable envelope is NOT replayed...
+        expect((await env.exists('/future.txt')).getOrThrow(), isFalse);
+        // ...but session records are version-independent keys.
+        expect(
+          (await env.readTextFile('/sessions/s.jsonl')).getOrThrow(),
+          sessionBody,
+        );
+
+        // A save must never clobber the backup.
+        (await env.writeFile('/now.txt', 'x')).getOrThrow();
+        await env.flush();
+        expect(store.records[PersistentWebExecutionEnv.backupKey], newer);
+      });
+
+      test('vector 2 — a v1 envelope MIGRATES: sessions re-home into records, '
+          'nothing is wiped', () async {
+        const sessionBody = '{"v":1}\n';
+        final v1 = jsonEncode(
+          envelope(
+            version: 1,
+            dirs: ['/notes', '/sessions', '/sessions/--work--'],
+            files: [
+              {'path': '/notes/keep.txt', 'data': b64('keep')},
+              {'path': '/sessions/--work--/s1.jsonl', 'data': b64(sessionBody)},
+            ],
+          ),
+        );
+        final store = InMemoryFsSnapshotStore()
+          ..seed({PersistentWebExecutionEnv.storageKey: v1});
+        final env = await _restoreEnv(store);
+        // The whole v1 tree replays.
+        expect(
+          (await env.readTextFile('/notes/keep.txt')).getOrThrow(),
+          'keep',
+        );
+        expect(
+          (await env.readTextFile('/sessions/--work--/s1.jsonl')).getOrThrow(),
+          sessionBody,
+        );
+
+        // The next save (here: the session itself grows by one turn)
+        // re-homes the session into its own record and the envelope
+        // forward — no data lost in the move.
+        (await env.appendFile(
+          '/sessions/--work--/s1.jsonl',
+          '{"v":2}\n',
+        )).getOrThrow();
+        await env.flush();
+        expect(envelopeOf(store.records, env)['version'], 2);
+        expect(
+          envelopeFilePaths(
+            store.records,
+            env,
+          ).where((p) => p.startsWith('/sessions/')),
+          isEmpty,
+        );
+        expect(
+          store.records[sessionKeyOf('/sessions/--work--/s1.jsonl')],
+          b64('{"v":1}\n{"v":2}\n'),
+        );
+
+        // And the migrated layout round-trips.
+        final restored = await _restoreEnv(store);
+        expect(
+          (await restored.readTextFile(
+            '/sessions/--work--/s1.jsonl',
+          )).getOrThrow(),
+          '{"v":1}\n{"v":2}\n',
+        );
+      });
+
+      test('vector 4 — session files ride per-file records OUTSIDE the '
+          'envelope, so one oversized write cannot sink the rest', () async {
+        final store = InMemoryFsSnapshotStore();
+        final env = await _restoreEnv(store);
+        (await env.writeFile('/notes/a.txt', 'a')).getOrThrow();
+        (await env.writeFile(
+          '/sessions/--w--/s1.jsonl',
+          '{"one"}\n',
+        )).getOrThrow();
+        (await env.writeFile(
+          '/sessions/--w--/s2.jsonl',
+          '{"two"}\n',
+        )).getOrThrow();
+        await env.flush();
+
+        expect(envelopeFilePaths(store.records, env), ['/notes/a.txt']);
+        expect(
+          store.records[sessionKeyOf('/sessions/--w--/s1.jsonl')],
+          b64('{"one"}\n'),
+        );
+        expect(
+          store.records[sessionKeyOf('/sessions/--w--/s2.jsonl')],
+          b64('{"two"}\n'),
+        );
+      });
+
+      test('vector 1 — deleting one session evicts ONLY its record; the rest '
+          'stay byte-identical', () async {
+        final store = InMemoryFsSnapshotStore();
+        final env = await _restoreEnv(store);
+        (await env.writeFile(
+          '/sessions/--w--/s1.jsonl',
+          '{"one"}\n',
+        )).getOrThrow();
+        (await env.writeFile(
+          '/sessions/--w--/s2.jsonl',
+          '{"two"}\n',
+        )).getOrThrow();
+        await env.flush();
+        expect(
+          store.records.keys
+              .where(
+                (k) => k.startsWith(PersistentWebExecutionEnv.sessionKeyPrefix),
+              )
+              .length,
+          2,
+        );
+        final s2Before =
+            store.records[sessionKeyOf('/sessions/--w--/s2.jsonl')];
+
+        (await env.remove('/sessions/--w--/s1.jsonl')).getOrThrow();
+        await env.flush();
+
+        expect(
+          store.records.keys
+              .where(
+                (k) => k.startsWith(PersistentWebExecutionEnv.sessionKeyPrefix),
+              )
+              .toList(),
+          [sessionKeyOf('/sessions/--w--/s2.jsonl')],
+        );
+        expect(
+          store.records[sessionKeyOf('/sessions/--w--/s2.jsonl')],
+          s2Before,
+        );
+        expect(
+          (await env.readTextFile('/sessions/--w--/s2.jsonl')).getOrThrow(),
+          '{"two"}\n',
+        );
+      });
+
+      test('vector 1 — repeated saves never drop live session keys', () async {
+        final store = InMemoryFsSnapshotStore();
+        final env = await _restoreEnv(store);
+        (await env.writeFile(
+          '/sessions/--w--/s1.jsonl',
+          '{"live"}\n',
+        )).getOrThrow();
+        await env.flush();
+        final live = store.records[sessionKeyOf('/sessions/--w--/s1.jsonl')];
+        expect(live, isNotNull);
+
+        for (var i = 0; i < 3; i++) {
+          (await env.writeFile('/notes/n$i.txt', 'x')).getOrThrow();
           await env.flush();
-          expect(
-            store.records[PersistentWebExecutionEnv.backupKey],
-            '{not json at all',
-          );
-          expect(envelopeOf(store.records, env)['version'], isNot(1));
-          final restored = await _restoreEnv(store);
-          expect(
-            (await restored.readTextFile('/after.txt')).getOrThrow(),
-            'ok',
-          );
-        },
-      );
-
-      test(
-        'vector 2 — a newer-version envelope is backed up, and session '
-        'records restore regardless of the envelope',
-        () async {
-          const sessionBody = '{"role":"user"}\n';
-          final newer = jsonEncode(
-            envelope(
-              version: 999,
-              files: [
-                {'path': '/future.txt', 'data': b64('from the future')},
-              ],
-            ),
-          );
-          final store = InMemoryFsSnapshotStore()
-            ..seed({
-              PersistentWebExecutionEnv.storageKey: newer,
-              sessionKeyOf('/sessions/s.jsonl'): b64(sessionBody),
-            });
-          final env = await _restoreEnv(store);
-          // The unreadable envelope is NOT replayed...
-          expect((await env.exists('/future.txt')).getOrThrow(), isFalse);
-          // ...but session records are version-independent keys.
-          expect(
-            (await env.readTextFile('/sessions/s.jsonl')).getOrThrow(),
-            sessionBody,
-          );
-
-          // A save must never clobber the backup.
-          (await env.writeFile('/now.txt', 'x')).getOrThrow();
-          await env.flush();
-          expect(store.records[PersistentWebExecutionEnv.backupKey], newer);
-        },
-      );
-
-      test(
-        'vector 2 — a v1 envelope MIGRATES: sessions re-home into records, '
-        'nothing is wiped',
-        () async {
-          const sessionBody = '{"v":1}\n';
-          final v1 = jsonEncode(
-            envelope(
-              version: 1,
-              dirs: ['/notes', '/sessions', '/sessions/--work--'],
-              files: [
-                {'path': '/notes/keep.txt', 'data': b64('keep')},
-                {
-                  'path': '/sessions/--work--/s1.jsonl',
-                  'data': b64(sessionBody),
-                },
-              ],
-            ),
-          );
-          final store = InMemoryFsSnapshotStore()
-            ..seed({PersistentWebExecutionEnv.storageKey: v1});
-          final env = await _restoreEnv(store);
-          // The whole v1 tree replays.
-          expect((await env.readTextFile('/notes/keep.txt')).getOrThrow(), 'keep');
-          expect(
-            (await env.readTextFile('/sessions/--work--/s1.jsonl'))
-                .getOrThrow(),
-            sessionBody,
-          );
-
-          // The next save re-homes the session into its own record and the
-          // envelope forward — no data lost in the move.
-          await env.flush();
-          expect(envelopeOf(store.records, env)['version'], 2);
-          expect(
-            envelopeFilePaths(
-              store.records,
-              env,
-            ).where((p) => p.startsWith('/sessions/')),
-            isEmpty,
-          );
-          expect(
-            store.records[sessionKeyOf('/sessions/--work--/s1.jsonl')],
-            b64(sessionBody),
-          );
-
-          // And the migrated layout round-trips.
-          final restored = await _restoreEnv(store);
-          expect(
-            (await restored.readTextFile('/sessions/--work--/s1.jsonl'))
-                .getOrThrow(),
-            sessionBody,
-          );
-        },
-      );
-
-      test(
-        'vector 4 — session files ride per-file records OUTSIDE the '
-        'envelope, so one oversized write cannot sink the rest',
-        () async {
-          final store = InMemoryFsSnapshotStore();
-          final env = await _restoreEnv(store);
-          (await env.writeFile('/notes/a.txt', 'a')).getOrThrow();
-          (await env.writeFile(
-            '/sessions/--w--/s1.jsonl',
-            '{"one"}\n',
-          )).getOrThrow();
-          (await env.writeFile(
-            '/sessions/--w--/s2.jsonl',
-            '{"two"}\n',
-          )).getOrThrow();
-          await env.flush();
-
-          expect(envelopeFilePaths(store.records, env), ['/notes/a.txt']);
-          expect(
-            store.records[sessionKeyOf('/sessions/--w--/s1.jsonl')],
-            b64('{"one"}\n'),
-          );
-          expect(
-            store.records[sessionKeyOf('/sessions/--w--/s2.jsonl')],
-            b64('{"two"}\n'),
-          );
-        },
-      );
-
-      test(
-        'vector 1 — deleting one session evicts ONLY its record; the rest '
-        'stay byte-identical',
-        () async {
-          final store = InMemoryFsSnapshotStore();
-          final env = await _restoreEnv(store);
-          (await env.writeFile(
-            '/sessions/--w--/s1.jsonl',
-            '{"one"}\n',
-          )).getOrThrow();
-          (await env.writeFile(
-            '/sessions/--w--/s2.jsonl',
-            '{"two"}\n',
-          )).getOrThrow();
-          await env.flush();
-          expect(
-            store.records.keys
-                .where((k) => k.startsWith(PersistentWebExecutionEnv.sessionKeyPrefix))
-                .length,
-            2,
-          );
-          final s2Before =
-              store.records[sessionKeyOf('/sessions/--w--/s2.jsonl')];
-
-          (await env.remove('/sessions/--w--/s1.jsonl')).getOrThrow();
-          await env.flush();
-
-          expect(
-            store.records.keys
-                .where((k) => k.startsWith(PersistentWebExecutionEnv.sessionKeyPrefix))
-                .toList(),
-            [sessionKeyOf('/sessions/--w--/s2.jsonl')],
-          );
-          expect(
-            store.records[sessionKeyOf('/sessions/--w--/s2.jsonl')],
-            s2Before,
-          );
-          expect(
-            (await env.readTextFile('/sessions/--w--/s2.jsonl')).getOrThrow(),
-            '{"two"}\n',
-          );
-        },
-      );
-
-      test(
-        'vector 1 — repeated saves never drop live session keys',
-        () async {
-          final store = InMemoryFsSnapshotStore();
-          final env = await _restoreEnv(store);
-          (await env.writeFile(
-            '/sessions/--w--/s1.jsonl',
-            '{"live"}\n',
-          )).getOrThrow();
-          await env.flush();
-          final live = store.records[sessionKeyOf('/sessions/--w--/s1.jsonl')];
-          expect(live, isNotNull);
-
-          for (var i = 0; i < 3; i++) {
-            (await env.writeFile('/notes/n$i.txt', 'x')).getOrThrow();
-            await env.flush();
-            expect(
-              store.records[sessionKeyOf('/sessions/--w--/s1.jsonl')],
-              live,
-            );
-          }
-        },
-      );
-
+          expect(store.records[sessionKeyOf('/sessions/--w--/s1.jsonl')], live);
+        }
+      });
 
       test(
         'vector 4 — an over-quota session fails ALONE: unrelated saves keep '
@@ -550,7 +528,10 @@ void main() {
             '/sessions/--w--/huge.jsonl',
             'x' * 5000,
           )).getOrThrow();
-          (await env.writeFile('/notes/regular.txt', 'still saves')).getOrThrow();
+          (await env.writeFile(
+            '/notes/regular.txt',
+            'still saves',
+          )).getOrThrow();
           await env.flush();
 
           // The envelope was still rewritten with the ordinary change and
@@ -560,9 +541,10 @@ void main() {
             contains('/notes/regular.txt'),
           );
           expect(
-            envelopeFilePaths(store.records, env).where(
-              (p) => p.startsWith('/sessions/'),
-            ),
+            envelopeFilePaths(
+              store.records,
+              env,
+            ).where((p) => p.startsWith('/sessions/')),
             isEmpty,
           );
           // The small session record is untouched.
@@ -573,8 +555,9 @@ void main() {
           // The huge one never landed, and the failure stays visible for
           // the next mutation or flush to retry.
           expect(
-            store.records
-                .containsKey(sessionKeyOf('/sessions/--w--/huge.jsonl')),
+            store.records.containsKey(
+              sessionKeyOf('/sessions/--w--/huge.jsonl'),
+            ),
             isFalse,
           );
           expect(env.hasPendingChanges, isTrue);
@@ -646,8 +629,9 @@ void main() {
 
           final reloaded = await _restoreEnv(store);
           expect(
-            (await reloaded.readTextFile('/sessions/--w--/live.jsonl'))
-                .getOrThrow(),
+            (await reloaded.readTextFile(
+              '/sessions/--w--/live.jsonl',
+            )).getOrThrow(),
             '{"tail":true}\n',
           );
           reloaded.dispose();
@@ -673,8 +657,13 @@ void main() {
         var flushDone = false;
         unawaited(env.flush().then((_) => flushDone = true));
         await Future<void>.delayed(const Duration(milliseconds: 10));
-        expect(flushDone, isFalse, reason: 'flush returned before the '
-            'in-flight save landed');
+        expect(
+          flushDone,
+          isFalse,
+          reason:
+              'flush returned before the '
+              'in-flight save landed',
+        );
 
         store.release();
         await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -771,8 +760,10 @@ final class _MidInstallEnv implements ExecutionEnv, FsSnapshotExporter {
   Future<Result<void, FileError>> appendFile(String path, String content) =>
       _inner.appendFile(path, content);
   @override
-  Future<Result<void, FileError>> createDir(String path, {bool recursive = true}) =>
-      _inner.createDir(path, recursive: recursive);
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _inner.createDir(path, recursive: recursive);
   @override
   Future<Result<void, FileError>> remove(
     String path, {
@@ -858,6 +849,7 @@ final class _QuotaStore implements FsSnapshotStore {
 final class _GatedStore implements FsSnapshotStore {
   final Map<String, String> _records = {};
   Completer<void>? _gate;
+  bool _gated = false;
 
   /// Saves started (test observability).
   int saveCalls = 0;
@@ -866,10 +858,16 @@ final class _GatedStore implements FsSnapshotStore {
   int landedSaves = 0;
 
   /// Gates the NEXT save call.
-  void gateNext() => _gate = Completer<void>();
+  void gateNext() {
+    _gate = Completer<void>();
+    _gated = true;
+  }
 
   /// Lets the gated save land.
-  void release() => _gate?.complete();
+  void release() {
+    _gated = false;
+    _gate?.complete();
+  }
 
   @override
   Future<Map<String, String>> load() async => Map.of(_records);
@@ -877,10 +875,9 @@ final class _GatedStore implements FsSnapshotStore {
   @override
   Future<void> save(Map<String, String> records) async {
     saveCalls++;
-    final gate = _gate;
-    if (gate != null) {
-      _gate = null;
-      await gate.future;
+    if (_gated) {
+      _gated = false;
+      await _gate!.future;
     }
     _records.addAll(records);
     landedSaves++;
