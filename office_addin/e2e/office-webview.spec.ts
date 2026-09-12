@@ -183,3 +183,24 @@ test('sandbox IndexedDB FS persists across pane reloads', async ({ page }) => {
   const loaded = await page.evaluate(() => window.__fahFsLoad?.());
   expect(loaded).toEqual(marker);
 });
+
+test('a History-less iframe (OWA sandbox) still boots to the first frame', async ({ page }) => {
+  // The live OWA evidence (issue #202): its taskpane iframe ships a
+  // `history` stub without the mutation methods; the web engine's default
+  // deep-link URL sync crashed mid-boot on replaceState and grayed the
+  // pane. The pane must probe, install its no-op strategy, and reach the
+  // first frame anyway.
+  await page.addInitScript(() => {
+    History.prototype.replaceState = undefined as unknown as typeof History.prototype.replaceState;
+    History.prototype.pushState = undefined as unknown as typeof History.prototype.pushState;
+  });
+  const boot = await openAppPane(page);
+  await firstFrame(page);
+  const historyErrors = boot.pageErrors.filter((e) =>
+    /replaceState|pushState/.test(e),
+  );
+  expect(
+    historyErrors,
+    `history errors: ${historyErrors.join(' | ')}`,
+  ).toEqual([]);
+});
