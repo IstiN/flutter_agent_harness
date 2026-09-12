@@ -75,6 +75,13 @@ dependencies:
   uuid: ^4.6.0
   flutter_chat_core: ^2.9.0
   yaml: ^3.1.3
+  # Sandbox-safe web URL strategy (issue #202): the OWA iframe strips
+  # history.replaceState and the engine's default deep-link sync dies on it.
+  flutter_web_plugins:
+    sdk: flutter
+  # Modern web bindings (package:web) for the history probe — dart:html is
+  # deprecated by the analyzer.
+  web: ^1.1.1
 
   # UI localization (gen-l10n, lib/l10n/*.arb → AppLocalizations).
   flutter_localizations:

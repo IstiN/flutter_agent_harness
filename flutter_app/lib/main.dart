@@ -11,6 +11,8 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/services/relay/relay_probe.dart';
+import 'package:fa/services/office/office_boot.dart';
+import 'package:fa/services/web/sandbox_url_strategy.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
@@ -97,6 +99,15 @@ Future<RelayAgentService?> createRelayServiceIfHosted() async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Office.onReady FIRST (issue #202): the pane's handshake starts before
+  // any later boot step can die on a sandboxed host.
+  bootOfficeApi();
+  // The OWA iframe sandbox strips history.replaceState — the web engine's
+  // default deep-link URL sync crashes on it mid-boot ("q.replaceState is
+  // not a function"), graying the pane before the first frame. Probe the
+  // History API and fall back to a no-op strategy in stripped frames
+  // (issue #202); working hosts keep the default strategy.
+  installSandboxSafeUrlStrategy();
   // Use NSURLSession on iOS/macOS instead of dart:io HttpClient; this fixes
   // "Failed host lookup" failures on networks where the system resolver is
   // required (DNS-over-HTTPS, content filters, per-app VPNs).
