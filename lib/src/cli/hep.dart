@@ -219,7 +219,9 @@ class HepWriter {
     _emit(hepCompactionEndFrame(_openTurnId ?? currentTurnId, tokensFreed));
   }
 
-  /// Handles one agent event (AgentListener shape).
+  /// Handles one agent event (AgentListener shape). The turn-lifecycle
+  /// arms live here; the streaming arms (message/tool deltas) are split
+  /// into [_handleStreamEvent] — one switch each keeps the CRAP gate.
   Future<void> handleEvent(AgentEvent event, CancelToken cancelToken) async {
     switch (event) {
       case AgentStartEvent():
@@ -245,6 +247,16 @@ class HepWriter {
             ),
           );
         }
+      case TurnEndEvent(:final message, :final toolResults):
+        _emitTerminal(message, toolResults);
+      default:
+        _handleStreamEvent(event);
+    }
+  }
+
+  /// The tool-execution streaming arms of [handleEvent].
+  void _handleStreamEvent(AgentEvent event) {
+    switch (event) {
       case ToolExecutionStartEvent(:final toolCallId, :final toolName, :final args):
         _emit(
           hepToolStartFrame(
@@ -267,8 +279,6 @@ class HepWriter {
             hepToolDeltaFrame(turnId: _turnId(), id: toolCallId, update: update),
           );
         }
-      case TurnEndEvent(:final message, :final toolResults):
-        _emitTerminal(message, toolResults);
       default:
         break;
     }
