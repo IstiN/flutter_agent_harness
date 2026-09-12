@@ -87,6 +87,26 @@ final class PersistentWebExecutionEnv
   }
 
   Future<String> _snapshot() async {
+    final delegate = _delegate;
+    if (delegate case final FsSnapshotExporter exporter) {
+      // Atomic path (issue #201): encode from a synchronous point-in-time
+      // deep copy. The async walk below yields to the event loop between
+      // every directory and file, so a concurrent write (e.g. an install
+      // loop landing widget.js after manifest.json) could interleave
+      // mid-walk and persist a torn tree that then failed to launch with
+      // FileError(notFound). A synchronous export has no yield points —
+      // a saved snapshot is always a consistent point-in-time view.
+      final snapshot = exporter.exportSnapshot();
+      return jsonEncode({
+        'version': snapshotVersion,
+        'dirs': snapshot.dirs,
+        'files': [
+          for (final file in snapshot.files.entries)
+            {'path': file.key, 'data': base64Encode(file.value)},
+        ],
+      });
+    }
+    // Fallback for non-memory delegates: the historical async walk.
     final dirs = <String>[];
     final files = <Map<String, String>>[];
     Future<void> walk(String dir) async {
@@ -148,6 +168,19 @@ final class PersistentWebExecutionEnv
       }
     }
   }
+
+  /// True when mutations since the last completed save are still
+  /// unpersisted (including a save that failed and armed the retry).
+  bool get hasPendingChanges => _dirty;
+
+  /// Best-effort persistence for page unload: the web bootstrap binds this
+  /// to `beforeunload` and `visibilitychange(hidden)` (see
+  /// `bindUnloadFlush` in `unload_flush.dart`). Without it, a panel unload
+  /// inside the 800 ms debounce window silently dropped the last mutations
+  /// (issue #201 — and the extension side panel unloads on every close).
+  /// Returns the flush future so tests can await it; browser event
+  /// handlers fire-and-forget it.
+  Future<void> onPageUnload() => flush();
 
   /// Stops the debounce timer. Pending unsaved changes are dropped; call
   /// [flush] first when they matter.
