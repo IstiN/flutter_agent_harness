@@ -4,7 +4,7 @@
 
 import 'package:fa/sandbox/fs_persistence.dart';
 
-/// Non-web fallback: no durable browser storage exists, so the snapshot
+/// Non-web fallback: no durable browser storage exists, so the record
 /// store is process memory only. Selected unless `dart.library.html` is
 /// available (see the conditional import in `env_factory_stub.dart`).
-FsSnapshotStore createFsSnapshotStore() => InMemoryFsSnapshotStore();
+FsRecordStore createFsSnapshotStore() => InMemoryFsRecordStore();

@@ -14,7 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// Mirrors the web wiring in `env_factory_stub.dart`: a MemoryShell-backed
 /// MemoryExecutionEnv wrapped for persistence.
 Future<PersistentWebExecutionEnv> _restoreEnv(
-  FsSnapshotStore store, {
+  FsRecordStore store, {
   Duration persistDelay = const Duration(milliseconds: 800),
 }) {
   final shell = MemoryShell();
@@ -32,7 +32,7 @@ void main() {
     test(
       'writes through the wrapper are readable through the same instance',
       () async {
-        final env = await _restoreEnv(InMemoryFsSnapshotStore());
+        final env = await _restoreEnv(InMemoryFsRecordStore());
         (await env.writeFile('/notes/hello.txt', 'hi there')).getOrThrow();
         (await env.writeBinaryFile(
           '/bin.dat',
@@ -58,7 +58,7 @@ void main() {
     test(
       'mutations persist and restore into a fresh env (round-trip)',
       () async {
-        final store = InMemoryFsSnapshotStore();
+        final store = InMemoryFsRecordStore();
         final env = await _restoreEnv(store);
         (await env.writeFile('/dir/a.txt', 'hello')).getOrThrow();
         (await env.appendFile('/dir/a.txt', ' world')).getOrThrow();
@@ -98,7 +98,7 @@ void main() {
     );
 
     test('remove persists', () async {
-      final store = InMemoryFsSnapshotStore();
+      final store = InMemoryFsRecordStore();
       final env = await _restoreEnv(store);
       (await env.writeFile('/gone.txt', 'x')).getOrThrow();
       await env.flush();
@@ -110,7 +110,7 @@ void main() {
     });
 
     test('the debounced save fires without an explicit flush', () async {
-      final store = InMemoryFsSnapshotStore();
+      final store = InMemoryFsRecordStore();
       final env = await _restoreEnv(
         store,
         persistDelay: const Duration(milliseconds: 20),
@@ -125,7 +125,7 @@ void main() {
     });
 
     test('shell commands mark the FS dirty (exec persistence hook)', () async {
-      final store = InMemoryFsSnapshotStore();
+      final store = InMemoryFsRecordStore();
       final env = await _restoreEnv(store);
       final result = await env.exec("printf 'from shell' > /via_shell.txt");
       expect(result.isOk, isTrue, reason: result.errorOrNull.toString());
@@ -139,22 +139,26 @@ void main() {
     });
 
     test('a corrupt snapshot restores to a clean FS and recovers', () async {
-      final store = InMemoryFsSnapshotStore()..seed('{not json at all');
+      final store = InMemoryFsRecordStore()..seed(PersistentWebExecutionEnv.storageKey, '{not json at all');
       final env = await _restoreEnv(store);
       expect((await env.listDir('/')).getOrThrow(), isEmpty);
 
       // Persistence keeps working afterwards and overwrites the bad data.
       (await env.writeFile('/after.txt', 'ok')).getOrThrow();
       await env.flush();
-      final snapshot = jsonDecode(await store.load() ?? '') as Map;
+      final snapshot = jsonDecode(
+          (await store.loadAll())[PersistentWebExecutionEnv.storageKey] ??
+              '',
+        ) as Map;
       expect(snapshot['version'], PersistentWebExecutionEnv.snapshotVersion);
       final restored = await _restoreEnv(store);
       expect((await restored.readTextFile('/after.txt')).getOrThrow(), 'ok');
     });
 
     test('a snapshot with an unknown version is ignored', () async {
-      final store = InMemoryFsSnapshotStore()
+      final store = InMemoryFsRecordStore()
         ..seed(
+          PersistentWebExecutionEnv.storageKey,
           jsonEncode({
             'version': 999,
             'dirs': <String>[],
@@ -170,8 +174,9 @@ void main() {
     test(
       'a structurally valid but semantically corrupt snapshot is ignored',
       () async {
-        final store = InMemoryFsSnapshotStore()
+        final store = InMemoryFsRecordStore()
           ..seed(
+            PersistentWebExecutionEnv.storageKey,
             jsonEncode({
               'version': PersistentWebExecutionEnv.snapshotVersion,
               'dirs': ['/x'],
@@ -193,7 +198,7 @@ void main() {
       'IT-atomic-snapshot: a persist pass racing an install never '
       'persists a torn tree (issue #201)',
       () async {
-        final store = InMemoryFsSnapshotStore();
+        final store = InMemoryFsRecordStore();
         final env = await PersistentWebExecutionEnv.restore(
           _MidInstallEnv(),
           store,
@@ -235,7 +240,7 @@ void main() {
       'UT-parity: the atomic export is byte-identical to a quiescent '
       'async walk (issue #201)',
       () async {
-        final store = InMemoryFsSnapshotStore();
+        final store = InMemoryFsRecordStore();
         final env = await _restoreEnv(store);
         // Golden fixture tree: nested dirs, an empty dir, binary content,
         // and a sessions log (the expensive real-world payload).
@@ -254,14 +259,18 @@ void main() {
         )).getOrThrow();
         await env.flush();
         env.dispose();
-        final atomic = await store.load();
-        expect(atomic, isNotNull);
 
         // Reference: the pre-fix async-walk encoding over the now-quiescent
-        // tree. Byte-identical output proves the atomic path changed the
-        // CONSISTENCY, not the FORMAT, of snapshots (AC5).
+        // tree, compared against the MERGED persisted view (envelope files
+        // plus per-session records, issue #237). Identical output proves
+        // the atomic path changed the CONSISTENCY, not the CONTENT, of
+        // snapshots (AC5): session bytes moved out of the envelope into
+        // their own records, nothing else.
         final reloaded = await _restoreEnv(store);
-        expect(await _legacyWalkSnapshot(reloaded), atomic);
+        expect(
+          _canonical(await _mergedStoredSnapshot(store)),
+          _canonical(await _legacyWalkSnapshot(reloaded)),
+        );
         reloaded.dispose();
       },
     );
@@ -270,7 +279,7 @@ void main() {
       'IT-unload-flush: a mutation followed immediately by page unload '
       'persists (issue #201)',
       () async {
-        final store = InMemoryFsSnapshotStore();
+        final store = InMemoryFsRecordStore();
         // A debounce the test never lets fire: only the unload hook may save.
         final env = await _restoreEnv(
           store,
@@ -304,6 +313,374 @@ void main() {
       (await env.writeFile('/still.txt', 'works')).getOrThrow();
       expect((await env.readTextFile('/still.txt')).getOrThrow(), 'works');
     });
+  });
+
+  // Issue #237 — pins for the #228 session-loss vectors in the IndexedDB
+  // twin, over an in-memory record store (mirroring #236's FakeChrome
+  // pins):
+  //
+  //   vector 1 (eviction):  deleting one session must remove ONLY its
+  //                         record; a save must never drop live session
+  //                         records.
+  //   vector 2 (version wipe): a v1 envelope migrates; an unreadable/newer
+  //                         envelope is backed up under sandbox.bak BEFORE
+  //                         any save can overwrite it, and session records
+  //                         (version-independent keys) still restore.
+  //   vector 3 (torn/unload): rides the #201 fix — a session mutation
+  //                         flushed by onPageUnload must actually persist
+  //                         the session; session writes also persist
+  //                         EAGERLY (mobile browsers may never fire
+  //                         beforeunload).
+  //   vector 4 (one-record quota): sessions live as per-file records
+  //                         outside the monolith envelope, so one oversized
+  //                         session fails alone; unrelated saves keep
+  //                         working and previously-saved sessions stay
+  //                         byte-identical.
+  group('version safety (vector 2 — never wipe on version mismatch)', () {
+    test(
+      'a v1 envelope migrates: sessions and files restore, then persist '
+      'as v2 with sessions OUTSIDE the envelope',
+      () async {
+        final store = InMemoryFsRecordStore()
+          ..seed(
+            PersistentWebExecutionEnv.storageKey,
+            _v1Envelope(
+              dirs: ['/notes'],
+              files: {
+                '/sessions/s1.jsonl': '{"v":1}\n{"role":"user"}\n',
+                '/notes/a.txt': 'alpha',
+              },
+            ),
+          );
+
+        final env = await _restoreEnv(store);
+        expect(
+          (await env.readTextFile('/sessions/s1.jsonl')).getOrThrow(),
+          '{"v":1}\n{"role":"user"}\n',
+        );
+        expect((await env.readTextFile('/notes/a.txt')).getOrThrow(), 'alpha');
+
+        (await env.writeFile('/b.txt', 'beta')).getOrThrow();
+        await env.flush();
+
+        final stored = await store.loadAll();
+        final envelope = _envelopeOf(stored);
+        expect(envelope['version'], PersistentWebExecutionEnv.snapshotVersion);
+        // The session migrated out of the envelope into its own record.
+        expect(
+          _envelopeFilePaths(stored),
+          isNot(contains('/sessions/s1.jsonl')),
+        );
+        expect(
+          _envelopeFilePaths(stored),
+          containsAll(['/notes/a.txt', '/b.txt']),
+        );
+        expect(
+          stored['${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/s1.jsonl'],
+          _b64('{"v":1}\n{"role":"user"}\n'),
+        );
+        env.dispose();
+      },
+    );
+
+    test(
+      'a NEWER-version envelope is backed up, never wiped; session '
+      'records still restore',
+      () async {
+        final futureEnvelope = jsonEncode({
+          'version': PersistentWebExecutionEnv.snapshotVersion + 1,
+          'dirs': <String>[],
+          'files': <Object>[],
+          'futureField': 'must-not-be-destroyed',
+        });
+        final store = InMemoryFsRecordStore()
+          ..seed(PersistentWebExecutionEnv.storageKey, futureEnvelope)
+          ..seed(
+            '${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/s1.jsonl',
+            _b64('HISTORY'),
+          );
+
+        final env = await _restoreEnv(store);
+        // Version-independent session records survive the envelope bump.
+        expect(
+          (await env.readTextFile('/sessions/s1.jsonl')).getOrThrow(),
+          'HISTORY',
+        );
+        // The unreadable envelope is preserved under the backup key.
+        expect(
+          (await store.loadAll())[PersistentWebExecutionEnv.backupKey],
+          futureEnvelope,
+        );
+
+        // A subsequent save may replace the envelope — but the backup stays.
+        (await env.writeFile('/x.txt', 'x')).getOrThrow();
+        await env.flush();
+        final after = await store.loadAll();
+        expect(after[PersistentWebExecutionEnv.backupKey], futureEnvelope);
+        expect(
+          _envelopeOf(after)['version'],
+          PersistentWebExecutionEnv.snapshotVersion,
+        );
+        env.dispose();
+      },
+    );
+
+    test(
+      'a corrupt envelope is backed up and boot still restores session '
+      'records',
+      () async {
+        final store = InMemoryFsRecordStore()
+          ..seed(PersistentWebExecutionEnv.storageKey, '{not json at all')
+          ..seed(
+            '${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/old.jsonl',
+            _b64('OLD'),
+          );
+
+        final env = await _restoreEnv(store);
+        expect(
+          (await env.readTextFile('/sessions/old.jsonl')).getOrThrow(),
+          'OLD',
+        );
+        expect(
+          (await store.loadAll())[PersistentWebExecutionEnv.backupKey],
+          '{not json at all',
+        );
+        env.dispose();
+      },
+    );
+  });
+
+  group('session writes and unload (vector 3 — rides the #201 fix)', () {
+    test(
+      'a session mutation flushed by onPageUnload persists the session '
+      'record (sessions are included in the #201 unload path)',
+      () async {
+        final store = InMemoryFsRecordStore();
+        // A debounce the test never lets fire: only the unload hook may save.
+        final env = await _restoreEnv(
+          store,
+          persistDelay: const Duration(hours: 1),
+        );
+        (await env.writeFile('/sessions/s1.jsonl', '{"turn":1}\n'))
+            .getOrThrow();
+
+        await env.onPageUnload();
+
+        final stored = await store.loadAll();
+        expect(
+          stored,
+          contains(
+            '${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/s1.jsonl',
+          ),
+        );
+        env.dispose();
+
+        final reloaded = await _restoreEnv(store);
+        expect(
+          (await reloaded.readTextFile('/sessions/s1.jsonl')).getOrThrow(),
+          '{"turn":1}\n',
+        );
+        reloaded.dispose();
+      },
+    );
+
+    test(
+      'a session write survives a reload WITHOUT a flush or unload hook '
+      '(eager persist)',
+      () async {
+        final store = InMemoryFsRecordStore();
+        final env = await _restoreEnv(store);
+        (await env.writeFile('/sessions/s1.jsonl', '{"turn":1}\n'))
+            .getOrThrow();
+        // NO flush, NO unload: the page dies inside the 800 ms debounce
+        // window (mobile browsers may never fire beforeunload).
+        await _settle();
+
+        final reincarnated = await _restoreEnv(store);
+        expect(
+          (await reincarnated.readTextFile('/sessions/s1.jsonl')).getOrThrow(),
+          '{"turn":1}\n',
+        );
+        env.dispose();
+      },
+    );
+
+    test('rapid session appends each reach storage without a flush', () async {
+      final store = InMemoryFsRecordStore();
+      final env = await _restoreEnv(store);
+      (await env.appendFile('/sessions/s1.jsonl', 'a\n')).getOrThrow();
+      (await env.appendFile('/sessions/s1.jsonl', 'b\n')).getOrThrow();
+      (await env.appendFile('/sessions/s1.jsonl', 'c\n')).getOrThrow();
+      await _settle();
+
+      final reincarnated = await _restoreEnv(store);
+      expect(
+        (await reincarnated.readTextFile('/sessions/s1.jsonl')).getOrThrow(),
+        'a\nb\nc\n',
+      );
+      env.dispose();
+    });
+
+    test('non-session files keep the debounce (documented tradeoff)', () async {
+      final store = InMemoryFsRecordStore();
+      final env = await _restoreEnv(store);
+      (await env.writeFile('/scratch.txt', 'temp')).getOrThrow();
+      await _settle();
+      expect(
+        await store.loadAll(),
+        isNot(contains(PersistentWebExecutionEnv.storageKey)),
+      );
+      await env.flush();
+      expect(
+        await store.loadAll(),
+        contains(PersistentWebExecutionEnv.storageKey),
+      );
+      env.dispose();
+    });
+  });
+
+  group('per-session storage records (vector 1 eviction / vector 4 '
+      'monolith)', () {
+    test('sessions live outside the monolith envelope', () async {
+      final store = InMemoryFsRecordStore();
+      final env = await _restoreEnv(store);
+      (await env.writeFile('/sessions/s1.jsonl', 'S' * 2000)).getOrThrow();
+      (await env.writeFile('/app/data.txt', 'app-bytes')).getOrThrow();
+      await env.flush();
+
+      final stored = await store.loadAll();
+      expect(
+        stored.keys,
+        containsAll([
+          PersistentWebExecutionEnv.storageKey,
+          '${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/s1.jsonl',
+        ]),
+      );
+      // The envelope carries neither the session path nor its bytes.
+      expect(_envelopeFilePaths(stored), ['/app/data.txt']);
+      expect(
+        stored[PersistentWebExecutionEnv.storageKey]!,
+        isNot(contains(_b64('S' * 2000))),
+      );
+      env.dispose();
+    });
+
+    test('appending to one session rewrites ONLY that record', () async {
+      final store = _RecordingStore(InMemoryFsRecordStore());
+      final env = await _restoreEnv(store);
+      (await env.writeFile('/sessions/aaa.jsonl', 'one\n')).getOrThrow();
+      (await env.writeFile('/sessions/bbb.jsonl', 'two\n')).getOrThrow();
+      (await env.writeFile('/note.txt', 'n')).getOrThrow();
+      await env.flush();
+
+      store.changedKeys.clear();
+      (await env.appendFile('/sessions/aaa.jsonl', 'more\n')).getOrThrow();
+      await _settle();
+
+      expect(store.changedKeys, {
+        '${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/aaa.jsonl',
+      });
+      env.dispose();
+    });
+
+    test(
+      'deleting a session removes only its record; live records are '
+      'never evicted by a save',
+      () async {
+        final store = InMemoryFsRecordStore();
+        final env = await _restoreEnv(store);
+        (await env.writeFile('/sessions/aaa.jsonl', 'one\n')).getOrThrow();
+        (await env.writeFile('/sessions/bbb.jsonl', 'two\n')).getOrThrow();
+        await env.flush();
+        expect(
+          await store.loadAll(),
+          contains(
+            '${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/aaa.jsonl',
+          ),
+        );
+
+        (await env.remove('/sessions/aaa.jsonl')).getOrThrow();
+        await env.flush();
+
+        final stored = await store.loadAll();
+        expect(
+          stored,
+          isNot(
+            contains(
+              '${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/aaa.jsonl',
+            ),
+          ),
+        );
+        expect(
+          stored['${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/bbb.jsonl'],
+          _b64('two\n'),
+        );
+        expect(stored, contains(PersistentWebExecutionEnv.storageKey));
+        env.dispose();
+      },
+    );
+  });
+
+  group('quota isolation (vector 4 — one oversized session fails alone)', () {
+    test(
+      'an over-quota session does not block unrelated saves and leaves '
+      'previously-saved sessions byte-identical',
+      () async {
+        const aaaKey =
+            '${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/aaa.jsonl';
+        final store = InMemoryFsRecordStore(quotaBytes: 4000);
+
+        final env = await _restoreEnv(store);
+        (await env.writeFile('/sessions/aaa.jsonl', 'A' * 400)).getOrThrow();
+        await env.flush();
+        final savedA = (await store.loadAll())[aaaKey];
+        expect(savedA, isNotNull);
+
+        // The oversized session can never fit: its record write fails, the
+        // env stays dirty (surfaced, retried), but nothing else breaks.
+        (await env.writeFile('/sessions/big.jsonl', 'B' * 10000))
+            .getOrThrow();
+        await env.flush();
+        expect(env.hasPendingChanges, isTrue);
+
+        // Unrelated saves keep working: the envelope no longer carries
+        // session bytes, so it still fits.
+        (await env.writeFile('/note.txt', 'tiny')).getOrThrow();
+        await env.flush();
+
+        final stored = await store.loadAll();
+        // Vector 1/4: the previously-saved session was never dropped or
+        // rewritten by the failing saves.
+        expect(stored[aaaKey], savedA);
+        expect(_envelopeFilePaths(stored), contains('/note.txt'));
+        // Session-local damage: only the oversized record is missing.
+        expect(
+          stored,
+          isNot(
+            contains(
+              '${PersistentWebExecutionEnv.sessionKeyPrefix}/sessions/big.jsonl',
+            ),
+          ),
+        );
+
+        // After a restart: everything that fit survived.
+        final reincarnated = await _restoreEnv(store);
+        expect(
+          (await reincarnated.readTextFile('/sessions/aaa.jsonl'))
+              .getOrThrow(),
+          'A' * 400,
+        );
+        expect(
+          (await reincarnated.readTextFile('/note.txt')).getOrThrow(),
+          'tiny',
+        );
+        expect(
+          (await reincarnated.exists('/sessions/big.jsonl')).getOrThrow(),
+          isFalse,
+        );
+        env.dispose();
+      },
+    );
   });
 }
 
@@ -431,10 +808,120 @@ Future<String> _legacyWalkSnapshot(ExecutionEnv env) async {
   });
 }
 
-final class _ThrowingLoadStore implements FsSnapshotStore {
+final class _ThrowingLoadStore implements FsRecordStore {
   @override
-  Future<String?> load() => throw StateError('storage blocked');
+  Future<Map<String, String>> loadAll() => throw StateError('storage blocked');
 
   @override
-  Future<void> save(String snapshot) async {}
+  Future<void> save(String key, String value) async {}
+
+  @override
+  Future<void> remove(List<String> keys) async {}
+}
+
+/// Normalizes a snapshot JSON string (dirs sorted, files sorted by path)
+/// so the merged persisted view and the legacy async walk can be compared
+/// independent of traversal order.
+String _canonical(String snapshotJson) {
+  final decoded = jsonDecode(snapshotJson) as Map<String, dynamic>;
+  final dirs = [for (final d in decoded['dirs'] as List) d as String]
+    ..sort();
+  final files = [
+    for (final f in decoded['files'] as List) f as Map<String, dynamic>,
+  ]..sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
+  return jsonEncode({
+    'version': decoded['version'],
+    'dirs': dirs,
+    'files': files,
+  });
+}
+
+/// Reassembles the full-tree snapshot from the stored records: the
+/// envelope (non-session files) plus one record per session file
+/// (issue #237).
+Future<String> _mergedStoredSnapshot(InMemoryFsRecordStore store) async {
+  final all = await store.loadAll();
+  final envelope =
+      jsonDecode(all[PersistentWebExecutionEnv.storageKey]!)
+          as Map<String, dynamic>;
+  final files = [...envelope['files'] as List];
+  for (final entry in all.entries) {
+    if (!entry.key.startsWith(PersistentWebExecutionEnv.sessionKeyPrefix)) {
+      continue;
+    }
+    files.add({
+      'path': entry.key.substring(
+        PersistentWebExecutionEnv.sessionKeyPrefix.length,
+      ),
+      'data': entry.value,
+    });
+  }
+  return jsonEncode({
+    'version': envelope['version'],
+    'dirs': envelope['dirs'],
+    'files': files,
+  });
+}
+
+/// Drains the microtask queue plus a few macrotask turns so fire-and-forget
+/// persists (eager session saves, no fake timers involved) can settle
+/// WITHOUT calling flush — flush would mask the loss vector being pinned.
+Future<void> _settle() async {
+  for (var i = 0; i < 5; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+}
+
+String _b64(String text) => base64Encode(utf8.encode(text));
+
+/// The v1 (pre-#237) snapshot envelope: sessions inline, whole tree under
+/// one record — the shape existing users have stored in IndexedDB.
+String _v1Envelope({
+  Map<String, String> files = const {},
+  List<String> dirs = const [],
+}) => jsonEncode({
+  'version': 1,
+  'dirs': dirs,
+  'files': [
+    for (final e in files.entries)
+      {'path': e.key, 'data': _b64(e.value)},
+  ],
+});
+
+Map<String, dynamic> _envelopeOf(Map<String, String> stored) =>
+    jsonDecode(stored[PersistentWebExecutionEnv.storageKey]!)
+        as Map<String, dynamic>;
+
+List<String> _envelopeFilePaths(Map<String, String> stored) => [
+  for (final f in _envelopeOf(stored)['files'] as List)
+    (f as Map)['path'] as String,
+];
+
+/// An [FsRecordStore] wrapper that records which keys a save actually
+/// CHANGED (like FakeChrome's onChanged in the #236 pins): writing a
+/// record whose value is already stored is not a change.
+final class _RecordingStore implements FsRecordStore {
+  _RecordingStore(this._inner);
+
+  final InMemoryFsRecordStore _inner;
+  final Set<String> changedKeys = {};
+
+  @override
+  Future<Map<String, String>> loadAll() => _inner.loadAll();
+
+  @override
+  Future<void> save(String key, String value) async {
+    final before = await _inner.loadAll();
+    await _inner.save(key, value);
+    if (before[key] != value) changedKeys.add(key);
+  }
+
+  @override
+  Future<void> remove(List<String> keys) async {
+    final before = await _inner.loadAll();
+    await _inner.remove(keys);
+    for (final key in keys) {
+      if (before.containsKey(key)) changedKeys.add(key);
+    }
+  }
 }

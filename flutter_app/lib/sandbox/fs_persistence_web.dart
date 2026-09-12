@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:js_interop';
 
 import 'package:fa/sandbox/fs_persistence.dart';
@@ -10,27 +11,33 @@ import 'package:fa/sandbox/fs_persistence.dart';
 @JS()
 external JSBoolean get _fahFsLoadDefined;
 
-@JS('__fahFsLoad')
-external JSPromise _fahFsLoadJs();
+@JS('__fahFsLoadAll')
+external JSPromise _fahFsLoadAllJs();
 
 @JS('__fahFsSave')
-external JSPromise _fahFsSaveJs(String snapshot);
+external JSPromise _fahFsSaveJs(String key, String value);
 
-/// IndexedDB-backed [FsSnapshotStore] for the browser.
+@JS('__fahFsRemove')
+external JSPromise _fahFsRemoveJs(String keysJson);
+
+/// IndexedDB-backed [FsRecordStore] for the browser.
 ///
-/// IndexedDB is used instead of localStorage on purpose: snapshots carry
+/// IndexedDB is used instead of localStorage on purpose: records carry
 /// arbitrary uploaded binaries (base64 inside the JSON envelope), and
 /// localStorage is string-only, synchronous, and capped around 5 MB, while
 /// IndexedDB stores large payloads asynchronously under the real per-origin
-/// storage quota. The whole sandbox tree lives behind one key; each save
-/// replaces it, so the database never grows unboundedly across saves.
+/// storage quota. The store is a flat key→value surface (issue #237): the
+/// versioned JSON envelope of the non-session tree lives under one key and
+/// every session file is its own record, so an over-quota session write
+/// fails alone and never takes unrelated saves (or other sessions) down
+/// with it.
 ///
 /// The IndexedDB calls live in `web/fs_store.js`, referenced from
 /// `web/index.html` like the other externalized scripts. The helper used
 /// to be injected as an inline `<script>` (the same pattern `WebInterpreters`
 /// uses for its CDN runners), but MV3 extension pages forbid inline code in
 /// their CSP, which turned every save into a console error in the panel.
-final class IdbFsSnapshotStore implements FsSnapshotStore {
+final class IdbFsRecordStore implements FsRecordStore {
   static bool _scriptChecked = false;
 
   static void _ensureScript() {
@@ -48,18 +55,31 @@ final class IdbFsSnapshotStore implements FsSnapshotStore {
   }
 
   @override
-  Future<String?> load() async {
+  Future<Map<String, String>> loadAll() async {
     _ensureScript();
-    final result = await _fahFsLoadJs().toDart;
-    return result == null ? null : (result as JSString).toDart;
+    final result = await _fahFsLoadAllJs().toDart;
+    if (result == null) return const {};
+    final decoded = jsonDecode((result as JSString).toDart);
+    if (decoded is! Map) return const {};
+    return {
+      for (final entry in decoded.entries)
+        entry.key as String: entry.value as String,
+    };
   }
 
   @override
-  Future<void> save(String snapshot) async {
+  Future<void> save(String key, String value) async {
     _ensureScript();
-    await _fahFsSaveJs(snapshot).toDart;
+    await _fahFsSaveJs(key, value).toDart;
+  }
+
+  @override
+  Future<void> remove(List<String> keys) async {
+    if (keys.isEmpty) return;
+    _ensureScript();
+    await _fahFsRemoveJs(jsonEncode(keys)).toDart;
   }
 }
 
 /// Factory selected by the conditional import in `env_factory_stub.dart`.
-FsSnapshotStore createFsSnapshotStore() => IdbFsSnapshotStore();
+FsRecordStore createFsSnapshotStore() => IdbFsRecordStore();

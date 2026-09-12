@@ -11,7 +11,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/sandbox/fs_persistence.dart';
 
 /// An [ExecutionEnv] wrapper that mirrors the delegate's filesystem into an
-/// [FsSnapshotStore] so the web sandbox (an in-memory FS) survives page
+/// [FsRecordStore] so the web sandbox (an in-memory FS) survives page
 /// reloads.
 ///
 /// Mutations (`write*`, `appendFile`, `createDir`, `remove`) and every
@@ -30,12 +30,20 @@ final class PersistentWebExecutionEnv
     implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   PersistentWebExecutionEnv._(this._delegate, this._store, this._persistDelay);
 
-  /// Schema version of the JSON snapshot envelope. Snapshots with a
-  /// different version are ignored (clean start) rather than migrated.
+  /// Schema version of the JSON snapshot envelope.
   static const snapshotVersion = 1;
 
+  /// Storage key holding the versioned JSON envelope.
+  static const storageKey = 'sandbox';
+
+  /// Backup key an unreadable envelope is preserved under (issue #237).
+  static const backupKey = 'sandbox.bak';
+
+  /// Per-session-file record key prefix (issue #237).
+  static const sessionKeyPrefix = 'sandbox.session';
+
   final ExecutionEnv _delegate;
-  final FsSnapshotStore _store;
+  final FsRecordStore _store;
   final Duration _persistDelay;
 
   Timer? _timer;
@@ -46,7 +54,7 @@ final class PersistentWebExecutionEnv
   /// Creates the wrapper and replays the stored snapshot into [delegate].
   static Future<PersistentWebExecutionEnv> restore(
     ExecutionEnv delegate,
-    FsSnapshotStore store, {
+    FsRecordStore store, {
     Duration persistDelay = const Duration(milliseconds: 800),
   }) async {
     final env = PersistentWebExecutionEnv._(delegate, store, persistDelay);
@@ -57,7 +65,7 @@ final class PersistentWebExecutionEnv
   Future<void> _restore() async {
     String? raw;
     try {
-      raw = await _store.load();
+      raw = (await _store.loadAll())[storageKey];
     } on Object {
       return; // Storage unavailable (blocked, private mode) → clean start.
     }
@@ -159,7 +167,7 @@ final class PersistentWebExecutionEnv
     while (_dirty && !_disposed) {
       _dirty = false;
       try {
-        await _store.save(await _snapshot());
+        await _store.save(storageKey, await _snapshot());
       } on Object {
         // Save failed (quota, blocked storage): stay dirty so the next
         // mutation or flush retries; never break the sandbox over it.

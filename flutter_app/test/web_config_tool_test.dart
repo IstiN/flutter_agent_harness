@@ -16,7 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Mirrors the web wiring in `env_factory_stub.dart`: a MemoryShell-backed
 /// MemoryExecutionEnv wrapped for persistence — the browser-storage env.
-Future<PersistentWebExecutionEnv> _restoreWebEnv(FsSnapshotStore store) async {
+Future<PersistentWebExecutionEnv> _restoreWebEnv(FsRecordStore store) async {
   final shell = MemoryShell();
   final env = MemoryExecutionEnv(cwd: '/', shell: shell);
   shell.attach(env);
@@ -29,7 +29,7 @@ Future<PersistentWebExecutionEnv> _restoreWebEnv(FsSnapshotStore store) async {
 
 void main() {
   test('web config survives a page reload (persistence test)', () async {
-    final store = InMemoryFsSnapshotStore();
+    final store = InMemoryFsRecordStore();
     final before = await _restoreWebEnv(store);
     final beforeService = ConfigService(
       env: before,
@@ -66,7 +66,7 @@ void main() {
   });
 
   test('the config tool drives the web env — no shell anywhere', () async {
-    final store = InMemoryFsSnapshotStore();
+    final store = InMemoryFsRecordStore();
     final env = await _restoreWebEnv(store);
     final service = ConfigService(
       env: env,
@@ -98,7 +98,7 @@ void main() {
   });
 
   test('stdio-only keys answer not applicable on the web env', () async {
-    final store = InMemoryFsSnapshotStore();
+    final store = InMemoryFsRecordStore();
     final env = await _restoreWebEnv(store);
     final service = ConfigService(
       env: env,
@@ -142,7 +142,7 @@ void main() {
   test(
     'whole-section sets cannot smuggle stdio servers past the guard',
     () async {
-      final store = InMemoryFsSnapshotStore();
+      final store = InMemoryFsRecordStore();
       final env = await _restoreWebEnv(store);
       final service = ConfigService(
         env: env,
