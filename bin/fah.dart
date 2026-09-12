@@ -33,6 +33,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/cli/config_command.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
+import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart';
 import 'package:yaml/yaml.dart' as yaml;
@@ -1191,6 +1192,28 @@ Future<void> _runApp(List<String> args) async {
     );
   }
 
+  // `fa session list [--json] [--flat]` (issue #198) — the tree-grouped
+  // session listing, intercepted like trajectory: no agent boot.
+  final sessionList = parsed.sessionList;
+  if (sessionList != null) {
+    final io = _TerminalCliIO(headless: true);
+    final listEnv = LocalExecutionEnv(
+      cwd: parsed.cwd ?? Directory.current.path,
+    );
+    exit(
+      await runSessionListCliCommand(
+        write: io.write,
+        writeln: io.writeln,
+        env: listEnv,
+        sessionRoot:
+            parsed.sessionRoot ?? _defaultSessionRoot(),
+        cwd: listEnv.cwd,
+        json: sessionList.json,
+        flat: sessionList.flat,
+      ),
+    );
+  }
+
   // JS extension bootstrap (.fa/bootstrap.yaml, project then user): every
   // normal start applies it idempotently before the REPL or headless run;
   // E15 soft-fail lines go to stderr. FA_EXT_BOOTSTRAP_STRICT=1 makes a
@@ -2031,7 +2054,14 @@ Future<void> _runApp(List<String> args) async {
     );
   };
 
-  await persistConfig();
+  try {
+    await persistConfig();
+  } on ConfigException catch (error) {
+    // Issue #221 E3: an unparseable config.yaml makes the save refuse
+    // loudly instead of clobbering the file with defaults. Keep running
+    // with the in-memory config; the user's file stays untouched.
+    stderr.writeln('warning: config not saved: $error');
+  }
 
   Future<void> resetTerminalForShell() async {
     if (!stdin.hasTerminal) return;
