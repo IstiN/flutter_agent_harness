@@ -43,11 +43,46 @@ class FakeChatService extends ChangeNotifier implements FaChatService {
   @override
   String transcriptMarkdown() => '';
   @override
+  int? get historyAboveCount => 0;
+  @override
+  String? historyLoadError;
+  int loadOlderHistoryCalls = 0;
+  @override
+  Future<void> loadOlderHistory() async {
+    loadOlderHistoryCalls++;
+  }
+
+  @override
+  bool get historyLoading => false;
+  @override
+  int? get historyTotalCount => null;
+
+  /// Set by tests to drive the "Load newer" banner.
+  bool hasNewer = false;
+  @override
+  bool get historyHasNewer => hasNewer;
+  @override
+  int? get historyBelowCount => 0;
+  int loadNewerHistoryCalls = 0;
+  @override
+  Future<void> loadNewerHistory() async {
+    loadNewerHistoryCalls++;
+  }
+
+  @override
+  Future<bool> jumpToMessage(String messageId) async {
+    final index = int.tryParse(messageId.replaceFirst('msg-', ''));
+    return index != null && index >= 0 && index < messages.length;
+  }
+
+  @override
+  void Function(String messageId)? get scrollToMessageHandler => null;
+  @override
+  set scrollToMessageHandler(void Function(String messageId)? handler) {}
+  @override
   ApprovalPrompt? approvalPromptHandler;
   @override
   AskCallback? askHandler;
-  @override
-  void Function(String messageId)? scrollToMessageHandler;
   @override
   RequestSecretCallback? secretRequestHandler;
   @override

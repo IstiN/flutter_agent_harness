@@ -17,7 +17,7 @@ import 'execution_env.dart';
 /// Paths are normalized (`.`/`..` resolved, duplicate slashes collapsed) and
 /// relative paths are resolved against [cwd]. Writes and appends create
 /// parent directories automatically, matching the `dart:io` implementation.
-final class MemoryFileSystem implements FileSystem {
+final class MemoryFileSystem implements FileSystem, RangedReadFileSystem {
   /// Creates a [MemoryFileSystem] rooted at [cwd] (default `/`).
   MemoryFileSystem({this.cwd = '/'}) {
     _dirs.add('/');
@@ -97,6 +97,21 @@ final class MemoryFileSystem implements FileSystem {
     final result = await _readFile(path);
     if (result.isErr) return Err(result.errorOrNull!);
     return Ok(Uint8List.fromList(result.valueOrNull!.bytes));
+  }
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) async {
+    final result = await _readFile(path);
+    if (result.isErr) return Err(result.errorOrNull!);
+    final bytes = result.valueOrNull!.bytes;
+    final from = start.clamp(0, bytes.length);
+    final to = end.clamp(from, bytes.length);
+    if (to <= from) return Ok(Uint8List(0));
+    return Ok(Uint8List.fromList(bytes.sublist(from, to)));
   }
 
   @override

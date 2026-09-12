@@ -21,6 +21,32 @@ import 'trajectory_toolbar.dart';
 typedef TrajectoryTimelineBuilder =
     Widget Function(BuildContext context, TrajectoryController controller);
 
+/// What the trajectory's projected window covers (issue #135 AC11):
+/// the ledger marks its WINDOWED scope — a partial projection is
+/// never presented as the complete trajectory.
+final class TrajectoryProjectionScope {
+  /// Creates a scope from the session's window counters; null counts
+  /// are unknown (edges not walked yet).
+  const TrajectoryProjectionScope({this.above, this.below, this.total});
+
+  /// Records above the resident window (earlier history).
+  final int? above;
+
+  /// Records below the resident window (later history slid out).
+  final int? below;
+
+  /// Total records in the session branch; null while unmeasured.
+  final int? total;
+
+  /// Records inside the window right now.
+  int get visible => total == null
+      ? 0
+      : (total! - (above ?? 0) - (below ?? 0)).clamp(0, total!);
+
+  /// Whether the projection is partial (either side outside the window).
+  bool get isPartial => (above ?? 0) > 0 || (below ?? 0) > 0;
+}
+
 /// Builds the ledger table; defaults to the real [TrajectoryTable] wired
 /// to the details sheet. Tests and hosts can inject a replacement.
 typedef TrajectoryTableBuilder =
@@ -39,7 +65,13 @@ class TrajectoryView extends StatefulWidget {
     required this.controller,
     this.tableBuilder,
     this.timelineBuilder,
+    this.onRecordActivate,
   });
+
+  /// Jump-in-chat for a ledger record (issue #135 AC6): when non-null,
+  /// the details sheet gains a "Jump in chat" action that pages the
+  /// transcript to this record (host-supplied; null hides the action).
+  final ValueChanged<TrajectoryRecord>? onRecordActivate;
 
   /// The controller holding the snapshot and interaction state.
   final TrajectoryController controller;
@@ -97,6 +129,9 @@ class _TrajectoryViewState extends State<TrajectoryView> {
                   context,
                   record: record,
                   snapshot: controller.snapshot,
+                  onJumpToChat: widget.onRecordActivate == null
+                      ? null
+                      : () => widget.onRecordActivate!(record),
                 ),
               );
     return Semantics(
@@ -124,13 +159,64 @@ class _TrajectoryViewState extends State<TrajectoryView> {
 /// hides the header's close affordance (embedded hosts).
 class TrajectoryBody extends StatelessWidget {
   /// Creates the shell body bound to [controller].
-  const TrajectoryBody({super.key, required this.controller, this.onClose});
+  const TrajectoryBody({
+    super.key,
+    required this.controller,
+    this.onClose,
+    this.scope,
+    this.onRecordActivate,
+  });
 
   /// The controller holding the snapshot and interaction state.
   final TrajectoryController controller;
 
   /// Pops the surface (route close / switch back to chat); null hides it.
   final VoidCallback? onClose;
+
+  /// What the projected window covers (issue #135 AC11); null or
+  /// complete renders no scope notice.
+  final TrajectoryProjectionScope? scope;
+
+  /// Jump-in-chat for a ledger record (issue #135 AC6); null hides it.
+  final ValueChanged<TrajectoryRecord>? onRecordActivate;
+
+  /// The ledger honesty notice (AC11): the trajectory projects the
+  /// RESIDENT window — a partial window is never presented as
+  /// complete.
+  Widget _scopeNotice(BuildContext context) {
+    final scope = this.scope;
+    if (scope == null || !scope.isPartial) return const SizedBox.shrink();
+    final strings = TrajectoryStrings.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Row(
+        children: [
+          Icon(
+            Icons.filter_alt_outlined,
+            size: 14,
+            color: Theme.of(context).hintColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              scope.total == null
+                  ? strings.historyScopeWindowed(
+                      scope.above ?? 0,
+                      scope.below ?? 0,
+                    )
+                  : '${strings.historyScopeWindowed(scope.above ?? 0, scope.below ?? 0)}'
+                        ' · ${strings.historyScopeShownOf(scope.visible, scope.total!)}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).hintColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -139,6 +225,7 @@ class TrajectoryBody extends StatelessWidget {
     // opening the modal sheet.
     final feed = TrajectoryView(
       controller: controller,
+      onRecordActivate: onRecordActivate,
       tableBuilder: isWide
           ? (context, controller) => TrajectoryTable(controller: controller)
           : null,
@@ -146,6 +233,7 @@ class TrajectoryBody extends StatelessWidget {
     return Column(
       children: [
         TrajectoryHeader(controller: controller, onClose: onClose),
+        _scopeNotice(context),
         const Divider(height: 1),
         Expanded(
           child: isWide
@@ -156,7 +244,10 @@ class TrajectoryBody extends StatelessWidget {
                     const VerticalDivider(width: 1),
                     Expanded(
                       flex: 45,
-                      child: TrajectoryDetailsPane(controller: controller),
+                      child: TrajectoryDetailsPane(
+                        controller: controller,
+                        onRecordActivate: onRecordActivate,
+                      ),
                     ),
                   ],
                 )
@@ -388,10 +479,18 @@ class _TrajectorySearchField extends StatelessWidget {
 /// while nothing is selected.
 class TrajectoryDetailsPane extends StatelessWidget {
   /// Creates the pane bound to [controller].
-  const TrajectoryDetailsPane({super.key, required this.controller});
+  const TrajectoryDetailsPane({
+    super.key,
+    required this.controller,
+    this.onRecordActivate,
+  });
 
   /// The controller whose selected record this pane renders.
   final TrajectoryController controller;
+
+  /// Jump-in-chat for the selected record (issue #135 AC6); null hides
+  /// the action.
+  final ValueChanged<TrajectoryRecord>? onRecordActivate;
 
   @override
   Widget build(BuildContext context) {
@@ -416,6 +515,7 @@ class TrajectoryDetailsPane extends StatelessWidget {
           );
         }
         final tabs = trajectoryDetailTabs(record, controller.snapshot, strings);
+        final selected = record;
         return DefaultTabController(
           key: ValueKey(record.recordId),
           length: tabs.length,
@@ -425,6 +525,15 @@ class TrajectoryDetailsPane extends StatelessWidget {
                 isScrollable: true,
                 tabs: [for (final tab in tabs) Tab(text: tab.label)],
               ),
+              if (onRecordActivate != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.gps_fixed, size: 16),
+                    label: Text(strings.detailsJumpToChat),
+                    onPressed: () => onRecordActivate!(selected),
+                  ),
+                ),
               Expanded(
                 child: TabBarView(
                   children: [for (final tab in tabs) tab.build(context)],

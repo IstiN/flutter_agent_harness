@@ -302,6 +302,28 @@ jobs:
           sys.exit(0 if float(pct) < 1.0 else 1)
           EOF
 
+      # Issue #135 AC1 evidence: a realistic ~300 MB / 100k-record
+      # session (3 branches, image blocks, compaction checkpoints)
+      # opens through the windowed storage in bounded time and memory.
+      # The timing numbers land in the job log; the bounds assertions
+      # make regressions (an accidental full read at open) fail here.
+      - name: Windowed-open scale evidence (issue #135 AC1)
+        run: |
+          dart run scripts/gen_session_fixture.dart \
+            --records 100000 --out /tmp/big-session.jsonl \
+            --branches 3 --images --compactions --measure | tee /tmp/ac1.log
+          python3 - <<'EOF'
+          import re, sys
+          log = open('/tmp/ac1.log').read()
+          total = int(re.search(r'countRecords: (\d+)', log).group(1))
+          resident = int(re.search(r'open\+tail: (\d+)', log).group(1))
+          assert total >= 100000, f'unexpected record count {total}'
+          # The resident window after open is the tail chunk (200) —
+          # a full read at open would report ~100k here.
+          assert resident <= 1000, f'open read too much: {resident}'
+          print(f'AC1 bounds OK: {total} records, {resident} resident at open')
+          EOF
+
   flutter-tests:
     name: Flutter app tests (ubuntu)
     runs-on: ubuntu-latest
@@ -397,7 +419,6 @@ jobs:
             fi
           done
           echo "Quality gate OK"
-
   integration:
     name: Integration tests (LLM)
     runs-on: ubuntu-latest

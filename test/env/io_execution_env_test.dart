@@ -92,6 +92,36 @@ void main() {
       expect(result.errorOrNull?.path, '${tempDir.path}/nope.txt');
     });
 
+    test('readRange reads a byte slice from real disk', () async {
+      final bytes = Uint8List.fromList(List.generate(10, (i) => i));
+      await fs.writeBinaryFile('r.bin', bytes);
+      expect((await fs.readRange('r.bin', 2, 5)).getOrThrow(),
+          Uint8List.fromList([2, 3, 4]));
+    });
+
+    test('readRange clamps end past EOF and start at EOF', () async {
+      final bytes = Uint8List.fromList([1, 2, 3]);
+      await fs.writeBinaryFile('r.bin', bytes);
+      expect(
+        (await fs.readRange('r.bin', 1, 999)).getOrThrow(),
+        Uint8List.fromList([2, 3]),
+      );
+      expect((await fs.readRange('r.bin', 3, 999)).getOrThrow(), isEmpty);
+      expect((await fs.readRange('r.bin', 99, 999)).getOrThrow(), isEmpty);
+    });
+
+    test('readRange with inverted range returns empty without I/O', () async {
+      await fs.writeFile('r.bin', 'abc');
+      expect((await fs.readRange('r.bin', 2, 2)).getOrThrow(), isEmpty);
+      expect((await fs.readRange('r.bin', 3, 1)).getOrThrow(), isEmpty);
+    });
+
+    test('readRange on a missing file maps to notFound', () async {
+      final result = await fs.readRange('nope.bin', 0, 10);
+      expect(result.errorOrNull?.code, FileErrorCode.notFound);
+      expect(result.errorOrNull?.path, '${tempDir.path}/nope.bin');
+    });
+
     test('absolutePath resolves relatives against cwd', () async {
       expect(
         (await fs.absolutePath('x.txt')).getOrThrow(),
