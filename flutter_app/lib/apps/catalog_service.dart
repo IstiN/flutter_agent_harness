@@ -24,6 +24,25 @@ const String kDefaultWidgetsRawBaseUrl =
 /// How long a fetched catalog stays trusted before the next fetch revalidates.
 const Duration kCatalogCacheTtl = Duration(hours: 6);
 
+/// Joins a catalog [base] URL with a relative [assetPath], collapsing
+/// redundant slashes so exactly one separates them — regardless of whether
+/// [base] ends with `/` or [assetPath] starts with one. Single source of
+/// truth for every release-asset URL (catalog.json, per-widget zips):
+/// the historical bug appended `/catalog.json` to [kDefaultWidgetsBaseUrl],
+/// which already ends with `download/`, producing
+/// `.../releases/latest/download//catalog.json` (double slash).
+Uri catalogAssetUri(String base, String assetPath) {
+  var normalizedBase = base;
+  while (normalizedBase.endsWith('/')) {
+    normalizedBase = normalizedBase.substring(0, normalizedBase.length - 1);
+  }
+  var normalizedPath = assetPath;
+  while (normalizedPath.startsWith('/')) {
+    normalizedPath = normalizedPath.substring(1);
+  }
+  return Uri.parse('$normalizedBase/$normalizedPath');
+}
+
 /// Everything that can go wrong while consuming the widgets catalog:
 /// fetch/decode failures, archive hash mismatches, hostile zip layouts.
 class CatalogError implements Exception {
@@ -116,7 +135,7 @@ class CatalogEntry {
   final int zipSizeBytes;
 
   /// Gallery download URL for this entry's archive.
-  Uri get downloadUrl => Uri.parse('$kDefaultWidgetsBaseUrl$zipFile');
+  Uri get downloadUrl => catalogAssetUri(kDefaultWidgetsBaseUrl, zipFile);
 }
 
 /// The outcome of a catalog fetch: entries plus how trustworthy they are.
@@ -184,7 +203,9 @@ class CatalogService {
       }
     }
     try {
-      final response = await _client.get(Uri.parse('$_baseUrl/catalog.json'));
+      final response = await _client.get(
+        catalogAssetUri(_baseUrl, 'catalog.json'),
+      );
       if (response.statusCode != 200) {
         throw CatalogError('catalog HTTP ${response.statusCode}');
       }
