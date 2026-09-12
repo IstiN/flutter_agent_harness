@@ -1768,8 +1768,7 @@ class AgentCli {
   /// unreadable.
   Future<String> _sessionPickerLabel(SessionMetadata metadata) async {
     try {
-      final session = await _repo.open(metadata);
-      return await session.getSessionName() ?? metadata.id;
+      return await _sessionNameQuick(metadata) ?? metadata.id;
     } on Object {
       return '${metadata.id} (unreadable)';
     }
@@ -1922,6 +1921,15 @@ class AgentCli {
     }
   }
 
+  /// Label-only session-name read (issue #199): the repo's backward tail
+  /// scan when the concrete repo supports it, else the legacy full open.
+  /// Never keeps the opened [Session] — switching paths open their own.
+  Future<String?> _sessionNameQuick(SessionMetadata metadata) async {
+    final repo = _repo;
+    if (repo is JsonlSessionRepo) return repo.sessionNameQuick(metadata);
+    return (await _repo.open(metadata)).getSessionName();
+  }
+
   /// Every session whose id IS [name] (exact id short-circuits — ids are
   /// unique) or whose session_info name equals it, across every workspace
   /// (the exit hint prints `fa --session '<id>'` for unnamed sessions, so
@@ -1933,8 +1941,7 @@ class AgentCli {
     final matches = <SessionMetadata>[];
     for (final metadata in sessions) {
       if (metadata.id == name.trim()) return [metadata];
-      final session = await _repo.open(metadata);
-      final sessionName = await session.getSessionName();
+      final sessionName = await _sessionNameQuick(metadata);
       if (sessionName != null && sessionName.trim() == name.trim()) {
         matches.add(metadata);
       }

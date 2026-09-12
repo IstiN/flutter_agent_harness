@@ -175,8 +175,7 @@ extension on AgentCli {
     io.writeln('sessions:');
     for (var i = 0; i < sessions.length; i++) {
       final metadata = sessions[i];
-      final session = await _repo.open(metadata);
-      final sessionName = await session.getSessionName();
+      final sessionName = await _sessionNameQuick(metadata);
       final label = sessionName ?? metadata.id;
       final marker = current?.path == metadata.path ? '*' : ' ';
       final folder = _pathBasename(metadata.cwd);

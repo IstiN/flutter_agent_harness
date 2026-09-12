@@ -359,6 +359,31 @@ jobs:
           print(f'AC1 bounds OK: {total} records, {resident} resident at open')
           EOF
 
+      # Issue #199 evidence: a FULL open of the same fixture through the
+      # isolate parse executor matches the inline default (parity asserted
+      # in-process), and listing 500 small sessions through the repo's
+      # bounded-parallel list stays fast. Bounds are generous CI guards;
+      # the real numbers land in the job log for trend tracking.
+      - name: Isolate parse + parallel listing evidence (issue #199)
+        run: |
+          dart run scripts/gen_session_fixture.dart \
+            --records 100000 --out /tmp/big-session.jsonl \
+            --branches 3 --images --compactions --measure | tee /tmp/ac199.log
+          dart run scripts/gen_session_fixture.dart \
+            --list-sessions 500 --out /tmp/sessions-199 | tee /tmp/ac199-list.log
+          python3 - <<'EOF'
+          import re, sys
+          log = open('/tmp/ac199.log').read()
+          isolate = int(re.search(r'full-open isolate: (\d+)', log).group(1))
+          assert isolate < 120000, f'isolate full-open too slow: {isolate} ms'
+          assert 'isolate parity: OK' in log, 'isolate/inline parity mismatch'
+          llog = open('/tmp/ac199-list.log').read()
+          listed = int(re.search(r'list 500 sessions: (\d+)', llog).group(1))
+          assert listed < 5000, f'list of 500 sessions too slow: {listed} ms'
+          print(f'AC199 OK: isolate full-open {isolate} ms, '
+                f'list 500 sessions {listed} ms')
+          EOF
+
   flutter-tests:
     name: Flutter app tests (ubuntu)
     runs-on: ubuntu-latest
