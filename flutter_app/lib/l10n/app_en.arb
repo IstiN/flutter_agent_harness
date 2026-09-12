@@ -499,6 +499,14 @@
   "sidebarRenameSessionTooltip": "Rename session",
   "sidebarRetry": "Retry",
   "sidebarSessionTitle": "session {id}",
+  "sidebarSearchHint": "Search sessions",
+  "sidebarSearchClearTooltip": "Clear search",
+  "sidebarSearchNoMatches": "No sessions match \"{query}\"",
+  "@sidebarSearchNoMatches": {
+    "placeholders": {
+      "query": {}
+    }
+  },
   "sidebarSessionsHeader": "Sessions",
   "tjsCacheTitle": "Downloaded models (transformers.js)",
   "tjsCacheWebOnly": "On-device (transformers.js) models are available in the web build only.",

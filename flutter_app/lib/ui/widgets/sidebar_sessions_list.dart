@@ -1,11 +1,15 @@
+import 'dart:async';
+
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show SessionMetadata;
 import 'package:path/path.dart' as p;
@@ -87,8 +91,26 @@ class SidebarSessionsList extends StatefulWidget {
 }
 
 class _SidebarSessionsListState extends State<SidebarSessionsList> {
+  /// The applied (debounced) search query — a transient lookup over the
+  /// in-memory projection, never persisted; '' restores the full list.
+  String _query = '';
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+
   void _onChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// Cmd/Ctrl+F focuses the search field while the expanded list is on
+  /// screen (issue #200). Registered globally — focus may sit anywhere in
+  /// the shell (the composer, a panel) — and never consumes the event.
+  bool _onKey(KeyEvent event) {
+    if (widget.collapsed || event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.keyF) return false;
+    final mods = HardwareKeyboard.instance;
+    if (!mods.isMetaPressed && !mods.isControlPressed) return false;
+    _searchFocus.requestFocus();
+    return false;
   }
 
   @override
@@ -96,6 +118,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     super.initState();
     widget.manager.addListener(_onChanged);
     widget.sessionNamesStore?.addListener(_onChanged);
+    HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   @override
@@ -115,9 +138,20 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     widget.manager.removeListener(_onChanged);
     widget.sessionNamesStore?.removeListener(_onChanged);
+    _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
+  }
+
+  /// The empty state's Clear affordance (E1): reset the query and the
+  /// field in one tap — the full list restores instantly.
+  void _clearSearch() {
+    setState(() => _query = '');
+    _searchController.clear();
+    _searchFocus.unfocus();
   }
 
   String _titleFor(_SessionEntry entry) {
@@ -180,10 +214,19 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       // Creation time never changes: clicking moves only the dot, a new
       // session still lands on top.
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    // The click highlights the row IN PLACE (selection =
-    // selectedSessionId); the list never reorders under the finger.
+    // Live search (issue #200): a pure filter over the in-memory
+    // projection — zero I/O. Name matches rank first; a blank query
+    // keeps the list exactly as it was.
+    final visible = rankSessionEntries(entries, _query, (e) {
+      return (
+        title: _titleFor(e),
+        id: e.id,
+        cwd: e.cwd,
+        updatedAt: e.lastUpdatedAt,
+      );
+    });
     final grouped = _groupEntriesByFolder(
-      entries,
+      visible,
       context.l10n.sessionFolderPersonal,
     );
     return Column(
@@ -214,9 +257,29 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
             ],
           ),
         ),
+        // The search row sits pinned between the header and the list —
+        // it does not scroll away.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+          child: SessionSearchField(
+            controller: _searchController,
+            focusNode: _searchFocus,
+            onQueryChanged: (q) {
+              if (q != _query) setState(() => _query = q);
+            },
+          ),
+        ),
         Expanded(
           child: grouped.isEmpty
-              ? const SizedBox.shrink()
+              ? (_query.trim().isEmpty
+                    ? const SizedBox.shrink()
+                    // E1: no matches → say so, offer a way out.
+                    : sessionSearchEmptyState(
+                        context,
+                        colors,
+                        _query.trim(),
+                        _clearSearch,
+                      ))
               : ListView(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   children: [

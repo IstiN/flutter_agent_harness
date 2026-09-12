@@ -42,6 +42,7 @@ import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
 
@@ -193,6 +194,18 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// Persisted sessions with an open in flight (drawer double-tap guard).
   final Set<String> _opening = {};
 
+  /// The drawer's applied (debounced) search query — a transient lookup,
+  /// reset when the drawer closes (reopening shows the full list).
+  String _drawerQuery = '';
+  final TextEditingController _drawerSearchController = TextEditingController();
+
+  /// The empty state's Clear affordance: reset the query and the field —
+  /// the full list restores instantly.
+  void _clearDrawerSearch() {
+    setState(() => _drawerQuery = '');
+    _drawerSearchController.clear();
+  }
+
   /// The session the user just tapped (an open is in flight): its row
   /// highlights AND sorts to the top immediately — the SAME rule the wide
   /// sidebar applies. Cleared once the manager's live id / active slot
@@ -315,6 +328,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
     _persistedTimer?.cancel();
     _panelAnim.dispose();
     _drawerAnim.dispose();
+    _drawerSearchController.dispose();
     super.dispose();
   }
 
@@ -510,6 +524,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   Future<void> _toggleDrawer() {
     if (_drawerAnim.value > 0.5) {
+      // The search is a transient lookup: closing the drawer drops it, so
+      // reopening always shows the full list.
+      _drawerQuery = '';
+      _drawerSearchController.clear();
       return _drawerAnim.animateTo(
         0,
         duration: const Duration(milliseconds: 200),
@@ -1022,11 +1040,23 @@ class SessionChatSheetState extends State<SessionChatSheet>
           // activity sort teleported the clicked row to the top on every
           // switch (archive mtime bump + fresh slot stamp).
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // Live search over the drawer's rows (issue #200): a pure filter on
+    // the in-memory projection, name matches rank first.
+    final visible = rankSessionEntries(entries, _drawerQuery, (e) {
+      return (
+        title:
+            _namesStore?.titleFor(e.id) ??
+            derivedSessionTitle(context, id: e.id, createdAt: e.createdAt),
+        id: e.id,
+        cwd: e.cwd,
+        updatedAt: e.lastUpdatedAt,
+      );
+    });
     // Folder-grouped rows (headers + tiles): the sessions of one project
     // stay together under the folder basename, most recently active
     // project first (entries are activity-sorted, groups follow).
     final drawerRows = <_DrawerRow>[
-      for (final group in _groupDrawerEntries(entries, l10n)) ...[
+      for (final group in _groupDrawerEntries(visible, l10n)) ...[
         _DrawerRow.header(group.label),
         for (final e in group.entries) _DrawerRow.tile(e),
       ],
@@ -1086,6 +1116,15 @@ class SessionChatSheetState extends State<SessionChatSheet>
               title: Text(l10n.sidebarNewSessionTooltip),
               onTap: () => unawaited(_newSessionFromDrawer()),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              child: SessionSearchField(
+                controller: _drawerSearchController,
+                onQueryChanged: (q) {
+                  if (q != _drawerQuery) setState(() => _drawerQuery = q);
+                },
+              ),
+            ),
             Divider(height: 1, color: colors.border),
             Expanded(
               child: entries.isEmpty
@@ -1100,6 +1139,15 @@ class SessionChatSheetState extends State<SessionChatSheet>
                           ).textTheme.bodySmall?.copyWith(color: colors.dim),
                         ),
                       ),
+                    )
+                  : drawerRows.isEmpty
+                  // E1: the query matched nothing — say so, offer a
+                  // way out; never a blank void.
+                  ? sessionSearchEmptyState(
+                      context,
+                      colors,
+                      _drawerQuery.trim(),
+                      _clearDrawerSearch,
                     )
                   : ListView.builder(
                       // The drawer slides out UNDER the input bar: pad the

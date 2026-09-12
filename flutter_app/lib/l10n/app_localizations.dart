@@ -2786,6 +2786,24 @@ abstract class AppLocalizations {
   /// **'session {id}'**
   String sidebarSessionTitle(Object id);
 
+  /// No description provided for @sidebarSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search sessions'**
+  String get sidebarSearchHint;
+
+  /// No description provided for @sidebarSearchClearTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear search'**
+  String get sidebarSearchClearTooltip;
+
+  /// No description provided for @sidebarSearchNoMatches.
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions match \"{query}\"'**
+  String sidebarSearchNoMatches(Object query);
+
   /// No description provided for @sidebarSessionsHeader.
   ///
   /// In en, this message translates to:

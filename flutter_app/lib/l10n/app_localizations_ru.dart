@@ -1555,6 +1555,17 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get sidebarSearchHint => 'Поиск по сессиям';
+
+  @override
+  String get sidebarSearchClearTooltip => 'Очистить поиск';
+
+  @override
+  String sidebarSearchNoMatches(Object query) {
+    return 'Нет сессий по запросу «$query»';
+  }
+
+  @override
   String get sidebarSessionsHeader => 'Сессии';
 
   @override

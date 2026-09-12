@@ -76,6 +76,8 @@ const _coverage = <String, String>{
       'test/golden/dynamic_messages_golden_test.dart',
   'lib/ui/widgets/downloaded_models_quick_start.dart':
       'test/golden/sections_golden_test.dart',
+  'lib/ui/widgets/session_search_field.dart':
+      'test/golden/session_search_golden_test.dart',
   'lib/gemma/gemma_cache_section.dart': 'test/golden/sections_golden_test.dart',
   'lib/webllm/webllm_cache_section.dart':
       'test/golden/sections_golden_test.dart',

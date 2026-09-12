@@ -496,6 +496,14 @@
   "sidebarRenameSessionTooltip": "Переименовать сессию",
   "sidebarRetry": "Повторить",
   "sidebarSessionTitle": "сессия {id}",
+  "sidebarSearchHint": "Поиск по сессиям",
+  "sidebarSearchClearTooltip": "Очистить поиск",
+  "sidebarSearchNoMatches": "Нет сессий по запросу «{query}»",
+  "@sidebarSearchNoMatches": {
+    "placeholders": {
+      "query": {}
+    }
+  },
   "sidebarSessionsHeader": "Сессии",
   "tjsCacheTitle": "Загруженные модели (transformers.js)",
   "tjsCacheWebOnly": "On-device модели (transformers.js) доступны только в веб-сборке.",

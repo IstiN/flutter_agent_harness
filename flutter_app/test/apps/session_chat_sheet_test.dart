@@ -12,6 +12,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa_ui/fa_ui.dart' show FaAttachGlyph, TrajectoryScreen;
@@ -955,10 +956,10 @@ void main() {
     /// finalized records (runAsync: the fake provider stream completes on
     /// the real event loop, not on FakeAsync pumps).
     Future<void> driveTurn(
-        WidgetTester tester,
-        AgentService service,
-        String text,
-      ) async {
+      WidgetTester tester,
+      AgentService service,
+      String text,
+    ) async {
       await tester.runAsync(() async {
         await service.initialize();
         await service.sendText(text);
@@ -969,9 +970,9 @@ void main() {
     /// Opens the panel and pushes the trajectory page; settles the
     /// controller's snapshot debounce.
     Future<AgentService> openTrajectoryPage(
-        WidgetTester tester,
-        _Harness harness,
-      ) async {
+      WidgetTester tester,
+      _Harness harness,
+    ) async {
       await _openPanelViaDrawer(tester, 'sess-b');
       await tester.tap(find.byKey(trajectoryButtonKey));
       await tester.pump(); // route push
@@ -980,10 +981,15 @@ void main() {
     }
 
     testWidgets('the panel header timeline button pushes the ledger page '
-        'rendering the session through the shared fa_ui widgets (AC1)',
-        (tester) async {
+        'rendering the session through the shared fa_ui widgets (AC1)', (
+      tester,
+    ) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       await openTrajectoryPage(tester, harness);
 
       expect(find.byType(TrajectoryScreen), findsOneWidget);
@@ -1022,7 +1028,11 @@ void main() {
     testWidgets('a turn landing while the page stays open appears without '
         'manual refresh (AC2)', (tester) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       final service = await openTrajectoryPage(tester, harness);
 
       await driveTurn(tester, service, 'check the logs');
@@ -1041,7 +1051,11 @@ void main() {
     testWidgets('a ledger row tap opens the details sheet; back returns to '
         'the page, back again to the sheet (AC3)', (tester) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       await openTrajectoryPage(tester, harness);
 
       await tester.tap(
@@ -1072,7 +1086,11 @@ void main() {
     testWidgets('a session switch while the page stays open follows the '
         'newly active session (E2: follow, pinned)', (tester) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       await driveTurn(tester, harness.services['sess-a']!, 'review the diff');
       await openTrajectoryPage(tester, harness);
       expect(
@@ -1103,6 +1121,89 @@ void main() {
         findsNothing,
       );
       await tester.pump(const Duration(seconds: 4));
+    });
+  });
+  group('sessions drawer search (issue #200)', () {
+    Future<void> typeQuery(WidgetTester tester, String text) async {
+      await tester.enterText(find.byType(SessionSearchField), text);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    testWidgets('the drawer filters by id and hides non-matches; clear '
+        'restores (AC1, AC4)', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+
+      await typeQuery(tester, 'sess-a');
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsNothing,
+      );
+
+      await tester.tap(find.byIcon(Icons.cancel));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('no matches shows the empty state (E1)', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+
+      await typeQuery(tester, 'zzz');
+      expect(find.text('No sessions match "zzz"'), findsOneWidget);
+      expect(find.text('Clear'), findsOneWidget);
+      await tester.tap(find.text('Clear'));
+      await tester.pumpAndSettle();
+      expect(find.text('No sessions match "zzz"'), findsNothing);
+    });
+
+    testWidgets('closing the drawer drops the query: reopening shows the '
+        'full list', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+      await typeQuery(tester, 'sess-a');
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsNothing,
+      );
+
+      // Scrim tap closes the drawer.
+      await tester.tapAt(const Offset(700, 100));
+      await tester.pumpAndSettle();
+      await _openDrawer(tester);
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the keyboard does not overflow the 320pt drawer '
+        '(AC4)', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+      tester.view.viewInsets = FakeViewPadding(bottom: 336);
+      await tester.pump();
+      await typeQuery(tester, 'sess');
+
+      expect(tester.takeException(), isNull);
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
+        findsOneWidget,
+      );
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pump();
     });
   });
 }

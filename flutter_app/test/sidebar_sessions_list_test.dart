@@ -11,7 +11,9 @@ import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -365,7 +367,15 @@ void main() {
     await tester.tap(find.text('Rename session'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'My chat');
+    await tester.enterText(
+      // Scope to the dialog: the sidebar itself now hosts the search
+      // field (issue #200), so an unscoped TextField finder is ambiguous.
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'My chat',
+    );
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
@@ -615,5 +625,206 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened, isNotNull);
     expect(opened.id, older.id);
+  });
+
+  group('session search (issue #200)', () {
+    EditableText editableOf(WidgetTester tester) => tester.widget<EditableText>(
+      find.descendant(
+        of: find.byType(SessionSearchField),
+        matching: find.byType(EditableText),
+      ),
+    );
+
+    Future<void> typeQuery(WidgetTester tester, String text) async {
+      await tester.enterText(find.byType(SessionSearchField), text);
+      // The filter is debounced (~150 ms) — one idle pump changes nothing.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    testWidgets('filters as-you-type: non-matches hide, clear restores '
+        '(AC1, IT-sidebar)', (tester) async {
+      final goal = await persistSession(
+        userText: 'goal work',
+        cwd: '/work/goal_builder',
+      );
+      final other = await persistSession(userText: 'other work');
+
+      await tester.pumpWidget(
+        harness(
+          persisted: [goal, other],
+          sessionInfoNames: {goal.id: 'goal_builder', other.id: 'Chores'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Chores'), findsOneWidget);
+
+      await typeQuery(tester, 'goal');
+      // Both the tile title AND its folder group header read
+      // 'goal_builder'; the non-matching row hides.
+      expect(find.text('goal_builder'), findsNWidgets(2));
+      expect(find.text('Chores'), findsNothing);
+
+      // The ✕ affordance restores the full list instantly.
+      await tester.tap(find.byIcon(Icons.cancel));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsNWidgets(2));
+      expect(find.text('Chores'), findsOneWidget);
+    });
+
+    testWidgets('matches id, cwd basename and folds Cyrillic case '
+        '(AC1, E5)', (tester) async {
+      final ru = await persistSession(userText: 'review');
+      final project = await persistSession(
+        userText: 'project',
+        cwd: '/work/goal_builder',
+      );
+      await tester.pumpWidget(
+        harness(
+          persisted: [ru, project],
+          sessionInfoNames: {ru.id: 'Ревью', project.id: 'x'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Unicode-aware lowercase: the query's case folds like the title's.
+      await typeQuery(tester, 'ревью');
+      expect(find.text('Ревью'), findsOneWidget);
+      expect(find.text('x'), findsNothing);
+
+      await typeQuery(tester, 'goal_builder');
+      expect(find.text('Ревью'), findsNothing);
+      // The matching row keeps its project folder group header (the
+      // finder is scoped to the list: the search FIELD itself holds the
+      // query text).
+      expect(
+        find.descendant(
+          of: find.byType(ListView),
+          matching: find.text('goal_builder'),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('name matches rank first (AC1)', (tester) async {
+      final byName = await persistSession(userText: 'named');
+      final byCwd = await persistSession(
+        userText: 'cwd match',
+        cwd: '/work/alpha',
+      );
+      // byCwd was created later, so it would be first unfiltered.
+      await tester.pumpWidget(
+        harness(
+          persisted: [byCwd, byName],
+          sessionInfoNames: {byCwd.id: 'gamma work', byName.id: 'Alpha'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(find.text('gamma work')).dy,
+        lessThan(tester.getTopLeft(find.text('Alpha')).dy),
+      );
+
+      await typeQuery(tester, 'alpha');
+      // The title hit jumps above the cwd hit.
+      expect(
+        tester.getTopLeft(find.text('Alpha')).dy,
+        lessThan(tester.getTopLeft(find.text('gamma work')).dy),
+      );
+    });
+
+    testWidgets('the filter is debounced: one keystroke frame changes '
+        'nothing yet (E3)', (tester) async {
+      final goal = await persistSession(
+        userText: 'goal work',
+        cwd: '/work/goal_builder',
+      );
+      final other = await persistSession(userText: 'other work');
+      await tester.pumpWidget(
+        harness(
+          persisted: [goal, other],
+          sessionInfoNames: {goal.id: 'goal_builder', other.id: 'Chores'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(SessionSearchField), 'goal');
+      await tester.pump();
+      // Debounce has not fired: the full list is still there.
+      expect(find.text('Chores'), findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('Chores'), findsNothing);
+    });
+
+    testWidgets('no matches shows the empty state with a clear affordance; '
+        'the active marker survives the detour (E1, E2)', (tester) async {
+      final goal = await persistSession(
+        userText: 'goal work',
+        cwd: '/work/goal_builder',
+      );
+      await tester.pumpWidget(
+        harness(
+          persisted: [goal],
+          sessionInfoNames: {goal.id: 'goal_builder'},
+          selectedSessionId: goal.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await typeQuery(tester, 'zzz');
+      expect(find.text('No sessions match "zzz"'), findsOneWidget);
+      expect(find.text('Clear'), findsOneWidget);
+
+      await tester.tap(find.text('Clear'));
+      await tester.pumpAndSettle();
+      // The active row comes back with its selected styling (E2: nothing
+      // about the session state changed while it was filtered out).
+      expect(find.text('No sessions match "zzz"'), findsNothing);
+      expect(
+        tester
+            .widget<SessionTile>(
+              find.widgetWithText(SessionTile, 'goal_builder').first,
+            )
+            .isActive,
+        isTrue,
+      );
+    });
+
+    testWidgets('Cmd+F focuses the field, Esc clears and unfocuses '
+        '(AC3)', (tester) async {
+      final goal = await persistSession(
+        userText: 'goal work',
+        cwd: '/work/goal_builder',
+      );
+      await tester.pumpWidget(
+        harness(
+          persisted: [goal],
+          sessionInfoNames: {goal.id: 'goal_builder'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.metaLeft,
+        platform: 'macos',
+      );
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyF, platform: 'macos');
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyF, platform: 'macos');
+      await tester.sendKeyUpEvent(
+        LogicalKeyboardKey.metaLeft,
+        platform: 'macos',
+      );
+      await tester.pump();
+      expect(editableOf(tester).focusNode!.hasFocus, isTrue);
+
+      await typeQuery(tester, 'goal');
+      expect(find.text('Chores'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsNWidgets(2));
+      expect(editableOf(tester).focusNode!.hasFocus, isFalse);
+    });
   });
 }
