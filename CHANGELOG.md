@@ -3,6 +3,15 @@
 ## 0.1.358
 
 
+- fix(hub): boot online from the persisted DAP credential — with no
+  `DAP_MASTER_SECRET`/`DAP_CLIENT_SECRET` in the environment, the CLI now
+  seeds the hub kill switch from `~/.dap/config.json` `clientSecret`
+  (the explicit prior opt-in from `/dap start`), restoring the documented
+  "the next boot is online by itself" behavior: hub mail delivery and
+  hub peers in `agent_directory` (the browser extension, embedded hosts)
+  work on a fresh boot. The fabric gate also reads the mutable
+  environment overlay the plugin actually uses, not the read-only
+  process environment.
 - fix(195): images follow-up from the #190 review. F2: a stale
   `[Image N]` citation in history no longer silently rebinds to the
   WRONG image after compaction renumbering — once a renumbering boundary
@@ -3399,6 +3408,13 @@
 - ci(161): daily auto-publish — TestFlight + pub.dev + CLI + website + add-in, self-filing fix issues (#170)
 - fix(152): root-cause the browser-ext e2e dispatch flake class (#158)
 - ci(177): drop the 'Quality gates' alias — protection switched to 'Quality gate' (#192)
+
+## 0.1.361
+
+- feat(178): honor FA_LOG_FILE env var as the default for --log-file (#216)
+- fix(197): four minor windowing defects from the round-4 review (#211)
+- fix(196): HEP follow-up from #193 review (#210)
+- fix(195): images follow-up - stale citation renumbering guard + F3/F4/F5 + config tests (#205)
 
 ## Unreleased
 
