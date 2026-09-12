@@ -38,11 +38,12 @@ void main() {
 
   /// Spawns one headless `fah` prompt (temp HOME, `--cwd <workspace>`),
   /// same convention as `fa_cube_headless_helper.dart`, with [extraArgs]
-  /// appended before the prompt.
+  /// appended before the prompt and [extraEnv] merged into the child env.
   Future<ProcessResult> runHeadless(
     MockLlmServer server,
-    List<String> extraArgs,
-  ) {
+    List<String> extraArgs, {
+    Map<String, String> extraEnv = const {},
+  }) {
     return Process.run(
       'dart',
       [
@@ -61,7 +62,11 @@ void main() {
         'hi',
       ],
       workingDirectory: Directory.current.path,
-      environment: {'OPENAI_API_KEY': 'mock', 'HOME': tempHome.path},
+      environment: {
+        'OPENAI_API_KEY': 'mock',
+        'HOME': tempHome.path,
+        ...extraEnv,
+      },
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     ).timeout(const Duration(minutes: 4));
@@ -101,4 +106,40 @@ void main() {
       expect(File(logPath).existsSync(), isFalse);
     },
   );
+
+  test(
+    'FA_LOG_FILE tees the trace when the flag is absent (issue #178)',
+    () async {
+      final server = await MockLlmServer.start();
+      addTearDown(server.stop);
+      server.enqueueText('env reply');
+
+      final logPath = '${workspace.path}/env-trace.log';
+      final result = await runHeadless(
+        server,
+        const [],
+        extraEnv: {'FA_LOG_FILE': logPath},
+      );
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      expect(result.stdout as String, contains('env reply'));
+      expect(File(logPath).readAsStringSync(), contains('env reply'));
+    },
+  );
+
+  test('the --log-file flag wins over the FA_LOG_FILE env var', () async {
+    final server = await MockLlmServer.start();
+    addTearDown(server.stop);
+    server.enqueueText('flag reply');
+
+    final flagPath = '${workspace.path}/flag-trace.log';
+    final envPath = '${workspace.path}/ignored-trace.log';
+    final result = await runHeadless(
+      server,
+      ['--log-file', flagPath],
+      extraEnv: {'FA_LOG_FILE': envPath},
+    );
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    expect(File(flagPath).readAsStringSync(), contains('flag reply'));
+    expect(File(envPath).existsSync(), isFalse);
+  });
 }
