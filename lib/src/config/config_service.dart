@@ -71,6 +71,7 @@ const configTopLevelKeys = <String>{
   'mcp',
   'a2a',
   'providerTimeouts',
+  'images',
   'skills',
 };
 
@@ -1053,6 +1054,7 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'models': (value, _) => ModelsConfig.fromYaml(value),
   'customProviders': (value, _) => _validateCustomProviders(value),
   'ttsr': (value, label) => TtsrConfig.fromYaml(value, sourcePath: label),
+  'images': (value, _) => _validateImagesSection(value),
   'a2a': (value, _) => A2aConfig.fromYaml(value, (name) => '\${$name}'),
   'providerTimeouts': (value, _) => _validateProviderTimeouts(value),
   'skills': (value, _) => _validateSkillsSection(value),
@@ -1085,6 +1087,31 @@ void _validateProviderTimeouts(Object? node) {
       throw ConfigException(
         '"providerTimeouts.$key" must be a positive integer (milliseconds)',
       );
+    }
+  }
+}
+
+/// Mirrors the strict private parser in `cli_config.dart` (pinned by
+/// test).
+void _validateImagesSection(Object? node) {
+  if (node is! YamlMap) {
+    throw ConfigException('must be a map, got: $node');
+  }
+  for (final entry in node.entries) {
+    final key = '${entry.key}';
+    switch (key) {
+      case 'registry':
+        if (entry.value is! bool) {
+          throw ConfigException('"images.registry" must be a boolean');
+        }
+      case 'maxPerRequest':
+        final value = entry.value;
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+              '"images.maxPerRequest" must be a positive integer');
+        }
+      default:
+        throw ConfigException('unknown "images" key: $key');
     }
   }
 }

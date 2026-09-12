@@ -9,6 +9,7 @@ library;
 export 'src/agent/agent.dart';
 export 'src/agent/agent_loop.dart';
 export 'src/agent/agent_tool.dart';
+export 'src/agent/image_registry.dart';
 export 'src/agent/tool_pairing.dart';
 export 'src/agent/auto_compactor.dart'
     show
@@ -18,7 +19,6 @@ export 'src/agent/auto_compactor.dart'
         AutoCompactorPass,
         AutoCompactorSources;
 export 'src/agent/param_validator.dart';
-export 'src/agent/image_registry.dart';
 export 'src/agent/tool_registry.dart';
 export 'src/approval/approval.dart';
 export 'src/approval/approval_hook.dart';

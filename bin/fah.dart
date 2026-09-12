@@ -1243,6 +1243,9 @@ Future<void> _runApp(List<String> args) async {
   // Provider watchdog overrides (`providerTimeouts:` section): process-wide,
   // read by the adapters' connect/idle watchdogs on every request.
   providerTimeoutsOverride = saved.providerTimeouts;
+  // Session image registry (`images:` section, issue #171): process-wide,
+  // read inside the agent loop's request build. Default: on.
+  imageRegistryConfig = saved.images ?? const ImageRegistryConfig();
 
   // `fa config export-providers` — needs the loaded config (saved
   // providers + key names); check|path|get|set already ran above.
@@ -1706,10 +1709,6 @@ Future<void> _runApp(List<String> args) async {
       ImageContent(data: base64Encode(bytes), mimeType: _sniffMime(bytes)),
     );
   }
-  final imageRegistryMax = eventsMode
-      ? (int.tryParse(Platform.environment['FAH_MAX_IMAGES'] ?? '') ??
-          defaultMaxImagesPerRequest)
-      : null;
   if (eventsMode) {
     // Stdout purity: deltas ride frames; diagnostics keep their channel
     // (and still tee to --log-file via the wrapper chain).
@@ -1759,11 +1758,9 @@ Future<void> _runApp(List<String> args) async {
       // active entry's last-used model — all persisted via persistConfig.
       customProviders: CustomProviderRegistry(saved.customProviders),
       sessionRoot: sessionRoot,
-      // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT cancel
-      // leaves a resumable partial transcript; the image registry caps
-      // unique images per request.
+      // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT
+      // cancel leaves a resumable partial transcript.
       persistAbortedPartials: eventsMode,
-      imageRegistryMax: imageRegistryMax,
       // The same launch-pin rule the boot restore used: explicit
       // --model/--provider/--base-url or an FA_PROVIDER_* preconfig wins
       // over per-folder memory, including later session switches.

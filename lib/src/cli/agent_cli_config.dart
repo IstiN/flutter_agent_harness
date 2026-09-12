@@ -94,7 +94,6 @@ final class AgentCliConfig {
     this.agentCapabilities = const [],
     this.machineName,
     this.persistAbortedPartials = false,
-    this.imageRegistryMax,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -108,10 +107,6 @@ final class AgentCliConfig {
   /// REPL keeps discarding incomplete streams.
   final bool persistAbortedPartials;
 
-  /// Backend agent mode (issue #155): per-request image registry cap
-  /// (`[Image N]` dedup). Null = off (prose/REPL safety); the events host
-  /// sets it (env `FAH_MAX_IMAGES` or [defaultMaxImagesPerRequest]).
-  final int? imageRegistryMax;
 
   /// Override for the compaction thresholds (ratio-based trigger, reserve
   /// and recent-token budgets). When `null`, `defaultCompactionSettings`

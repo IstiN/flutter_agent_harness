@@ -57,6 +57,20 @@ factual: paths, commands, invariants — no essays.
   trail); `_finishStreamed` stamps per-run position-counter ids
   session-unique; `auto_compactor.dart`'s `_localTrimFallback` routes the
   kept region through the same repairer.
+- `lib/src/agent/image_registry.dart` — session image registry (issue
+  #171): unique images ride a provider request exactly once; every other
+  occurrence becomes a `[Image N]` text ref. `rewriteHistoryImages`
+  rewrites the OUTBOUND payload only (session JSONL byte-identical);
+  carriers `[{text:"[Image N]"},{image}]` anchor before the first
+  referencing user message or after the tool-result run (never inside
+  call/result pairs); the current user message rides images in place
+  (I3); the per-request cap (`images.maxPerRequest`, default 20) drops
+  current-first-then-newest with a drop notice (never silent); dangling
+  refs (compaction, cap) resolve to `(image no longer available)`.
+  Stateless per-request rebuild — determinism, compaction eviction and
+  resume come free. Kill switch `images.registry: false` → byte-for-byte
+  legacy shape. `agent_loop.dart` applies it in `_buildRequestContext`
+  after `transformContext`, before tool-pairing repair.
 - `lib/src/trajectory/` — the trajectory ledger core (issue #10): finalized
   session records project into an immutable `TrajectorySnapshot` through
   `TrajectorySnapshotBuilder.append`/`applyEvent` — streamed agent events
@@ -1295,21 +1309,36 @@ tests are done right:
 
 ## Quality gates (pre-commit hook: `scripts/pre-commit`)
 
-- `dart analyze` + `dart format --set-exit-if-changed lib test bin example
-  scripts flutter_app packages` clean (explicit dirs — `yoclip/` is a
+Issue #177 restructured CI so a PR pays only for what it touched. The hook
+is a thin wrapper over `scripts/ci_fast_gate.sh` — the SAME script CI runs
+(AC7: parity is checkable by diffing the `GATE_STAGE <name> OK|SKIP`
+markers). Path filters: docs/markdown/prompts-only → size+analyze; lib/bin/
+test/pubspec → +tests, coverage, CRAP, jscpd; flutter_app/packages →
++flutter analyze+tests; scripts/.github/crap4dart.yaml → everything (safe
+default). Hook-only extras: dart format self-heal of staged files and
+`scripts/check_goldens.py --quick` (skipped for docs-only commits).
+
+- `dart analyze` + dart format clean (explicit dirs — `yoclip/` is a
   standalone video workspace with its own toolchain); example app also
   `flutter analyze --no-fatal-infos --no-fatal-warnings`.
-- `dart test` green (integration-tagged excluded — they run in CI).
+- `dart test` green (integration-tagged excluded — nightly runs them).
 - `cd flutter_app && flutter test --exclude-tags integration` green
-  (includes golden suite; integration-tagged `test/cli_visual` runs on
-  demand) + `scripts/check_goldens.py --quick`.
-- Line coverage of `lib/` ≥ 80%; jscpd duplication < 1% core `lib/`,
-  < 2.2% `flutter_app/lib/` (ratchet — only tighten).
+  (includes golden suite; integration-tagged `test/cli_visual` runs in the
+  nightly workflow + on demand).
+- Line coverage of `lib/` ≥ 80% (full ratchet on main/nightly; PRs ratchet
+  CHANGED lines via `scripts/diff_coverage.py`); jscpd duplication < 1%
+  core `lib/`, < 3.7% `flutter_app/lib/` (ratchet — only tighten).
 - CRAP ratchet (`crap4dart analyze`, config `crap4dart.yaml`, tool pinned
   as `dart pub global activate crap4dart 0.2.1`): the threshold is the
-  current repo max — only down from here; runs after the coverage step in
-  pre-commit and in the `ci.yml` quality job.
+  current repo max — only down from here.
 - Max 2800 lines per `.dart` file (`*.g.dart` exempt).
+- CI layout: `changes` (path filter) → parallel `static`, `test-core`
+  (3 duration-balanced shards, `scripts/test_shards.json`, rebalanced
+  weekly), `coverage-gate`, `guards`, `flutter-tests` (ubuntu; goldens stay
+  host-locked in build-macos/nightly) → one aggregate `Quality gate`
+  required check. `nightly.yml` runs the full monolith + PTY/CLI
+  integration + terminal-visual suites; `coverage-gardener.yml` bumps the
+  only-up CLI coverage baseline weekly.
 
 ## Cross-platform parity
 

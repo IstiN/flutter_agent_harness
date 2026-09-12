@@ -27,6 +27,11 @@ on:
       - '.github/workflows/browser-ext.yml'
   workflow_dispatch:
 
+# Cancel superseded runs of the same ref (issue #177).
+concurrency:
+  group: Browser extension-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   headless-suite:
     name: Headless Chrome suite

@@ -58,7 +58,6 @@ import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
-import '../agent/image_registry.dart';
 import '../context.dart';
 import '../cube/cube.dart';
 import '../env/cwd_override_env.dart';
@@ -88,6 +87,7 @@ import '../providers/copilot_oauth.dart';
 import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
+import '../agent/image_registry.dart' show imageDropNotice;
 import '../providers/provider_common.dart'
     show authExpiredProvider, stripAuthExpiredMarker;
 import '../providers/transient_retry_stream.dart';
@@ -501,17 +501,6 @@ class AgentCli {
     // masking keeps running alongside (attached lazily on runtime tokens).
     if (config.redactionPipeline != null) {
       attachRedactionPipeline(_agent, config.redactionPipeline!);
-    }
-    // Backend agent mode (issue #155): the per-request image registry —
-    // every unique image rides once, later occurrences become `[Image N]`
-    // references. Off unless the host opts in (events mode).
-    final imageRegistryMax = config.imageRegistryMax;
-    if (imageRegistryMax != null && imageRegistryMax > 0) {
-      attachImageRegistry(
-        _agent,
-        maxImages: imageRegistryMax,
-        onSkip: io.writeln,
-      );
     }
     // Busy-row honesty: name the executing tool ('Running bash…') instead
     // of leaving a stale 'Compacting context…' label over long tool calls.
@@ -1089,6 +1078,23 @@ class AgentCli {
     };
   }
 
+  /// Image registry drop visibility (issue #171): when the per-request
+  /// cap drops a history image, say so — a dim transcript line + an
+  /// fa.log entry instead of a silent degradation.
+  void _wireImageDropNotice() {
+    imageDropNotice = (index, keyPreview) {
+      io.writeln(
+        _style.dim(
+          '[images] dropping [Image $index] (key $keyPreview…) '
+          '— per-request cap reached',
+        ),
+      );
+      _logDiagnostic(
+        'image registry drop sid=$_logSid index=$index key=$keyPreview',
+      );
+    };
+  }
+
   Future<void> run() async {
     await _cubeBootRestore();
     await _loadAgentContext();
@@ -1105,6 +1111,7 @@ class AgentCli {
     // version next to the session id before any lifecycle line.
     _logDiagnostic('fa boot sid=$_logSid version=$_version');
     _wireTransientRetryNotice();
+    _wireImageDropNotice();
     final presence = await _registerLivePresence();
     // Phase 3a: rehydrate the subagent registry from the resumed session's
     // `subagent_registry` records — agents of this session are visible again
