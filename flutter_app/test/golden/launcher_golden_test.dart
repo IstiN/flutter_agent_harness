@@ -10,11 +10,14 @@
 library;
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/asr_service.dart';
+import 'package:fa/services/apps_mode_store.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/session_names_store.dart';
@@ -149,9 +152,39 @@ Map<String, List<String>> get _apps => {
   ],
 };
 
+/// Fake [AsrApi] — widget tests never touch the real method channel.
+/// Injected into the launcher fixture so the composer's mic renders
+/// identically on every host (an injected backend IS the availability
+/// statement, issue #184): without it the mic is macOS/iOS-only and the
+/// bar goldens drift into a send button off-Apple platforms.
+final class _FakeAsrApi implements AsrApi {
+  @override
+  Future<bool> get isAvailable async => true;
+
+  @override
+  Future<bool> requestAccess() async => true;
+
+  @override
+  Future<void> startRecording() async {}
+
+  @override
+  Future<AsrRecording> stopRecording() async =>
+      (path: '/tmp/fah-golden.m4a', durationMs: 5000, sampleRate: 44100);
+
+  @override
+  Future<Uint8List> readRecording(String path) async =>
+      Uint8List.fromList(const [1, 2, 3]);
+}
+
 Future<MemoryExecutionEnv> _seededEnv({
   bool liveTiles = false,
   Map<String, String> extraTiles = const {},
+
+  /// Issue #224 AC4: false persists the apps-expanded home mode
+  /// (`apps_home_mode.json`) so the sheet boots with the chat collapsed
+  /// to the pinned composer bar. true writes nothing — the missing file
+  /// IS the chat-expanded default.
+  bool chatExpanded = true,
 }) async {
   final env = MemoryExecutionEnv();
   for (final entry in _apps.entries) {
@@ -218,6 +251,12 @@ Future<MemoryExecutionEnv> _seededEnv({
     await env.writeFile(
       'apps/${entry.key}/widget_tile.js',
       '(function(){});',
+    );
+  }
+  if (!chatExpanded) {
+    await env.writeFile(
+      AppsHomeModeStore.fileName,
+      '{"version": 1, "chatExpanded": false}',
     );
   }
   return env;
@@ -464,10 +503,13 @@ Future<void> _pumpLauncher(
   String modelId = 'test-model',
   int? gridColumns,
   Map<String, String> extraTiles = const {},
+  bool chatExpanded = true,
+  bool restoreAppsMode = false,
 }) async {
   final env = await _seededEnv(
     liveTiles: liveTiles,
     extraTiles: extraTiles,
+    chatExpanded: chatExpanded,
   );
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   for (final entry
@@ -508,7 +550,9 @@ Future<void> _pumpLauncher(
       gridColumns: gridColumns,
     ),
     appsStore: _appsStore(env),
+    restoreAppsMode: restoreAppsMode,
     tileEngineFactory: tileEngineFactory,
+    asr: _FakeAsrApi(),
   );
   await pumpGolden(
     tester,
@@ -885,6 +929,58 @@ void main() {
       );
       await openSessionPanel(tester, 'sess-b');
       await expectGolden(tester, 'launcher/sheet_session_chip_320_dark');
+    });
+    // Issue #224 AC4 (E2E-golden): the header action row with the new
+    // apps toggle holds at the 320pt floor and at 400pt, in BOTH home
+    // modes — chat expanded (the sheet up, apps behind) and apps
+    // expanded (the sheet collapsed to the pinned composer bar).
+    testWidgets('session panel — 320pt — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        size: const Size(320, 568),
+      );
+      await openSessionPanel(tester, 'sess-b');
+      await expectGolden(tester, 'launcher/sheet_session_320_dark');
+    });
+
+    testWidgets('session panel — 400pt — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        size: const Size(400, 700),
+      );
+      await openSessionPanel(tester, 'sess-b');
+      await expectGolden(tester, 'launcher/sheet_session_400_dark');
+    });
+
+    testWidgets('home apps-expanded — 320pt — dark', (tester) async {
+      // Persisted apps-expanded mode: the sheet boots collapsed to the
+      // pinned composer bar — no gestures, the launcher grid owns the
+      // screen (AC1: the collapsed side keeps zero sheet space).
+      // restoreAppsMode mirrors the production wiring (main.dart) —
+      // without it the sheet never reads the mode file.
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        size: const Size(320, 568),
+        chatExpanded: false,
+        restoreAppsMode: true,
+      );
+      await tester.pumpAndSettle();
+      await expectGolden(tester, 'launcher/sheet_home_apps_320_dark');
+    });
+
+    testWidgets('home apps-expanded — 400pt — dark', (tester) async {
+      await _pumpLauncher(
+        tester,
+        sessions: twoSessions(),
+        size: const Size(400, 700),
+        chatExpanded: false,
+        restoreAppsMode: true,
+      );
+      await tester.pumpAndSettle();
+      await expectGolden(tester, 'launcher/sheet_home_apps_400_dark');
     });
   });
 }
