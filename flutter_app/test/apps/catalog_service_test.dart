@@ -94,7 +94,7 @@ Future<Uint8List> _captureZip(String id) async {
   // Rebuild deterministically via a one-off client hit.
   final client = fakeServer(goodCatalog());
   final response = await client.get(
-    Uri.parse('$kDefaultWidgetsBaseUrl/calculator-1.2.0.zip'),
+    catalogAssetUri(kDefaultWidgetsBaseUrl, 'calculator-1.2.0.zip'),
   );
   if (id != 'calculator') return response.bodyBytes;
   captured.clear();
@@ -104,6 +104,82 @@ Future<Uint8List> _captureZip(String id) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('catalog asset URL construction', () {
+    test('catalog fetch hits exactly one slash before catalog.json', () async {
+      final env = MemoryExecutionEnv();
+      Uri? requested;
+      final service = CatalogService(
+        env,
+        httpClient: MockClient((request) async {
+          requested = request.url;
+          return http.Response(jsonEncode(goodCatalog()), 200);
+        }),
+      );
+      await service.fetchCatalog();
+      expect(
+        requested.toString(),
+        'https://github.com/IstiN/fa_widgets/releases/latest/download/'
+        'catalog.json',
+        reason: 'the historical bug produced `download//catalog.json` '
+            '(double slash) by appending "/catalog.json" to a base that '
+            'already ends with "download/"',
+      );
+    });
+
+    test('custom base joins with exactly one slash either way', () {
+      expect(
+        catalogAssetUri('https://example.com/assets', 'catalog.json')
+            .toString(),
+        'https://example.com/assets/catalog.json',
+      );
+      expect(
+        catalogAssetUri('https://example.com/assets/', 'catalog.json')
+            .toString(),
+        'https://example.com/assets/catalog.json',
+      );
+      expect(
+        catalogAssetUri('https://example.com/assets/', '/catalog.json')
+            .toString(),
+        'https://example.com/assets/catalog.json',
+      );
+      expect(
+        catalogAssetUri('https://example.com/assets//', '//catalog.json')
+            .toString(),
+        'https://example.com/assets/catalog.json',
+      );
+    });
+
+    test('widget zip downloadUrl carries no double slash', () {
+      final entry = CatalogEntry.fromJson(
+        Map<String, dynamic>.from(goodCatalog()['widgets'][0] as Map),
+      );
+      expect(
+        entry.downloadUrl.toString(),
+        'https://github.com/IstiN/fa_widgets/releases/latest/download/'
+        'calculator-1.2.0.zip',
+      );
+      expect(entry.downloadUrl.path, isNot(contains('//')));
+    });
+
+    test('custom base without trailing slash still fetches the catalog', () async {
+      final env = MemoryExecutionEnv();
+      Uri? requested;
+      final service = CatalogService(
+        env,
+        baseUrl: Uri.parse('https://example.com/assets'),
+        httpClient: MockClient((request) async {
+          requested = request.url;
+          return http.Response(jsonEncode(goodCatalog()), 200);
+        }),
+      );
+      await service.fetchCatalog();
+      expect(
+        requested.toString(),
+        'https://example.com/assets/catalog.json',
+      );
+    });
+  });
 
   group('CatalogEntry.fromJson platforms', () {
     Map<String, dynamic> base() =>
