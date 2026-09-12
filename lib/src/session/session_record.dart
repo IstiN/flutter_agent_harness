@@ -226,6 +226,19 @@ sealed class SessionRecord {
         display: json['display'] as bool? ?? false,
         details: json['details'],
       ),
+      'label' => LabelRecord(
+        id: id,
+        parentId: parentId as String?,
+        timestamp: timestamp,
+        targetId: json['targetId'] as String? ?? '',
+        label: json['label'] as String?,
+      ),
+      'session_info' => SessionInfoRecord(
+        id: id,
+        parentId: parentId as String?,
+        timestamp: timestamp,
+        name: json['name'] as String?,
+      ),
       'hidden_range' => HiddenRangeRecord(
         id: id,
         parentId: parentId as String?,
