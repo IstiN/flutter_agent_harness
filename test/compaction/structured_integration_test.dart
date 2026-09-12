@@ -16,6 +16,7 @@ import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/expand_tool.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/markers.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/judge.dart';
 import 'package:flutter_agent_harness/src/trajectory/trajectory_snapshot_builder.dart';
 import 'package:test/test.dart';
 
@@ -734,6 +735,142 @@ void main() {
         expect(
           (await session.getEntries()).whereType<CompactCheckpointRecord>(),
           isNotEmpty,
+        );
+      },
+    );
+
+    test(
+      'judge calls are cache-fed, cheap, and costed (instrumentation)',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        await session.appendMessage(UserMessage.text('instrumented session'));
+        for (var i = 0; i < 4; i++) {
+          await session.appendMessage(
+            _assistant(
+              'read $i',
+              calls: [ToolCall(id: 'p$i', name: 'read', arguments: {})],
+            ),
+          );
+          await session.appendMessage(_result('p$i', 'read', 'x' * 6000));
+        }
+        for (var i = 0; i < 6; i++) {
+          await session.appendMessage(_assistant('note $i: fine'));
+        }
+
+        // A priced smol-role judge (Haiku-ish rates) whose provider serves
+        // the ledger prefix from the prompt cache: 95% of input tokens are
+        // cache reads, the fresh suffix is small, output is a pick list.
+        const judgeModel = Model(
+          id: 'm1',
+          api: 'anthropic-messages',
+          provider: 'p',
+          baseUrl: 'http://localhost:1',
+          contextWindow: 8000,
+          maxTokens: 4096,
+          cost: ModelCost(
+            input: 3,
+            output: 15,
+            cacheRead: 0.3,
+            cacheWrite: 3.75,
+          ),
+        );
+        AssistantMessage msg(String text, Usage usage) => AssistantMessage(
+          content: [TextContent(text: text)],
+          api: 'anthropic-messages',
+          provider: 'p',
+          model: 'm1',
+          usage: usage,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        );
+
+        var judgeCalls = 0;
+        final usages = <Usage>[];
+        AssistantMessageEventStream fn(
+          Model m,
+          Context c, {
+          CancelToken? cancelToken,
+        }) {
+          judgeCalls++;
+          // Serve picks straight off the ledger the adapter delivered —
+          // the same shape a real judge returns for hide candidates.
+          final picks = RegExp(r'^\[(\d+)\]', multiLine: true)
+              .allMatches((c.messages.single as UserMessage).content as String)
+              .map((match) => match.group(1)!)
+              .toList();
+          const usage = Usage(
+            input: 300,
+            output: 40,
+            cacheRead: 5700,
+            cacheWrite: 0,
+            totalTokens: 6040,
+            cost: UsageCost(),
+          );
+          usages.add(usage);
+          final stream = AssistantMessageEventStream();
+          stream.push(StartEvent(partial: msg('', usage)));
+          stream.push(
+            DoneEvent(
+              reason: StopReason.stop,
+              message: msg(jsonEncode(picks), usage),
+            ),
+          );
+          stream.end();
+          return stream;
+        }
+
+        final judge = streamFunctionHideJudge(fn, judgeModel, system: 'judge');
+        final state = stateFor(await session.buildContextMessages());
+        final ok = await StructuredCompactor(
+          session: session,
+          state: state,
+          window: 8000,
+          settings: _settings,
+          judge: judge,
+          summarize: (r) async => SummarizationResult.failure('hides suffice'),
+          checkpointPrompt: 'P',
+        ).run();
+        expect(ok, isTrue);
+        expect(
+          judgeCalls,
+          greaterThanOrEqualTo(1),
+          reason: 'one cheap judge call per relief',
+        );
+
+        // Cached-token share: almost the whole judge prompt came from the
+        // prompt cache, so relief stays cheap as sessions grow.
+        final inputTokens = usages
+            .map((u) => u.input + u.cacheRead)
+            .reduce((a, b) => a + b);
+        final cacheRead = usages
+            .map((u) => u.cacheRead)
+            .reduce((a, b) => a + b);
+        final cachedShare = cacheRead / inputTokens;
+        expect(cachedShare, greaterThan(0.9));
+
+        // Cost: aggregated over the reliefs, priced via calculateCost.
+        final total = usages.reduce(
+          (a, b) => a.copyWith(
+            input: a.input + b.input,
+            output: a.output + b.output,
+            cacheRead: a.cacheRead + b.cacheRead,
+            cacheWrite: a.cacheWrite + b.cacheWrite,
+          ),
+        );
+        final cost = calculateCost(total, judgeModel);
+        final perRelief = cost.cost.total / judgeCalls;
+        expect(
+          perRelief,
+          lessThan(0.01),
+          reason: 'a relief must cost cents at most',
+        );
+        // Instrumentation log — the AC5 evidence line.
+        print(
+          'AC5: $judgeCalls judge call(s), '
+          'cached ${cachedShare.toStringAsFixed(3)} of input tokens, '
+          '\$${perRelief.toStringAsFixed(5)}/relief.',
         );
       },
     );
