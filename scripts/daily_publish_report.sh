@@ -60,7 +60,7 @@ log_excerpt() { # $1 = child run id ("" = this run), $2 = log prefix
 # ── issue lifecycle ────────────────────────────────────────────────────────
 find_open_issue() { # $1 = exact title; echoes the issue number or nothing
   gh issue list --repo "$repo" --state open --label daily-publish \
-    --json number,title --jq '.[] | [.number, .title] | @tsv' 2>/dev/null \
+    --limit 200 --json number,title --jq '.[] | [.number, .title] | @tsv' 2>/dev/null \
     | while IFS=$'\t' read -r n t; do
         if [ "$t" = "$1" ]; then echo "$n"; fi
       done | head -1
