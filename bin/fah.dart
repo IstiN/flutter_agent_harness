@@ -140,7 +140,72 @@ Never _exitWithUsage(String version) {
   exit(0);
 }
 
-Never _exitWithVersion(String version) {
+/// Set once the first SIGTERM arrived in a headless run (issue #155): a
+/// second one escalates from graceful to forced.
+var _sigtermSeen = false;
+
+/// The in-flight headless run, awaited by the SIGINT/SIGTERM graceful
+/// exits (issue #155). Set before the signals can matter, read only from
+/// the exit paths.
+Future<int>? _headlessRun;
+
+/// Graceful headless abort shared by SIGINT and SIGTERM (issue #155):
+/// abort the run, wait for it to settle (bounded — a wedged provider
+/// cannot hold the exit), flush the HEP stream, exit 130.
+void _gracefulHeadlessExit(void Function() fireInterrupt) {
+  fireInterrupt();
+  final run = _headlessRun;
+  unawaited(
+    Future(() async {
+      if (run != null) {
+        await run.timeout(const Duration(seconds: 10), onTimeout: () => 130);
+      }
+      await stdout.flush();
+    }).whenComplete(() => exit(130)),
+  );
+}
+
+/// One HEP JSONL line to stdout, flushed immediately (issue #155): a
+/// supervisor tailing the pipe must never wait on a buffer.
+void _writeHepLine(String line) {
+  stdout.writeln(line);
+  stdout.flush();
+}
+
+/// Image type by magic bytes (issue #155 `--attach`): the file extension
+/// is untrusted; the first bytes are. png/jpeg/gif/webp covered, else
+/// application/octet-stream.
+String _sniffMime(Uint8List bytes) {
+  bool startsWith(List<int> magic) {
+    if (bytes.length < magic.length) return false;
+    for (var i = 0; i < magic.length; i++) {
+      if (bytes[i] != magic[i]) return false;
+    }
+    return true;
+  }
+
+  const png = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (startsWith(png)) return 'image/png';
+  if (startsWith([0xFF, 0xD8, 0xFF])) return 'image/jpeg';
+  if (startsWith([0x47, 0x49, 0x46, 0x38])) return 'image/gif';
+  if (startsWith([0x52, 0x49, 0x46, 0x46]) &&
+      bytes.length > 12 &&
+      bytes[8] == 0x57 &&
+      bytes[9] == 0x45 &&
+      bytes[10] == 0x42 &&
+      bytes[11] == 0x50) {
+    return 'image/webp';
+  }
+  return 'application/octet-stream';
+}
+
+Never _exitWithVersion(String version, {String? output}) {
+  if (output == 'json') {
+    // Machine-readable for supervisors (issue #155): version + HEP
+    // protocol version, one JSON object.
+    stdout.writeln(jsonEncode({'version': version, 'hep': hepVersion}));
+    exit(0);
+  }
   stdout.writeln('fa $version');
   exit(0);
 }
@@ -1074,7 +1139,8 @@ Future<void> _runApp(List<String> args) async {
   try {
     parsed = switch (parseCliArgs(serve.cliArgs)) {
       CliArgsHelp() => _exitWithUsage(packageVersion),
-      CliArgsVersion() => _exitWithVersion(packageVersion),
+      CliArgsVersion(:final output) =>
+        _exitWithVersion(packageVersion, output: output),
       final CliArgs cliArgs => cliArgs,
     };
   } on CliArgsException catch (error) {
@@ -1488,6 +1554,8 @@ Future<void> _runApp(List<String> args) async {
     logTeeFile = tee;
     io = TeeCliIO(terminalIo, tee.writeStringSync);
   }
+  // HEP events mode (issue #155): resolved below with the writer; the
+  // assignment happens once `parsed.output` is known — see HepEventsIO.
   // The one boot notice for env preconfig (same channel as the raw-mode
 
   // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
@@ -1612,6 +1680,42 @@ Future<void> _runApp(List<String> args) async {
 
   // The execution env shared by the CLI config (tools, session storage)
   // and the presence store (live-session heartbeats) — see `cliEnv` above.
+  // Backend agent mode (issue #155): `--output events[=full]` turns
+  // stdout into a HEP v1 JSONL stream owned by the HepWriter; the CLI's
+  // prose deltas are dropped (frames carry them) and diagnostics keep
+  // flowing to their channel. `--attach` files ride the first user
+  // message as image blocks.
+  final eventsMode = headlessPrompt != null && parsed.output != null;
+  final hep = eventsMode
+      ? HepWriter(
+          emit: _writeHepLine,
+          fahVersion: packageVersion,
+          toolArgs: parsed.output == 'events=full'
+              ? HepToolArgs.full
+              : HepToolArgs.summary,
+        )
+      : null;
+  final attachedImages = <ImageContent>[];
+  for (final attachment in parsed.attachments) {
+    final file = File(attachment);
+    if (!file.existsSync()) {
+      _fail('--attach: no such file: $attachment');
+    }
+    final bytes = file.readAsBytesSync();
+    attachedImages.add(
+      ImageContent(data: base64Encode(bytes), mimeType: _sniffMime(bytes)),
+    );
+  }
+  final imageRegistryMax = eventsMode
+      ? (int.tryParse(Platform.environment['FAH_MAX_IMAGES'] ?? '') ??
+          defaultMaxImagesPerRequest)
+      : null;
+  if (eventsMode) {
+    // Stdout purity: deltas ride frames; diagnostics keep their channel
+    // (and still tee to --log-file via the wrapper chain).
+    io = HepEventsIO(io);
+  }
+
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui:
@@ -1655,6 +1759,11 @@ Future<void> _runApp(List<String> args) async {
       // active entry's last-used model — all persisted via persistConfig.
       customProviders: CustomProviderRegistry(saved.customProviders),
       sessionRoot: sessionRoot,
+      // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT cancel
+      // leaves a resumable partial transcript; the image registry caps
+      // unique images per request.
+      persistAbortedPartials: eventsMode,
+      imageRegistryMax: imageRegistryMax,
       // The same launch-pin rule the boot restore used: explicit
       // --model/--provider/--base-url or an FA_PROVIDER_* preconfig wins
       // over per-folder memory, including later session switches.
@@ -1932,20 +2041,45 @@ Future<void> _runApp(List<String> args) async {
             // exit — an io-routed line would land in a dead transcript.
             final hint = await cli.sessionResumeHint();
             if (hint != null) stdout.writeln(hint);
+            await stdout.flush();
           }).whenComplete(() => exit(130)),
         );
       case SigintAction.exitHeadless:
-        // Headless: no cosmetic newline on stdout so a pipe never sees it.
-        exit(130);
+
+        // Headless graceful abort (issue #155): fire the interrupt, then
+        // let the RUN settle — [AgentCli.waitForIdle] tracks the REPL's
+        // settle future, which headless never starts, so the run future
+        // itself is the honest wait: abort lands, the partial transcript
+        // persists, the HEP writer emits `cancelled`, THEN exit 130.
+        _gracefulHeadlessExit(terminalIo.fireInterrupt);
     }
   });
+  // Backend supervisors send SIGTERM (issue #155): route it through the
+  // same graceful abort as SIGINT — partial persist + `cancelled` frame +
+  // exit 130 — instead of dying mid-write. A second SIGTERM escalates
+  // (graceful → forced), the usual supervisor contract. [stdout.flush]
+  // matters: exit() drops the async write buffer, taking the just-written
+  // `cancelled` frame with it.
+  if (headlessPrompt != null) {
+    ProcessSignal.sigterm.watch().listen((_) {
+      if (_sigtermSeen) exit(143);
+      _sigtermSeen = true;
+      _gracefulHeadlessExit(terminalIo.fireInterrupt);
+    });
+  }
 
   if (headlessPrompt != null) {
+    _headlessRun = cli.runHeadless(
+      headlessPrompt,
+      images: attachedImages,
+      hep: hep,
+    );
     final int code;
     try {
-      code = await cli.runHeadless(headlessPrompt);
+      code = (await _headlessRun)!;
     } finally {
       await sigintSub.cancel();
+      await stdout.flush();
       logTeeFile?.closeSync();
     }
     exit(code);

@@ -18,6 +18,7 @@ export 'src/agent/auto_compactor.dart'
         AutoCompactorPass,
         AutoCompactorSources;
 export 'src/agent/param_validator.dart';
+export 'src/agent/image_registry.dart';
 export 'src/agent/tool_registry.dart';
 export 'src/approval/approval.dart';
 export 'src/approval/approval_hook.dart';
@@ -46,6 +47,7 @@ export 'src/cli/cli_config.dart'
         loadProjectCubeSettings,
         resolveStartupCubeSource;
 export 'src/cli/cli_help.dart';
+export 'src/cli/hep.dart';
 export 'src/cli/folder_model_state.dart';
 export 'src/cli/log_file_tee.dart';
 export 'src/cli/sigint_action.dart';

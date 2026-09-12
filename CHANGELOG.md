@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.355
+
+
+- feat(155): backend agent mode — `fah` as a server-side agent engine
+  for a Go supervisor. `--output events[=full]` switches stdout to a HEP
+  v1 JSONL stream (header + agent_start/turn lifecycle frames, message
+  and tool deltas, usage passthrough in turn_done; `events=full` also
+  caps tool args at 4000 chars instead of the 100-char summary);
+  prose mode is untouched. `--attach <path>` (repeatable) reads image
+  files, sniffs the type from magic bytes, and rides them as base64
+  data-URI image blocks on the first user message. SIGTERM (and SIGINT)
+  in headless mode now abort the run gracefully — partial transcript
+  persists (`persistAbortedPartials`), a `cancelled` frame closes the
+  HEP stream, stdout is flushed, exit code 130; a second SIGTERM forces
+  exit 143. An unknown `--session` key on a clean root starts a fresh
+  session instead of failing. `--version --output json` prints
+  `{"version":…,"hep":"v1"}`. The learn.ai-style image registry dedups
+  images per request (`[Image N]` text references, cap via
+  `FAH_MAX_IMAGES`, default 10, over-cap drops logged) — off outside
+  events mode.
+
 ## 0.1.354
 
 

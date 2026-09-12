@@ -58,10 +58,14 @@ final class CliArgsHelp extends CliArgsResult {
   const CliArgsHelp() : super._();
 }
 
-/// `--version` was passed: print the version and exit 0.
+/// `--version` was passed: print the version and exit 0. [output] carries
+/// `--output json` (issue #155): machine-readable version + HEP version.
 final class CliArgsVersion extends CliArgsResult {
   /// Creates a [CliArgsVersion].
-  const CliArgsVersion() : super._();
+  const CliArgsVersion({this.output}) : super._();
+
+  /// `--output <mode>` when combined with `--version` ('json').
+  final String? output;
 }
 
 /// A parsed run configuration (interactive or headless).
@@ -96,6 +100,8 @@ final class CliArgs extends CliArgsResult {
     this.config,
     this.ext,
     this.positionals = const [],
+    this.output,
+    this.attachments = const [],
   }) : super._();
 
   /// `--model <id>`.
@@ -214,6 +220,14 @@ final class CliArgs extends CliArgsResult {
   /// extension manager instead of a prompt run.
   final ExtCliCommand? ext;
 
+  /// `--output <mode>` (issue #155): 'events' (HEP v1 JSONL on stdout) or
+  /// 'events=full' (full tool arguments). 'json' only rides `--version`.
+  final String? output;
+
+  /// `--attach <path>` (repeatable, issue #155): files attached to the
+  /// first user message of a headless run as image content blocks.
+  final List<String> attachments;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless =>
@@ -243,7 +257,7 @@ CliArgsResult parseCliArgs(List<String> args) {
   for (var i = 0; i < args.length; i++) {
     final arg = args[i];
     if (const {'--help', '-h'}.contains(arg)) return const CliArgsHelp();
-    if (arg == '--version') return const CliArgsVersion();
+    if (arg == '--version') return CliArgsVersion(output: _prescanOutput(args));
     final flag = _valueFlags[arg];
     if (flag != null) {
       final (canonical, apply) = flag;
@@ -841,7 +855,41 @@ const _valueFlags = <String, _ValueFlag>{
   '--tools': ('--tools', _setTools),
   '--compaction-engine': ('--compaction-engine', _setCompactionEngine),
   '--log-file': ('--log-file', _setLogFile),
+  '--output': ('--output', _setOutput),
+  '--attach': ('--attach', _addAttachment),
 };
+
+void _setOutput(_CliArgValues v, String value) {
+  _validateOutputMode(value);
+  v.output = value;
+}
+
+void _addAttachment(_CliArgValues v, String value) => v.attachments.add(value);
+
+const _outputModes = {'events', 'events=full', 'json'};
+
+void _validateOutputMode(String value) {
+  if (!_outputModes.contains(value)) {
+    throw CliArgsException('unknown --output mode: $value '
+        '(expected events, events=full or json)');
+  }
+}
+
+/// The `--output` value anywhere in the arg list, for the `--version`
+/// early return (flag order must not matter: `--version --output json`
+/// and `--output json --version` both carry it).
+String? _prescanOutput(List<String> args) {
+  for (var i = 0; i < args.length; i++) {
+    if (args[i] == '--output') {
+      if (i + 1 >= args.length) {
+        throw const CliArgsException('--output requires a value');
+      }
+      _validateOutputMode(args[i + 1]);
+      return args[i + 1];
+    }
+  }
+  return null;
+}
 
 void _setModel(_CliArgValues v, String value) => v.model = value;
 void _setProvider(_CliArgValues v, String value) {
@@ -920,6 +968,8 @@ final class _CliArgValues {
   String? prompt;
   String? promptFile;
   String? logFile;
+  String? output;
+  final attachments = <String>[];
   final positionals = <String>[];
 
   /// Validates flag combinations and builds the resulting [CliArgs].
@@ -943,6 +993,20 @@ final class _CliArgValues {
     if (promptFile != null && positionals.isNotEmpty) {
       throw CliArgsException(
         'cannot combine --prompt-file with positional prompt arguments',
+      );
+    }
+    if (output == 'json') {
+      throw const CliArgsException(
+        '--output json applies to --version only '
+        '(use --version --output json)',
+      );
+    }
+    final hasPrompt =
+        prompt != null || promptFile != null || positionals.isNotEmpty;
+    if (!hasPrompt && attachments.isNotEmpty) {
+      throw const CliArgsException(
+        '--attach applies to headless runs (-p/--prompt or a positional '
+        'prompt)',
       );
     }
     return CliArgs(
@@ -971,6 +1035,8 @@ final class _CliArgValues {
       logFile: logFile,
       prompt: prompt,
       positionals: positionals,
+      output: output,
+      attachments: List.unmodifiable(attachments),
     );
   }
 }

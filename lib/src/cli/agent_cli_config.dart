@@ -93,12 +93,25 @@ final class AgentCliConfig {
     this.hubFabric,
     this.agentCapabilities = const [],
     this.machineName,
+    this.persistAbortedPartials = false,
+    this.imageRegistryMax,
   });
 
   /// The user's home directory, when the host has one (used for user-level
   /// skill/context discovery: `~/.fah/skills`, `~/.fah/AGENTS.md`). Null on
   /// sandboxed hosts (web) where only the project FS exists.
   final String? homeDir;
+
+  /// Backend agent mode (issue #155): persist aborted assistant partials
+  /// so a SIGTERM/SIGINT graceful cancel leaves a resumable JSONL (the
+  /// `cancelled` HEP frame's counterpart on disk). Default false: the
+  /// REPL keeps discarding incomplete streams.
+  final bool persistAbortedPartials;
+
+  /// Backend agent mode (issue #155): per-request image registry cap
+  /// (`[Image N]` dedup). Null = off (prose/REPL safety); the events host
+  /// sets it (env `FAH_MAX_IMAGES` or [defaultMaxImagesPerRequest]).
+  final int? imageRegistryMax;
 
   /// Override for the compaction thresholds (ratio-based trigger, reserve
   /// and recent-token budgets). When `null`, `defaultCompactionSettings`
