@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/apps_mode_store.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
@@ -147,19 +148,25 @@ const _menuKey = ValueKey('sessionChatMenu');
 const _newSessionKey = ValueKey('sessionChatNewSession');
 
 class _Harness {
-  _Harness(this.manager, this.services);
+  _Harness(this.manager, this.services, this.env);
 
   final FlutterSessionManager manager;
 
   /// id → service, for per-session message seeding.
   final Map<String, AgentService> services;
+
+  /// The in-memory env backing the manager (persisted-store assertions).
+  final MemoryExecutionEnv env;
 }
 
 /// Pumps the sheet with two sessions; the second one (`sess-b`) is active.
+/// [restoreAppsMode] mirrors the production flag (issue #224) — the
+/// persisted apps↔chat mode is loaded on mount.
 Future<_Harness> _pumpSheet(
   WidgetTester tester, {
   Map<String, List<FahChatMessage>>? messages,
   SessionNamesStore? namesStore,
+  bool restoreAppsMode = false,
 }) async {
   final env = MemoryExecutionEnv();
   final services = {'sess-a': _fakeService(env), 'sess-b': _fakeService(env)};
@@ -177,12 +184,13 @@ Future<_Harness> _pumpSheet(
           manager: manager,
           sessionNamesStore: namesStore,
           asr: _FakeAsrApi(),
+          restoreAppsMode: restoreAppsMode,
         ),
       ),
     ),
   );
   await tester.pumpAndSettle();
-  return _Harness(manager, services);
+  return _Harness(manager, services, env);
 }
 
 Future<void> _openDrawer(WidgetTester tester) async {
@@ -1103,6 +1111,136 @@ void main() {
         findsNothing,
       );
       await tester.pump(const Duration(seconds: 4));
+    });
+  });
+
+  group('SessionChatSheet apps collapse toggle (issue #224)', () {
+    const panelAppsKey = ValueKey('sessionChatPanelApps');
+
+    testWidgets('the header Apps icon collapses the panel; the input bar '
+        'stays (AC1)', (tester) async {
+      await _pumpSheet(tester);
+      await _openPanelViaDrawer(tester, 'sess-b');
+      expect(find.byKey(_panelKey), findsOneWidget);
+
+      await tester.tap(find.byKey(panelAppsKey));
+      await tester.pumpAndSettle();
+      expect(find.byKey(_panelKey), findsNothing);
+      expect(find.byKey(_barKey), findsOneWidget);
+    });
+
+    testWidgets('restore boots the panel expanded when the user last left '
+        'it so (AC2)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final store = await AppsHomeModeStore.load(env);
+      await store.setChatExpanded(true);
+      final services = {'sess-b': _fakeService(env)};
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-b', services['sess-b']!);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SessionChatSheet(manager: manager, restoreAppsMode: true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(_panelKey), findsOneWidget);
+    });
+
+    testWidgets('restore on a first run boots chat expanded (issue '
+        'default)', (tester) async {
+      await _pumpSheet(tester, restoreAppsMode: true);
+      expect(find.byKey(_panelKey), findsOneWidget);
+    });
+
+    testWidgets('toggling persists the mode for the next boot (AC2)',
+        (tester) async {
+      final env = MemoryExecutionEnv();
+      final store = await AppsHomeModeStore.load(env);
+      await store.setChatExpanded(false); // user's last state: apps home
+      final services = {'sess-b': _fakeService(env)};
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-b', services['sess-b']!);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SessionChatSheet(manager: manager, restoreAppsMode: true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(_panelKey), findsNothing);
+      // The user opens the chat again: the toggle records chat-expanded.
+      await _openPanelViaDrawer(tester, 'sess-b');
+      expect(find.byKey(_panelKey), findsOneWidget);
+      final persisted = await AppsHomeModeStore.load(env);
+      expect(persisted.chatExpanded, isTrue);
+    });
+
+    testWidgets('composer text survives the toggle in both directions '
+        '(AC3)', (tester) async {
+      await _pumpSheet(tester);
+      await tester.enterText(find.byType(TextField).first, 'draft reply');
+      await tester.pump();
+
+      // Chat -> apps: the bar's text must survive the panel close.
+      await _openPanelViaDrawer(tester, 'sess-b');
+      await tester.tap(find.byKey(panelAppsKey));
+      await tester.pumpAndSettle();
+      expect(find.text('draft reply'), findsOneWidget);
+
+      // Apps -> chat: opening the panel keeps the draft too.
+      await _openPanelViaDrawer(tester, 'sess-b');
+      expect(find.text('draft reply'), findsOneWidget);
+    });
+
+    testWidgets('a streaming run keeps streaming across the toggle; the '
+        'work bar stays reachable on the apps home (E1)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _hungResponse());
+      addTearDown(service.dispose);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-h', service);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        unawaited(service.sendText('long task'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+
+      // Expand the chat while streaming through the status row's expand
+      // button (timed pumps — the orbit indicator never settles), then
+      // collapse it back through the header Apps icon.
+      await tester.tap(find.byIcon(Icons.open_in_full));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(_panelKey), findsOneWidget);
+      await tester.tap(find.byKey(ValueKey('sessionChatPanelApps')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(_panelKey), findsNothing);
+      expect(service.isStreaming, isTrue);
+      const orbitKey = ValueKey('faWorkBarOrbit');
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byKey(orbitKey), findsOneWidget); // status row visible
     });
   });
 }

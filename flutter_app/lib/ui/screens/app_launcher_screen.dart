@@ -72,6 +72,7 @@ class AppLauncherScreen extends StatefulWidget {
     this.videoControllerFactory,
     this.tileEngineFactory,
     this.hideChatSheet = false,
+    this.restoreAppsMode = false,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -117,6 +118,11 @@ class AppLauncherScreen extends StatefulWidget {
   /// When true the [SessionChatSheet] floating overlay is NOT rendered —
   /// the wide-screen [WideLayoutShell] owns chat instead.
   final bool hideChatSheet;
+
+  /// Restore the persisted apps↔chat surface mode (issue #224) in the
+  /// chat sheet; forwarded from [faHomeScreen]. Tests/goldens keep the
+  /// default false — the apps grid stays the deterministic resting state.
+  final bool restoreAppsMode;
 
   @override
   State<AppLauncherScreen> createState() => _AppLauncherScreenState();
@@ -997,6 +1003,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 asrTranscriber: widget.asrTranscriber,
                 audioControllerFactory: widget.audioControllerFactory,
                 videoControllerFactory: widget.videoControllerFactory,
+                restoreAppsMode: widget.restoreAppsMode,
               ),
             if (_openFolderId != null) ...[
               _buildFolderBarrier(colors),

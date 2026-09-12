@@ -21,6 +21,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/chat_text_store.dart';
+import 'package:fa/services/apps_mode_store.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/attached_session_controller.dart';
@@ -114,6 +115,7 @@ class SessionChatSheet extends StatefulWidget {
     this.audioControllerFactory,
     this.videoControllerFactory,
     this.panelFraction = SessionChatSheetState.defaultPanelFraction,
+    this.restoreAppsMode = false,
   });
 
   /// The multi-session manager the drawer and the panel are driven by.
@@ -137,6 +139,14 @@ class SessionChatSheet extends StatefulWidget {
   /// app's own header or hero content visible above it) pass a smaller
   /// fraction; defaults to [SessionChatSheetState.defaultPanelFraction].
   final double panelFraction;
+
+  /// Restore the persisted apps↔chat surface mode (issue #224) when the
+  /// sheet mounts: a relaunch (or a wide→narrow rotation) reopens the chat
+  /// panel exactly as the user last left it — chat expanded by default
+  /// ([AppsHomeModeStore] first-run default), apps expanded once the user
+  /// collapsed the chat. Off in tests/goldens, which pin the launcher's
+  /// historical resting state (apps expanded) deterministically.
+  final bool restoreAppsMode;
 
   /// Microphone backend override for the composer (tests).
   final AsrApi? asr;
@@ -167,6 +177,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   late final AnimationController _panelAnim;
   late final AnimationController _drawerAnim;
+
+  /// The persisted apps↔chat mode (null until restored; sheets without
+  /// [SessionChatSheet.restoreAppsMode] never load one, so toggles animate
+  /// without persisting).
+  AppsHomeModeStore? _appsMode;
+
+  /// Set on the first user-driven open/close so a late store load can never
+  /// clobber what the user just did (the load resolves within the first
+  /// frames, well before any realistic interaction).
+  var _userToggledApps = false;
   SessionNamesStore? _namesStore;
 
   /// Live-session presence (sessions a running `fa` CLI owns).
@@ -291,6 +311,18 @@ class SessionChatSheetState extends State<SessionChatSheet>
     // up front; later changes (streaming row, multiline field) come through
     // the notification.
     WidgetsBinding.instance.addPostFrameCallback((_) => _measureBarHeight());
+    // Apps↔chat surface mode (issue #224): restore the persisted toggle
+    // state once — chat expanded by default on a first run.
+    if (widget.restoreAppsMode) unawaited(_restoreAppsMode());
+  }
+
+  /// Loads the persisted mode and jumps the panel to it (no boot
+  /// animation). A toggle that already happened wins over the file.
+  Future<void> _restoreAppsMode() async {
+    final mode = await AppsHomeModeStore.load(widget.manager.env);
+    if (!mounted || _userToggledApps) return;
+    _appsMode = mode;
+    _panelAnim.value = mode.chatExpanded ? 1 : 0;
   }
 
   /// Reads the bar's real laid-out height into [_barHeight] (no-op when
@@ -446,6 +478,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
   void expand() => unawaited(_openPanel());
 
   Future<void> _openPanel() {
+    _userToggledApps = true;
+    unawaited(_appsMode?.setChatExpanded(true));
     AppAnalytics.instance.chatSheetState('expanded');
     if (_drawerAnim.value > 0) {
       unawaited(
@@ -460,6 +494,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
   }
 
   Future<void> _closePanel() {
+    _userToggledApps = true;
+    unawaited(_appsMode?.setChatExpanded(false));
     AppAnalytics.instance.chatSheetState('collapsed');
     // Dismiss the keyboard together with the panel: a still-focused
     // composer in the docked bar would keep the keyboard floating over the
@@ -680,6 +716,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
           asrTranscriber: widget.asrTranscriber,
           audioControllerFactory: widget.audioControllerFactory,
           videoControllerFactory: widget.videoControllerFactory,
+          // The full chat's Apps button (issue #224) pops back here AND
+          // collapses the panel, so the tap really lands on the apps grid.
+          onAppsToggle: () => unawaited(_closePanel()),
         ),
       ),
     );
@@ -1323,6 +1362,17 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 tooltip: context.l10n.appsOpenTrajectoryTooltip,
                 visualDensity: VisualDensity.compact,
                 onPressed: () => unawaited(_openTrajectory()),
+              ),
+              // The apps-collapse toggle (issue #224): one tap hands the
+              // screen back to the apps grid — the chat collapses to the
+              // pinned composer bar, which stays reachable for the reverse
+              // direction (focus, send, or the work bar's expand).
+              IconButton(
+                key: const ValueKey('sessionChatPanelApps'),
+                icon: const Icon(Icons.apps, size: 20),
+                tooltip: context.l10n.appsShowAppsTooltip,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => unawaited(_closePanel()),
               ),
               PopupMenuButton<String>(
                 key: const ValueKey('sessionChatMenu'),

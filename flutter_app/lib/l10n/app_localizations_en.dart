@@ -120,6 +120,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appsGridTitle => 'Apps';
 
   @override
+  String get appsHideAppsTooltip => 'Hide apps';
+
+  @override
   String appsLoadError(Object error) {
     return 'Failed to load apps: $error';
   }
@@ -258,6 +261,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appsSendTooltip => 'Send';
+
+  @override
+  String get appsShowAppsTooltip => 'Show apps';
 
   @override
   String appsStartError(Object error, Object name) {
