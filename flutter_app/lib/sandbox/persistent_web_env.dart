@@ -169,6 +169,19 @@ final class PersistentWebExecutionEnv
     }
   }
 
+  /// True when mutations since the last completed save are still
+  /// unpersisted (including a save that failed and armed the retry).
+  bool get hasPendingChanges => _dirty;
+
+  /// Best-effort persistence for page unload: the web bootstrap binds this
+  /// to `beforeunload` and `visibilitychange(hidden)` (see
+  /// `bindUnloadFlush` in `unload_flush.dart`). Without it, a panel unload
+  /// inside the 800 ms debounce window silently dropped the last mutations
+  /// (issue #201 — and the extension side panel unloads on every close).
+  /// Returns the flush future so tests can await it; browser event
+  /// handlers fire-and-forget it.
+  Future<void> onPageUnload() => flush();
+
   /// Stops the debounce timer. Pending unsaved changes are dropped; call
   /// [flush] first when they matter.
   void dispose() {

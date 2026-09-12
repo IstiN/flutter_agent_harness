@@ -266,6 +266,37 @@ void main() {
       },
     );
 
+    test(
+      'IT-unload-flush: a mutation followed immediately by page unload '
+      'persists (issue #201)',
+      () async {
+        final store = InMemoryFsSnapshotStore();
+        // A debounce the test never lets fire: only the unload hook may save.
+        final env = await _restoreEnv(
+          store,
+          persistDelay: const Duration(hours: 1),
+        );
+        (await env.writeFile('/apps/calculator/widget.js', 'code'))
+            .getOrThrow();
+        expect(env.hasPendingChanges, isTrue);
+
+        // Simulated beforeunload / visibilitychange(hidden): the web
+        // bootstrap's bindUnloadFlush calls exactly this.
+        await env.onPageUnload();
+        expect(env.hasPendingChanges, isFalse);
+        expect(store.saveCount, greaterThan(0));
+        env.dispose();
+
+        final reloaded = await _restoreEnv(store);
+        expect(
+          (await reloaded.readTextFile('/apps/calculator/widget.js'))
+              .getOrThrow(),
+          'code',
+        );
+        reloaded.dispose();
+      },
+    );
+
     test('a store that throws on load starts clean', () async {
       final store = _ThrowingLoadStore();
       final env = await _restoreEnv(store);
