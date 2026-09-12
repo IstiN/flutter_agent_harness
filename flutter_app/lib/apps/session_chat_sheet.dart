@@ -36,9 +36,11 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/screens/attached_session_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/media_player.dart';
+import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
@@ -266,6 +268,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
     _namesStore?.addListener(_onChanged);
     if (_namesStore == null) unawaited(_loadNamesStore());
     widget.manager.addListener(_onManagerChanged);
+    // The header's model chip follows the ACTIVE service (reconfigure,
+    // session restore) — the manager alone never notifies on those.
+    _subscribeToActiveService();
     unawaited(_reloadPersisted());
     // Live-session presence: sessions a `fa` CLI currently owns show a
     // green dot and attach (read-only view + input hand-over) on tap.
@@ -303,6 +308,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
   void dispose() {
     _surfaceHandlers.detach();
     widget.manager.removeListener(_onManagerChanged);
+    _listenedService?.removeListener(_onChanged);
     _namesStore?.removeListener(_onChanged);
     _presence?.removeListener(_onPresenceChanged);
     _presence?.dispose();
@@ -314,6 +320,20 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   void _onChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// The service we're currently listening to — the header's model chip
+  /// rebuilds on model changes (reconfigure, session restore), which the
+  /// manager's own notifications never cover. Same pattern as the wide
+  /// shell.
+  AgentService? _listenedService;
+
+  void _subscribeToActiveService() {
+    final active = widget.manager.active?.service;
+    if (active == _listenedService) return;
+    _listenedService?.removeListener(_onChanged);
+    _listenedService = active;
+    active?.addListener(_onChanged);
   }
 
   /// Presence transitions resync both the live dots and the disk listing
@@ -397,6 +417,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// changes (closed sessions reappear there) and rebuild.
   void _onManagerChanged() {
     if (!mounted) return;
+    _subscribeToActiveService();
     if (_pendingOpenId != null &&
         (widget.manager.hostedLiveId.value == _pendingOpenId ||
             widget.manager.activeId == _pendingOpenId)) {
@@ -1216,6 +1237,35 @@ class SessionChatSheetState extends State<SessionChatSheet>
     }
   }
 
+  /// Opens the SAME quick model picker the wide shell's header chip opens
+  /// (issue #167 parity) — presented as a bottom sheet on the narrow
+  /// layout; the switch itself is the shared [openQuickModelPicker] path.
+  Future<void> _openModelPicker(AgentService service) async {
+    final registry = widget.registry;
+    if (registry == null) return;
+    await openQuickModelPicker(
+      context,
+      service: service,
+      registry: registry,
+      lastConnectionStore: widget.lastConnectionStore,
+      asBottomSheet: true,
+    );
+  }
+
+  /// Long-press polish: jump straight to the dedicated Models settings
+  /// page.
+  Future<void> _openModelSettings(AgentService service) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ModelsSettingsPage(
+          service: service,
+          registry: widget.registry,
+          lastConnectionStore: widget.lastConnectionStore,
+        ),
+      ),
+    );
+  }
+
   Widget _buildHeader(FahColors colors, AgentService service) {
     final activeId = widget.manager.activeId ?? '';
     final title =
@@ -1252,6 +1302,17 @@ class SessionChatSheetState extends State<SessionChatSheet>
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
+              ),
+              // Quick model switch — parity with the wide header's chip
+              // (issue #167): same chip, same shared picker flow; only
+              // the presentation differs (bottom sheet on narrow).
+              QuickModelChip(
+                key: const ValueKey('sessionChatModelChip'),
+                modelId: service.modelId,
+                tooltip: context.l10n.chatModelSwitchTooltip,
+                maxWidth: 132,
+                onTap: () => unawaited(_openModelPicker(service)),
+                onLongPress: () => unawaited(_openModelSettings(service)),
               ),
               // The trajectory entry (issue #168): pushes the ledger page
               // — the same fa_ui surface the desktop chat exposes, so
