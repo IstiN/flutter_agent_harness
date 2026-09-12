@@ -124,7 +124,7 @@ jobs:
       - name: Example app setup (full analyze only)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: |
-          touch [REDACTED:Credential File]
+          printf 'OPENROUTER_API_KEY=\nMODEL_ID=\nBASE_URL=\nHUGGINGFACE_TOKEN=\n' > [REDACTED:Credential File]
           cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
           cd flutter_app && flutter pub get
 
@@ -319,8 +319,19 @@ jobs:
 
       # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
       # newer flutter validates assets at pub-get/test-build time, so the
-      # placeholders must exist BEFORE flutter pub get.
-      - run: touch [REDACTED:Credential File]
+      # placeholders must exist BEFORE flutter pub get. Content mirrors the
+      # proven build-macos.yml incantation (bare `touch` produced "No file or
+      # variants found for asset: .env" on ubuntu/flutter 3.47.4).
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
 
       # firebase_options.dart is gitignored; the tracked placeholder makes it
       # compile (Firebase init is skipped for YOUR_* values at runtime).
