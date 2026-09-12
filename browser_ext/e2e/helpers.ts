@@ -264,6 +264,14 @@ export class FaHarness {
       .serviceWorkers()
       .find((w) => w.url().endsWith('/sw/main.js'));
     if (alive) return alive;
+    // Arm the listener BEFORE the wake call: the sendMessage below can
+    // boot the SW and emit "serviceworker" between the two awaits — a
+    // check-then-wait would miss the event and ride out the timeout
+    // (seen on CI's slower runners: AC7 45s timeout, next test green).
+    const waiter = this.context.waitForEvent('serviceworker', {
+      predicate: (w) => w.url().endsWith('/sw/main.js'),
+      timeout,
+    });
     try {
       // Fire-and-forget on purpose (mirrors wakeServiceWorker): awaiting the
       // sendMessage promise can hang while the worker boots.
@@ -276,10 +284,7 @@ export class FaHarness {
     } catch {
       // Panel may be closed (residency spec); waitForEvent still sees revival.
     }
-    return this.context.waitForEvent('serviceworker', {
-      predicate: (w) => w.url().endsWith('/sw/main.js'),
-      timeout,
-    });
+    return waiter;
   }
 
   /**
