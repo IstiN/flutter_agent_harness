@@ -163,9 +163,9 @@ jobs:
         with:
           channel: stable
           cache: true
-      - run: cd flutter_app && flutter pub get
       - run: touch [REDACTED:Credential File]
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - run: cd flutter_app && flutter pub get
       - name: flutter test test/cli_visual --tags integration
         run: cd flutter_app && flutter test test/cli_visual --tags integration
       - uses: actions/upload-artifact@v4

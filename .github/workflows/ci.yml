@@ -83,16 +83,6 @@ jobs:
               - 'docs/**'
               - 'prompts/**'
               - '**/*.md'
-      # Re-publish under stable output names (paths-filter emits them, but
-      # keeping one indirection lets the fallback above share the shape).
-      - id: rename
-        if: github.event_name == 'pull_request'
-        run: |
-          for k in core app docs shared; do
-            v=$(jq -r ".$k" <<< '${{ toJSON(steps.paths.outputs) }}')
-            echo "$k=$v" >> "$GITHUB_OUTPUT"
-          done
-
   static:
     name: Static gates
     runs-on: ubuntu-latest
@@ -125,19 +115,18 @@ jobs:
       # Full analyze needs the example app's package config (Flutter imports);
       # a docs-only PR skips the flutter setup entirely and analyzes the pure
       # Dart scopes only — it cannot have changed resolution anyway.
-      - name: Example app setup (full analyze only)
-        if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-        run: |
-          flutter --version >/dev/null
-          cd flutter_app && flutter pub get
-          touch flutter_app/.env
-          cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
-        # flutter-action only where needed:
       - uses: subosito/flutter-action@v2
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
           channel: stable
           cache: true
+
+      - name: Example app setup (full analyze only)
+        if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: |
+          touch [REDACTED:Credential File]
+          cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+          cd flutter_app && flutter pub get
 
       - name: dart analyze (full)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -237,8 +226,10 @@ jobs:
           pattern: coverage-shard-*
           path: coverage-shards
 
-      - name: Merge shard coverage (lcov concat is append-safe)
-        run: cat coverage-shards/*/lcov.info > coverage/lcov.info
+      - name: Merge shard coverage (union DA hits per file, NOT cat)
+        run: |
+          mkdir -p coverage
+          python3 scripts/merge_lcov.py -o coverage/lcov.info coverage-shards/*/lcov.info
 
       # PRs pay the ratchet on CHANGED lines only (issue #177 wave 2): the
       # 80% bar applies to the diff; main/tags keep the full-suite ratchet.
@@ -286,7 +277,10 @@ jobs:
           pattern: coverage-shard-*
           path: coverage-shards
 
-      - run: mkdir -p coverage && cat coverage-shards/*/lcov.info > coverage/lcov.info
+      - name: Merge shard coverage (union DA hits per file, NOT cat)
+        run: |
+          mkdir -p coverage
+          python3 scripts/merge_lcov.py -o coverage/lcov.info coverage-shards/*/lcov.info
 
       - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
         run: |
@@ -323,15 +317,16 @@ jobs:
           channel: stable
           cache: true
 
-      - run: cd flutter_app && flutter pub get
-
       # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
-      # without it the analyzer fails with asset_does_not_exist.
+      # newer flutter validates assets at pub-get/test-build time, so the
+      # placeholders must exist BEFORE flutter pub get.
       - run: touch [REDACTED:Credential File]
 
       # firebase_options.dart is gitignored; the tracked placeholder makes it
       # compile (Firebase init is skipped for YOUR_* values at runtime).
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - run: cd flutter_app && flutter pub get
 
       - name: flutter analyze
         run: cd flutter_app && flutter analyze --no-fatal-infos --no-fatal-warnings
