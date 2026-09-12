@@ -25,14 +25,16 @@ const _model = Model(
   maxTokens: 4096,
 );
 
-/// Window 800: the ~700-token answer pushes the post-turn transcript over
-/// the compaction threshold (same shape as the auto-compact suite).
+/// Window 16384: the ~5000-token answer pushes the post-turn request size
+/// (transcript + ~8.4k system-prompt/tool-schema overhead while unanchored)
+/// over the compaction threshold at 12288 (same shape as the auto-compact
+/// suite).
 const _tinyWindow = Model(
   id: 'tiny',
   api: 'test-api',
   provider: 'test-provider',
   baseUrl: 'https://example.test',
-  contextWindow: 800,
+  contextWindow: 16384,
   maxTokens: 4096,
 );
 
@@ -292,7 +294,7 @@ void main() {
   test('compaction over threshold emits compaction_start/end frames',
       () async {
     final fake = FakeStreamFunction([
-      textTurn('a' * 2800),
+      textTurn('a' * 20000),
       textTurn('AUTO SUMMARY'),
     ]);
     final cli = cliFor(fake.call, model: _tinyWindow);
