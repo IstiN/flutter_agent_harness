@@ -40,6 +40,18 @@
   `list`/`current`/`apply` behind the `theme` permission with a consent
   dialog per apply. Apps can never install or delete packs (no such API
   exists; pinned by a byte-scan test).
+- chore(flutter): raise the Flutter floor to 3.47 (`>=3.47.0`) across
+  `flutter_app`, `packages/fa_ui`, `packages/fa_llm_flutter` and
+  `yoclip`; drop the `meta: 1.18.0` dependency overrides (the 3.47 SDK
+  declares `meta ^1.18.3`, so 1.19.0 resolves for dart_tui without an
+  override); regenerate the flutter_app goldens for the 3.47.4
+  rendering (text/geometry drift only); clean up new-SDK lints in two
+  config tests; ios Podfile now forces the iOS 16 deployment floor on
+  pod TARGET-level build configs too (podspec-declared 15.0 targets
+  broke the build against 16.0-only Promises under the newer toolchain).
+- chore(deps): js_widget_runtime ^0.4.121 — typed fallback hardening
+  for legacy manifest keys, widget manifest i18n compatibility, and the
+  JSR video `onError` bridge.
 
 ## 0.1.357
 
