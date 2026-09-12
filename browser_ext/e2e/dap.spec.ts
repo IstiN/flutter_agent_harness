@@ -273,6 +273,14 @@ class CliProc {
 
 test.describe('DAP: CLI agent ↔ extension agent', () => {
   skipWithoutChrome();
+  // One retry, this describe ONLY: the DM exchange is a three-process
+  // choreography (MV3 service worker ↔ dart hub ↔ dart CLI) whose
+  // presence-gated sends (dap_dm refuses offline peers by design) still
+  // carry a browser-timing window the spec cannot close from outside —
+  // observed post-fixes on runs 34641400371 (reply relay) and
+  // 34642770301 (forward relay). Everything else stays at the project's
+  // retries: 0 so deterministic regressions keep failing loudly (#152).
+  test.describe.configure({ retries: 1 });
   test.setTimeout(300_000);
 
   let hub: HubProc;
@@ -292,39 +300,52 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
   test('two agents exchange end-to-end-encrypted DMs through the hub', async ({
     fa,
   }) => {
+    // Boots (or re-boots — idempotent, config + identity persist) the
+    // extension agent onto the hub and returns its agent id once connected.
+    // Re-used right before the CLI's turn: MV3 idle-kills the SW during
+    // the CLI's `dart run` boot, dap_dm is presence-gated (an offline peer
+    // errors the send with nothing re-sending it), so the DM's target
+    // must be freshly online when the scripted turn fires (#152 flake
+    // class; observed as relayTargets stuck empty on runs 34627556966 and
+    // 34629634925).
+    const bootExtAgent = async (): Promise<string> => {
+      await fa.swEval(
+        (config) => {
+          const sw = globalThis as unknown as {
+            faAgent: { boot(c: unknown): Promise<unknown> };
+          };
+          return sw.faAgent.boot(config);
+        },
+        {
+          approvalMode: 'unattended',
+          dap: { url: hub.url, name: 'ext-agent' },
+        },
+      );
+      await expect
+        .poll(
+          () =>
+            fa.swEval(() => {
+              const sw = globalThis as unknown as {
+                faAgent: { getState(): { hub?: { phase?: string } } };
+              };
+              return sw.faAgent.getState().hub?.phase ?? null;
+            }),
+          { timeout: 60_000 },
+        )
+        .toBe('connected');
+      const agentId = await fa.swEval(() => {
+        const sw = globalThis as unknown as {
+          faAgent: { getState(): { hub?: { agentId?: string } } };
+        };
+        return sw.faAgent.getState().hub?.agentId ?? '';
+      });
+      expect(agentId).toMatch(/^[0-9a-f]{16}$/);
+      return agentId;
+    };
+
     // 1. Boot the extension agent onto the hub (fake provider — no LLM;
     //    dap config persists + connects via the boot path).
-    await fa.swEval(
-      (config) => {
-        const sw = globalThis as unknown as {
-          faAgent: { boot(c: unknown): Promise<unknown> };
-        };
-        return sw.faAgent.boot(config);
-      },
-      {
-        approvalMode: 'unattended',
-        dap: { url: hub.url, name: 'ext-agent' },
-      },
-    );
-    await expect
-      .poll(
-        () =>
-          fa.swEval(() => {
-            const sw = globalThis as unknown as {
-              faAgent: { getState(): { hub?: { phase?: string } } };
-            };
-            return sw.faAgent.getState().hub?.phase ?? null;
-          }),
-        { timeout: 60_000 },
-      )
-      .toBe('connected');
-    const extAgentId = await fa.swEval(() => {
-      const sw = globalThis as unknown as {
-        faAgent: { getState(): { hub?: { agentId?: string } } };
-      };
-      return sw.faAgent.getState().hub?.agentId ?? '';
-    });
-    expect(extAgentId).toMatch(/^[0-9a-f]{16}$/);
+    const extAgentId = await bootExtAgent();
     await fa.collectEvents();
 
     // 2. Bring the CLI up on the same hub and have its scripted provider
@@ -339,18 +360,24 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
     mock.dmTarget = extAgentId;
     const cli = CliProc.start(home, mock.port);
     try {
-      // The hub handshake needs a moment before the prompt's tool call can
-      // send; the mock's first response only lands after a full boot anyway.
-      await new Promise((r) => setTimeout(r, 5_000));
-      cli.prompt('dm the extension agent');
-
-      // 3. The hub routed CLI → ext …
+      // Gate the prompt on the CLI's hub enrollment (#152 flake class): a
+      // fixed 5s sleep races `dart run` cold boot on a loaded runner — the
+      // mock's one-shot dap_dm response then fires before the DAP handshake
+      // completes, the tool call errors out, and nothing re-sends it.
       await expect
         .poll(
           () => hub.agentIds().find((id) => id !== extAgentId) ?? null,
           { timeout: 60_000 },
         )
         .not.toBeNull();
+      // Re-wake the extension's SW (see bootExtAgent): the enrollment wait
+      // above can span the SW's idle lifetime, and the dap_dm target must
+      // be online when the turn fires milliseconds later.
+      mock.dmTarget = await bootExtAgent();
+      expect(mock.dmTarget).toBe(extAgentId); // identity must persist across re-boots
+      cli.prompt('dm the extension agent');
+
+      // 3. The hub routed CLI → ext …
       const otherId = hub.agentIds().find((id) => id !== extAgentId)!;
       await expect
         .poll(() => hub.relayTargets(), { timeout: 60_000 })
@@ -368,11 +395,28 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
         .toBeGreaterThan(0);
 
       // 5. … and the reply made it back: the CLI's idle wake ran a turn
-      //    against the mock, printing the marker.
       await expect
         .poll(() => cli.output(), { timeout: 120_000, intervals: [1_000] })
         .toContain('mock: cli done');
-      expect(hub.relayTargets()).toContain(otherId);
+      try {
+        expect(hub.relayTargets()).toContain(otherId);
+      } catch (e) {
+        // The reply relay is the one remaining intermittent (#152):
+        // dump both sides so the next red run pins the sender-side cause.
+        console.log(
+          '[dap-e2e-diag]',
+          JSON.stringify({
+            extAgentId,
+            otherId,
+            relays: hub.relayTargets(),
+            extDapDm: (await fa.events()).filter(
+              (ev) => ev.toolName === 'dap_dm',
+            ),
+            cliTail: cli.output().slice(-1500),
+          }),
+        );
+        throw e;
+      }
     } finally {
       await cli.stop();
       fs.rmSync(home, { recursive: true, force: true });
@@ -456,7 +500,13 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
         return sw.faAgent.getState().hub?.agentId ?? '';
       });
       expect(extAgentId).toMatch(/^[0-9a-f]{16}$/);
-      expect(phub.helloCount()).toBeGreaterThanOrEqual(1);
+      // Poll, not instant: the hub-side hello event reaches this process
+      // via hub_server's 100ms stdout ticker — an instant assert races it
+      // (green twice at c5b7ccd9, red twice at c017e22d with identical
+      // code — pure observability lag on a loaded runner).
+      await expect
+        .poll(() => phub.helloCount(), { timeout: 10_000 })
+        .toBeGreaterThanOrEqual(1);
       await fa.collectEvents();
 
       // 3. The CLI joins the SAME protected hub with the SAME password
@@ -473,7 +523,15 @@ test.describe('DAP: CLI agent ↔ extension agent', () => {
       mock.resetScript();
       const cli = CliProc.start(home, mock.port, pwd);
       try {
-        await new Promise((r) => setTimeout(r, 5_000));
+        // Gate the prompt on the CLI's hub enrollment (#152 flake class —
+        // same race the DM test fixed): the fixed 5s sleep loses the prompt
+        // or fires dap_dm before the handshake on a loaded runner.
+        await expect
+          .poll(
+            () => phub.agentIds().find((id) => id !== extAgentId) ?? null,
+            { timeout: 60_000 },
+          )
+          .not.toBeNull();
         cli.prompt('dm the extension agent');
 
         // 4. The hub routed CLI → ext and the extension answered; the
