@@ -752,6 +752,12 @@ abstract class AppLocalizations {
   /// **'Voice input'**
   String get chatMicTooltip;
 
+  /// No description provided for @chatModelSwitchTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch model'**
+  String get chatModelSwitchTooltip;
+
   /// No description provided for @chatRemoveAttachment.
   ///
   /// In en, this message translates to:

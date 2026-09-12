@@ -41,6 +41,7 @@ export 'src/cli/cli_config.dart'
     show
         CliConfig,
         loadCliConfig,
+        loadProjectCompactionEngine,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
         resolveStartupCubeSource;

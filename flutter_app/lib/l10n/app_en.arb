@@ -128,6 +128,7 @@
   "chatMicError": "Voice input failed: {error}",
   "chatMicStopTooltip": "Stop recording",
   "chatMicTooltip": "Voice input",
+  "chatModelSwitchTooltip": "Switch model",
   "chatRemoveAttachment": "Remove attachment",
   "chatSendError": "Could not send: {error}",
   "chatSendTooltip": "Send",

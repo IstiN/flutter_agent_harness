@@ -396,6 +396,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get chatMicTooltip => 'Голосовой ввод';
 
   @override
+  String get chatModelSwitchTooltip => 'Сменить модель';
+
+  @override
   String get chatRemoveAttachment => 'Удалить вложение';
 
   @override
