@@ -84,6 +84,8 @@ class FakeChatService extends ChangeNotifier implements FaChatService {
   @override
   AskCallback? askHandler;
   @override
+  void Function(String messageId)? scrollToMessageHandler;
+  @override
   RequestSecretCallback? secretRequestHandler;
   @override
   ApprovalManager get approval => ApprovalManager();

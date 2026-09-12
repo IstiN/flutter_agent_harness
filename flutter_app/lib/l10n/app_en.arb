@@ -61,6 +61,7 @@
   "widgetsCatalogRetry": "Retry",
   "appsOpenChatTooltip": "Open chat",
   "appsOpenFullChatTooltip": "Open full chat",
+  "appsOpenTrajectoryTooltip": "Open trajectory",
   "appsPermissionCalendar": "Calendar",
   "appsPermissionCalendarDesc": "jsr.fa.calendar — read your system calendar events",
   "appsPermissionContacts": "Contacts",
