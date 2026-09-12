@@ -27,10 +27,11 @@ on:
       - '.github/workflows/browser-ext.yml'
   workflow_dispatch:
 
-# Cancel superseded runs of the same ref (issue #177).
+# Superseded PR runs die instantly; main-push runs are never cancelled
+# mid-flight (issue #194 pt 5, same release-protection principle as ci.yml).
 concurrency:
   group: Browser extension-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   headless-suite:

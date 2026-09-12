@@ -16,10 +16,11 @@ on:
           - 'true'
           - 'false'
 
-# Cancel superseded runs of the same ref (issue #177).
+# Release builds are never preempted (issue #194 pt 5, same principle as
+# ci.yml: main/tag/release runs must not be cancelled mid-flight).
 concurrency:
   group: Build macOS Release (Fa)-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   version:

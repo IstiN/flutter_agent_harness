@@ -25,13 +25,18 @@ concurrency:
 # Issue #177 — a pull request pays only for what it touched:
 #   changes  → path classification (union semantics, shared files = full gate)
 #   static   → size guard + analyze + publish dry-run        (always, ~1-2 min)
-#   test-core→ dart test sharded ×3 with per-shard coverage  (core/shared)
+#   test-core→ dart test sharded ×3, per-shard coverage + junit durations
+#              (core/shared)
 #   coverage-gate → merge shard coverage; PR: diff-coverage, main: full ratchet
 #   guards   → CRAP + jscpd                                   (core/shared)
 #   flutter-tests → flutter_app analyze + tests on ubuntu     (app/core/shared;
 #                   golden suite stays in build-macos.yml — goldens are
 #                   host-locked, see issue #177 E5 discussion)
 #   quality-gate → ONE aggregate required check (skip-tolerant)
+#   step-timings → per-step duration telemetry (jobs API → summary+artifact)
+#   watchdog   → >2x-baseline timeouts; a timed-out leg means a degraded
+#                runner allocation → ONE empty-commit retrigger, never
+#                `gh run rerun` (a rerun reallocates into the same pool)
 # Tag-only / main-only jobs (publish, binaries, installer-smoke, release,
 # integration) are unchanged in semantics — they just need the new aggregate.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -40,9 +45,9 @@ jobs:
   changes:
     name: Classify changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       core: ${{ steps.paths.outputs.core || steps.filter.outputs.core }}
       app: ${{ steps.paths.outputs.app || steps.filter.outputs.app }}
@@ -50,6 +55,8 @@ jobs:
       shared: ${{ steps.paths.outputs.shared || steps.filter.outputs.shared }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # base...head diff for the classifier below
       # Non-PR events (main push, tags, schedule, dispatch): everything is
       # affected — the full gate always guards main and releases.
       - id: filter
@@ -59,34 +66,39 @@ jobs:
           echo "app=true" >> "$GITHUB_OUTPUT"
           echo "docs=true" >> "$GITHUB_OUTPUT"
           echo "shared=true" >> "$GITHUB_OUTPUT"
-      - uses: dorny/paths-filter@v3
+      # PR classification runs through THE SAME classifier the pre-commit
+      # hook uses (issue #194, AC7 + AC5/E2): one source of truth for path
+      # rules, and the unknown-path safe default (full gate) — e.g. a new
+      # dart_test.yaml at the repo root — now holds in CI, not only in the
+      # hook. The selected stage set maps back to the same four groups the
+      # old dorny filter emitted.
+      - id: paths
         if: github.event_name == 'pull_request'
-        id: paths
-        with:
-          filters: |
-            shared:
-              - '.github/**'
-              - 'scripts/**'
-              - 'crap4dart.yaml'
-              - 'analysis_options.yaml'
-            core:
-              - 'lib/**'
-              - 'bin/**'
-              - 'test/**'
-              - 'example/**'
-              - 'pubspec.yaml'
-              - 'pubspec.lock'
-            app:
-              - 'flutter_app/**'
-              - 'packages/**'
-            docs:
-              - 'docs/**'
-              - 'prompts/**'
-              - '**/*.md'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha }}
+        run: |
+          stages=$(scripts/ci_fast_gate.sh --dry-run |
+            sed -n 's/^Fast gate scope: .*stages://p')
+          echo "gate stages:[$stages]"
+          # Empty output can only mean detection failure: full gate.
+          [ -z "$(echo $stages)" ] && stages="size analyze test-core coverage crap dup flutter"
+          case " $stages " in *"flutter"*) echo "app=true" >> "$GITHUB_OUTPUT" ;; esac
+          case " $stages " in *"test-core"*) echo "core=true" >> "$GITHUB_OUTPUT" ;; esac
+          case " $stages " in *"analyze"*) echo "docs=true" >> "$GITHUB_OUTPUT" ;; esac
+          # All seven stages selected = a shared/unknown path changed:
+          if [ -z "$(echo $stages)" ]; then
+            # Empty output can only mean detection failure: full gate.
+            stages="size analyze test-core coverage crap dup flutter"
+          fi
+          if [ "$(echo $stages | wc -w)" -eq 7 ]; then
+            echo "shared=true" >> "$GITHUB_OUTPUT"
+          fi
   static:
     name: Static gates
     runs-on: ubuntu-latest
     needs: changes
+    timeout-minutes: 8
     permissions:
       contents: read
     steps:
@@ -161,6 +173,7 @@ jobs:
     if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
     permissions:
       contents: read
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
@@ -187,12 +200,23 @@ jobs:
 
       # Duration-balanced shards (issue #177 AC3): scripts/test_shards.json
       # maps test dirs to shards; rebalanced weekly by shard-rebalance.yml.
-      # Unknown tests land in the default bucket (E4).
+      # Unknown tests land in the default bucket (E4); top-level test dirs
+      # missing from the manifest are bin-packed in at runtime by
+      # shard_files.py, so a PR adding one never silently skips them.
+      # The json file-reporter (converted to junit below — dart test has no
+      # built-in junit reporter) feeds the rebalancer real durations
+      # (issue #194 AC3).
       - name: dart test --coverage (shard ${{ matrix.shard }})
         run: |
           targets=$(python3 scripts/shard_files.py scripts/test_shards.json ${{ matrix.shard }})
           echo "shard targets: $targets"
-          dart test --coverage=coverage --exclude-tags integration $targets
+          mkdir -p test-results
+          dart test --coverage=coverage --exclude-tags integration \
+            --file-reporter="json:test-results/dart-shard-${{ matrix.shard }}.json" \
+            $targets
+          python3 scripts/junit_from_dart_json.py \
+            test-results/dart-shard-${{ matrix.shard }}.json \
+            test-results/junit-shard-${{ matrix.shard }}.xml
 
       - name: Format coverage to lcov
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
@@ -203,10 +227,19 @@ jobs:
           path: coverage/lcov.info
           retention-days: 2
 
+      # junit durations for the weekly shard-rebalance.yml (retention 7d so
+      # a quiet week never starves it into the file-count fallback).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: junit-shard-${{ matrix.shard }}
+          path: test-results/junit-shard-${{ matrix.shard }}.xml
+          retention-days: 7
+
   coverage-gate:
     name: Coverage ratchet
     runs-on: ubuntu-latest
     needs: [changes, test-core]
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -251,6 +284,7 @@ jobs:
     name: CRAP + duplication
     runs-on: ubuntu-latest
     needs: [changes, test-core]
+    timeout-minutes: 6
     permissions:
       contents: read
     steps:
@@ -330,6 +364,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -399,6 +434,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [changes, static, test-core, coverage-gate, guards, flutter-tests]
     if: always()
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -420,10 +456,118 @@ jobs:
             fi
           done
           echo "Quality gate OK"
+
+  # Issue #194 (point 4): per-step duration telemetry. The jobs API already
+  # records started/completed per step — dump it as a summary table plus a
+  # raw artifact instead of instrumenting every step by hand.
+  step-timings:
+    name: Per-step timing telemetry
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests]
+    if: always()
+    permissions:
+      actions: read
+    steps:
+      - name: Collect per-step durations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/jobs.json
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import datetime, json
+          jobs = json.load(open('/tmp/jobs.json'))['jobs']
+          print('## Per-step durations\n')
+          print('| job | step | duration | conclusion |')
+          print('|---|---|---|---|')
+          for j in jobs:
+              for s in j.get('steps', []):
+                  if not (s.get('started_at') and s.get('completed_at')):
+                      continue
+                  t0 = datetime.datetime.fromisoformat(s['started_at'].replace('Z', '+00:00'))
+                  t1 = datetime.datetime.fromisoformat(s['completed_at'].replace('Z', '+00:00'))
+                  print(f"| {j['name']} | {s['name']} | {int((t1 - t0).total_seconds())}s | {s['conclusion']} |")
+          EOF
+          cp /tmp/jobs.json step-timings.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: step-timings
+          path: step-timings.json
+          retention-days: 14
+
+  # Issue #194 (point 4): >2x-baseline watchdog. The timeout-minutes above
+  # are ≈2x the healthy job durations observed on main (shards 3-5 min,
+  # flutter-tests ~14 min). A timeout means this run landed on a degraded
+  # runner allocation; the remedy is a fresh EMPTY-COMMIT push — a new run
+  # gets a fresh allocation and the push cancels this stale run via the PR
+  # concurrency group. NEVER `gh run rerun`: it reallocates into the same
+  # degraded pool. One retrigger max per head commit (loop guard below).
+  watchdog:
+    name: Watchdog (degraded-runner retrigger)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests]
+    # Same-repo PRs only: the empty-commit retrigger pushes to the PR branch,
+    # which this token cannot do for a fork's ref.
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Detect a timeout-type failure
+        id: trip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          trip=false
+          for id in $(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" \
+              --jq '.jobs[] | select(.conclusion=="failure") | .id'); do
+            # A job-level timeout cancels the running step: the job is
+            # 'failure' but its LAST step is 'cancelled'. A real test
+            # failure ends with a failed step.
+            last=$(gh api "repos/$REPO/actions/jobs/$id" --jq '.steps[-1].conclusion // ""')
+            echo "job $id last step: $last"
+            if [ "$last" = "cancelled" ]; then trip=true; fi
+          done
+          echo "trip=$trip" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.trip.outputs.trip == 'true'
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          # GITHUB_TOKEN pushes never trigger workflows — the retrigger must
+          # re-fire CI, so it rides RELEASE_PAT (same as release/gardener).
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Retrigger with an empty commit (fresh runner allocation)
+        if: steps.trip.outputs.trip == 'true'
+        env:
+          HAS_PAT: ${{ secrets.RELEASE_PAT != '' }}
+        run: |
+          if [ "$HAS_PAT" != "true" ]; then
+            echo "::notice::RELEASE_PAT not configured — cannot retrigger"
+            exit 0
+          fi
+          msg="ci: watchdog retrigger (degraded runner pool)"
+          if [ "$(git log -1 --format=%s)" = "$msg" ]; then
+            echo "head commit is already a watchdog retrigger — not looping"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "$msg"
+          git push origin HEAD:"${{ github.event.pull_request.head.ref }}"
+
   integration:
     name: Integration tests (LLM)
     runs-on: ubuntu-latest
     needs: quality-gate
+    timeout-minutes: 20
     permissions:
       contents: read
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -451,6 +595,7 @@ jobs:
     name: JS engine integration (quickjs-ng)
     runs-on: ubuntu-latest
     needs: quality-gate
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -472,6 +617,7 @@ jobs:
     name: Publish to pub.dev
     runs-on: ubuntu-latest
     needs: quality-gate
+    timeout-minutes: 10
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       id-token: write # OIDC — pub.dev verifies the GitHub identity, no secrets
@@ -534,6 +680,7 @@ jobs:
     name: Build native binaries
     runs-on: ${{ matrix.runner }}
     needs: quality-gate
+    timeout-minutes: 45
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write # attach assets to the GitHub Release
@@ -645,6 +792,7 @@ jobs:
     name: Installer smoke
     runs-on: ${{ matrix.os }}
     needs: binaries
+    timeout-minutes: 15
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
@@ -698,6 +846,7 @@ jobs:
     name: Auto-release (patch bump + tag)
     runs-on: ubuntu-latest
     needs: quality-gate
+    timeout-minutes: 15
     # Every push to main gets a release with an auto-incremented patch version
     # (0.1.x -> 0.1.y), coalesced to <=1 per 2h — pub.dev rate-limits publishes
     # (~12/day; hit on 2026-07-18). Release commits are skipped (loop guard).
@@ -733,6 +882,7 @@ jobs:
   binaries-pr:
     name: Binaries (PR)
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     needs: changes
     if: github.event_name == 'pull_request' && (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true')
     strategy:
