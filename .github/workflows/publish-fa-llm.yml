@@ -4,6 +4,11 @@ on:
   push:
     tags: ['fa_llm-v*']
 
+# Cancel superseded runs of the same ref (issue #177).
+concurrency:
+  group: Publish fa_llm-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   id-token: write # OIDC — pub.dev verifies the GitHub identity, no secrets
   contents: read
