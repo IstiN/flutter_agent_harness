@@ -57,6 +57,7 @@ import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_parse_factory.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
@@ -209,6 +210,11 @@ class AgentService extends ChangeNotifier
     @visibleForTesting bool watchExternalSessions = true,
     String? sessionsRoot,
     OfficeApi? officeApi,
+
+    /// Overrides the platform session-parse executor (issue #199). Tests
+    /// inject a fake to keep parsing deterministic; production passes
+    /// `createSessionParseExecutor()` (null on web → inline parsing).
+    @visibleForTesting SessionParseExecutor? parseExecutor,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -254,6 +260,7 @@ class AgentService extends ChangeNotifier
       streamFunction: streamFunction,
       watchExternalSessions: watchExternalSessions,
       taskModelsStore: taskModelsStore,
+      parseExecutor: parseExecutor ?? createSessionParseExecutor(),
       sessionsRoot: resolvedSessionsRoot,
       officeApi: officeApi ?? bootOfficeApi(),
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
@@ -371,6 +378,10 @@ class AgentService extends ChangeNotifier
     bool watchExternalSessions = true,
     MediaKeyResolver? resolveSecretName,
     OfficeApi? officeApi,
+    // The session-parse executor (issue #199): non-null routes ALL record
+    // parsing through it (background isolates in production); null keeps
+    // inline parsing (tests stay deterministic).
+    SessionParseExecutor? parseExecutor,
     this._secretsEnv,
     this._sessionKeys,
     this._taskModelsStore,
@@ -385,22 +396,26 @@ class AgentService extends ChangeNotifier
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
     : _skillsHomeDir = skillsHomeDir,
-       // ignore: prefer_initializing_formals
-       _watchExternalSessions = watchExternalSessions,
-       _config = config,
-       _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
-       _resolveSecretName = resolveSecretName,
-       approval = ApprovalManager(
-         mode: initialApprovalMode ?? ApprovalMode.write,
-         // Outlook taskpane (issue #182): read_attachment streams
-         // attacker-controlled bytes and insert_draft_body rewrites the
-         // user's draft — both prompt on EVERY call in EVERY session mode
-         // (the override outranks mode, turn grants and always-allow).
-         overrides:
-             officeApi == null ? const {} : officeToolApprovalOverrides(),
-       ),
-       sessionsRoot = sessionsRoot,
-       _repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
+      // ignore: prefer_initializing_formals
+      _watchExternalSessions = watchExternalSessions,
+      _config = config,
+      _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
+      _resolveSecretName = resolveSecretName,
+      approval = ApprovalManager(
+        mode: initialApprovalMode ?? ApprovalMode.write,
+        // Outlook taskpane (issue #182): read_attachment streams
+        // attacker-controlled bytes and insert_draft_body rewrites the
+        // user's draft — both prompt on EVERY call in EVERY session mode
+        // (the override outranks mode, turn grants and always-allow).
+        overrides:
+            officeApi == null ? const {} : officeToolApprovalOverrides(),
+      ),
+      sessionsRoot = sessionsRoot,
+      _repo = JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: sessionsRoot,
+        parseExecutor: parseExecutor,
+      ) {
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
     _activeApiKey = config.apiKey;
@@ -1606,27 +1621,35 @@ class AgentService extends ChangeNotifier
   Future<void> _reloadExternalMessages() async {
     final session = _session;
     if (session == null || isStreaming) return;
+    final gen = _loadGeneration;
     try {
       if (session.getStorage() case final WindowedSessionStorage windowed) {
         final ingest = await windowed.ingestAppended();
+        if (gen != _loadGeneration) return;
         if (ingest.reanchored) {
           // Truncation/rotation: the view (and the provider context)
           // reset to the new tail — stale anything is never kept.
           _viewBranch = ingest.delta;
           await _applyViewBranch();
+          if (gen != _loadGeneration) return;
           final context = await session.buildContext();
+          if (gen != _loadGeneration) return;
           _agent.state.messages = context.messages;
           _persistedCount = context.messages.length;
         } else if (ingest.delta.isNotEmpty) {
           _viewBranch?.addAll(ingest.delta);
           await _applyViewBranch();
+          if (gen != _loadGeneration) return;
           await _growProviderContext(session, ingest.delta);
+          if (gen != _loadGeneration) return;
         }
         unawaited(_refreshHistoryAbove());
         return;
       }
       final metadata = await session.getMetadata();
+      if (gen != _loadGeneration) return;
       final fresh = await _repo.open(metadata);
+      if (gen != _loadGeneration) return;
       _session = fresh;
       await _reprojectLoadedWindow(fresh);
     } on Object {
@@ -1737,15 +1760,18 @@ class AgentService extends ChangeNotifier
     if (_loadingHistory || isStreaming) return;
     final windowed = _windowed;
     if (windowed == null) return;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       final joined = await windowed.loadOlder();
+      if (gen != _loadGeneration) return;
       if (joined.isNotEmpty) {
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
       }
       await _refreshHistoryAbove();
+      if (gen != _loadGeneration) return;
       if (_historyLoadError != null) {
         _historyLoadError = null;
         notifyListeners();
@@ -1767,15 +1793,18 @@ class AgentService extends ChangeNotifier
     if (_loadingHistory || isStreaming) return;
     final windowed = _windowed;
     if (windowed == null) return;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       final joined = await windowed.loadNewer();
+      if (gen != _loadGeneration) return;
       if (joined.isNotEmpty) {
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
       }
       await _refreshHistoryAbove();
+      if (gen != _loadGeneration) return;
       _historyLoadError = null;
       notifyListeners();
     } on Object catch (e) {
@@ -1809,13 +1838,14 @@ class AgentService extends ChangeNotifier
     final index = _positionalRow(messageId);
     if (index == null) return false;
     if (_loadingHistory || isStreaming) return index < messages.length;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     var reached = index < messages.length;
     try {
       for (var pass = 0; !reached && pass < 100 && windowed.hasOlder; pass++) {
         final joined = await windowed.loadOlder();
-        if (joined.isEmpty) break;
+        if (joined.isEmpty || gen != _loadGeneration) break;
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
         reached = index < messages.length;
@@ -1840,14 +1870,17 @@ class AgentService extends ChangeNotifier
     String recordId,
   ) async {
     if (_loadingHistory || isStreaming) return false;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       final branch = await windowed.jumpToRecord(recordId);
-      if (branch.isEmpty) return false;
+      if (branch.isEmpty || gen != _loadGeneration) return false;
       await _syncViewToWindow(windowed);
       await _applyViewBranch();
+      if (gen != _loadGeneration) return false;
       await _refreshHistoryAbove();
+      if (gen != _loadGeneration) return false;
       _historyLoadError = null;
       return true;
     } on Object catch (e) {
@@ -1866,7 +1899,9 @@ class AgentService extends ChangeNotifier
   Future<void> _refreshHistoryAbove() async {
     final windowed = _windowed;
     if (windowed == null) return;
+    final gen = _loadGeneration;
     final count = await windowed.countAbove();
+    if (gen != _loadGeneration) return;
     if (_historyAboveCount != count || windowed.cachedTotalRecords != null) {
       _historyAboveCount = count;
       notifyListeners();
@@ -1910,6 +1945,13 @@ class AgentService extends ChangeNotifier
   String? _sessionFile;
   int _persistedCount = 0;
 
+  /// Monotonic load-generation counter (issue #199 AC5/E3): bumped by
+  /// every path that swaps or clears the session ([loadSession], [reset],
+  /// [initialize], [deleteSession]); page loads, external refreshes, and
+  /// ledger folds capture it and bail when it moved — stale work must
+  /// never land in the new session's state.
+  int _loadGeneration = 0;
+
   /// Request summaries captured live (ModelRequestEvent) but not yet
   /// written; flushed at the head of every [_persistUnchecked] pass.
   final List<TrajectoryRequestDetail> _pendingRequestSummaries = [];
@@ -1950,6 +1992,8 @@ class AgentService extends ChangeNotifier
   /// behind. [loadSession] still creates an OS-backed [_session] for the
   /// restored session.
   Future<void> initialize() async {
+    // A fresh/cleared session invalidates in-flight loaders (issue #199).
+    _loadGeneration++;
     // The session FILE materialises lazily on the first persist (an
     // untouched session never hits the disk), but the id is allocated
     // eagerly: hosts (FlutterSessionManager) key sessions by id from the
@@ -2529,6 +2573,8 @@ class AgentService extends ChangeNotifier
 
   /// Clears the in-memory transcript and starts a new session.
   Future<void> reset() async {
+    // Any in-flight load/page/fold for the outgoing session goes stale.
+    _loadGeneration++;
     await deleteSessionIfEmpty();
     // Detach the old session so [initialize] allocates a fresh id — the
     // old file (when it has content) stays on disk for the session list.
@@ -2696,8 +2742,20 @@ class AgentService extends ChangeNotifier
   /// in the CLI and the app appends one) is restored: the DEFAULT chat
   /// model only applies to NEW sessions, not to reopening an old one.
   Future<void> loadSession(SessionMetadata metadata) async {
+    // Generation guard (issue #199 AC5/E3): every await below re-checks —
+    // a newer load owns the state and a stale loader abandons silently.
+    final gen = ++_loadGeneration;
     abort();
     await waitForIdle();
+    if (gen != _loadGeneration) return;
+    // Skeleton-first (issue #199 AC2): the session shell renders BEFORE
+    // the history parses, so the composer is live while the open runs.
+    _sessionId = metadata.id;
+    _sessionFile = metadata.path;
+    _sessionCwd = metadata.cwd;
+    _historyAboveCount = null;
+    messages.clear();
+    notifyListeners();
     // Windowed open (issue #135): header + newest chunk only; older
     // records page in through loadOlderHistory. Small sessions load
     // completely either way. A windowed-open failure (a corrupt tail,
@@ -2710,24 +2768,25 @@ class AgentService extends ChangeNotifier
     } on Object {
       session = await _repo.open(metadata);
     }
+    if (gen != _loadGeneration) return;
     // The count belongs to the session being opened; the background
     // refresh at the end of this method fills it in.
     _historyAboveCount = null;
     _viewBranch = await session.getBranch();
+    if (gen != _loadGeneration) return;
     final context = await session.buildContext();
+    if (gen != _loadGeneration) return;
     final contextMessages = context.messages;
     _agent.reset();
     _agent.state.messages = contextMessages;
     _session = session;
-    _sessionId = metadata.id;
-    _sessionFile = metadata.path;
-    _sessionCwd = metadata.cwd;
     _setMailboxPrefix(metadata.id);
     // Follow external appends (a running fa CLI on the same session).
     _startSessionWatch();
     // The ledger re-projects the active branch (records carry richer
     // structure than the rebuilt message list).
     await _rebuildTrajectory(records: _viewBranch);
+    if (gen != _loadGeneration) return;
     // Restore the session's own model: same wire kind → modelId override;
     // the provider itself stays the configured connection (its key lives
     // in the Keychain, not in the session). An unresolvable or
@@ -2769,6 +2828,7 @@ class AgentService extends ChangeNotifier
         '${sessionModel.modelId}',
       );
     }
+    if (gen != _loadGeneration) return;
     // The prompt's messaging section carries the live mailbox address.
     final activeConfig = _config;
     if (activeConfig != null) {
@@ -2787,9 +2847,11 @@ class AgentService extends ChangeNotifier
     // position — the branch walk counts message records, so each marker
     // lands right after the reply that emitted it.
     await dynamicMessages.forgetAll();
+    if (gen != _loadGeneration) return;
     final widgetMarkers = await dynamicMessages.adoptBranch(
       await session.getBranch(),
     );
+    if (gen != _loadGeneration) return;
     final rebuilt = contextMessages.map(_toChatMessage).toList();
     for (final (index, marker) in widgetMarkers) {
       final at = index > rebuilt.length ? rebuilt.length : index;
@@ -2810,6 +2872,8 @@ class AgentService extends ChangeNotifier
   Future<void> deleteSession(SessionMetadata metadata) async {
     final isActive = metadata.id == _sessionId;
     if (isActive) {
+      // In-flight loaders/pager work must not land on a deleted session.
+      _loadGeneration++;
       // Stop any in-flight run and let its persistence settle before the
       // session file disappears underneath it.
       abort();
@@ -2997,9 +3061,20 @@ class AgentService extends ChangeNotifier
   Future<void> _rebuildTrajectory({List<SessionRecord>? records}) async {
     final session = _session;
     if (session == null) return;
+    final gen = _loadGeneration;
     _trajectory.reset();
+    var folded = 0;
     for (final record in records ?? await session.getBranch()) {
       _trajectory.append(record);
+      // Chunked fold (issue #199): yield the event loop every 100 records
+      // so long ledger rebuilds interleave frames instead of blocking one.
+      // A generation bump or session swap mid-fold stops the stale fold —
+      // it must not keep appending to the swapped session's ledger.
+      if (++folded % 100 == 0) {
+        if (gen != _loadGeneration || !identical(session, _session)) return;
+        await Future<void>.delayed(Duration.zero);
+        if (gen != _loadGeneration || !identical(session, _session)) return;
+      }
     }
   }
 

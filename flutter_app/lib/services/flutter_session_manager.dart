@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/session_parse_factory.dart';
 import 'package:fa/services/sessions_root.dart';
 
 /// One managed chat session: the [AgentService] and the session id.
@@ -66,7 +67,15 @@ final class FlutterSessionManager extends ChangeNotifier {
     required this.sessionsRoot,
     JsonlSessionRepo? repo,
     this.maxSessionLoadBytes = defaultMaxSessionLoadBytes,
-  }) : _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot);
+  }) : _repo =
+           repo ??
+           // Issue #199: record parsing rides background isolates on IO
+           // platforms (null = inline chunked parsing on web).
+           JsonlSessionRepo(
+             fs: env,
+             sessionsRoot: sessionsRoot,
+             parseExecutor: createSessionParseExecutor(),
+           );
 
   /// The default per-session load budget (64 MiB): a JSONL session file
   /// balloons to many times its size as Dart objects, so anything in the
@@ -207,14 +216,25 @@ final class FlutterSessionManager extends ChangeNotifier {
     List<SessionMetadata> sessions,
   ) async {
     final names = <String, String>{};
-    for (final metadata in sessions) {
-      try {
-        final name = await (await _repo.open(metadata)).getSessionName();
-        if (name != null) names[metadata.id] = name;
-      } on Object {
-        // Broken or foreign session file: skip, never break the sidebar.
+    // Bounded fan-out (issue #199 AC3): the quick name probes run 16 at a
+    // time instead of sequentially. Results key by metadata.id, so map
+    // identity is per session regardless of completion order.
+    var next = 0;
+    Future<void> worker() async {
+      while (next < sessions.length) {
+        final metadata = sessions[next++];
+        try {
+          final name = await _repo.sessionNameQuick(metadata);
+          if (name != null) names[metadata.id] = name;
+        } on Object {
+          // Broken or foreign session file: skip, never break the sidebar.
+        }
       }
     }
+
+    await Future.wait([
+      for (var i = 0; i < 16 && i < sessions.length; i++) worker(),
+    ]);
     return names;
   }
 
@@ -386,6 +406,10 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// only while still empty (no user messages), so every relaunch of an
   /// untouched app does not pile up another empty session file.
   ///
+  /// Issue #199: the boot FULL open is gone — the user-message scan runs
+  /// over a windowed open (newest chunk only), and an oversized file is
+  /// refused without reading it at all. Decision semantics are unchanged.
+  ///
   /// [cachedSessionList] avoids a redundant `_repo.list()` call when the
   /// boot path already fetched the list.
   Future<SessionMetadata?> findReusableSession({
@@ -411,19 +435,28 @@ final class FlutterSessionManager extends ChangeNotifier {
         created.day == now.day) {
       return newest;
     }
+    if (_tooLarge(newest)) return null;
+    Future<bool> hasUserMessages(SessionStorage storage) async {
+      final messages = await storage.findEntries('message');
+      return messages.any((r) => r is MessageRecord && r.message is UserMessage);
+    }
+
     try {
-      // Lightweight check: scan raw message records instead of building the
-      // full context tree (which is O(n²) for long sessions). We only need
-      // to know whether any user message exists.
-      final session = await _repo.open(newest);
-      final messages = await session.getStorage().findEntries('message');
-      final hasUser = messages.any(
-        (r) => r is MessageRecord && r.message is UserMessage,
-      );
-      return hasUser ? null : newest;
+      final storage = (await _repo.open(newest, windowed: true)).getStorage();
+      if (await hasUserMessages(storage)) return null;
+      return newest;
     } on Object {
-      // Unreadable session file — do not resume it.
-      return null;
+      // Windowed open failed (corrupt tail, IO hiccup) — fall back to the
+      // legacy full open, matching loadSession's compatibility path.
+      try {
+        if (await hasUserMessages((await _repo.open(newest)).getStorage())) {
+          return null;
+        }
+        return newest;
+      } on Object {
+        // Unreadable session file — do not resume it.
+        return null;
+      }
     }
   }
 
