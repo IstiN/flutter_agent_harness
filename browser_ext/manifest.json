@@ -14,20 +14,46 @@
   "action": {
     "default_icon": "icons/icon-32.png"
   },
+  // Issue #137 — maximum viable permission set: the generic chrome.*
+  // bridge (browser_api) exposes every declared namespace to the agent,
+  // so permissions without access are pure waste. Tier 3 exclusions
+  // (documented here + permission_matrix.dart):
+  //   enterprise.*            — device-admin, managed contexts only
+  //   platformKeys            — ChromeOS-only
+  //   fileSystemProvider      — ChromeOS-only
+  //   wallpaper               — ChromeOS-only
+  //   gcm / instanceID        — legacy push transport, no agent surface
+  //   devtools                — opens interactive windows, not automation
+  //   passwords               — chrome exposes no such API at all
+  // `commands`/`omnibox` are manifest KEYS (below), not permissions.
+  // `management` is declared but bridge-default-DENIED (self-preservation:
+  // an injected page must not disable the agent's own extension).
   "permissions": [
     "alarms",
     "bookmarks",
+    "browsingData",
+    "clipboardRead",
+    "clipboardWrite",
+    "contentSettings",
     "contextMenus",
     "cookies",
     "debugger",
+    "declarativeNetRequest",
     "downloads",
+    "fontSettings",
     "history",
     "identity",
     "idle",
+    "management",
+    "nativeMessaging",
     "notifications",
     "offscreen",
     "power",
+    "privacy",
+    "proxy",
+    "readingList",
     "scripting",
+    "search",
     "sessions",
     "sidePanel",
     "storage",
@@ -35,17 +61,17 @@
     "system.display",
     "system.memory",
     "system.storage",
+    "tabCapture",
     "tabGroups",
     "tabs",
+    "tts",
     "unlimitedStorage",
-    "webNavigation"
+    "webNavigation",
+    "webRequest"
   ],
   "optional_permissions": [
     "desktopCapture",
     "pageCapture",
-    "readingList",
-    "search",
-    "tabCapture",
     "topSites",
     "userScripts"
   ],
