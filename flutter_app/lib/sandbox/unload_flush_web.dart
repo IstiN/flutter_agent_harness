@@ -43,8 +43,8 @@ void bindUnloadFlush(PersistentWebExecutionEnv env) {
     );
   }
 
-  _addWindowListener('beforeunload', ((_) => flush()).toJS);
-  _addDocumentListener('visibilitychange', ((_) {
+  _addWindowListener('beforeunload', ((JSAny? _) => flush()).toJS);
+  _addDocumentListener('visibilitychange', ((JSAny? _) {
     if (_visibilityState == 'hidden') flush();
   }).toJS);
 }
