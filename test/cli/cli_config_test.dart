@@ -303,7 +303,9 @@ prompts:
     test('parses the images section and round-trips it', () async {
       final file = File('${tmp.path}/.fah/config.yaml');
       file.createSync(recursive: true);
-      file.writeAsStringSync('images:\n  registry: false\n  maxPerRequest: 4\n');
+      file.writeAsStringSync(
+        'images:\n  registry: false\n  maxPerRequest: 4\n',
+      );
       final loaded = loadCliConfig(tmp.path);
       expect(loaded.images?.enabled, isFalse);
       expect(loaded.images?.maxPerRequest, 4);
@@ -657,6 +659,20 @@ prompts:
         resolveStartupCubeSource(project: const CubeSettings(enabled: true)),
         isNull,
         reason: 'enabled with no config path has nothing to resolve',
+      );
+    });
+  });
+  group('logFileFromEnv', () {
+    test('absent or blank yields null', () {
+      expect(logFileFromEnv({}), isNull);
+      expect(logFileFromEnv({'FA_LOG_FILE': ''}), isNull);
+      expect(logFileFromEnv({'FA_LOG_FILE': '   '}), isNull);
+    });
+
+    test('returns the path', () {
+      expect(
+        logFileFromEnv({'FA_LOG_FILE': '/tmp/trace.log'}),
+        '/tmp/trace.log',
       );
     });
   });
