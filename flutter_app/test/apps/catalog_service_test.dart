@@ -60,6 +60,19 @@ Map<String, dynamic> goodCatalog() => {
       'minRuntime': '0.4.79',
       'icon': 'icon.svg',
       'zip': {'file': 'calculator-1.2.0.zip', 'sha256': '', 'sizeBytes': 100},
+      // EXTERNAL-kind widget: sources live in the origin repo pinned by
+      // sha, NOT under fa_widgets/widgets/<id>/ — the web install path
+      // must use these URLs verbatim.
+      'preview': {
+        'manifest':
+            'https://raw.githubusercontent.com/IstiN/flutter_js_widget_runtime/'
+            'db4e6dd4369c1ba8bb6325633d09187cc382f786/'
+            'example/widgets/calculator/manifest.json',
+        'js':
+            'https://raw.githubusercontent.com/IstiN/flutter_js_widget_runtime/'
+            'db4e6dd4369c1ba8bb6325633d09187cc382f786/'
+            'example/widgets/calculator/widget.js',
+      },
     },
     {
       'id': 'focus-timer',
@@ -71,6 +84,11 @@ Map<String, dynamic> goodCatalog() => {
       'minRuntime': '0.4.79',
       'icon': null,
       'zip': {'file': 'focus-timer-1.0.0.zip', 'sha256': '', 'sizeBytes': 50},
+      'preview': {
+        'manifest':
+            '${kDefaultWidgetsRawBaseUrl}widgets/focus-timer/manifest.json',
+        'js': '${kDefaultWidgetsRawBaseUrl}widgets/focus-timer/widget.js',
+      },
     },
   ],
 };
@@ -489,10 +507,10 @@ void main() {
     // release-assets.githubusercontent.com sends NO CORS headers, so
     // BrowserClient dies with `ClientException: Load failed` on the release
     // URLs; raw.githubusercontent.com sends `access-control-allow-origin: *`.
-    CatalogEntry calcEntry([Map<String, dynamic> Function()? mutate]) {
+    CatalogEntry calcEntry([Map<String, dynamic>? overrides]) {
       final json =
           Map<String, dynamic>.from(goodCatalog()['widgets'][0] as Map);
-      mutate?.call()?.forEach((key, value) => json[key] = value);
+      overrides?.forEach((key, value) => json[key] = value);
       return CatalogEntry.fromJson(json);
     }
 
@@ -536,7 +554,8 @@ void main() {
       );
     });
 
-    test('web installs a widget from raw sources, never the zip', () async {
+    test('web installs from the catalog preview URLs, never the zip',
+        () async {
       final env = MemoryExecutionEnv();
       final requested = <String>[];
       final service = CatalogService(
@@ -545,9 +564,13 @@ void main() {
         httpClient: rawSourceServer(requested),
       );
       final files = await service.downloadWidget(calcEntry());
+      final preview = calcEntry();
       expect(requested, [
-        '${kDefaultWidgetsRawBaseUrl}widgets/calculator/manifest.json',
-        '${kDefaultWidgetsRawBaseUrl}widgets/calculator/widget.js',
+        // preview URLs used VERBATIM — EXTERNAL widgets have no sources
+        // under fa_widgets/widgets/<id>/ to reconstruct from.
+        preview.previewManifestUrl,
+        preview.previewJsUrl,
+        // the icon is always mirrored into fa_widgets itself
         '${kDefaultWidgetsRawBaseUrl}widgets/calculator/icon.svg',
       ]);
       expect(files.keys.toList()..sort(), [
@@ -558,7 +581,7 @@ void main() {
       expect(utf8.decode(files['widget.js']!), '(function(){})();');
     });
 
-    test('web raw source URLs collapse redundant slashes', () async {
+    test('web icon URL collapses redundant slashes', () async {
       final env = MemoryExecutionEnv();
       final requested = <String>[];
       final service = CatalogService(
@@ -569,9 +592,31 @@ void main() {
       );
       await service.downloadWidget(calcEntry());
       expect(
-        requested.first,
-        'https://example.com/raw/widgets/calculator/manifest.json',
+        requested.last,
+        'https://example.com/raw/widgets/calculator/icon.svg',
       );
+    });
+
+    test('web fails loudly when the catalog entry lacks preview URLs',
+        () async {
+      final env = MemoryExecutionEnv();
+      final requested = <String>[];
+      final service = CatalogService(
+        env,
+        isWeb: true,
+        httpClient: rawSourceServer(requested),
+      );
+      await expectLater(
+        service.downloadWidget(calcEntry({'preview': null})),
+        throwsA(
+          isA<CatalogError>().having(
+            (e) => '$e',
+            'text',
+            allOf(contains('calculator'), contains('preview')),
+          ),
+        ),
+      );
+      expect(requested, isEmpty);
     });
 
     test('web skips the icon fetch when the entry declares none', () async {
@@ -586,10 +631,7 @@ void main() {
         Map<String, dynamic>.from(goodCatalog()['widgets'][1] as Map),
       );
       final files = await service.downloadWidget(entry);
-      expect(requested, [
-        '${kDefaultWidgetsRawBaseUrl}widgets/focus-timer/manifest.json',
-        '${kDefaultWidgetsRawBaseUrl}widgets/focus-timer/widget.js',
-      ]);
+      expect(requested, [entry.previewManifestUrl, entry.previewJsUrl]);
       expect(files.keys.toList()..sort(), ['manifest.json', 'widget.js']);
     });
 
@@ -640,7 +682,7 @@ void main() {
         httpClient: rawSourceServer(requested),
       );
       await expectLater(
-        service.downloadWidget(calcEntry(() => {'id': '../evil'})),
+        service.downloadWidget(calcEntry({'id': '../evil'})),
         throwsA(isA<CatalogError>()),
       );
       expect(requested, isEmpty);
