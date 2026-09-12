@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.358
+
 
 - feat(169): declarative-only secured theme API — theme packs
   (`theme.json` + optional wallpaper image in a `.zip`; strict schema
@@ -3380,6 +3381,8 @@
 - ci(161): daily auto-publish — TestFlight + pub.dev + CLI + website + add-in, self-filing fix issues (#170)
 - fix(152): root-cause the browser-ext e2e dispatch flake class (#158)
 - ci(177): drop the 'Quality gates' alias — protection switched to 'Quality gate' (#192)
+
+## Unreleased
 
 ## Unreleased
 
