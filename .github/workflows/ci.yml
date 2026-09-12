@@ -127,6 +127,7 @@ jobs:
           printf 'OPENROUTER_API_KEY=\nMODEL_ID=\nBASE_URL=\nHUGGINGFACE_TOKEN=\n' > [REDACTED:Credential File]
           cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
           cd flutter_app && flutter pub get
+          dart pub get --directory=office_addin/dart
 
       - name: dart analyze (full)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'

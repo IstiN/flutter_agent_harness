@@ -331,3 +331,8 @@ final class JsOfficeApi implements OfficeApi {
     _applyFn(addHandler, mailbox, ['itemNameChanged'.toJS, handler.toJS].toJS);
   }
 }
+
+/// Web binding of the factory the package exports (see _web_empty.dart
+/// for the VM twin): the pane's boot seam gets the real adapter without
+/// importing a lib/src path.
+OfficeApi? createJsOfficeApi() => JsOfficeApi();

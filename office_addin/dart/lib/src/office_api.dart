@@ -15,7 +15,7 @@
 // before [OfficeApi.onReady] completes (an add-in that boots early hangs
 // silently). Host detection rides [OfficeApi.host] — `Outlook` today;
 // Word/Excel/PowerPoint are the reserved dispatch points of the second
-// tier (host_bridge.dart answers them with a clean note, never a crash).
+// tier (the facade answers them with a clean note, never a crash).
 library;
 
 /// The Office hosts the bridge knows about. Outlook is the v1 adapter;

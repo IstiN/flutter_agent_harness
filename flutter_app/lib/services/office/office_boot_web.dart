@@ -17,11 +17,11 @@
 library;
 
 import 'package:fa/services/relay/relay_probe.dart' show kFaBuildHost;
-import 'package:fa_office_agent/fa_office_agent.dart' show OfficeApi;
-import 'package:fa_office_agent/src/office_api_js.dart' show JsOfficeApi;
+import 'package:fa_office_agent/fa_office_agent.dart'
+    show createJsOfficeApi, OfficeApi;
 
 /// The [OfficeApi] for this run, or null when not office-hosted.
 OfficeApi? bootOfficeApi() {
   if (kFaBuildHost != 'office') return null;
-  return JsOfficeApi();
+  return createJsOfficeApi();
 }
