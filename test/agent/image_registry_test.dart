@@ -121,7 +121,7 @@ void main() {
       // the same map.
       final reloaded = [
         for (final json in messages.map((m) => m.toJson()))
-          messageFromJson(json as Map<String, dynamic>),
+          messageFromJson(json),
       ];
       expect(ImageRegistry.scan(reloaded).indexByKey, first);
     });
