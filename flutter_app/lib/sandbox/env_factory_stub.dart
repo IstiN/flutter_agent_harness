@@ -6,6 +6,7 @@ import 'package:fa/sandbox/fs_persistence_stub.dart'
     if (dart.library.html) 'fs_persistence_web.dart';
 import 'package:fa/sandbox/memory_shell.dart';
 import 'package:fa/sandbox/persistent_web_env.dart';
+import 'package:fa/sandbox/unload_flush.dart';
 
 /// Creates the execution environment for the current platform.
 ///
@@ -23,7 +24,15 @@ Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
   final shell = MemoryShell(httpClient: httpClient);
   final env = MemoryExecutionEnv(cwd: '/', shell: shell);
   shell.attach(env);
-  return PersistentWebExecutionEnv.restore(env, createFsSnapshotStore());
+  final persistent = await PersistentWebExecutionEnv.restore(
+    env,
+    createFsSnapshotStore(),
+  );
+  // Shrink the loss window: without this, a panel unload inside the 800 ms
+  // debounce silently dropped the last mutations (issue #201). No-op off
+  // the web.
+  bindUnloadFlush(persistent);
+  return persistent;
 }
 
 /// `true` when running on a mobile OS that needs the WASM shell sandbox.

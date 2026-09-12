@@ -758,6 +758,16 @@ class AppsStore {
         }
       }
       await _env.writeBinaryFile(path, bytes);
+      // Write-verify (issue #201, fix direction 4): a write that does not
+      // read back byte-identical must surface as an install FAILURE, not
+      // as a broken tile on the grid (manifest present, entry file bad).
+      final written = (await _env.readBinaryFile(path)).valueOrNull;
+      if (written == null || sha256.convert(written).toString() != digest) {
+        throw StateError(
+          'install of $id failed verification: $path did not read back '
+          'byte-identical',
+        );
+      }
       hashes[file.key] = digest;
     }
     entry['files'] = hashes;
@@ -927,6 +937,26 @@ class AppsStore {
       if (sha256.convert(current).toString() != file.value) return false;
     }
     return true;
+  }
+
+  /// Recorded files of a catalog install (per `apps/.installed.json`
+  /// hashes) that are MISSING on disk — the fingerprint of a torn
+  /// filesystem snapshot replaying only part of an install (issue #201:
+  /// manifest restored, widget.js lost, tile renders but launch dies with
+  /// FileError notFound). Empty when the install is intact or [id] is not
+  /// catalog-installed.
+  Future<List<String>> missingInstalledFiles(String id) async {
+    final meta = await _readInstalled();
+    final files = meta[id]?['files'];
+    if (files is! Map) return const [];
+    final missing = <String>[];
+    for (final rel in files.keys) {
+      final path = 'apps/$id/$rel';
+      if (!((await _env.exists(path)).valueOrNull ?? false)) {
+        missing.add(rel.toString());
+      }
+    }
+    return missing;
   }
 
   Future<void> _writeInstalled(Map<String, Map<String, dynamic>> meta) async {

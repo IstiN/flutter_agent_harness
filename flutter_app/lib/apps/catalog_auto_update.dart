@@ -80,5 +80,36 @@ Future<List<String>> autoUpdateCleanWidgets({
       AppLog.i('apps', 'healing of ${entry.id} failed: $error');
     }
   }
+
+  // Repair TORN installs (issue #201): a catalog widget whose RECORDED
+  // files are partially missing on disk — the residue of a non-atomic web
+  // FS snapshot that persisted mid-install (manifest restored, widget.js
+  // lost) and left a tile that dies on launch with FileError notFound. A
+  // missing recorded file is damage, never a user edit, so the repair
+  // reinstall bypasses the clean-install check. User data (storage.json)
+  // survives, as with every installWidget pass.
+  for (final entry in result.entries) {
+    if (!installed.containsKey(entry.id) || updated.contains(entry.id)) {
+      continue;
+    }
+    final missing = await store.missingInstalledFiles(entry.id);
+    if (missing.isEmpty) continue;
+    try {
+      final files = await catalog.downloadWidgetHealing(entry);
+      await store.installWidget(
+        id: entry.id,
+        version: entry.version,
+        files: files,
+      );
+      updated.add(entry.id);
+      AppLog.i(
+        'apps',
+        'repaired torn install of ${entry.id} '
+        '(missing: ${missing.join(', ')})',
+      );
+    } on Object catch (error) {
+      AppLog.i('apps', 'repair of ${entry.id} failed: $error');
+    }
+  }
   return updated;
 }

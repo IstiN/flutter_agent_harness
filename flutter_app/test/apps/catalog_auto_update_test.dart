@@ -219,5 +219,76 @@ void main() {
       final files = await env.listDir('apps/pomodoro');
       expect(files.valueOrNull?.length, 1, reason: 'storage.json only');
     });
+
+    test(
+      'IT-repair: repairs a torn install (recorded widget.js missing, '
+      'issue #201)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = AppsStore(env);
+        await store.installWidget(
+          id: 'calculator',
+          version: '1.0.1',
+          files: {
+            'manifest.json': utf8.encode(
+              jsonEncode({'id': 'calculator', 'version': '1.0.1'}),
+            ),
+            'widget.js': utf8.encode('// calc'),
+          },
+        );
+        // A torn web FS snapshot replays only part of the install:
+        // manifest present (tile renders), widget.js lost (launch dies
+        // with FileError notFound).
+        await env.remove('apps/calculator/widget.js');
+
+        final repaired = await autoUpdateCleanWidgets(
+          store: store,
+          catalog: _catalog(
+            env,
+            _serverFor('calculator', '1.0.1', {'widget.js': '// calc'}),
+          ),
+        );
+
+        expect(repaired, contains('calculator'));
+        expect(
+          (await env.readTextFile('apps/calculator/widget.js')).valueOrNull,
+          '// calc',
+        );
+        // A launch now succeeds — no dead error screen.
+        expect(
+          (await env.readTextFile('apps/calculator/widget.js')).isOk,
+          isTrue,
+        );
+      },
+    );
+
+    test('leaves an intact install untouched (no repair download)', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env);
+      await store.installWidget(
+        id: 'calculator',
+        version: '1.0.1',
+        files: {
+          'manifest.json': utf8.encode(
+            jsonEncode({'id': 'calculator', 'version': '1.0.1'}),
+          ),
+          'widget.js': utf8.encode('// calc'),
+        },
+      );
+
+      final zipHits = <String>[];
+      final repaired = await autoUpdateCleanWidgets(
+        store: store,
+        catalog: _catalog(
+          env,
+          _serverFor('calculator', '1.0.1', {
+            'widget.js': '// calc',
+          }, zipHits: zipHits),
+        ),
+      );
+
+      expect(repaired, isEmpty);
+      expect(zipHits, isEmpty);
+    });
   });
 }
