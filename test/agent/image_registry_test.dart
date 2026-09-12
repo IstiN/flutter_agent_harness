@@ -8,6 +8,8 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/markers.dart'
     show localTrimMarkerPrefix;
+import 'package:flutter_agent_harness/src/session/session_tree.dart'
+    show branchSummaryPrefix, branchSummarySuffix;
 import 'package:test/test.dart';
 
 ImageContent _img(String data, {String mimeType = 'image/png'}) =>
@@ -359,6 +361,12 @@ void main() {
                 .single)
             .text;
 
+    String lastAssistantText(List<Message> messages) =>
+        (messages.whereType<AssistantMessage>().last.content
+                .whereType<TextContent>()
+                .single)
+            .text;
+
     test('a stale citation degrades instead of rebinding to the wrong '
         'image', () {
       // Pre-compaction the window held a(0), b(1); the citation named b.
@@ -408,6 +416,35 @@ void main() {
           reason: 'marker "$marker" must degrade stale citations',
         );
       }
+    });
+
+    test('a hidden tool_result marker (visible call) opens the stale '
+        'epoch too', () {
+      final rewritten = rewriteHistoryImages([
+        _user([_img('bbb')], ms: 1),
+        _assistantCall(_call('c9')),
+        _result('c9', [TextContent(text: '[3:hidden·tool_result·4.2k]')]),
+        _assistantText('about [Image 0]'),
+        _user('go on', ms: 3),
+      ]);
+      // [Image 0] rides (bbb holds it now), but the citation was authored
+      // before the structured hide renumbered the window — degrade it.
+      expect(lastAssistantText(rewritten), contains(unavailableImageNote),
+          reason: 'structured hide without checkpoint must degrade');
+    });
+
+    test('a branch summary marker opens the stale epoch too', () {
+      final rewritten = rewriteHistoryImages([
+        _user([_img('bbb')], ms: 1),
+        UserMessage.text(
+          '${branchSummaryPrefix}branch summary$branchSummarySuffix',
+          timestamp: DateTime.utc(2026, 1, 1, 0, 0, 1),
+        ),
+        _assistantText('about [Image 0]'),
+        _user('go on', ms: 3),
+      ]);
+      expect(lastAssistantText(rewritten), contains(unavailableImageNote),
+          reason: 'branch summary must degrade stale citations');
     });
 
     test('the local trim valve marker does too', () {

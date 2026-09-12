@@ -366,6 +366,28 @@ void main() {
       expect(AppLog.dump(), contains('a1b2c3d4'));
     });
 
+    test('cap drops log on the production create() path too (issue #195 F4)',
+        () async {
+      AppLog.reset();
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: 'test-key',
+        ),
+        env: MemoryExecutionEnv(cwd: '/'),
+        streamFunction: _singleTextResponse('ok'),
+      );
+      addTearDown(service.dispose);
+
+      // The config-built constructor is what the real app boots through;
+      // its drop notice must be armed as well.
+      expect(imageDropNotice, isNotNull);
+      imageDropNotice!(3, 'deadbeef');
+      expect(AppLog.dump(), contains('[Image 3]'));
+    });
+
     test('error event surfaces error text', () async {
       final env = MemoryExecutionEnv();
       final service = AgentService(

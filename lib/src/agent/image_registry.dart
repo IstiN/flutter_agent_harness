@@ -40,10 +40,11 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+import '../context.dart';
 import '../compaction/structured/markers.dart'
     show isCompactionMarkerText, localTrimMarkerPrefix;
-import '../context.dart';
-import '../session/session_tree.dart' show compactionSummaryPrefix;
+import '../session/session_tree.dart'
+    show branchSummaryPrefix, compactionSummaryPrefix;
 import '../types.dart';
 
 /// Default per-request cap on unique images (`images.maxPerRequest`).
@@ -233,12 +234,24 @@ List<Message> rewriteHistoryImages(
 /// point, so `[Image N]` citations authored before it may now bind to a
 /// different image (issue #195 F2).
 bool _isRenumberingBoundary(Message message) {
-  if (message is! UserMessage) return false;
-  final content = message.content;
-  if (content is! String) return false;
-  return content.startsWith(compactionSummaryPrefix) ||
-      content.startsWith(localTrimMarkerPrefix) ||
-      isCompactionMarkerText(content);
+  if (message is UserMessage) {
+    final content = message.content;
+    if (content is String) {
+      return content.startsWith(compactionSummaryPrefix) ||
+          content.startsWith(branchSummaryPrefix) ||
+          content.startsWith(localTrimMarkerPrefix) ||
+          isCompactionMarkerText(content);
+    }
+    return false;
+  }
+  if (message is ToolResultMessage) {
+    // Structured hide keeps the tool_use visible and projects the hidden
+    // result as a lone marker text — that is a renumbering boundary too.
+    return message.content.any(
+      (block) => block is TextContent && isCompactionMarkerText(block.text),
+    );
+  }
+  return false;
 }
 
 /// Scan pass: first-seen entries + per-key occurrence positions.
