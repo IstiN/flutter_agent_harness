@@ -995,20 +995,7 @@ final class _CliArgValues {
         'cannot combine --prompt-file with positional prompt arguments',
       );
     }
-    if (output == 'json') {
-      throw const CliArgsException(
-        '--output json applies to --version only '
-        '(use --version --output json)',
-      );
-    }
-    final hasPrompt =
-        prompt != null || promptFile != null || positionals.isNotEmpty;
-    if (!hasPrompt && attachments.isNotEmpty) {
-      throw const CliArgsException(
-        '--attach applies to headless runs (-p/--prompt or a positional '
-        'prompt)',
-      );
-    }
+    _validateBackendModeFlags();
     return CliArgs(
       model: model,
       provider: provider,
@@ -1038,5 +1025,26 @@ final class _CliArgValues {
       output: output,
       attachments: List.unmodifiable(attachments),
     );
+  }
+
+  /// Backend agent mode flag validation (issue #155), split out of
+  /// [finish] to keep its complexity under the repo's CRAP gate:
+  /// `--output json` only pairs with `--version`; `--attach` needs a
+  /// prompt to attach to.
+  void _validateBackendModeFlags() {
+    if (output == 'json') {
+      throw const CliArgsException(
+        '--output json applies to --version only '
+        '(use --version --output json)',
+      );
+    }
+    final hasPrompt =
+        prompt != null || promptFile != null || positionals.isNotEmpty;
+    if (!hasPrompt && attachments.isNotEmpty) {
+      throw const CliArgsException(
+        '--attach applies to headless runs (-p/--prompt or a positional '
+        'prompt)',
+      );
+    }
   }
 }
