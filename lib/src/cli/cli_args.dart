@@ -185,7 +185,8 @@ final class CliArgs extends CliArgsResult {
   /// `--log-file <path>`: tee every line the CLI prints (assistant text,
   /// tool trace, diagnostics) to [path] as it is produced, so a run nested
   /// inside a parent CLI's output capture leaves a readable, `tail -f`-able
-  /// trace file behind. The file is truncated on start.
+  /// trace file behind. The file is truncated on start. The `FA_LOG_FILE`
+  /// env var is the twin default when the flag is absent (flag wins).
   final String? logFile;
 
   /// The `redact:` section of the saved CLI config (layered secret

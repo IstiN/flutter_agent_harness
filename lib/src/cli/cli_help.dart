@@ -101,7 +101,9 @@ OPTIONS
                                tool trace, diagnostics) to <path> as it
                                is produced — a live, `tail -f`-able
                                session trace even when a parent CLI
-                               captures stdout; truncated on start
+                               captures stdout; truncated on start; the
+                               FA_LOG_FILE env var is the default when
+                               the flag is absent
   --help, -h                   Show this help
   --version                    Print the version
 

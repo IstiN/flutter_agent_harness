@@ -1573,18 +1573,24 @@ Future<void> _runApp(List<String> args) async {
   // --log-file (issue #91): tee the rendered session trace into a file so
   // a parent CLI's stdout capture cannot swallow it. The sink is a sync
   // RandomAccessFile — unbuffered, so `tail -f` streams the trace live and
-  // even a SIGINT exit never loses the tail of the log.
+  // even a SIGINT exit never loses the tail of the log. FA_LOG_FILE
+  // (issue #178) is the env twin — the default when the flag is absent,
+  // so CI hosts that cannot pass flags still leave the trace; flag wins.
   RandomAccessFile? logTeeFile;
   CliIO io = terminalIo;
-  if (parsed.logFile case final logPath?) {
+  final logPath = parsed.logFile ?? logFileFromEnv(Platform.environment);
+  if (logPath case final path?) {
     final RandomAccessFile tee;
     try {
-      tee = File(logPath).openSync(mode: FileMode.write);
+      tee = File(path).openSync(mode: FileMode.write);
     } on Object catch (error) {
-      _fail('cannot open --log-file "$logPath": $error');
+      _fail('cannot open --log-file "$path": $error');
     }
     logTeeFile = tee;
     io = TeeCliIO(terminalIo, tee.writeStringSync);
+    if (parsed.logFile == null) {
+      io.writeln('note: --log-file "$path" from the FA_LOG_FILE env var');
+    }
   }
   // HEP events mode (issue #155): resolved below with the writer; the
   // assignment happens once `parsed.output` is known — see HepEventsIO.

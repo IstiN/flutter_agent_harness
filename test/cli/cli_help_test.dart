@@ -168,6 +168,7 @@ void main() {
       'inspect_image',
       'transcribe_audio',
       'FA_TOOLS',
+      'FA_LOG_FILE',
       'tools:',
       '.fah/lsp.json',
       // Plugins and templates.

@@ -3400,6 +3400,13 @@
 - fix(152): root-cause the browser-ext e2e dispatch flake class (#158)
 - ci(177): drop the 'Quality gates' alias — protection switched to 'Quality gate' (#192)
 
+## 0.1.361
+
+- feat(178): honor FA_LOG_FILE env var as the default for --log-file (#216)
+- fix(197): four minor windowing defects from the round-4 review (#211)
+- fix(196): HEP follow-up from #193 review (#210)
+- fix(195): images follow-up - stale citation renumbering guard + F3/F4/F5 + config tests (#205)
+
 ## Unreleased
 
 ## Unreleased
