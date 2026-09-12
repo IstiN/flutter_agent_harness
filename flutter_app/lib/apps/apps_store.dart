@@ -212,14 +212,19 @@ class JsTileWidgetInfo {
       r'^(\d+)x(\d+)$',
     ).firstMatch(json['size']?.toString() ?? '');
     if (match != null) {
-      widthCells = (int.tryParse(match.group(1)!) ?? defaultWidthCells).clamp(
-        minWidthCells,
-        maxWidthCells,
-      );
-      heightCells = (int.tryParse(match.group(2)!) ?? defaultHeightCells).clamp(
-        minHeightCells,
-        maxHeightCells,
-      );
+      final declaredW = int.tryParse(match.group(1)!) ?? defaultWidthCells;
+      final declaredH = int.tryParse(match.group(2)!) ?? defaultHeightCells;
+      widthCells = declaredW.clamp(minWidthCells, maxWidthCells);
+      heightCells = declaredH.clamp(minHeightCells, maxHeightCells);
+      // An out-of-range span (0x0, 9x9, …) clamps with a note, never a
+      // crash (issue #166, E2).
+      if (declaredW != widthCells || declaredH != heightCells) {
+        AppLog.i(
+          'apps',
+          'widget size ${declaredW}x$declaredH clamped to '
+          '${widthCells}x$heightCells',
+        );
+      }
     }
     final refresh = json['refreshSeconds'];
     return JsTileWidgetInfo(

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:math';
+
 import 'package:fa/ui/widgets/span_grid_delegate.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,7 +35,7 @@ void main() {
       ]);
     });
 
-    test('first-fit leaves holes, later small tiles backfill them', () {
+    test('a tile that does not fit wraps; trailing cells stay blank', () {
       final placements = packTileSpans(
         crossAxisCount: 3,
         spans: const [(w: 2, h: 1), (w: 2, h: 1), (w: 1, h: 1)],
@@ -41,8 +43,79 @@ void main() {
       expect(placements, [
         (row: 0, col: 0), // cells (0,0)-(0,1)
         (row: 1, col: 0), // (0,2) alone can't fit 2 wide → next row
-        (row: 0, col: 2), // the 1x1 backfills the hole
+        (row: 1, col: 2), // stays after the wrap — (0,2) is left blank
       ]);
+    });
+
+    test('later tiles never backfill an earlier row (order preserved)', () {
+      // 4 columns: the 4x2 tile wraps past the leading 1x1, so the row-0
+      // trailing cells are blank and everything after the wrap packs at or
+      // below the wide tile — reading order == tile order.
+      final placements = packTileSpans(
+        crossAxisCount: 4,
+        spans: const [(w: 1, h: 1), (w: 4, h: 2), (w: 1, h: 1)],
+      );
+      expect(placements, [
+        (row: 0, col: 0),
+        (row: 1, col: 0), // wraps: row 0 has only 3 cells left
+        (row: 3, col: 0), // below the 2-high tile, NOT back in row 0
+      ]);
+    });
+
+    // AC3 of issue #166: for ANY span sequence, tiles never overlap, the
+    // packing stays within the grid, and reading order is preserved.
+    test('property: any span sequence packs in order without overlap', () {
+      final random = Random(42);
+      for (var trial = 0; trial < 300; trial++) {
+        final columns = 2 + random.nextInt(7); // 2..8
+        final count = random.nextInt(12);
+        final spans = [
+          for (var i = 0; i < count; i++)
+            (w: 1 + random.nextInt(6), h: 1 + random.nextInt(4)),
+        ];
+        final placements = packTileSpans(
+          crossAxisCount: columns,
+          spans: spans,
+        );
+        expect(placements.length, spans.length, reason: 'trial $trial');
+        final occupied = <String>{};
+        var lastRow = 0;
+        var lastCol = -1;
+        for (var i = 0; i < spans.length; i++) {
+          final w = spans[i].w.clamp(1, columns);
+          final h = spans[i].h < 1 ? 1 : spans[i].h;
+          final p = placements[i];
+          // Within the grid bounds (a span wider than the grid clamps to
+          // full width — AC4).
+          expect(p.col + w, lessThanOrEqualTo(columns),
+              reason: 'trial $trial tile $i overflows the row');
+          expect(p.col, greaterThanOrEqualTo(0));
+          expect(p.row, greaterThanOrEqualTo(0));
+          // No overlap.
+          for (var r = 0; r < h; r++) {
+            for (var c = 0; c < w; c++) {
+              expect(occupied.add('${p.row + r}:${p.col + c}'), isTrue,
+                  reason: 'trial $trial tile $i overlaps at '
+                      '(${p.row + r},${p.col + c})');
+            }
+          }
+          // Order preserved: row-major reading order never goes backwards.
+          expect(p.row, greaterThanOrEqualTo(lastRow),
+              reason: 'trial $trial tile $i broke reading order');
+          if (p.row == lastRow) {
+            expect(p.col, greaterThan(lastCol),
+                reason: 'trial $trial tile $i broke reading order');
+          }
+          lastRow = p.row;
+          lastCol = p.col;
+        }
+        // Deterministic.
+        expect(
+          packTileSpans(crossAxisCount: columns, spans: spans),
+          placements,
+          reason: 'trial $trial is not deterministic',
+        );
+      }
     });
 
     test('a 2x2 tile reserves its block across two rows', () {
