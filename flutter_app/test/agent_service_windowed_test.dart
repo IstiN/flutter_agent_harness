@@ -343,6 +343,38 @@ void main() {
     await service.loadOlderHistory();
     expect(service.messages, hasLength(500));
   });
+  test('jumpToMessage resolves record ids on fallback-open sessions', () async {
+    // The windowed open dies on the first ranged read: the session
+    // loads through the FULL open — where a record-id jump must still
+    // land (issue #197 defect 4), not silently no-op.
+    final tmp = await io.Directory.systemTemp.createTemp('fa_fallback_jump');
+    addTearDown(() => tmp.delete(recursive: true));
+    await seedRaw('${tmp.path}/big.jsonl', 500);
+    final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
+    flaky.failNextReadRange = true;
+    final service = AgentService(
+      agent: _createAgent(),
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
+      watchExternalSessions: false,
+    );
+    addTearDown(service.dispose);
+    await service.initialize();
+    final stored = (await service.listSessions()).single;
+    await service.loadSession(stored);
+    expect(service.messages, hasLength(500));
+
+    String? scrolled;
+    service.scrollToMessageHandler = (messageId) => scrolled = messageId;
+    // A record id resolves to its transcript row and hands it to the
+    // scroll surface.
+    expect(await service.jumpToMessage('e250'), isTrue);
+    expect(scrolled, 'msg-250');
+    // Unknown record ids stay a plain miss.
+    expect(await service.jumpToMessage('e-nope'), isFalse);
+    expect(scrolled, 'msg-250');
+  });
 
   test('a failed page load surfaces historyLoadError until a retry', () async {
     final flaky = FlakyFileSystem(
