@@ -178,15 +178,17 @@ List<Message> _projectRecord(
   required List<Message> Function(SessionRecord record) projectEntry,
 }) {
   // A covering checkpoint renders at the position of its first visible
-  // path record (D2: markers sit where the content sat) — unless the
-  // checkpoint itself was hidden by a later judge pick, in which case its
-  // range renders as if uncovered.
-  final cover = state.coveredRecordIds[record.id];
-  if (cover != null && !state.hiddenRecordIds.contains(cover.id)) {
-    return emitted.add(cover.id) && !state.isCovered(cover.id)
-        ? [_checkpointMessage(cover, byId: byId, seqs: seqs)]
-        : const [];
-  }
+  // path record (D2: markers sit where the content sat); null when the
+  // record is not covered (or its checkpoint was itself hidden — then
+  // the range renders as if uncovered).
+  final covered = _coverAt(
+    record,
+    state: state,
+    byId: byId,
+    seqs: seqs,
+    emitted: emitted,
+  );
+  if (covered != null) return covered;
   switch (record) {
     case HiddenRangeRecord():
       return const [];
@@ -215,25 +217,54 @@ List<Message> _projectRecord(
         projectEntry: projectEntry,
       );
     case CustomMessageRecord():
-      // Host-injected context must never silently vanish on a structured
-      // branch: hidden customs render as notice markers, visible ones
-      // project through the classic per-record projection.
-      if (state.hiddenRecordIds.contains(record.id)) {
-        return [
-          UserMessage(
-            content: hiddenMarker(
-              seq: seqs.seqOf(record.id) ?? 0,
-              kind: markerKinds.notice,
-              tokens: _recordTokens(record),
-            ),
-            timestamp: record.timestamp,
-          ),
-        ];
-      }
-      return projectEntry(record);
+      return _customAt(
+        record,
+        state: state,
+        seqs: seqs,
+        projectEntry: projectEntry,
+      );
     default:
       return const [];
   }
+}
+
+/// The covering-checkpoint projection for [record], or null when it does
+/// not apply (not covered, or the covering checkpoint is itself hidden).
+List<Message>? _coverAt(
+  SessionRecord record, {
+  required StructuredViewState state,
+  required Map<String, SessionRecord> byId,
+  required RecordSeqIndex seqs,
+  required Set<String> emitted,
+}) {
+  final cover = state.coveredRecordIds[record.id];
+  if (cover == null || state.hiddenRecordIds.contains(cover.id)) return null;
+  return emitted.add(cover.id) && !state.isCovered(cover.id)
+      ? [_checkpointMessage(cover, byId: byId, seqs: seqs)]
+      : const [];
+}
+
+/// A [CustomMessageRecord] to its wire message: host-injected context
+/// must never silently vanish on a structured branch — hidden customs
+/// render as notice markers, visible ones project through the classic
+/// per-record projection.
+List<Message> _customAt(
+  CustomMessageRecord record, {
+  required StructuredViewState state,
+  required RecordSeqIndex seqs,
+  required List<Message> Function(SessionRecord record) projectEntry,
+}) {
+  if (!state.hiddenRecordIds.contains(record.id)) return projectEntry(record);
+  return [
+    UserMessage(
+      content: hiddenMarker(
+        seq: seqs.seqOf(record.id) ?? 0,
+        kind: markerKinds.notice,
+        tokens: _recordTokens(record),
+      ),
+      timestamp: record.timestamp,
+    ),
+  ];
 }
 
 /// A [MessageRecord] to its wire message: hidden and orphaned records
