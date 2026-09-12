@@ -717,4 +717,18 @@ prompts:
       );
     });
   });
+  group('logFileFromEnv', () {
+    test('absent or blank yields null', () {
+      expect(logFileFromEnv({}), isNull);
+      expect(logFileFromEnv({'FA_LOG_FILE': ''}), isNull);
+      expect(logFileFromEnv({'FA_LOG_FILE': '   '}), isNull);
+    });
+
+    test('returns the path', () {
+      expect(
+        logFileFromEnv({'FA_LOG_FILE': '/tmp/trace.log'}),
+        '/tmp/trace.log',
+      );
+    });
+  });
 }
