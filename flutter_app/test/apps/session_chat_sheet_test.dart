@@ -14,7 +14,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
-import 'package:fa_ui/fa_ui.dart' show FaAttachGlyph;
+import 'package:fa_ui/fa_ui.dart' show FaAttachGlyph, TrajectoryScreen;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -945,6 +945,164 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('session '), findsNothing);
+    });
+  });
+
+  group('SessionChatSheet trajectory (issue #168)', () {
+    const trajectoryButtonKey = ValueKey('sessionChatPanelTrajectory');
+
+    /// Drives a real turn on [service] so its trajectory feed holds the
+    /// finalized records (runAsync: the fake provider stream completes on
+    /// the real event loop, not on FakeAsync pumps).
+    Future<void> driveTurn(
+        WidgetTester tester,
+        AgentService service,
+        String text,
+      ) async {
+      await tester.runAsync(() async {
+        await service.initialize();
+        await service.sendText(text);
+        await service.waitForIdle();
+      });
+    }
+
+    /// Opens the panel and pushes the trajectory page; settles the
+    /// controller's snapshot debounce.
+    Future<AgentService> openTrajectoryPage(
+        WidgetTester tester,
+        _Harness harness,
+      ) async {
+      await _openPanelViaDrawer(tester, 'sess-b');
+      await tester.tap(find.byKey(trajectoryButtonKey));
+      await tester.pump(); // route push
+      await tester.pump(const Duration(seconds: 4)); // debounce + throttle
+      return harness.services['sess-b']!;
+    }
+
+    testWidgets('the panel header timeline button pushes the ledger page '
+        'rendering the session through the shared fa_ui widgets (AC1)',
+        (tester) async {
+      final harness = await _pumpSheet(tester);
+      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await openTrajectoryPage(tester, harness);
+
+      expect(find.byType(TrajectoryScreen), findsOneWidget);
+      // A full-screen route, not a sheet/dialog over the launcher.
+      expect(find.byType(BottomSheet), findsNothing);
+      expect(find.byType(Dialog), findsNothing);
+      // The ledger renders the live session's records.
+      expect(
+        find.descendant(
+          of: find.byType(TrajectoryScreen),
+          matching: find.textContaining('deploy the service'),
+        ),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('an empty session shows the friendly empty state, not a '
+        'spinner (E1)', (tester) async {
+      final harness = await _pumpSheet(tester);
+      // No turn driven: the feed replays an empty snapshot immediately.
+      await openTrajectoryPage(tester, harness);
+
+      expect(find.byType(TrajectoryScreen), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(TrajectoryScreen),
+          matching: find.textContaining('No records yet'),
+        ),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('a turn landing while the page stays open appears without '
+        'manual refresh (AC2)', (tester) async {
+      final harness = await _pumpSheet(tester);
+      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      final service = await openTrajectoryPage(tester, harness);
+
+      await driveTurn(tester, service, 'check the logs');
+      await tester.pump(const Duration(seconds: 4));
+
+      expect(
+        find.descendant(
+          of: find.byType(TrajectoryScreen),
+          matching: find.textContaining('check the logs'),
+        ),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('a ledger row tap opens the details sheet; back returns to '
+        'the page, back again to the sheet (AC3)', (tester) async {
+      final harness = await _pumpSheet(tester);
+      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await openTrajectoryPage(tester, harness);
+
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TrajectoryScreen),
+          matching: find.textContaining('deploy the service'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(BottomSheet), findsOneWidget);
+
+      // Back: the details sheet's barrier tap closes it onto the
+      // still-open page (the phone back gesture's equivalent).
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(find.byType(BottomSheet), findsNothing);
+      expect(find.byType(TrajectoryScreen), findsOneWidget);
+
+      // Back again: the page's header close pops it onto the launcher
+      // sheet, panel intact.
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+      expect(find.byType(TrajectoryScreen), findsNothing);
+      expect(find.byKey(_panelKey), findsOneWidget);
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('a session switch while the page stays open follows the '
+        'newly active session (E2: follow, pinned)', (tester) async {
+      final harness = await _pumpSheet(tester);
+      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(tester, harness.services['sess-a']!, 'review the diff');
+      await openTrajectoryPage(tester, harness);
+      expect(
+        find.descendant(
+          of: find.byType(TrajectoryScreen),
+          matching: find.textContaining('deploy the service'),
+        ),
+        findsOneWidget,
+      );
+
+      harness.manager.switchTo('sess-a');
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 4));
+
+      // The page now renders the NEWLY active session's ledger.
+      expect(
+        find.descendant(
+          of: find.byType(TrajectoryScreen),
+          matching: find.textContaining('review the diff'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(TrajectoryScreen),
+          matching: find.textContaining('deploy the service'),
+        ),
+        findsNothing,
+      );
+      await tester.pump(const Duration(seconds: 4));
     });
   });
 }

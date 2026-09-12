@@ -58,6 +58,7 @@
   "widgetsCatalogRetry": "Повторить",
   "appsOpenChatTooltip": "Открыть чат",
   "appsOpenFullChatTooltip": "Открыть полный чат",
+  "appsOpenTrajectoryTooltip": "Открыть траекторию",
   "appsPermissionCalendar": "Календарь",
   "appsPermissionCalendarDesc": "jsr.fa.calendar — чтение событий системного календаря",
   "appsPermissionContacts": "Контакты",
