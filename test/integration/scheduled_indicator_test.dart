@@ -1,3 +1,4 @@
+@Tags(['integration'])
 @Timeout(Duration(minutes: 5))
 /// Issue #115: the CLI interactive mode (TUI) visualizes pending scheduled
 /// follow-up messages (`schedule_message`) on top of the "Working…" row —

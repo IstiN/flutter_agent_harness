@@ -1,3 +1,4 @@
+@Tags(['integration'])
 /// Per-server MCP gating at runtime (issue #19 AC13):
 /// `tools: mcp:<server>: false` unregisters that server's tools and drops it from
 /// the prompt section; re-enabling re-registers them WITHOUT restarting

@@ -1,3 +1,4 @@
+@Tags(['integration'])
 /// Runtime toggle behavior (issue #19 AC10–AC12, fakes only):
 ///
 /// - AC10/AC11: `/tools disable X` removes X from the next model turn's

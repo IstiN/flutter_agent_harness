@@ -105,6 +105,10 @@ def weights_from_junit(units: dict, junit_dir: str) -> dict:
     return totals
 
 
+# ponytail: unit = top-level test dir, so a flat monster (test/cli = 87 files,
+# ~40% of suite time) cannot be split — post-rebalance skew bottoms out around
+# 1.5x. If that ever hurts, chunk flat dirs by sorted filename here and teach
+# shard_files.py to print the chunk's files.
 def bin_pack(weights: dict, n: int) -> list:
     """Greedy longest-processing-time bin-pack into n shards."""
     shards = [[] for _ in range(n)]

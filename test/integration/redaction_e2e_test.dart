@@ -1,3 +1,4 @@
+@Tags(['integration'])
 // End-to-end redaction integration tests (issue #24 AC5/AC6/AC7/AC8).
 //
 // A real [Agent] driven by a scripted fake provider and real [AgentTool]s,

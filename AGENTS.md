@@ -1319,13 +1319,18 @@ tests are done right:
 ## Quality gates (pre-commit hook: `scripts/pre-commit`)
 
 Issue #177 restructured CI so a PR pays only for what it touched. The hook
-is a thin wrapper over `scripts/ci_fast_gate.sh` — the SAME script CI runs
-(AC7: parity is checkable by diffing the `GATE_STAGE <name> OK|SKIP`
-markers). Path filters: docs/markdown/prompts-only → size+analyze; lib/bin/
-test/pubspec → +tests, coverage, CRAP, jscpd; flutter_app/packages →
-+flutter analyze+tests; scripts/.github/crap4dart.yaml → everything (safe
-default). Hook-only extras: dart format self-heal of staged files and
-`scripts/check_goldens.py --quick` (skipped for docs-only commits).
+is a thin wrapper over `scripts/ci_fast_gate.sh`; CI is NOT the same
+process — it implements the same stages as parallel jobs, and since
+issue #194 its PR path classification runs through the SAME script
+(`ci_fast_gate.sh --dry-run` in the `changes` job). One classifier, one
+set of thresholds; parity is checkable by diffing the hook's
+`GATE_STAGE <name> OK|SKIP` markers against the stages the CI changes job
+logs for the same diff. Path filters: docs/markdown/prompts-only →
+size+analyze; lib/bin/test/example/pubspec → +tests, coverage, CRAP,
+jscpd; flutter_app/packages → +flutter analyze+tests;
+scripts/.github/crap4dart.yaml/unknown → everything (safe default, E2 —
+holds in CI too). Hook-only extras: dart format self-heal of staged files
+and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
 
 - `dart analyze` + dart format clean (explicit dirs — `yoclip/` is a
   standalone video workspace with its own toolchain); example app also
@@ -1343,11 +1348,16 @@ default). Hook-only extras: dart format self-heal of staged files and
 - Max 2800 lines per `.dart` file (`*.g.dart` exempt).
 - CI layout: `changes` (path filter) → parallel `static`, `test-core`
   (3 duration-balanced shards, `scripts/test_shards.json`, rebalanced
-  weekly), `coverage-gate`, `guards`, `flutter-tests` (ubuntu; goldens stay
+  weekly from junit durations; shard jobs emit junit-shard-N artifacts and
+  `shard_files.py` bin-packs manifest-missing new test dirs at runtime),
+  `coverage-gate`, `guards`, `flutter-tests` (ubuntu; goldens stay
   host-locked in build-macos/nightly) → one aggregate `Quality gate`
-  required check. `nightly.yml` runs the full monolith + PTY/CLI
-  integration + terminal-visual suites; `coverage-gardener.yml` bumps the
-  only-up CLI coverage baseline weekly.
+  required check, plus `step-timings` (per-step duration telemetry) and a
+  `watchdog` (>2x-baseline timeouts; a timed-out PR leg gets ONE
+  empty-commit retrigger — never `gh run rerun`, which reallocates into
+  the same degraded runner pool). `nightly.yml` runs the full monolith +
+  PTY/CLI integration + terminal-visual suites; `coverage-gardener.yml`
+  bumps the only-up CLI coverage baseline weekly.
 
 ## Cross-platform parity
 
