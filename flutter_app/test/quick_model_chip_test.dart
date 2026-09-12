@@ -15,6 +15,7 @@
 /// - very long model ids ellipsis-clamp on a 320pt-wide canvas.
 
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/main.dart' show faHomeScreen;
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -274,5 +275,51 @@ void main() {
     );
     expect(label.overflow, TextOverflow.ellipsis);
     expect(label.maxLines, 1);
+  });
+
+  testWidgets('wiring parity: the WIDE header chip opens the same unified '
+      'picker config as the mobile one (issue #167 AC2)', (tester) async {
+    // The real call sites, not just the factory: pump the actual wide
+    // shell (>= 900px) and tap ITS chip — the page it opens must carry
+    // the exact quickModelPickerPage config the mobile sheet's E2E test
+    // above exercises. If either header ever re-forks its picker wiring,
+    // this (or the mobile test) fails.
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final env = MemoryExecutionEnv();
+    final registry = ProviderRegistry.inMemory();
+    final service = _fakeService(env);
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+      ..addSession('fake-session', service);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFahTheme(),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Builder(
+          builder: (context) => faHomeScreen(
+            context: context,
+            manager: manager,
+            registry: registry,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final wideChip = find.byKey(const ValueKey('wideModelChip'));
+    expect(wideChip, findsOneWidget);
+    await tester.tap(wideChip);
+    await tester.pumpAndSettle();
+
+    final page = tester.widget<MediaSlotProviderPickerPage>(
+      find.byType(MediaSlotProviderPickerPage),
+    );
+    expect(page.slot, isNull);
+    expect(page.connectedOnly, isTrue);
+    expect(page.allowMainConnection, isFalse);
+    expect(page.mainBaseUrl, service.activeBaseUrl);
+    expect(page.registry, same(registry));
   });
 }
