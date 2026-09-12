@@ -598,6 +598,31 @@ extension ApprovalCommands on AgentCli {
   /// memo on the stream's growing length would invalidate it on EVERY
   /// delta — a full O(context) re-scan dozens of times per second (the
   /// "typing lag").
+  ///
+  /// The memoized request overhead for [_liveContextTokens] (fields live
+  /// on [AgentCli] — extensions can't declare them): recomputed only when
+  /// the system prompt instance or the tool set changes.
+  int _requestOverheadTokens(String systemPrompt, List<Tool> tools) {
+    final key = [for (final tool in tools) identityHashCode(tool)];
+    final cached = _overheadToolKey;
+    if (identical(_overheadPromptKey, systemPrompt) &&
+        cached != null &&
+        cached.length == key.length) {
+      var same = true;
+      for (var i = 0; i < key.length; i++) {
+        if (cached[i] != key[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return _overheadTokens;
+    }
+    _overheadTokens = estimateRequestOverheadTokens(systemPrompt, tools);
+    _overheadPromptKey = systemPrompt;
+    _overheadToolKey = key;
+    return _overheadTokens;
+  }
+
   int _liveContextTokens() {
     final state = _agent.state;
     final messages = state.messages;

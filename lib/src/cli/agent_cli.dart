@@ -859,37 +859,15 @@ class AgentCli {
   /// transcript length + last message instance — never on stream content.
   final SettledContextEstimate _ctxEstimate = SettledContextEstimate();
 
-  /// Memo for the status line's request overhead (system prompt + tool
-  /// schemas, [estimateRequestOverheadTokens]): keyed on the prompt
+  /// Memo fields for the status line's request overhead (system prompt +
+  /// tool schemas, [estimateRequestOverheadTokens] — the method lives in
+  /// approval_commands.dart next to its only caller): keyed on the prompt
   /// instance and the tool ELEMENT identities — the [AgentState] getters
   /// copy their lists on every read, so list identity would miss every
   /// frame while the Tool objects themselves stay stable across copies.
   String? _overheadPromptKey;
   List<int>? _overheadToolKey;
   int _overheadTokens = 0;
-
-  /// The memoized request overhead for [_liveContextTokens]: recomputed
-  /// only when the system prompt instance or the tool set changes.
-  int _requestOverheadTokens(String systemPrompt, List<Tool> tools) {
-    final key = [for (final tool in tools) identityHashCode(tool)];
-    final cached = _overheadToolKey;
-    if (identical(_overheadPromptKey, systemPrompt) &&
-        cached != null &&
-        cached.length == key.length) {
-      var same = true;
-      for (var i = 0; i < key.length; i++) {
-        if (cached[i] != key[i]) {
-          same = false;
-          break;
-        }
-      }
-      if (same) return _overheadTokens;
-    }
-    _overheadTokens = estimateRequestOverheadTokens(systemPrompt, tools);
-    _overheadPromptKey = systemPrompt;
-    _overheadToolKey = key;
-    return _overheadTokens;
-  }
 
   late SessionRepo _repo = JsonlSessionRepo(
     fs: _env,
