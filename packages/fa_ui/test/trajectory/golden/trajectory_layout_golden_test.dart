@@ -153,6 +153,10 @@ void main() {
     ('layout/wide_fullscreen_dark', goldenSizeDesktop, buildFahTheme()),
     ('layout/wide_fullscreen_light', goldenSizeDesktop, buildFahThemeLight()),
     ('layout/narrow_page', goldenSizePhone, buildFahTheme()),
+    // Mobile density (issue #168 AC4): the narrow page at the tightest
+    // common phone widths — no overflow, default (expanded) groups.
+    ('layout/narrow_page_320', const Size(320, 844), buildFahTheme()),
+    ('layout/narrow_page_400', const Size(400, 844), buildFahTheme()),
   ]) {
     testWidgets(name, (tester) async {
       final service = FakeChatService();
