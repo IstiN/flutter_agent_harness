@@ -708,25 +708,6 @@ jobs:
   # can merge — but only when the CLI surface could have changed (issue
   # #177: a docs/app PR must not pay for five platform builds).
 
-  # Backward-compat alias: branch protection still requires the OLD aggregate
-  # check name "Quality gates" (this PR renames it to "Quality gate"). Until
-  # the protection config is switched to the new names (AC6 — needs repo
-  # admin, tracked in issue #177), this alias reports under the old name so
-  # merges stay unblocked both on this PR and on every other PR afterwards.
-  quality-gates-alias:
-    name: Quality gates
-    needs: [quality-gate]
-    if: always()
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Mirror aggregate result
-        run: |
-          r="${{ needs.quality-gate.result }}"
-          echo "Quality gate result: $r"
-          [ "$r" = "success" ] || [ "$r" = "skipped" ]
-
   binaries-pr:
     name: Binaries (PR)
     runs-on: ${{ matrix.runner }}
