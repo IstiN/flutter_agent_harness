@@ -1,3 +1,4 @@
+@Tags(['integration'])
 /// Scoped `tools:` config end-to-end (issue #19 AC6–AC9, fakes only):
 /// global (`~/.fah/config.yaml` via [AgentCliConfig.homeDir]), project
 /// (`<cwd>/.fah/config.yaml`), and session (`tools.yaml` next to the
