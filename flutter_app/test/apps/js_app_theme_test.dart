@@ -97,29 +97,34 @@ void main() {
     );
   });
 
-  test(
-    'E3: concurrent applies serialize their prompts, last grant wins',
-    () async {
-      final order = <String>[];
-      final bridge = FaThemeBridgeHost(
-        store: store,
-        controller: controller,
-        prompt: (_) async {
-          order.add('prompt');
-          // Simulate a slow dialog: the second apply must wait for it.
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-          return true;
-        },
-      );
-      final results = await Future.wait([
-        bridge.applyPack('forest-walk'),
-        bridge.applyPack('forest-walk'),
-      ]);
-      expect(results.map((r) => r['applied']), everyElement(true));
-      expect(order, hasLength(2));
+  test('E3: concurrent applies serialize their prompts — never overlap', () {
+    var active = 0;
+    var maxConcurrent = 0;
+    var resolved = 0;
+    final bridge = FaThemeBridgeHost(
+      store: store,
+      controller: controller,
+      prompt: (_) async {
+        // The second dialog must not open until the first resolved.
+        active++;
+        maxConcurrent = maxConcurrent < active ? active : maxConcurrent;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        active--;
+        resolved++;
+        return true;
+      },
+    );
+    final results = Future.wait([
+      bridge.applyPack('forest-walk'),
+      bridge.applyPack('forest-walk'),
+    ]);
+    return results.then((list) {
+      expect(list.map((r) => r['applied']), everyElement(true));
+      expect(resolved, 2);
+      expect(maxConcurrent, 1, reason: 'prompts must run one at a time');
       expect(controller.packId, 'forest-walk');
-    },
-  );
+    });
+  });
 
   test('byte-scan: the engine bootstrap exposes exactly list/current/apply, '
       'no theme.install (AC4)', () {

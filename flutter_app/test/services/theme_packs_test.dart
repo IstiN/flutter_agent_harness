@@ -36,6 +36,19 @@ void main() {
       expect(result.warnings, isEmpty);
     });
 
+    test('#RRGGBBAA keeps its alpha byte — no silent data loss', () {
+      final result = validateThemePack({
+        'name': 'Glass',
+        'version': '1.0.0',
+        'colors': {
+          'dark': {'accent': '#2E7D3280'},
+        },
+      }, const {});
+      final spec = result.spec;
+      expect(spec, isNotNull, reason: result.reasons.join('\n'));
+      expect(spec!.dark!.accent, const Color(0x802E7D32));
+    });
+
     test('unknown top-level key rejects the pack', () {
       final result = validateThemePack({
         'name': 'X',

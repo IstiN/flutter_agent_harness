@@ -69,17 +69,21 @@ final class FaThemeBridgeHost implements FaThemeBridge {
         'installed ids',
       );
     }
-    // Queue this pack's prompt behind any in-flight one.
-    final granted = await _gate.then((_) => prompt(pack));
-    // Keep the chain alive even when a prompt throws (a dead host widget
-    // must not wedge the next apply).
-    _gate = _gate.then((_) {}, onError: (_) {});
+    // Queue this pack's prompt behind any in-flight one — the chain must
+    // cover the prompt itself, or a second apply would open its dialog
+    // while the first one is still up (E3).
+    final granted = await _queue(() => prompt(pack));
     if (!granted) return {'applied': false, 'reason': 'denied'};
-    await _controller.setPack(
-      id,
-      hasWallpaper: pack.spec.wallpaper != null,
-    );
+    await _controller.setPack(id, hasWallpaper: pack.spec.wallpaper != null);
     return {'applied': true, 'pack': descriptorOf(pack)};
+  }
+
+  /// Runs [action] once every earlier queued prompt has settled (E3); a
+  /// throwing action must not wedge the ones behind it.
+  Future<T> _queue<T>(Future<T> Function() action) {
+    final result = _gate.then((_) => action());
+    _gate = result.then((_) {}, onError: (_) {});
+    return result;
   }
 }
 
@@ -112,6 +116,13 @@ Future<bool> showThemePackConsent(
               l10n.themeConsentContrast,
               style: Theme.of(dialogContext).textTheme.bodySmall,
             ),
+            const SizedBox(height: 4),
+            // The specific failing pairs, not just the generic warning.
+            for (final pair in pack.spec.contrastWarnings)
+              Text(
+                '• $pair',
+                style: Theme.of(dialogContext).textTheme.bodySmall,
+              ),
           ],
         ],
       ),

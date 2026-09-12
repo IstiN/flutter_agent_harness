@@ -1512,24 +1512,19 @@ class ThemePacksSection extends StatelessWidget {
 
   Future<void> _import(BuildContext context, ThemePackStore store) async {
     final files =
-        await (picker ?? createUploadPicker())?.pick() ??
-        const <UploadFile>[];
+        await (picker ?? createUploadPicker())?.pick() ?? const <UploadFile>[];
     if (files.isEmpty) return;
     final result = await store.installFromZip(files.first.bytes);
     if (!context.mounted) return;
     final l10n = context.l10n;
-    final message =
-        result.spec == null
-            ? '${l10n.themePackImportFailed}:\n${result.reasons.join('\n')}'
-            : result.warnings.isEmpty
-            ? l10n.themePackImported(result.spec!.name)
-            : '${l10n.themePackImported(result.spec!.name)}\n'
-                '${result.warnings.join('\n')}';
+    final message = result.spec == null
+        ? '${l10n.themePackImportFailed}:\n${result.reasons.join('\n')}'
+        : result.warnings.isEmpty
+        ? l10n.themePackImported(result.spec!.name)
+        : '${l10n.themePackImported(result.spec!.name)}\n'
+              '${result.warnings.join('\n')}';
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 6),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 6)),
     );
   }
 
@@ -1602,9 +1597,27 @@ class ThemePacksSection extends StatelessWidget {
                       key: ValueKey('theme-pack-${pack.id}'),
                       value: pack.id,
                       title: Text(pack.name),
-                      subtitle: pack.spec.wallpaper == null
+                      subtitle:
+                          (pack.spec.wallpaper == null &&
+                              pack.spec.contrastWarnings.isEmpty)
                           ? null
-                          : Text(context.l10n.themePackWallpaperChip),
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (pack.spec.wallpaper != null)
+                                  Text(context.l10n.themePackWallpaperChip),
+                                if (pack.spec.contrastWarnings.isNotEmpty)
+                                  // The failing pairs (AC6), visible before
+                                  // the radio apply — not just in the JS
+                                  // consent dialog.
+                                  Text(
+                                    pack.spec.contrastWarnings.join(' · '),
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: theme.colorScheme.error,
+                                    ),
+                                  ),
+                              ],
+                            ),
                       secondary: IconButton(
                         tooltip: context.l10n.themePackDelete,
                         icon: const Icon(Icons.delete_outline, size: 20),

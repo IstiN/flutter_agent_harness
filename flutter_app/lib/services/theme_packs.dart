@@ -153,8 +153,11 @@ final class ThemePackWallpaper {
 
 /// Outcome of validating one pack import: either a ready [spec], or the
 /// human-readable rejection [reasons] (shown verbatim to the user).
-typedef ThemePackValidation =
-    ({ThemePackSpec? spec, List<String> reasons, List<String> warnings});
+typedef ThemePackValidation = ({
+  ThemePackSpec? spec,
+  List<String> reasons,
+  List<String> warnings,
+});
 
 /// The single wallpaper asset may be at most 8 MB.
 const int maxWallpaperBytes = 8 * 1024 * 1024;
@@ -213,8 +216,8 @@ ThemePackValidation validateThemePack(
 
   // ── top-level schema (strict) ──────────────────────────────────────────
   const topLevel = {'name', 'version', 'colors', 'typography', 'wallpaper'};
-  final unknownTop =
-      json.keys.where((k) => !topLevel.contains(k)).toList()..sort();
+  final unknownTop = json.keys.where((k) => !topLevel.contains(k)).toList()
+    ..sort();
   if (unknownTop.isNotEmpty) {
     reasons.add('unknown theme.json keys: ${unknownTop.join(', ')}');
   }
@@ -259,8 +262,8 @@ ThemePackValidation validateThemePack(
     if (typography is! Map<String, Object?>) {
       reasons.add('typography must be an object');
     } else {
-      final unknown =
-          typography.keys.where((k) => k != 'fontFamily').toList()..sort();
+      final unknown = typography.keys.where((k) => k != 'fontFamily').toList()
+        ..sort();
       if (unknown.isNotEmpty) {
         reasons.add('unknown typography keys: ${unknown.join(', ')}');
       }
@@ -281,7 +284,8 @@ ThemePackValidation validateThemePack(
       reasons.add('wallpaper must be an object');
     } else {
       final unknown =
-          wp.keys.where((k) => !{'asset', 'fit', 'opacity'}.contains(k))
+          wp.keys
+              .where((k) => !{'asset', 'fit', 'opacity'}.contains(k))
               .toList()
             ..sort();
       if (unknown.isNotEmpty) {
@@ -301,9 +305,7 @@ ThemePackValidation validateThemePack(
               ? asset.split('.').last.toLowerCase()
               : '';
           if (!wallpaperExtensions.contains(ext)) {
-            reasons.add(
-              'wallpaper asset must be png, jpg or webp (got .$ext)',
-            );
+            reasons.add('wallpaper asset must be png, jpg or webp (got .$ext)');
           }
           if (bytes.length > maxWallpaperBytes) {
             reasons.add(
@@ -313,8 +315,7 @@ ThemePackValidation validateThemePack(
           }
         }
         final fit = wp['fit'];
-        if (fit != null &&
-            (fit is! String || !fitTokens.contains(fit))) {
+        if (fit != null && (fit is! String || !fitTokens.contains(fit))) {
           reasons.add('wallpaper.fit must be one of: ${fitTokens.join(', ')}');
         }
         final opacity = wp['opacity'];
@@ -325,8 +326,9 @@ ThemePackValidation validateThemePack(
         wallpaper = ThemePackWallpaper(
           asset: asset,
           fit: ThemePackWallpaper.fitFor(fit is String ? fit : null),
-          opacity:
-              opacity is num ? opacity.toDouble() : kWallpaperOpacityDefault,
+          opacity: opacity is num
+              ? opacity.toDouble()
+              : kWallpaperOpacityDefault,
         );
       }
     }
@@ -411,9 +413,7 @@ ThemePackColors? _parseVariant(
     if (!packColorKeys.contains(entry.key)) continue;
     if (entry.value == null) continue;
     if (entry.value is! String || !_hexColor.hasMatch(entry.value as String)) {
-      reasons.add(
-        'colors.$variant.${entry.key} must be #RRGGBB or #RRGGBBAA',
-      );
+      reasons.add('colors.$variant.${entry.key} must be #RRGGBB or #RRGGBBAA');
       continue;
     }
     parsed[entry.key] = _parseHex(entry.value as String);
@@ -442,9 +442,14 @@ ThemePackColors? _parseVariant(
 }
 
 Color _parseHex(String hex) {
-  final argb = hex.replaceFirst('#', '');
-  final value = int.parse('FF$argb'.padLeft(8, '0').substring(0, 8), radix: 16);
-  return Color(value);
+  final rgb = hex.replaceFirst('#', '');
+  // The schema documents #RRGGBBAA — honor the alpha byte instead of
+  // silently discarding it (a strict validator never loses data).
+  if (rgb.length == 8) {
+    final alpha = int.parse(rgb.substring(6), radix: 16);
+    return Color(alpha << 24 | int.parse(rgb.substring(0, 6), radix: 16));
+  }
+  return Color(0xFF000000 | int.parse(rgb, radix: 16));
 }
 
 /// A flat image file name: one segment, a known extension shape, no
