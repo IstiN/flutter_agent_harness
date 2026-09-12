@@ -239,10 +239,18 @@ Safety kernel (`bridge_tools.dart`):
   `tabCapture`, `nativeMessaging`) prompt before EVERY call. Unknown
   or unmapped namespaces default to exec — new Chrome APIs are
   safe-by-default until mapped.
-- **Exactly one prompt per exec-tier call per mode**: ask mode's
-  approval matrix prompts every call already; write mode's matrix is
-  silent for the static read tier, so the bridge's dynamic risk ask
-  carries the exec namespaces there; yolo/unattended never prompt.
+- **Exactly one prompt per exec/write call per mode** (review r2,
+  owner): write-classified methods (verb-first Chrome naming —
+  `create`/`update`/`set`/`remove`/…) map write→exec for approval
+  purposes, so a bridge call that mutates chrome.* state is NEVER
+  silent in an interactive mode: ask mode's approval matrix prompts
+  every call already; write mode's matrix is silent for the static
+  read tier, so the bridge's dynamic risk ask carries the exec
+  namespaces AND write calls there; pure queries (`get`/`query`/
+  `search`) stay silent in write mode. **Unattended mode keeps
+  working headless** — it auto-allows the ask exactly like bash's
+  unattended behavior (and yolo is zero-prompt by contract); every
+  call still lands in the audit trail.
 - **Yolo means trust**: in yolo every namespace executes immediately,
   the panel shows a persistent "bridge: yolo — no prompts" indicator,
   and the first bridge call of the session drops a one-time notice in

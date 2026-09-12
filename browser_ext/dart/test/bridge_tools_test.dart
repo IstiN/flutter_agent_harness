@@ -116,6 +116,39 @@ void main() {
     });
   });
 
+  group('UT: write-verb classifier (review r2 — write→exec)', () {
+    test('mutating verbs classify as writes', () {
+      for (final p in [
+        'chrome.bookmarks.create',
+        'chrome.bookmarks.remove',
+        'chrome.tabs.update',
+        'chrome.history.deleteUrl',
+        'chrome.tabs.move',
+        'chrome.tabGroups.ungroup',
+        'chrome.downloads.erase',
+        'chrome.windows.close',
+        'chrome.tabs.discard',
+      ]) {
+        expect(bridgeCallWrites(parseBridgePath(p)), isTrue, reason: p);
+      }
+    });
+
+    test('queries stay reads (no false positives)', () {
+      for (final p in [
+        'chrome.tabs.get',
+        'chrome.tabs.query',
+        'chrome.idle.queryState',
+        'chrome.bookmarks.search',
+        'chrome.bookmarks.getRecent',
+        'chrome.system.cpu.getInfo',
+        'chrome.downloads.search',
+        'chrome.tabs.getZoomSettings', // 'settings' suffix ≠ setter
+      ]) {
+        expect(bridgeCallWrites(parseBridgePath(p)), isFalse, reason: p);
+      }
+    });
+  });
+
   group('IT: catalog over the fake (AC2 mirror)', () {
     late FakeChrome chrome;
     late ToolRegistry reg;
@@ -376,13 +409,14 @@ void main() {
       expect((jsonDecode(_unwrapped(text)) as Map)['ok'], true);
     });
 
-    test('write tier never asks; executes', () async {
-      final asked = <String>[];
+    test('review r2: write-classified calls ask (write→exec); allow '
+        'executes', () async {
+      final asked = <(String, ApprovalTier)>[];
       final chrome = FakeChrome(clock: () => 1730000000000);
       final reg = ToolRegistry();
       await registerBridgeTools(reg, chrome,
           riskAsk: (path, tier) async {
-            asked.add(path);
+            asked.add((path, tier));
             return true;
           });
       final text = await callTool(reg, 'browser_api', {
@@ -391,8 +425,25 @@ void main() {
           {'title': 'x', 'url': 'https://x.example/'}
         ],
       });
-      expect(asked, isEmpty);
+      // bookmarks is a READ root — the ask comes from the write verb,
+      // mapped to exec for approval purposes.
+      expect(asked, [('chrome.bookmarks.create', ApprovalTier.exec)]);
       expect((jsonDecode(_unwrapped(text)) as Map)['ok'], true);
+    });
+
+    test('review r2: write-classified call denied → approval_required '
+        'data error', () async {
+      final chrome = FakeChrome(clock: () => 1730000000000);
+      final reg = ToolRegistry();
+      await registerBridgeTools(reg, chrome, riskAsk: (path, tier) async => false);
+      final text = await callTool(reg, 'browser_api', {
+        'path': 'chrome.history.deleteUrl',
+        'args': [{'url': 'https://x.example/'}],
+      });
+      final json = jsonDecode(text) as Map<String, dynamic>;
+      expect(json['ok'], false);
+      expect((json['error'] as Map)['code'], 'approval_required');
+      expect((json['error'] as Map)['message'], contains('write call'));
     });
 
     test('exec tier asks; allow executes', () async {

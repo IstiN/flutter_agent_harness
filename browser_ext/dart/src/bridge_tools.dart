@@ -12,8 +12,12 @@
 //    machinery or its secret-bearing config;
 //  * navigation/download-capable methods ride the SAME ExfilGate as
 //    the curated tabs_open/downloads_start (visited-origins ask);
-//  * per-root risk map (bridgeRiskTier) drives a dynamic exec-tier ask;
-//    read/write ride their static tiers like every other tool;
+//  * per-root risk map (bridgeRiskTier) drives a dynamic exec-tier ask
+//    AND write-classified calls map write→exec for approval purposes
+//    (owner, review r2: a phished model must never get a SILENT
+//    chrome.* write — every interactive mode prompts; yolo/unattended
+//    keep their zero-prompt/headless contracts, documented);
+//  * pure reads ride their static tier like every other tool;
 library;
 
 import 'dart:async';
@@ -81,6 +85,41 @@ const Set<String> _readRoots = {
   'system', 'sidePanel', 'identity', 'readingList', 'search', 'tts',
   'i18n', 'extension',
 };
+
+/// Method-name prefixes that MUTATE browser state. Chrome's API naming
+/// is verb-first, so a read-root method starting with one of these is a
+/// write (`bookmarks.create`, `tabs.update`, `history.deleteUrl`…);
+/// everything else in a read root is a query (`get`/`query`/`search`/
+/// `list`/…). Owner decision (review r2): write-classified bridge calls
+/// map write→exec for approval purposes — NO silent chrome.* write in
+/// any interactive mode. Over-classification asks more, never less;
+/// exec roots ask regardless.
+const Set<String> _writeVerbs = {
+  'create', 'update', 'remove', 'delete', 'set', 'clear', 'insert', 'add',
+  'move', 'discard', 'reload', 'duplicate', 'group', 'ungroup', 'highlight',
+  'restore', 'reopen', 'close', 'open', 'show', 'hide', 'mute', 'unmute',
+  'enable', 'disable', 'toggle', 'download', 'upload', 'send', 'post',
+  'run', 'execute', 'write', 'put', 'patch', 'launch', 'start', 'stop',
+  'reset', 'apply', 'save', 'store', 'erase', 'wipe', 'prune', 'mark',
+  'pin', 'unpin', 'lock', 'unlock', 'focus', 'select', 'activate',
+  'deactivate', 'register', 'unregister', 'install', 'uninstall',
+  'connect', 'disconnect', 'attach', 'detach', 'accept', 'dismiss',
+  'navigate', 'goBack', 'goForward', 'setZoom', 'setDetails',
+};
+
+/// Whether this bridge path's method mutates state (review r2: the
+/// write→exec approval mapping's classifier). Chrome names are
+/// camelCase verb-first: `deleteUrl` = `delete` + `Url`.
+bool bridgeCallWrites(BridgePath p) {
+  for (final v in _writeVerbs) {
+    if (p.method == v) return true;
+    if (p.method.length > v.length && p.method.startsWith(v)) {
+      final next = p.method.codeUnitAt(v.length);
+      if (next >= 0x41 && next <= 0x5A) return true; // 'A'..'Z'
+    }
+  }
+  return false;
+}
 
 /// One hard cap for bridge results (64 KiB, the curated family's budget).
 const int bridgeResultBudgetBytes = 64 * 1024;
@@ -286,10 +325,13 @@ Future<void> registerBridgeTools(
           'wrapped as UNTRUSTED page content. chrome.management, '
           'chrome.runtime and chrome.storage are denied in every mode '
           '(storage holds the agent\'s own provider config — use the '
-          'config tool). Navigation and download methods '
-          '(tabs.create/update, windows.create/update, '
-          'downloads.download) ride the same visited-origins approval '
-          'as the curated open/download tools. For code injection '
+          'config tool). State-mutating methods (create/update/set/…) '
+          'and exec-tier namespaces prompt before EVERY call in every '
+          'interactive mode — there is no silent chrome.* write. '
+          'Navigation and download methods (tabs.create/update, '
+          'windows.create/update, downloads.download) additionally '
+          'ride the same visited-origins approval as the curated '
+          'open/download tools. For code injection '
           'prefer inject_js (scripting.executeScript through the bridge '
           'cannot carry a source string — MV3 CSP blocks eval; files[] '
           'works; chrome.debugger Runtime.evaluate is the cdp_eval '
@@ -328,16 +370,22 @@ Future<void> registerBridgeTools(
         }
         final args = [for (final a in (rawArgs as List?) ?? const []) a];
 
-        // Dynamic exec-tier gate: the static tier is read (so the approval
-        // matrix never double-prompts); exec-tier namespaces ask here,
-        // mode-suppressed by the host (yolo/unattended auto-allow).
+        // Dynamic ask gate: the static tier is read (so the approval
+        // matrix never double-prompts in ask mode); exec-tier
+        // namespaces AND write-classified methods ask here — review r2
+        // (owner): write→exec for approval purposes, so NO bridge call
+        // that mutates chrome.* state is ever silent in an interactive
+        // mode. The host mode-suppresses (yolo/unattended auto-allow —
+        // yolo is zero-prompt by contract, unattended must stay
+        // headless, like bash's unattended behavior).
         final tier = bridgeRiskTier(parsed.root);
-        if (tier == ApprovalTier.exec && riskAsk != null) {
-          if (!await riskAsk(path, tier)) {
+        final writes = bridgeCallWrites(parsed);
+        if ((tier == ApprovalTier.exec || writes) && riskAsk != null) {
+          if (!await riskAsk(path, ApprovalTier.exec)) {
             return err(
               'approval_required',
               'chrome.$path was not approved '
-                  '(${parsed.root} is an exec-tier namespace)',
+                  '(${parsed.root} is ${writes ? 'a write call' : 'an exec-tier namespace'})',
             );
           }
         }

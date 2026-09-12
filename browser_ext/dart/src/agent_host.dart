@@ -937,25 +937,29 @@ final class AgentHost implements UiHostBackend {
     return allow;
   }
 
-  /// The bridge's exec-tier ask (issue #137): same prompt surface as
-  /// ordinary approvals. The static tier of browser_api is read, so the
-  /// approval matrix never double-prompts; this ask carries the exec-tier
-  /// namespaces in write mode (the one mode where the matrix is silent
-  /// but exec must still ask).
+  /// The bridge's exec/write ask (issue #137, review r2): same prompt
+  /// surface as ordinary approvals. The static tier of browser_api is
+  /// read, so the approval matrix never double-prompts; this ask
+  /// carries the exec-tier namespaces AND write-classified methods in
+  /// write mode (the one mode where the matrix is silent but writes and
+  /// exec must still ask — no silent chrome.* write).
   Future<bool> _askBridgeRisk(String path, ApprovalTier tier) async {
-    // Exactly ONE prompt per exec-tier call in the interactive modes:
+    // Exactly ONE prompt per exec/write call in the interactive modes:
     // write mode's matrix auto-allowed the static read tier, so this ask
     // is the prompt; ask mode's matrix already prompts every browser_api
     // call (read tier included), so asking here too would double-prompt;
-    // yolo/unattended ask nothing (zero prompts is their contract).
+    // yolo/unattended ask nothing (yolo's zero-prompt contract;
+    // unattended must keep working headless — parity with bash's
+    // unattended behavior, review r2).
     if (_approvals.mode != ApprovalMode.write) return true;
     final allow = await _promptApproval(
       ApprovalRequest(
         toolName: 'browser_api',
         tier: tier,
         arguments: {'path': path},
-        reason: 'chrome.$path is an exec-tier namespace '
-            '(code execution or user-facing surface)',
+        reason: '$path asks because it is '
+            '${tier == ApprovalTier.exec ? 'an exec-tier namespace (code execution or user-facing surface)' : 'a state-mutating write call'} '
+            '— no silent chrome.* write in interactive modes',
       ),
     );
     return allow != ApprovalDecision.deny;
