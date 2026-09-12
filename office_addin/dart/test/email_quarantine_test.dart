@@ -5,7 +5,7 @@
 // Issue #89.
 import 'package:test/test.dart';
 
-import '../src/email_quarantine.dart';
+import 'package:fa_office_agent/src/email_quarantine.dart';
 
 void main() {
   group('quarantineEmailBody', () {
