@@ -9,6 +9,11 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../native_test_guard.dart';
+
+/// Skip value stamped on this file's engine-dependent tests: every one
+/// boots a real JS engine (issue #184). Resolved once per isolate.
+final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 
 /// Coverage for the JsAppView display chrome: `chrome: 'header'` (default)
 /// keeps the AppBar with the permissions/reload actions; `chrome: 'full'`
@@ -19,185 +24,193 @@ import 'package:flutter_test/flutter_test.dart';
 /// before ever touching the JS backend); the reload test then fixes the app
 /// and boots the REAL JavaScriptCore backend via the menu's Reload action.
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  group('JS engine (native quickjs/JavaScriptCore bridge)', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
 
-  const widgetJs =
-      '(function(){ jsr.render({type:"text",data:"reloaded"}); })();';
+    const widgetJs =
+        '(function(){ jsr.render({type:"text",data:"reloaded"}); })();';
 
-  Future<MemoryExecutionEnv> brokenAppEnv() async {
-    final env = MemoryExecutionEnv();
-    // Only the manifest — no widget.js: a deterministic start error.
-    await env.writeFile('apps/demo/manifest.json', '{}');
-    return env;
-  }
+    Future<MemoryExecutionEnv> brokenAppEnv() async {
+      final env = MemoryExecutionEnv();
+      // Only the manifest — no widget.js: a deterministic start error.
+      await env.writeFile('apps/demo/manifest.json', '{}');
+      return env;
+    }
 
-  Future<void> pumpView(
-    WidgetTester tester,
-    MemoryExecutionEnv env, {
-    Map<String, Object?> manifest = const {'id': 'demo', 'name': 'Demo'},
-  }) async {
-    final permissions = await AppPermissionsStore.load(env);
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        locale: const Locale('en'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: JsAppView(
-          app: JsAppInfo.fromManifest(
-            manifest,
-            bundled: false,
-            fallbackId: 'demo',
+    Future<void> pumpView(
+      WidgetTester tester,
+      MemoryExecutionEnv env, {
+      Map<String, Object?> manifest = const {'id': 'demo', 'name': 'Demo'},
+    }) async {
+      final permissions = await AppPermissionsStore.load(env);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: JsAppView(
+            app: JsAppInfo.fromManifest(
+              manifest,
+              bundled: false,
+              fallbackId: 'demo',
+            ),
+            env: env,
+            permissionsStore: permissions,
           ),
-          env: env,
-          permissionsStore: permissions,
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-  }
+      );
+      await tester.pumpAndSettle();
+    }
 
-  Future<void> openChromeMenu(WidgetTester tester) async {
-    await tester.tap(find.byIcon(Icons.more_vert));
-    await tester.pumpAndSettle();
-  }
+    Future<void> openChromeMenu(WidgetTester tester) async {
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+    }
 
-  testWidgets('header chrome keeps the AppBar with permissions and reload', (
-    tester,
-  ) async {
-    final env = await brokenAppEnv();
-    await pumpView(tester, env);
-
-    expect(find.byType(AppBar), findsOneWidget);
-    expect(find.text('Demo'), findsOneWidget);
-    expect(find.byIcon(Icons.shield_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.refresh), findsOneWidget);
-    // No floating overlay menu in header mode.
-    expect(find.byIcon(Icons.more_vert), findsNothing);
-    expect(find.byType(PopupMenuButton<String>), findsNothing);
-  });
-
-  testWidgets('full chrome hides the AppBar and floats a controls menu', (
-    tester,
-  ) async {
-    final env = await brokenAppEnv();
-    await pumpView(
+    testWidgets('header chrome keeps the AppBar with permissions and reload', (
       tester,
-      env,
-      manifest: const {'id': 'demo', 'name': 'Demo', 'chrome': 'full'},
-    );
+    ) async {
+      final env = await brokenAppEnv();
+      await pumpView(tester, env);
 
-    expect(find.byType(AppBar), findsNothing);
-    expect(find.byIcon(Icons.shield_outlined), findsNothing);
-    expect(find.byIcon(Icons.refresh), findsNothing);
-    expect(find.byIcon(Icons.more_vert), findsOneWidget);
+      expect(find.byType(AppBar), findsOneWidget);
+      expect(find.text('Demo'), findsOneWidget);
+      expect(find.byIcon(Icons.shield_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.refresh), findsOneWidget);
+      // No floating overlay menu in header mode.
+      expect(find.byIcon(Icons.more_vert), findsNothing);
+      expect(find.byType(PopupMenuButton<String>), findsNothing);
+    });
 
-    await openChromeMenu(tester);
-    expect(find.text('App permissions'), findsOneWidget);
-    expect(find.text('Reload app'), findsOneWidget);
-    expect(find.text('Close app'), findsOneWidget);
-  });
+    testWidgets('full chrome hides the AppBar and floats a controls menu', (
+      tester,
+    ) async {
+      final env = await brokenAppEnv();
+      await pumpView(
+        tester,
+        env,
+        manifest: const {'id': 'demo', 'name': 'Demo', 'chrome': 'full'},
+      );
 
-  testWidgets('full chrome menu close pops the app route', (tester) async {
-    final env = await brokenAppEnv();
-    final permissions = await AppPermissionsStore.load(env);
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFahTheme(),
-        locale: const Locale('en'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: Center(
-              child: TextButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => JsAppView(
-                      app: JsAppInfo.fromManifest(
-                        const {'id': 'demo', 'name': 'Demo', 'chrome': 'full'},
-                        bundled: false,
-                        fallbackId: 'demo',
+      expect(find.byType(AppBar), findsNothing);
+      expect(find.byIcon(Icons.shield_outlined), findsNothing);
+      expect(find.byIcon(Icons.refresh), findsNothing);
+      expect(find.byIcon(Icons.more_vert), findsOneWidget);
+
+      await openChromeMenu(tester);
+      expect(find.text('App permissions'), findsOneWidget);
+      expect(find.text('Reload app'), findsOneWidget);
+      expect(find.text('Close app'), findsOneWidget);
+    });
+
+    testWidgets('full chrome menu close pops the app route', (tester) async {
+      final env = await brokenAppEnv();
+      final permissions = await AppPermissionsStore.load(env);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => JsAppView(
+                        app: JsAppInfo.fromManifest(
+                          const {
+                            'id': 'demo',
+                            'name': 'Demo',
+                            'chrome': 'full',
+                          },
+                          bundled: false,
+                          fallbackId: 'demo',
+                        ),
+                        env: env,
+                        permissionsStore: permissions,
                       ),
-                      env: env,
-                      permissionsStore: permissions,
                     ),
                   ),
+                  child: const Text('open'),
                 ),
-                child: const Text('open'),
               ),
             ),
           ),
         ),
-      ),
-    );
-    await tester.tap(find.text('open'));
-    await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.more_vert), findsOneWidget);
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.more_vert), findsOneWidget);
 
-    await openChromeMenu(tester);
-    await tester.tap(find.text('Close app'));
-    await tester.pumpAndSettle();
+      await openChromeMenu(tester);
+      await tester.tap(find.text('Close app'));
+      await tester.pumpAndSettle();
 
-    // Back on the home page: the full-chrome app is closed (its canvas
-    // swallowed the iOS edge swipe, so the menu close is the only exit).
-    expect(find.text('open'), findsOneWidget);
-    expect(find.byIcon(Icons.more_vert), findsNothing);
-  });
+      // Back on the home page: the full-chrome app is closed (its canvas
+      // swallowed the iOS edge swipe, so the menu close is the only exit).
+      expect(find.text('open'), findsOneWidget);
+      expect(find.byIcon(Icons.more_vert), findsNothing);
+    });
 
-  testWidgets('full chrome menu opens the permissions dialog', (tester) async {
-    final env = await brokenAppEnv();
-    await pumpView(
+    testWidgets('full chrome menu opens the permissions dialog', (
       tester,
-      env,
-      manifest: const {'id': 'demo', 'name': 'Demo', 'chrome': 'full'},
-    );
+    ) async {
+      final env = await brokenAppEnv();
+      await pumpView(
+        tester,
+        env,
+        manifest: const {'id': 'demo', 'name': 'Demo', 'chrome': 'full'},
+      );
 
-    await openChromeMenu(tester);
-    await tester.tap(find.text('App permissions'));
-    await tester.pumpAndSettle();
+      await openChromeMenu(tester);
+      await tester.tap(find.text('App permissions'));
+      await tester.pumpAndSettle();
 
-    expect(find.byType(AppPermissionsDialog), findsOneWidget);
-    expect(find.byType(SwitchListTile), findsNWidgets(10));
+      expect(find.byType(AppPermissionsDialog), findsOneWidget);
+      expect(find.byType(SwitchListTile), findsNWidgets(10));
 
-    await tester.tap(find.text('Done'));
-    await tester.pumpAndSettle();
-    expect(find.byType(AppPermissionsDialog), findsNothing);
-  });
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppPermissionsDialog), findsNothing);
+    });
 
-  testWidgets('full chrome menu reload restarts the app', (tester) async {
-    final env = await brokenAppEnv();
-    await pumpView(
-      tester,
-      env,
-      manifest: const {'id': 'demo', 'name': 'Demo', 'chrome': 'full'},
-    );
-    expect(find.textContaining('Failed to start Demo'), findsOneWidget);
+    testWidgets('full chrome menu reload restarts the app', (tester) async {
+      final env = await brokenAppEnv();
+      await pumpView(
+        tester,
+        env,
+        manifest: const {'id': 'demo', 'name': 'Demo', 'chrome': 'full'},
+      );
+      expect(find.textContaining('Failed to start Demo'), findsOneWidget);
 
-    // Fix the app, then reload through the overlay menu. The real JS backend
-    // boots on the real event loop, so this runs inside runAsync with manual
-    // pumps (the fake-zone settle would hang on the engine's periodic timer).
-    await tester.runAsync(() async {
-      await env.writeFile('apps/demo/widget.js', widgetJs);
-      await tester.tap(find.byIcon(Icons.more_vert));
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
-      await tester.tap(find.text('Reload app'));
-      await tester.pump();
-      for (var i = 0; i < 20; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+      // Fix the app, then reload through the overlay menu. The real JS backend
+      // boots on the real event loop, so this runs inside runAsync with manual
+      // pumps (the fake-zone settle would hang on the engine's periodic timer).
+      await tester.runAsync(() async {
+        await env.writeFile('apps/demo/widget.js', widgetJs);
+        await tester.tap(find.byIcon(Icons.more_vert));
         await tester.pump();
-        if (find.text('reloaded').evaluate().isNotEmpty) break;
-      }
-    });
-    expect(find.text('reloaded'), findsOneWidget);
-    expect(find.textContaining('Failed to start Demo'), findsNothing);
+        await tester.pump(const Duration(seconds: 1));
+        await tester.tap(find.text('Reload app'));
+        await tester.pump();
+        for (var i = 0; i < 20; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          await tester.pump();
+          if (find.text('reloaded').evaluate().isNotEmpty) break;
+        }
+      });
+      expect(find.text('reloaded'), findsOneWidget);
+      expect(find.textContaining('Failed to start Demo'), findsNothing);
 
-    // Unmount so the engine is disposed before teardown.
-    await tester.runAsync(() async {
-      await tester.pumpWidget(const SizedBox.shrink());
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      // Unmount so the engine is disposed before teardown.
+      await tester.runAsync(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
     });
-    await tester.pump();
-  });
+  }, skip: _engineSkip);
 }
