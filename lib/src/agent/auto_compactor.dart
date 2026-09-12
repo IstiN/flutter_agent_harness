@@ -25,6 +25,7 @@ import 'dart:async';
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
 import '../compaction/structured/engine.dart';
+import '../compaction/structured/markers.dart' show localTrimMarkerPrefix;
 import '../compaction/structured/judge.dart';
 import '../context.dart';
 import '../model.dart';
@@ -380,7 +381,7 @@ final class AutoCompactor {
     // the session file keeps every record.
     final rebuilt = repairToolPairing([
       UserMessage.text(
-        '[context trimmed locally: the summarizer endpoint was unavailable, '
+        '$localTrimMarkerPrefix the summarizer endpoint was unavailable, '
         '$cut older message(s) were dropped from the live context at '
         '${DateTime.now().toUtc().toIso8601String()} — the full history '
         'stays in the session file]',

@@ -566,7 +566,8 @@ void main() {
         'a2a:\n  servers: {}\n'
         'providerTimeouts:\n  connectTimeoutMs: 1000\n'
         'skills:\n  access: ask\n'
-        'prompts:\n  bootstrap: hi\n',
+        'prompts:\n  bootstrap: hi\n'
+        'images:\n  maxPerRequest: 20\n',
       );
       final report = await service.check();
       expect(
@@ -627,6 +628,47 @@ void main() {
         (await service.check()).errors.single.message,
         contains('prompts.bootstrap must be a string'),
       );
+    });
+
+    test('images rejects unknown keys, bad bools and non-positive ints '
+        '(issue #195 F1)', () async {
+      await env.writeFile(_globalConfig, 'images:\n  bogus: 1\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('unknown "images" key: bogus'),
+      );
+      await env.writeFile(_globalConfig, 'images:\n  registry: "yes"\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('"images.registry" must be a boolean'),
+      );
+      await env.writeFile(_globalConfig, 'images:\n  maxPerRequest: 0\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('"images.maxPerRequest" must be a positive integer'),
+      );
+      await env.writeFile(_globalConfig, 'images:\n  maxPerRequest: -2\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('"images.maxPerRequest" must be a positive integer'),
+      );
+    });
+
+    test('images must be a map (issue #195 F1)', () async {
+      await env.writeFile(_globalConfig, 'images: [a, b]\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('must be a map'),
+      );
+    });
+
+    test('a valid images section passes clean (issue #195 F1)', () async {
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\nimages:\n  registry: false\n  maxPerRequest: 8\n',
+      );
+      final report = await checkOrThrow(service);
+      expect(report.warnings, isEmpty);
     });
   });
 
