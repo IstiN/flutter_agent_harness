@@ -23,7 +23,7 @@ import 'package:fa/services/upload.dart';
 import 'package:fa/ui/screens/app_launcher_screen.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
-import 'package:fa/ui/screens/providers_section.dart' show agentConfigFrom;
+import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
@@ -509,37 +509,14 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
                 ),
               ),
               // Quick model switch: current model name → tap opens the
-              // unified model picker (all providers, filter). The chip
-              // is wrapped in a [Material] so the [InkWell] ripple has
-              // somewhere to paint — a plain Container ancestor would
-              // swallow the gesture highlight.
-              Material(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
-                child: InkWell(
-                  onTap: () => _openModelPicker(active),
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.memory, size: 14, color: colors.indigo),
-                        const SizedBox(width: 4),
-                        Text(
-                          active.service.modelId,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colors.dim,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+              // unified model picker (all providers, filter) — the shared
+              // chip/flow also renders in the mobile session panel
+              // (issue #167 parity).
+              QuickModelChip(
+                key: const ValueKey('wideModelChip'),
+                modelId: active.service.modelId,
+                tooltip: context.l10n.chatModelSwitchTooltip,
+                onTap: () => _openModelPicker(active),
               ),
             ],
           ),
@@ -751,48 +728,19 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     }
   }
 
-  /// Opens the same two-step provider → model picker the settings
-  /// "Default chat model" row uses — keeping the chat header's quick
-  /// model switch in lockstep with the settings flow.
+  /// Opens the shared quick model picker (the same two-step provider →
+  /// model flow the settings "Default chat model" row uses) — see
+  /// [openQuickModelPicker]; the mobile session panel's chip routes
+  /// through the same function (issue #167 parity).
   Future<void> _openModelPicker(FlutterManagedSession session) async {
-    final service = session.service;
     final registry = widget.registry;
-    final lastConnectionStore = widget.lastConnectionStore;
     if (registry == null) return;
-    final result = await pushFaPage<MediaSlotEditorResult>(
+    await openQuickModelPicker(
       context,
-      MediaSlotProviderPickerPage(
-        slot: null,
-        title: context.l10n.settingsDefaultChatModelTitle,
-        initial: null,
-        mainBaseUrl: service.activeBaseUrl,
-        registry: registry,
-        // Connected providers only — same as the role/media rows.
-        connectedOnly: true,
-        // Editing the main connection: no "Same as main" row.
-        allowMainConnection: false,
-      ),
+      service: session.service,
+      registry: registry,
+      lastConnectionStore: widget.lastConnectionStore,
     );
-    if (result == null || result.cleared) return;
-    if (!mounted) return;
-    final override = result.override!;
-    String? resolvedKey;
-    if (override.apiKeyName != null && override.apiKeyName!.isNotEmpty) {
-      resolvedKey = registry.keyValueForName(override.apiKeyName!) ?? '';
-      if (resolvedKey.isEmpty) {
-        resolvedKey = FaUiHost.resolveKey(override.apiKeyName!, () => '');
-      }
-    }
-    final config = FaChatModelConfig(
-      providerKind: override.providerKind,
-      modelId: override.modelId,
-      baseUrl: override.baseUrl,
-      apiKey: resolvedKey ?? '',
-      providerId: override.providerId,
-    );
-    final agentConfig = agentConfigFrom(config);
-    await service.reconfigure(agentConfig);
-    await lastConnectionStore?.saveFromConfig(agentConfig);
   }
 
   /// Session info dialog: the active session's name (renameable — same

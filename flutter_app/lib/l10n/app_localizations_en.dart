@@ -387,6 +387,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatMicTooltip => 'Voice input';
 
   @override
+  String get chatModelSwitchTooltip => 'Switch model';
+
+  @override
   String get chatRemoveAttachment => 'Remove attachment';
 
   @override
