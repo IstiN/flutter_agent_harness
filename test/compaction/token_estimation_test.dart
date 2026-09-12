@@ -159,6 +159,87 @@ void main() {
       ];
       expect(estimateContextTokens(messages).lastUsageIndex, isNull);
     });
+
+    test('repeated images charge once plus the wire replacement '
+        '(issue #195 F5)', () {
+      // Two DISTINCT instances carrying the same bytes: the registry
+      // dedups them on the wire, so the estimate must too.
+      const image = ImageContent(data: 'AAAA', mimeType: 'image/png');
+      final messages = [
+        UserMessage(
+          content: [TextContent(text: 'a' * 40), image],
+          timestamp: DateTime.utc(2026),
+        ),
+        UserMessage(
+          content: [
+            TextContent(text: 'b' * 40),
+            const ImageContent(data: 'AAAA', mimeType: 'image/png'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      // First occurrence: 4800 chars; the repeat: a short note/label.
+      final expected = ((40 + 4800 + 40 + 32) / 4).ceil();
+      expect(estimateContextTokens(messages).tokens, expected);
+    });
+
+    test('distinct images each charge full (issue #195 F5)', () {
+      final messages = [
+        UserMessage(
+          content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
+          timestamp: DateTime.utc(2026),
+        ),
+        UserMessage(
+          content: [const ImageContent(data: 'BBBB', mimeType: 'image/png')],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      expect(estimateContextTokens(messages).tokens, (2 * 4800 / 4).ceil());
+    });
+
+    test('trailing repeats of anchor-era images stay cheap (issue #195 F5)',
+        () {
+      const usage = Usage(
+        input: 5000,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 5000,
+        cost: UsageCost(),
+      );
+      final messages = [
+        UserMessage(
+          content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
+          timestamp: DateTime.utc(2026),
+        ),
+        _assistant(content: [TextContent(text: 'b' * 40)], usage: usage),
+        UserMessage(
+          content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      // The trailing repeat estimates as the note, not a second image.
+      expect(estimateContextTokens(messages).trailingTokens, 8);
+    });
+
+    test('the content key matches the registry (drift pin, issue #195 F5)',
+        () {
+      const image = ImageContent(data: 'AAAA', mimeType: 'image/png');
+      expect(estimationImageKey(image), imageContentKey(image));
+    });
+
+    test('estimateTokens without a seen set charges every occurrence', () {
+      final message = UserMessage(
+        content: [
+          TextContent(text: 'a' * 40),
+          const ImageContent(data: 'AAAA', mimeType: 'image/png'),
+          const ImageContent(data: 'AAAA', mimeType: 'image/png'),
+        ],
+        timestamp: DateTime.utc(2026),
+      );
+      // (40 + 2 * 4800) / 4 = 2410 — per-message calls stay as before.
+      expect(estimateTokens(message), 2410);
+    });
   });
 
   group('SettledContextEstimate', () {
