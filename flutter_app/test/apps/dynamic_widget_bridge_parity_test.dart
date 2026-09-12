@@ -8,6 +8,11 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../native_test_guard.dart';
+
+/// Skip value for the tests booting real JS engines (issue #184); the
+/// pure-Dart bootstrap-surface tests in this file run on every host.
+final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 
 /// Bridge-parity contract for dynamic-message widgets (AC6): a widget runs
 /// the SAME [JsAppEngine] with the SAME fa bootstrap as an installed app —
@@ -51,89 +56,92 @@ void main() {
 })();
 ''';
 
-  testWidgets('widget engine and app engine get the identical bridge surface', (
-    tester,
-  ) async {
-    await tester.runAsync(() async {
-      // Identity: a dirOverride app boots the SAME engine class — no
-      // subclass with a stripped bridge set.
-      expect(widgetApp(), isA<JsAppInfo>());
-      expect(widgetApp().dir, '.widgets/session-1/w-1');
+  group('engine-backed bridge parity (native JS engine)', () {
+    testWidgets(
+      'widget engine and app engine get the identical bridge surface',
+      (tester) async {
+        await tester.runAsync(() async {
+          // Identity: a dirOverride app boots the SAME engine class — no
+          // subclass with a stripped bridge set.
+          expect(widgetApp(), isA<JsAppInfo>());
+          expect(widgetApp().dir, '.widgets/session-1/w-1');
 
-      final env = MemoryExecutionEnv();
-      await env.writeFile('${widgetApp().dir}/widget.js', probeJs);
-      await env.writeFile('apps/demo/widget.js', probeJs);
-      final widgetEngine = JsAppEngine(
-        app: widgetApp(),
-        env: env,
-        permissions: const AppPermissions(),
-      );
-      final appEngine = JsAppEngine(
-        app: app(),
-        env: env,
-        permissions: const AppPermissions(),
-      );
-      try {
-        expect(widgetEngine, isA<JsAppEngine>());
+          final env = MemoryExecutionEnv();
+          await env.writeFile('${widgetApp().dir}/widget.js', probeJs);
+          await env.writeFile('apps/demo/widget.js', probeJs);
+          final widgetEngine = JsAppEngine(
+            app: widgetApp(),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          final appEngine = JsAppEngine(
+            app: app(),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            expect(widgetEngine, isA<JsAppEngine>());
 
-        await widgetEngine.start();
-        await appEngine.start();
-        await Future<void>.delayed(settle);
+            await widgetEngine.start();
+            await appEngine.start();
+            await Future<void>.delayed(settle);
 
-        // Byte parity: the same static bootstrap (see the method-set test
-        // below) drives both engines, so the same fa.emit probe resolves
-        // identically — {emitted: false}, neither has a host sink here.
-        expect(
-          jsonEncode(widgetEngine.exportedState?['result']),
-          jsonEncode(appEngine.exportedState?['result']),
-        );
-        expect(widgetEngine.exportedState?['result'], {'emitted': false});
-      } finally {
-        await widgetEngine.dispose();
-        await appEngine.dispose();
-      }
+            // Byte parity: the same static bootstrap (see the method-set test
+            // below) drives both engines, so the same fa.emit probe resolves
+            // identically — {emitted: false}, neither has a host sink here.
+            expect(
+              jsonEncode(widgetEngine.exportedState?['result']),
+              jsonEncode(appEngine.exportedState?['result']),
+            );
+            expect(widgetEngine.exportedState?['result'], {'emitted': false});
+          } finally {
+            await widgetEngine.dispose();
+            await appEngine.dispose();
+          }
+        });
+      },
+    );
+
+    testWidgets('permission gates are unchanged for widget engines', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('${widgetApp().dir}/widget.js', '''
+  (function() {
+    jsr.onEvent(function(actionId, payload) {});
+    jsr.fa.llm('ping').then(function(result) {
+      jsr.exportState({result: result});
+    }, function(error) {
+      jsr.exportState({result: {__rejected: '' + error}});
     });
-  });
-
-  testWidgets('permission gates are unchanged for widget engines', (
-    tester,
-  ) async {
-    await tester.runAsync(() async {
-      final env = MemoryExecutionEnv();
-      await env.writeFile('${widgetApp().dir}/widget.js', '''
-(function() {
-  jsr.onEvent(function(actionId, payload) {});
-  jsr.fa.llm('ping').then(function(result) {
-    jsr.exportState({result: result});
-  }, function(error) {
-    jsr.exportState({result: {__rejected: '' + error}});
-  });
-  jsr.render({type: 'text', data: 'x'});
-})();
-''');
-      final engine = JsAppEngine(
-        app: widgetApp(),
-        env: env,
-        permissions: const AppPermissions(),
-      );
-      try {
-        await engine.start();
-        await Future<void>.delayed(settle);
-
-        // const AppPermissions() has every flag false: the llm gate still
-        // denies through the same _faCall route (emit is the ONLY un-gated
-        // addition, and it has no permission to check). Denials resolve as
-        // {__error: ...}, which the runtime bootstrap surfaces as a promise
-        // rejection — identical to an installed app.
-        expect(
-          engine.exportedState?['result']?['__rejected'],
-          contains('llm permission'),
+    jsr.render({type: 'text', data: 'x'});
+  })();
+  ''');
+        final engine = JsAppEngine(
+          app: widgetApp(),
+          env: env,
+          permissions: const AppPermissions(),
         );
-      } finally {
-        await engine.dispose();
-      }
+        try {
+          await engine.start();
+          await Future<void>.delayed(settle);
+
+          // const AppPermissions() has every flag false: the llm gate still
+          // denies through the same _faCall route (emit is the ONLY un-gated
+          // addition, and it has no permission to check). Denials resolve as
+          // {__error: ...}, which the runtime bootstrap surfaces as a promise
+          // rejection — identical to an installed app.
+          expect(
+            engine.exportedState?['result']?['__rejected'],
+            contains('llm permission'),
+          );
+        } finally {
+          await engine.dispose();
+        }
+      });
     });
-  });
+  }, skip: _engineSkip);
 
   test('bootstrap is public, non-empty, and bakes in the host locale', () {
     final bootstrap = JsAppEngine.faBootstrapJsFor('en');
