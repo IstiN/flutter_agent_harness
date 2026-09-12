@@ -3428,6 +3428,13 @@
 - fix(196): HEP follow-up from #193 review (#210)
 - fix(195): images follow-up - stale citation renumbering guard + F3/F4/F5 + config tests (#205)
 
+## 0.1.363
+
+- chore(flutter): raise Flutter floor to 3.47 + js_widget_runtime ^0.4.121 (#230)
+- fix(apps): unmute JSR media widgets on iOS — audio session category drift (#227)
+- feat(apps): widget manifest i18n — additive nameI18n/descriptionI18n keys (#226)
+- fix(catalog): single-slash URL join for all release-asset fetches (#219)
+
 ## Unreleased
 
 ## Unreleased
