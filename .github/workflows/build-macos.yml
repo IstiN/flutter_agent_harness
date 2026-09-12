@@ -16,6 +16,11 @@ on:
           - 'true'
           - 'false'
 
+# Cancel superseded runs of the same ref (issue #177).
+concurrency:
+  group: Build macOS Release (Fa)-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   version:
     name: Derive version

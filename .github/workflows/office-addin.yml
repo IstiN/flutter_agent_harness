@@ -29,6 +29,11 @@ on:
       - '.github/workflows/office-addin.yml'
   workflow_dispatch:
 
+# Cancel superseded runs of the same ref (issue #177).
+concurrency:
+  group: Office add-in-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   office-addin-suite:
     name: Office add-in suite

@@ -35,6 +35,11 @@ permissions:
   actions: write
   id-token: write
 
+# Cancel superseded runs of the same ref (issue #177).
+concurrency:
+  group: Build Mobile Apps-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   version:
     name: Derive version
