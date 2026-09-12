@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/sandbox/memory_shell.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -344,6 +345,25 @@ void main() {
       expect(service.messages[0].content, 'describe this');
       expect(service.messages[0].imageBytes, bytes);
       expect(service.messages[1].role, 'assistant');
+    });
+
+    test('cap drops surface in the app log, never silent (issue #195 F4)',
+        () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _createAgent(_singleTextResponse('ok')),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      AppLog.reset();
+      await service.initialize();
+
+      // The service owns the process-wide drop notice now: a drop must
+      // reach the debug log the user can copy, like the CLI's dim line.
+      expect(imageDropNotice, isNotNull);
+      imageDropNotice!(7, 'a1b2c3d4');
+      expect(AppLog.dump(), contains('[Image 7]'));
+      expect(AppLog.dump(), contains('a1b2c3d4'));
     });
 
     test('error event surfaces error text', () async {
@@ -1426,10 +1446,12 @@ void main() {
       final images = blocks.whereType<ImageContent>().toList();
       expect(images, hasLength(1));
       expect(images.single.mimeType, 'image/png');
-      expect(
-        blocks.whereType<TextContent>().single.text,
-        contains('[attached file: uploads/pic.png'),
-      );
+      // The current message's in-place image carries its F3 label, so
+      // there are two texts: the attachment note, then `[Image 0]`.
+      final texts = blocks.whereType<TextContent>().toList();
+      expect(texts, hasLength(2));
+      expect(texts[0].text, contains('[attached file: uploads/pic.png'));
+      expect(texts[1].text, '[Image 0]');
     });
 
     test(
@@ -1481,9 +1503,11 @@ void main() {
         // reference in the text.
         expect(images, hasLength(1));
         expect(images.single.mimeType, 'image/png');
-        final text = blocks.whereType<TextContent>().single.text;
-        expect(text, contains('[attached file: uploads/icon.svg'));
-        expect(text, contains('[attached file: uploads/pic.png'));
+        final texts = blocks.whereType<TextContent>().toList();
+        expect(texts, hasLength(2)); // attachment note + F3 label
+        expect(texts[0].text, contains('[attached file: uploads/icon.svg'));
+        expect(texts[0].text, contains('[attached file: uploads/pic.png'));
+        expect(texts[1].text, '[Image 0]');
         // The UI thumbnail comes from the PNG, never from the SVG bytes.
         expect(service.messages[0].imageBytes, [1, 2, 3]);
       },

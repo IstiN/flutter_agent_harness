@@ -64,9 +64,16 @@ factual: paths, commands, invariants — no essays.
   carriers `[{text:"[Image N]"},{image}]` anchor before the first
   referencing user message or after the tool-result run (never inside
   call/result pairs); the current user message rides images in place
-  (I3); the per-request cap (`images.maxPerRequest`, default 20) drops
-  current-first-then-newest with a drop notice (never silent); dangling
-  refs (compaction, cap) resolve to `(image no longer available)`.
+  (I3), each in-place image carrying its `[Image N]` label (issue #195
+  F3 — the model can cite what it sees); the per-request cap
+  (`images.maxPerRequest`, default 20) drops current-first-then-newest
+  with a drop notice (never silent; the app logs drops via `AppLog`,
+  issue #195 F4); dangling refs (compaction, cap) resolve to `(image no
+  longer available)`, and once a renumbering boundary exists (compaction
+  summary, structured marker, local-trim note) AUTHORED history
+  citations degrade to that note too — after renumbering an `[Image N]`
+  may name a different image, so silent rebinding is never allowed
+  (issue #195 F2; generated refs/labels stay content-keyed and fresh).
   Stateless per-request rebuild — determinism, compaction eviction and
   resume come free. Kill switch `images.registry: false` → byte-for-byte
   legacy shape. `agent_loop.dart` applies it in `_buildRequestContext`

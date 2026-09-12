@@ -163,10 +163,11 @@ void main() {
       (last.content as List<ContentBlock>).whereType<ImageContent>(),
       isNotEmpty,
     );
-    // The history occurrence is a ref pointing at the current part.
+    // The history occurrence is a ref pointing at the current part; the
+    // current part carries its own F3 label.
     final serialized = _serialized(request.messages);
     expect(_occurrences(serialized, 'same'), 1);
-    expect(_occurrences(serialized, '[Image 0]'), 1);
+    expect(_occurrences(serialized, '[Image 0]'), 2);
   });
 
   test('kill switch reproduces the legacy request shape byte-for-byte (AC5)',

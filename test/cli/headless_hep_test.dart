@@ -261,11 +261,12 @@ void main() {
     final image = blocks.singleWhere((b) => b is ImageContent) as ImageContent;
     expect(image.data, 'cGhvdG8=');
     expect(image.mimeType, 'image/jpeg');
-    // The prompt text rides alongside.
-    expect(
-      blocks.whereType<TextContent>().single.text,
-      'what is in the photo',
-    );
+    // The prompt text rides alongside, plus the F3 label of the in-place
+    // image.
+    final texts = blocks.whereType<TextContent>().toList();
+    expect(texts, hasLength(2));
+    expect(texts[0].text, 'what is in the photo');
+    expect(texts[1].text, '[Image 0]');
   });
 
   test('interrupt mid-run: cancelled frame, exit 130, partial persisted',

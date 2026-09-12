@@ -15,6 +15,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'app_log.dart';
 import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
@@ -144,6 +145,15 @@ class AgentService extends ChangeNotifier
     // endpoint-aware UI never reads an uninitialized late field.
     _activeBaseUrl = _agent.state.model.baseUrl;
     _activeApiKey = '';
+    // F4: cap drops must never be silent — same rule as the CLI's dim
+    // line, surfaced through the app debug log (logs/app.log).
+    imageDropNotice = (index, keyPreview) {
+      AppLog.i(
+        'images',
+        'dropping [Image $index] (key $keyPreview…) '
+            '— per-request cap reached',
+      );
+    };
     _redactor = redactor;
     _attachRedactor(redactor);
     _attachApproval();
@@ -360,6 +370,7 @@ class AgentService extends ChangeNotifier
         formatSkillsForPrompt(skills),
     ].join('\n\n');
   }
+
   AgentService._withEnv({
     Map<String, String> bootSecrets = const {},
     required this.env,
@@ -396,8 +407,9 @@ class AgentService extends ChangeNotifier
          // attacker-controlled bytes and insert_draft_body rewrites the
          // user's draft — both prompt on EVERY call in EVERY session mode
          // (the override outranks mode, turn grants and always-allow).
-         overrides:
-             officeApi == null ? const {} : officeToolApprovalOverrides(),
+         overrides: officeApi == null
+             ? const {}
+             : officeToolApprovalOverrides(),
        ),
        sessionsRoot = sessionsRoot,
        _repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
