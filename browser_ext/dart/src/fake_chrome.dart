@@ -88,6 +88,8 @@ final class FakeChrome implements ChromeApi {
     this.authRedirectUrl =
         'https://app.example.com/callback#access_token=fake-token',
     int? quotaBytes,
+    this.bridgeResultFor,
+    this.bridgeNamespaces,
   }) : _clock = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
        _quotaBytes = quotaBytes ?? defaultStorageQuotaBytes {
     // Bookmark roots are created once so the roots list and the id map
@@ -135,6 +137,22 @@ final class FakeChrome implements ChromeApi {
   /// Canned CDP answers; null (default) echoes `{method, params}` back.
   final Object? Function(String method, Map<String, Object?> params)?
   cdpResponder;
+
+  /// Canned bridge (issue #137) results; null (default) resolves through
+  /// the modeled method table. Mirrors [resultsFor] semantics.
+  final Object? Function(String path, List<Object?> args)? bridgeResultFor;
+
+  /// Which chrome.* namespaces exist on this fake — the fake's manifest
+  /// truth. Default: every API namespace the (maximized) required manifest
+  /// grants; a trimmed set models a stripped manifest (E7 / AC6).
+  final Set<String>? bridgeNamespaces;
+
+  /// Recorded bridge-path browsingData.remove calls (test observability).
+  final List<Map<String, Object?>> browsingDataRemoved = [];
+
+  @override
+  late final bridge = _FakeBridge(this);
+
 
   final String notificationPermission;
   final String authRedirectUrl;
@@ -1918,3 +1936,333 @@ final class _BmRec {
   String? parentId;
   final List<_BmRec> children = [];
 }
+
+// ---------------------------------------------------------------------------
+// Generic bridge fake (issue #137)
+// ---------------------------------------------------------------------------
+
+/// The fake's [BridgeApi]: namespaces() reads [FakeChrome.bridgeNamespaces]
+/// (the fake's manifest truth — a trimmed set models a stripped manifest),
+/// calls resolve through the modeled method table below. The table covers
+/// the methods tests exercise; every other declared namespace is
+/// present-with-empty-methods (present in the catalog, api_missing on
+/// call) — the fake's documented truth, mirroring how the real adapter
+/// reports an ungranted API.
+final class _FakeBridge implements BridgeApi {
+  _FakeBridge(this._c);
+  final FakeChrome _c;
+
+  /// The API namespaces the maximized required manifest grants (+ runtime,
+  /// always present). Optional-permission namespaces (topSites,
+  /// pageCapture, …) are absent until granted — like a fresh install.
+  static const _grantedByDefault = {
+    'tabs', 'windows', 'tabGroups', 'sessions', 'history', 'bookmarks',
+    'downloads', 'cookies', 'scripting', 'debugger', 'storage', 'alarms',
+    'notifications', 'action', 'offscreen', 'power', 'idle', 'contextMenus',
+    'omnibox', 'commands', 'webNavigation', 'system', 'sidePanel',
+    'identity', 'browsingData', 'clipboardRead', 'clipboardWrite',
+    'contentSettings', 'declarativeNetRequest', 'fontSettings', 'management',
+    'nativeMessaging', 'privacy', 'proxy', 'readingList', 'search',
+    'tabCapture', 'tts', 'webRequest', 'runtime',
+  };
+
+  /// Events per namespace (catalog metadata; events are not bridge-callable).
+  static const _events = {
+    'tabs': ['onActivated', 'onCreated', 'onMoved', 'onRemoved', 'onUpdated'],
+    'windows': ['onCreated', 'onFocusChanged', 'onRemoved'],
+    'tabGroups': ['onCreated', 'onMoved', 'onRemoved', 'onUpdated'],
+    'bookmarks': [
+      'onChanged', 'onChildrenReordered', 'onCreated', 'onImportEnded',
+      'onMoved', 'onRemoved',
+    ],
+    'cookies': ['onChanged'],
+    'storage': ['onChanged'],
+    'management': ['onDisabled', 'onEnabled', 'onInstalled', 'onUninstalled'],
+    'webNavigation': ['onCompleted', 'onDOMContentLoaded'],
+    'commands': ['onCommand'],
+    'contextMenus': ['onClicked'],
+    'omnibox': ['onInputEntered'],
+  };
+
+  /// Child namespaces (storage.local shape).
+  static const _children = {
+    'storage': ['local'],
+    'system': ['cpu', 'display', 'memory', 'storage'],
+  };
+
+  /// path (no `chrome.` prefix) → (arity, impl). Arity mirrors the real
+  /// chrome function's declared parameter count.
+  Map<String, (int, Future<Object?> Function(List<Object?>))> get _methods => {
+    'idle.queryState': (1, (a) async => _c._idleState),
+    'tabs.query': (1, (a) async => [
+          for (final t in await _c.tabs.query(
+            url: _str(a, 0, 'url'),
+            title: _str(a, 0, 'title'),
+            groupId: _int(a, 0, 'groupId'),
+            pinned: _bool(a, 0, 'pinned'),
+            muted: _bool(a, 0, 'muted'),
+            active: _bool(a, 0, 'active'),
+            currentWindow: _bool(a, 0, 'currentWindow'),
+          ))
+            t.toJson(),
+        ]),
+    'tabs.get': (1, (a) async => (await _c.tabs.get(a[0] as int)).toJson()),
+    'tabs.create': (1, (a) async => (await _c.tabs.create(
+          url: _str(a, 0, 'url') ?? 'about:blank',
+          active: _bool(a, 0, 'active'),
+        ))
+        .toJson()),
+    'tabs.update': (
+      2,
+      (a) async => (await _c.tabs.update(
+        a[0] as int,
+        url: _str(a, 1, 'url'),
+        active: _bool(a, 1, 'active'),
+        pinned: _bool(a, 1, 'pinned'),
+        muted: _bool(a, 1, 'muted'),
+      ))
+          .toJson(),
+    ),
+    'windows.create': (
+      1,
+      (a) async {
+        final arg = a[0];
+        // windows.create takes url as string OR list of strings.
+        final url = arg is Map
+            ? (arg['url'] is List)
+                  ? ((arg['url'] as List).whereType<String>().firstOrNull)
+                  : arg['url'] as String?
+            : arg as String?;
+        return (await _c.windows.create(url: url)).toJson();
+      },
+    ),
+    'downloads.download': (
+      1,
+      (a) async => _c.downloads.download(
+        url: _str(a, 0, 'url') ?? '',
+        filename: _str(a, 0, 'filename'),
+        saveAs: _bool(a, 0, 'saveAs'),
+      ),
+    ),
+    'tabs.remove': (
+      1,
+      (a) async {
+        await _c.tabs.close(a[0] as int);
+        return null;
+      },
+    ),
+    'bookmarks.getTree': (0, (a) async => [for (final n in await _c.bookmarks.tree()) n.toJson()]),
+    'bookmarks.get': (
+      1,
+      (a) async => [_findBm(a[0] as String).toJson()],
+    ),
+    'bookmarks.search': (
+      1,
+      (a) async {
+        final q = (a[0] as String? ?? '').toLowerCase();
+        return [
+          for (final n in _c._bmById.values)
+            if ((q.isEmpty ||
+                    n.title.toLowerCase().contains(q) ||
+                    (n.url ?? '').toLowerCase().contains(q)))
+              _bmJson(n),
+        ];
+      },
+    ),
+    'bookmarks.create': (
+      1,
+      (a) async => (await _c.bookmarks.create(
+        parentId: _str(a, 0, 'parentId'),
+        title: _str(a, 0, 'title') ?? '',
+        url: _str(a, 0, 'url'),
+      ))
+          .toJson(),
+    ),
+    'bookmarks.update': (
+      2,
+      (a) async => (await _c.bookmarks.update(
+        a[0] as String,
+        title: _str(a, 1, 'title'),
+        url: _str(a, 1, 'url'),
+      ))
+          .toJson(),
+    ),
+    'bookmarks.remove': (
+      1,
+      (a) async {
+        await _c.bookmarks.remove(a[0] as String);
+        return null;
+      },
+    ),
+    'cookies.getAll': (
+      1,
+      (a) async => [
+        for (final c in await _c.cookies.getAll(
+          url: _str(a, 0, 'url'),
+          domain: _str(a, 0, 'domain'),
+          name: _str(a, 0, 'name'),
+        ))
+          c.toJson(),
+      ],
+    ),
+    'cookies.set': (
+      1,
+      (a) async => (await _c.cookies.set(
+        url: _str(a, 0, 'url') ?? '',
+        name: _str(a, 0, 'name') ?? '',
+        value: _str(a, 0, 'value') ?? '',
+      ))
+          .toJson(),
+    ),
+    'scripting.executeScript': (
+      1,
+      (a) async {
+        final cfg = (a[0] as Map).cast<String, Object?>();
+        final target = (cfg['target'] as Map).cast<String, Object?>();
+        // TRUTHFUL to real Chrome: `func` must be a function object —
+        // a JSON bridge can never carry one, so a string func is a
+        // schema-validation error here exactly as it is on the real
+        // API ("Property 'func'. Property must be a function"). files[]
+        // (bundled paths) is the serializable alternative.
+        if (cfg['func'] != null && cfg['func'] is! Function) {
+          throw _err(
+            'bad_args',
+            "Invalid value for argument 1. Property 'func'. "
+            'Property must be a function.',
+          );
+        }
+        final files = (cfg['files'] as List?)?.cast<String>();
+        if (cfg['func'] == null && files == null) {
+          throw _err('bad_args', 'executeScript needs func or files');
+        }
+        final source = files == null ? null : '/* files */ ${files.join(',')}';
+        return [
+          for (final r in await _c.scripting.executeScript(
+            tabId: target['tabId'] as int,
+            funcSource: source ?? '',
+            args: (cfg['args'] as List?)?.cast<Object?>(),
+            world: cfg['world'] as String?,
+            allFrames: cfg['allFrames'] as bool?,
+          ))
+            r.toJson(),
+        ];
+      },
+    ),
+    'debugger.attach': (
+      2,
+      (a) async {
+        await _c.debugger.attach(
+          (a[0] as Map)['tabId'] as int,
+          requiredVersion: (a[1] as String?) ?? '1.3',
+        );
+        return null;
+      },
+    ),
+    'debugger.sendCommand': (
+      3,
+      (a) async => _c.debugger.sendCommand(
+        (a[0] as Map)['tabId'] as int,
+        a[1] as String,
+        (a[2] as Map?)?.cast<String, Object?>(),
+      ),
+    ),
+    'debugger.detach': (
+      1,
+      (a) async {
+        await _c.debugger.detach((a[0] as Map)['tabId'] as int);
+        return null;
+      },
+    ),
+    'browsingData.remove': (
+      2,
+      (a) async {
+        _c.browsingDataRemoved.add({
+          'options': a[0],
+          'dataToRemove': a[1],
+        });
+        return null;
+      },
+    ),
+    'contextMenus.removeAll': (
+      0,
+      (a) async {
+        await _c.contextMenus.removeAll();
+        return null;
+      },
+    ),
+  };
+
+  BookmarkNode _findBm(String id) {
+    final n = _c._bmById[id];
+    if (n == null) throw _err('no_node', 'no bookmark with id $id');
+    return BookmarkNode(
+      id: n.id,
+      title: n.title,
+      url: n.url,
+      children: [for (final c in n.children) _findBm(c.id)],
+    );
+  }
+
+  /// Flat bookmark JSON (search results are flat by chrome contract).
+  Map<String, Object?> _bmJson(_BmRec n) => {
+    'id': n.id,
+    'title': n.title,
+    if (n.url != null) 'url': n.url!,
+    if (n.parentId != null) 'parentId': n.parentId!,
+  };
+
+  @override
+  Future<List<String>> namespaces() async {
+    final present = _c.bridgeNamespaces ?? _grantedByDefault;
+    return present.toList()..sort();
+  }
+
+  @override
+  Future<Map<String, Object?>> namespace(String ns) async {
+    final present = _c.bridgeNamespaces ?? _grantedByDefault;
+    final segments = ns.split('.');
+    final root = segments.first;
+    // Child namespaces (storage.local) resolve below the root.
+    if (!present.contains(root) ||
+        (segments.length > 1 &&
+            !(_children[root] ?? const []).contains(segments.last))) {
+      throw _err('api_missing', 'chrome.$ns is not available');
+    }
+    final methods = <String, int>{
+      for (final e in _methods.entries)
+        if (e.key == ns || e.key.startsWith('$ns.'))
+          e.key.split('.').last: e.value.$1,
+    };
+    return {
+      'methods': methods,
+      'events': _events[root] ?? const [],
+      if ((_children[root] ?? const []).isNotEmpty)
+        'children': _children[root]!,
+    };
+  }
+
+  @override
+  Future<Object?> call(String path, List<Object?> args) async {
+    // bridgeResultFor set: its answer (even null) wins — canned mode.
+    final canned = _c.bridgeResultFor;
+    if (canned != null) return canned(path, args);
+    final present = _c.bridgeNamespaces ?? _grantedByDefault;
+    if (!present.contains(path.split('.').first)) {
+      throw _err('api_missing', 'chrome.$path is not available');
+    }
+    final m = _methods[path];
+    if (m == null) throw _err('api_missing', 'chrome.$path is not available');
+    return m.$2(args);
+  }
+}
+
+// -- Small arg-extraction helpers over the untyped bridge args --------------
+
+String? _str(List<Object?> args, int i, String key) =>
+    i >= args.length ? null : (args[i] as Map?)?[key] as String?;
+
+int? _int(List<Object?> args, int i, String key) =>
+    i >= args.length ? null : (args[i] as Map?)?[key] as int?;
+
+bool? _bool(List<Object?> args, int i, String key) =>
+    i >= args.length ? null : (args[i] as Map?)?[key] as bool?;

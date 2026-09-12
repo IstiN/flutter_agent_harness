@@ -120,7 +120,7 @@ AssistantMessageEventStream fakeStream(
   // tool from an e2e spec (e.g. web_fetch against a local test server).
   // Unanchored for the same [context]-prefix reason as inject_js.
   final generic = RegExp(
-    r'tool (\w+) (\{.+\})',
+    r'tool (\w+) (\{.*\})',
     dotAll: true,
   ).firstMatch(prompt);
   if (generic != null) {
