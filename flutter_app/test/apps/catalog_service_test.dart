@@ -484,4 +484,194 @@ void main() {
       );
     });
   });
+
+  group('web platform policy', () {
+    // release-assets.githubusercontent.com sends NO CORS headers, so
+    // BrowserClient dies with `ClientException: Load failed` on the release
+    // URLs; raw.githubusercontent.com sends `access-control-allow-origin: *`.
+    CatalogEntry calcEntry([Map<String, dynamic> Function()? mutate]) {
+      final json =
+          Map<String, dynamic>.from(goodCatalog()['widgets'][0] as Map);
+      mutate?.call()?.forEach((key, value) => json[key] = value);
+      return CatalogEntry.fromJson(json);
+    }
+
+    MockClient rawSourceServer(
+      List<String> requested, {
+      String manifest = '{"id":"calculator"}',
+      String widgetJs = '(function(){})();',
+      int manifestStatus = 200,
+      int widgetJsStatus = 200,
+    }) {
+      return MockClient((request) async {
+        requested.add(request.url.toString());
+        final path = request.url.path;
+        if (path.endsWith('/manifest.json')) {
+          return http.Response(manifest, manifestStatus);
+        }
+        if (path.endsWith('/widget.js')) {
+          return http.Response(widgetJs, widgetJsStatus);
+        }
+        if (path.endsWith('/icon.svg')) return http.Response('<svg/>', 200);
+        return http.Response('nf', 404);
+      });
+    }
+
+    test('web fetches the catalog from the CORS-friendly raw mirror',
+        () async {
+      final env = MemoryExecutionEnv();
+      Uri? requested;
+      final service = CatalogService(
+        env,
+        isWeb: true,
+        httpClient: MockClient((request) async {
+          requested = request.url;
+          return http.Response(jsonEncode(goodCatalog()), 200);
+        }),
+      );
+      await service.fetchCatalog();
+      expect(
+        requested.toString(),
+        'https://raw.githubusercontent.com/IstiN/fa_widgets/main/catalog.json',
+      );
+    });
+
+    test('web installs a widget from raw sources, never the zip', () async {
+      final env = MemoryExecutionEnv();
+      final requested = <String>[];
+      final service = CatalogService(
+        env,
+        isWeb: true,
+        httpClient: rawSourceServer(requested),
+      );
+      final files = await service.downloadWidget(calcEntry());
+      expect(requested, [
+        '${kDefaultWidgetsRawBaseUrl}widgets/calculator/manifest.json',
+        '${kDefaultWidgetsRawBaseUrl}widgets/calculator/widget.js',
+        '${kDefaultWidgetsRawBaseUrl}widgets/calculator/icon.svg',
+      ]);
+      expect(files.keys.toList()..sort(), [
+        'icon.svg',
+        'manifest.json',
+        'widget.js',
+      ]);
+      expect(utf8.decode(files['widget.js']!), '(function(){})();');
+    });
+
+    test('web raw source URLs collapse redundant slashes', () async {
+      final env = MemoryExecutionEnv();
+      final requested = <String>[];
+      final service = CatalogService(
+        env,
+        isWeb: true,
+        rawBaseUrl: Uri.parse('https://example.com/raw//'),
+        httpClient: rawSourceServer(requested),
+      );
+      await service.downloadWidget(calcEntry());
+      expect(
+        requested.first,
+        'https://example.com/raw/widgets/calculator/manifest.json',
+      );
+    });
+
+    test('web skips the icon fetch when the entry declares none', () async {
+      final env = MemoryExecutionEnv();
+      final requested = <String>[];
+      final service = CatalogService(
+        env,
+        isWeb: true,
+        httpClient: rawSourceServer(requested),
+      );
+      final entry = CatalogEntry.fromJson(
+        Map<String, dynamic>.from(goodCatalog()['widgets'][1] as Map),
+      );
+      final files = await service.downloadWidget(entry);
+      expect(requested, [
+        '${kDefaultWidgetsRawBaseUrl}widgets/focus-timer/manifest.json',
+        '${kDefaultWidgetsRawBaseUrl}widgets/focus-timer/widget.js',
+      ]);
+      expect(files.keys.toList()..sort(), ['manifest.json', 'widget.js']);
+    });
+
+    test('web fails loudly on malformed manifest content', () async {
+      final env = MemoryExecutionEnv();
+      final service = CatalogService(
+        env,
+        isWeb: true,
+        httpClient: rawSourceServer(<String>[], manifest: 'not json'),
+      );
+      await expectLater(
+        service.downloadWidget(calcEntry()),
+        throwsA(
+          isA<CatalogError>().having(
+            (e) => '$e',
+            'text',
+            allOf(contains('calculator'), contains('manifest')),
+          ),
+        ),
+      );
+    });
+
+    test('web surfaces a missing source file as CatalogError', () async {
+      final env = MemoryExecutionEnv();
+      final service = CatalogService(
+        env,
+        isWeb: true,
+        httpClient: rawSourceServer(<String>[], widgetJsStatus: 404),
+      );
+      await expectLater(
+        service.downloadWidget(calcEntry()),
+        throwsA(
+          isA<CatalogError>().having(
+            (e) => '$e',
+            'text',
+            allOf(contains('calculator'), contains('404')),
+          ),
+        ),
+      );
+    });
+
+    test('web rejects an unsafe widget id before any request', () async {
+      final env = MemoryExecutionEnv();
+      final requested = <String>[];
+      final service = CatalogService(
+        env,
+        isWeb: true,
+        httpClient: rawSourceServer(requested),
+      );
+      await expectLater(
+        service.downloadWidget(calcEntry(() => {'id': '../evil'})),
+        throwsA(isA<CatalogError>()),
+      );
+      expect(requested, isEmpty);
+    });
+
+    test('explicit isWeb:false keeps the release zip flow byte-identical',
+        () async {
+      final sealed = await sealedCatalog(goodCatalog());
+      final env = MemoryExecutionEnv();
+      final requested = <String>[];
+      final delegate = fakeServer(sealed);
+      final service = CatalogService(
+        env,
+        isWeb: false,
+        httpClient: MockClient((request) async {
+          requested.add(request.url.toString());
+          return delegate.get(request.url, headers: request.headers);
+        }),
+      );
+      final files = await service.downloadWidget(
+        CatalogEntry.fromJson(sealed['widgets'][0] as Map<String, dynamic>),
+      );
+      expect(
+        requested.single,
+        '${kDefaultWidgetsBaseUrl}calculator-1.2.0.zip',
+      );
+      expect(files.keys.toList()..sort(), [
+        'icon.svg',
+        'manifest.json',
+        'widget.js',
+      ]);
+    });
+  });
 }
