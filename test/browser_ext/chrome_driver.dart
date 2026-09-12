@@ -585,6 +585,23 @@ Future<dynamic> evaluateInServiceWorker(
   bool awaitPromise = false,
 }) async {
   final session = await chrome.attachServiceWorker();
+  // The SW target appears the moment main.js starts, but faAgentV2 is
+  // defined by the big compiled agent.js that loads after — on a slow
+  // CI runner (two Chrome instances live) that gap is a race. Wait for
+  // the global (bounded) before touching it; on timeout the expression
+  // runs anyway and surfaces the real error.
+  if (expression.contains('faAgentV2')) {
+    try {
+      await pollUntil(
+        () => session.evaluate('typeof globalThis.faAgentV2'),
+        (v) => v == 'object',
+        description: 'faAgentV2 to appear in the service worker',
+        timeout: const Duration(seconds: 20),
+      );
+    } on TimeoutException {
+      // fall through — the evaluate below reports the honest failure
+    }
+  }
   return session.evaluate(expression, awaitPromise: awaitPromise);
 }
 
