@@ -3359,6 +3359,17 @@
 - feat(168): mobile trajectory view — parity with desktop (#175)
 - docs(157): KB — DAP e2e family triage (two cases were #158 races) (#163)
 
+## 0.1.357
+
+- feat(135): windowed session loading for app chat (#139)
+- feat(155): backend agent mode — HEP v1 events output, --attach, SIGTERM graceful abort, image registry (#193)
+- feat(137): generic chrome.* bridge — browser_api / browser_api_catalog (#172)
+- feat(171): session image registry — [Image N] send-once request assembly (#190)
+- fix(184): host-portable flutter_app tests — quickjs skip guard + injected-ASR fix (#191)
+- ci(161): daily auto-publish — TestFlight + pub.dev + CLI + website + add-in, self-filing fix issues (#170)
+- fix(152): root-cause the browser-ext e2e dispatch flake class (#158)
+- ci(177): drop the 'Quality gates' alias — protection switched to 'Quality gate' (#192)
+
 ## Unreleased
 
 ## Unreleased
