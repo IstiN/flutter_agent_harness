@@ -1819,7 +1819,8 @@ class AgentService extends ChangeNotifier
     final windowed = _windowed;
     if (windowed == null) {
       final index = _positionalRow(messageId);
-      return index != null && index < messages.length;
+      if (index == null) return _jumpLoadedRecord(messageId);
+      return index >= 0 && index < messages.length;
     }
     if (!messageId.startsWith('msg-')) {
       return _jumpToRecord(windowed, messageId);
@@ -1850,6 +1851,30 @@ class AgentService extends ChangeNotifier
   int? _positionalRow(String messageId) {
     final index = int.tryParse(messageId.replaceFirst('msg-', ''));
     return index == null || index < 0 ? null : index;
+  }
+
+  /// A record-id jump on a FULL-OPEN session (the windowed-open
+  /// fallback, issue #197 defect 4): everything is already loaded, so
+  /// the jump is a scroll — resolve the record's transcript row and
+  /// hand it to the scroll surface. `false` on an unknown record or one
+  /// that projects no row. Fallback-open sessions are small by
+  /// definition (that is why the full open won), so the prefix
+  /// projection that finds the row costs nothing.
+  Future<bool> _jumpLoadedRecord(String recordId) async {
+    final session = _session;
+    if (session == null) return false;
+    try {
+      final branch = await session.getBranch();
+      final pos = branch.indexWhere((record) => record.id == recordId);
+      if (pos < 0) return false;
+      final index =
+          session.projectPath(branch.take(pos + 1).toList()).length - 1;
+      if (index < 0) return false;
+      scrollToMessageHandler?.call('msg-$index');
+      return true;
+    } on Object {
+      return false;
+    }
   }
 
   /// The AC6 byte-offset seek: hit id → window re-center → view sync.

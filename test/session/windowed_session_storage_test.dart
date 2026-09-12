@@ -813,6 +813,67 @@ void main() {
       expect(idsOf(older), isNot(contains('e299a')));
       expect(idsOf(older).first, isNot('e100a'));
     });
+    test('branch re-center keeps the load-newer banner off (#197)', () async {
+      // One trunk e0..e99, then two forks: B (e100b..e199b) first in
+      // file order, A (e100a..e299a) after — the open tail lands on A.
+      const iso = '2026-01-01T00:00:00.000Z';
+      String line(String id, String? parent, [String tag = 'a']) =>
+          '{"type":"message","id":"$id","parentId":'
+          '${parent == null ? 'null' : '"$parent"'},"timestamp":"$iso",'
+          '"message":{"role":"user","content":[{"type":"text","text":'
+          '"message $id $tag"}]}}\n';
+      final buffer = StringBuffer(
+        '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
+        '"cwd":"/work"}\n',
+      );
+      for (var i = 0; i < 100; i++) {
+        buffer.write(line('e$i', i == 0 ? null : 'e${i - 1}'));
+      }
+      for (var i = 0; i < 100; i++) {
+        buffer.write(line('e${100 + i}b', i == 0 ? 'e99' : 'e${99 + i}b', 'b'));
+      }
+      for (var i = 0; i < 200; i++) {
+        buffer.write(line('e${100 + i}a', i == 0 ? 'e99' : 'e${99 + i}a'));
+      }
+      await fs.writeFile(path, buffer.toString());
+      final storage = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 150,
+        residentBytes: 1 << 30,
+      );
+      await storage.setLeafId('e150b');
+      // The re-centered window sits at B's head: branch A's records
+      // continue BELOW in file order, but they are not B's newer
+      // history — the banner must not claim them (issue #197 defect 3).
+      expect(storage.hasNewer, isFalse);
+      expect(storage.countBelow, 0);
+      // With the below-count known, the above-count resolves too.
+      expect(await storage.countAbove(), isNotNull);
+      // A page-down tap stays a no-op instead of paging foreign records.
+      expect(await storage.loadNewer(), isEmpty);
+      expect(storage.hasNewer, isFalse);
+    });
+
+    test(
+      'locateRecord skips a torn line that carries the needle (#197)',
+      () async {
+        await seedRaw(10);
+        // The torn tail: a partially-written record embedding an id (the
+        // ASCII gate passes) whose JSON never completes.
+        final raw = (await fs.readTextFile(path)).valueOrNull!;
+        await fs.writeFile(
+          path,
+          '$raw{"type":"message","id":"eZ","parentId":"e9"',
+        );
+        final reader = SessionChunkReader(fs: fs, path: path);
+        // A torn hit degrades to a clean miss, never a throw (defect 1).
+        expect(await reader.locateRecord('eZ'), isNull);
+        // Whole records still resolve.
+        expect(await reader.locateRecord('e5'), isNotNull);
+      },
+    );
 
     test('AC7: a same-size rewrite (mtime) re-anchors to tail', () async {
       await seedRaw(100);
