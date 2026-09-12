@@ -11,6 +11,7 @@ import '../env/execution_env.dart';
 import '../exceptions.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
+import 'windowed_session_storage.dart';
 import 'session_tree.dart';
 import 'uuid.dart';
 
@@ -223,7 +224,15 @@ final class JsonlSessionRepo implements SessionRepo {
   }
 
   @override
-  Future<Session> open(SessionMetadata metadata) async {
+  /// Opens a session. With [windowed] (the app's chat path, issue #135)
+  /// only the header plus the newest chunk are materialized — older
+  /// records page in on demand through the returned [Session]'s
+  /// [WindowedSessionStorage]; small sessions load completely either way.
+  /// The default full open reads the whole file (CLI, tools, migrations).
+  Future<Session> open(
+    SessionMetadata metadata, {
+    bool windowed = false,
+  }) async {
     final exists = _fsOrThrow(
       await _fs.exists(metadata.path),
       'Failed to check session ${metadata.path}',
@@ -234,7 +243,11 @@ final class JsonlSessionRepo implements SessionRepo {
         code: SessionErrorCode.notFound,
       );
     }
-    return Session(await JsonlSessionStorage.open(_fs, metadata.path));
+    return Session(
+      windowed
+          ? await WindowedSessionStorage.open(_fs, metadata.path)
+          : await JsonlSessionStorage.open(_fs, metadata.path),
+    );
   }
 
   @override
@@ -273,16 +286,17 @@ final class JsonlSessionRepo implements SessionRepo {
     if (!rootExists) return 0;
     final files = await _collectJsonlFiles(root);
     for (final path in files) {
-      final contents = _fsOrThrow(
-        await _fs.readTextFile(path),
+      // Emptiness is decidable from the first two lines: line 1 is the
+      // header, and any transcript content means a second line. The read
+      // streams and stops there — scanning every session whole would turn
+      // the cleanup pass into O(bytes on disk) and defeat windowed
+      // loading (issue #135) on big session files. (fa writers never emit
+      // blank lines, so "second line empty" can only mean "no content".)
+      final lines = _fsOrThrow(
+        await _fs.readTextLines(path, maxLines: 2),
         'Failed to read $path',
       );
-      // A session that holds only its header record has zero or one
-      // non-empty line; anything more means real transcript.
-      final nonEmpty = contents
-          .split('\n')
-          .where((line) => line.trim().isNotEmpty)
-          .length;
+      final nonEmpty = lines.where((line) => line.trim().isNotEmpty).length;
       if (nonEmpty > 1) continue;
       _fsOrThrow(
         await _fs.remove(path, force: true),

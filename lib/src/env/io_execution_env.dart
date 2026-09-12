@@ -71,7 +71,7 @@ FileError _fromFileSystemException(FileSystemException error, String path) {
 ///
 /// Relative paths resolve against [cwd] (default: the process working
 /// directory). All operations uphold the [FileSystem] never-throw invariant.
-final class LocalFileSystem implements FileSystem {
+final class LocalFileSystem implements FileSystem, RangedReadFileSystem {
   /// Creates a [LocalFileSystem] rooted at [cwd].
   LocalFileSystem({String? cwd}) : cwd = cwd ?? Directory.current.path;
 
@@ -132,6 +132,30 @@ final class LocalFileSystem implements FileSystem {
       return Ok(await File(resolved).readAsBytes());
     } on Object catch (error) {
       return Err(_toFileError(error, resolved));
+    }
+  }
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) async {
+    final resolved = _resolve(path);
+    if (end <= start) return Ok(Uint8List(0));
+    RandomAccessFile? handle;
+    try {
+      handle = await File(resolved).open();
+      final length = await handle.length();
+      final from = start.clamp(0, length);
+      final to = end.clamp(from, length);
+      if (to <= from) return Ok(Uint8List(0));
+      await handle.setPosition(from);
+      return Ok(await handle.read(to - from));
+    } on Object catch (error) {
+      return Err(_toFileError(error, resolved));
+    } finally {
+      await handle?.close();
     }
   }
 
@@ -695,7 +719,8 @@ final class _LocalShellJob implements ShellJob {
 /// Local [ExecutionEnv]: [LocalFileSystem] plus [LocalShell].
 ///
 /// Exported only from `lib/io.dart`.
-final class LocalExecutionEnv implements ExecutionEnv, BackgroundShell {
+final class LocalExecutionEnv
+    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   /// Creates a [LocalExecutionEnv] rooted at [cwd].
   ///
   /// A custom [shell] may be provided to swap the default [LocalShell] for a
@@ -725,6 +750,13 @@ final class LocalExecutionEnv implements ExecutionEnv, BackgroundShell {
   @override
   Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
       _fs.readBinaryFile(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) => _fs.readRange(path, start, end);
 
   @override
   Future<Result<List<String>, FileError>> readTextLines(

@@ -16,7 +16,8 @@ import 'dart:typed_data';
 import 'execution_env.dart';
 
 /// An [ExecutionEnv] that injects secret env vars into every [exec].
-final class SecretsExecutionEnv implements ExecutionEnv, BackgroundShell {
+final class SecretsExecutionEnv
+    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   /// Creates a decorator over [delegate] injecting [secrets] (name → value).
   SecretsExecutionEnv(this._delegate, Map<String, String> secrets)
     : _secrets = Map.of(secrets);
@@ -126,6 +127,27 @@ final class SecretsExecutionEnv implements ExecutionEnv, BackgroundShell {
   @override
   Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
       _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) {
+    final delegate = _delegate;
+    if (delegate case final RangedReadFileSystem ranged) {
+      return ranged.readRange(path, start, end);
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'readRange not supported by $_delegate',
+          path: path,
+        ),
+      ),
+    );
+  }
 
   @override
   Future<Result<List<String>, FileError>> readTextLines(

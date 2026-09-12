@@ -34,7 +34,8 @@ const modelEnvVar = 'FAH_MODEL';
 
 /// An [ExecutionEnv] that injects session-correlation env vars into every
 /// [exec]. See the library doc for the contract.
-final class SessionVarsExecutionEnv implements ExecutionEnv, BackgroundShell {
+final class SessionVarsExecutionEnv
+    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   /// Creates a decorator over [delegate] injecting the vars returned by
   /// [vars] (consulted live on every [exec]).
   SessionVarsExecutionEnv(this._delegate, this._vars);
@@ -129,6 +130,27 @@ final class SessionVarsExecutionEnv implements ExecutionEnv, BackgroundShell {
   @override
   Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
       _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) {
+    final delegate = _delegate;
+    if (delegate case final RangedReadFileSystem ranged) {
+      return ranged.readRange(path, start, end);
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'readRange not supported by $_delegate',
+          path: path,
+        ),
+      ),
+    );
+  }
 
   @override
   Future<Result<List<String>, FileError>> readTextLines(

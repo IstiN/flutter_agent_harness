@@ -47,6 +47,7 @@ export 'src/cli/cli_config.dart'
         loadProjectCubeSettings,
         resolveStartupCubeSource;
 export 'src/cli/cli_help.dart';
+export 'src/cli/hep.dart';
 export 'src/cli/folder_model_state.dart';
 export 'src/cli/log_file_tee.dart';
 export 'src/cli/sigint_action.dart';
@@ -120,6 +121,8 @@ export 'src/session/session_record.dart';
 export 'src/session/session_repo.dart';
 export 'src/session/session_storage.dart';
 export 'src/session/session_tree.dart';
+export 'src/session/session_chunk_reader.dart';
+export 'src/session/windowed_session_storage.dart';
 export 'src/trajectory/formatters.dart';
 export 'src/trajectory/timeline_range.dart';
 export 'src/trajectory/timeline_projection.dart';
