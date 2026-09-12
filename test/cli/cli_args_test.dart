@@ -512,4 +512,117 @@ void main() {
       );
     });
   });
+  group('parseCliArgs --output (backend agent mode, issue #155)', () {
+    test('--output events parses', () {
+      final args = parseCliArgs(
+        const ['--output', 'events', '-p', 'hi'],
+      ) as CliArgs;
+      expect(args.output, 'events');
+    });
+
+    test('--output events=full parses', () {
+      final args = parseCliArgs(
+        const ['--output', 'events=full', '-p', 'hi'],
+      ) as CliArgs;
+      expect(args.output, 'events=full');
+    });
+
+    test('--output without a value is an error', () {
+      expect(
+        () => parseCliArgs(const ['--output']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--output requires a value'),
+          ),
+        ),
+      );
+    });
+
+    test('unknown --output value is an error', () {
+      expect(
+        () => parseCliArgs(const ['--output', 'yaml', '-p', 'hi']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown --output mode: yaml'),
+          ),
+        ),
+      );
+    });
+
+    test('--output json is only valid with --version', () {
+      expect(
+        () => parseCliArgs(const ['--output', 'json', '-p', 'hi']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--output json applies to --version only'),
+          ),
+        ),
+      );
+    });
+
+    test('--version --output json carries the output mode', () {
+      final result = parseCliArgs(
+        const ['--version', '--output', 'json'],
+      ) as CliArgsVersion;
+      expect(result.output, 'json');
+    });
+
+    test('--output json --version carries the output mode (flag order)', () {
+      final result = parseCliArgs(
+        const ['--output', 'json', '--version'],
+      ) as CliArgsVersion;
+      expect(result.output, 'json');
+    });
+
+    test('--version without --output has no output mode', () {
+      final result = parseCliArgs(const ['--version']) as CliArgsVersion;
+      expect(result.output, isNull);
+    });
+  });
+
+  group('parseCliArgs --attach (backend agent mode, issue #155)', () {
+    test('--attach parses and repeats', () {
+      final args = parseCliArgs(const [
+        '--attach',
+        '/tmp/a.jpg',
+        '--attach',
+        '/tmp/b.png',
+        '-p',
+        'compare',
+      ]) as CliArgs;
+      expect(args.attachments, ['/tmp/a.jpg', '/tmp/b.png']);
+    });
+
+    test('--attach without a value is an error', () {
+      expect(
+        () => parseCliArgs(const ['--attach']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--attach requires a value'),
+          ),
+        ),
+      );
+    });
+
+    test('--attach applies to headless runs only', () {
+      expect(
+        () => parseCliArgs(const ['--attach', '/tmp/a.jpg']),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('--attach applies to headless runs'),
+          ),
+        ),
+      );
+    });
+  });
 }

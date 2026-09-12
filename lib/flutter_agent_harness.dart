@@ -47,6 +47,7 @@ export 'src/cli/cli_config.dart'
         loadProjectCubeSettings,
         resolveStartupCubeSource;
 export 'src/cli/cli_help.dart';
+export 'src/cli/hep.dart';
 export 'src/cli/folder_model_state.dart';
 export 'src/cli/log_file_tee.dart';
 export 'src/cli/sigint_action.dart';

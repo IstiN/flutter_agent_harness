@@ -65,6 +65,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
 
   @override
   void onPass(AutoCompactorPass pass) {
+    _runTokensBefore ??= pass.tokensBefore;
     if (!pass.ok) {
       // The pass failed: onBothRolesFailed already prints the user-facing
       // hint. Printing the success-looking "auto-compacted" line here
@@ -120,10 +121,24 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
     );
   }
 
+  /// The run's first pass's before-count — set by [onPass], read by
+  /// [onDone] to compute the freed delta for the HEP end frame.
+  int? _runTokensBefore;
+
   @override
   void onDone(int passes, int tokens) {
     if (passes > 0) {
       cli._logDiagnostic('auto-compact done passes=$passes tokens=$tokens');
+    }
+    // Backend agent mode (issue #155): close the compaction bracket once
+    // per run with the net freed delta (clamped — a restamped estimator
+    // can report a slightly larger after-count than the usage-anchored
+    // before-count).
+    final before = _runTokensBefore;
+    if (before != null) {
+      final freed = before - tokens;
+      cli._hep?.compactionEnd(freed < 0 ? 0 : freed);
+      _runTokensBefore = null;
     }
   }
 
@@ -207,6 +222,11 @@ extension AgentCliCompactionRun on AgentCli {
   /// [AutoCompactor]. Used by both [_maybeAutoCompact] (gated by
   /// [shouldCompact]) and [_runManualCompact] (unconditional).
   Future<void> _runAutoCompact(String label) async {
+    // Backend agent mode (issue #155): bracket the run so the supervisor
+    // sees why a turn stalled. Pre-flight runs carry the upcoming turn id
+    // (the following agent_start reuses it). The end frame comes from the
+    // pass result in [_AutoCompactorCliHooks.onPass] — the honest numbers.
+    _hep?.compactionStart();
     final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
     final ok = await AutoCompactorFactory(
       session: _session!,
