@@ -242,6 +242,70 @@ void main() {
     });
   });
 
+  group('estimateRequestOverheadTokens', () {
+    test('counts the system prompt and tool schemas at chars/4', () {
+      final tool = Tool(
+        name: 'read',
+        description: 'd' * 20,
+        parameters: const {
+          'type': 'object',
+          'properties': <String, dynamic>{},
+        },
+      );
+      final chars =
+          100 + 'read'.length + 20 + jsonEncode(tool.parameters).length;
+      expect(
+        estimateRequestOverheadTokens('s' * 100, [tool]),
+        (chars / 4).ceil(),
+      );
+    });
+
+    test('a null prompt and no tools cost nothing', () {
+      expect(estimateRequestOverheadTokens(null, const []), 0);
+      expect(estimateRequestOverheadTokens('', const []), 0);
+    });
+  });
+
+  group('estimateRequestTokens (the meter/guard shared basis)', () {
+    test('an unanchored transcript adds the system prompt and tool schemas',
+        () {
+      // 25 transcript tokens; the request additionally carries the system
+      // prompt and the tool schemas, which the transcript-only estimate
+      // silently drops (the resumed-session ctx-meter bug).
+      final messages = [UserMessage.text('a' * 100)];
+      final tools = [
+        Tool(name: 't', description: 'd' * 36, parameters: const {}),
+      ];
+      final overhead = estimateRequestOverheadTokens('s' * 100, tools);
+      expect(overhead, greaterThan(0));
+      expect(
+        estimateRequestTokens(messages, systemPrompt: 's' * 100, tools: tools),
+        25 + overhead,
+      );
+    });
+
+    test('an anchored transcript does NOT add overhead — provider usage '
+        'already prices the system prompt and tools', () {
+      final anchored = _assistant(
+        content: [TextContent(text: 'hi')],
+        usage: Usage.zero.copyWith(input: 100, totalTokens: 120),
+      );
+      final messages = [UserMessage.text('a' * 100), anchored];
+      // The 120-token anchor stands; the huge prompt must not be counted
+      // a second time on top of it.
+      expect(
+        estimateRequestTokens(
+          messages,
+          systemPrompt: 's' * 100000,
+          tools: [
+            Tool(name: 't', description: 'd' * 1000, parameters: const {}),
+          ],
+        ),
+        120,
+      );
+    });
+  });
+
   group('SettledContextEstimate', () {
     test('memoizes on the list identity + length — one estimator run for '
         'repeated calls', () {
@@ -280,6 +344,30 @@ void main() {
       memo.settled(messages);
       memo.settled(messages);
       expect(memo.estimatorCalls, 1);
+    });
+
+    test('a fresh list COPY over the same settled messages still hits the '
+        'memo (the AgentState getter copies the list on every read)', () {
+      final memo = SettledContextEstimate();
+      final messages = [UserMessage.text('a' * 100)];
+      expect(memo.settled(List.unmodifiable(messages)), 25);
+      expect(memo.settled(List.unmodifiable(messages)), 25);
+      expect(memo.estimatorCalls, 1);
+    });
+
+    test('settledEstimate exposes the usage anchor so callers can add '
+        'request overhead only when unanchored', () {
+      final memo = SettledContextEstimate();
+      final unanchored = memo.settledEstimate([UserMessage.text('a' * 100)]);
+      expect(unanchored.lastUsageIndex, isNull);
+      final anchored = memo.settledEstimate([
+        _assistant(
+          content: [TextContent(text: 'hi')],
+          usage: Usage.zero.copyWith(input: 100, totalTokens: 120),
+        ),
+      ]);
+      expect(anchored.lastUsageIndex, 0);
+      expect(anchored.tokens, 120);
     });
   });
 
