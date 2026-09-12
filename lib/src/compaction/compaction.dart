@@ -47,6 +47,8 @@ import 'token_estimation.dart';
 
 export '../compaction/compaction_engine.dart'
     show CompactionEngine, resolveCompactionEngine;
+export '../compaction/structured/expand_tool.dart'
+    show CompactExpandController, compactExpandToolName;
 export '../prompts/prompts.g.dart'
     show
         hideJudgeSystemPrompt,

@@ -79,7 +79,10 @@ final class TrajectorySnapshotBuilder {
     switch (record) {
       case MessageRecord():
         discarded = _appendMessage(record, synthetic: synthetic);
-      case CompactionRecord() || BranchSummaryRecord():
+      case CompactionRecord() ||
+          BranchSummaryRecord() ||
+          HiddenRangeRecord() ||
+          CompactCheckpointRecord():
         _appendCompacted(record);
       case ModelChangeRecord() ||
           ActiveToolsChangeRecord() ||
@@ -328,6 +331,8 @@ final class TrajectorySnapshotBuilder {
     final summary = switch (record) {
       CompactionRecord() => record.summary,
       BranchSummaryRecord() => record.summary,
+      CompactCheckpointRecord() => record.text,
+      HiddenRangeRecord() => 'hidden ${record.recordIds.length} records',
       _ => '',
     };
     _records.add(

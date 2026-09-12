@@ -113,7 +113,6 @@ import '../tools/availability_gate.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/builtin_tools.dart';
-import '../compaction/structured/expand_tool.dart';
 import '../tools/checkpoint_tool.dart';
 import '../tools/generate_image.dart';
 import '../tools/generate_video.dart';

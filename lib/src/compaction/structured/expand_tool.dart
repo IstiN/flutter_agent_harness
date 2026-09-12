@@ -46,7 +46,7 @@ int _tokensForChars(int chars) => chars ~/ 4;
 
 /// Extracts the numeric id or range from a marker or bare target:
 /// `5`, `2-6`, or a pasted `[5:hidden·tool_result·4.5k]`.
-final RegExp _targetPattern = RegExp(r'(\d+)(?:-(\d+))');
+final RegExp _targetPattern = RegExp(r'(\d+)(?:-(\d+))?');
 
 /// Owns the per-turn expand budget and the [compact_expand] tool for one
 /// agent. Created next to [builtinTools] (see [CheckpointRewindController]);
@@ -81,7 +81,8 @@ final class CompactExpandController {
       'properties': {
         'target': {
           'type': 'string',
-          'description': 'Numeric id or range from a context marker, '
+          'description':
+              'Numeric id or range from a context marker, '
               'e.g. "5" or "2-6"',
         },
         'page': {
@@ -181,15 +182,17 @@ final class CompactExpandController {
     }
     _spentTokens += cost;
 
-    final header = StringBuffer('[expand ${start == end ? '$start' : '$start-$end'}');
+    final header = StringBuffer(
+      '[expand ${start == end ? '$start' : '$start-$end'}',
+    );
     if (skipped.isNotEmpty) {
       header.write(' · out of range: ${idsToRanges(skipped)}');
     }
     header.write(']');
     final footer = pages > 1
         ? '\n\n[page $page/$pages — compact_expand target='
-            '${start == end ? '$start' : '$start-$end'}, page: ${page + 1} '
-            'continues]'
+              '${start == end ? '$start' : '$start-$end'}, page: ${page + 1} '
+              'continues]'
         : '';
     return ToolExecutionResult.text('$header\n$slice$footer');
   }
@@ -201,7 +204,7 @@ String? _renderRecord(int seq, SessionRecord record) {
   switch (record) {
     case MessageRecord(:final message):
       return switch (message) {
-        UserMessage() => '[$seq user]\n${_userText(message)}',
+        UserMessage() => '[$seq user]\n${_userText(message.content)}',
         AssistantMessage() => '[$seq assistant]\n${_assistantText(message)}',
         ToolResultMessage(:final toolName, :final content) =>
           '[$seq tool_result · $toolName]\n${_blockTexts(content)}',
@@ -222,9 +225,8 @@ String? _renderRecord(int seq, SessionRecord record) {
   }
 }
 
-String _userText(Object content) => content is String
-    ? content
-    : _blockTexts(content as List<ContentBlock>);
+String _userText(Object content) =>
+    content is String ? content : _blockTexts(content as List<ContentBlock>);
 
 String _assistantText(AssistantMessage message) {
   final parts = <String>[];
