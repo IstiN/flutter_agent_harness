@@ -1370,6 +1370,30 @@ abstract class AppLocalizations {
   /// **'Small (2×2)'**
   String get launcherTileSizeSmall;
 
+  /// No description provided for @launcherTileSizeTall.
+  ///
+  /// In en, this message translates to:
+  /// **'Tall (1×2)'**
+  String get launcherTileSizeTall;
+
+  /// No description provided for @launcherTileSizeWide.
+  ///
+  /// In en, this message translates to:
+  /// **'Wide (2×1)'**
+  String get launcherTileSizeWide;
+
+  /// No description provided for @launcherTileSizeColumn.
+  ///
+  /// In en, this message translates to:
+  /// **'Column (1×3)'**
+  String get launcherTileSizeColumn;
+
+  /// No description provided for @launcherTileSizeRow.
+  ///
+  /// In en, this message translates to:
+  /// **'Row (3×1)'**
+  String get launcherTileSizeRow;
+
   /// No description provided for @mediaFileMissing.
   ///
   /// In en, this message translates to:

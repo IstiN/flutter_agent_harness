@@ -43,12 +43,17 @@ abstract final class LauncherGridSpec {
   static double gridCrossExtent(int columns) => spanCrossExtent(columns);
 }
 
-/// Greedy first-fit row packing of [spans] into a grid with
-/// [crossAxisCount] columns: each tile takes the first top-left position
-/// (scanning rows top-to-bottom, columns left-to-right) whose WxH block is
-/// free, possibly leaving holes — iOS-home-screen-like, no reflow. Spans
-/// are clamped to the grid (width 1..[crossAxisCount], height at least 1).
-/// Child index ↔ span index stays 1:1, so reorder logic is unaffected.
+/// Order-preserving row packing of [spans] into a grid with
+/// [crossAxisCount] columns (issue #166): tiles are placed strictly in
+/// list order — each tile takes the first free WxH block at or after the
+/// previous tile's position (scanning the current row left-to-right, then
+/// wrapping to the next row), so placements never go backwards in reading
+/// order and the visual order always matches the tile order. A tile that
+/// does not fit the remaining cells of a row wraps to the next row and
+/// the trailing cells stay blank — iOS-home-screen-like, no backfilling,
+/// no reordering. Spans are clamped to the grid (width
+/// 1..[crossAxisCount], height at least 1). Child index ↔ span index
+/// stays 1:1, so reorder logic is unaffected.
 List<TilePlacement> packTileSpans({
   required int crossAxisCount,
   required List<TileSpan> spans,
@@ -56,30 +61,35 @@ List<TilePlacement> packTileSpans({
   // rows[r][c] = occupied; rows are appended on demand.
   final rows = <List<bool>>[];
   final placements = <TilePlacement>[];
+  var cursorRow = 0;
+  var cursorCol = 0;
   for (final span in spans) {
     final w = span.w.clamp(1, crossAxisCount);
     final h = span.h < 1 ? 1 : span.h;
-    var placed = false;
-    for (var row = 0; !placed; row++) {
-      while (rows.length < row + h) {
+    while (true) {
+      while (rows.length < cursorRow + h) {
         rows.add(List<bool>.filled(crossAxisCount, false));
       }
-      for (var col = 0; col + w <= crossAxisCount && !placed; col++) {
-        var fits = true;
-        for (var dr = 0; dr < h && fits; dr++) {
-          for (var dc = 0; dc < w && fits; dc++) {
-            if (rows[row + dr][col + dc]) fits = false;
+      var fits = cursorCol + w <= crossAxisCount;
+      for (var dr = 0; dr < h && fits; dr++) {
+        for (var dc = 0; dc < w && fits; dc++) {
+          if (rows[cursorRow + dr][cursorCol + dc]) fits = false;
+        }
+      }
+      if (fits) {
+        for (var dr = 0; dr < h; dr++) {
+          for (var dc = 0; dc < w; dc++) {
+            rows[cursorRow + dr][cursorCol + dc] = true;
           }
         }
-        if (fits) {
-          for (var dr = 0; dr < h; dr++) {
-            for (var dc = 0; dc < w; dc++) {
-              rows[row + dr][col + dc] = true;
-            }
-          }
-          placements.add((row: row, col: col));
-          placed = true;
-        }
+        placements.add((row: cursorRow, col: cursorCol));
+        cursorCol += w;
+        break;
+      }
+      // Advance along the row; wrap when the span no longer fits.
+      if (++cursorCol + w > crossAxisCount) {
+        cursorRow++;
+        cursorCol = 0;
       }
     }
   }
