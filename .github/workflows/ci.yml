@@ -717,7 +717,7 @@ jobs:
   # merges stay unblocked both on this PR and on every other PR afterwards.
   quality-gates-alias:
     name: Quality gates
-    needs: [gate]
+    needs: [quality-gate]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -725,7 +725,7 @@ jobs:
     steps:
       - name: Mirror aggregate result
         run: |
-          r="${{ needs.gate.result }}"
+          r="${{ needs.quality-gate.result }}"
           echo "Quality gate result: $r"
           [ "$r" = "success" ] || [ "$r" = "skipped" ]
 
