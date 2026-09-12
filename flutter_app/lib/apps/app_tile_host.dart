@@ -17,6 +17,9 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/viewport_reporter.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_theme.dart';
+import 'package:fa/apps/js_theme_bridge_host.dart';
+import 'package:fa/services/theme_controller.dart';
+import 'package:fa/services/theme_pack_store.dart';
 import 'package:fa/ui/app_theme.dart';
 
 /// Engine factory behind [AppTileHost]; tests and goldens inject a fake
@@ -261,6 +264,7 @@ class _AppTileHostState extends State<AppTileHost> {
             permissions: effective,
             entryFile:
                 widget.app.tileWidget?.entry ?? JsTileWidgetInfo.defaultEntry,
+            themeBridge: _themeBridge(),
             hostLocale: Localizations.localeOf(context).languageCode,
             initialTheme: initialTheme,
           );
@@ -290,6 +294,26 @@ class _AppTileHostState extends State<AppTileHost> {
     } on Object catch (error) {
       if (mounted) setState(() => _startError = error);
     }
+  }
+
+  /// The theme bridge for the tile's engine (issue #169) — same contract
+  /// as the fullscreen app view: every apply prompts the user.
+  FaThemeBridge? _themeBridge() {
+    final store = ThemePackScope.maybeOf(context);
+    final controller = FahThemeScope.maybeOf(context);
+    if (store == null || controller == null) return null;
+    return FaThemeBridgeHost(
+      store: store,
+      controller: controller,
+      prompt: (pack) async {
+        if (!mounted) return false;
+        return showThemePackConsent(
+          context,
+          appName: widget.app.name,
+          pack: pack,
+        );
+      },
+    );
   }
 
   @override

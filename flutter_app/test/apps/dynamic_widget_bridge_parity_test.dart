@@ -187,6 +187,8 @@ void main() {
       'media.generateVideo', 'media.readVideo',
       // keys
       'keys.list', 'keys.get', 'keys.request',
+      // theme packs (issue #169) — declarative-only; no install exists.
+      'theme.list', 'theme.current', 'theme.apply',
       // back navigation + the widget->host emit channel.
       'back.handler', 'back.close', 'emit',
     };

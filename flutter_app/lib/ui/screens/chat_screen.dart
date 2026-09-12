@@ -29,6 +29,7 @@ import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
+import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/media_player.dart';
@@ -337,6 +338,7 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       },
       audioControllerFactory: widget.audioControllerFactory,
+      wallpaperBuilder: (_) => const FahWallpaper(),
       videoControllerFactory: widget.videoControllerFactory,
     );
   }

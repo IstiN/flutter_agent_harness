@@ -33,9 +33,9 @@ enum FahThemeMode {
 /// IO it is a plain file in the sandbox/app-documents directory (same
 /// pattern as [ProviderRegistry] / [LastConnectionStore]).
 ///
-/// Written on every [setMode]; read once at boot. A missing, unreadable, or
-/// corrupt file yields the default ([FahThemeMode.system]). Non-secret by
-/// design.
+/// Written on every [setMode]/[setPack]; read once at boot. A missing,
+/// unreadable, or corrupt file yields the default ([FahThemeMode.system]).
+/// Non-secret by design.
 class ThemeController extends ChangeNotifier {
   ThemeController._(this._env);
 
@@ -51,6 +51,8 @@ class ThemeController extends ChangeNotifier {
 
   final ExecutionEnv? _env;
   FahThemeMode _mode = FahThemeMode.system;
+  String? _packId;
+  String? _wallpaperPackId;
 
   /// Loads the mode persisted in [env]; a missing, unreadable, or corrupt
   /// file yields the default mode.
@@ -62,6 +64,16 @@ class ThemeController extends ChangeNotifier {
 
   /// The selected appearance choice.
   FahThemeMode get mode => _mode;
+
+  /// The active theme pack id (null = the stock Fa look), persisted in the
+  /// same `theme.json` envelope. The id survives pack updates (E1) and a
+  /// removed pack resolves to the stock look at apply time (never a crash).
+  String? get packId => _packId;
+
+  /// The pack currently supplying the wallpaper layer (issue #169 E4):
+  /// applying a colors-only pack keeps this untouched, so the wallpaper
+  /// "stays whatever it was"; reverting to the stock look clears it.
+  String? get wallpaperPackId => _wallpaperPackId;
 
   /// The [ThemeMode] handed to `MaterialApp.themeMode`.
   ThemeMode get themeMode => switch (_mode) {
@@ -75,13 +87,41 @@ class ThemeController extends ChangeNotifier {
   Future<void> setMode(FahThemeMode mode) async {
     if (mode == _mode) return;
     _mode = mode;
+    await _persist();
     notifyListeners();
+  }
+
+  /// Selects the active theme pack ([packId] null reverts to the stock
+  /// look AND clears the wallpaper). Applying a pack WITHOUT a wallpaper
+  /// leaves the current wallpaper in place (issue #169 E4): callers pass
+  /// [hasWallpaper] so [wallpaperPackId] tracks the last pack that did
+  /// ship one, independently of [packId]. Persistence is best effort,
+  /// same contract as [setMode].
+  Future<void> setPack(String? packId, {bool? hasWallpaper}) async {
+    if (packId == _packId && hasWallpaper != true) return;
+    _packId = packId;
+    if (packId == null) {
+      _wallpaperPackId = null;
+    } else if (hasWallpaper == true) {
+      _wallpaperPackId = packId;
+    }
+    await _persist();
+    notifyListeners();
+  }
+
+  /// Writes the current envelope; best effort by design.
+  Future<void> _persist() async {
     final env = _env;
     if (env == null) return;
     try {
       await env.writeFile(
         '${env.cwd}/$fileName',
-        jsonEncode({'version': _version, 'mode': mode.name}),
+        jsonEncode({
+          'version': _version,
+          'mode': _mode.name,
+          if (_packId != null) 'pack': _packId,
+          if (_wallpaperPackId != null) 'wallpaper': _wallpaperPackId,
+        }),
       );
     } on Object {
       // Best effort: persistence must never block the theme switch.
@@ -98,6 +138,12 @@ class ThemeController extends ChangeNotifier {
       if (decoded is! Map<String, dynamic>) return;
       if (decoded['version'] != _version) return;
       _mode = FahThemeMode.parse(decoded['mode'] as String?);
+      final pack = decoded['pack'];
+      if (pack is String && pack.isNotEmpty) _packId = pack;
+      final wallpaper = decoded['wallpaper'];
+      if (wallpaper is String && wallpaper.isNotEmpty) {
+        _wallpaperPackId = wallpaper;
+      }
     } on Object {
       // Corrupt or incompatible file → default mode, never crash boot.
     }

@@ -13,8 +13,8 @@
 /// material.
 library;
 
+import 'dart:convert';
 import 'dart:io';
-
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/agent_service.dart';
@@ -22,8 +22,9 @@ import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
-import 'package:fa/services/task_models_store.dart';
-import 'package:fa/ui/app_theme.dart';
+import 'package:fa/services/theme_pack_store.dart';
+import 'package:archive/archive.dart';
+import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
@@ -31,6 +32,8 @@ import 'package:fa/ui/screens/dap_settings_page.dart';
 import 'package:fa/services/dap_service.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/services/task_models_store.dart';
+import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -635,6 +638,66 @@ void main() {
 
       // The platform-honest note instead of the connection surface.
       await expectGolden(tester, 'settings_dap_hub_unsupported');
+    });
+
+    testWidgets('theme packs section over its wallpaper', (tester) async {
+      final env = MemoryExecutionEnv();
+      final store = await ThemePackStore.load(env);
+      // 1×1 transparent PNG — decodes for real (the golden rasterizes it).
+      final png = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhf'
+        'DwAChwGA60e6kgAAAABJRU5ErkJggg==',
+      );
+      final wallpaper = jsonEncode({
+        'name': 'Forest Walk',
+        'version': '1.0.0',
+        'colors': {
+          'dark': {'accent': '#2E7D32'},
+        },
+        'wallpaper': {'asset': 'bg.png', 'fit': 'cover'},
+      });
+      final mono = jsonEncode({
+        'name': 'Mono',
+        'version': '1.0.0',
+        'colors': {
+          'dark': {'accent': '#9E9E9E'},
+        },
+      });
+      final archive = Archive()
+        ..add(ArchiveFile.bytes('theme.json', utf8.encode(wallpaper)))
+        ..add(ArchiveFile.bytes('bg.png', png));
+      final monoArchive = Archive()
+        ..add(ArchiveFile.bytes('theme.json', utf8.encode(mono)));
+      for (final a in [archive, monoArchive]) {
+        final result = await store.installFromZip(
+          Uint8List.fromList(ZipEncoder().encode(a)),
+        );
+        expect(result.spec, isNotNull, reason: result.reasons.join('\n'));
+      }
+      final controller = ThemeController.inMemory();
+      await controller.setPack('forest-walk', hasWallpaper: true);
+
+      await _pumpSettingsFrame(
+        tester,
+        child: ThemePackScope(
+          store: store,
+          child: FahThemeScope(
+            controller: controller,
+            child: SizedBox(
+              width: double.infinity,
+              height: 640,
+              child: Stack(
+                fit: StackFit.expand,
+                children: const [
+                  Positioned.fill(child: FahWallpaper()),
+                  Positioned.fill(child: ThemePacksSection()),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await expectGolden(tester, 'settings_theme_packs_section');
     });
   });
 }

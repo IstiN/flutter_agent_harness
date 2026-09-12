@@ -36,6 +36,7 @@ import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
 import 'package:fa/ui/widgets/media_player.dart';
+import 'package:fa/ui/widgets/fah_wallpaper.dart';
 import 'package:fa/ui/widgets/span_grid_delegate.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart'
     show faAppBar, faIsMacOSDesktop;
@@ -979,6 +980,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
         bottom: false,
         child: Stack(
           children: [
+            const Positioned.fill(child: FahWallpaper()),
             _buildGridArea(colors),
             // The iMessage-style session chat overlay: the always-visible
             // input bar, the sessions drawer (from the left) and the session

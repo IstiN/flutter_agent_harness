@@ -28,6 +28,8 @@ final class FaUiTheme {
     this.surface,
     this.userBubble,
     this.userBubbleBorder,
+    this.darkPalette,
+    this.lightPalette,
   });
 
   /// Primary accent (buttons, marks, selections); null keeps the brand
@@ -71,6 +73,20 @@ final class FaUiTheme {
 
   /// User chat bubble border; null derives it from [indigo].
   final Color? userBubbleBorder;
+
+  /// Full dark-brightness palette override (theme packs): every [FahColors]
+  /// slot the pack re-skins, null slots keeping the brand dark values. Null
+  /// keeps [FahColors.dark]; the per-field accent/bubble overrides above
+  /// still apply on top of a palette.
+  final FahColors? darkPalette;
+
+  /// The [FahColors.light] counterpart of [darkPalette]; null keeps the
+  /// stock light palette.
+  final FahColors? lightPalette;
+
+  /// The palette override for [brightness], or null for the stock palette.
+  FahColors? paletteFor(Brightness brightness) =>
+      brightness == Brightness.light ? lightPalette : darkPalette;
 
   /// The effective accent colors for a palette built on [baseIndigo] /
   /// [baseTeal].

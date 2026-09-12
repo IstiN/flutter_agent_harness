@@ -194,6 +194,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'jsr.fa.keys — доступ к API-ключам, сохранённым в Fa, и запрос новых';
 
   @override
+  String get appsPermissionTheme => 'Темы оформления';
+
+  @override
+  String get appsPermissionThemeDesc =>
+      'jsr.fa.theme — список тем и применение (каждый запрос подтверждается пользователем)';
+
+  @override
   String get appsPermissionLlm => 'LLM';
 
   @override
@@ -1834,4 +1841,52 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get dynamicTileRetry => 'Повторить';
+
+  @override
+  String get themeConsentTitle => 'Применить тему?';
+
+  @override
+  String themeConsentBody(String app, String pack) {
+    return 'Приложение $app просит применить тему \"$pack\".';
+  }
+
+  @override
+  String get themeConsentContrast =>
+      'Внимание: часть цветовых пар темы ниже контрастности WCAG AA (4,5:1).';
+
+  @override
+  String get themeConsentApply => 'Применить';
+
+  @override
+  String get themeConsentDeny => 'Оставить текущую';
+
+  @override
+  String get themePacksTitle => 'Темы оформления';
+
+  @override
+  String get themePacksSubtitle =>
+      'Установка .zip с theme.json, выбор активной темы и удаление';
+
+  @override
+  String get themePackDefault => 'Стандартный вид Fa';
+
+  @override
+  String get themePackImport => 'Импортировать тему';
+
+  @override
+  String get themePackDelete => 'Удалить';
+
+  @override
+  String get themePackActiveChip => 'активна';
+
+  @override
+  String get themePackWallpaperChip => 'обои';
+
+  @override
+  String themePackImported(String name) {
+    return 'Тема \"$name\" установлена';
+  }
+
+  @override
+  String get themePackImportFailed => 'Тема отклонена';
 }
