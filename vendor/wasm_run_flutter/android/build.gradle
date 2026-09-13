@@ -67,5 +67,19 @@ android {
         // NDK r28+ requires minSdk >= 21 (CXX1110); 21 also matches the app's
     // flutter_launcher_icons min_sdk_android (issue #289).
     minSdkVersion 21
+
+        externalNativeBuild {
+            cmake {
+                // Play's 16 KB page-size gate (issue #289 DoD item 1): the
+                // arm64-v8a libwasm_run_dart.so must be linked with a 16 KB
+                // max page size (LOAD segment align >= 0x4000) or Play
+                // rejects updates targeting API 35+ and the device degrades
+                // to page-size compat mode. CMakeLists.txt appends this flag
+                // to CMAKE_SHARED_LINKER_FLAGS only when
+                // ANDROID_ABI == arm64-v8a; the other ABIs keep the
+                // toolchain default page size.
+                arguments "-DWASM_RUN_ARM64_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
+            }
+        }
     }
 }
