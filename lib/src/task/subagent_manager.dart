@@ -182,13 +182,21 @@ final class SubagentManager {
       createdAt: now,
       task: task,
     )..lastActivity = now;
+    // Issue #222: an explicit fresh respawn after a failed same-named child
+    // links back to the latest previous generation so UIs can collapse the
+    // chain (no silent clones — the link makes the chain visible).
+    for (final existing in _handles.values) {
+      if (existing.name == name) handle.supersedes = existing.id;
+    }
     _handles[id] = handle;
     _emit(handle);
     _persist();
     return handle;
   }
 
-  /// Updates a handle's status and emits an event.
+  /// Updates a handle's status and emits an event. [clearError] drops the
+  /// recorded failure — the resume path (issue #222) clears the old error
+  /// when a failed child goes back to running.
   Future<void> update(
     String id, {
     SubagentStatus? status,
@@ -196,6 +204,7 @@ final class SubagentManager {
     int? requests,
     String? modelId,
     String? error,
+    bool clearError = false,
   }) async {
     final handle = _handles[id];
     if (handle == null) return;
@@ -204,6 +213,7 @@ final class SubagentManager {
     if (requests != null) handle.requests += requests;
     if (modelId != null) handle.modelId = modelId;
     if (error != null) handle.error = error;
+    if (clearError) handle.error = null;
     handle.lastActivity = DateTime.now().toUtc().toIso8601String();
     _emit(handle);
     _persist();

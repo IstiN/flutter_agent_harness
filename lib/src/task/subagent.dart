@@ -118,6 +118,13 @@ final class SubagentHandle {
   /// preview instead (prime-agent semantics).
   String? lastReply;
 
+  /// The id of the previous same-named handle this child supersedes
+  /// (issue #222): an explicit fresh respawn after a failure links back to
+  /// the old child so UIs can collapse the chain into one logical entry.
+  /// Null for the first generation (the resume path — `task_resume` —
+  /// continues the same handle and never sets this).
+  String? supersedes;
+
   /// Inter-agent messages addressed to this child and not yet consumed
   /// (Phase 3b pending queue). Bounded by the manager's size guard.
   final List<SubagentMessage> pendingMessages = [];
@@ -146,6 +153,7 @@ final class SubagentHandle {
     'requests': requests,
     'modelId': modelId,
     'lastReply': lastReply,
+    if (supersedes != null) 'supersedes': supersedes,
     'pendingMessages': [for (final m in pendingMessages) m.toJson()],
   };
 
@@ -168,6 +176,7 @@ final class SubagentHandle {
     handle.requests = json['requests'] as int? ?? 0;
     handle.modelId = json['modelId'] as String?;
     handle.lastReply = json['lastReply'] as String?;
+    handle.supersedes = json['supersedes'] as String?;
     for (final entry
         in (json['pendingMessages'] as List<dynamic>? ?? const [])) {
       if (entry is Map<String, dynamic>) {
