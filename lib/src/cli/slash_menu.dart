@@ -1,4 +1,5 @@
 import '../plugins/plugin.dart';
+import 'fuzzy_matcher.dart';
 import '../skills/skills.dart';
 import 'prompt_templates.dart';
 import 'tui_repl.dart';
@@ -29,6 +30,12 @@ List<MenuItem> buildSlashMenuItems(
   ];
 }
 
+/// Subsequence fallback for the composer's fuzzy overlay (issue #275):
+/// a candidate survives the substring filter when its key fuzzy-matches
+/// the prefix, so '/e' still surfaces /help and /model.
+bool _fuzzyKeyHit(String key, String prefix) =>
+    prefix.isEmpty || scoreFuzzy(key, prefix) != null;
+
 List<MenuItem> _builtinMenuItems(
   Map<String, String> slashCommands,
   String lower,
@@ -36,9 +43,15 @@ List<MenuItem> _builtinMenuItems(
   final items = <MenuItem>[];
   for (final entry in slashCommands.entries) {
     if (entry.key.toLowerCase().contains(lower) ||
-        entry.value.toLowerCase().contains(lower)) {
+        entry.value.toLowerCase().contains(lower) ||
+        _fuzzyKeyHit(entry.key, lower)) {
       items.add(
-        MenuItem(key: entry.key, label: entry.key, description: entry.value),
+        MenuItem(
+          key: entry.key,
+          label: entry.key,
+          description: entry.value,
+          group: 'commands',
+        ),
       );
     }
   }
@@ -52,12 +65,14 @@ List<MenuItem> _pluginMenuItems(
 ) {
   final items = <MenuItem>[];
   for (final entry in pluginSlashCommands.entries) {
-    if (entry.key.toLowerCase().contains(lower)) {
+    if (entry.key.toLowerCase().contains(lower) ||
+        _fuzzyKeyHit(entry.key, lower)) {
       items.add(
         MenuItem(
           key: entry.key,
           label: entry.key,
           description: descriptions[entry.key] ?? '',
+          group: 'commands',
         ),
       );
     }
@@ -72,9 +87,14 @@ List<MenuItem> _templateMenuItems(
   final items = <MenuItem>[];
   for (final t in templates) {
     final name = '/${t.name}';
-    if (name.toLowerCase().contains(lower)) {
+    if (name.toLowerCase().contains(lower) || _fuzzyKeyHit(name, lower)) {
       items.add(
-        MenuItem(key: name, label: name, description: t.argumentHint ?? ''),
+        MenuItem(
+          key: name,
+          label: name,
+          description: t.argumentHint ?? '',
+          group: 'commands',
+        ),
       );
     }
   }
@@ -97,12 +117,14 @@ List<MenuItem> _skillMenuItems(List<Skill> skills, String lower) {
         ? skill.description
         : '${skill.description} $hint';
     if (skill.name.toLowerCase().contains(needle) ||
-        skill.description.toLowerCase().contains(needle)) {
+        skill.description.toLowerCase().contains(needle) ||
+        _fuzzyKeyHit('/${skill.name}', needle)) {
       items.add(
         MenuItem(
           key: '/skill:${skill.name} ',
           label: '/${skill.name}',
           description: description,
+          group: 'skills',
         ),
       );
     }
@@ -122,6 +144,7 @@ const builtinSlashCommands = <String, String>{
   '/compact': 'summarize history to free context',
   '/stats': 'show token and cost totals',
   '/tasks': '[cancel <id>] — list background agents',
+  '/queue': '[clear] — queued follow-up messages (strip above the input)',
   '/memory': '[maintain] — memory stats or run consolidation',
   '/redact': '[on|off|block on|block off|stats|layers] — secret redaction',
   '/a2a': 'show A2A remote agent servers status',
@@ -175,7 +198,8 @@ List<String> helpLines({
       .where(
         (e) =>
             e.key.toLowerCase().contains(lower) ||
-            e.value.toLowerCase().contains(lower),
+            e.value.toLowerCase().contains(lower) ||
+            _fuzzyKeyHit(e.key, lower),
       )
       .toList();
   if (entries.isEmpty) return [_helpEmptyLine(filter)];

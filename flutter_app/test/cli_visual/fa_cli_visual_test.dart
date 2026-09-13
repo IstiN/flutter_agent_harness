@@ -609,6 +609,40 @@ void main() {
       tempHome.deleteSync(recursive: true);
     });
 
+    testWidgets('composer fuzzy overlay: slash menu ranks and highlights; '
+        'kill-ring yank restores text', (tester) async {
+      final tempHome = _tempHome();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      // Typing a slash prefix opens the fuzzy-ranked command menu: '/e'
+      // must surface /exit (tight match first) alongside /help and
+      // /sessions via the subsequence fallback (issue #275 AC1).
+      harness.sendText('/e');
+      await harness.settle(settleMs: 400);
+      await harness.screenshot(shotsDir, '97_fuzzy_overlay');
+      expect(harness.screenText, contains('/exit'));
+      expect(harness.screenText, contains('/help'));
+      expect(harness.screenText, contains('Commands'));
+
+      // Escape closes the overlay; the typed prefix stays for editing.
+      harness.sendEscape();
+      await harness.settle(settleMs: 300);
+      expect(harness.screenText, contains('/e'));
+
+      // Kill-ring: ctrl-w cuts the word, ctrl-y yanks it back (AC3).
+      harness.sendText('word-to-kill');
+      await harness.settle(settleMs: 200);
+      harness.sendText('\x17'); // ctrl-w
+      await harness.settle(settleMs: 300);
+      expect(harness.screenText, isNot(contains('word-to-kill')));
+      harness.sendText('\x19'); // ctrl-y
+      await harness.settle(settleMs: 300);
+      expect(harness.screenText, contains('word-to-kill'));
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+
     testWidgets('busy queue: enter queues, ↑ pops the message back', (
       tester,
     ) async {
@@ -875,16 +909,22 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       await harness.settle(settleMs: 200);
       harness.sendText('Y');
       await harness.settle(settleMs: 200);
-      // Unhandled combos must never leak their base letter.
-      harness.sendText('\x18\x07\x1a'); // ctrl+x, ctrl+g, ctrl+z
+      // ctrl+x is the #275 queue-row delete (no queue -> no-op) and
+      // ctrl+g stays unhandled: neither may leak its base letter.
+      harness.sendText('\x18\x07'); // ctrl+x, ctrl+g
       await harness.settle(settleMs: 200);
-      harness.sendText('Z');
+      harness.sendText(' Z'); // a fresh word: one undo group of its own
       await harness.settle(settleMs: 300);
+      // ctrl+z is grouped undo since #275: the Z inserts, then undo
+      // removes it again — visible undo in the real terminal.
+      harness.sendText('\x1a'); // ctrl+z
+      await harness.settle(settleMs: 200);
 
       await harness.screenshot(shotsDir, '102_composer_ctrl_keys');
       final flat = harness.screenText.replaceAll('\n', '');
-      expect(flat, contains('Xhello worldYZ'));
-      expect(flat, isNot(contains('Xhello worldYZxgz')));
+      expect(flat, contains('Xhello worldY'));
+      expect(flat, isNot(contains('Xhello worldYZ')));
+      expect(flat, isNot(contains('Xhello worldYxg')));
 
       await harness.close();
       tempHome.deleteSync(recursive: true);
