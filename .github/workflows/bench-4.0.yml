@@ -1,10 +1,12 @@
 name: Bench 4.0
 
 # Runs the fa coding agent against Terminal-Bench 4.0 on the Harbor
-# framework (issue #147): CPU tasks in docker on the self-hosted runner,
-# GPU tasks via Modal, results uploaded to Harbor Hub — the current
-# leaderboard source (tbench.ai). The legacy terminal-bench-core 0.1.1
-# path lives in bench.yml.
+# framework (issue #147): all shards run via Modal sandboxes by default
+# (the issue's own command uses -e modal; the self-hosted runner mac has
+# no docker), with cpu-env=docker available once the runner gains docker.
+# Results upload to Harbor Hub — the current leaderboard source
+# (tbench.ai). The legacy terminal-bench-core 0.1.1 path lives in
+# bench.yml.
 #
 # Same bundle/env contract as the legacy bench: `dart build cli` Linux
 # bundle + FA_PROVIDER_TYPE=zai env-provider-preconfig (glm-5.3-flash),
@@ -41,11 +43,15 @@ on:
         required: false
         default: '1'
       shards:
-        description: 'CPU docker shard count (~4 tasks/shard keeps each job under the 6h window)'
+        description: 'Shard count for CPU tasks (~4 tasks/shard keeps each job under the 6h window)'
         required: false
         default: '16'
+      cpu-env:
+        description: 'Harbor env for CPU shards (modal default; docker once the self-hosted runner has it)'
+        required: false
+        default: 'modal'
       cpu-runner:
-        description: 'Runner label for the docker shards (self-hosted label pending owner confirmation)'
+        description: 'Runner label hosting the harbor CLI (it orchestrates Modal sandboxes; needs docker only with cpu-env=docker)'
         required: false
         default: 'self-hosted'
 
@@ -103,12 +109,13 @@ jobs:
 
       # Download the dataset once for classification; harbor re-fetches
       # into its own cache during the run.
-      - name: Shard dataset into CPU (docker) / GPU (modal)
+      - name: Shard dataset into CPU / GPU shards
         id: shards
         env:
           DATASET: ${{ inputs.dataset }}
           TASKS: ${{ inputs.tasks }}
           SHARDS: ${{ inputs.shards }}
+          CPU_ENV: ${{ inputs.cpu-env }}
         run: |
           harbor datasets download "$DATASET" --output-dir "$RUNNER_TEMP/ds" --overwrite
           # Dataset name at version: dir name is the dataset slug.
@@ -116,7 +123,7 @@ jobs:
           [ -d "$ds_dir" ] || ds_dir="$RUNNER_TEMP/ds"
           # split_tasks.py writes the matrix/counts into GITHUB_OUTPUT itself.
           python bench/harbor_fa/split_tasks.py "$ds_dir" \
-            --filter "$TASKS" --shards "$SHARDS"
+            --filter "$TASKS" --shards "$SHARDS" --cpu-env "$CPU_ENV"
 
   bench:
     name: fa on tbench 4.0, shard ${{ matrix.i }} (${{ matrix.env }}, ${{ inputs.model }})
