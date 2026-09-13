@@ -765,17 +765,25 @@ final class _OpenAICompletionsSession {
         state.errorMessage ?? 'Provider returned an error stop reason',
       );
     }
-    // Some providers (seen on OpenRouter free-tier models) close the SSE
-    // stream without a final finish_reason chunk. The accumulated content
-    // is complete as far as we know, so keep the default natural stop
-    // instead of failing the whole turn — but flag the silent truncation
-    // so the UI can note the reply may be cut off. A genuinely truncated
-    // tool call surfaces as an args-parse error downstream, which the
-    // agent loop already feeds back to the model as a tool error.
     if (!hasFinishReason) {
-      state.stopReason = StopReason.stop;
-      state.errorMessage ??=
+      const truncated =
           'stream ended without finish_reason — the reply may be truncated';
+      // Issue #312: with nothing observable streamed, a stream that closes
+      // without a finish_reason is a cut transport, not a natural stop —
+      // surface it as a (transient-classified) error the retry umbrella
+      // can replay, instead of answering an empty turn.
+      if (state.blocks.isEmpty) {
+        throw StateError(truncated);
+      }
+      // Some providers (seen on OpenRouter free-tier models) close the SSE
+      // stream without a final finish_reason chunk. The accumulated content
+      // is complete as far as we know, so keep the default natural stop
+      // instead of failing the whole turn — but flag the silent truncation
+      // so the UI can note the reply may be cut off. A genuinely truncated
+      // tool call surfaces as an args-parse error downstream, which the
+      // agent loop already feeds back to the model as a tool error.
+      state.stopReason = StopReason.stop;
+      state.errorMessage ??= truncated;
     }
 
     eventStream.push(
@@ -1461,7 +1469,7 @@ Usage _parseChunkUsage(Map<String, dynamic> rawUsage, Model model) {
 }
 
 ({StopReason reason, String? errorMessage}) _mapStopReason(String reason) {
-  return switch (reason) {
+  final mapped = switch (reason) {
     'stop' || 'end' => (reason: StopReason.stop, errorMessage: null),
     'length' => (reason: StopReason.length, errorMessage: null),
     'function_call' ||
@@ -1479,6 +1487,14 @@ Usage _parseChunkUsage(Map<String, dynamic> rawUsage, Model model) {
       errorMessage: 'Provider finish_reason: $reason',
     ),
   };
+  // Catalogue hook (issue #312): an unclassified FAILURE word is allowed —
+  // it defaults to transient downstream — but never silent. Successfully
+  // mapped reasons never trip it.
+  if (mapped.reason == StopReason.error &&
+      classifyFinishReason(reason) == FinishReasonClass.unknown) {
+    onUnknownFinishReason?.call(reason);
+  }
+  return mapped;
 }
 
 bool _isEncryptedReasoningDetail(Object? detail) {

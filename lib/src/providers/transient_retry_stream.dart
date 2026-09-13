@@ -51,6 +51,9 @@ final _transientNetworkPatterns = [
   RegExp(r'host is (down|unreachable)', caseSensitive: false),
   RegExp(r'software caused connection abort', caseSensitive: false),
   RegExp(r'handshake ?exception', caseSensitive: false),
+  // Truncation class (issue #312): a stream that closes without a
+  // finish_reason and without content is a cut transport.
+  RegExp(r'stream ended without finish_reason'),
   RegExp(r'\b50[0234]\b'),
   RegExp(r'bad gateway', caseSensitive: false),
   RegExp(r'service unavailable', caseSensitive: false),
@@ -318,8 +321,14 @@ Future<_AttemptOutcome> _runAttempt(
         out.push(event);
         return const _Forwarded();
       case ErrorEvent():
-        if (event.reason == StopReason.error &&
-            isTransientNetworkError(event.error)) {
+        // Issue #312: a wire finish_reason carries the structured verdict —
+        // terminal (content_filter family) never retries, transient and
+        // unknown vendor words do; without one the text nets decide.
+        final retryClass = finishReasonRetryClass(event.error);
+        final transient = retryClass != null
+            ? retryClass != FinishReasonClass.terminal
+            : isTransientNetworkError(event.error);
+        if (event.reason == StopReason.error && transient) {
           // Not forwarded: the buffer is discarded and the call retries.
           return _TransientFailure(event.error);
         }
@@ -346,7 +355,17 @@ Future<_AttemptOutcome> _runAttempt(
 /// the mid-answer failure and keeps the provider line as evidence.
 ErrorEvent _midAnswer(ErrorEvent event) {
   final error = event.error;
-  if (event.reason != StopReason.error || !isTransientNetworkError(error)) {
+  if (event.reason != StopReason.error) {
+    return event;
+  }
+  // Issue #312: a classified non-terminal finish_reason mid-answer gets
+  // the same hygiene wrap (the transcript already holds the deltas); a
+  // TERMINAL verdict (content_filter family) keeps its verbatim story.
+  final retryClass = finishReasonRetryClass(error);
+  final transient = retryClass != null
+      ? retryClass != FinishReasonClass.terminal
+      : isTransientNetworkError(error);
+  if (!transient) {
     return event;
   }
   return ErrorEvent(
@@ -363,6 +382,7 @@ ErrorEvent _midAnswer(ErrorEvent event) {
           'Provider failed mid-answer: the stream died after output was '
           'already delivered (not retried — a replay would duplicate the '
           'transcript). Provider error: ${_shortReason(error.errorMessage)}',
+      rawStopReason: error.rawStopReason,
       timestamp: error.timestamp,
     ),
   );
