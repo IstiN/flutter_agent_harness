@@ -8,6 +8,7 @@ import 'package:dart_tui/dart_tui.dart';
 
 import 'composer_overlay.dart';
 import 'ansi_markdown.dart';
+import 'agent_hub_tui.dart';
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
 import 'system_notice_render.dart';
@@ -55,6 +56,7 @@ final class FaTuiCallbacks {
     this.onPickerCancelled,
     this.onSteer,
     this.pathCandidates,
+    this.onHubAction,
   });
 
   /// Called when the user submits a non-empty input line.
@@ -106,8 +108,13 @@ final class FaTuiCallbacks {
   /// keystroke — the host must cache the listing (the issue's "candidates
   /// cached" clause). Null disables path completion.
   final List<String> Function(String fragment)? pathCandidates;
-}
 
+  /// Agents-hub overlay actions (issue #277): [FaHubAction.enter] drills
+  /// into the selected agent's transcript ([key] = row key), back returns
+  /// from a transcript to the tree, close hides the overlay. The host
+  /// pushes fresh [HubStateMsg] content in response.
+  final Future<void> Function(String action, String? key)? onHubAction;
+}
 
 /// The braille spinner frames cycled while [FaTuiModel.busy] is set.
 const _spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -198,6 +205,7 @@ final class FaTuiModel extends Model {
     this.scheduledNextDueMs = -1,
     this.scheduledTickPending = false,
     this.frameNonce = 0,
+    this.hub,
     DateTime Function()? now,
   }) : nowFn = now ?? DateTime.now,
        editor = editor ?? const LineEditor.empty();
@@ -225,6 +233,8 @@ final class FaTuiModel extends Model {
   String get inputText => editor.text;
   int get cursor => editor.cursor;
 
+  /// The open agents-hub overlay state (issue #277); null when closed.
+  final FaHubState? hub;
   /// Persistent viewport scroll offset (0 = top). Snapped to the bottom on
   /// new output while [followTail] holds; kept (clamped) otherwise.
   final int scrollOffset;
@@ -570,6 +580,8 @@ final class FaTuiModel extends Model {
     int? scheduledNextDueMs,
     bool? scheduledTickPending,
     Object? historyDraft = _unset,
+    FaHubState? hub,
+    bool clearHub = false,
   }) {
     final copy = FaTuiModel(
       callbacks: callbacks,
@@ -619,6 +631,7 @@ final class FaTuiModel extends Model {
       historyDraft: historyDraft == _unset
           ? this.historyDraft
           : historyDraft as String?,
+      hub: clearHub ? null : (hub ?? this.hub),
       // Every copy is a new model state: bump the frame nonce so the view's
       // cursor line always differs after a change (see [frameNonce]).
       frameNonce: frameNonce + 1,
@@ -630,7 +643,6 @@ final class FaTuiModel extends Model {
     copy._promptCompleter = _promptCompleter;
     return copy;
   }
-
   @override
   Cmd? init() => null;
 
@@ -866,6 +878,9 @@ final class FaTuiModel extends Model {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
     if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
+    if (msg is HubStateMsg) return _handleHubStateMsg(msg);
+    if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
+
     if (msg is _SetInputTextMsg) {
       return (
         copyWith(
@@ -889,6 +904,41 @@ final class FaTuiModel extends Model {
     }
     if (msg is _QuitRequestedMsg) return (this, () => quit());
     return _handleTerminalMsg(msg);
+  }
+
+  /// Host push of fresh hub content (open or refresh): carries the local
+  /// interactive bits over so a re-push never resets the user's selection
+  /// or scroll anchor.
+  (Model, Cmd?) _handleHubStateMsg(HubStateMsg msg) {
+    return (
+      copyWith(hub: msg.state.carryingFrom(hub)),
+      null,
+    );
+  }
+
+  /// The open hub overlay owns every key; wheel scrolling moves its tree
+  /// selection instead of the chat history.
+  (Model, Cmd?) _handleHubKey(KeyMsg msg) {
+    final current = hub!;
+    final (next, action) = current.handleKey(
+      msg.key,
+      viewport: _viewportHeight - 3,
+    );
+    switch (action) {
+      case FaHubAction.none:
+        return (copyWith(hub: next), null);
+      case FaHubAction.enter:
+      case FaHubAction.back:
+      case FaHubAction.close:
+        final cleared = action == FaHubAction.close;
+        return (
+          copyWith(hub: cleared ? null : next),
+          () async {
+            await callbacks.onHubAction?.call(action.name, current.selectedKey);
+            return null;
+          },
+        );
+    }
   }
 
   /// Terminal events: window resizes, mouse wheel scrolling, pastes, and
@@ -992,6 +1042,22 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleMouseWheel(MouseWheelMsg msg) {
+    // Hub overlay: the wheel moves the fleet-tree selection.
+    if (hub != null) {
+      final delta = switch (msg.mouse.button) {
+        MouseButton.wheelUp => -1,
+        MouseButton.wheelDown => 1,
+        _ => 0,
+      };
+      if (delta != 0) {
+        final (next, _) = hub!.handleKey(
+          delta < 0 ? 'up' : 'down',
+          viewport: _viewportHeight - 3,
+        );
+        return (copyWith(hub: next), null);
+      }
+      return (this, null);
+    }
     // Mouse wheel scrolls the chat history, like Copilot's transcript pane.
     final delta = switch (msg.mouse.button) {
       MouseButton.wheelUp => -3,
@@ -1049,6 +1115,10 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleKey(KeyMsg msg) {
+    // Hub overlay: a full-screen modal owns every key while open (before
+    // prompt/menu so the overlay is not shortcut through those zones).
+    if (hub != null) return _handleHubKey(msg);
+
     // Prompt mode: route keys to the interactive prompt zone.
     if (prompt != null) return _handlePromptKey(msg);
 
@@ -2013,9 +2083,17 @@ final class FaTuiModel extends Model {
 
   @override
   View view() {
+    // Hub overlay: a full-screen modal frame replaces the whole view.
+    if (hub != null) {
+      return View(
+        content:
+            '${renderHubFrame(hub!, width: termWidth, height: _viewportHeight)}\x1b[?25l',
+        cursor: null,
+        mouseMode: mouseCapture ? MouseMode.cellMotion : MouseMode.none,
+      );
+    }
     final b = StringBuffer();
     final height = _viewportHeight;
-
     _writeStickyEcho(b);
 
     // Output history, padded to a fixed height. Markdown is formatted and
@@ -2557,6 +2635,17 @@ final class FaTuiController {
       if (index >= 0) selected = index;
     }
     _send(OpenPickerMsg(pickerId, title, items, initialIndex: selected));
+  }
+
+  /// Opens or refreshes the agents-hub overlay with a whole new state
+  /// (issue #277). Pass hub = null-equivalent via `closeHub` to hide it.
+  void pushHub(FaHubState state) {
+    _send(HubStateMsg(state));
+  }
+
+  /// Hides the agents-hub overlay.
+  void closeHub() {
+    _send(const _CloseHubMsg());
   }
 
   void sendQuit() {

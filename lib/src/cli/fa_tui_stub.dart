@@ -15,6 +15,7 @@
 /// VM-only and not part of this surface.
 library;
 
+import 'agent_hub_tui.dart';
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
 
@@ -38,6 +39,7 @@ final class FaTuiCallbacks {
     this.onPickerCancelled,
     this.onSteer,
     this.pathCandidates,
+    this.onHubAction,
   });
 
   final Future<void> Function(String line) onSubmit;
@@ -53,6 +55,9 @@ final class FaTuiCallbacks {
   final void Function(String pickerId)? onPickerCancelled;
   final Future<void> Function(List<String> messages)? onSteer;
   final List<String> Function(String fragment)? pathCandidates;
+
+  /// Agents-hub overlay actions (issue #277). See fa_tui.dart.
+  final Future<void> Function(String action, String? key)? onHubAction;
 }
 
 /// No-op stand-in for the real TUI controller (never run on web).
@@ -82,6 +87,13 @@ final class FaTuiController {
     List<MenuItem> items, {
     String? initialKey,
   }) {}
+
+  /// No-op on web (the TUI never runs there). Mirrors the dart_tui
+  /// controller so agent_cli call sites compile for BOTH targets.
+  void pushHub(FaHubState state) {}
+
+  /// No-op on web. See [pushHub].
+  void closeHub() {}
 
   void sendQuit() {}
 
