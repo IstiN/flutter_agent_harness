@@ -36,9 +36,14 @@ extension MemoryLlmSlotResolution on AgentCli {
 }
 
 class _AutoCompactorCliHooks implements AutoCompactorHooks {
-  _AutoCompactorCliHooks(this.cli);
+  _AutoCompactorCliHooks(this.cli, {required this.auto});
 
   final AgentCli cli;
+
+  /// Whether this run is the auto-trigger (vs the manual `/compact`): the
+  /// report header names what happened — a manual compact must not read
+  /// as "auto-compacted".
+  final bool auto;
 
   DateTime? _lastDeltaPhase;
   String _compactionTail = '';
@@ -110,7 +115,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       cli._logDiagnostic('auto-compact pass ${pass.pass} no-op');
       return;
     }
-    cli._printCompactionReport(pass, auto: true);
+    cli._printCompactionReport(pass, auto: auto);
     cli._logDiagnostic(
       'auto-compact pass ${pass.pass} '
       'fallback=${pass.fallback ?? '-'} '
@@ -312,7 +317,7 @@ extension AgentCliCompactionRun on AgentCli {
         mainStream: _streamFunction,
         mainModel: _agent.state.model,
       ),
-      hooks: _AutoCompactorCliHooks(this),
+      hooks: _AutoCompactorCliHooks(this, auto: label == '[auto-compacted]'),
       prompts: CompactionPrompts.fromOverrides(config.promptOverrides),
       // Issue #287: structured is the default fallback; an explicit
       // config choice (config.compactionEngine) or a live override from

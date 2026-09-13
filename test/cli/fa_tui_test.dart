@@ -1374,10 +1374,6 @@ void main() {
         final sticky = model.stickyLines.join('\n');
         expect(sticky, contains('…'));
         final strippedSticky = sticky.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), '');
-        // ignore: avoid_print
-        for (final r in sticky.split(r'\n')) {
-          print('STICKYROW=' + r.length.toString() + '=' + r);
-        }
         for (final row in strippedSticky.split('\n')) {
           expect(row.length, lessThanOrEqualTo(60));
         }
