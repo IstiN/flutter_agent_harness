@@ -89,19 +89,15 @@ final class GithubComment {
   final bool isReview;
 }
 
-/// One entry of a git tree: a file blob, or a submodule gitlink (mode
-/// `160000`, [sha] = the pinned commit of the submodule repo).
+/// One entry of a git tree: a file blob. Mode-`160000` entries were
+/// retired with #232 — external widget provenance is the overlay
+/// `source: {repo, commit}` pin, never a tree entry.
 final class GithubTreeEntry {
   const GithubTreeEntry({required this.path, required this.mode, this.sha});
 
   /// File blob entry.
   factory GithubTreeEntry.file(String path, String blobSha) =>
       GithubTreeEntry(path: path, mode: '100644', sha: blobSha);
-
-  /// Submodule gitlink entry; [commitSha] is the pinned commit of the
-  /// external repository (its URL lives in the `.gitmodules` blob).
-  factory GithubTreeEntry.submodule(String path, String commitSha) =>
-      GithubTreeEntry(path: path, mode: '160000', sha: commitSha);
 
   final String path;
   final String mode;
@@ -110,7 +106,7 @@ final class GithubTreeEntry {
   Map<String, Object?> toJson() => {
     'path': path,
     'mode': mode,
-    'type': mode == '160000' ? 'commit' : 'blob',
+    'type': 'blob',
     if (sha != null) 'sha': sha,
   };
 }
@@ -266,7 +262,7 @@ class GithubApiClient {
 
   /// `POST /user/repos` — creates a repo under the connected account.
   /// Widget repos are PUBLIC ([private] defaults false): the catalog CI
-  /// clones external submodules anonymously.
+  /// fetches the pinned commit over anonymous codeload (#232).
   Future<GithubRepo> createRepo({
     required String name,
     String? description,
