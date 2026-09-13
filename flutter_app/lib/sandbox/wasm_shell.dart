@@ -592,14 +592,13 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
 
       // WASI guests surface SIGPIPE as stderr noise (issue #337 AC5); it
       // carries no information the caller can act on, so translate it out.
+      // Only the bare `<tool>: stdout: Broken pipe` shape is stripped - a
+      // python `BrokenPipeError: [Errno 32] Broken pipe` traceback stays.
       final stderrText = utf8.decode(data.stderr, allowMalformed: true);
-      final stageStderr = stderrText.contains('Broken pipe')
-          ? utf8.encode(
-              stderrText
-                  .split('\n')
-                  .where((line) => !line.contains('Broken pipe'))
-                  .join('\n'),
-            )
+      final lines = stderrText.split('\n');
+      final hasNoise = lines.any(_isSigpipeNoise);
+      final stageStderr = hasNoise
+          ? utf8.encode(lines.where((l) => !_isSigpipeNoise(l)).join('\n'))
           : data.stderr;
 
       if (stdoutFile != null) {
@@ -844,6 +843,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
     if (value.isEmpty || value.startsWith('/')) return arg;
     return '$key=${_resolveSandboxPath(value, cwd)}';
   }
+
+  /// Matches SIGPIPE stderr noise only: bare `Broken pipe` or the
+  /// `<tool>: <stream>: Broken pipe` shape busybox tools emit. Deliberately
+  /// does NOT match python tracebacks (`BrokenPipeError: [Errno 32] ...`).
+  static final RegExp _sigpipeNoise = RegExp(
+    r'^(Broken pipe|[\w./-]+: (?:stdout|stderr): Broken pipe)$',
+  );
+
+  bool _isSigpipeNoise(String line) =>
+      _sigpipeNoise.hasMatch(line.trim());
 
   String _maybeRewritePath(String command, String arg, String cwd) {
     if (arg.isEmpty || arg == '-') return arg;
@@ -1397,13 +1406,13 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
     ShellExecOptions? options,
     String? inputSource,
   ) async {
+    // Byte path: piped binaries (`cat img | curl -d @-`) must not go
+    // through a UTF-8 decode (a FormatException there used to escape the
+    // Result contract and abort the pipeline - issue #337 review).
+    final stdinBytes = await _inputBytes(inputSource);
     final result = await _sandboxBuiltins(
       options?.cwd ?? _currentDir,
-    ).curl(
-      stage.args,
-      stdin: await _stdinFromSource(stage, inputSource),
-      timeout: options?.timeout,
-    );
+    ).curl(stage.args, stdinBytes: stdinBytes, timeout: options?.timeout);
     return _builtinOk(result);
   }
 

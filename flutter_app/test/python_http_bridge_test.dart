@@ -173,6 +173,36 @@ void main() {
     expect(text, endsWith('hi'));
   });
 
+  test('auto-decompressed gzip (header kept by the host) is relabeled plain', () async {
+    // dart:io autoUncompress / NSURLSession decode the body transparently
+    // but keep `content-encoding: gzip` - python must see plain bytes or
+    // urllib3 dies with `incorrect header check` (issue #337 review).
+    final b = FaHttpBridge(
+      sandboxRoot: root.path,
+      httpClient: MockClient(
+        (request) async => http.Response.bytes(
+          utf8.encode('plain'),
+          200,
+          headers: {'content-encoding': 'gzip'},
+        ),
+      ),
+    );
+    b.filter(
+      utf8.encode(
+        _marker(
+          'dec0de',
+          'example.com:80',
+          'GET / HTTP/1.1\r\nHost: example.com\r\n\r\n',
+        ),
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    final text = File('${root.path}/dev/.fahttp/dec0de').readAsStringSync();
+    expect(text, isNot(contains('content-encoding')));
+    expect(text, contains('content-length: 5'));
+    expect(text, endsWith('plain'));
+  });
+
   test('a 1 MiB JSON body survives the bridge', () async {
     final bigBody = '{"body":"${'x' * (1024 * 1024)}"}';
     late http.Request captured;

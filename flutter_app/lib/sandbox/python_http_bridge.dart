@@ -93,6 +93,7 @@ final class FaHttpBridge {
 
   /// Performs the bridged request and returns raw HTTP/1.1 response bytes.
   Future<List<int>> _perform(String authority, List<int> raw) async {
+    _sweepStaleResponses();
     final separator = _headerBodySeparator(raw);
     final headerText = latin1.decode(raw.sublist(0, separator));
     final body = raw.sublist(separator + 4);
@@ -137,13 +138,16 @@ final class FaHttpBridge {
     await response.stream.forEach(builder.add);
     var bytes = builder.toBytes();
     final responseHeaders = Map<String, String>.from(response.headers);
-    // If the host client transparently decompressed (python never does),
-    // drop the encoding marker so http.client reads plain bytes.
+    // gzip responses: decode when they arrive compressed; always drop the
+    // encoding marker once the body is plain. dart:io autoUncompress and
+    // NSURLSession decode transparently but KEEP the header - handing
+    // python plain bytes labeled gzip kills urllib3 with `incorrect
+    // header check` on every gzip-serving server (issue #337 review).
     if (responseHeaders['content-encoding']?.contains('gzip') ?? false) {
       if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
         bytes = Uint8List.fromList(gzip.decode(bytes));
-        responseHeaders.remove('content-encoding');
       }
+      responseHeaders.remove('content-encoding');
     }
     responseHeaders
       ..remove('transfer-encoding')
@@ -154,6 +158,23 @@ final class FaHttpBridge {
     responseHeaders.forEach((name, value) => out.write('$name: $value\r\n'));
     out.write('\r\n');
     return [...latin1.encode(out.toString()), ...bytes];
+  }
+
+  /// Deletes response files left behind by stages that timed out between
+  /// the request and the poll (issue #337 review): every request sweeps
+  /// anything older than ten minutes.
+  void _sweepStaleResponses() {
+    try {
+      final dir = Directory('$_root/dev/.fahttp');
+      if (!dir.existsSync()) return;
+      final cutoff = DateTime.now().subtract(const Duration(minutes: 10));
+      for (final entity in dir.listSync()) {
+        if (entity is! File) continue;
+        if (entity.statSync().modified.isBefore(cutoff)) entity.deleteSync();
+      }
+    } on Object {
+      // Sweeping is best-effort housekeeping.
+    }
   }
 
   Future<void> _writeResponse(String rid, List<int> bytes) async {
@@ -273,7 +294,7 @@ class _BridgeSocket(object):
         return ("0.0.0.0", 0)
 
     def fileno(self):
-        raise OSError("fa_http bridge socket has no file descriptor")
+        return -1
 
     def close(self):
         pass
@@ -306,6 +327,13 @@ def _install_stdlib(scheme):
 
 
 def _patch_urllib3():
+    try:
+        import urllib3.util.connection as _uc
+        # Connection liveness checks select() on the fd; the bridge socket
+        # has none, so sessions must treat every pooled connection as live.
+        _uc.is_connection_dropped = lambda conn: False
+    except Exception:
+        pass
     try:
         import urllib3.connection as _c
     except Exception:

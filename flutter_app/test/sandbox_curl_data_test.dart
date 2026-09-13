@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:fa/sandbox/memory_shell.dart';
+import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -158,6 +159,77 @@ void main() {
       'curl -s -X POST -d @/tmp/blob.bin https://api.example.com',
     );
     expect(result.valueOrNull!.exitCode, 0);
+    expect(bodies.single, bytes);
+  });
+  test('curl --data-raw @file sends the value literally (no file read)', () async {
+    final bodies = <String>[];
+    final shell = MemoryShell(
+      httpClient: MockClient((request) async {
+        bodies.add(request.body);
+        return http.Response('{}', 200);
+      }),
+    );
+    final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+    shell.attach(env);
+
+    final result = await env.exec(
+      "curl -s --data-raw @/tmp/nope.json https://api.example.com",
+    );
+    final r = result.valueOrNull!;
+    expect(r.exitCode, 0, reason: r.stderr);
+    expect(bodies.single, '@/tmp/nope.json');
+  });
+
+  test('explicit -X GET with -d sends GET with a body (curl semantics)', () async {
+    final methods = <String>[];
+    final bodies = <String>[];
+    final shell = MemoryShell(
+      httpClient: MockClient((request) async {
+        methods.add(request.method);
+        bodies.add(request.body);
+        return http.Response('{}', 200);
+      }),
+    );
+    final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+    shell.attach(env);
+
+    final result = await env.exec(
+      "curl -s -X GET -d 'payload' https://api.example.com",
+    );
+    final r = result.valueOrNull!;
+    expect(r.exitCode, 0, reason: r.stderr);
+    expect(methods, ['GET']);
+    expect(bodies.single, 'payload');
+  });
+
+  test('binary stdin bytes ride -d @- byte-for-byte', () async {
+    final bodies = <List<int>>[];
+    final shell = MemoryShell(
+      httpClient: MockClient((request) async {
+        bodies.add(request.bodyBytes);
+        return http.Response('{}', 200);
+      }),
+    );
+    final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+    shell.attach(env);
+
+    final bytes = Uint8List.fromList(
+      [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff],
+    );
+    final builtins = SandboxBuiltins(
+      httpClient: MockClient((request) async {
+        bodies.add(request.bodyBytes);
+        return http.Response('{}', 200);
+      }),
+      readTextFile: (path) async => null,
+      writeBinaryFile: (path, content) async {},
+      readBinaryFile: (path) async => null,
+    );
+    final result = await builtins.curl(
+      ['-s', '-d', '@-', 'https://api.example.com'],
+      stdinBytes: bytes,
+    );
+    expect(result.exitCode, 0, reason: utf8.decode(result.stderr));
     expect(bodies.single, bytes);
   });
 }

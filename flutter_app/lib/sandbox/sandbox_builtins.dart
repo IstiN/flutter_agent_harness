@@ -211,7 +211,7 @@ final class SandboxBuiltins {
   /// subset (`-X`, `-H`, `-d`, `-o`, `-s`, `-L`, `--version`, `--help`).
   Future<SandboxBuiltinResult> curl(
     List<String> args, {
-    String? stdin,
+    List<int>? stdinBytes,
     Duration? timeout,
   }) async {
     if (args.contains('--version') || args.contains('-V')) {
@@ -233,6 +233,7 @@ final class SandboxBuiltins {
           ' -d, --data <data>        HTTP POST data; @file reads the file,\n'
           '                          multiple flags join with &, -d implies POST\n'
           '    --data-binary <data>  Like --data (bytes sent verbatim)\n'
+          '    --data-raw <data>     Like --data but @ is literal (no file)\n'
           ' -o, --output <file>      Write to file instead of stdout\n'
           ' -s, --silent             Silent mode\n'
           ' -L, --location           Follow redirects\n'
@@ -254,12 +255,13 @@ final class SandboxBuiltins {
 
     final (bodyBytes, bodyError) = await _curlBody(
       parsed.dataArgs,
-      stdinBytes: stdin == null ? null : utf8.encode(stdin),
+      stdinBytes: stdinBytes,
     );
     if (bodyError != null) return _error(bodyError, 26);
 
-    // Like curl, a data argument implies POST unless -X says otherwise.
-    final method = parsed.method == 'GET' && parsed.dataArgs.isNotEmpty
+    // Like curl, a data argument implies POST unless -X says otherwise
+    // (an explicit `-X GET -d ...` sends GET with a body).
+    final method = !parsed.explicitMethod && parsed.dataArgs.isNotEmpty
         ? 'POST'
         : parsed.method;
     final request = http.Request(method, uri);
@@ -327,24 +329,29 @@ final class SandboxBuiltins {
     String? url,
     String method,
     Map<String, String> headers,
-    List<String> dataArgs,
+    List<(String, bool)> dataArgs,
     String? outputFile,
     bool silent,
     bool followRedirects,
+    bool explicitMethod,
   })
   _parseCurlArgs(List<String> args) {
     var method = 'GET';
     final headers = <String, String>{};
-    final dataArgs = <String>[];
+    final dataArgs = <(String, bool)>[]; // (value, expand @)
     String? outputFile;
     var silent = false;
     var followRedirects = false;
+    var explicitMethod = false;
     String? url;
 
     for (var i = 0; i < args.length; i++) {
       final arg = args[i];
       if (arg == '-X' || arg == '--request') {
-        if (i + 1 < args.length) method = args[++i];
+        if (i + 1 < args.length) {
+          method = args[++i];
+          explicitMethod = true;
+        }
       } else if (arg == '-H' || arg == '--header') {
         if (i + 1 < args.length) {
           final header = args[++i];
@@ -359,7 +366,10 @@ final class SandboxBuiltins {
           arg == '--data' ||
           arg == '--data-raw' ||
           arg == '--data-binary') {
-        if (i + 1 < args.length) dataArgs.add(args[++i]);
+        if (i + 1 < args.length) {
+          // `--data-raw` treats the value literally: no @file/@- expansion.
+          dataArgs.add((args[++i], arg != '--data-raw'));
+        }
       } else if (arg == '-o' || arg == '--output') {
         if (i + 1 < args.length) outputFile = args[++i];
       } else if (arg == '-s' || arg == '--silent') {
@@ -381,6 +391,7 @@ final class SandboxBuiltins {
       outputFile: outputFile,
       silent: silent,
       followRedirects: followRedirects,
+      explicitMethod: explicitMethod,
     );
   }
 
@@ -390,19 +401,19 @@ final class SandboxBuiltins {
   /// `(null, error)` when a referenced file is missing or the body exceeds
   /// the sandbox size cap.
   Future<(List<int>?, String?)> _curlBody(
-    List<String> dataArgs, {
+    List<(String, bool)> dataArgs, {
     List<int>? stdinBytes,
   }) async {
     if (dataArgs.isEmpty) return (null, null);
     final segments = BytesBuilder(copy: false);
     var first = true;
-    for (final value in dataArgs) {
+    for (final (value, expand) in dataArgs) {
       if (!first) segments.add(utf8.encode('&'));
       first = false;
       // Real curl reads the request body from stdin for `-d -` and `-d @-`.
-      if ((value == '-' || value == '@-') && stdinBytes != null) {
+      if (expand && (value == '-' || value == '@-') && stdinBytes != null) {
         segments.add(stdinBytes);
-      } else if (value.startsWith('@')) {
+      } else if (expand && value.startsWith('@')) {
         final path = value.substring(1);
         final List<int>? data;
         try {
