@@ -12,10 +12,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa_ui/fa_ui.dart'
     show
+        FaAdaptiveHeader,
         FaAuthRecoveryCallback,
         FaChatSurfaceHandlers,
+        FaHeaderAction,
         TrajectoryController,
         TrajectoryScreen;
+
+import 'package:path/path.dart' as p;
 
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
@@ -715,6 +719,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
   }
 
   Future<void> _openFullChat() async {
+    final service = widget.manager.active?.service;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ChatScreen(
@@ -726,6 +731,21 @@ class SessionChatSheetState extends State<SessionChatSheet>
           asrTranscriber: widget.asrTranscriber,
           audioControllerFactory: widget.audioControllerFactory,
           videoControllerFactory: widget.videoControllerFactory,
+          // The merged adaptive header (issue #225): the full chat renders
+          // the same project identity + quick-model chip inline.
+          projectIcon: Icons.folder_outlined,
+          projectIconColor: _sessionHasFolder(service)
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.onSurfaceVariant,
+          projectLabel: _projectLabel(service),
+          modelChip: QuickModelChip(
+            key: const ValueKey('fullChatModelChip'),
+            modelId: service?.modelId ?? '',
+            tooltip: context.l10n.chatModelSwitchTooltip,
+            maxWidth: 132,
+            onTap: () => unawaited(_openModelPicker(service!)),
+            onLongPress: () => unawaited(_openModelSettings(service!)),
+          ),
           // The full chat's Apps button (issue #224) pops back here AND
           // collapses the panel, so the tap really lands on the apps grid.
           onAppsToggle: () => unawaited(_closePanel()),
@@ -747,6 +767,22 @@ class SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
+  /// Whether the active session works inside a mounted project folder
+  /// (drives the project pill's indigo tint, mirroring the wide shell).
+  bool _sessionHasFolder(AgentService? service) =>
+      service?.currentSessionCwd != null;
+
+  /// The project identity label for the full chat's header (issue #225):
+  /// the active session's folder basename, or the localized Personal
+  /// label for unsandboxed sessions.
+  String _projectLabel(AgentService? service) {
+    final cwd = service?.currentSessionCwd;
+    if (cwd != null) {
+      final name = p.basename(cwd);
+      if (name.isNotEmpty && name != '/' && name != '.') return name;
+    }
+    return context.l10n.sessionFolderPersonal;
+  }
   // --- build -----------------------------------------------------------------
 
   @override
@@ -1307,112 +1343,90 @@ class SessionChatSheetState extends State<SessionChatSheet>
         );
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              // Sessions button — opens the drawer over the panel so the
-              // user can switch conversations without closing the session.
-              IconButton(
-                key: const ValueKey('sessionChatPanelSessions'),
-                icon: SessionsGlyph(
-                  color: colors.dim,
-                  background: colors.panelAlt,
-                ),
-                tooltip: context.l10n.sidebarSessionsHeader,
-                visualDensity: VisualDensity.compact,
-                onPressed: () => unawaited(_toggleDrawer()),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-              ),
-              // Quick model switch — parity with the wide header's chip
-              // (issue #167): same chip, same shared picker flow; only
-              // the presentation differs (bottom sheet on narrow).
-              QuickModelChip(
-                key: const ValueKey('sessionChatModelChip'),
-                modelId: service.modelId,
-                tooltip: context.l10n.chatModelSwitchTooltip,
-                maxWidth: 132,
-                onTap: () => unawaited(_openModelPicker(service)),
-                onLongPress: () => unawaited(_openModelSettings(service)),
-              ),
-              // The trajectory entry (issue #168): pushes the ledger page
-              // — the same fa_ui surface the desktop chat exposes, so
-              // mobile gets run/tool/compaction inspection in place.
-              IconButton(
-                key: const ValueKey('sessionChatPanelTrajectory'),
-                icon: const Icon(Icons.timeline, size: 20),
-                tooltip: context.l10n.appsOpenTrajectoryTooltip,
-                visualDensity: VisualDensity.compact,
-                onPressed: () => unawaited(_openTrajectory()),
-              ),
-              // The apps-collapse toggle (issue #224): one tap hands the
-              // screen back to the apps grid — the chat collapses to the
-              // pinned composer bar, which stays reachable for the reverse
-              // direction (focus, send, or the work bar's expand).
-              IconButton(
-                key: const ValueKey('sessionChatPanelApps'),
-                icon: const Icon(Icons.apps, size: 20),
-                tooltip: context.l10n.appsShowAppsTooltip,
-                visualDensity: VisualDensity.compact,
-                onPressed: () => unawaited(_closePanel()),
-              ),
-              PopupMenuButton<String>(
-                key: const ValueKey('sessionChatMenu'),
-                icon: const Icon(Icons.more_vert, size: 20),
-                tooltip: context.l10n.launcherChatActionsTooltip,
-                color: colors.panelAlt,
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'new',
-                    child: Text(context.l10n.sidebarNewSessionTooltip),
-                  ),
-                  // The rename affordance
-                  // appears once the titles store is available.
-                  if (_namesStore != null)
-                    PopupMenuItem(
-                      value: 'rename',
-                      child: Text(context.l10n.sidebarRenameSessionTooltip),
-                    ),
-                  PopupMenuItem(
-                    value: 'full',
-                    child: Text(context.l10n.appsOpenFullChatTooltip),
-                  ),
-                  PopupMenuItem(
-                    value: 'copy',
-                    child: Text(context.l10n.chatCopySessionTooltip),
-                  ),
-                  PopupMenuItem(
-                    value: 'close',
-                    child: Text(context.l10n.appsCollapseChatTooltip),
-                  ),
-                ],
-                onSelected: (value) {
-                  switch (value) {
-                    case 'new':
-                      unawaited(_newSession());
-                    case 'rename':
-                      unawaited(_renameActive());
-                    case 'full':
-                      unawaited(_openFullChat());
-                    case 'copy':
-                      unawaited(_copyActiveSession());
-                    case 'close':
-                      unawaited(_closePanel());
-                  }
-                },
-              ),
-            ],
+      // The SAME adaptive-header widget family as the chat bar (issue
+      // #225) — compact density and the sheet's own padding, so this is a
+      // styling variant of one header, never a third variant.
+      child: FaAdaptiveHeader(
+        visualDensity: VisualDensity.compact,
+        iconSize: 20,
+        leading: IconButton(
+          key: const ValueKey('sessionChatPanelSessions'),
+          icon: SessionsGlyph(
+            color: colors.dim,
+            background: colors.panelAlt,
+          ),
+          tooltip: context.l10n.sidebarSessionsHeader,
+          visualDensity: VisualDensity.compact,
+          onPressed: () => unawaited(_toggleDrawer()),
+        ),
+        title: title,
+        titleStyle: Theme.of(context).textTheme.titleSmall,
+        chip: QuickModelChip(
+          key: const ValueKey('sessionChatModelChip'),
+          modelId: service.modelId,
+          tooltip: context.l10n.chatModelSwitchTooltip,
+          maxWidth: 132,
+          onTap: () => unawaited(_openModelPicker(service)),
+          onLongPress: () => unawaited(_openModelSettings(service)),
+        ),
+        actions: [
+          // The trajectory entry (issue #168) and the apps-collapse toggle
+          // (issue #224) — demotable into the ⋮ menu like every action.
+          FaHeaderAction(
+            key: const ValueKey('sessionChatPanelTrajectory'),
+            icon: Icons.timeline,
+            label: context.l10n.appsOpenTrajectoryTooltip,
+            onPressed: () => unawaited(_openTrajectory()),
+          ),
+          FaHeaderAction(
+            key: const ValueKey('sessionChatPanelApps'),
+            icon: Icons.apps,
+            label: context.l10n.appsShowAppsTooltip,
+            onPressed: () => unawaited(_closePanel()),
           ),
         ],
+        menuColor: colors.panelAlt,
+        overflowMenuKey: const ValueKey('sessionChatMenu'),
+        overflowTooltip: context.l10n.launcherChatActionsTooltip,
+        menuItems: [
+          PopupMenuItem(
+            value: 'new',
+            child: Text(context.l10n.sidebarNewSessionTooltip),
+          ),
+          // The rename affordance appears once the titles store is
+          // available.
+          if (_namesStore != null)
+            PopupMenuItem(
+              value: 'rename',
+              child: Text(context.l10n.sidebarRenameSessionTooltip),
+            ),
+          PopupMenuItem(
+            value: 'full',
+            child: Text(context.l10n.appsOpenFullChatTooltip),
+          ),
+          PopupMenuItem(
+            value: 'copy',
+            child: Text(context.l10n.chatCopySessionTooltip),
+          ),
+          PopupMenuItem(
+            value: 'close',
+            child: Text(context.l10n.appsCollapseChatTooltip),
+          ),
+        ],
+        onMenuSelected: (value) {
+          switch (value) {
+            case 'new':
+              unawaited(_newSession());
+            case 'rename':
+              unawaited(_renameActive());
+            case 'full':
+              unawaited(_openFullChat());
+            case 'copy':
+              unawaited(_copyActiveSession());
+            case 'close':
+              unawaited(_closePanel());
+          }
+        },
       ),
     );
   }

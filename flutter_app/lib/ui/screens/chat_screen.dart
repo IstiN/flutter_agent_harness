@@ -62,6 +62,11 @@ class ChatScreen extends StatefulWidget {
     this.audioControllerFactory,
     this.videoControllerFactory,
     this.onAppsToggle,
+    this.projectIcon,
+    this.projectIconColor,
+    this.projectLabel,
+    this.onProjectTap,
+    this.modelChip,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -121,6 +126,23 @@ class ChatScreen extends StatefulWidget {
   /// the hosting sheet collapses itself underneath the popped route. The
   /// wide shell passes null (the button is narrow-only anyway).
   final VoidCallback? onAppsToggle;
+
+  /// The adaptive header's project slot (issue #225): the hosting layout
+  /// renders the project identity inline in the chat bar instead of a
+  /// separate project row above the chat. Null renders no project slot.
+  final IconData? projectIcon;
+
+  /// The project icon color (indigo when the session has a folder).
+  final Color? projectIconColor;
+
+  /// The project identity label ("Personal" or the folder basename).
+  final String? projectLabel;
+
+  /// Invoked on the project pill's tap (the wide shell's session info).
+  final VoidCallback? onProjectTap;
+
+  /// The inline quick-model chip in the merged header (host-built).
+  final Widget? modelChip;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -183,11 +205,26 @@ class _ChatScreenState extends State<ChatScreen> {
           message: message,
           onSaveAsApp: _graduateWidget,
         );
+    // The ✦ affordance (issue #102) as an adaptive-header action
+    // (issue #225): the host-styled button stays the inline bar widget,
+    // and its label/handler feed the ⋮ menu when the action demotes on
+    // tight widths.
     fa_ui.FaChatHost.dynamicMessagesButtonBuilder = (context, chatService) {
       if (widget.service.dynamicMessages.widgets.isEmpty) return null;
-      return DynamicMessagesButton(
-        service: chatService as AgentService,
-        onSaveAsApp: _graduateWidget,
+      final service = chatService as AgentService;
+      return fa_ui.FaChatHeaderAction(
+        widget: DynamicMessagesButton(
+          service: service,
+          onSaveAsApp: _graduateWidget,
+        ),
+        label: context.l10n.dynamicMessagesButtonTooltip,
+        onPressed: () => unawaited(
+          showDynamicMessagesSheet(
+            context,
+            service: service,
+            onSaveAsApp: _graduateWidget,
+          ),
+        ),
       );
     };
     // The Apps toggle (issue #224): narrow full-chat only in v1 — tapping
@@ -198,14 +235,20 @@ class _ChatScreenState extends State<ChatScreen> {
       if (MediaQuery.sizeOf(context).width >= fa_ui.kWideLayoutBreakpoint) {
         return null;
       }
-      return IconButton(
-        key: const ValueKey('chatAppsToggle'),
-        icon: const Icon(Icons.apps),
-        tooltip: context.l10n.appsShowAppsTooltip,
-        onPressed: () {
-          widget.onAppsToggle?.call();
-          Navigator.of(context).maybePop();
-        },
+      void toggle() {
+        widget.onAppsToggle?.call();
+        Navigator.of(context).maybePop();
+      }
+
+      return fa_ui.FaChatHeaderAction(
+        widget: IconButton(
+          key: const ValueKey('chatAppsToggle'),
+          icon: const Icon(Icons.apps),
+          tooltip: context.l10n.appsShowAppsTooltip,
+          onPressed: toggle,
+        ),
+        label: context.l10n.appsShowAppsTooltip,
+        onPressed: toggle,
       );
     };
   }
@@ -306,6 +349,11 @@ class _ChatScreenState extends State<ChatScreen> {
     return fa_ui.FaChatScreen(
       service: service,
       title: context.l10n.appTitle,
+      projectIcon: widget.projectIcon,
+      projectIconColor: widget.projectIconColor,
+      projectLabel: widget.projectLabel,
+      onProjectTap: widget.onProjectTap,
+      modelChip: widget.modelChip,
       settingsBuilder: (_) => SettingsScreen(
         service: service,
         env: service.env,

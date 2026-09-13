@@ -193,7 +193,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       final name = p.basename(cwd);
       if (name.isNotEmpty && name != '/' && name != '.') return name;
     }
-    return 'Personal'; // l10n:ignore — matches the drawer group label
+    return context.l10n.sessionFolderPersonal;
   }
 
   /// Whether the active session has a real project folder (drives the
@@ -445,96 +445,37 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (active == null) {
       return _buildPlaceholder(colors);
     }
-    final theme = Theme.of(context);
-    final isLight = theme.brightness == Brightness.light;
-    return Column(
-      children: [
-        // Session header: the active session's FOLDER (its origin cwd) —
-        // not a workspace/mount picker. Tap opens the session info dialog
-        // (rename, restrict, folder).
-        // No bottom border — the vertical dividers between panels run full height.
-        Container(
-          // Chip inner padding (8h) is compensated here so the label/icon
-          // glyphs keep their old 20px edge alignment while the hover/focus
-          // pill hugs each chip instead of smearing across the header.
-          padding: EdgeInsets.fromLTRB(12, _isMacOS ? 28 : 8, 12, 4),
-          decoration: BoxDecoration(
-            color: isLight ? colors.panel : colors.panel,
-          ),
-          child: Row(
-            children: [
-              // The Expanded keeps the model chip pushed to the right edge
-              // (a Flexible + Spacer combo breaks hot-reload layouts); the
-              // Align loosens the width so the InkWell pill shrink-wraps the
-              // chip instead of smearing across the whole header.
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Material(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
-                    child: InkWell(
-                      onTap: _openSessionInfoDialog,
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.folder_outlined,
-                              size: 16,
-                              color: _sessionHasFolder
-                                  ? colors.indigo
-                                  : colors.dim,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                _sessionFolderLabel(),
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              // Quick model switch: current model name → tap opens the
-              // unified model picker (all providers, filter) — the shared
-              // chip/flow also renders in the mobile session panel
-              // (issue #167 parity).
-              QuickModelChip(
-                key: const ValueKey('wideModelChip'),
-                modelId: active.service.modelId,
-                tooltip: context.l10n.chatModelSwitchTooltip,
-                onTap: () => _openModelPicker(active),
-              ),
-            ],
-          ),
+    return MediaQuery(
+      // The ONE adaptive header (issue #225): the old session row
+      // (folder + label + model chip) merged into the chat bar — the
+      // shell hands the project identity + chip to the chat screen and
+      // the chat renders everything in a single row above the
+      // transcript. On macOS the traffic lights float over the bar, so
+      // the header insets by the same top padding the session row used.
+      data: MediaQuery.of(
+        context,
+      ).copyWith(padding: MediaQuery.paddingOf(context) + EdgeInsets.only(top: _isMacOS ? 28 : 0)),
+      child: ChatScreen(
+        manager: widget.manager,
+        registry: widget.registry,
+        lastConnectionStore: widget.lastConnectionStore,
+        uploadPicker: widget.uploadPicker,
+        asr: widget.asr,
+        asrTranscriber: widget.asrTranscriber,
+        audioControllerFactory: widget.audioControllerFactory,
+        videoControllerFactory: widget.videoControllerFactory,
+        projectIcon: Icons.folder_outlined,
+        projectIconColor: _sessionHasFolder ? colors.indigo : colors.dim,
+        projectLabel: _sessionFolderLabel(),
+        onProjectTap: _openSessionInfoDialog,
+        modelChip: QuickModelChip(
+          key: const ValueKey('wideModelChip'),
+          modelId: active.service.modelId,
+          tooltip: context.l10n.chatModelSwitchTooltip,
+          maxWidth: 132,
+          onTap: () => _openModelPicker(active),
         ),
-        // Chat area (fills the rest).
-        Expanded(
-          child: ChatScreen(
-            manager: widget.manager,
-            registry: widget.registry,
-            lastConnectionStore: widget.lastConnectionStore,
-            uploadPicker: widget.uploadPicker,
-            asr: widget.asr,
-            asrTranscriber: widget.asrTranscriber,
-            audioControllerFactory: widget.audioControllerFactory,
-            videoControllerFactory: widget.videoControllerFactory,
-          ),
-        ),
-      ],
+      ),
     );
   }
 
