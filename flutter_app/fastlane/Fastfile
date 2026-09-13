@@ -13,12 +13,18 @@
 #   APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID /
 #   APP_STORE_CONNECT_KEY_CONTENT
 #
+# Android (#289): the build_only/build_release + upload_only lanes follow
+# the same split against Google Play; the service-account JSON rides
+# PLAY_STORE_SERVICE_ACCOUNT_JSON and
+# the track rides PLAY_TRACK (internal first, then external beta).
+#
 # iOS:    IOS_IPA_PATH points at the built .ipa (default: build/ios/*.ipa's
 #         conventional location).
 # macOS:  MACOS_PKG_PATH points at the signed .pkg (Mac Installer
 #         Distribution cert) and MACOS_BUNDLE_ID overrides dev.fa1.app.
 
 require_relative "appstore_preflight"
+require_relative "play_upload_preflight"
 
 def asc_api_key
   app_store_connect_api_key(
@@ -735,6 +741,89 @@ platform :mac do
       end
     else
       UI.message("Skipping screenshots upload (MACOS_DEPLOY_SCREENSHOTS=false)")
+    end
+  end
+end
+
+# ── Android / Play (issue #289) ───────────────────────────────────────────
+# Mirrors the iOS split: the build lane produces the release AAB from the
+# CI secrets (the upload keystore rides ANDROID_KEYSTORE_BASE64 et al. and
+# is decoded by app/build.gradle.kts — see the release signingConfig), the
+# upload lane ships it to Google Play. Track policy: the FIRST real upload
+# goes to the internal track (owner, one-time console step — Play App
+# Signing enrollment may also require the console UI); afterwards the
+# daily-publish Play leg publishes to the external beta (open testing)
+# track via PLAY_TRACK=beta. Every decision routes through
+# play_upload_preflight.rb so the lane logic is testable without the Play
+# API (fastlane/test/play_upload_preflight_test.rb).
+platform :android do
+  desc "Build the release AAB only (CI split build/submit pattern; #289 build_release)"
+  lane :build_release do
+    sh("flutter", "pub", "get")
+    if ENV["BUILD_NUMBER"]
+      sh("flutter", "build", "appbundle", "--release", "--build-number=#{ENV['BUILD_NUMBER']}")
+    else
+      sh("flutter", "build", "appbundle", "--release")
+    end
+    aab = PlayUploadPreflight.default_aab_path(File.expand_path("..", __dir__))
+    UI.user_error!("AAB not found at #{aab} after the build") unless File.exist?(aab)
+    UI.success("Release AAB built: #{aab}")
+  end
+
+  desc "Alias of build_release — keeps the iOS `build_only` lane name so `fastlane android build_only` works"
+  lane :build_only do
+    build_release
+  end
+
+  desc "Upload the built AAB to Google Play (upload_to_play_store). PLAY_TRACK selects internal/alpha/beta/production (default internal); PLAY_VALIDATE_ONLY=1 authenticates and resolves the track without publishing"
+  lane :upload_only do
+    repo_root = File.expand_path("..", __dir__)
+    json_key = PlayUploadPreflight.play_json_key!(ENV)
+    track = PlayUploadPreflight.track!(ENV)
+    aab = PlayUploadPreflight.aab_path!(ENV, repo_root: repo_root)
+    validate_only = PlayUploadPreflight.validate_only?(ENV)
+
+    UI.message("Play upload: track=#{track} aab=#{aab} validate_only=#{validate_only}")
+    upload_to_play_store(
+      PlayUploadPreflight
+        .supply_options(track: track, aab: aab, validate_only: validate_only)
+        .merge(json_key_data: json_key)
+    )
+    if validate_only
+      UI.success("✅ Play validate-only pass: authenticated, track '#{track}' + #{File.basename(aab)} resolved — nothing published")
+    else
+      store_summary_line("Android #{store_pubspec_version} uploaded to the Play '#{track}' track — #{File.basename(aab)}")
+    end
+  end
+
+  desc "Deploy the Google Play store listing (metadata + images + screenshots, no binary). PLAY_DEPLOY_METADATA=false skips texts, PLAY_DEPLOY_IMAGES=false skips icon/featureGraphic/screenshots, PLAY_VALIDATE_ONLY=1 authenticates and resolves the track without uploading"
+  lane :play_store do
+    # The store-listing half of the Android release (issue #289), the
+    # supply twin of the iOS/mac `app_store` lanes: the texts live in
+    # fastlane/metadata/android/<locale>/ and the images are COMMITTED
+    # GOLDENS rendered by test/golden/store_screenshots_test.dart and
+    # test/golden/play_store_assets_test.dart (sizes enforced by
+    # test/play_store_listing_guard_test.dart). Never a binary — AABs ride
+    # upload_only — and never changelogs (Play release notes need a
+    # version code and belong to the binary upload).
+    do_metadata = ENV.fetch("PLAY_DEPLOY_METADATA", "true") == "true"
+    do_images = ENV.fetch("PLAY_DEPLOY_IMAGES", "true") == "true"
+    track = PlayUploadPreflight.track!(ENV)
+    validate_only = PlayUploadPreflight.validate_only?(ENV)
+    UI.message("Play store listing deploy: metadata=#{do_metadata}, images=#{do_images}, track=#{track}, validate_only=#{validate_only}")
+
+    upload_to_play_store(
+      PlayUploadPreflight
+        .supply_listing_options(
+          track: track, metadata: do_metadata, images: do_images,
+          validate_only: validate_only
+        )
+        .merge(json_key_data: PlayUploadPreflight.play_json_key!(ENV))
+    )
+    if validate_only
+      UI.success("✅ Play listing validate-only pass: authenticated, track '#{track}' resolved — nothing uploaded")
+    else
+      store_summary_line("Google Play store listing updated (metadata=#{do_metadata}, images=#{do_images})")
     end
   end
 end

@@ -261,8 +261,13 @@ flutter:
           weight: 700
 
 flutter_launcher_icons:
+  # Android icons are NOT generated here: they derive from the iOS release
+  # master via tool/generate_android_adaptive_icons.dart (issue #289) so
+  # both platforms ship the identical icon (safe-zone adaptive foreground
+  # + brand navy background). flutter_launcher_icons cannot express the
+  # safe-zone padding, so android stays off here.
+  android: false
   image_path: "assets/app_icon_source.png"
-  android: true
   ios: true
   remove_alpha_ios: true
   min_sdk_android: 21

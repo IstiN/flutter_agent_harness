@@ -73,6 +73,45 @@ const _devices = <_Device>[
 
 const _locales = [Locale('en'), Locale('ru')];
 
+// ── Google Play listing targets (issue #289) ─────────────────────────────
+// The same story frames at Play Console sizes, snapshotted DIRECTLY into
+// the supply metadata tree (fastlane/metadata/android/<locale>/images/…),
+// so the listing screenshots are committed goldens like the App Store set.
+//
+// Play accepts ONLY 9:16 or 16:9 screenshots (each side 320–3840 for the
+// phone / 7-inch sets, 1080–7680 for the 10-inch set):
+//   * phone: 1080×1920 — exact 9:16, both sides inside 320–3840; localized
+//     en-US + ru-RU listings (repo convention: localized store shots);
+//   * 10-inch: 1440×2560 — exact 9:16 with sides ≥1080. (The classic
+//     1600×2560 tablet res is 10:16 and Play REJECTS it; the guard test
+//     test/play_store_listing_guard_test.dart enforces the ratio.)
+//     en-US only — the tablet set is optional and the ru listing falls
+//     back to its phone shots on tablets.
+const _Device _playPhone = (
+  name: 'play',
+  physical: Size(1080, 1920),
+  dpr: 2.0,
+);
+const _Device _playTenInch = (
+  name: 'tenInch',
+  physical: Size(1440, 2560),
+  dpr: 2.0,
+);
+
+/// Listing screenshot order — the Play Console sorts by file name.
+const _playOrder = {
+  'store_chat': '01',
+  'store_apps': '02',
+  'store_inapp': '03',
+  'store_media': '04',
+  'store_providers': '05',
+};
+
+/// The supply images dir for [lang] ('en'/'ru') relative to this test.
+String _playImagesDir(String lang) =>
+    '../../fastlane/metadata/android/${lang == 'ru' ? 'ru-RU' : 'en-US'}/'
+    'images';
+
 /// The real photo inside the media frame (see assets/store/README.md),
 /// written into the in-memory sandbox as the "generated" wallpaper.
 late Uint8List _wallpaperBytes;
@@ -219,11 +258,26 @@ Future<void> _expectStore(
   Locale locale,
   String screen,
 ) {
+  // App Store devices land in test/goldens/store/<lang>/<device>/; the
+  // Play devices land straight in the supply metadata tree with their
+  // listing order prefix (Play sorts screenshots by file name).
+  final String golden;
+  switch (device.name) {
+    case 'play':
+      golden =
+          '${_playImagesDir(locale.languageCode)}/phoneScreenshots/'
+          '${_playOrder[screen]}_$screen.png';
+    case 'tenInch':
+      golden =
+          '${_playImagesDir(locale.languageCode)}/tenInchScreenshots/'
+          '${_playOrder[screen]}_$screen.png';
+    default:
+      golden =
+          '../goldens/store/${locale.languageCode}/${device.name}/$screen.png';
+  }
   return expectLater(
     find.byType(MaterialApp),
-    matchesGoldenFile(
-      '../goldens/store/${locale.languageCode}/${device.name}/$screen.png',
-    ),
+    matchesGoldenFile(golden),
   );
 }
 
@@ -1223,6 +1277,61 @@ void main() {
           await _providersShot(tester, device, locale);
         }
       }
+    });
+  });
+
+  // ── Google Play listing screenshots (issue #289) ──────────────────────
+  // The same five story frames, golden-verified straight into the supply
+  // tree: phone 1080×1920 (en-US + ru-RU) and 10-inch 1440×2560 (en-US).
+  // Regeneration note: `--update-goldens` also refreshes the App Store
+  // goldens above on a non-canonical host — restore those
+  // (`git checkout -- test/goldens/store`) so only the intended files
+  // change; the committed listing files are then guarded by
+  // test/play_store_listing_guard_test.dart.
+  group('Google Play listing screenshots — the story at Play sizes', () {
+    testWidgets('play store_chat — the ask at 1080×1920 / 1440×2560', (
+      tester,
+    ) async {
+      for (final locale in _locales) {
+        await _chatShot(tester, _playPhone, locale);
+      }
+      await _chatShot(tester, _playTenInch, const Locale('en'));
+    });
+
+    testWidgets('play store_apps — the dashboard at Play sizes', (
+      tester,
+    ) async {
+      for (final locale in _locales) {
+        await _appsShot(tester, _playPhone, locale);
+      }
+      await _appsShot(tester, _playTenInch, const Locale('en'));
+    });
+
+    testWidgets('play store_inapp — the follow-up edit at Play sizes', (
+      tester,
+    ) async {
+      for (final locale in _locales) {
+        await _inappShot(tester, _playPhone, locale);
+      }
+      await _inappShot(tester, _playTenInch, const Locale('en'));
+    });
+
+    testWidgets('play store_media — generation tools at Play sizes', (
+      tester,
+    ) async {
+      for (final locale in _locales) {
+        await _mediaShot(tester, _playPhone, locale);
+      }
+      await _mediaShot(tester, _playTenInch, const Locale('en'));
+    });
+
+    testWidgets('play store_providers — the settings frame at Play sizes', (
+      tester,
+    ) async {
+      for (final locale in _locales) {
+        await _providersShot(tester, _playPhone, locale);
+      }
+      await _providersShot(tester, _playTenInch, const Locale('en'));
     });
   });
 }
