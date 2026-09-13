@@ -183,54 +183,83 @@ final class CompactExpandController {
     final seqs = RecordSeqIndex(entries);
     final validIds = expandValidIds(entries.length);
 
-    final rawTarget = args['target'];
-    final range = rawTarget == null ? null : _parseTarget(rawTarget);
-    if (rawTarget != null && range == null) {
-      return ToolExecutionResult.text(
-        'target must be a numeric id or range from a marker, '
-        'e.g. "5" or "2-6" (got: $rawTarget)',
-      );
-    }
+    final (range, parseError) = _parseRangeArg(args['target']);
+    if (parseError != null) return ToolExecutionResult.text(parseError);
     if (range == null) {
       // Discovery is free (AC2): the index never consumes the budget.
       return ToolExecutionResult.text(
         await _discover(live, seqs, validIds, query: args['query'] as String?),
       );
     }
-    final (start, end) = range;
-    if (end < start) {
+
+    final expandable = await _expandabilityOf(live);
+    final (blocks, skipped, blocked, label) = _gatherBlocks(
+      seqs,
+      range.$1,
+      range.$2,
+      (record) => expandable(record.id),
+    );
+    if (blocks.isEmpty) {
       return ToolExecutionResult.text(
-        'inverted range $start-$end — use "min-max"',
+        _emptyReason(skipped, blocked, label, validIds),
       );
     }
+    return _paged(args, blocks, skipped, blocked, label);
+  }
 
-    // Which records still render in context? Everything else — hidden,
-    // checkpoint-covered, folded away by a classic summary, off-branch —
-    // expands (#266 F2: a visible record is not expandable).
+  /// Parses + validates the `target` arg: `(null, null)` = discovery mode,
+  /// `(range, null)` = expand mode, `(_, error)` = honest failure.
+  ((int, int)?, String?) _parseRangeArg(Object? rawTarget) {
+    final range = rawTarget == null ? null : _parseTarget(rawTarget);
+    if (rawTarget != null && range == null) {
+      return (
+        null,
+        'target must be a numeric id or range from a marker, '
+            'e.g. "5" or "2-6" (got: $rawTarget)',
+      );
+    }
+    if (range == null) return (null, null);
+    final (start, end) = range;
+    if (end < start) {
+      return (null, 'inverted range $start-$end — use "min-max"');
+    }
+    return (range, null);
+  }
+
+  /// The F2 predicate: hidden, checkpoint-covered, folded away by a
+  /// classic summary, or off-branch → expandable (visible is not).
+  Future<bool Function(String id)> _expandabilityOf(Session live) async {
     final path = classicTransform(await live.getBranch());
     final state = buildStructuredViewState(path);
     final pathIds = {for (final record in path) record.id};
-    bool expandable(SessionRecord record) =>
-        !pathIds.contains(record.id) ||
-        state.hiddenRecordIds.contains(record.id) ||
-        state.isCovered(record.id);
+    bool expandable(String id) =>
+        !pathIds.contains(id) ||
+        state.hiddenRecordIds.contains(id) ||
+        state.isCovered(id);
+    return expandable;
+  }
 
-    final (blocks, skipped, blocked, label) = _gatherBlocks(
-      seqs,
-      start,
-      end,
-      expandable,
-    );
-    if (blocks.isEmpty) {
-      if (skipped.isNotEmpty) {
-        return ToolExecutionResult.text(expandNoRecordMsg(label, validIds));
-      }
-      if (blocked.isNotEmpty) {
-        return ToolExecutionResult.text(expandVisibleMsg(label));
-      }
-      return ToolExecutionResult.text(expandNoContentMsg(label));
-    }
+  /// One honest message per empty-gather failure class (AC3).
+  String _emptyReason(
+    List<int> skipped,
+    List<int> blocked,
+    String label,
+    String validIds,
+  ) {
+    if (skipped.isNotEmpty) return expandNoRecordMsg(label, validIds);
+    if (blocked.isNotEmpty) return expandVisibleMsg(label);
+    return expandNoContentMsg(label);
+  }
 
+  /// Validates the page arg, charges the delivered page against the
+  /// per-turn budget (S6), and renders header + slice + paging footer.
+  ToolExecutionResult _paged(
+    Map<String, dynamic> args,
+    List<String> blocks,
+    List<int> skipped,
+    List<int> blocked,
+    String label,
+  ) {
     final content = blocks.join('\n\n');
     final pages = (content.length / pageChars).ceil();
     final page = (args['page'] as num?)?.toInt() ?? 1;
@@ -248,7 +277,12 @@ final class CompactExpandController {
       return ToolExecutionResult.text(expandBudgetMsg(turnBudgetTokens));
     }
     _spentTokens += cost;
+    return ToolExecutionResult.text(
+      '${_header(label, skipped, blocked)}\n$slice${_footer(label, page, pages)}',
+    );
+  }
 
+  String _header(String label, List<int> skipped, List<int> blocked) {
     final header = StringBuffer('[expand $label');
     if (skipped.isNotEmpty) {
       header.write(' · out of range: ${idsToRanges(skipped)}');
@@ -257,13 +291,16 @@ final class CompactExpandController {
       header.write(' · visible: ${idsToRanges(blocked)}');
     }
     header.write(' · ${expandBudgetLeft(turnBudgetTokens - _spentTokens)}]');
-    final footer = pages > 1
-        ? page < pages
-              ? '\n\n[page $page/$pages — continue with compact_expand '
-                    '{"target": "$label", "page": ${page + 1}}]'
-              : '\n\n[end of record $label]'
-        : '';
-    return ToolExecutionResult.text('$header\n$slice$footer');
+    return header.toString();
+  }
+
+  String _footer(String label, int page, int pages) {
+    if (pages <= 1) return '';
+    if (page < pages) {
+      return '\n\n[page $page/$pages — continue with compact_expand '
+          '{"target": "$label", "page": ${page + 1}}]';
+    }
+    return '\n\n[end of record $label]';
   }
 
   /// The hidden-segment index (no `target`), optionally filtered and
@@ -274,73 +311,84 @@ final class CompactExpandController {
     String validIds, {
     String? query,
   }) async {
-    final path = classicTransform(await live.getBranch());
-    final state = buildStructuredViewState(path);
-    final pathIds = {for (final record in path) record.id};
-
-    // (rank, seq, line): seq is the tiebreak so equal ranks stay in file
-    // order regardless of sort stability.
+    final expandable = await _expandabilityOf(live);
     final rows = <(int, int, String)>[];
     for (var seq = 2; seq <= seqs.entries.length + 1; seq++) {
       final record = seqs.recordAt(seq)!;
-      if (pathIds.contains(record.id) &&
-          !state.hiddenRecordIds.contains(record.id) &&
-          !state.isCovered(record.id)) {
-        continue; // renders in context — nothing to discover
-      }
-      final content = recordPreviewSource(record);
-      final block = _renderRecord(seq, record) ?? content;
-      final pages = (block.length / pageChars).ceil();
-      final preview = markerPreview(content);
-      final needle = query?.toLowerCase();
-      var rank = 1;
-      if (needle != null) {
-        rank = 0;
-        if (preview.toLowerCase().contains(needle) ||
-            markerKindFor(record).contains(needle)) {
-          rank = 2;
-        } else if (content.toLowerCase().contains(needle)) {
-          rank = 1;
-        }
-      }
-      if (rank == 0) continue;
-      var marker = hiddenMarker(
-        seq: seq,
-        kind: markerKindFor(record),
-        tokens: recordTokens(record),
-        preview: preview,
-      );
-      if (pages > 1) {
-        marker = '${marker.substring(0, marker.length - 1)}·pages:$pages]';
-      }
-      rows.add((rank, seq, marker));
+      if (!expandable(record.id)) continue; // renders in context
+      final row = _discoverRow(seq, record, query);
+      if (row != null) rows.add(row);
     }
+    // seq is the tiebreak so equal ranks stay in file order regardless
+    // of sort stability.
     rows.sort((a, b) => a.$1 != b.$1 ? b.$1 - a.$1 : a.$2 - b.$2);
+    return _formatIndex(rows, query, validIds);
+  }
 
+  /// `(rank, seq, marker)` for one hidden segment; null when [query]
+  /// filters it out.
+  (int, int, String)? _discoverRow(
+    int seq,
+    SessionRecord record,
+    String? query,
+  ) {
+    final content = recordPreviewSource(record);
+    final block = _renderRecord(seq, record) ?? content;
+    final pages = (block.length / pageChars).ceil();
+    final preview = markerPreview(content);
+    final rank = _rank(preview, content, markerKindFor(record), query);
+    if (rank == 0) return null;
+    var marker = hiddenMarker(
+      seq: seq,
+      kind: markerKindFor(record),
+      tokens: recordTokens(record),
+      preview: preview,
+    );
+    if (pages > 1) {
+      marker = '${marker.substring(0, marker.length - 1)}·pages:$pages]';
+    }
+    return (rank, seq, marker);
+  }
+
+  int _rank(String preview, String content, String kind, String? query) {
+    final needle = query?.toLowerCase();
+    if (needle == null) return 1;
+    if (preview.toLowerCase().contains(needle) || kind.contains(needle)) {
+      return 2;
+    }
+    if (content.toLowerCase().contains(needle)) return 1;
+    return 0;
+  }
+
+  String _formatIndex(
+    List<(int, int, String)> rows,
+    String? query,
+    String validIds,
+  ) {
     if (query == null) {
       if (rows.isEmpty) {
         return 'no hidden segments — everything in this session is visible '
             'in context';
       }
-      final lines = [for (final row in rows.take(maxDiscoverRows)) row.$3];
-      if (rows.length > maxDiscoverRows) {
-        lines.add(
-          '…and ${rows.length - maxDiscoverRows} more — '
-          'narrow with query',
-        );
-      }
-      return '$hiddenIndexHeading\n${lines.join('\n')}';
+      return '$hiddenIndexHeading\n${_topRows(rows)}';
     }
     if (rows.isEmpty) {
       return 'no hidden segments match "$query" — valid ids $validIds '
           '(drop query for the full index)';
     }
+    return '${rows.length} hidden segments match "$query" (best first):\n'
+        '${_topRows(rows, hint: 'narrow query')}';
+  }
+
+  String _topRows(
+    List<(int, int, String)> rows, {
+    String hint = 'narrow with query',
+  }) {
     final lines = [for (final row in rows.take(maxDiscoverRows)) row.$3];
     if (rows.length > maxDiscoverRows) {
-      lines.add('…and ${rows.length - maxDiscoverRows} more — narrow query');
+      lines.add('…and ${rows.length - maxDiscoverRows} more — $hint');
     }
-    return '${rows.length} hidden segments match "$query" (best first):\n'
-        '${lines.join('\n')}';
+    return lines.join('\n');
   }
 }
 
