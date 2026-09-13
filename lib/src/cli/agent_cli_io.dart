@@ -149,3 +149,43 @@ final class _Style implements TuiStyle {
   String indigo(String text) =>
       enabled ? '\x1B[38;2;129;140;248m$text\x1B[0m' : text;
 }
+
+/// Run-notice wiring for [AgentCli], split from agent_cli.dart to keep it
+/// under the repo's 2800-line size gate. Same library (a `part of`), so
+/// the extension sees the class's private members.
+extension on AgentCli {
+  /// Transient network retry visibility (the Wi-Fi-switch case): the
+  /// retry itself lives in providerStreamFunction; here it gets a voice —
+  /// a dim transcript line + an fa.log entry instead of a silent 5s pause.
+  void _wireTransientRetryNotice() {
+    transientRetryNotice = (attempt, maxAttempts, delay, reason) {
+      io.writeln(
+        _style.dim(
+          '[net] connection lost ($reason) — retrying in '
+          '${delay.inSeconds}s (attempt ${attempt + 1}/$maxAttempts)',
+        ),
+      );
+      _logDiagnostic(
+        'transient retry sid=$_logSid attempt=${attempt + 1}/$maxAttempts '
+        'reason=$reason',
+      );
+    };
+  }
+
+  /// Image registry drop visibility (issue #171): when the per-request
+  /// cap drops a history image, say so — a dim transcript line + an
+  /// fa.log entry instead of a silent degradation.
+  void _wireImageDropNotice() {
+    imageDropNotice = (index, keyPreview) {
+      io.writeln(
+        _style.dim(
+          '[images] dropping [Image $index] (key $keyPreview…) '
+          '— per-request cap reached',
+        ),
+      );
+      _logDiagnostic(
+        'image registry drop sid=$_logSid index=$index key=$keyPreview',
+      );
+    };
+  }
+}
