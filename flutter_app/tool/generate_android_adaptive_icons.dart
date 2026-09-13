@@ -19,6 +19,9 @@
 // reference these outputs; icon/generate_icons.sh calls this tool for its
 // Android leg (no rsvg/ImageMagick needed here).
 //
+// Also writes the Google Play store-listing icon (512x512) into
+// fastlane/metadata/android/{en-US,ru-RU}/images/ (issue #289).
+//
 // ignore_for_file: avoid_print
 
 import 'dart:io';
@@ -80,5 +83,18 @@ void main() {
     print('adaptive $out (${size}x$size, master@${inner}px in safe zone)');
   }
 
+  // Google Play store-listing icon (issue #289): exactly 512x512, <= 1 MB,
+  // the master full-bleed — written to every locale's images/ dir (the
+  // brand icon is locale-neutral; test/android_icon_test.dart pins the
+  // derivation + the byte-identical ru-RU mirror,
+  // test/play_store_listing_guard_test.dart pins the Play spec).
+  final playIcon = copyResize(master, width: 512, height: 512);
+  final playIconBytes = encodePng(playIcon);
+  for (final locale in ['en-US', 'ru-RU']) {
+    final out = '$appRoot/fastlane/metadata/android/$locale/images/icon.png';
+    Directory('${File(out).parent.path}').createSync(recursive: true);
+    File(out).writeAsBytesSync(playIconBytes);
+    print('listing $out (512x512)');
+  }
   print('Android launcher icons regenerated from the iOS master.');
 }

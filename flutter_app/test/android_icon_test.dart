@@ -147,6 +147,35 @@ void main() {
     }
   });
 
+  test('Play store listing icon = iOS master at 512, mirrored to ru-RU', () {
+    // Google Play Console: app icon PNG exactly 512x512, <= 1 MB.
+    const playIcon = 'fastlane/metadata/android/en-US/images/icon.png';
+    final icon = _read(playIcon);
+    expect(icon.width, 512, reason: 'Play icon must be exactly 512 wide');
+    expect(icon.height, 512, reason: 'Play icon must be exactly 512 tall');
+    expect(File('$_appRoot/$playIcon').lengthSync(), lessThan(1000 * 1024),
+        reason: 'Play icon must stay under 1 MB');
+
+    final expected = _overNavy(master, size: 512);
+    final actual = _overNavy(icon, size: 512);
+    final score = _ssim(expected, actual);
+    expect(score, greaterThan(0.95),
+        reason: 'the Play icon must be the iOS master full-bleed at 512 '
+            '(SSIM=$score)');
+
+    // The ru-RU listing mirrors the locale-neutral brand icon byte-for-byte.
+    final mirror = File(
+        '$_appRoot/fastlane/metadata/android/ru-RU/images/icon.png');
+    expect(mirror.existsSync(), isTrue,
+        reason: 'ru-RU mirrors the brand icon — regenerate with '
+            'dart run tool/generate_android_adaptive_icons.dart');
+    if (mirror.existsSync()) {
+      expect(mirror.readAsBytesSync(),
+          File('$_appRoot/$playIcon').readAsBytesSync(),
+          reason: 'ru-RU icon.png must be the exact en-US bytes');
+    }
+  });
+
   test('adaptive foreground = master in the safe zone (all densities)', () {
     const sizes = {
       'mdpi': 108,
