@@ -81,12 +81,12 @@ class LineEditor {
   /// Programmatic whole-line sets (history recall, menu-accept prefills)
   /// and cursor-only motion ride this; neither is an undoable edit.
   LineEditor withBuffer(LineBuffer next) => LineEditor._(
-    next,
-    killRing: killRing,
-    killIndex: killIndex,
-    undoStack: undoStack,
-    lastActionWasYank: lastActionWasYank,
-  );
+        next,
+        killRing: killRing,
+        killIndex: killIndex,
+        undoStack: undoStack,
+        lastActionWasYank: lastActionWasYank,
+      );
 
   String get text => buffer.text;
   int get cursor => buffer.cursor;
@@ -174,42 +174,43 @@ class LineEditor {
     return _push(next, const _KillGroup())._ringPush(killed);
   }
 
-  /// ctrl-y: yank the most recent kill at the caret. Consecutive yanks
-  /// (with no intervening edit) rotate the ring on the NEXT yank request —
-  /// exposed via [yankRotate] for ctrl-y ctrl-y sequences.
+  /// ctrl-y: yank the most recent kill at the caret. Consecutive ctrl-y
+  /// calls walk OLDER ring entries (readline meta-y without the meta key).
   LineEditor yank() {
     if (killRing.isEmpty) return this;
-    final killed = killRing[(killIndex < 0 ? 0 : killIndex) % killRing.length];
+    final index = killIndex < 0 ? killRing.length - 1 : killIndex;
+    final killed = killRing[index];
     final b = buffer;
-    final next = LineBuffer(b.before + killed + b.after, b.cursor + killed.length);
+    final next =
+        LineBuffer(b.before + killed + b.after, b.cursor + killed.length);
     return LineEditor._(
-      _push(next, _YankGroup)._buffer,
+      _push(next, _YankGroup).buffer,
       killRing: killRing,
-      killIndex: killIndex,
+      killIndex: index,
       undoStack: undoStack,
       lastActionWasYank: true,
     );
   }
 
-  LineBuffer get _buffer => buffer;
-
-  /// ctrl-y followed by more yanks pop older ring entries (readline
-  /// meta-y without the meta key: repeat yank walks the ring).
+  /// ctrl-y followed by more yanks pop older ring entries; the previously
+  /// yanked span is replaced, not appended (readline yank-pop semantics).
   LineEditor yankOlder() {
     if (killRing.isEmpty) return this;
-    final next = (killIndex < 0 ? 0 : killIndex + 1) % killRing.length;
+    final current = killIndex < 0 ? killRing.length - 1 : killIndex;
+    final next = current <= 0 ? killRing.length - 1 : current - 1;
     final killed = killRing[next];
     final b = buffer;
     // Replace the previously yanked span, not append.
-    final prevLen = killRing[killIndex < 0 ? 0 : killIndex].length;
-    final start = b.cursor - prevLen;
-    final replaced = start >= 0 && b.text.substring(start, b.cursor) == killRing[killIndex < 0 ? 0 : killIndex];
+    final prev = killRing[current];
+    final start = b.cursor - prev.length;
+    final replaced = start >= 0 && b.text.substring(start, b.cursor) == prev;
     final nextText = replaced
         ? b.text.substring(0, start) + killed + b.after
         : b.before + killed + b.after;
-    final nextCursor = replaced ? start + killed.length : b.cursor + killed.length;
+    final nextCursor =
+        replaced ? start + killed.length : b.cursor + killed.length;
     return LineEditor._(
-      _push(LineBuffer(nextText, nextCursor), _YankGroup)._buffer,
+      _push(LineBuffer(nextText, nextCursor), _YankGroup).buffer,
       killRing: killRing,
       killIndex: next,
       undoStack: undoStack,
@@ -220,10 +221,12 @@ class LineEditor {
   LineEditor _ringPush(String killed) {
     final ring = [...killRing, killed];
     final over = ring.length - killRingSize;
+    final kept = over > 0 ? ring.sublist(over) : ring;
     return LineEditor._(
       buffer,
-      killRing: over > 0 ? ring.sublist(over) : ring,
-      killIndex: -1,
+      killRing: kept,
+      // A fresh kill becomes the yank head.
+      killIndex: kept.length - 1,
       undoStack: undoStack,
     );
   }
@@ -238,7 +241,10 @@ class LineEditor {
     if (c == 0) return this;
     if (c == b.text.length) c -= 1; // caret at EOL transposes last two chars
     if (c < 1) return this;
-    final t = b.text.substring(0, c - 1) + b.text[c] + b.text[c - 1] + b.text.substring(c + 1);
+    final t = b.text.substring(0, c - 1) +
+        b.text[c] +
+        b.text[c - 1] +
+        b.text.substring(c + 1);
     return _push(LineBuffer(t, c + 1), const _TransposeGroup());
   }
 
@@ -253,7 +259,9 @@ class LineEditor {
     while (steps.isNotEmpty && steps.last.group == group) {
       steps = steps.sublist(0, steps.length - 1);
     }
-    final restored = steps.isEmpty ? const LineBuffer('') : steps.last.buffer;
+    // An emptied stack restores the buffer the first popped step recorded
+    // (the state before the oldest coalesced change), not a blank line.
+    final restored = steps.isEmpty ? last.buffer : steps.last.buffer;
     return LineEditor._(
       restored,
       killRing: killRing,
@@ -282,7 +290,8 @@ class _WordGroup {
   final bool atWordStart;
   const _WordGroup(this.atWordStart);
   @override
-  bool operator ==(Object other) => other is _WordGroup && other.atWordStart == atWordStart;
+  bool operator ==(Object other) =>
+      other is _WordGroup && other.atWordStart == atWordStart;
   @override
   int get hashCode => atWordStart.hashCode;
 }
