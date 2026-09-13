@@ -310,6 +310,20 @@ factual: paths, commands, invariants — no essays.
   and would strand the reminder) — hosts re-arm on every mailbox change
   (CLI `_syncMailboxPrefix`, app `_setMailboxPrefix`) and sweep due records
   on their inbox ticks; `dispose()` cancels only the timer, the files stay.
+  Sleep resilience (issue #259): all due math rides an injectable wall
+  clock (`ScheduledMessageQueue(clock:)`), long waits are split into ≤60s
+  timer legs (`maxTimerLeg`) that recompute the remaining delay from the
+  wall clock on every fire — never accumulating duration drift — and
+  hosts run a catch-up sweep at every TURN START (CLI `_beginUserPrompt`,
+  app `sendText`) in addition to the idle inbox ticks, so the first
+  post-sleep turn delivers every overdue record immediately. Catch-up is
+  exactly-once per record (file removed on send + the `_delivering`
+  in-flight guard) — missed cycles of a recurring self-re-arm are NOT
+  replayed; the re-armed cycle simply resumes from "now". For true
+  sleep-proofing (delivery DURING lid sleep) no in-process timer can
+  help: add an external pinger, e.g. a cron/launchd entry that messages
+  the session's mailbox — mail to an asleep session already launches a
+  headless wake run that drains the inbox and sweeps due records.
  Records carry the scheduling instance's `owner` (mailbox prefix): a
  sweeper re-addresses a self-addressed record only when the stored owner
  matches its own prefix, and never deletes another instance's record -

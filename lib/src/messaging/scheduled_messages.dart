@@ -24,12 +24,14 @@ final class ScheduledMessageQueue {
     required String Function() root,
     String Function()? selfMailbox,
     String Function()? ownerPrefix,
+    DateTime Function()? clock,
     this.onScheduled,
     this.onFired,
   }) : _env = env,
        _repo = repo,
        _selfMailbox = selfMailbox,
        _ownerPrefix = ownerPrefix,
+       _clock = clock,
        _root = root;
 
   final ExecutionEnv _env;
@@ -48,6 +50,15 @@ final class ScheduledMessageQueue {
   /// matches its own prefix — a differing owner means another live instance
   /// scheduled it, and the record is left for its owner.
   final String Function()? _ownerPrefix;
+
+  /// Injectable wall clock (issue #259): scheduling and due comparisons
+  /// must ride one wall-clock source so a fake clock can simulate system
+  /// sleep in tests, and so every due check recomputes from the CURRENT
+  /// wall time instead of trusting duration-based timer state. Defaults
+  /// to [DateTime.now]; pure Dart, no dart:io.
+  final DateTime Function()? _clock;
+
+  DateTime _now() => _clock?.call() ?? DateTime.now();
 
   /// Host-visible notice when a record is scheduled ('in 25m: <text>').
   final void Function(String text)? onScheduled;
@@ -130,7 +141,7 @@ final class ScheduledMessageQueue {
     final id = newMessageId();
     final record = {
       'id': id,
-      'dueMs': DateTime.now().millisecondsSinceEpoch + delay.inMilliseconds,
+      'dueMs': _now().millisecondsSinceEpoch + delay.inMilliseconds,
       'to': to ?? _self(),
       'from': from ?? _self(),
       'text': text,
@@ -245,7 +256,7 @@ final class ScheduledMessageQueue {
           text: json['text'] as String? ?? '',
           sentAt:
               json['sentAt'] as String? ??
-              DateTime.now().toUtc().toIso8601String(),
+              _now().toUtc().toIso8601String(),
           hops: json['hops'] as int? ?? 0,
         ),
       );
@@ -345,7 +356,7 @@ final class ScheduledMessageQueue {
       final record = await _readRecord(path);
       if (record == null) continue;
       final dueMs = record['dueMs'] as int?;
-      if (dueMs == null || dueMs > DateTime.now().millisecondsSinceEpoch) {
+      if (dueMs == null || dueMs > _now().millisecondsSinceEpoch) {
         continue; // not a schedule record, or not due yet
       }
       final from =
@@ -358,7 +369,7 @@ final class ScheduledMessageQueue {
           fromId: from,
           toId: to,
           text: '[scheduled] ${record['text'] ?? ''}',
-          sentAt: DateTime.now().toUtc().toIso8601String(),
+          sentAt: _now().toUtc().toIso8601String(),
           hops: 0,
         ),
       );
@@ -379,13 +390,24 @@ final class ScheduledMessageQueue {
   /// Scans the pending records for the earliest due time (null: none).
   Future<int?> _nearestDueMs() async => (await pendingSummary()).nextDueMs;
 
+  /// The longest single timer leg (issue #259). A one-shot timer armed for
+  /// the full wait freezes with OS sleep (monotonic clocks pause while the
+  /// lid is closed) and fires late by the slept duration. Capping each leg
+  /// turns long waits into a lightweight idle heartbeat: every leg's fire
+  /// recomputes the remaining delay from the WALL clock ([_now]) — never
+  /// accumulating duration-based drift — so the first post-sleep fire
+  /// immediately sees and delivers every overdue record.
+  static const Duration maxTimerLeg = Duration(seconds: 60);
+
   Future<void> _armAsync() async {
     if (_disposed) return;
     final nearest = await _nearestDueMs();
     // The scan awaited above; the host may have torn the queue down meanwhile.
     if (_disposed || nearest == null) return;
-    final wait = nearest - DateTime.now().millisecondsSinceEpoch;
-    _timer = Timer(Duration(milliseconds: wait.clamp(0, 1 << 40)), () async {
+    final wait = nearest - _now().millisecondsSinceEpoch;
+    var leg = wait.clamp(0, 1 << 40);
+    if (leg > maxTimerLeg.inMilliseconds) leg = maxTimerLeg.inMilliseconds;
+    _timer = Timer(Duration(milliseconds: leg), () async {
       await _deliverDue();
       _arm();
     });
