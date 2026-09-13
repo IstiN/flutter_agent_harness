@@ -18,7 +18,11 @@ void main() {
       );
     });
 
-    test('unrecognized modes behave like current', () {
+    test('unrecognized modes stay — defensive last resort only', () {
+      // The config layer (agent_main._dapFrom) normalizes garbage to
+      // 'dedicated' BEFORE the table sees it (see the normalize group
+      // below); this branch is a defensive net so a future caller can
+      // never lose mail by minting sessions off a bogus mode string.
       expect(
         boundSessionAction(
           mode: 'weird',
@@ -159,6 +163,42 @@ void main() {
           pristineLive: false,
         ),
         BoundSessionAction.stay,
+      );
+    });
+  });
+
+  group('normalizeBoundSessionMode (issue #321: dedicated default)', () {
+    test('absent / empty / garbled modes degrade to dedicated, not current',
+        () {
+      expect(kDefaultBoundSessionMode, 'dedicated');
+      for (final raw in [null, '', '   ', 'garbled', 'CURRENT', '0']) {
+        expect(
+          normalizeBoundSessionMode(raw),
+          'dedicated',
+          reason: 'raw=$raw must fall back to the dedicated default',
+        );
+      }
+    });
+
+    test('valid modes pass through (whitespace tolerated)', () {
+      expect(normalizeBoundSessionMode('dedicated'), 'dedicated');
+      expect(normalizeBoundSessionMode('current'), 'current');
+      expect(normalizeBoundSessionMode('named'), 'named');
+      expect(normalizeBoundSessionMode(' named '), 'named');
+    });
+
+    test('default flows into the routing table as createDedicated', () {
+      // End-to-end pin of the #304 owner UX: a config with no stored
+      // binding routes the first inbound mail into a fresh DAP Inbox
+      // session — never silently into the open one.
+      expect(
+        boundSessionAction(
+          mode: kDefaultBoundSessionMode,
+          boundId: null,
+          currentId: 'live',
+          pristineLive: false,
+        ),
+        BoundSessionAction.createDedicated,
       );
     });
   });

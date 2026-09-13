@@ -118,9 +118,12 @@
     <section>
       <h2>Inbound mail routing</h2>
       <div class="dim">Where hub DMs land: a dedicated agent session (default), the current session, or a picked one.</div>
-      <label><input type="radio" name="dapBindMode" value="dedicated" checked> Dedicated "DAP Inbox" session</label>
-      <label><input type="radio" name="dapBindMode" value="current"> Current session</label>
-      <label><input type="radio" name="dapBindMode" value="named"> Named session</label>
+      <!-- One id per mode: panel.js resolves DOM only through $()
+           (getElementById) — the vm-test harness stubs that, while
+           querySelectorAll probes at import time break it (issue #321). -->
+      <label><input type="radio" name="dapBindMode" id="dapMode_dedicated" value="dedicated" checked> Dedicated "DAP Inbox" session</label>
+      <label><input type="radio" name="dapBindMode" id="dapMode_current" value="current"> Current session</label>
+      <label><input type="radio" name="dapBindMode" id="dapMode_named" value="named"> Named session</label>
       <div id="dapBindNamedRow" hidden>
         <label>Session
           <select id="dapBindSession"></select>
