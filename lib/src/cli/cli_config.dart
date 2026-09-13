@@ -24,6 +24,7 @@ import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
 import '../agent/image_registry.dart';
+import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
 import 'custom_providers.dart';
@@ -174,6 +175,7 @@ final class CliConfig {
     this.compactionEngine,
     this.images,
     this.contextWindowCap,
+    this.powerSleepPrevention,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -253,6 +255,7 @@ final class CliConfig {
         label: '~/.fah/config.yaml',
       ),
       images: _parseImagesSection(map['images']),
+      powerSleepPrevention: parsePowerSection(map['power']),
       // The agent section (owner-side context cap, issue #273) is strict
       // too.
       contextWindowCap: _parseAgentSection(map['agent']),
@@ -416,6 +419,13 @@ final class CliConfig {
   /// the loop guard). `null` = uncapped (the raw model window).
   final int? contextWindowCap;
 
+  /// Sleep-prevention level from the `power:` section
+  /// (`power.sleepPrevention`, issue #325 — ported from oh-my-pi's
+  /// `power.sleepPrevention`). `null` means the section is absent; the
+  /// host resolves the `idle` default, keeping "not configured" and
+  /// "explicitly off" distinct.
+  final PowerAssertionLevel? powerSleepPrevention;
+
 
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
@@ -447,6 +457,7 @@ final class CliConfig {
       compactionEngine: compactionEngine,
       images: images,
       contextWindowCap: contextWindowCap,
+      powerSleepPrevention: powerSleepPrevention,
     );
   }
 
@@ -509,6 +520,10 @@ final class CliConfig {
     if (images != null) buffer.write(_imagesYaml());
     if (contextWindowCap != null) {
       buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
+    }
+    final sleepPrevention = powerSleepPrevention;
+    if (sleepPrevention != null) {
+      buffer.write('power:\n  sleepPrevention: ${sleepPrevention.value}\n');
     }
     return buffer.toString();
   }

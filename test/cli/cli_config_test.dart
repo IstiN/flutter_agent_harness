@@ -320,6 +320,39 @@ prompts:
       expect(loadCliConfig(tmp.path).images, isNull);
     });
 
+    test('parses the power section and round-trips it (issue #325)', () async {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('power:\n  sleepPrevention: system\n');
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.powerSleepPrevention, PowerAssertionLevel.system);
+
+      await saveCliConfig(tmp.path, loaded);
+      final reloaded = loadCliConfig(tmp.path);
+      expect(reloaded.powerSleepPrevention, PowerAssertionLevel.system);
+    });
+
+    test('power defaults to null when absent (the host applies idle)', () {
+      expect(loadCliConfig(tmp.path).powerSleepPrevention, isNull);
+    });
+
+    test('rejects a bad power.sleepPrevention value', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('power:\n  sleepPrevention: sometimes\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"power.sleepPrevention" must be off, idle, display or '
+                'system'),
+          ),
+        ),
+      );
+    });
+
     test('rejects unknown images keys', () {
       final file = File('${tmp.path}/.fah/config.yaml');
       file.createSync(recursive: true);
