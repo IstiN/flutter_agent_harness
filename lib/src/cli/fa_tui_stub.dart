@@ -104,5 +104,7 @@ final class FaTuiController {
 
   Future<List<String>> drainQueue() async => const [];
 
+  void clearQueue() {}
+
   Future<void> run() async {}
 }

@@ -122,6 +122,7 @@ const builtinSlashCommands = <String, String>{
   '/compact': 'summarize history to free context',
   '/stats': 'show token and cost totals',
   '/tasks': '[cancel <id>] — list background agents',
+  '/queue': '[clear] — queued follow-up messages (strip above the input)',
   '/memory': '[maintain] — memory stats or run consolidation',
   '/redact': '[on|off|block on|block off|stats|layers] — secret redaction',
   '/a2a': 'show A2A remote agent servers status',

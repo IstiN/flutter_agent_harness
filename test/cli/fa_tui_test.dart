@@ -877,19 +877,23 @@ void main() {
       model =
           model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
               as FaTuiModel;
-      expect(model.queue, ['first']);
+      expect(model.queue.map((m) => m.text), ['first']);
       expect(model.inputText, '');
       expect(submitted, isEmpty);
       model = type(model, 'second');
       model =
           model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
               as FaTuiModel;
-      expect(model.queue, ['first', 'second']);
-      // The view shows the queued lines and the hint.
+      expect(model.queue.map((m) => m.text), ['first', 'second']);
+      // The view shows the count badge, the queued lines, and the hint.
       final frame = model.view().content;
+      expect(frame, contains('⏵ queued (2)'));
       expect(frame, contains('❯ first'));
       expect(frame, contains('❯ second'));
-      expect(frame, contains('↑ to edit · ctrl-s to send immediately'));
+      expect(
+        frame,
+        contains('↑ edit · ctrl+x delete · ctrl-s send immediately'),
+      );
     });
 
     test('slash commands submit immediately even while busy', () async {
@@ -924,14 +928,14 @@ void main() {
           model.update(KeyPressMsg(const TeaKey(code: KeyCode.up))).$1
               as FaTuiModel;
       expect(model.inputText, 'two');
-      expect(model.queue, ['one']);
+      expect(model.queue.map((m) => m.text), ['one']);
       // A second up does NOT pop: the buffer is no longer empty (kimi-cli
       // pops only into an empty editor).
       model =
           model.update(KeyPressMsg(const TeaKey(code: KeyCode.up))).$1
               as FaTuiModel;
       expect(model.inputText, 'two');
-      expect(model.queue, ['one']);
+      expect(model.queue.map((m) => m.text), ['one']);
     });
 
     test('ctrl+s steers the input plus the whole queue', () async {
@@ -978,7 +982,90 @@ void main() {
       model = model.update(DrainQueueMsg(completer)).$1 as FaTuiModel;
       expect(await completer.future, ['later']);
       expect(model.queue, isEmpty);
-      expect(model.outputLines.join('\n'), contains('later'));
+    });
+
+    test('ctrl+x deletes the last queued row while busy', () {
+      var model = busyModel();
+      for (final text in ['one', 'two', 'three']) {
+        model = type(model, text);
+        model =
+            model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
+                as FaTuiModel;
+      }
+      model =
+          model
+                  .update(
+                    KeyPressMsg(
+                      const TeaKey(
+                        code: KeyCode.rune,
+                        text: 'x',
+                        modifiers: {KeyMod.ctrl},
+                      ),
+                    ),
+                  )
+                  .$1
+              as FaTuiModel;
+      expect(model.queue.map((m) => m.text), ['one', 'two']);
+      // Deleting down to empty hides the whole strip.
+      model =
+          model
+                  .update(
+                    KeyPressMsg(
+                      const TeaKey(
+                        code: KeyCode.rune,
+                        text: 'x',
+                        modifiers: {KeyMod.ctrl},
+                      ),
+                    ),
+                  )
+                  .$1
+              as FaTuiModel;
+      model =
+          model
+                  .update(
+                    KeyPressMsg(
+                      const TeaKey(
+                        code: KeyCode.rune,
+                        text: 'x',
+                        modifiers: {KeyMod.ctrl},
+                      ),
+                    ),
+                  )
+                  .$1
+              as FaTuiModel;
+      expect(model.queue, isEmpty);
+      expect(model.view().content, isNot(contains('⏵ queued')));
+    });
+
+    test('steer rows render badged and drain in queue order', () async {
+      var model = busyModel();
+      model = type(model, 'followup');
+      model =
+          model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
+              as FaTuiModel;
+      model = model.copyWith(
+        queue: [...model.queue, const QueuedMessage('interrupt', steer: true)],
+      );
+      final frame = model.view().content;
+      expect(frame, contains('⤳ [steer] interrupt'));
+      expect(frame, contains('❯ followup'));
+      // Flush preserves queue order — steer rows included.
+      final completer = Completer<List<String>>();
+      model = model.update(DrainQueueMsg(completer)).$1 as FaTuiModel;
+      expect(await completer.future, ['followup', 'interrupt']);
+      expect(model.queue, isEmpty);
+    });
+
+    test('ClearQueueMsg empties the queue without draining', () {
+      var model = busyModel();
+      model = type(model, 'later');
+      model =
+          model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
+              as FaTuiModel;
+      model = model.update(const ClearQueueMsg()).$1 as FaTuiModel;
+      expect(model.queue, isEmpty);
+      // Nothing was echoed into the history (unlike a drain).
+      expect(model.outputLines.join('\n'), isNot(contains('later')));
     });
   });
 
@@ -1039,7 +1126,7 @@ void main() {
       model = model.update(BusyMsg(true)).$1 as FaTuiModel;
       model = type(model, 'queued one');
       model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
-      expect(model.queue, ['queued one']);
+      expect(model.queue.map((m) => m.text), ['queued one']);
       // ↑ pops the queued message back for editing — NOT the history entry.
       model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
       expect(model.inputText, 'queued one');
@@ -2211,11 +2298,7 @@ void main() {
       // A nearer record appears (E2): the pending boundary tick already
       // covers it — boundaries are wall-clock aligned, so no re-arm.
       final second = model.update(ScheduledStatusMsg(2, currentMs + 45000));
-      expect(
-        second.$2,
-        isNull,
-        reason: 'one pending countdown timer max',
-      );
+      expect(second.$2, isNull, reason: 'one pending countdown timer max');
       model = second.$1 as FaTuiModel;
       // E1: the record fires/cancels; the outstanding tick fires once and
       // the chain stops.
