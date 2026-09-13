@@ -23,6 +23,9 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
     show defaultHubStateFile, envHubSecret, readHubStateSecret;
 
+import 'fah_dap_command.dart'
+    show DapHubController, resolveDapLocalHubUrl;
+
 // The /dap menu lives in lib/ as pure data (issue #129): the untagged
 // structural test pins it without importing this dart:io plugin, which
 // would drag bin/ into the default coverage run and trip the CRAP
@@ -54,12 +57,17 @@ final class HubPluginHost implements FahPlugin {
     String? localHubUrl,
     Future<bool> Function(int port)? hubHealthProbe,
     Future<void> Function(int port)? hubSpawner,
+    this.hubStopper,
   }) : _hub = hubPlugin,
        // ignore: prefer_initializing_formals
        _environment = environment ?? Platform.environment,
        // ignore: prefer_initializing_formals
        _home = home,
-       _localHubUrl = localHubUrl ?? hub.defaultDapUrl,
+       // The one-step local surface (start/stop/state rows, issue #304):
+       // `DAP_LOCAL_HUB_URL` wins over the zero-config default so hosts
+       // and tests can pin it; the CONNECT config stays independent.
+       _localHubUrl =
+           localHubUrl ?? resolveDapLocalHubUrl(environment ?? Platform.environment),
        _hubHealthProbe = hubHealthProbe ?? _defaultHubHealthProbe,
        _hubSpawner = hubSpawner ?? _defaultHubSpawner;
 
@@ -82,6 +90,12 @@ final class HubPluginHost implements FahPlugin {
   /// launch one. Injected by tests; the defaults use dart:io.
   final Future<bool> Function(int port) _hubHealthProbe;
   final Future<void> Function(int port) _hubSpawner;
+
+  /// `/dap stop` seam: the graceful-stop exit code for the local hub at
+  /// [url] (the [DapHubController] default: peer warning, SIGTERM the
+  /// owning pid from the `~/.dap/hub.pid` state file, no zombie). Null
+  /// builds the production controller; tests inject a fake.
+  final Future<int> Function(String url)? hubStopper;
 
   @override
   String get name => _pluginName;
@@ -106,7 +120,7 @@ final class HubPluginHost implements FahPlugin {
       (args) => _dapSlash(context, args),
       description:
           'DAP hub — end-to-end-encrypted messaging between agents '
-          '(start / status / connect / secret)',
+          '(start / stop / status / connect / secret)',
     );
     // The inbox stays unconditional EXCEPT when the fabric composite owns
     // delivery (issue #27): registering both would race one hub frame
@@ -460,16 +474,25 @@ final class HubPluginHost implements FahPlugin {
   }
 
   /// The guided `/dap` menu: every entry explains itself; inputs are
-  /// interactive (masked for the secret).
+  /// interactive (masked for the secret). The leading row is
+  /// STATE-DEPENDENT (issue #304 AC7): a stopped local hub offers
+  /// "Start DAP locally (one step)", a running one swaps it for
+  /// "Stop DAP" — same slot, so the arrow-walk for the other rows never
+  /// shifts.
   Future<void> _dapMenu(PluginContext context, PluginPickOption pick) async {
+    final port = Uri.parse(_localHubUrl).port;
+    final hubRunning = await _hubHealthProbe(port);
     final choice = await pick(
       'DAP — Distributed Agents Platform: end-to-end-encrypted '
-      'messaging between agents over a local hub',
-      dapMenuOptions,
+      'messaging between agents over a local hub'
+      '${hubRunning ? ' — local hub RUNNING' : ''}',
+      dapMenuOptions(hubRunning: hubRunning),
     );
     switch (choice) {
       case 'start':
         await _dapStart(context);
+      case 'stop':
+        await _dapStop(context);
       case 'status':
         await _printStatus(context);
       case 'connect':
@@ -480,6 +503,31 @@ final class HubPluginHost implements FahPlugin {
         context.io.writeln(_aboutText);
       case null:
         break; // cancelled — stay quiet
+    }
+  }
+
+  /// `/dap stop` — the graceful local-hub stop (issue #304 AC2/E4): the
+  /// [DapHubController] names the connected peers (e.g. "Browser"),
+  /// SIGTERMs the owning pid from the `~/.dap/hub.pid` state file —
+  /// works from any CLI instance, exactly once — and this session's
+  /// messaging fabric transparently falls back to its file inboxes
+  /// (27.1: queued hub mail is forwarded when the hub returns).
+  Future<void> _dapStop(PluginContext context) async {
+    final ask = context.askLine;
+    final stopper =
+        hubStopper ??
+        () => DapHubController(
+              home: _home,
+              environment: _environment,
+              url: _localHubUrl,
+              secretPrompt: ask == null
+                  ? null
+                  : (question) => ask(question, secret: true),
+              out: context.io.writeln,
+            ).stop();
+    final code = await stopper(_localHubUrl);
+    if (code != 0) {
+      context.io.writeln('[hub] stop did not complete (exit $code)');
     }
   }
 
@@ -685,8 +733,10 @@ final class HubPluginHost implements FahPlugin {
       description:
           'Send an end-to-end encrypted direct message to a hub peer. '
           '`to` is the 16-hex agent id or a display name (run dap_peers '
-          'first); this is how hub mail is answered — hub mail must not be '
-          'replied to with agent_message.',
+          'first). Prefer agent_message for peers listed in '
+          'agent_directory (issue #304: hub peers are first-class inbox '
+          'agents) — use dap_dm only when the fabric is off or the peer '
+          'is absent from the directory.',
       parameters: const {
         'type': 'object',
         'properties': {
