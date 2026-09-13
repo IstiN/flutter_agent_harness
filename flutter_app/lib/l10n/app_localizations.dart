@@ -296,6 +296,12 @@ abstract class AppLocalizations {
   /// **'Apps'**
   String get appsGridTitle;
 
+  /// No description provided for @appsHideAppsTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide apps'**
+  String get appsHideAppsTooltip;
+
   /// No description provided for @appsLoadError.
   ///
   /// In en, this message translates to:
@@ -535,6 +541,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Send'**
   String get appsSendTooltip;
+
+  /// No description provided for @appsShowAppsTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Show apps'**
+  String get appsShowAppsTooltip;
 
   /// No description provided for @appsStartError.
   ///

@@ -122,6 +122,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsGridTitle => 'Приложения';
 
   @override
+  String get appsHideAppsTooltip => 'Скрыть приложения';
+
+  @override
   String appsLoadError(Object error) {
     return 'Не удалось загрузить приложения: $error';
   }
@@ -260,6 +263,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get appsSendTooltip => 'Отправить';
+
+  @override
+  String get appsShowAppsTooltip => 'Показать приложения';
 
   @override
   String appsStartError(Object error, Object name) {
