@@ -2135,6 +2135,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'main/docs',
                   ),
                 ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+                // Registry-classified CLI-only settings, listed with their
+                // reasons — never a silent absence (issue #288 AC4).
+                const CliOnlySettingsSection(),
               ],
               WebLlmCacheSection(engine: widget.webLlmEngine),
               // The transformers.js section is web-only (its provider is);

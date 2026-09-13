@@ -1,4 +1,5 @@
 import 'package:fa/services/provider_registry.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -271,6 +272,39 @@ void main() {
         find.widgetWithText(TextField, 'API key'),
       );
       expect(keyField.controller?.text, isEmpty);
+    });
+  });
+
+  group('CliOnlySettingsSection (issue #288 AC4)', () {
+    testWidgets('lists every registry CLI-only setting with its reason',
+        (tester) async {
+      await _pump(tester, const CliOnlySettingsSection());
+
+      expect(find.text('CLI-only settings'), findsOneWidget);
+      // One row per registry entry — the app renders the registry, it
+      // cannot drift from it.
+      expect(
+        find.byIcon(Icons.terminal),
+        findsNWidgets(cliOnlySettings.length),
+      );
+      for (final setting in cliOnlySettings) {
+        expect(
+          find.text(cliOnlyJustifications[setting]!),
+          findsOneWidget,
+          reason: 'the WHY for ${setting.name} must be user-visible',
+        );
+      }
+    });
+
+    testWidgets('never renders an empty reason row (silent absence guard)',
+        (tester) async {
+      await _pump(tester, const CliOnlySettingsSection());
+      final reasons = tester
+          .widgetList<Text>(find.byType(Text))
+          .map((text) => text.data ?? '')
+          .where((text) => text.isNotEmpty);
+      expect(reasons, isNotEmpty);
+      expect(find.text(''), findsNothing);
     });
   });
 }
