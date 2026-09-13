@@ -563,13 +563,23 @@ AgentConfig? restorableBootConfig({
     key = settingsKeyEnv('OPENROUTER_API_KEY', sessionKeysStore);
   }
   if (key.isEmpty && custom == null) return null;
-  return AgentConfig(
+  final config = AgentConfig(
     providerKind: kind,
     modelId: connection.modelId,
     baseUrl: baseUrl,
     apiKey: key,
     supportsImages: modelIdSuggestsVision(connection.modelId),
   );
+  // Issue #327: never boot a connection whose model and auth resolve from
+  // DIFFERENT registry rows, or a hosted/CodeMie endpoint with no
+  // credential on this surface — show the setup screen instead (the
+  // message names the broken row for the debug log).
+  final problem = providerConnectionProblem(registry, config);
+  if (problem != null) {
+    debugPrint('[Fa] boot: refusing broken connection — $problem');
+    return null;
+  }
+  return config;
 }
 
 /// A transparent 28px strip at the top of the macOS window that allows

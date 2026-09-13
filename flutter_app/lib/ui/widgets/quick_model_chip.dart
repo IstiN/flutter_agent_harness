@@ -181,6 +181,17 @@ Future<void> openQuickModelPicker(
     providerId: override.providerId,
   );
   final agentConfig = agentConfigFrom(config);
-  await service.reconfigure(agentConfig);
+  // Issue #327: a connection assembling model and auth from different
+  // registry rows (or a keyless hosted/CodeMie endpoint) is refused —
+  // surface the row-naming hint instead of dying in the gesture handler.
+  try {
+    await service.reconfigure(agentConfig);
+  } on ProviderConnectionException catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.message)));
+    return;
+  }
   await lastConnectionStore?.saveFromConfig(agentConfig);
 }

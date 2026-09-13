@@ -11,7 +11,11 @@ import 'package:fa_ui/fa_ui.dart'
         FaChatConnection,
         FaChatMessage,
         FaChatService,
-        TrajectoryServiceFeed;
+        ProviderPreset,
+        TrajectoryServiceFeed,
+        hostedProviderKeyName,
+        hostedProviderPresets,
+        providerForBaseUrl;
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -86,6 +90,97 @@ part 'agent_service_runs.dart';
 bool isCodeMieProvider(String baseUrl) =>
     baseUrl.contains('/code-assistant-api/');
 
+/// Thrown when a would-be connection assembles model and auth from
+/// DIFFERENT provider rows, or rides a hosted/CodeMie endpoint with no
+/// resolvable credential on this surface (issue #327). The message is
+/// user-facing: it names the owning rows so the fix is obvious.
+class ProviderConnectionException implements Exception {
+  ProviderConnectionException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// The display name of the row serving [baseUrl]: the custom registry
+/// entry, else the built-in hosted preset (name capitalized), else null.
+String? _connectionDisplayName(ProviderRegistry? registry, String baseUrl) {
+  final provider = providerForBaseUrl(baseUrl, registry);
+  if (provider == null) return null;
+  return switch (provider) {
+    ProviderPreset preset => switch (preset) {
+      ProviderPreset.openrouter => 'OpenRouter',
+      ProviderPreset.ollamaCloud => 'Ollama Cloud',
+      ProviderPreset.gemini => 'Google Gemini',
+      ProviderPreset.aiin => 'AIIN',
+      ProviderPreset.dial => 'DIAL',
+      ProviderPreset.minimax => 'MiniMax',
+      _ => preset.name,
+    },
+    final CustomProvider custom => custom.name,
+    _ => provider.toString(),
+  };
+}
+
+/// Issue #327: `null` when [config] can assemble model AND auth from the
+/// same provider row on this surface; otherwise a user-facing reason
+/// naming the broken row(s). Pure: no I/O, safe from boot and pickers.
+String? providerConnectionProblem(
+  ProviderRegistry? registry,
+  AgentConfig config,
+) {
+  if (AgentService._isOnDeviceKind(config.providerKind)) return null;
+  return _modelRowMismatch(registry, config) ??
+      _missingCredential(registry, config);
+}
+
+/// Fails when [config.modelId] is owned by a registry row OTHER than the
+/// one serving [config.baseUrl] — the #327 fingerprint: an OpenRouter
+/// model id riding a CodeMie (or any other) endpoint sends the request to
+/// an endpoint/auth pair that never heard of the model.
+String? _modelRowMismatch(ProviderRegistry? registry, AgentConfig config) {
+  if (registry == null) return null;
+  final entries = registry.providers;
+  final serving = entries.where((e) => e.baseUrl == config.baseUrl);
+  if (serving.any((e) => e.modelId == config.modelId)) return null;
+  final owners = entries
+      .where((e) => e.modelId == config.modelId && e.baseUrl != config.baseUrl)
+      .toList();
+  if (owners.isEmpty) return null;
+  final servingName =
+      _connectionDisplayName(registry, config.baseUrl) ?? config.baseUrl;
+  final ownerNames = owners.map((e) => e.name).toSet().join("', '");
+  return "Model ${config.modelId} belongs to provider '$ownerNames' "
+      '(${owners.first.baseUrl}), active connection is $servingName '
+      '(${config.baseUrl}). Pick the model from the SAME provider row as '
+      'the endpoint you are connecting to.';
+}
+
+/// Fails when a hosted-preset or CodeMie endpoint has no key/sign-in on
+/// THIS surface (per-surface partitions, issue #221 D2): an empty key on
+/// those endpoints is a guaranteed 401 ("No cookie auth credentials
+/// found" for CodeMie). Custom self-hosted endpoints (localhost Ollama,
+/// private gateways) stay keyless-legal.
+String? _missingCredential(ProviderRegistry? registry, AgentConfig config) {
+  if (config.apiKey.isNotEmpty) return null;
+  final baseUrl = config.baseUrl;
+  if (isCodeMieProvider(baseUrl)) {
+    final name = _connectionDisplayName(registry, baseUrl) ?? 'CodeMie';
+    return '$name: no sign-in on this surface — sign in here or sync the '
+        'account from a surface that has it.';
+  }
+  for (final preset in hostedProviderPresets) {
+    if (preset.baseUrl != null && preset.baseUrl == baseUrl) {
+      final name = _connectionDisplayName(registry, baseUrl) ?? preset.name;
+      final keyName = hostedProviderKeyName(preset) ?? 'API key';
+      return '$name: no API key on this surface — add $keyName here or '
+          'sync it from a surface that has it.';
+    }
+  }
+  return null;
+}
+
 /// Shown in place of an assistant bubble when a completed turn produced
 /// neither text nor tool calls — a small on-device model occasionally
 /// returns an empty completion, and a blank bubble looks like a UI bug.
@@ -129,6 +224,7 @@ class AgentService extends ChangeNotifier
     @visibleForTesting bool watchExternalSessions = true,
     @visibleForTesting bool includeSharedSessionRoots = true,
   }) : _resolveSecretName = null,
+      _providerRegistry = null,
        // ignore: prefer_initializing_formals
        _watchExternalSessions = watchExternalSessions,
        // ignore: prefer_initializing_formals
@@ -275,6 +371,7 @@ class AgentService extends ChangeNotifier
       secretsEnv: secretsEnv,
       sessionKeys: sessionKeys,
       config: config,
+      providerRegistry: providerRegistry,
       redactor: redactor,
       bootSecrets: secrets,
       streamFunction: streamFunction,
@@ -407,6 +504,7 @@ class AgentService extends ChangeNotifier
     this._secretsEnv,
     this._sessionKeys,
     this._taskModelsStore,
+    ProviderRegistry? providerRegistry,
     this._promptSuffix = '',
     ApprovalMode? initialApprovalMode,
     this._approvalModeStore,
@@ -424,7 +522,9 @@ class AgentService extends ChangeNotifier
        _includeSharedSessionRoots = includeSharedSessionRoots,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
-       _resolveSecretName = resolveSecretName,
+      _resolveSecretName = resolveSecretName,
+      // ignore: prefer_initializing_formals
+      _providerRegistry = providerRegistry,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
          // Outlook taskpane (issue #182): read_attachment streams
@@ -811,11 +911,78 @@ class AgentService extends ChangeNotifier
     // CodeMie: the cookie rides in model.headers (set by toModel); pass an
     // empty key so the adapter skips `Authorization: Bearer`.
     final apiKey = isCodeMieProvider(config.baseUrl) ? '' : config.apiKey;
-    return providerStreamFunction(
-      config.providerKind,
-      apiKey,
-      sessionId: () => _session?.cachedId,
+    // Issue #327: provider auth failures surface the owning row's name —
+    // a bare `401: No cookie auth credentials found` gives the user no
+    // idea WHICH provider row to fix. On-device bridges keep raw errors.
+    return decorateAuthErrors(
+      providerStreamFunction(
+        config.providerKind,
+        apiKey,
+        sessionId: () => _session?.cachedId,
+      ),
+      () => _connectionDisplayName(
+        _providerRegistry,
+        config.baseUrl,
+      ), // null = pass-through, no registry row to name.
     );
+  }
+
+  /// Wraps [inner] so HTTP auth failures (401/403, key/cookie/credentials
+  /// wording) carry a `'[<entry>] '` prefix naming the provider row the
+  /// request went out with. [label] resolving to null (no known row)
+  /// leaves every event untouched. Pure stream plumbing — visible for the
+  /// issue #327 decoration tests.
+  @visibleForTesting
+  static StreamFunction decorateAuthErrors(
+    StreamFunction inner,
+    String? Function() label,
+  ) {
+    final authFailure = RegExp(r'^40[13]:|^[45]\d\d:?.*(unauthorized|api key|credentials|sign in)', caseSensitive: false);
+    return (model, context, {cancelToken}) {
+      final owner = label();
+      final stream = inner(model, context, cancelToken: cancelToken);
+      if (owner == null || owner.isEmpty) return stream;
+      final controller = AssistantMessageEventStream();
+      Future<void> pump() async {
+        try {
+          await for (final event in stream) {
+            var outgoing = event;
+            if (event is ErrorEvent) {
+              final text = event.error.errorMessage ?? '';
+              if (authFailure.hasMatch(text.trim())) {
+                final patched = event.error.copyWith(
+                  errorMessage: '[$owner] $text',
+                );
+                outgoing = ErrorEvent(
+                  reason: event.reason,
+                  error: patched,
+                );
+              }
+            }
+            controller.push(outgoing);
+          }
+        } on Object catch (error) {
+          controller.push(
+            ErrorEvent(
+              reason: StopReason.error,
+              error: AssistantMessage(
+                content: const [],
+                api: model.api,
+                provider: model.provider,
+                model: model.id,
+                usage: Usage.zero,
+                stopReason: StopReason.error,
+                errorMessage: '[internal] $error',
+                timestamp: DateTime.now(),
+              ),
+            ),
+          );
+        }
+        controller.end();
+      }
+      unawaited(pump());
+      return controller;
+    };
   }
 
   /// The system prompt plus a secret-name hint (names only, never values).
@@ -983,6 +1150,13 @@ class AgentService extends ChangeNotifier
   /// tool still works, the value just is not persisted (the result text
   /// reflects that via [RequestSecretResult.persisted]).
   final SessionKeysStore? _sessionKeys;
+
+  /// The custom-provider registry ([AgentService.create] path). Backs the
+  /// issue #327 connection guards: reconfigure refuses a config whose
+  /// model id and endpoint/auth resolve from different registry rows, and
+  /// auth-error messages name the owning entry. `null` for services built
+  /// around a pre-constructed [Agent] (tests) — guards stay silent.
+  final ProviderRegistry? _providerRegistry;
 
   /// Per-task-role model overrides (`task_models.json`); `null` for services
   /// built around a pre-constructed [Agent] (tests). When the `smol` role
@@ -2458,6 +2632,15 @@ class AgentService extends ChangeNotifier
   /// engine is a singleton), so the new stream function reuses the warm
   /// instance. The switch is recorded as a `model_change` session record.
   Future<void> reconfigure(AgentConfig config) async {
+    // Issue #327: refuse a connection whose model and auth resolve from
+    // DIFFERENT registry rows, or a hosted/CodeMie endpoint with no
+    // credential on this surface — before any state changes (fail fast,
+    // no side effects; pickers surface the message verbatim).
+    final problem = providerConnectionProblem(_providerRegistry, config);
+    if (problem != null) {
+      debugPrint('[Fa] reconfigure refused: $problem');
+      throw ProviderConnectionException(problem);
+    }
     abort();
     await waitForIdle();
     final newModel = config.toModel();
