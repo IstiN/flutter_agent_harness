@@ -67,9 +67,8 @@ Future<Session?> resolveTrajectorySession(
     if (metadata.id == wanted) return repo.open(metadata);
   }
   for (final metadata in sessions) {
-    final session = await repo.open(metadata);
-    final name = await session.getSessionName();
-    if (name != null && name.trim() == wanted) return session;
+    final name = await repo.sessionNameQuick(metadata);
+    if (name != null && name.trim() == wanted) return repo.open(metadata);
   }
   return null;
 }

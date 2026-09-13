@@ -335,4 +335,61 @@ void main() {
     final names = await sessionDisplayNames(repo, [metadata]);
     expect(names[metadata.id], 'early_bird');
   });
+  test('sessionDisplayNames falls back to windowed opens for non-JSONL '
+      'repos, paging resolveSessionName as needed', () async {
+    final session = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+    );
+    await session.appendSessionName('paged_in');
+    // Name record sits outside the 600-record resident tail; only chunk
+    // paging through resolveSessionName can still see it.
+    for (var i = 0; i < 650; i++) {
+      await session.appendMessage(testAssistant());
+    }
+    final metadata = await session.getMetadata();
+
+    final names = await sessionDisplayNames(_GenericRepo(repo), [metadata]);
+    expect(names[metadata.id], 'paged_in');
+  });
+
+  test('resolveSessionName pages older chunks and stops at the cap', () async {
+    final session = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+    );
+    // No name anywhere: the paged scan must give up cleanly (null), first
+    // on a windowed storage and again on a full open (no paging at all).
+    final metadata = await session.getMetadata();
+    expect(
+      await (await repo.open(metadata, windowed: true)).resolveSessionName(),
+      isNull,
+    );
+    expect(
+      await (await repo.open(metadata)).resolveSessionName(maxPages: 2),
+      isNull,
+    );
+
+    // A name in the resident tail resolves on the first probe, no paging.
+    await session.appendSessionName('tail_name');
+    expect(
+      await (await repo.open(metadata, windowed: true)).resolveSessionName(),
+      'tail_name',
+    );
+  });
+}
+
+/// SessionRepo façade that is NOT a [JsonlSessionRepo] (is-check fails) but
+/// delegates every open to one — drives sessionDisplayNames' generic-repo
+/// fallback, the windowed-open loop the quick-scan path skips.
+class _GenericRepo implements SessionRepo {
+  _GenericRepo(this._inner);
+
+  final JsonlSessionRepo _inner;
+
+  @override
+  Future<Session> open(SessionMetadata metadata, {bool windowed = false}) =>
+      _inner.open(metadata, windowed: windowed);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('not needed for the fallback test');
 }
