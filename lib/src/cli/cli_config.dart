@@ -851,9 +851,7 @@ Future<void> saveCliConfig(String homeDir, CliConfig config) async {
     final diskText = file.existsSync() ? file.readAsStringSync() : '';
     final merged = _mergeWithOnDisk(file, config, diskText);
     final tmp = File('${file.path}.tmp.$pid.${_configTmpCounter++}');
-    await tmp.writeAsString(
-      _preserveDiskSections(diskText, merged.toYaml()),
-    );
+    await tmp.writeAsString(_preserveDiskSections(diskText, merged.toYaml()));
     try {
       await tmp.rename(file.path);
     } on FileSystemException {

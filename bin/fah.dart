@@ -1238,8 +1238,7 @@ Future<void> _runApp(List<String> args) async {
         write: io.write,
         writeln: io.writeln,
         env: listEnv,
-        sessionRoot:
-            parsed.sessionRoot ?? _defaultSessionRoot(),
+        sessionRoot: parsed.sessionRoot ?? _defaultSessionRoot(),
         cwd: listEnv.cwd,
         json: sessionList.json,
         flat: sessionList.flat,

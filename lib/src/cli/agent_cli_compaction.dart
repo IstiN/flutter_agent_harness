@@ -284,7 +284,10 @@ extension AgentCliCompactionRun on AgentCli {
         // and restore the compaction phase label either way. A timeout
         // skips extraction for this pass only — never the compaction.
         final source = CancelTokenSource();
-        final deadline = Timer(AgentCli._memoryExtractionDeadline, source.cancel);
+        final deadline = Timer(
+          AgentCli._memoryExtractionDeadline,
+          source.cancel,
+        );
         try {
           final hook = compactionMemoryHook(
             memory: _memory,

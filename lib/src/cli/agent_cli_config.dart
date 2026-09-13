@@ -109,7 +109,6 @@ final class AgentCliConfig {
   /// REPL keeps discarding incomplete streams.
   final bool persistAbortedPartials;
 
-
   /// Override for the compaction thresholds (ratio-based trigger, reserve
   /// and recent-token budgets). When `null`, `defaultCompactionSettings`
   /// is used (ratio 0.7, reserve 50000, keep 80000). Hosts plumb their

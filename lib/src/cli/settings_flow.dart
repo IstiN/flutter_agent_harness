@@ -489,11 +489,7 @@ extension SettingsFlow on AgentCli {
   /// controller re-reads the section before every memory operation.
   Future<void> startMemoryStoresFlow() async {
     final picked = await _pickOption('memory stores', [
-      (
-        'projectPath',
-        'Project memory',
-        _memoryPathLabel(project: true),
-      ),
+      ('projectPath', 'Project memory', _memoryPathLabel(project: true)),
       ('userPath', 'User memory', _memoryPathLabel(project: false)),
     ]);
     if (picked == null) return;
