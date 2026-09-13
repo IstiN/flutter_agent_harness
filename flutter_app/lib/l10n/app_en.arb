@@ -41,6 +41,7 @@
   "appsFaStatusWriting": "writing…",
   "appsFollowUpHint": "Follow up…",
   "appsGridTitle": "Apps",
+  "appsHideAppsTooltip": "Hide apps",
   "appsLoadError": "Failed to load apps: {error}",
   "widgetsCatalogInstallFailed": "Install failed: {error}",
   "widgetsCatalogNotInstalled": "Widget is not installed yet.",
@@ -92,6 +93,7 @@
   "appsReloadTooltip": "Reload app",
   "appsSendToFa": "Send to Fa",
   "appsSendTooltip": "Send",
+  "appsShowAppsTooltip": "Show apps",
   "appsStartError": "Failed to start {name}:\n{error}",
   "appsStopTooltip": "Stop",
   "askAnswerAction": "Answer",
@@ -500,6 +502,22 @@
   "sidebarRetry": "Retry",
   "sidebarSessionTitle": "session {id}",
   "sidebarSessionsHeader": "Sessions",
+  "sidebarSubagentSessionCount": "{count, plural, =1{1 agent} other{{count} agents}}",
+  "@sidebarSubagentSessionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sidebarSubagentTitle": "subagent {id}",
+  "@sidebarSubagentTitle": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
   "tjsCacheTitle": "Downloaded models (transformers.js)",
   "tjsCacheWebOnly": "On-device (transformers.js) models are available in the web build only.",
   "uploadTooLarge": "Upload is too large: {total} exceeds the {max} per-batch limit.",

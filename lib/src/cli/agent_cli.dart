@@ -108,6 +108,7 @@ import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
 import '../session/session_tree.dart';
+import 'session_tree.dart';
 import '../trajectory/trajectory_snapshot.dart';
 import 'trajectory_tui.dart';
 import '../tools/availability.dart';
@@ -717,6 +718,20 @@ class AgentCli {
   Future<void> tuiPickAddProviderForTest(String key) =>
       _tuiPickAddProvider(key);
 
+  /// Test seam: opens the sessions picker (building its rows) without a
+  /// TUI; the built items land in [sessionPickerItemsForTest].
+  @visibleForTesting
+  Future<void> openSessionsPickerForTest() => _openSessionsPicker();
+
+  /// The items the most recent sessions picker opened with (see
+  /// [openSessionsPickerForTest]).
+  @visibleForTesting
+  List<MenuItem>? sessionPickerItemsForTest;
+
+  /// Test seam routing a sessions-picker selection in line mode.
+  @visibleForTesting
+  Future<void> tuiPickSessionForTest(String key) => _tuiPickSession(key);
+
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in
@@ -856,8 +871,19 @@ class AgentCli {
 
   /// Memoized settled-part context estimate for the status line
   /// (see `_liveContextTokens` in approval_commands.dart): keyed on the
-  /// transcript list identity + length only — never on stream content.
+  /// transcript length + last message instance — never on stream content.
   final SettledContextEstimate _ctxEstimate = SettledContextEstimate();
+
+  /// Memo fields for the status line's request overhead (system prompt +
+  /// tool schemas, [estimateRequestOverheadTokens] — the method lives in
+  /// approval_commands.dart next to its only caller): keyed on the prompt
+  /// instance and the tool ELEMENT identities — the [AgentState] getters
+  /// copy their lists on every read, so list identity would miss every
+  /// frame while the Tool objects themselves stay stable across copies.
+  String? _overheadPromptKey;
+  List<int>? _overheadToolKey;
+  int _overheadTokens = 0;
+
   late SessionRepo _repo = JsonlSessionRepo(
     fs: _env,
     sessionsRoot: config.sessionRoot,
@@ -1036,6 +1062,11 @@ class AgentCli {
   /// automatic window correction so the catalog default (200k) stops lying
   /// for custom endpoints.
   Map<String, int> _modelContextWindows = const {};
+
+  /// Model ids the "endpoint reported no window" note already fired for
+  /// (see `_noteUndetectedContextWindow` in provider_models.dart) — once
+  /// per id per process, never a per-refresh spam.
+  final Set<String> _undetectedWindowNoteIds = <String>{};
 
   /// Max-output-token caps reported by the endpoint's `/models` payload
   /// (same source as [_modelContextWindows]); drives automatic `maxTokens`
@@ -1631,11 +1662,21 @@ class AgentCli {
     _wizardPickerAnswer = null;
   }
 
-  /// A sessions-picker selection: the key is the index into the most recent
-  /// `/sessions` listing.
+  /// A sessions-picker selection (issue #198): `flat`/`tree` flips the
+  /// view and reopens; `r<index>` resolves through the most recent
+  /// picker's row list.
   Future<void> _tuiPickSession(String key) async {
-    final metadata = listItemAt(_lastSessionList, int.tryParse(key) ?? -1);
-    if (metadata == null) return;
+    if (key == 'flat' || key == 'tree') {
+      _sessionPickerFlat = key == 'flat';
+      return _openSessionsPicker();
+    }
+    if (!key.startsWith('r')) return;
+    final rows = _lastSessionRows;
+    final row = rows == null
+        ? null
+        : listItemAt(rows, int.tryParse(key.substring(1)) ?? -1);
+    if (row == null) return;
+    final metadata = row.metadata;
     try {
       final session = await _repo.open(metadata);
       final label = await session.getSessionName() ?? metadata.id;
@@ -1701,9 +1742,13 @@ class AgentCli {
     _completeWizardPicker(pickerId, null);
   }
 
-  /// The sessions shown by the most recent `/sessions` picker, so a picker
-  /// selection resolves to metadata without a second round trip.
-  List<SessionMetadata>? _lastSessionList;
+  /// The rows shown by the most recent `/sessions` picker (issue #198), so
+  /// a picker selection resolves to metadata without a second round trip.
+  List<SessionListRow>? _lastSessionRows;
+
+  /// Whether the sessions picker shows the flat single-level list instead
+  /// of the tree (toggled from the picker's first item).
+  bool _sessionPickerFlat = false;
 
   Future<void> _openSessionsPicker() async {
     final List<SessionMetadata> sessions;
@@ -1723,70 +1768,32 @@ class AgentCli {
       );
       return;
     }
-    if (sessions.isEmpty) {
-      io.writeln('no sessions');
-      return;
-    }
-    _lastSessionList = sessions;
+    _lastSessionRows = await _sessionPickerRows(sessions);
     _tuiController?.openPicker(
       'sessions',
       'Sessions',
-      await _sessionPickerItems(sessions),
+      // The view toggle rides the first item (issue #198 open question:
+      // remembered per run, not persisted).
+      sessionPickerItems(_lastSessionRows!, flat: _sessionPickerFlat),
+    );
+    // For the picker tests: the items the picker opened with.
+    sessionPickerItemsForTest = sessionPickerItems(
+      _lastSessionRows!,
+      flat: _sessionPickerFlat,
     );
   }
 
-  /// Numbered picker items for [sessions], marking the active session.
-  Future<List<MenuItem>> _sessionPickerItems(
+  /// Tree-grouped picker rows (children nested under their parent, issue
+  /// #198), or the flat single-level rows while toggled.
+  Future<List<SessionListRow>> _sessionPickerRows(
     List<SessionMetadata> sessions,
   ) async {
-    final current = await _session?.getMetadata();
-    final items = <MenuItem>[];
-    for (var i = 0; i < sessions.length; i++) {
-      items.add(await _sessionPickerItem(i, sessions[i], current));
-    }
-    return items;
-  }
-
-  /// One numbered sessions-picker row, marked when it is the active
-  /// session. Kept shallow so the CRAP score stays low without a TUI
-  /// picker test harness.
-  Future<MenuItem> _sessionPickerItem(
-    int i,
-    SessionMetadata metadata,
-    SessionMetadata? current,
-  ) async {
-    final label = await _sessionPickerLabel(metadata);
-    final description = _sessionPickerDescription(metadata, current);
-    return MenuItem(
-      key: '$i',
-      label: '${i + 1}) $label',
-      description: description,
+    return buildSessionListRows(
+      sessions: sessions,
+      flat: _sessionPickerFlat,
+      names: await sessionDisplayNames(_repo, sessions),
+      currentSessionPath: (await _session?.getMetadata())?.path,
     );
-  }
-
-  /// Readable label for a session, degrading gracefully when the file is
-  /// unreadable.
-  Future<String> _sessionPickerLabel(SessionMetadata metadata) async {
-    try {
-      final session = await _repo.open(metadata);
-      return await session.getSessionName() ?? metadata.id;
-    } on Object {
-      return '${metadata.id} (unreadable)';
-    }
-  }
-
-  /// Folder + last-update timestamp description for a sessions-picker row,
-  /// marking the active session.
-  String _sessionPickerDescription(
-    SessionMetadata metadata,
-    SessionMetadata? current,
-  ) {
-    final marker = current?.path == metadata.path ? ' (current)' : '';
-    final folder = _pathBasename(metadata.cwd);
-    final timestamp = (metadata.lastUpdatedAt ?? metadata.createdAt)
-        .toLocal()
-        .toIso8601String();
-    return folder.isEmpty ? '$timestamp$marker' : '$folder · $timestamp$marker';
   }
 
   /// Last non-empty path segment, with a fallback for the filesystem root.
@@ -1991,11 +1998,15 @@ class AgentCli {
     _startupAmbiguousSessions = null;
     _startupAmbiguousName = null;
     if (matches == null || name == null) return;
-    _lastSessionList = matches;
+    _lastSessionRows = await _sessionPickerRows(matches);
     _tuiController?.openPicker(
       'sessions',
       "Several sessions named '$name' — which one?",
-      await _sessionPickerItems(matches),
+      sessionPickerItems(
+        _lastSessionRows!,
+        flat: _sessionPickerFlat,
+        toggle: false,
+      ),
     );
   }
 
@@ -2101,7 +2112,11 @@ class AgentCli {
   /// turn (including auto-compaction). The host's [CliIO] should be
   /// non-interactive and route [CliIO.writeln] diagnostics to stderr so
   /// [CliIO.write] (the assistant text) is the only stdout content.
-  Future<int> runHeadless(String prompt, {List<ImageContent> images = const [], HepWriter? hep}) async {
+  Future<int> runHeadless(
+    String prompt, {
+    List<ImageContent> images = const [],
+    HepWriter? hep,
+  }) async {
     _hep = hep;
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
     // same cached trees a REPL session would).

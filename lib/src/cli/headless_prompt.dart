@@ -55,10 +55,15 @@ String? resolveHeadlessPrompt({
       // Unreadable or undecodable "text" file: attach by path instead.
     }
   }
-  final reference =
-      '[attached file: ${file.absolute.path} — read it with your tools]';
+  final reference = attachPathReference(file.absolute.path);
   return trailing.isEmpty ? reference : '$reference\n\n$trailing';
 }
+
+/// The `[attached file: <path> — read it with your tools]` marker: shared
+/// by the positional file-as-prompt resolution and the `--attach`
+/// non-image passthrough (issue #196) so the wording cannot drift.
+String attachPathReference(String path) =>
+    '[attached file: $path — read it with your tools]';
 
 /// Reads an explicit `--prompt-file` as UTF-8 text, verbatim. A missing,
 /// unreadable, or undecodable file is a usage error — unlike the implicit

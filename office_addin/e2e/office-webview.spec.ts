@@ -29,6 +29,7 @@ declare global {
     /** Sandbox FS helper surface from flutter_app/web/fs_store.js. */
     __fahFsSave?: (snapshot: unknown) => Promise<null>;
     __fahFsLoad?: () => Promise<unknown>;
+    __fahBootDone?: boolean;
     __inlineRan?: boolean;
   }
 }
@@ -88,9 +89,17 @@ async function engineUp(page: Page) {
   );
 }
 
-/** Waits until the app rendered its first frame (splash fades out). */
+/** Waits until the boot-complete latch fires (splash hidden: first frame,
+ * or the 12s alive-behind-splash net). The fah-done class is transient
+ * (element removed ≤500ms later), and a webkit main-thread stall (canvaskit
+ * shader compile on loaded CI) can blind the poll exactly across that
+ * window — boot succeeds, the window slips by, and the old wait times out
+ * on an element that no longer exists (issue #234). The latch is monotonic:
+ * any post-stall tick observes it. */
 async function firstFrame(page: Page) {
-  await expect(page.locator('#fah-splash.fah-done')).toHaveClass(/fah-done/, { timeout: 100_000 });
+  await page.waitForFunction(() => window.__fahBootDone === true, undefined, {
+    timeout: 100_000,
+  });
 }
 
 // NOTE: the office branch itself (FA_HOST=office → outlook.* registry) is

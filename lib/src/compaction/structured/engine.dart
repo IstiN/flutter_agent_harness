@@ -141,21 +141,31 @@ final class StructuredCompactor {
 
   int _pass = 0;
 
+  /// The live request-size estimate in the ONE basis the ctx meter, the
+  /// loop's over-window guard, and the classic compactor all enforce:
+  /// transcript estimate plus the system-prompt / tool-schema overhead
+  /// whenever no provider-usage anchor prices them in.
+  int _requestTokens() => estimateRequestTokens(
+    state.messages,
+    systemPrompt: state.systemPrompt,
+    tools: state.tools,
+  );
+
   /// Runs both passes; returns whether the context ended under pressure.
   Future<bool> run({bool force = false}) async {
     if (window <= 0) return true;
     final trigger = window - settings.reserveTokens;
-    if (!force && estimateContextTokens(state.messages).tokens <= trigger) {
+    if (!force && _requestTokens() <= trigger) {
       return true;
     }
     if (!await _runHidePasses(trigger)) return false;
     if (!await _runCheckpointPasses(trigger)) return false;
-    return estimateContextTokens(state.messages).tokens <= trigger;
+    return _requestTokens() <= trigger;
   }
 
   Future<bool> _runHidePasses(int trigger) async {
     for (var i = 0; i < maxHidePasses; i++) {
-      final before = estimateContextTokens(state.messages).tokens;
+      final before = _requestTokens();
       if (before <= trigger) return true;
       final view = await _buildView();
       if (view == null) return true;
@@ -193,7 +203,7 @@ final class StructuredCompactor {
 
   Future<bool> _runCheckpointPasses(int trigger) async {
     for (var i = 0; i < maxCheckpointPasses; i++) {
-      final before = estimateContextTokens(state.messages).tokens;
+      final before = _requestTokens();
       if (before <= trigger) return true;
       final range = await _pickCheckpointRange();
       if (range == null) break;
@@ -279,7 +289,7 @@ final class StructuredCompactor {
             ? message.copyWith(usage: Usage.zero)
             : message,
     ];
-    return estimateContextTokens(state.messages).tokens;
+    return _requestTokens();
   }
 
   /// Picks the next checkpoint range: the oldest visible records up to

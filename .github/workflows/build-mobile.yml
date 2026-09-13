@@ -243,7 +243,9 @@ jobs:
             cp -R "$LOCAL_SRC" "$DEST/"
           else
             echo "Local framework not found, downloading from upstream release..."
-            curl -L --retry 3 --retry-delay 10 --max-time 600 \
+            # --retry alone skips transient mid-transfer resets (curl 56) —
+            # the run-34709113737 failure: reset 3s into the 92.7 MB asset.
+            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
               -o /tmp/WasmRun.xcframework.zip \
               https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
             unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"

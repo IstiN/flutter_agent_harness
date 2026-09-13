@@ -33,7 +33,8 @@ gh label create daily-publish --repo "$repo" --color B60205 \
 
 # ── log collection ─────────────────────────────────────────────────────────
 # Failing job/step names and the last ~50 log lines, from the child run when
-# one exists, else from this daily run filtered by the leg job's log prefix.
+# one exists, else from this daily run's leg job (jobs API — the run is
+# still in progress here, and GitHub serves no logs for it mid-run).
 failing_steps() { # $1 = child run id ("" = this run), $2 = log prefix
   if [ -n "$1" ]; then
     gh run view "$1" --repo "$repo" --json jobs --jq '
@@ -43,8 +44,21 @@ failing_steps() { # $1 = child run id ("" = this run), $2 = log prefix
             | .name] | join(", "))]
       | join("\n")' 2>/dev/null || true
   else
-    gh run view "$GITHUB_RUN_ID" --repo "$repo" --log-failed 2>/dev/null \
-      | grep -F "$2" | awk -F'\t' '{print $2}' | sort -u | paste -sd, - || true
+    # The report job runs INSIDE the daily run, so the run is still in
+    # progress here — and GitHub serves no logs for in-progress runs
+    # (--log-failed returns empty: issue #208 was filed as "unknown (job
+    # cancelled or timed out)" for a leg that died in 4s with a clear
+    # error). Job/step data IS served mid-run — read failed steps from it.
+    gh run view "$GITHUB_RUN_ID" --repo "$repo" --json jobs 2>/dev/null \
+      | jq -r --arg job "$2" '
+          [.jobs[] | select(.name == $job
+                              and (.conclusion == "failure"
+                                or .conclusion == "cancelled"))
+            | .name + " — " +
+              ([.steps[] | select(.conclusion == "failure"
+                               or .conclusion == "cancelled")
+                | .name] | join(", "))]
+          | join("\n")' 2>/dev/null || true
   fi
 }
 
