@@ -4,8 +4,9 @@
 part of 'agent_cli.dart';
 
 /// Steering that arrived too late to enter a run: resolution and the loud
-/// drop print.
-extension on AgentCli {
+/// drop print. Named so the driver-test seams below stay reachable from
+/// the test suite (the private members stay library-private).
+extension AgentCliSteering on AgentCli {
   /// Steers [trimmed] into the running agent with the file-reference
   /// resolution applied (a pasted path becomes an explicit
   /// `[attached file: …]` marker — a bare path steered as plain text made
@@ -66,4 +67,15 @@ extension on AgentCli {
     }
     _printDroppedSteering(outcome.texts);
   }
+
+  /// Test seam: queues a steer through the same `_steerResolved` path
+  /// mid-run input takes (panel join + agent steer queue).
+  @visibleForTesting
+  void steerForTest(String text) => _steerResolved(text);
+
+  /// Test seam: the run-settle steering resolution (leftover run or loud
+  /// drop) so driver tests can exercise both branches deterministically
+  /// instead of racing the real settle window.
+  @visibleForTesting
+  void settleLeftoverSteeringForTest() => _settleLeftoverSteering();
 }

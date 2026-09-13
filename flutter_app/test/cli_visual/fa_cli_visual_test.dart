@@ -13,6 +13,8 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -41,13 +43,19 @@ void main() {
 
   /// Spawns the CLI, binds the tester, pumps the TerminalView (which sizes
   /// the PTY to the real cell geometry) and waits for the boot banner.
+  /// [args] are forwarded to the CLI (e.g. `--session-root <dir>`).
   Future<CliVisualHarness> boot(
     WidgetTester tester, {
     Map<String, String>? extraEnv,
+    List<String> args = const [],
   }) async {
     // runAsync returns T? — spawn never returns null.
     final harness = (await tester.runAsync(
-      () => CliVisualHarness.spawn(repoRoot: repoRoot, extraEnv: extraEnv),
+      () => CliVisualHarness.spawn(
+        repoRoot: repoRoot,
+        extraEnv: extraEnv,
+        args: args,
+      ),
     ))!;
     harness.attach(tester);
     await harness.pumpTerminalView();
@@ -1037,8 +1045,9 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
     });
 
     testWidgets('request_secret sheet: value-first focus, dots mask, Ctrl+R '
-        'reveals, Ctrl+U clears, the saved secret never echoes',
-        (tester) async {
+        'reveals, Ctrl+U clears, the saved secret never echoes', (
+      tester,
+    ) async {
       final server = await _startAnsweringServer(
         tester,
         18780,
@@ -1157,6 +1166,199 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       await harness.close();
       tempHome.deleteSync(recursive: true);
     });
+
+    testWidgets('seeded fleet renders children with metrics; child '
+        'transcript and /mail panels are real', (tester) async {
+      final tempHome = _tempHomeWithProvider();
+      final sessionsDir = Directory('${tempHome.path}/sessions')
+        ..createSync(recursive: true);
+      // The CLI runs with its own session root, so the seeded fleet is the
+      // only state in it and /resume deterministically lands on it.
+      final harness = await boot(
+        tester,
+        extraEnv: {'HOME': tempHome.path},
+        args: ['--session-root', sessionsDir.path],
+      );
+
+      // Seed AFTER boot: /resume picks the newest created session — the
+      // seeded parent must be newer than the boot's own fresh session.
+      await _seedHubFleet(tester, repoRoot, sessionsDir.path);
+      await harness.runSlashCommand('/resume');
+      await harness.liveWaitForText(
+        "switched to session 'hub-evidence'",
+        timeout: const Duration(seconds: 15),
+      );
+
+      // The hub tree: main + two children with live metrics.
+      await harness.runSlashCommand('/agents');
+      await harness.liveWaitForText(
+        'agents hub',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.liveWaitForText(
+        'explore#1',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '277_hub_tree_fleet');
+      expect(harness.screenText, contains('explore#2'));
+      expect(harness.screenText, contains('18.4k tok'));
+      expect(harness.screenText, contains('Σ'));
+
+      // Drill into the first child row — the tree orders running above
+      // done, so that is the live explore#2 transcript.
+      harness.sendArrowDown();
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'transcript — explore#2',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.liveWaitForText(
+        'following live',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '277_hub_child_transcript');
+
+      // Esc unwinds to the tree, then closes back to the REPL; /mail
+      // renders the deferred panel seeded in this session's mailbox.
+      harness.sendEscape();
+      await harness.liveWaitForText(
+        'agents hub',
+        timeout: const Duration(seconds: 15),
+      );
+      harness.sendEscape();
+      await harness.settle(settleMs: 300);
+      await harness.runSlashCommand('/mail');
+      await harness.liveWaitForText(
+        'mail from explore#1',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '277_hub_mail');
+
+      tempHome.deleteSync(recursive: true);
+    });
+  });
+}
+
+/// Seeds a hub fleet for the visual evidence test (issue #277): a parent
+/// session named `hub-evidence` carrying a `subagent_registry` record with
+/// two children (one completed with metrics, one running), each child a
+/// real JSONL session with a short transcript, plus one fabric mail in the
+/// parent's main mailbox. All writes go through the real session/fabric
+/// writers so the CLI rehydrates exactly what a real fleet would leave.
+Future<void> _seedHubFleet(
+  WidgetTester tester,
+  String repoRoot,
+  String sessionsDir,
+) async {
+  return tester.runAsync(() async {
+    final env = LocalExecutionEnv(cwd: repoRoot);
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsDir);
+    final now = DateTime.now().toUtc();
+
+    Future<Session> child(String name) async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(
+          cwd: repoRoot,
+          metadata: {'agent': 'cli', 'model': 'test-model'},
+        ),
+      );
+      await session.appendMessage(
+        UserMessage.text('$name: map the retry paths'),
+      );
+      await session.appendMessage(
+        AssistantMessage(
+          content: const [
+            TextContent(
+              text:
+                  'Found three retry paths: transport, auth, and rate '
+                  'limit — the transport one backoffs exponentially.',
+            ),
+          ],
+          api: 'openai-completions',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: const Usage(
+            input: 900,
+            output: 300,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 1200,
+            cost: UsageCost(total: 0.0042),
+          ),
+          stopReason: StopReason.stop,
+          timestamp: now.add(const Duration(seconds: 4)),
+        ),
+      );
+      return session;
+    }
+
+    final done = await child('explore#1');
+    final running = await child('explore#2');
+    final doneMeta = await done.getMetadata();
+    final runningMeta = await running.getMetadata();
+
+    final parent = await repo.create(
+      JsonlSessionCreateOptions(
+        cwd: repoRoot,
+        metadata: {'agent': 'cli', 'model': 'test-model'},
+      ),
+    );
+    await parent.appendSessionName('hub-evidence');
+    await parent.appendMessage(
+      UserMessage.text('Audit the retry paths across the fleet'),
+    );
+    await parent.appendCustomEntry(
+      customType: 'subagent_registry',
+      data: [
+        {
+          'id': 'explore#1',
+          'name': 'explore#1',
+          'agentType': 'explore',
+          'sessionId': doneMeta.path,
+          'createdAt': now.toIso8601String(),
+          'lastActivity': now
+              .subtract(const Duration(minutes: 5))
+              .toIso8601String(),
+          'task': 'Map the retry paths in the api client',
+          'status': 'completed',
+          'tokens': 18432,
+          'requests': 6,
+          'modelId': 'test-model',
+        },
+        {
+          'id': 'explore#2',
+          'name': 'explore#2',
+          'agentType': 'explore',
+          'sessionId': runningMeta.path,
+          'createdAt': now.toIso8601String(),
+          'lastActivity': now.toIso8601String(),
+          'task': 'Check the auth refresh loop',
+          'status': 'running',
+          'tokens': 512,
+          'requests': 1,
+        },
+      ],
+    );
+    final parentMeta = await parent.getMetadata();
+
+    // One fabric mail in the parent's main mailbox: /mail lists it with
+    // the reply hint, proving the deferred-message plumbing end to end.
+    final mailbox = FileMessagingRepository.sanitizeAgentId(
+      '${parentMeta.id}/main',
+    );
+    final messagesRoot = '$sessionsDir/${encodeSessionCwd(repoRoot)}/messages';
+    final inbox = Directory('$messagesRoot/$mailbox/inbox')
+      ..createSync(recursive: true);
+    File('${inbox.path}/m1.json').writeAsStringSync(
+      jsonEncode({
+        'id': 'm1',
+        'fromId': 'explore#1',
+        'toId': '${parentMeta.id}/main',
+        'text': 'what about the retry path?',
+        'sentAt': now.toIso8601String(),
+        'hops': 0,
+      }),
+    );
   });
 }
 

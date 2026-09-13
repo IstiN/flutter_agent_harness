@@ -302,4 +302,112 @@ void main() {
       await run;
     },
   );
+
+  test(
+    'steering left after settle runs a follow-up turn',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      final contexts = <Context>[];
+      final turns = <List<AssistantMessageEvent>>[
+        textTurn('one'),
+        textTurn('two'),
+      ];
+      final cli = buildCli((model, context, {cancelToken}) {
+        contexts.add(
+          Context(
+            systemPrompt: context.systemPrompt,
+            messages: List.of(context.messages),
+            tools: context.tools,
+          ),
+        );
+        final stream = AssistantMessageEventStream();
+        for (final event in turns.removeAt(0)) {
+          stream.push(event);
+        }
+        stream.end();
+        return stream;
+      });
+      final run = cli.run();
+
+      io.sendLine('start');
+      await waitForIt(
+        () => contexts.length == 1 && !cli.isBusy,
+        reason: 'the first run settles',
+      );
+      // Queue a steer AFTER the run settled — the exact "typed while the
+      // model streamed its last bytes" race — then settle it by hand (the
+      // same resolution the CLI runs on every settle; racing the real
+      // window from a test would be flaky).
+      cli.steerForTest('late steer');
+      cli.settleLeftoverSteeringForTest();
+      await waitForIt(
+        () => contexts.length == 2 && !cli.isBusy,
+        reason: 'the leftover steering runs a follow-up turn',
+      );
+      expect(
+        io.out.toString(),
+        contains('steering arrived after the last checkpoint'),
+      );
+      expect(
+        contexts[1].messages.any(
+          (message) =>
+              message is UserMessage &&
+              _messageText(message).contains('late steer'),
+        ),
+        isTrue,
+      );
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'hub driver seams expose the tree, transcript and action paths',
+    () async {
+      final cli = buildCli((model, context, {cancelToken}) {
+        final stream = AssistantMessageEventStream();
+        stream.end();
+        return stream;
+      });
+      // Seed a child session the handle points at, mirroring what the
+      // executor's attachSession does at completion.
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final session = await repo.create(
+        const JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendMessage(UserMessage.text('child transcript line'));
+      final path = (await session.getMetadata()).path;
+      await cli.subagentManager.register(
+        id: 'drill#1',
+        name: 'drill#1',
+        agentType: 'explore',
+        task: 'scout',
+      );
+      await cli.subagentManager.attachSession('drill#1', path);
+      await cli.subagentManager.update(
+        'drill#1',
+        status: SubagentStatus.running,
+        tokens: 512,
+      );
+
+      // The tree assembly mirrors what `/agents` bare pushes: the main
+      // agent row plus the live child with its metrics.
+      final (rows, footer) = cli.hubTreeForTest();
+      expect(rows.first.agent.id, 'main');
+      // The idle main (no run in flight) plus the live child.
+      expect(footer.running, 1);
+
+      // The transcript push renders the child's session ledger.
+      final (lines, running) = await cli.hubTranscriptForTest('drill#1');
+      expect(lines.join('\n'), contains('child transcript line'));
+      expect(running, isTrue, reason: 'a running child keeps the follow armed');
+
+      // The action router: enter drills into the transcript, back returns
+      // to the tree, close hides the overlay (no TUI attached: pushes no-op).
+      await cli.hubActionForTest('enter', 'drill#1');
+      await cli.hubActionForTest('back', null);
+      await cli.hubActionForTest('close', null);
+    },
+  );
 }

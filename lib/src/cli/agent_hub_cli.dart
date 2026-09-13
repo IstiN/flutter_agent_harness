@@ -68,9 +68,9 @@ extension AgentCliHubDriver on AgentCli {
 
   /// Rebuilds and pushes the tree-mode overlay. No-op when the TUI is not
   /// attached (line mode renders the same rows via the bare `/agents`
-  /// fallback) or the hub is closed.
-  void _pushHubTree() {
-    final controller = _tuiController;
+  /// fallback) — unless [target] overrides the destination (test seam).
+  void _pushHubTree([FaTuiController? target]) {
+    final controller = target ?? _tuiController;
     if (controller == null) return;
     _hubUpsertFleet();
     final rows = _hubProjection.rows();
@@ -83,6 +83,33 @@ extension AgentCliHubDriver on AgentCli {
       ),
     );
   }
+
+  /// Test seam: pushes the tree overlay into [controller] — the same
+  /// `_pushHubTree` assembly the TUI-attached `/agents` runs — so driver
+  /// tests can cover it without a PTY model loop.
+  @visibleForTesting
+  void pushHubTreeForTest(FaTuiController controller) =>
+      _pushHubTree(controller);
+
+  /// Test seam: the live fleet snapshot + aggregates the tree overlay
+  /// renders from (the same upsert + rows assembly as `_pushHubTree`).
+  @visibleForTesting
+  (List<HubRow>, HubFooter) hubTreeForTest() {
+    _hubUpsertFleet();
+    final rows = _hubProjection.rows();
+    return (rows, _hubProjection.footer());
+  }
+
+  /// Test seam: the transcript push for [id] (the overlay's enter target).
+  @visibleForTesting
+  Future<(List<String>, bool)> hubTranscriptForTest(String id) =>
+      _hubTranscriptLines(id, 80);
+
+  /// Test seam: the overlay action router (enter / back / close) the TUI
+  /// routes its hub keys onto.
+  @visibleForTesting
+  Future<void> hubActionForTest(String action, String? key) =>
+      _onHubAction(action, key);
 
   /// Opens the hub overlay (`/agents` bare in the TUI). Line mode keeps
   /// the Variant-B picker (no full-screen surface to render into).
