@@ -140,6 +140,12 @@ extension AgentCliMessagingFlow on AgentCli {
         io.writeln(_style.dim('[sched] $text'));
         unawaited(_pushScheduledStatus());
       },
+      // Failure isolation (issue #270): a failed delivery is a visible
+      // [sched] line, never a dead heartbeat — the record stays for the
+      // next sweep.
+      onError: (text) {
+        io.writeln('[sched] $text');
+      },
     );
   }
 
