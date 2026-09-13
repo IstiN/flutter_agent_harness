@@ -332,6 +332,48 @@ void main() {
         },
       );
 
+      test('aborted children refuse messages in the guard', () async {
+        final handle = await mgr.register(
+          id: 'gone',
+          name: 'gone',
+          agentType: 'task',
+          task: '',
+        );
+        handle.status = SubagentStatus.aborted;
+        expect(
+          () => mgr.enqueueMessage('gone', note('too late')),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('is aborted and takes no messages'),
+            ),
+          ),
+        );
+      });
+
+      test('remote a2a children refuse messages in the guard', () async {
+        await mgr.register(
+          id: 'remote',
+          name: 'remote',
+          agentType: 'a2a:peer',
+          task: '',
+        );
+        expect(
+          () => mgr.enqueueMessage('remote', note('no local inbox')),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              allOf([
+                contains('runs on a remote a2a server'),
+                contains('no local inbox to deliver into'),
+              ]),
+            ),
+          ),
+        );
+      });
+
       test('local handles and selfId win over the hub roster', () async {
         final hub = _FakeHub()..resolvable.addAll(['a1', 'main']);
         final fabric = FallbackMessagingRepository(

@@ -295,30 +295,44 @@ final class SubagentManager {
   /// local handle. Aborted children refuse messages; remote `a2a:` children
   /// refuse them too (nothing drains their local inbox — see the guard).
   Future<void> _guardRecipient(String id, SubagentHandle? handle) async {
-    final deliverable =
-        handle != null ||
-        (id == selfId || id.contains('/')) && messaging != null ||
-        id.contains('@') && a2aGateway != null ||
-        await _hubResolvable(id);
-    if (!deliverable) {
+    if (!await _isDeliverable(id, handle)) {
       throw StateError(
         'unknown subagent "$id" — available: ${_handles.keys.join(', ')}',
       );
     }
+    final refusal = _localInboxRefusal(id, handle);
+    if (refusal != null) throw StateError(refusal);
+  }
+
+  /// Whether [id] names an address this manager can deliver into: a known
+  /// local handle, the [selfId] inbox or an absolute cross-instance
+  /// mailbox when the fabric is wired, a foreign `name@machine` address
+  /// when the A2A gateway is, or a hub target the routing fabric resolves.
+  Future<bool> _isDeliverable(String id, SubagentHandle? handle) async {
+    if (handle != null) return true;
+    if ((id == selfId || id.contains('/')) && messaging != null) return true;
+    if (id.contains('@') && a2aGateway != null) return true;
+    return _hubResolvable(id);
+  }
+
+  /// Why [handle] takes no further messages, or null when it does:
+  /// aborted children refuse everything; a remote `a2a:` child has NO
+  /// local loop draining its inbox (the remote prompt is assembled once,
+  /// at send time) — queueing mail for it is silent mail loss. Name the
+  /// real channel instead.
+  String? _localInboxRefusal(String id, SubagentHandle? handle) {
     if (handle?.status == SubagentStatus.aborted) {
-      throw StateError('subagent "$id" is aborted and takes no messages');
+      return 'subagent "$id" is aborted and takes no messages';
     }
-    // A remote `a2a:` child has NO local loop draining its inbox (the
-    // remote prompt is assembled once, at send time) — queueing mail for it
-    // is silent mail loss. Fail honestly, naming the real channel.
     if (handle != null && handle.agentType.startsWith('a2a:')) {
-      throw StateError(
+      return (
         'subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
         'it has no local inbox to deliver into; follow up with a new '
         'task item (agent ${handle.agentType}) carrying your message in '
-        'its task text',
+        'its task text'
       );
     }
+    return null;
   }
 
   /// Whether [id] resolves on the routing (hub) transport — consulted only
