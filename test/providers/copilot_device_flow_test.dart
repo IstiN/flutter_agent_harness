@@ -372,9 +372,57 @@ void main() {
       );
     });
 
-    test('a socket-level poll failure surfaces a transport error', () async {
+    // Issue #229 / AC1: a lost connection (iOS suspends networking when
+    // the user backgrounds the app to authorize — NSURLErrorDomain -1005)
+    // is TRANSIENT, never the flow's verdict.
+    test(
+      'transient socket failures retry on cadence and the grant completes',
+      () async {
+        var polls = 0;
+        final statuses = <String>[];
+        final (client, requests) = _router((_) {
+          polls++;
+          if (polls <= 3) {
+            throw Exception(
+              'NSURLErrorDomain -1005: the network connection was lost',
+            );
+          }
+          if (polls == 4) {
+            return _json(const {'error': 'authorization_pending'});
+          }
+          return _json(const {'access_token': 'gh-after-retry'});
+        });
+
+        final token = await pollCopilotDeviceGrant(
+          grant: const CopilotDeviceGrant(
+            deviceCode: 'dc',
+            userCode: 'UC-1',
+            verificationUri: 'https://github.com/login/device',
+            expiresIn: 900,
+            interval: 5,
+          ),
+          clientId: 'Iv1.test',
+          delay: (_) async {},
+          onStatus: statuses.add,
+          client: client,
+        );
+
+        expect(token, 'gh-after-retry');
+        expect(polls, 5);
+        expect(requests, hasLength(5));
+        // The retries surfaced as STATUS lines, not an exception.
+        expect(
+          statuses.where((s) => s.contains('retrying')),
+          hasLength(3),
+        );
+      },
+    );
+
+    // Issue #229 / AC2: a transport that fails FOREVER still ends — the
+    // expiresIn budget binds the retries (no infinite loop).
+    test('a transport that fails forever ends in the expired error', () async {
       final client = http_testing.MockClient(
-        (_) => throw Exception('reset by peer'),
+        (_) => throw Exception('connection lost'),
       );
       final delays = <Duration>[];
 
@@ -384,7 +432,7 @@ void main() {
             deviceCode: 'dc',
             userCode: 'UC-1',
             verificationUri: 'https://github.com/login/device',
-            expiresIn: 900,
+            expiresIn: 10,
             interval: 5,
           ),
           clientId: 'Iv1.test',
@@ -392,13 +440,13 @@ void main() {
           client: client,
         ),
         throwsA(
-          isA<CopilotDeviceFlowError>().having(
-            (e) => e.kind,
-            'kind',
-            CopilotDeviceFlowErrorKind.transport,
-          ),
+          isA<CopilotDeviceFlowError>()
+              .having((e) => e.kind, 'kind', CopilotDeviceFlowErrorKind.expired)
+              .having((e) => e.message, 'message', contains('expired')),
         ),
       );
+      // 6 + 6 = 12s of waiting >= the 10s budget: bounded, not infinite.
+      expect(delays, hasLength(2));
     });
 
     test('reports waiting status lines through onStatus', () async {

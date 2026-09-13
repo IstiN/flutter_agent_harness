@@ -7,6 +7,13 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+/// A mutable fake wall clock (issue #259): hosts freeze with OS sleep, so
+/// scheduling math rides an injectable clock — never real sleeps in tests.
+final class _FakeClock {
+  DateTime now = DateTime.utc(2026, 9, 13, 2);
+  void jump(Duration d) => now = now.add(d);
+}
+
 void main() {
   test('parseDelay handles units and combinations', () {
     expect(parseDelay('90s'), const Duration(seconds: 90));
@@ -804,5 +811,139 @@ void main() {
             )
             as Map<String, dynamic>;
     expect(record['owner'], 'sid-9');
+  });
+
+  group('wall-clock catch-up (issue #259)', () {
+    (ScheduledMessageQueue, FileMessagingRepository, _FakeClock) harness(
+      MemoryExecutionEnv env,
+    ) {
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      final clock = _FakeClock();
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-1/main',
+        ownerPrefix: () => 'sid-1',
+        clock: () => clock.now,
+      );
+      return (queue, repo, clock);
+    }
+
+    test(
+      'an overdue record is delivered by the catch-up sweep immediately '
+      '(turn start), not at the next timer tick',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final (queue, repo, clock) = harness(env);
+        await queue.schedule(
+          text: 'standup notes',
+          delay: const Duration(minutes: 30),
+        );
+        // The record came due while no tick ran (host busy/asleep): the
+        // sweep a turn start performs must deliver it NOW — the armed
+        // real-time timer is still ~30 minutes out and must not be the
+        // delivery path this test waits on.
+        clock.jump(const Duration(minutes: 31));
+        expect(await queue.deliverDue(), 1);
+        final mail = await repo.peek('sid-1/main');
+        expect(mail.single.text, contains('[scheduled] standup notes'));
+        queue.dispose();
+      },
+    );
+
+    test(
+      'a clock jump (system sleep) catches up immediately and delivers '
+      'each due record exactly once (no N-fold replay)',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final (queue, repo, clock) = harness(env);
+        for (var i = 0; i < 3; i++) {
+          await queue.schedule(
+            text: 'cycle $i',
+            delay: Duration(minutes: 30 * (i + 1)),
+          );
+        }
+        // Six hours of "sleep": every record is overdue on wake.
+        clock.jump(const Duration(hours: 6));
+        // The post-wake heartbeat + a concurrent turn-start sweep race:
+        // the in-flight guard keeps delivery exactly-once per record.
+        final counts = await Future.wait([
+          queue.deliverDue(),
+          queue.deliverDue(),
+        ]);
+        expect(counts.fold<int>(0, (a, b) => a + b), 3);
+        // A repeated sweep must not replay missed cycles.
+        expect(await queue.deliverDue(), 0);
+        final mail = await repo.peek('sid-1/main');
+        expect(mail, hasLength(3));
+        // No pending record files survive the catch-up.
+        final left =
+            (await env.listDir('/sessions/--work--/messages/_scheduled'))
+                .valueOrNull ??
+            const [];
+        expect(left.where((e) => e.path.endsWith('.json')), isEmpty);
+        queue.dispose();
+      },
+    );
+
+    test('normal awake timing is unchanged: no early fire', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      await queue.schedule(
+        text: 'half minute',
+        delay: const Duration(seconds: 30),
+      );
+      clock.jump(const Duration(seconds: 29));
+      expect(await queue.deliverDue(), 0);
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      clock.jump(const Duration(seconds: 1));
+      expect(await queue.deliverDue(), 1);
+      expect((await repo.peek('sid-1/main')).single.text, contains('half'));
+      queue.dispose();
+    });
+
+    test(
+      'a recurring self re-arm after a clock jump resumes from "now"',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final (queue, repo, clock) = harness(env);
+        await queue.schedule(
+          text: 'monitor',
+          delay: const Duration(minutes: 30),
+        );
+        clock.jump(const Duration(hours: 6));
+        expect(await queue.deliverDue(), 1);
+        // The agent re-arms the next cycle from the CURRENT wall clock —
+        // the missed 02:34/03:04/… cycles are not replayed.
+        await queue.schedule(
+          text: 'monitor',
+          delay: const Duration(minutes: 30),
+        );
+        final dir = '/sessions/--work--/messages/_scheduled';
+        final entry = (await env.listDir(
+          dir,
+        )).valueOrNull!.singleWhere((e) => e.path.endsWith('.json'));
+        final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
+        final record =
+            jsonDecode((await env.readTextFile(path)).valueOrNull!)
+                as Map<String, dynamic>;
+        expect(
+          record['dueMs'],
+          clock.now.millisecondsSinceEpoch +
+              const Duration(minutes: 30).inMilliseconds,
+        );
+        clock.jump(const Duration(minutes: 30));
+        expect(await queue.deliverDue(), 1);
+        expect(await repo.peek('sid-1/main'), hasLength(2));
+        queue.dispose();
+      },
+    );
   });
 }
