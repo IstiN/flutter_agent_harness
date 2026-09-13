@@ -25,11 +25,12 @@ concurrency:
 # Issue #177 — a pull request pays only for what it touched:
 #   changes  → path classification (union semantics, shared files = full gate)
 #   static   → size guard + analyze + publish dry-run        (always, ~1-2 min)
-#   test-core→ dart test sharded ×3, per-shard coverage + junit durations
-#              (core/shared)
+#   test-core→ dart test sharded ×4 (file-level units), per-shard coverage
+#              + junit durations (core/shared)
 #   coverage-gate → merge shard coverage; PR: diff-coverage, main: full ratchet
 #   guards   → CRAP + jscpd                                   (core/shared)
-#   flutter-tests → flutter_app analyze + tests on ubuntu     (app/core/shared;
+#   flutter-analyze → flutter_app analyze on ubuntu          (app/core/shared)
+#   flutter-tests → flutter_app tests sharded ×2 on ubuntu   (app/core/shared;
 #                   golden suite stays in build-macos.yml — goldens are
 #                   host-locked, see issue #177 E5 discussion)
 #   test-faui → packages/fa_ui tests sharded ×3 by manifest   (app/core/shared;
@@ -187,7 +188,7 @@ jobs:
           dart pub publish --dry-run --ignore-warnings
 
   test-core:
-    name: Core tests (shard ${{ matrix.shard }}/3)
+    name: Core tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -197,7 +198,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -219,12 +220,14 @@ jobs:
       - run: dart pub get
 
       # Duration-balanced shards (issue #177 AC3): scripts/test_shards.json
-      # maps test dirs to shards; rebalanced weekly by shard-rebalance.yml.
-      # Unknown tests land in the default bucket (E4); top-level test dirs
-      # missing from the manifest are bin-packed in at runtime by
-      # shard_files.py, so a PR adding one never silently skips them.
-      # The json file-reporter (converted to junit below — dart test has no
-      # built-in junit reporter) feeds the rebalancer real durations
+      # maps test FILES to shards (file-level units — test/cli alone was
+      # half the suite's runtime and undivisible as a dir-unit); rebalanced
+      # weekly by shard-rebalance.yml from junit durations. Bootstrap here
+      # is filecount-balanced; the first weekly junit rebalance converges
+      # to duration balance. Unknown test files are bin-packed in at
+      # runtime by shard_files.py, so a PR adding one never silently skips
+      # it. The json file-reporter (converted to junit below — dart test
+      # has no built-in junit reporter) feeds the rebalancer real durations
       # (issue #194 AC3).
       - name: dart test --coverage (shard ${{ matrix.shard }})
         run: |
@@ -404,12 +407,15 @@ jobs:
                 f'list 500 sessions {listed} ms')
           EOF
 
-  flutter-tests:
-    name: Flutter app tests (ubuntu)
+  # Flutter app analyze split out of the test job (was serial pub get →
+  # analyze → test in one 6-min job): analyze runs in parallel with the
+  # sharded test legs, each leg no longer waits for it.
+  flutter-analyze:
+    name: Flutter app analyze (ubuntu)
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-    timeout-minutes: 15
+    timeout-minutes: 8
     permissions:
       contents: read
     steps:
@@ -419,6 +425,13 @@ jobs:
         with:
           channel: stable
           cache: true
+
+      - name: Pub cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pubcache-flutter-${{ runner.os }}-
 
       # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
       # newer flutter validates assets at pub-get/test-build time, so the
@@ -445,32 +458,82 @@ jobs:
       - name: flutter analyze
         run: cd flutter_app && flutter analyze --no-fatal-infos --no-fatal-warnings
 
+  # flutter_app tests sharded ×2 by a deterministic modulo split of the
+  # sorted suite (same file list as before — golden + cli_visual stay out,
+  # host-locked): each leg is ~half the test phase; pub-cache shared with
+  # flutter-analyze so a warm leg pair reuses downloads.
+  flutter-tests:
+    name: Flutter app tests (shard ${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Pub cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pubcache-flutter-${{ runner.os }}-
+
+      # See flutter-analyze: placeholder must exist before pub get.
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - run: cd flutter_app && flutter pub get
+
       # Golden suite is intentionally NOT here: goldens are host-locked
       # (same macOS host renders them differently across minor SDKs — see the
       # dynamic_messages saga) and would all redden on ubuntu. Widget/unit
       # tests run here on a cheap runner; goldens stay guarded by
       # build-macos.yml and the nightly full matrix (issue #177 E5/OQ3:
       # pinned-font golden migration is a follow-up, not this card).
-      - name: flutter test (excluding integration + golden suites)
+      - name: flutter test (shard ${{ matrix.shard }}/2)
         # Goldens stay out (host-locked, see the golden comment above).
         # Native-dependent tests (quickjs_c_bridge .so, mic channel) are NOT
         # excluded — issue #184 made them host-portable via the skip guard in
         # flutter_app/test/native_test_guard.dart + the injected-ASR fix.
+        # Deterministic modulo split of the sorted file list: shard i takes
+        # lines where NR % 2 == i — union == the old single job's list.
         run: |
           cd flutter_app
-          files=$(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*')
-          flutter test --exclude-tags integration $files
-
-      # packages/fa_ui tests moved to the sharded test-faui job below
-      # (issue #283): 9m54s monolith → 3 duration-balanced shards.
+          find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*' \
+            | sort | awk -v i=${{ matrix.shard }} 'NR % 2 == i' > shard-files.txt
+          echo "shard files: $(wc -l < shard-files.txt)"
+          flutter test --exclude-tags integration $(cat shard-files.txt)
 
       # Issue #239 AC3: the App Store submission pre-flight matrix is plain
       # ruby over flutter_app/fastlane/appstore_preflight.rb — no gems,
       # runs in under a second on the runner's stock ruby.
       # Issue #289 adds the fastlane guard/preflight suites (android id
       # guard + Play upload pre-flight) — same plain-ruby contract, so the
-      # step loops over every fastlane test file.
+      # step loops over every fastlane test file. Shard 0 only: once is
+      # enough (fa PR #333).
       - name: Fastlane pre-flight suites (ruby)
+        if: matrix.shard == 0
         run: |
           for t in flutter_app/fastlane/test/*_test.rb; do
             echo "::group::ruby $t"
