@@ -98,7 +98,8 @@ jobs:
         with:
           python-version: '3.13'
 
-      - run: pip install 'harbor[modal]'
+      # Pinned: the adapter targets the 0.23.0 BaseInstalledAgent contract.
+      - run: pip install 'harbor[modal]==0.23.0'
 
       # Download the dataset once for classification; harbor re-fetches
       # into its own cache during the run.
@@ -113,10 +114,9 @@ jobs:
           # Dataset name at version: dir name is the dataset slug.
           ds_dir="$RUNNER_TEMP/ds/$(basename "${DATASET%%@*}")"
           [ -d "$ds_dir" ] || ds_dir="$RUNNER_TEMP/ds"
-          out="$(python bench/harbor_fa/split_tasks.py "$ds_dir" \
-            --filter "$TASKS" --shards "$SHARDS")"
-          echo "$out"
-          eval "$out" >> "$GITHUB_OUTPUT"
+          # split_tasks.py writes the matrix/counts into GITHUB_OUTPUT itself.
+          python bench/harbor_fa/split_tasks.py "$ds_dir" \
+            --filter "$TASKS" --shards "$SHARDS"
 
   bench:
     name: fa on tbench 4.0, shard ${{ matrix.i }} (${{ matrix.env }}, ${{ inputs.model }})
@@ -142,7 +142,8 @@ jobs:
         with:
           python-version: '3.13'
 
-      - run: pip install 'harbor[modal]'
+      # Pinned: the adapter targets the 0.23.0 BaseInstalledAgent contract.
+      - run: pip install 'harbor[modal]==0.23.0'
 
       - name: Run harbor (fa agent, ${{ matrix.env }} env)
         env:

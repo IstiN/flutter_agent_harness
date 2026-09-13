@@ -117,9 +117,11 @@ class FaAgent(BaseInstalledAgent):
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Fold fa's session token accounting into the agent context.
 
-        fa session JSONL assistant records carry inputTokens / outputTokens /
-        cacheReadTokens / cacheWriteTokens per step; summed across steps this
-        is the billed usage for the trial.
+        fa session JSONL assistant records embed
+        ``message.usage = {input, output, cacheRead, cacheWrite, ...}``
+        (Usage.toJson in lib/src/types.dart); summed across records this is
+        the billed usage for the trial. Flat ``inputTokens``-style keys are
+        accepted as a fallback for older session shapes.
         """
         sessions_dir = self.logs_dir / "fah-sessions"
         if not sessions_dir.is_dir():
@@ -127,16 +129,18 @@ class FaAgent(BaseInstalledAgent):
         n_in = n_out = n_cache = 0
         for path in sessions_dir.rglob("*.jsonl"):
             for line in path.read_text(errors="replace").splitlines():
-                if '"inputTokens"' not in line and '"outputTokens"' not in line:
+                if '"usage"' not in line and '"inputTokens"' not in line:
                     continue
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                n_in += rec.get("inputTokens") or 0
-                n_out += rec.get("outputTokens") or 0
-                n_cache += (rec.get("cacheReadTokens") or 0) + (
-                    rec.get("cacheWriteTokens") or 0
+                message = rec.get("message") or {}
+                usage = message.get("usage") or rec
+                n_in += usage.get("input") or usage.get("inputTokens") or 0
+                n_out += usage.get("output") or usage.get("outputTokens") or 0
+                n_cache += (usage.get("cacheRead") or 0) + (
+                    usage.get("cacheWrite") or 0
                 )
         if n_in or n_out:
             context.n_input_tokens = (context.n_input_tokens or 0) + n_in
