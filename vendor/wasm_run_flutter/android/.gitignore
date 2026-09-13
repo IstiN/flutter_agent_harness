@@ -1,0 +1,4 @@
+# Build outputs (NDK/CMake download of prebuilt wasm_run binaries).
+.cxx/
+src/main/jniLibs/
+*.tar.gz

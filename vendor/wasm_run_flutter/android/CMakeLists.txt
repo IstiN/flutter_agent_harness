@@ -29,3 +29,14 @@ execute_process(
   COMMAND ${CMAKE_COMMAND} -E tar xzf ${ArchivePath}
   WORKING_DIRECTORY ${LibRoot}
 )
+
+# Play's 16 KB page-size gate (issue #289 DoD item 1): arm64-v8a shared
+# objects must be linked with a 16 KB max page size (LOAD segment align
+# >= 0x4000) or Play rejects updates targeting API 35+ and the device
+# degrades to page-size compat mode. The flag arrives from build.gradle
+# (defaultConfig externalNativeBuild) and is applied to arm64-v8a links
+# only; the other ABIs keep the toolchain default page size.
+if(ANDROID_ABI STREQUAL "arm64-v8a" AND WASM_RUN_ARM64_LINKER_FLAGS)
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${WASM_RUN_ARM64_LINKER_FLAGS}"
+      CACHE STRING "Shared linker flags" FORCE)
+endif()

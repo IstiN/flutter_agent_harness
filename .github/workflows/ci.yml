@@ -708,10 +708,390 @@ jobs:
   # Aggregate required check: branch protection requires ONE stable context.
   # Skipped legs (path-filtered out) count as pass — a docs PR must go green
   # on static alone.
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Issue #280: PR-level BUILD verification. The gates above analyze and
+  # test but never COMPILE a platform target — a PR could go green while
+  # breaking the iOS/macOS/Android/web build (pod/entitlement drift,
+  # web-only compile errors, asset manifest breakage), discovered later by
+  # build-mobile.yml/build-macos.yml at release time. Four parallel debug
+  # legs below close that gap, gated on app/shared changes only (docs/core
+  # PRs never pay). Debug mode on PRs: compile-truth is the goal; release-
+  # only concerns (tree-shaking, R8, codesign) live in the nightly release
+  # matrix (nightly.yml). Budgets (#177): ≤8 min warm / ≤15 min cold per
+  # leg, ≤10 min wall added to an app-touching PR (legs run in parallel).
+  # E4: both macOS legs use GitHub-hosted macos-latest — every job gets its
+  # own ephemeral VM, so ios+macos are never serialized on one runner (and
+  # PR code never lands on the self-hosted release pool).
+  # ─────────────────────────────────────────────────────────────────────────
+
+  build-web:
+    name: Build web (debug)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to the same SDK as the release path (#281): 3.47.x. The
+      # action's cache key embeds the resolved SDK version, so an SDK bump
+      # in a PR never restores a poisoned cache (E1).
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - run: cd flutter_app && flutter pub get
+
+      - name: flutter build web
+        # E3: warnings (including the Wasm dry-run diagnostics) are allowed;
+        # compile errors fail via the exit code — same fatal semantics as
+        # the flutter-tests leg's analyze step.
+        run: cd flutter_app && flutter build web
+
+  build-android:
+    name: Build Android APK (debug)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      # The google-services Gradle plugin (applied unconditionally in
+      # android/app/build.gradle.kts) refuses to run without this file.
+      # #299 commits a placeholder (negated in .gitignore) and the release
+      # path overwrites it from GOOGLE_SERVICES_JSON_BASE64; PR legs have no
+      # such secret, so seed the same structurally-valid placeholder with
+      # the #299 release identity (dev.fa1.app) — debug APKs never talk to
+      # Firebase with it; the goal here is compile truth (#280).
+      - name: Create placeholder google-services.json
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > android/app/google-services.json << 'EOF'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "fa1-placeholder",
+              "storage_bucket": "fa1-placeholder.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+                  "android_client_info": {
+                    "package_name": "dev.fa1.app"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyA-PLACEHOLDER-KEY-FOR-DEBUG-BUILDS-000000"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - run: cd flutter_app && flutter pub get
+
+      - name: flutter build apk (debug)
+        run: cd flutter_app && flutter build apk --debug
+
+  build-ios:
+    name: Build iOS (debug, unsigned)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      # bf81411e added GoogleService-Info.plist to the Runner target
+      # resources (a hard build input). The real plist is gitignored; the
+      # release path writes it from GOOGLE_SERVICE_INFO_PLIST_BASE64
+      # (build-mobile.yml), but PR legs have no such secret — seed a
+      # placeholder, same trick as the android leg's placeholder
+      # google-services.json. Xcode only copies the file; Firebase reads
+      # it at app runtime, never at build time.
+      - name: Write placeholder GoogleService-Info.plist (iOS)
+        run: |
+          set -euo pipefail
+          cat > flutter_app/ios/Runner/GoogleService-Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>GOOGLE_APP_ID</key>
+          	<string>1:000000000000:ios:0000000000000000000000</string>
+          	<key>API_KEY</key>
+          	<string>AIzaSyA-PLACEHOLDER-KEY-FOR-DEBUG-BUILDS-000000</string>
+          	<key>PROJECT_ID</key>
+          	<string>fa1-placeholder</string>
+          	<key>PROJECT_NUMBER</key>
+          	<string>000000000000</string>
+          	<key>BUNDLE_ID</key>
+          	<string>dev.fa1.app</string>
+          	<key>GCM_SENDER_ID</key>
+          	<string>000000000000</string>
+          	<key>IS_ANALYTICS_ENABLED</key>
+          	<false/>
+          	<key>IS_CRASHLYTICS_ENABLED</key>
+          	<false/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint flutter_app/ios/Runner/GoogleService-Info.plist
+
+      # E2: pods cache keyed on Podfile.lock AND a weekly-rolled epoch, so
+      # CocoaPods spec drift is re-verified at least weekly even when the
+      # lockfile is unchanged. restore-keys falls back to last week's
+      # same-lock cache (never a cross-lock cache).
+      - name: Compute weekly pods-cache epoch
+        id: week
+        run: echo "epoch=$(date -u +%Y-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache CocoaPods (iOS)
+        uses: actions/cache@v4
+        with:
+          path: flutter_app/ios/Pods
+          key: ios-pods-ci-v1-${{ hashFiles('flutter_app/ios/Podfile.lock') }}-${{ steps.week.outputs.epoch }}
+          restore-keys: |
+            ios-pods-ci-v1-${{ hashFiles('flutter_app/ios/Podfile.lock') }}-
+
+      - name: Restore vendored WasmRun iOS framework
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          # The prebuilt XCFramework is excluded from git (the release path
+          # prefers the self-hosted runner's local copy; GitHub-hosted PR
+          # legs always take the pinned upstream fallback).
+          DEST="vendor/wasm_run_flutter/ios/Frameworks"
+          rm -rf "$DEST/WasmRun.xcframework"
+          mkdir -p "$DEST"
+          # --retry alone skips transient mid-transfer resets (curl 56).
+          curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+            -o /tmp/WasmRun.xcframework.zip \
+            https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
+          unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
+          ls -la "$DEST/WasmRun.xcframework"
+
+      - run: cd flutter_app && flutter pub get
+
+      - name: flutter build ios (debug, unsigned)
+        # E2: when the failure is in the CocoaPods layer, name the fix
+        # (repo update + lockfile regen), not a raw stack.
+        run: |
+          set -o pipefail
+          cd flutter_app
+          if ! flutter build ios --debug --no-codesign 2>&1 | tee /tmp/build-ios.log; then
+            if grep -qiE 'cocoapods|pod install|pod repo|No podspec' /tmp/build-ios.log; then
+              echo "::error::iOS build failed in the CocoaPods layer — likely spec drift. Fix: cd flutter_app/ios && pod install --repo-update, commit the regenerated Podfile.lock (the pods cache re-rolls weekly, see the cache step). Raw log above."
+            fi
+            exit 1
+          fi
+
+  build-macos:
+    name: Build macOS (debug)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      # Same reason as the iOS leg: bf81411e made Runner/GoogleService-Info.plist
+      # a build input; gitignored + release-secret-only, so PR legs seed a
+      # placeholder. Also satisfies the 'Crashlytics: upload dSYMs' phase's
+      # inputPaths (the phase itself skips in debug — no dSYM).
+      - name: Write placeholder GoogleService-Info.plist (macOS)
+        run: |
+          set -euo pipefail
+          cat > flutter_app/macos/Runner/GoogleService-Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>GOOGLE_APP_ID</key>
+          	<string>1:000000000000:macos:0000000000000000000000</string>
+          	<key>API_KEY</key>
+          	<string>AIzaSyA-PLACEHOLDER-KEY-FOR-DEBUG-BUILDS-000000</string>
+          	<key>PROJECT_ID</key>
+          	<string>fa1-placeholder</string>
+          	<key>PROJECT_NUMBER</key>
+          	<string>000000000000</string>
+          	<key>BUNDLE_ID</key>
+          	<string>dev.fa1.app</string>
+          	<key>GCM_SENDER_ID</key>
+          	<string>000000000000</string>
+          	<key>IS_ANALYTICS_ENABLED</key>
+          	<false/>
+          	<key>IS_CRASHLYTICS_ENABLED</key>
+          	<false/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint flutter_app/macos/Runner/GoogleService-Info.plist
+
+      - name: Compute weekly pods-cache epoch
+        id: week
+        run: echo "epoch=$(date -u +%Y-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache CocoaPods (macOS)
+        uses: actions/cache@v4
+        with:
+          path: flutter_app/macos/Pods
+          key: macos-pods-ci-v1-${{ hashFiles('flutter_app/macos/Podfile.lock') }}-${{ steps.week.outputs.epoch }}
+          restore-keys: |
+            macos-pods-ci-v1-${{ hashFiles('flutter_app/macos/Podfile.lock') }}-
+
+      - name: Restore vendored WasmRun macOS framework
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          # Same upstream-release fallback as the iOS leg (framework is
+          # excluded from git).
+          DEST="vendor/wasm_run_flutter/macos/Frameworks"
+          rm -rf "$DEST/WasmRun.xcframework"
+          mkdir -p "$DEST"
+          curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+            -o /tmp/WasmRun.xcframework.zip \
+            https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
+          unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
+          ls -la "$DEST/WasmRun.xcframework"
+
+      - run: cd flutter_app && flutter pub get
+
+      # The macOS Podfile bundles the LiteRT-LM companion dylibs via a
+      # Runner script phase that fails on a fresh runner ("Could not find
+      # macOS companion dylibs") — seed from the pinned upstream native
+      # release, sha256-verified (same incantation as build-macos.yml).
+      - name: Ensure flutter_gemma macOS companion dylibs
+        run: |
+          set -euo pipefail
+          GEMMA_CACHE="$HOME/Library/Caches/flutter_gemma/native/macos_arm64"
+          if [ -f "$GEMMA_CACHE/libGemmaModelConstraintProvider.dylib" ]; then
+            echo "companion dylibs already cached"
+          else
+            echo "seeding companion dylibs from flutter_gemma native-v0.16.0"
+            mkdir -p "$GEMMA_CACHE"
+            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+              -o /tmp/litertlm-macos_arm64.tar.gz \
+              https://github.com/DenisovAV/flutter_gemma/releases/download/native-v0.16.0/litertlm-macos_arm64.tar.gz
+            echo "c597554a7a5cdf099658227099a54ef4916c5802b9182757e656e1788f9426b6  /tmp/litertlm-macos_arm64.tar.gz" | shasum -a 256 -c -
+            tar xzf /tmp/litertlm-macos_arm64.tar.gz -C "$GEMMA_CACHE"
+          fi
+          ls -la "$GEMMA_CACHE"
+
+      - name: flutter build macos (debug)
+        run: |
+          set -o pipefail
+          cd flutter_app
+          if ! flutter build macos --debug 2>&1 | tee /tmp/build-macos.log; then
+            if grep -qiE 'cocoapods|pod install|pod repo|No podspec' /tmp/build-macos.log; then
+              echo "::error::macOS build failed in the CocoaPods layer — likely spec drift. Fix: cd flutter_app/macos && pod install --repo-update, commit the regenerated Podfile.lock (the pods cache re-rolls weekly, see the cache step). Raw log above."
+            fi
+            exit 1
+          fi
+
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, perf-gate, cli-visual-settings]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, perf-gate, cli-visual-settings, build-web, build-android, build-ios, build-macos]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -770,7 +1150,7 @@ jobs:
     name: Per-step timing telemetry
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, build-web, build-android, build-ios, build-macos]
     if: always()
     permissions:
       actions: read
