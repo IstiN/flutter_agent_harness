@@ -6,6 +6,7 @@
 /// openai-completions adapter is ported; pricing tiers and the full compat
 /// matrix arrive with later providers.
 library;
+import 'dart:math' show min;
 
 import 'types.dart';
 
@@ -144,6 +145,16 @@ final class Model {
   /// adapter auto-detects from [provider]/[baseUrl].
   final OpenAICompletionsCompat? compat;
 }
+
+/// The effective context window: [contextWindow] clamped to [cap] when an
+/// owner cap is configured (`agent.contextWindowCap`, issue #273) and
+/// positive; a `null`/non-positive cap leaves the window untouched, so
+/// uncapped runs behave byte-identically to before. Every consumer of the
+/// EFFECTIVE window — the compaction thresholds, the ctx meter/footer, the
+/// loop's over-window guard — computes through this (one clamp point, not
+/// one per consumer).
+int effectiveContextWindow(int contextWindow, int? cap) =>
+    cap == null || cap <= 0 ? contextWindow : min(contextWindow, cap);
 
 /// Fills in [Usage.cost] from the model's [ModelCost] rates.
 ///

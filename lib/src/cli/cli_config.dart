@@ -58,6 +58,44 @@ ProviderTimeoutsOverride? _parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
+/// Parses the `agent:` section (issue #273): `contextWindowCap` — the
+/// owner-side effective context cap. The cap clamps the EFFECTIVE context
+/// window everywhere it is consumed (compaction thresholds, the ctx
+/// meter/footer, the loop's over-window guard) while the model keeps its
+/// real window. Strict like every section: a bad schema throws
+/// [ConfigException] at boot.
+///
+/// The cap must stay at or above the compaction reserve (16384 tokens):
+/// the compaction trigger is `window - reserve`, and a smaller cap would
+/// drive that threshold negative.
+int? _parseAgentSection(Object? node) {
+  if (node == null) return null;
+  if (node is! YamlMap) {
+    throw ConfigException('agent must be a map, got: $node');
+  }
+  int? cap;
+  for (final key in node.keys) {
+    if (key != 'contextWindowCap') {
+      throw ConfigException('unknown "agent" key: $key');
+    }
+    final value = node[key];
+    if (value is! int || value <= 0) {
+      throw ConfigException(
+        '"agent.contextWindowCap" must be a positive integer (tokens)',
+      );
+    }
+    if (value < 16384) {
+      throw ConfigException(
+        '"agent.contextWindowCap" must be at least 16384 — below the '
+        'compaction reserve the compaction trigger threshold would go '
+        'negative',
+      );
+    }
+    cap = value;
+  }
+  return cap;
+}
+
 /// Whether a raw `customProviders:` list node is a ghost entry named
 /// after a built-in catalog provider (issue #221). Non-map nodes are NOT
 /// ghosts — they fall through to [CustomProviderEntry.fromYaml], which
@@ -135,6 +173,7 @@ final class CliConfig {
     this.redact,
     this.compactionEngine,
     this.images,
+    this.contextWindowCap,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -214,6 +253,9 @@ final class CliConfig {
         label: '~/.fah/config.yaml',
       ),
       images: _parseImagesSection(map['images']),
+      // The agent section (owner-side context cap, issue #273) is strict
+      // too.
+      contextWindowCap: _parseAgentSection(map['agent']),
       // The fabric section (issue #27 phase 2 discovery announcements) is
       // strict too.
       fabric: map['fabric'] == null
@@ -358,16 +400,22 @@ final class CliConfig {
   /// the effective engine resolves global < project < runtime.
   final CompactionEngine? compactionEngine;
 
-  /// Optional `images:` section (session image registry, issue #171):
-  /// `registry` kill switch + `maxPerRequest` cap. `null` keeps the
-  /// defaults (registry on, [defaultMaxImagesPerRequest]).
-  final ImageRegistryConfig? images;
-
   /// Optional `redact:` section — layered secret redaction. `null` means
   /// the section is absent (redaction still runs with default config; the
   /// pipeline assembly happens in the host startup, see
   /// [buildRedactionPipeline]).
   final RedactionConfig? redact;
+
+  /// `registry` kill switch + `maxPerRequest` cap. `null` keeps the
+  /// defaults (registry on, [defaultMaxImagesPerRequest]).
+  final ImageRegistryConfig? images;
+
+  /// Owner-side effective context cap from the `agent:` section
+  /// (`contextWindowCap`, issue #273): clamps the EFFECTIVE context window
+  /// everywhere it is consumed (compaction thresholds, ctx meter/footer,
+  /// the loop guard). `null` = uncapped (the raw model window).
+  final int? contextWindowCap;
+
 
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
@@ -398,6 +446,7 @@ final class CliConfig {
       redact: redact,
       compactionEngine: compactionEngine,
       images: images,
+      contextWindowCap: contextWindowCap,
     );
   }
 
@@ -458,6 +507,9 @@ final class CliConfig {
       buffer.write('compaction:\n  engine: ${compactionEngine!.value}\n');
     }
     if (images != null) buffer.write(_imagesYaml());
+    if (contextWindowCap != null) {
+      buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
+    }
     return buffer.toString();
   }
 

@@ -37,6 +37,7 @@ import '../model.dart';
 import '../sse_decoder.dart';
 import '../types.dart';
 import 'provider_common.dart';
+import 'thinking.dart';
 
 const _fineGrainedToolStreamingBeta = 'fine-grained-tool-streaming-2025-05-14';
 const _interleavedThinkingBeta = 'interleaved-thinking-2025-05-14';
@@ -56,10 +57,11 @@ const _anthropicMessageEvents = {
 ///
 /// Ported subset of pi's `AnthropicOptions` (which extends `StreamOptions`):
 /// temperature, maxTokens, apiKey, headers, signal, thinkingEnabled,
-/// thinkingBudgetTokens, effort, thinkingDisplay, interleavedThinking,
-/// cacheRetention, toolChoice, onPayload, onResponse. pi's `signal:
-/// AbortSignal` is [cancelToken] here. OAuth, metadata, sessionId, timeoutMs,
-/// maxRetries, and the pre-built SDK client are not ported yet.
+/// thinkingBudgetTokens, thinkingLevel, effort, thinkingDisplay,
+/// interleavedThinking, cacheRetention, toolChoice, onPayload, onResponse.
+/// pi's `signal: AbortSignal` is [cancelToken] here. OAuth, metadata,
+/// sessionId, timeoutMs, maxRetries, and the pre-built SDK client are not
+/// ported yet.
 final class AnthropicOptions {
   const AnthropicOptions({
     this.temperature,
@@ -69,6 +71,7 @@ final class AnthropicOptions {
     this.cancelToken,
     this.thinkingEnabled,
     this.thinkingBudgetTokens,
+    this.thinkingLevel,
     this.effort,
     this.thinkingDisplay,
     this.interleavedThinking,
@@ -106,6 +109,13 @@ final class AnthropicOptions {
   /// Token budget for budget-based extended thinking. Default: 1024 when
   /// [thinkingEnabled] is true and no budget is provided.
   final int? thinkingBudgetTokens;
+
+  /// Thinking-level rung for the budget ladder: `minimal`, `low`, `medium`,
+  /// `high` (pi's `ThinkingLevel`; `xhigh`/`max` fold to `high`). Drives the
+  /// budget chosen by [adjustMaxTokensForThinking]; `null` means no level
+  /// requested — with [thinkingEnabled] true and no explicit
+  /// [thinkingBudgetTokens] this rides the `minimal` rung.
+  final String? thinkingLevel;
 
   /// Effort level for adaptive-thinking models (`low`, `medium`, `high`,
   /// `xhigh`, `max`). Accepted for forward compatibility; only sent once
@@ -665,6 +675,17 @@ Map<String, dynamic> _buildParams(
   _ResolvedCompat compat,
 ) {
   final cacheControl = _getCacheControl(options, compat);
+  // The ladder only applies when thinking is actually requested; pi's
+  // StreamOptions default the level to 'minimal' once thinking is enabled.
+  final thinkingLevel =
+      (options?.thinkingEnabled == true)
+          ? (options!.thinkingLevel ?? 'minimal')
+          : null;
+  final adjusted = adjustMaxTokensForThinking(
+    baseMaxTokens: options?.maxTokens,
+    modelMaxTokens: model.maxTokens,
+    level: thinkingLevel,
+  );
   final params = <String, dynamic>{
     'model': model.id,
     'messages': _convertMessages(
@@ -672,14 +693,14 @@ Map<String, dynamic> _buildParams(
       cacheControl: cacheControl,
       allowEmptySignature: compat.allowEmptySignature,
     ),
-    'max_tokens': options?.maxTokens ?? model.maxTokens,
+    'max_tokens': adjusted.maxTokens,
     'stream': true,
   };
 
   _addSystemParam(params, context, cacheControl);
   _addTemperatureParam(params, options, compat);
   _addToolsParam(params, context, compat, cacheControl);
-  _addThinkingParam(params, model, options);
+  _addThinkingParam(params, model, options, adjusted.thinkingBudget);
   _addToolChoiceParam(params, options);
 
   return params;
@@ -730,18 +751,23 @@ void _addToolsParam(
 }
 
 /// Configures thinking mode: budget-based enabled, explicitly disabled, or
-/// provider default (omitted). pi's adaptive-thinking branch
-/// (forceAdaptiveThinking, output_config effort) is not ported yet.
+/// provider default (omitted). [ladderBudget] is the budget computed in
+/// [_buildParams] via [adjustMaxTokensForThinking]; an explicit
+/// [AnthropicOptions.thinkingBudgetTokens] wins over it (enabled + no level
+/// + no explicit budget still sends 1024, the ladder's minimal rung —
+/// byte-identical to the old hard default). pi's adaptive-thinking branch
+/// (forceAdaptiveThinking, output_config effort) is still not ported.
 void _addThinkingParam(
   Map<String, dynamic> params,
   Model model,
   AnthropicOptions? options,
+  int ladderBudget,
 ) {
   if (model.reasoning && options?.thinkingEnabled != null) {
     if (options!.thinkingEnabled!) {
       params['thinking'] = {
         'type': 'enabled',
-        'budget_tokens': options.thinkingBudgetTokens ?? 1024,
+        'budget_tokens': options.thinkingBudgetTokens ?? ladderBudget,
         'display': options.thinkingDisplay ?? 'summarized',
       };
     } else {

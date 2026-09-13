@@ -1901,6 +1901,7 @@ Future<void> _runApp(List<String> args) async {
       alwaysAllowTools: saved.allowedTools.toSet(),
       runtimeTools: runtimeTools,
       compactionEngine: compactionEngine,
+      contextWindowCap: saved.contextWindowCap,
       modelRolesResolver: rolesResolver,
       // The live models config (`models:` section): `/models set`/`remove`
       // mutate its media slot overrides and `/model <name>` resolves its
