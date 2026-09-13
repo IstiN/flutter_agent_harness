@@ -203,6 +203,13 @@ extension AgentServiceSessions on AgentService {
     abort();
     await waitForIdle();
     if (gen != _loadGeneration) return;
+    // Phased open timing (issue #262 AC0): every phase below logs into
+    // the summary line at the end — the 36 s stall names its owner.
+    final openSw = Stopwatch()..start();
+    var storageMs = 0;
+    var branchMs = 0;
+    var contextMs = 0;
+    var ledgerMs = 0;
     // Skeleton-first (issue #199 AC2): the session shell renders BEFORE
     // the history parses, so the composer is live while the open runs.
     _sessionId = metadata.id;
@@ -224,12 +231,16 @@ extension AgentServiceSessions on AgentService {
       session = await _repo.open(metadata);
     }
     if (gen != _loadGeneration) return;
+    storageMs = openSw.elapsedMilliseconds;
     // The count belongs to the session being opened; the background
     // refresh at the end of this method fills it in.
     _historyAboveCount = null;
     _viewBranch = await session.getBranch();
     if (gen != _loadGeneration) return;
+    branchMs = openSw.elapsedMilliseconds - storageMs;
     final context = await session.buildContext();
+    if (gen != _loadGeneration) return;
+    contextMs = openSw.elapsedMilliseconds - storageMs - branchMs;
     if (gen != _loadGeneration) return;
     final contextMessages = context.messages;
     _agent.reset();
@@ -240,8 +251,10 @@ extension AgentServiceSessions on AgentService {
     _startSessionWatch();
     // The ledger re-projects the active branch (records carry richer
     // structure than the rebuilt message list).
+    final ledgerSw = Stopwatch()..start();
     await _rebuildTrajectory(records: _viewBranch);
     if (gen != _loadGeneration) return;
+    ledgerMs = ledgerSw.elapsedMilliseconds;
     // Restore the session's own model: same wire kind → modelId override;
     // the provider itself stays the configured connection (its key lives
     // in the Keychain, not in the session). An unresolvable or
@@ -316,6 +329,15 @@ extension AgentServiceSessions on AgentService {
       ..clear()
       ..addAll(rebuilt);
     _notify();
+    // First interactive frame landed (composer + latest window): the
+    // summary line names every phase owner (issue #262 AC0).
+    AppLog.i(
+      'open',
+      '${metadata.id}: storage=${storageMs}ms branch=${branchMs}ms '
+          'context=${contextMs}ms ledger=${ledgerMs}ms total='
+          '${openSw.elapsedMilliseconds}ms '
+          '(${_viewBranch?.length ?? 0} records in view)',
+    );
     // Background count of the records above the window (newline stream,
     // no decode): fills in the banner count without blocking the load.
     unawaited(_refreshHistoryAbove());

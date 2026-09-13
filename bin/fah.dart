@@ -713,22 +713,30 @@ Future<int> _runTrajectoryCommand(
     );
     return 1;
   }
+  // Phased open timing (issue #262 AC0): FA_TIMING=1 prints the
+  // storage-read+parse, ledger-projection, and render durations to stderr.
+  final timing = _envTruthy('FA_TIMING');
+  final parseSw = Stopwatch()..start();
   final records = await session.getBranch();
+  parseSw.stop();
+  final buildSw = Stopwatch()..start();
+  final baseSnapshot = trajectorySnapshotOf(records);
+  buildSw.stop();
+  final renderSw = Stopwatch()..start();
+  var exitCode = 0;
   switch (command.verb) {
     case 'view':
       final snapshot = command.at == null
-          ? trajectorySnapshotOf(records)
+          ? baseSnapshot
           : trajectorySnapshotAt(records, command.at!);
       if (snapshot == null) {
         io.writeln(
-          trajectoryRangeError(
-            command.at!,
-            trajectorySnapshotOf(records).records.length,
-          ),
+          trajectoryRangeError(command.at!, baseSnapshot.records.length),
         );
-        return 1;
+        exitCode = 1;
+        break;
       }
-      return _printTrajectory(
+      exitCode = _printTrajectory(
         io,
         command.json
             ? [
@@ -737,25 +745,26 @@ Future<int> _runTrajectoryCommand(
               ]
             : trajectoryLines(snapshot, width: io.columns),
       );
+      break;
     case 'cost':
-      return _printTrajectory(
-        io,
-        trajectoryCostLines(trajectorySnapshotOf(records)),
-      );
+      exitCode = _printTrajectory(io, trajectoryCostLines(baseSnapshot));
+      break;
     case 'inspect':
-      final snapshot = trajectorySnapshotOf(records);
+      final snapshot = baseSnapshot;
       final index = int.parse(command.positionals.first);
       final lines = trajectoryInspectLines(snapshot, index);
       if (lines == null) {
         io.writeln(trajectoryRangeError(index, snapshot.records.length));
-        return 1;
+        exitCode = 1;
+        break;
       }
-      return _printTrajectory(
+      exitCode = _printTrajectory(
         io,
         command.json && snapshot.records.isNotEmpty
             ? [trajectoryJsonLine(snapshot.records[index - 1])]
             : lines,
       );
+      break;
     case 'tail':
       io.writeln('trajectory: following records — Ctrl+C to stop');
       final tailer = TrajectoryTailer(width: io.columns);
@@ -777,8 +786,19 @@ Future<int> _runTrajectoryCommand(
         }
       }
   }
-  return 0;
+  renderSw.stop();
+  if (timing) {
+    stderr.writeln(
+      'trajectory timing: parse=${parseSw.elapsedMilliseconds}ms '
+          'build=${buildSw.elapsedMilliseconds}ms '
+          'render=${renderSw.elapsedMilliseconds}ms '
+          'total=${parseSw.elapsedMilliseconds + buildSw.elapsedMilliseconds + renderSw.elapsedMilliseconds}ms '
+          'records=${records.length}',
+    );
+  }
+  return exitCode;
 }
+
 
 /// Prints trajectory payload lines to stdout (newline-terminated).
 int _printTrajectory(CliIO io, List<String> lines) {
