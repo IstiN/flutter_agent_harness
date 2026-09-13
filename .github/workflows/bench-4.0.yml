@@ -122,8 +122,11 @@ jobs:
           ds_dir="$RUNNER_TEMP/ds/$(basename "${DATASET%%@*}")"
           [ -d "$ds_dir" ] || ds_dir="$RUNNER_TEMP/ds"
           # split_tasks.py writes the matrix/counts into GITHUB_OUTPUT itself.
+          # harbor -i matches qualified ids (<org>/<name>): prefix with the
+          # org part of the dataset spec.
           python bench/harbor_fa/split_tasks.py "$ds_dir" \
-            --filter "$TASKS" --shards "$SHARDS" --cpu-env "$CPU_ENV"
+            --filter "$TASKS" --shards "$SHARDS" --cpu-env "$CPU_ENV" \
+            --task-prefix "${DATASET%%/*}/"
 
   bench:
     name: fa on tbench 4.0, shard ${{ matrix.i }} (${{ matrix.env }}, ${{ inputs.model }})
