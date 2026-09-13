@@ -1127,22 +1127,6 @@ class AgentCli {
     };
   }
 
-  /// Unknown finish_reason catalogue visibility (issue #312): a vendor
-  /// word outside the classification table defaults to transient — say so
-  /// (dim line + fa.log) so the table can grow from real traffic.
-  void _wireUnknownFinishReason() {
-    onUnknownFinishReason = (reason) {
-      io.writeln(
-        _style.dim(
-          '[provider] unknown finish_reason "$reason" — treating as '
-          'transient (retryable); consider adding it to the '
-          'classification table',
-        ),
-      );
-      _logDiagnostic('unknown finish_reason sid=$_logSid reason=$reason');
-    };
-  }
-
   Future<void> run() async {
     await _cubeBootRestore();
     await _loadAgentContext();
@@ -1160,7 +1144,9 @@ class AgentCli {
     _logDiagnostic('fa boot sid=$_logSid version=$_version');
     _wireTransientRetryNotice();
     _wireImageDropNotice();
-    _wireUnknownFinishReason();
+    // Issue #312: catalogue unclassified vendor words (default transient).
+    onUnknownFinishReason = (reason) =>
+        _logDiagnostic('unknown finish_reason sid=$_logSid reason=$reason');
     final presence = await _registerLivePresence();
     // Phase 3a: rehydrate the subagent registry from the resumed session's
     // `subagent_registry` records — agents of this session are visible again
