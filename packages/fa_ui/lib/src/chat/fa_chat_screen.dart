@@ -553,6 +553,10 @@ class _FaChatScreenState extends State<FaChatScreen>
         ),
       );
       final newList = converted.toList();
+      // The top banner's empty-session escape (issue #223) reads the
+      // synced window; an emptiness flip must repaint it even when no
+      // service field changed (the initial history sync notifies nobody).
+      final emptinessFlipped = _lastSynced.isEmpty != newList.isEmpty;
 
       if (_lastSynced.isEmpty || newList.isEmpty) {
         // History load: instant, no set animation (messages are read from
@@ -604,6 +608,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       }
 
       _lastSynced = newList;
+      if (emptinessFlipped && mounted) setState(() {});
       // Drop jump anchors for ids the sync removed (edits rebuild ids).
       final liveIds = {for (final message in newList) message.id};
       _itemKeys.removeWhere((id, _) => !liveIds.contains(id));
@@ -956,8 +961,24 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// The top banner hides only on non-windowed hosts (no total, nothing
   /// above); a windowed host always shows it — count, spinner, or the
   /// terminal "Beginning of session" state (E6).
-  bool _topBannerVisible(int? historyAbove) =>
-      historyAbove == null || historyAbove > 0 || _historyTotal != null;
+  ///
+  /// Empty-session escape (issue #223): with no transcript rows loaded
+  /// and nothing above the window there is nothing to page in, so no
+  /// banner renders — even while the background count is still in flight
+  /// or has failed. The terminal state likewise never renders for a
+  /// header-only or single-record session (a "1 of 0"/"1 of 1" banner is
+  /// nonsense over an already-complete transcript).
+  bool _topBannerVisible(int? historyAbove) {
+    final total = _historyTotal;
+    if (historyAbove != null &&
+        historyAbove <= 0 &&
+        total != null &&
+        total <= 1) {
+      return false;
+    }
+    if (_lastSynced.isEmpty && (historyAbove ?? 0) <= 0) return false;
+    return historyAbove == null || historyAbove > 0 || total != null;
+  }
 
   String _topBannerLabel(FaChatStrings strings, int? historyAbove) {
     if (_historyLoadError != null) return strings.chatLoadEarlierFailed;

@@ -15,7 +15,10 @@ class _PagingService extends FakeChatService {
   int? total;
   bool loading = false;
   int loadCalls = 0;
+  List<FaChatMessage> msgs = const [];
 
+  @override
+  List<FaChatMessage> get messages => msgs;
   @override
   int? get historyAboveCount => above;
   @override
@@ -31,6 +34,12 @@ class _PagingService extends FakeChatService {
   }
 }
 
+/// A transcript window of [n] fake records.
+List<FaChatMessage> _msgs(int n) => [
+  for (var i = 0; i < n; i++)
+    FaChatMessage(role: i.isEven ? 'user' : 'assistant', content: 'm$i'),
+];
+
 Future<void> _pumpScreen(WidgetTester tester, _PagingService service) async {
   tester.view.physicalSize = const Size(600, 1000);
   tester.view.devicePixelRatio = 1;
@@ -44,7 +53,12 @@ void main() {
   testWidgets('banner shows "Load earlier" while the count is running', (
     tester,
   ) async {
-    final service = _PagingService()..above = null;
+    // A non-empty window: a big session whose background count has not
+    // landed yet keeps the in-flight banner (issue #135). An EMPTY window
+    // with a null count shows no banner (issue #223, see below).
+    final service = _PagingService()
+      ..above = null
+      ..msgs = _msgs(3);
     await _pumpScreen(tester, service);
 
     expect(find.text('Load earlier'), findsOneWidget);
@@ -71,7 +85,8 @@ void main() {
   testWidgets('E6: the terminal banner at the file top', (tester) async {
     final service = _PagingService()
       ..above = 0
-      ..total = 5000;
+      ..total = 5000
+      ..msgs = _msgs(3);
     await _pumpScreen(tester, service);
 
     expect(find.text('Beginning of session (1 of 5000)'), findsOneWidget);
@@ -134,7 +149,9 @@ void main() {
 
   testWidgets('a landing count (null -> N) flips the banner without a '
       'service swap', (tester) async {
-    final service = _PagingService()..above = null;
+    final service = _PagingService()
+      ..above = null
+      ..msgs = _msgs(3);
     await _pumpScreen(tester, service);
     expect(find.text('Load earlier'), findsOneWidget);
 
@@ -193,5 +210,90 @@ void main() {
       find.text("Couldn't load earlier messages - tap to retry"),
       findsNothing,
     );
+  });
+
+  // --- Issue #223: no top banner on an empty session. ---
+
+  /// No top banner of any kind renders.
+  void expectNoTopBanner() {
+    expect(find.textContaining('Load earlier'), findsNothing);
+    expect(find.textContaining('Beginning of session'), findsNothing);
+    expect(
+      find.text("Couldn't load earlier messages - tap to retry"),
+      findsNothing,
+    );
+  }
+
+  testWidgets('UT-empty: an empty session shows no banner once the count '
+      'lands', (tester) async {
+    // Header-only session: nothing in the window, nothing above, the
+    // background count landed at zero.
+    final service = _PagingService()
+      ..above = 0
+      ..total = 0;
+    await _pumpScreen(tester, service);
+
+    expectNoTopBanner();
+  });
+
+  testWidgets('UT-empty-inflight: an empty session shows no banner while '
+      'the count is still running', (tester) async {
+    final service = _PagingService()..above = null;
+    await _pumpScreen(tester, service);
+
+    expectNoTopBanner();
+
+    // A count landing at 0 keeps it hidden.
+    service
+      ..above = 0
+      ..total = 0
+      ..notifyListeners();
+    await tester.pump();
+    expectNoTopBanner();
+  });
+
+  testWidgets('UT-one-msg: a single-record session shows no terminal '
+      'banner', (tester) async {
+    final service = _PagingService()
+      ..above = 0
+      ..total = 1
+      ..msgs = _msgs(1);
+    await _pumpScreen(tester, service);
+
+    expectNoTopBanner();
+  });
+
+  testWidgets('UT-count-fail: a failed count over an empty transcript '
+      'hides; over a non-empty one the retry banner stays', (tester) async {
+    final service = _PagingService()
+      ..above = null
+      ..historyLoadError = 'scan failed';
+    await _pumpScreen(tester, service);
+    expectNoTopBanner();
+
+    // Same failure with a non-empty window keeps the retry surface.
+    service
+      ..msgs = _msgs(3)
+      ..notifyListeners();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(seconds: 1));
+    expect(
+      find.text("Couldn't load earlier messages - tap to retry"),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('E2E-golden: the wide layout renders no banner on an empty '
+      'session either', (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final service = _PagingService()
+      ..above = null
+      ..total = 0;
+    await tester.pumpWidget(MaterialApp(home: FaChatScreen(service: service)));
+    await tester.pump(const Duration(seconds: 1));
+
+    expectNoTopBanner();
   });
 }
