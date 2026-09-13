@@ -18,6 +18,7 @@ import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
 import 'system_notice_render.dart';
 import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
+import 'paste_image.dart';
 
 part 'fa_tui_messages.dart';
 part 'fa_tui_hub.dart';
@@ -65,10 +66,14 @@ final class FaTuiCallbacks {
     this.onSteer,
     this.pathCandidates,
     this.onHubAction,
+    this.readClipboardImage,
   });
 
-  /// Called when the user submits a non-empty input line.
-  final Future<void> Function(String line) onSubmit;
+  /// Called when the user submits a non-empty input line. [images] carries
+  /// the clipboard chips attached via Ctrl+V (empty for slash/bang
+  /// commands — those never consume attachments).
+  final Future<void> Function(String line, {List<TuiImageAttachment> images})
+  onSubmit;
 
   /// Called when the user picks a model from the picker.
   final Future<void> Function(String modelId) onModelSelected;
@@ -117,6 +122,11 @@ final class FaTuiCallbacks {
   /// keystroke — the host must cache the listing (the issue's "candidates
   /// cached" clause). Null disables path completion.
   final List<String> Function(String fragment)? pathCandidates;
+
+  /// Reads the platform pasteboard for an image (Ctrl+V). Null = no
+  /// reader wired (prints the unavailable hint). Runs OFF the UI loop —
+  /// the result comes back as a [PasteboardResultMsg].
+  final Future<PasteboardRead> Function()? readClipboardImage;
 
   /// Agents-hub overlay actions (issue #277): [FaHubAction.enter] drills
   /// into the selected agent's transcript ([key] = row key), back returns
@@ -171,6 +181,20 @@ int _lineCount(String s) {
   return n;
 }
 
+/// Hot theme swap (issue #276): repaints every frame with the new
+/// [TuiTheme.current] palette — wrap and sticky caches are dropped so no
+/// stale-colored rows survive.
+final class ThemeSwappedMsg extends Msg {
+  const ThemeSwappedMsg();
+}
+
+/// The async Ctrl+V pasteboard read landed; carries image bytes or the
+/// named failure reason.
+final class PasteboardResultMsg extends Msg {
+  PasteboardResultMsg(this.read);
+  final PasteboardRead read;
+}
+
 /// Sentinel for nullable copyWith fields (distinguishes "keep" from "set
 /// null").
 const Object _unset = Object();
@@ -207,6 +231,7 @@ final class FaTuiModel extends Model {
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
     this.queue = const [],
+    this.attachments = const [],
     this.inputHistory = const [],
     this.historyIndex = -1,
     this.historyDraft,
@@ -346,6 +371,11 @@ final class FaTuiModel extends Model {
   /// interrupt at the next step boundary (the soft-yield steering path)
   /// and render badged; plain rows wait for the run to settle.
   final List<QueuedMessage> queue;
+
+  /// Clipboard images attached via Ctrl+V, waiting in the composer as
+  /// chips; consumed by the next plain submit (slash/bang commands keep
+  /// them), rendered above the input frame.
+  final List<TuiImageAttachment> attachments;
 
   /// Submitted non-empty lines, oldest first (shell-style input history).
   /// Slash and bang commands are not recorded — ↑ recalls MESSAGES.
@@ -595,6 +625,7 @@ final class FaTuiModel extends Model {
     int? stickyIndex,
     int? stickyEchoLineCount,
     List<QueuedMessage>? queue,
+    List<TuiImageAttachment>? attachments,
     List<String>? inputHistory,
     int? historyIndex,
     int? scheduledCount,
@@ -643,6 +674,7 @@ final class FaTuiModel extends Model {
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
       queue: queue ?? this.queue,
+      attachments: attachments ?? this.attachments,
       inputHistory: inputHistory ?? this.inputHistory,
       historyIndex: historyIndex ?? this.historyIndex,
       scheduledCount: scheduledCount ?? this.scheduledCount,
@@ -929,6 +961,8 @@ final class FaTuiModel extends Model {
       );
     }
     if (msg is _QuitRequestedMsg) return (this, () => quit());
+    if (msg is ThemeSwappedMsg) return _handleThemeSwapped();
+    if (msg is PasteboardResultMsg) return _handlePasteboardResult(msg);
     return _handleTerminalMsg(msg);
   }
 
@@ -1114,6 +1148,49 @@ final class FaTuiModel extends Model {
     return (copyWith(editor: editor.insert(content)), null);
   }
 
+  /// Hot theme swap: drop the wrap + sticky caches (they hold rows painted
+  /// with the OLD palette) and bump the frame nonce; the renderer's row
+  /// diff then repaints every content row with the new colors. Frame-atomic
+  /// in practice: palette reads happen between frames on the single update
+  /// loop, so no torn half-themed frame is emitted.
+  (Model, Cmd?) _handleThemeSwapped() {
+    final next = copyWith()
+      .._wrapCache = _WrapCache()
+      .._stickyFmtRows = const []
+      .._stickyFmtSource = null
+      .._stickyFmtWidth = null;
+    return (next, null);
+  }
+
+  /// Ctrl+V outcome: image bytes become a composer chip; failures print
+  /// their NAMED reason (unavailable pasteboard, size cap, not an image).
+  (Model, Cmd?) _handlePasteboardResult(PasteboardResultMsg msg) {
+    final read = msg.read;
+    if (read is! PasteboardImage) {
+      final reason = read is PasteboardUnavailable
+          ? read.reason
+          : 'clipboard read failed';
+      return (
+        copyWith(outputLines: _appendOutput(outputLines, _dim(reason), true)),
+        null,
+      );
+    }
+    final error = pasteImageError(read.bytes);
+    if (error != null) {
+      return (
+        copyWith(outputLines: _appendOutput(outputLines, _dim(error), true)),
+        null,
+      );
+    }
+    final mime = sniffImageMime(read.bytes)!;
+    final attachment = TuiImageAttachment(
+      name: 'clipboard-${attachments.length + 1}.${imageMimeExtension(mime)}',
+      mimeType: mime,
+      bytes: read.bytes,
+    );
+    return (copyWith(attachments: [...attachments, attachment]), null);
+  }
+
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
     Model current = this;
     Cmd? lastCmd;
@@ -1267,7 +1344,7 @@ final class FaTuiModel extends Model {
       return (
         copyWith(menuOpen: false, inputText: '', cursor: 0, pickerId: ''),
         () async {
-          await callbacks.onSubmit(item.key);
+          await callbacks.onSubmit(item.key, images: const []);
           return null;
         },
       );
@@ -1306,9 +1383,37 @@ final class FaTuiModel extends Model {
   /// Normal-mode control keys (submit/steer/newline/interrupt/abort); null
   /// when the key belongs to another cluster.
   (Model, Cmd?)? _handleControlKey(KeyMsg msg) {
-    return _handleSubmitKeys(msg) ??
+    return _handlePasteImageKey(msg) ??
+        _handleSubmitKeys(msg) ??
         _handleQueueKeys(msg) ??
         _handleInterruptKeys(msg);
+  }
+
+  /// Ctrl+V (issue #276): read the platform pasteboard off the UI loop and
+  /// attach the image as a composer chip. Without a wired reader (or in
+  /// prompt mode) this is a no-op — the prompt zone owns plain pastes.
+  (Model, Cmd?)? _handlePasteImageKey(KeyMsg msg) {
+    if (msg.key != 'ctrl+v') return null;
+    final reader = callbacks.readClipboardImage;
+    if (reader == null) {
+      return (
+        copyWith(
+          outputLines: _appendOutput(
+            outputLines,
+            _dim(clipboardUnavailableHint),
+            true,
+          ),
+        ),
+        null,
+      );
+    }
+    return (
+      this,
+      () async {
+        final read = await reader();
+        return PasteboardResultMsg(read);
+      },
+    );
   }
 
   /// Normal-mode submit keys (enter/ctrl+s) and the newline-insertion
@@ -1949,6 +2054,12 @@ final class FaTuiModel extends Model {
     // slash commands bypass the busy queue.
     final mouseCommand = _handleMouseCommand(text);
     if (mouseCommand != null) return mouseCommand;
+    // Slash/bang commands execute instantly and never consume clipboard
+    // chips — they persist for the next real message (E2).
+    final keepAttachments = text.startsWith('/') || text.startsWith('!');
+    final images = keepAttachments
+        ? const <TuiImageAttachment>[]
+        : List<TuiImageAttachment>.of(attachments);
     final rule = _dim('─' * termWidth);
     final bg = tuiUserMessageBgSgr();
     const reset = '\x1b[0m';
@@ -1956,9 +2067,15 @@ final class FaTuiModel extends Model {
     // message echo — an empty backgrounded block would read as a glitch.
     if (inputText.isEmpty) {
       return (
-        copyWith(inputText: '', cursor: 0, menuOpen: false, menuTokenStart: -1),
+        copyWith(
+          inputText: '',
+          cursor: 0,
+          menuOpen: false,
+          menuTokenStart: -1,
+          attachments: keepAttachments ? null : const [],
+        ),
         () async {
-          await callbacks.onSubmit(text);
+          await callbacks.onSubmit(text, images: images);
           return null;
         },
       );
@@ -1990,6 +2107,7 @@ final class FaTuiModel extends Model {
       stickyLines: [rule, '$bg$shown$reset$more'],
       stickyIndex: outputLines.length,
       stickyEchoLineCount: 2 + inputText.split('\n').length,
+      attachments: keepAttachments ? null : const [],
     );
     return (
       // A fresh submit always jumps to the bottom AND re-attaches follow:
@@ -2000,7 +2118,7 @@ final class FaTuiModel extends Model {
         followTail: true,
       ),
       () async {
-        await callbacks.onSubmit(text);
+        await callbacks.onSubmit(text, images: images);
         return null;
       },
     );
@@ -2302,6 +2420,7 @@ final class FaTuiModel extends Model {
   }
 
 
+
   /// The busy indicator line (one row): spinner + label + honesty
   /// suffixes. Extracted from [_writeBusyAndQueue] to keep both methods'
   /// CRAP scores under the ratchet.
@@ -2587,6 +2706,11 @@ final class FaTuiController {
       _pending.add(msg);
     }
   }
+
+  /// Hot theme swap (issue #276): the `/theme` handler already flipped
+  /// [TuiTheme.current]; this repaints every row with the new palette and
+  /// drops the wrap/sticky caches so no old-colored rows survive.
+  void applyTheme() => _send(const ThemeSwappedMsg());
 
   void sendOutput(String text, {bool newline = false}) {
     // Merge semantics match sending the pieces separately: text just

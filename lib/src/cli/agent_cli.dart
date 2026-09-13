@@ -152,6 +152,12 @@ import '../usage_summary.dart';
 import '../web_search/web_search.dart';
 // The interactive dart_tui REPL is VM-only (raw terminal + FFI); web builds
 // of the root library get a no-op stub with the same host-facing API.
+import 'paste_image.dart';
+// Pasteboard reads are VM-only (osascript/xclip/PowerShell); web builds get
+// a stub that always reports unavailable.
+import 'clipboard_reader_stub.dart'
+    if (dart.library.io) 'clipboard_reader.dart';
+
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
 import 'prompt_templates.dart';
 import 'ask_menu.dart';
@@ -1160,7 +1166,6 @@ class AgentCli {
   bool _runStarting = false;
 
   /// Runs the REPL until `/exit` or the input stream closes.
-
   Future<void> run() async {
     await _cubeBootRestore();
     await _loadAgentContext();
@@ -1505,7 +1510,8 @@ class AgentCli {
       mouseCapture: config.tuiMouseCapture,
       syncOutput: config.tuiSyncOutput,
       callbacks: FaTuiCallbacks(
-        onSubmit: (line) => _handleTuiSubmit(controller, line),
+        onSubmit: (line, {images = const []}) =>
+            _handleTuiSubmit(controller, line, images),
         onModelSelected: _tuiSelectModel,
         buildSlashMenu: _buildSlashMenu,
         buildModelMenu: _buildModelMenu,
@@ -1530,6 +1536,7 @@ class AgentCli {
         onSteer: _steerTuiMessages,
         pathCandidates: pathCandidatesFor,
         onHubAction: (action, key) => _onHubAction(action, key),
+        readClipboardImage: () => readPasteboardImage(),
       ),
       isExited: () => _exited,
       programHooks: config.tuiProgramHooks,
@@ -1568,10 +1575,14 @@ class AgentCli {
   /// A TUI submit: runs the line, waits for the run to settle, drains the
   /// queued messages, and schedules the quit when `/exit` marked the
   /// session exited.
-  Future<void> _handleTuiSubmit(FaTuiController controller, String line) async {
+  Future<void> _handleTuiSubmit(
+    FaTuiController controller,
+    String line,
+    List<TuiImageAttachment> images,
+  ) async {
     controller.sendBusy(true, source: 'submit');
     try {
-      await _handleLine(line);
+      await _handleLine(line, images: images);
       // Runs are fire-and-forget (_startRun only records the future):
       // wait for the run to actually settle so the busy spinner lives
       // for the whole stream instead of flashing for one frame.
@@ -1958,7 +1969,10 @@ class AgentCli {
     envVarValue: config.envVarValue,
   );
 
-  Future<void> _handleLine(String line) async {
+  Future<void> _handleLine(
+    String line, {
+    List<TuiImageAttachment> images = const [],
+  }) async {
     final trimmed = line.trim();
     if (_routePendingInput(trimmed)) return;
     if (trimmed.isEmpty) return;
@@ -1989,14 +2003,14 @@ class AgentCli {
           _steerResolved(trimmed);
           return;
         }
-        await _dispatchInput(line, trimmed);
+        await _dispatchInput(line, trimmed, images);
         return;
       }
-      _steerResolved(trimmed);
+      _steerResolved(trimmed, images: images);
       return;
     }
     await _settled;
-    await _dispatchInput(line, trimmed);
+    await _dispatchInput(line, trimmed, images);
   }
 
   /// Routes input owned by a pending prompt (ask question, guided provider
@@ -2027,7 +2041,11 @@ class AgentCli {
 
   /// Settled, non-empty input: a shell command, a skill invocation, a slash
   /// command, or a prompt for the agent.
-  Future<void> _dispatchInput(String line, String trimmed) async {
+  Future<void> _dispatchInput(
+    String line,
+    String trimmed,
+    List<TuiImageAttachment> images,
+  ) async {
     if (trimmed.startsWith('!')) {
       await _runShellCommand(trimmed.substring(1));
       return;
@@ -2044,7 +2062,7 @@ class AgentCli {
     // (`allowed-tools`) do not leak into it. The skill path re-grants after
     // this clear (it goes through `/skill:` / the slash alias above).
     _approval.clearTurnGrants();
-    _startRun(line);
+    _startRun(line, images: images);
   }
 
   /// `/mcp`: prints the configured MCP servers and their live connection
@@ -2091,7 +2109,7 @@ class AgentCli {
     }
   }
 
-  void _startRun(String text) {
+  void _startRun(String text, {List<TuiImageAttachment> images = const []}) {
     // One streaming run at a time: a run-starting command typed mid-stream
     // (/skill:, a command alias) lands here while isBusy — refuse it with
     // a visible note instead of interleaving a second run into the same
@@ -2130,7 +2148,7 @@ class AgentCli {
     if (resolved != text) {
       io.writeln(_style.dim('[file] pasted path attached for the agent'));
     }
-    final settled = _runPrompt(resolved);
+    final settled = _runPrompt(resolved, images: images);
     _settled = settled;
     unawaited(
       settled.whenComplete(() {
@@ -2182,10 +2200,32 @@ class AgentCli {
     return redactPrompt(pipeline, text);
   }
 
-  Future<void> _runPrompt(String text, {bool isAutoContinue = false}) async {
+  Future<void> _runPrompt(
+    String text, {
+    bool isAutoContinue = false,
+    List<TuiImageAttachment> images = const [],
+  }) async {
     await _beginUserPrompt(isAutoContinue: isAutoContinue);
     try {
-      await _agent.prompt(_redactUserText(text));
+      if (images.isEmpty) {
+        await _agent.prompt(_redactUserText(text));
+      } else {
+        // Clipboard chips (issue #276): the images ride the user message
+        // as ImageContent blocks next to the text — same shape as --attach.
+        await _agent.promptMessage(
+          UserMessage(
+            content: [
+              TextContent(text: _redactUserText(text)),
+              for (final image in images)
+                ImageContent(
+                  data: base64Encode(image.bytes),
+                  mimeType: image.mimeType,
+                ),
+            ],
+            timestamp: DateTime.now(),
+          ),
+        );
+      }
       final lastMessage = _agent.state.messages.lastOrNull;
       final finished = await _settleAfterPrompt(
         lastMessage,

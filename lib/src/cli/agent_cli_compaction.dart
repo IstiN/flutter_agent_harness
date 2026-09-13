@@ -110,10 +110,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       cli._logDiagnostic('auto-compact pass ${pass.pass} no-op');
       return;
     }
-    cli.io.writeln(
-      '[auto-compacted${pass.pass == 1 ? '' : ' pass=${pass.pass}'}] '
-      '${pass.tokensBefore} tokens summarized',
-    );
+    cli._printCompactionReport(pass, auto: true);
     cli._logDiagnostic(
       'auto-compact pass ${pass.pass} '
       'fallback=${pass.fallback ?? '-'} '
@@ -188,6 +185,45 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
 
 /// Auto/manual compaction run methods (moved from agent_cli.dart under the
 /// repo's 2800-line size gate). Same library, so private state is in scope.
+
+/// Formats the in-chat compaction report block (issue #276): tokens
+/// before → after, freed count/percent, and the summary in a fenced block
+/// so the user can eyeball — and copy — what the transcript was condensed
+/// to. Pure; [_AgentCliCompactionReportPrinter.print] renders it.
+List<String> formatCompactionReport(
+  AutoCompactorPass pass, {
+  required bool auto,
+}) {
+  final freed = pass.tokensBefore - pass.tokensAfter;
+  final pct = pass.tokensBefore == 0
+      ? 0
+      : (freed * 100 / pass.tokensBefore).round();
+  return [
+    '${auto ? 'auto-compacted' : 'compacted'}'
+        '${pass.pass == 1 ? '' : ' · pass ${pass.pass}'}',
+    'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} '
+        '($freed freed · $pct%)',
+    'summary:',
+    '```',
+    pass.summary?.trim() ?? '',
+    '```',
+  ];
+}
+
+/// Renders [formatCompactionReport] through the styled transcript writer
+/// so both line mode and the TUI see the same block.
+extension _AgentCliCompactionReportPrinter on AgentCli {
+  void _printCompactionReport(AutoCompactorPass pass, {required bool auto}) {
+    final lines = formatCompactionReport(pass, auto: auto);
+    final header = lines.first;
+    final body = lines.sublist(1);
+    io.writeln(_style.teal('● $header'));
+    for (final line in body) {
+      io.writeln(line == '```' ? _style.dim(line) : line);
+    }
+  }
+}
+
 extension AgentCliCompactionRun on AgentCli {
   /// Runs the auto-compaction when the live transcript crosses the
   /// threshold. Returns whether a compaction pass actually ran and
@@ -241,7 +277,18 @@ extension AgentCliCompactionRun on AgentCli {
       return;
     }
     _tuiController?.setBusyPhase('Compacting context…');
+    final before = _liveRequestTokens();
     await _runAutoCompact('[compacted]');
+    if (_liveRequestTokens() >= before) {
+      // A no-op manual /compact (already compacted at the leaf) prints no
+      // report block — say why instead of looking like a silent hang.
+      io.writeln(
+        _style.dim(
+          'nothing to compact — every message is already summarized or '
+          'the transcript is at its smallest',
+        ),
+      );
+    }
   }
 
   /// Builds the per-host smol/main summarizers and runs the shared
@@ -254,7 +301,7 @@ extension AgentCliCompactionRun on AgentCli {
     // pass result in [_AutoCompactorCliHooks.onPass] — the honest numbers.
     _hep?.compactionStart();
     final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
-    final ok = await AutoCompactorFactory(
+    await AutoCompactorFactory(
       session: _session!,
       state: _agent.state,
       window: _effectiveContextWindow,
@@ -311,11 +358,5 @@ extension AgentCliCompactionRun on AgentCli {
       force: label == '[compacted]',
     ).run();
     _persistedCount = _agent.state.messages.length;
-    if (label == '[compacted]' && ok) {
-      // Manual `/compact` echoes the legacy "compacted" line; the
-      // auto-trigger prints its own per-pass "[auto-compacted]" line via
-      // [_AutoCompactorCliHooks.onPass].
-      io.writeln('$label $_persistedCount messages kept');
-    }
   }
 }

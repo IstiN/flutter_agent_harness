@@ -27,7 +27,7 @@ void main() {
     List<String> Function(String fragment)? pathCandidates,
   }) {
     return FaTuiCallbacks(
-      onSubmit: (line) async => submitted.add(line),
+      onSubmit: (line, {images = const []}) async => submitted.add(line),
       onInterrupt: onInterrupt,
       isShiftPressed: isShiftPressed,
       opensPicker: (key) => key == '/sessions',
@@ -838,7 +838,7 @@ void main() {
     // not soft-wrapped (a wrap desyncs the renderer's row math).
     var model = FaTuiModel(
       callbacks: FaTuiCallbacks(
-        onSubmit: (_) async {},
+        onSubmit: (_, {images = const []}) async {},
         onModelSelected: (_) async {},
         buildSlashMenu: (_) => const [
           MenuItem(
@@ -882,7 +882,7 @@ void main() {
     final ansi = RegExp(r'\x1b\[[0-9;?]*[A-Za-z]');
     FaTuiModel modelWith(String status) => FaTuiModel(
       callbacks: FaTuiCallbacks(
-        onSubmit: (_) async {},
+        onSubmit: (_, {images = const []}) async {},
         onModelSelected: (_) async {},
         buildSlashMenu: (_) => const [],
         buildModelMenu: (_, _) => const [],
@@ -1262,7 +1262,7 @@ void main() {
 
     FaTuiCallbacks cancelCallbacks(List<String> cancelled) {
       return FaTuiCallbacks(
-        onSubmit: (_) async {},
+        onSubmit: (_, {images = const []}) async {},
         onModelSelected: (_) async {},
         buildSlashMenu: (_) => const [],
         buildModelMenu: (_, _) => const [],
@@ -1374,6 +1374,10 @@ void main() {
         final sticky = model.stickyLines.join('\n');
         expect(sticky, contains('…'));
         final strippedSticky = sticky.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), '');
+        // ignore: avoid_print
+        for (final r in sticky.split(r'\n')) {
+          print('STICKYROW=' + r.length.toString() + '=' + r);
+        }
         for (final row in strippedSticky.split('\n')) {
           expect(row.length, lessThanOrEqualTo(60));
         }
@@ -2597,7 +2601,7 @@ void main() {
       void Function()? onInterrupt,
     }) {
       return FaTuiCallbacks(
-        onSubmit: (_) async {},
+        onSubmit: (_, {images = const []}) async {},
         onInterrupt: onInterrupt,
         onModelSelected: (_) async {},
         buildSlashMenu: (_) => const [],

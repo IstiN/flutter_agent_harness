@@ -10,8 +10,13 @@ extension AgentCliSteering on AgentCli {
   /// Steers [trimmed] into the running agent with the file-reference
   /// resolution applied (a pasted path becomes an explicit
   /// `[attached file: …]` marker — a bare path steered as plain text made
-  /// the model miss the attachment entirely).
-  void _steerResolved(String trimmed) {
+  /// the model miss the attachment entirely). [images] rides along when
+  /// the steer originated from a composer submit carrying clipboard chips
+  /// (issue #276): they become ImageContent blocks next to the text.
+  void _steerResolved(
+    String trimmed, {
+    List<TuiImageAttachment> images = const [],
+  }) {
     final resolved = resolveInteractiveFileReference(trimmed);
     if (resolved != trimmed) {
       io.writeln(_style.dim('[file] attached to steered message'));
@@ -24,7 +29,23 @@ extension AgentCliSteering on AgentCli {
         body: resolved,
       );
     }
-    _agent.steer(UserMessage.text(resolved));
+    if (images.isEmpty) {
+      _agent.steer(UserMessage.text(resolved));
+      return;
+    }
+    _agent.steer(
+      UserMessage(
+        content: [
+          TextContent(text: resolved),
+          for (final image in images)
+            ImageContent(
+              data: base64Encode(image.bytes),
+              mimeType: image.mimeType,
+            ),
+        ],
+        timestamp: DateTime.now(),
+      ),
+    );
   }
 
   /// The steering still queued after a run settled, or null when there
