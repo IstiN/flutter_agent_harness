@@ -78,16 +78,9 @@ FuzzyMatch? scoreFuzzy(String haystack, String needle, {int maxIndices = 256}) {
   var prevCh = '';
   for (var ni = 0; ni < n.length; ni++) {
     final want = n[ni];
-    var found = -1;
-    while (hi < h.length) {
-      if (h[hi] == want) {
-        found = hi;
-        break;
-      }
-      prevCh = h[hi];
-      hi++;
-    }
+    final found = _indexOfFrom(h, want, hi);
     if (found < 0) return null;
+    if (found > hi) prevCh = h[found - 1];
     // Scoring: first char anchor, boundary hits, contiguous-run bonus.
     if (ni == 0) score += 20;
     if (_isBoundary(prevCh, haystack[found])) score += 12;
@@ -112,6 +105,15 @@ FuzzyMatch? scoreFuzzy(String haystack, String needle, {int maxIndices = 256}) {
     );
   }
   return FuzzyMatch(score, indices, haystack);
+}
+
+/// Case-folded scan for [want] from [start]; -1 when absent. Extracted so
+/// the scorer stays under the CRAP ratchet's complexity ceiling.
+int _indexOfFrom(String h, String want, int start) {
+  for (var i = start; i < h.length; i++) {
+    if (h[i] == want) return i;
+  }
+  return -1;
 }
 
 /// Scores every candidate, drops non-matches, sorts best-first, and caps the

@@ -17,6 +17,17 @@ void main() {
       expect(scoreFuzzy('compact', 'ctx'), isNull);
     });
 
+    test('needle longer than the haystack returns null', () {
+      expect(scoreFuzzy('ab', 'abc'), isNull);
+    });
+
+    test('maxIndices keeps the tail of the index list', () {
+      final m = scoreFuzzy('a' * 300, 'a' * 300, maxIndices: 8);
+      expect(m, isNotNull);
+      expect(m!.indices.length, 8);
+      expect(m.indices.last, 299);
+    });
+
     test('case-insensitive subsequence match with ascending indices', () {
       final m = scoreFuzzy('/TrajectoryView', 'trv');
       expect(m, isNotNull);
