@@ -32,6 +32,12 @@ concurrency:
 #   flutter-tests → flutter_app analyze + tests on ubuntu     (app/core/shared;
 #                   golden suite stays in build-macos.yml — goldens are
 #                   host-locked, see issue #177 E5 discussion)
+#   test-faui → packages/fa_ui tests sharded ×3 by manifest   (app/core/shared;
+#               issue #283 — same template as test-core: manifest assert,
+#               per-shard coverage merged to ONE report, junit durations
+#               feed shard-rebalance.yml; goldens excluded as before)
+#   faui-coverage → merge the 3 fa_ui shard reports into ONE lcov
+#                   (issue #283 E3: the gate never sees 3 competing uploads)
 #   quality-gate → ONE aggregate required check (skip-tolerant)
 #   step-timings → per-step duration telemetry (jobs API → summary+artifact)
 #   watchdog   → >2x-baseline timeouts; a timed-out leg means a degraded
@@ -389,7 +395,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -441,15 +447,8 @@ jobs:
           files=$(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*')
           flutter test --exclude-tags integration $files
 
-      # packages/fa_ui had NO CI coverage at all before issue #177 (not in
-      # any workflow, not in the pre-commit hook) — gate its non-golden
-      # suites here; its goldens are host-locked like flutter_app's and stay
-      # out until the pinned-font migration.
-      - name: fa_ui package tests (excluding goldens)
-        run: |
-          cd packages/fa_ui
-          flutter pub get
-          flutter test --exclude-tags integration $(find test -name '*_test.dart' ! -path '*/golden/*')
+      # packages/fa_ui tests moved to the sharded test-faui job below
+      # (issue #283): 9m54s monolith → 3 duration-balanced shards.
 
       # Issue #239 AC3: the App Store submission pre-flight matrix is plain
       # ruby over flutter_app/fastlane/appstore_preflight.rb — no gems,
@@ -457,13 +456,129 @@ jobs:
       - name: App Store pre-flight matrix (ruby)
         run: ruby flutter_app/fastlane/test/appstore_preflight_test.rb
 
+  # Issue #283: fa_ui tests sharded ×3 by the test-core template — a
+  # duration-balanced manifest (scripts/faui_test_shards.json, rebalanced
+  # weekly by shard-rebalance.yml), one file executed by exactly ONE shard,
+  # goldens excluded exactly as before (host-locked). Shards fan out INSIDE
+  # the job graph; only the aggregate Quality gate is a required check, so
+  # a red shard = red gate and path-skipped = neutral (AC4 semantics). A
+  # single failed matrix leg can be rerun alone via "Re-run failed jobs"
+  # (E1) — the gate then re-aggregates the same results.
+  test-faui:
+    name: fa_ui tests (shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # Shard-manifest assert (AC1/E4): union of the 3 selections == the
+      # full non-golden suite, pairwise disjoint, ZERO golden leakage —
+      # fails loudly on manifest drift or a golden-pattern rename before
+      # any test runs. Pure python, no flutter needed.
+      - name: Assert shard manifest (union/disjoint/no-goldens)
+        working-directory: packages/fa_ui
+        run: >-
+          python3 ../../scripts/assert_shard_manifest.py
+          ../../scripts/faui_test_shards.json --shards 3 --exclude golden
+
+      - run: cd packages/fa_ui && flutter pub get
+
+      # E2: a NEW test file added by a PR needs no manifest edit —
+      # shard_files.py bin-packs uncovered files into shards at runtime;
+      # the weekly rebalance then absorbs them into the manifest.
+      - name: flutter test --coverage (shard ${{ matrix.shard }}/3)
+        working-directory: packages/fa_ui
+        run: |
+          targets=$(python3 ../../scripts/shard_files.py \
+            ../../scripts/faui_test_shards.json ${{ matrix.shard }} --exclude golden)
+          echo "shard targets: $targets"
+          mkdir -p test-results
+          flutter test --exclude-tags integration --coverage \
+            --file-reporter="json:test-results/flutter-shard-${{ matrix.shard }}.json" \
+            $targets
+          python3 ../../scripts/junit_from_dart_json.py \
+            test-results/flutter-shard-${{ matrix.shard }}.json \
+            test-results/junit-faui-shard-${{ matrix.shard }}.xml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: faui-coverage-shard-${{ matrix.shard }}
+          path: packages/fa_ui/coverage/lcov.info
+          retention-days: 2
+
+      # junit durations for the weekly shard-rebalance.yml (AC3), same
+      # contract as the core shards.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: junit-faui-shard-${{ matrix.shard }}
+          path: packages/fa_ui/test-results/junit-faui-shard-${{ matrix.shard }}.xml
+          retention-days: 7
+
+  # E3/AC6: the 3 shard reports merge into ONE lcov (union DA hits, never
+  # cat — no triple-counting). fa_ui coverage is NOT fed into the 80%
+  # ratchet: the coverage gate's semantics stay exactly as before; this
+  # merged report is telemetry/evidence only.
+  faui-coverage:
+    name: fa_ui coverage merge (one report)
+    runs-on: ubuntu-latest
+    needs: [changes, test-faui]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: faui-coverage-shard-*
+          path: faui-coverage-shards
+
+      - name: Merge shard coverage (union DA hits per file, NOT cat)
+        run: |
+          count=$(ls faui-coverage-shards/*/lcov.info | wc -l | tr -d ' ')
+          if [ "$count" != "3" ]; then
+            echo "::error::expected 3 fa_ui shard coverage reports, got $count"
+            exit 1
+          fi
+          mkdir -p packages/fa_ui/coverage
+          python3 scripts/merge_lcov.py \
+            -o packages/fa_ui/coverage/lcov.merged.info \
+            faui-coverage-shards/*/lcov.info
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: faui-coverage
+          path: packages/fa_ui/coverage/lcov.merged.info
+          retention-days: 14
+
   # Aggregate required check: branch protection requires ONE stable context.
   # Skipped legs (path-filtered out) count as pass — a docs PR must go green
   # on static alone.
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -476,11 +591,12 @@ jobs:
           echo "coverage-gate = ${{ needs.coverage-gate.result }}"
           echo "guards        = ${{ needs.guards.result }}"
           echo "flutter-tests = ${{ needs.flutter-tests.result }}"
+          echo "test-faui     = ${{ needs.test-faui.result }}"
       - name: Fail on any real failure
         run: |
           for r in "${{ needs.static.result }}" "${{ needs.test-core.result }}" \
                    "${{ needs.coverage-gate.result }}" "${{ needs.guards.result }}" \
-                   "${{ needs.flutter-tests.result }}"; do
+                   "${{ needs.flutter-tests.result }}" "${{ needs.test-faui.result }}"; do
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               echo "Quality gate FAILED (a leg is $r)"
               exit 1
@@ -495,7 +611,7 @@ jobs:
     name: Per-step timing telemetry
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui]
     if: always()
     permissions:
       actions: read
@@ -531,7 +647,7 @@ jobs:
 
   # Issue #194 (point 4): >2x-baseline watchdog. The timeout-minutes above
   # are ≈2x the healthy job durations observed on main (shards 3-5 min,
-  # flutter-tests ~14 min). A timeout means this run landed on a degraded
+  # flutter-tests ~6 min + fa_ui shards ~5 min since issue #283). A timeout means this run landed on a degraded
   # runner allocation; the remedy is a fresh EMPTY-COMMIT push — a new run
   # gets a fresh allocation and the push cancels this stale run via the PR
   # concurrency group. NEVER `gh run rerun`: it reallocates into the same
@@ -540,7 +656,7 @@ jobs:
     name: Watchdog (degraded-runner retrigger)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui]
     # Same-repo PRs only: the empty-commit retrigger pushes to the PR branch,
     # which this token cannot do for a fork's ref.
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
