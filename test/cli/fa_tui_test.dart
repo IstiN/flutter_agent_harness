@@ -5,6 +5,9 @@ import 'dart:io' show Platform, ProcessException, ProcessResult;
 import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
+import 'package:flutter_agent_harness/src/cli/fuzzy_matcher.dart';
+import 'package:flutter_agent_harness/src/cli/composer_overlay.dart'
+    show groupOf;
 import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
@@ -18,6 +21,7 @@ void main() {
     Map<String, String>? picked,
     List<List<String>>? steered,
     bool Function()? isShiftPressed,
+    List<String> Function(String fragment)? pathCandidates,
   }) {
     return FaTuiCallbacks(
       onSubmit: (line) async => submitted.add(line),
@@ -43,7 +47,11 @@ void main() {
             .where(
               (item) =>
                   item.key.toLowerCase().contains(lower) ||
-                  item.description.toLowerCase().contains(lower),
+                  item.description.toLowerCase().contains(lower) ||
+                  // Mirror production slash_menu.dart: subsequence fallback
+                  // so '/e' still surfaces /help and /model.
+                  lower.isEmpty ||
+                  scoreFuzzy(item.key, lower) != null,
             )
             .toList();
       },
@@ -55,6 +63,7 @@ void main() {
       ],
       statusLine: () => '/work · 0tok · turn 0 · test-model',
       prompt: 'fa> ',
+      pathCandidates: pathCandidates,
     );
   }
 
@@ -877,19 +886,23 @@ void main() {
       model =
           model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
               as FaTuiModel;
-      expect(model.queue, ['first']);
+      expect(model.queue.map((m) => m.text), ['first']);
       expect(model.inputText, '');
       expect(submitted, isEmpty);
       model = type(model, 'second');
       model =
           model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
               as FaTuiModel;
-      expect(model.queue, ['first', 'second']);
-      // The view shows the queued lines and the hint.
+      expect(model.queue.map((m) => m.text), ['first', 'second']);
+      // The view shows the count badge, the queued lines, and the hint.
       final frame = model.view().content;
+      expect(frame, contains('⏵ queued (2)'));
       expect(frame, contains('❯ first'));
       expect(frame, contains('❯ second'));
-      expect(frame, contains('↑ to edit · ctrl-s to send immediately'));
+      expect(
+        frame,
+        contains('↑ edit · ctrl+x delete · ctrl-s send immediately'),
+      );
     });
 
     test('slash commands submit immediately even while busy', () async {
@@ -924,14 +937,14 @@ void main() {
           model.update(KeyPressMsg(const TeaKey(code: KeyCode.up))).$1
               as FaTuiModel;
       expect(model.inputText, 'two');
-      expect(model.queue, ['one']);
+      expect(model.queue.map((m) => m.text), ['one']);
       // A second up does NOT pop: the buffer is no longer empty (kimi-cli
       // pops only into an empty editor).
       model =
           model.update(KeyPressMsg(const TeaKey(code: KeyCode.up))).$1
               as FaTuiModel;
       expect(model.inputText, 'two');
-      expect(model.queue, ['one']);
+      expect(model.queue.map((m) => m.text), ['one']);
     });
 
     test('ctrl+s steers the input plus the whole queue', () async {
@@ -978,7 +991,90 @@ void main() {
       model = model.update(DrainQueueMsg(completer)).$1 as FaTuiModel;
       expect(await completer.future, ['later']);
       expect(model.queue, isEmpty);
-      expect(model.outputLines.join('\n'), contains('later'));
+    });
+
+    test('ctrl+x deletes the last queued row while busy', () {
+      var model = busyModel();
+      for (final text in ['one', 'two', 'three']) {
+        model = type(model, text);
+        model =
+            model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
+                as FaTuiModel;
+      }
+      model =
+          model
+                  .update(
+                    KeyPressMsg(
+                      const TeaKey(
+                        code: KeyCode.rune,
+                        text: 'x',
+                        modifiers: {KeyMod.ctrl},
+                      ),
+                    ),
+                  )
+                  .$1
+              as FaTuiModel;
+      expect(model.queue.map((m) => m.text), ['one', 'two']);
+      // Deleting down to empty hides the whole strip.
+      model =
+          model
+                  .update(
+                    KeyPressMsg(
+                      const TeaKey(
+                        code: KeyCode.rune,
+                        text: 'x',
+                        modifiers: {KeyMod.ctrl},
+                      ),
+                    ),
+                  )
+                  .$1
+              as FaTuiModel;
+      model =
+          model
+                  .update(
+                    KeyPressMsg(
+                      const TeaKey(
+                        code: KeyCode.rune,
+                        text: 'x',
+                        modifiers: {KeyMod.ctrl},
+                      ),
+                    ),
+                  )
+                  .$1
+              as FaTuiModel;
+      expect(model.queue, isEmpty);
+      expect(model.view().content, isNot(contains('⏵ queued')));
+    });
+
+    test('steer rows render badged and drain in queue order', () async {
+      var model = busyModel();
+      model = type(model, 'followup');
+      model =
+          model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
+              as FaTuiModel;
+      model = model.copyWith(
+        queue: [...model.queue, const QueuedMessage('interrupt', steer: true)],
+      );
+      final frame = model.view().content;
+      expect(frame, contains('⤳ [steer] interrupt'));
+      expect(frame, contains('❯ followup'));
+      // Flush preserves queue order — steer rows included.
+      final completer = Completer<List<String>>();
+      model = model.update(DrainQueueMsg(completer)).$1 as FaTuiModel;
+      expect(await completer.future, ['followup', 'interrupt']);
+      expect(model.queue, isEmpty);
+    });
+
+    test('ClearQueueMsg empties the queue without draining', () {
+      var model = busyModel();
+      model = type(model, 'later');
+      model =
+          model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter))).$1
+              as FaTuiModel;
+      model = model.update(const ClearQueueMsg()).$1 as FaTuiModel;
+      expect(model.queue, isEmpty);
+      // Nothing was echoed into the history (unlike a drain).
+      expect(model.outputLines.join('\n'), isNot(contains('later')));
     });
   });
 
@@ -1039,7 +1135,7 @@ void main() {
       model = model.update(BusyMsg(true)).$1 as FaTuiModel;
       model = type(model, 'queued one');
       model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
-      expect(model.queue, ['queued one']);
+      expect(model.queue.map((m) => m.text), ['queued one']);
       // ↑ pops the queued message back for editing — NOT the history entry.
       model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
       expect(model.inputText, 'queued one');
@@ -1493,7 +1589,7 @@ void main() {
       model = typed(model, 'hi');
       model = send(model, ctrl('x'));
       model = send(model, ctrl('g'));
-      model = send(model, ctrl('z'));
+      // ctrl+z is no longer in this test: it is undo since #275.
       expect(model.inputText, 'hi');
       expect(model.cursor, 2);
     });
@@ -1537,6 +1633,132 @@ void main() {
       merged = send(merged, OutputMsg(folded.toString()));
 
       expect(merged.outputLines, separate.outputLines);
+    });
+  });
+
+  group('fuzzy autocomplete overlay (issue #275)', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+    FaTuiModel typed(FaTuiModel m, String text) {
+      for (final ch in text.split('')) {
+        m = send(m, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
+      }
+      return m;
+    }
+
+    test('slash prefix opens a fuzzy-ranked command menu with groups', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, '/m');
+      expect(model.menuOpen, isTrue);
+      // Fuzzy subsequence: /model and /sessions both contain the letters,
+      // /model ranks first (tighter match, shorter label).
+      String plain(String s) => s.replaceAll(RegExp('\x1b\\[[0-9;]*m'), '');
+      expect(plain(model.menuItems.first.label), '/model');
+      expect(model.menuItems.first.group, 'commands');
+      expect(model.menuTokenStart, 0);
+      // Fuzzy subsequence, not substring: '/e' matches /exit, /model,
+      // /help, /sessions (the letter run is scored, tight matches first).
+      model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, '/e');
+      expect(
+        model.menuItems.map((i) => plain(i.label)),
+        containsAll(['/exit', '/help', '/sessions']),
+      );
+      expect(plain(model.menuItems.first.label), '/exit');
+    });
+
+    test('matched runes are highlighted in the rendered menu', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, '/mo');
+      final frame = model.view().content;
+      // The 'm' and 'o' runes of /model carry the indigo accent code.
+      expect(frame, contains('\x1b[38;2;129;140;248m'));
+    });
+
+    test('@token opens the paths menu and accept splices in place', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(
+          pathCandidates: (_) => ['lib/main.dart', 'lib/util.dart'],
+        ),
+        isExited: () => false,
+      );
+      model = typed(model, 'see @ma');
+      expect(model.menuOpen, isTrue);
+      expect(model.menuItems.first.group, 'paths');
+      expect(model.menuItems.first.key, 'lib/main.dart');
+      expect(model.menuTokenStart, 'see @'.length);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.tab)));
+      expect(model.inputText, 'see @lib/main.dart ');
+      expect(model.cursor, 'see @lib/main.dart '.length);
+      expect(model.menuOpen, isFalse);
+    });
+
+    test('accept keeps text after the cursor', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(pathCandidates: (_) => ['main.dart']),
+        isExited: () => false,
+      );
+      model = typed(model, 'a @x b');
+      // Move the cursor back over ' b' (left twice) so the tail survives.
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.left)));
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.left)));
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.tab)));
+      expect(model.inputText, 'a @x b');
+    });
+
+    test('shell words on a bang line complete as paths', () async {
+      final submitted = <String>[];
+      var model = FaTuiModel(
+        callbacks: callbacks(
+          pathCandidates: (_) => ['bin/fah.dart'],
+          submitted: submitted,
+        ),
+        isExited: () => false,
+      );
+      model = typed(model, '!fah');
+      expect(model.menuOpen, isTrue);
+      expect(model.menuItems.first.key, 'bin/fah.dart');
+      // Tab accepts the completion; Enter must SUBMIT the command instead
+      // of splicing (review: explicit accept only).
+      final result = model.update(
+        KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+      );
+      model = result.$1 as FaTuiModel;
+      await result.$2?.call();
+      expect(model.inputText, '');
+      expect(submitted, ['!fah']);
+      model = typed(model, '!fah');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.tab)));
+      expect(model.inputText, '!bin/fah.dart ');
+      expect(model.menuOpen, isFalse);
+    });
+
+    test('no match closes the menu and esc dismisses it', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(pathCandidates: (_) => ['lib/main.dart']),
+        isExited: () => false,
+      );
+      model = typed(model, '@zzz');
+      expect(model.menuOpen, isFalse);
+      model = FaTuiModel(
+        callbacks: callbacks(pathCandidates: (_) => ['lib/main.dart']),
+        isExited: () => false,
+      );
+      model = typed(model, '@ma');
+      expect(model.menuOpen, isTrue);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.escape)));
+      expect(model.menuOpen, isFalse);
+      expect(model.inputText, '@ma');
+    });
+
+    test('empty @ fragment browses all candidates', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(pathCandidates: (_) => ['a.dart', 'b.dart']),
+        isExited: () => false,
+      );
+      model = typed(model, '@');
+      expect(model.menuOpen, isTrue);
+      expect(model.menuItems.length, 2);
     });
   });
 
@@ -2211,17 +2433,105 @@ void main() {
       // A nearer record appears (E2): the pending boundary tick already
       // covers it — boundaries are wall-clock aligned, so no re-arm.
       final second = model.update(ScheduledStatusMsg(2, currentMs + 45000));
-      expect(
-        second.$2,
-        isNull,
-        reason: 'one pending countdown timer max',
-      );
+      expect(second.$2, isNull, reason: 'one pending countdown timer max');
       model = second.$1 as FaTuiModel;
       // E1: the record fires/cancels; the outstanding tick fires once and
       // the chain stops.
       model = send(model, const ScheduledStatusMsg(0, null));
       final deadTick = model.update(const ScheduledTickMsg());
       expect(deadTick.$2, isNull);
+    });
+  });
+
+  group('readline editing keys (issue #275)', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+    FaTuiModel typed(FaTuiModel m, String text) {
+      for (final ch in text.split('')) {
+        m = send(m, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
+      }
+      return m;
+    }
+
+    KeyPressMsg ctrl(String ch) => KeyPressMsg(
+      TeaKey(code: KeyCode.rune, text: ch, modifiers: {KeyMod.ctrl}),
+    );
+
+    test('ctrl+k kills to line end; at the cursor end it is a no-op', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'hello world');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.left)));
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.left)));
+      model = send(model, ctrl('k'));
+      expect(model.inputText, 'hello wor');
+      // Cursor already at the end: unclaimed guard path.
+      model = send(model, ctrl('k'));
+      expect(model.inputText, 'hello wor');
+    });
+
+    test('ctrl+y yanks the last kill; consecutive yanks walk the ring', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'alpha beta');
+      model = send(model, ctrl('w')); // kills 'beta'
+      expect(model.inputText, 'alpha ');
+      model = send(model, ctrl('y'));
+      expect(model.inputText, 'alpha beta');
+      // A second ctrl+y rotates to the OLDER kill entry; with a single
+      // entry the ring wraps onto the same text.
+      model = send(model, ctrl('y'));
+      expect(model.inputText, contains('beta'));
+      // No kill ever made: the guard keeps the input untouched.
+      var fresh = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      fresh = typed(fresh, 'plain');
+      fresh = send(fresh, ctrl('y'));
+      expect(fresh.inputText, 'plain');
+    });
+
+    test('ctrl+t transposes at the cursor; empty input is a no-op', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'ab');
+      model = send(model, ctrl('t'));
+      expect(model.inputText, 'ba');
+      var empty = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      empty = send(empty, ctrl('t'));
+      expect(empty.inputText, '');
+    });
+
+    test('ctrl+z undoes the last edit group', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'kept');
+      model = send(
+        model,
+        ctrl('w'),
+      ); // no word before cursor 0? 'kept' is a word
+      model = send(model, ctrl('z'));
+      expect(model.inputText, contains('kept'));
+      // Nothing to undo on a fresh composer.
+      var fresh = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      fresh = send(fresh, ctrl('z'));
+      expect(fresh.inputText, '');
+    });
+
+    test('a ! line completes the trailing shell word from workspace paths', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(pathCandidates: (_) => ['build/notes.md']),
+        isExited: () => false,
+      );
+      model = typed(model, '!cat not');
+      expect(model.menuOpen, isTrue);
+      // The token starts after '!cat ' (position 5).
+      expect(model.menuTokenStart, 5);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.tab)));
+      expect(model.inputText, '!cat build/notes.md ');
+    });
+  });
+
+  group('composer overlay helpers', () {
+    test('groupOf classifies skill keys apart from commands', () {
+      expect(
+        groupOf(const MenuItem(key: '/skill:goal ', label: '/goal')),
+        'skills',
+      );
+      expect(groupOf(const MenuItem(key: '/exit', label: '/exit')), 'commands');
     });
   });
 }

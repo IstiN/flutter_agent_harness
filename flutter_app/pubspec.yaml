@@ -182,6 +182,8 @@ dependency_overrides:
   flutter_agent_memory: ^0.2.1
   fa_llm:
     path: ../packages/fa_llm
+  dart_tui:
+    path: ../vendor/dart_tui
   wasm_run:
     path: ../vendor/wasm_run
   wasm_run_flutter:

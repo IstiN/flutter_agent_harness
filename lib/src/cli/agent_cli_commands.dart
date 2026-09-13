@@ -19,6 +19,7 @@ final _leadingPathLike = RegExp(r'^/[^/\s]*\/');
 /// `/browser` (run via the bridge handle, then print).
 final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/mcp': (cli, rest) async => cli._mcpSlash(rest),
+  '/queue': (cli, rest) async => cli._queueSlash(rest),
   '/skills': (cli, rest) async => cli._skillsSlash(rest),
   '/tools': (cli, rest) async => cli._toolsSlash(rest),
   '/cube': (cli, rest) async => cli._handleCubeCommand(rest),
@@ -64,6 +65,27 @@ extension SlashCommandDispatch on AgentCli {
     } else {
       _printMcpStatus();
     }
+  }
+
+  /// `/queue [clear]` — clear the TUI composer's queued messages (issue
+  /// #275). The queue strip itself is always visible above the composer;
+  /// this arm exists so the queue is manageable from line mode too, and
+  /// bare `/queue` just points there. Line mode has no queue.
+  Future<void> _queueSlash(String rest) async {
+    if (rest.trim() != 'clear') {
+      io.writeln(
+        'Queued messages render above the input while a run streams; '
+        '/queue clear empties the queue.',
+      );
+      return;
+    }
+    final controller = _tuiController;
+    if (controller == null) {
+      io.writeln('No interactive TUI session — nothing is queued.');
+      return;
+    }
+    controller.clearQueue();
+    io.writeln('Queued messages cleared.');
   }
 
   /// The `/browser` arm: run the command and print its lines.
