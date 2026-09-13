@@ -1046,6 +1046,10 @@ class _FaChatScreenState extends State<FaChatScreen>
     final fileBrowserBuilder = widget.features.fileBrowser
         ? _fileBrowserBuilder
         : null;
+    final appsToggleButton = FaChatHost.appsToggleButtonBuilder?.call(
+      context,
+      widget.service,
+    );
     final dynamicMessagesButton = FaChatHost.dynamicMessagesButtonBuilder?.call(
       context,
       widget.service,
@@ -1055,6 +1059,9 @@ class _FaChatScreenState extends State<FaChatScreen>
           ? AppBar(
               title: Text(widget.title),
               actions: [
+                // The host's apps-collapse toggle (issue #224: the Apps
+                // icon). Consulted when the bar builds; null = no button.
+                ?appsToggleButton,
                 // The host's dynamic-messages affordance (issue #102: the
                 // ✦ button). Consulted when the bar builds, so the host
                 // widget decides its own visibility; null = no button.

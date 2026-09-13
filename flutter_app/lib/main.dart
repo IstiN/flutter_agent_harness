@@ -593,6 +593,10 @@ Widget faHomeScreen({
   TileEngineFactory? tileEngineFactory,
   LauncherLayoutStore? layoutStore,
   AppsStore? appsStore,
+
+  /// Restore the persisted apps↔chat surface mode on the narrow home
+  /// (issue #224): true for the real production homes, false in tests.
+  bool restoreAppsMode = false,
 }) {
   final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
   return WidgetPublicationResumeRefresher(
@@ -625,6 +629,7 @@ Widget faHomeScreen({
             tileEngineFactory: tileEngineFactory,
             layoutStore: layoutStore,
             appsStore: appsStore,
+            restoreAppsMode: restoreAppsMode,
           ),
   );
 }
@@ -872,6 +877,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
             context: navigator.context,
             manager: manager,
             registry: registry,
+            restoreAppsMode: true,
           ),
         ),
       );
@@ -926,6 +932,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
             manager: manager,
             registry: widget.registry,
             lastConnectionStore: widget.lastConnectionStore,
+            restoreAppsMode: true,
           ),
         ),
       );
@@ -1154,6 +1161,7 @@ class _EmptyManagerHomeState extends State<_EmptyManagerHome> {
         manager: manager,
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
+        restoreAppsMode: true,
       );
     }
     final error = _error;
@@ -1316,6 +1324,7 @@ class SetupScreen extends StatelessWidget {
           manager: manager,
           registry: registry,
           lastConnectionStore: lastConnectionStore,
+          restoreAppsMode: true,
         ),
       ),
     );
