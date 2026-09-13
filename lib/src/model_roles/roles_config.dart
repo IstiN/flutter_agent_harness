@@ -520,6 +520,23 @@ final class ModelRolesConfig {
         (role == defaultModelRole ? null : roles[defaultModelRole]);
   }
 
+  /// Whether [role] resolves EXPLICITLY for [cwd] — a top-level chain or a
+  /// matching [pathOverrides] pattern ([chainFor]'s steps 1–2) — rather
+  /// than through the inherit-default step. Callers distinguish "the user
+  /// configured this role here" from "the role rides the default chain":
+  /// a subagent keeps the parent's live wiring (its runtime-resolved
+  /// output-cap ladder entry) unless its role is genuinely pinned
+  /// (issue #302).
+  bool pinsRole(String role, {String? cwd, String? homeDir}) {
+    if (roles.containsKey(role)) return true;
+    if (cwd == null) return false;
+    return pathOverrides.any(
+      (override) =>
+          override.roles.containsKey(role) &&
+          pathPatternMatches(override.pattern, cwd, homeDir: homeDir),
+    );
+  }
+
   /// Serializes to the `roles:` / `modelOverrides:` / `retry:` yaml sections
   /// (round-trips with [ModelRolesConfig.fromYaml]).
   String toYaml() {

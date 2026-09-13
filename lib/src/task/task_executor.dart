@@ -517,10 +517,12 @@ final class TaskExecutor {
     return definition;
   }
 
-  /// Cheap-role resolution (omp's agent `model` frontmatter): a configured
-  /// role wins; a definition without a specialist role resolves through the
-  /// `subagent` delegation role when configured; anything else inherits the
-  /// parent wiring.
+  /// Cheap-role resolution (omp's agent `model` frontmatter): an
+  /// explicitly configured role wins; anything else inherits the parent
+  /// wiring — including a role that would merely ride the default chain,
+  /// whose rebuilt model would strand the parent's runtime-resolved
+  /// output-cap ladder entry (endpoint detection, `/model` edits) behind
+  /// a stale catalog default (issue #302).
   ({Model model, StreamFunction stream}) _resolveChildWiring(
     TaskAgentDefinition definition,
   ) {
@@ -529,7 +531,15 @@ final class TaskExecutor {
       return (model: model(), stream: streamFunction());
     }
     final role = definition.modelRole ?? subagentModelRole;
-    final resolved = rolesResolver.resolveRole(role);
+    // A pinned role always resolves (pinsRole ⇒ chainFor non-null); an
+    // unpinned one resolves to null here, keeping the parent wiring.
+    final resolved = rolesResolver.config.pinsRole(
+      role,
+      cwd: rolesResolver.cwd,
+      homeDir: rolesResolver.homeDir,
+    )
+        ? rolesResolver.resolveRole(role)
+        : null;
     if (resolved != null) {
       return (model: resolved.model, stream: resolved.stream);
     }
