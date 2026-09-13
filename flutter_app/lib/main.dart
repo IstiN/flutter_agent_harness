@@ -44,6 +44,7 @@ import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/chat_text_store.dart';
+import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/services/theme_pack_store.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
@@ -191,6 +192,8 @@ Future<void> main() async {
   final mediaModels = await MediaModelsStore.load(env);
   final taskModels = await TaskModelsStore.load(env);
   final onDeviceConfig = await OnDeviceConfigStore.load(env);
+  final imagePreviews = ImagePreviewStore(env);
+  await imagePreviews.load();
   // fa_ui's provider UI resolves named keys through the app's chain
   // (dart-defines → saved keys → .env), exactly like the connection form.
   FaUiHost.keyResolver = (name) => settingsKeyEnv(name, sessionKeys);
@@ -277,6 +280,7 @@ Future<void> main() async {
       mediaModelsStore: mediaModels,
       taskModelsStore: taskModels,
       onDeviceConfigStore: onDeviceConfig,
+      imagePreviewStore: imagePreviews,
       analytics: analytics,
     ),
   );
@@ -314,6 +318,7 @@ class MyApp extends StatelessWidget {
     this.taskModelsStore,
     this.onDeviceConfigStore,
     this.chatTextStore,
+    this.imagePreviewStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -367,6 +372,11 @@ class MyApp extends StatelessWidget {
   /// The persisted chat text-size choice; `null` skips the scope (the
   /// settings Chat text section hides, transcripts render at the default).
   final ChatTextStore? chatTextStore;
+
+  /// The persisted "High-quality image previews" choice (issue #207);
+  /// `null` skips the scope (the settings section hides, previews stay
+  /// downscaled — the default).
+  final ImagePreviewStore? imagePreviewStore;
 
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
@@ -479,6 +489,10 @@ class MyApp extends StatelessWidget {
     final chatText = chatTextStore;
     if (chatText != null) {
       child = ChatTextScope(store: chatText, child: child);
+    }
+    final imagePreviews = imagePreviewStore;
+    if (imagePreviews != null) {
+      child = ImagePreviewScope(store: imagePreviews, child: child);
     }
     return child;
   }
