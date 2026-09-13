@@ -224,6 +224,16 @@ const fileOnlyConfigKeys = <String, String>{
       'Roles-group member (per-path role pinning), superseded for '
       'interactive use by the roles: chains the agent-models flow edits; '
       'per-path pinning stays file-tuned.',
+
+  // The agent section carries the owner-side context cap
+  // (agent.contextWindowCap, issue #273): how many tokens of the model's
+  // window this machine's owner allows the agent to occupy. It bounds the
+  // compaction reserve and is a deployment/machine knob — tuned in the
+  // file, no interactive surface edits it.
+  'agent':
+      'Owner-side context cap (agent.contextWindowCap, issue #273) bounds '
+      'the usable window on this machine; a deployment knob tuned in the '
+      'file, not an interactive preference on any surface.',
 };
 
 /// Which app surfaces carry a shared setting: the Flutter app on macOS,

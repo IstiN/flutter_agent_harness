@@ -615,6 +615,13 @@ jobs:
 
       - run: cd flutter_app && flutter pub get
 
+      # The harness spawns `dart bin/fah.dart` FROM THE REPO ROOT; without
+      # a root package config that resolves package:flutter_agent_harness
+      # to the pub-cache copy (an old published build) and the CLI dies on
+      # compile errors before the first frame. flutter_app's pub get only
+      # writes flutter_app/.dart_tool — the root needs its own.
+      - run: dart pub get
+
       - name: flutter test cli_visual (settings hub flows only)
         run: >-
           cd flutter_app && flutter test test/cli_visual/fa_cli_visual_test.dart
