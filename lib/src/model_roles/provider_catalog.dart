@@ -182,7 +182,7 @@ const providerCatalog = <String, ProviderSpec>{
   'anthropic': ProviderSpec(
     name: 'anthropic',
     kind: 'anthropic',
-    api: 'anthropic-messages',
+    api: anthropicMessagesApi,
     defaultBaseUrl: 'https://api.anthropic.com',
     apiKeyEnvNames: ['ANTHROPIC_API_KEY'],
     contextWindow: 200000,
@@ -280,6 +280,12 @@ ProviderSpec? catalogProvider(String name) {
   return spec;
 }
 
+/// The Anthropic API dialect family the Claude ceiling table was derived
+/// from: the table is only consulted for models riding this api — a claude
+/// id served over any other dialect (openrouter routing, a claude-named
+/// model on an OpenAI-compatible proxy) keeps its provider's own default.
+const anthropicMessagesApi = 'anthropic-messages';
+
 /// Per-family maximum OUTPUT token ceilings for Claude models, ported from
 /// kimi-code's `_modelOutputCeilings` (issue #273): `family ->
 /// 'major.minor' -> maxOutputTokens`. Anthropic raised output caps from
@@ -323,9 +329,11 @@ const int _unknownClaudeOutputCeiling = 128000;
 
 /// The ceiling-table step of max-output-token resolution for [modelId]:
 /// per-model config override (caller-side) > this table > provider default
-/// (caller-side). Null is the table MISS — ids without `claude`
-/// (openai-compatible custom models, glm, kimi, ...) ride the caller's
-/// provider default unchanged.
+/// (caller-side). Null is the table MISS — non-`claude` ids (glm, kimi,
+/// ...) ride the caller's provider default unchanged, and so does any
+/// `claude` id whose [api] is outside the table's family
+/// ([anthropicMessagesApi], issue #302: Claude-specific ceilings never
+/// leak onto other provider families).
 ///
 /// Ported from kimi-code (issue #273). Resolution over the normalized id
 /// (lowercased, `_` → `-`):
@@ -344,7 +352,8 @@ const int _unknownClaudeOutputCeiling = 128000;
 ///   4.8's 128000, sonnet-4.7 falls to 4.6's); nothing catalogued ≤ it, an
 ///   unparseable version, or no known family → [_unknownClaudeOutputCeiling]
 ///   (AC2: totally unknown Claude → conservative fallback).
-int? resolveModelMaxOutputTokens(String modelId) {
+int? resolveModelMaxOutputTokens(String modelId, {required String api}) {
+  if (api != anthropicMessagesApi) return null;
   final id = modelId.toLowerCase().replaceAll('_', '-');
   if (!id.contains('claude')) return null;
 
@@ -420,7 +429,7 @@ Model buildCatalogModel(
     contextWindow: contextWindow ?? spec.contextWindow,
     maxTokens:
         maxTokens ??
-        resolveModelMaxOutputTokens(modelId) ??
+        resolveModelMaxOutputTokens(modelId, api: spec.api) ??
         spec.maxTokens,
   );
 }
@@ -462,7 +471,8 @@ Model buildCliDefaultModel(
     // No provider has a default model — the choice is always explicit.
     throw ConfigException('provider "$providerKind" requires --model <id>');
   }
-  final maxTokens = resolveModelMaxOutputTokens(id) ?? spec.maxTokens;
+  final maxTokens =
+      resolveModelMaxOutputTokens(id, api: spec.api) ?? spec.maxTokens;
   return Model(
     id: id,
     name: id,
