@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/flutter_session_manager.dart';
@@ -5,10 +7,16 @@ import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/widgets/dap_hub_mark.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show SessionMetadata, groupSessionsByParent, isSubagentSession;
+    show
+        SessionMetadata,
+        groupSessionsByParent,
+        isSubagentSession,
+        subagentParentId;
 import 'package:path/path.dart' as p;
 
 /// The sessions list for the wide-screen sidebar: shows every live session
@@ -88,8 +96,26 @@ class SidebarSessionsList extends StatefulWidget {
 }
 
 class _SidebarSessionsListState extends State<SidebarSessionsList> {
+  /// The applied (debounced) search query — a transient lookup over the
+  /// in-memory projection, never persisted; '' restores the full list.
+  String _query = '';
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+
   void _onChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// Cmd/Ctrl+F focuses the search field while the expanded list is on
+  /// screen (issue #200). Registered globally — focus may sit anywhere in
+  /// the shell (the composer, a panel) — and never consumes the event.
+  bool _onKey(KeyEvent event) {
+    if (widget.collapsed || event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.keyF) return false;
+    final mods = HardwareKeyboard.instance;
+    if (!mods.isMetaPressed && !mods.isControlPressed) return false;
+    _searchFocus.requestFocus();
+    return false;
   }
 
   @override
@@ -97,6 +123,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
     super.initState();
     widget.manager.addListener(_onChanged);
     widget.sessionNamesStore?.addListener(_onChanged);
+    HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   @override
@@ -116,8 +143,11 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     widget.manager.removeListener(_onChanged);
     widget.sessionNamesStore?.removeListener(_onChanged);
+    _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -142,6 +172,14 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       sessionInfoNames: widget.sessionInfoNames,
       subagent: subagent,
     );
+  }
+
+  /// The empty state's Clear affordance (E1): reset the query and the
+  /// field in one tap — the full list restores instantly.
+  void _clearSearch() {
+    setState(() => _query = '');
+    _searchController.clear();
+    _searchFocus.unfocus();
   }
 
   @override
@@ -198,14 +236,56 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       // Creation time never changes: clicking moves only the dot, a new
       // session still lands on top.
     ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // Live search (issue #200): a pure filter over the in-memory
+    // projection — zero I/O. Name matches rank first; a blank query
+    // keeps the list exactly as it was.
+    final query = _query.trim();
+    final visible = rankSessionEntries(entries, _query, (e) {
+      return (
+        title: _titleFor(e),
+        id: e.id,
+        cwd: e.cwd,
+        updatedAt: e.lastUpdatedAt,
+      );
+    });
+    // AC2 (tree interop): a matching subagent surfaces under its parent.
+    // The parent's own fields may not match — it is pulled in as dimmed
+    // context and force-expanded; non-matching siblings stay hidden
+    // (the rank filter already dropped them). A matching PARENT keeps
+    // its collapse state: nothing is forced for it.
+    final contextParents = <String>{};
+    if (query.isNotEmpty) {
+      final visibleIds = {for (final e in visible) e.id};
+      final entryById = {for (final e in entries) e.id: e};
+      for (final e in visible) {
+        final parentId = subagentParentId(
+          persistedById[e.id] ??
+              SessionMetadata(
+                id: e.id,
+                createdAt: e.createdAt,
+                cwd: e.cwd ?? '',
+                path: '',
+              ),
+        );
+        if (parentId != null &&
+            entryById.containsKey(parentId) &&
+            !visibleIds.contains(parentId)) {
+          contextParents.add(parentId);
+        }
+      }
+      visible.addAll([for (final id in contextParents) entryById[id]!]);
+    }
     // The click highlights the row IN PLACE (selection =
     // selectedSessionId); the list never reorders under the finger.
     final rows = sessionTreeRows(
-      entries,
+      visible,
       metadataById: persistedById,
       personalLabel: context.l10n.sessionFolderPersonal,
       activeSessionId: widget.selectedSessionId,
-      expandedIds: _expandedParents,
+      expandedIds: query.isEmpty
+          ? _expandedParents
+          : {..._expandedParents, ...contextParents},
+      dimmedIds: contextParents,
     );
     return Column(
       children: [
@@ -235,9 +315,29 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
             ],
           ),
         ),
+        // The search row sits pinned between the header and the list —
+        // it does not scroll away.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+          child: SessionSearchField(
+            controller: _searchController,
+            focusNode: _searchFocus,
+            onQueryChanged: (q) {
+              if (q != _query) setState(() => _query = q);
+            },
+          ),
+        ),
         Expanded(
           child: rows.isEmpty
-              ? const SizedBox.shrink()
+              ? (query.isEmpty
+                    ? const SizedBox.shrink()
+                    // E1: no matches → say so, offer a way out.
+                    : sessionSearchEmptyState(
+                        context,
+                        colors,
+                        query,
+                        _clearSearch,
+                      ))
               : ListView(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   children: [
@@ -277,7 +377,7 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   /// top-level, marked but not indented).
   Widget _sessionTile(SessionListRow row) {
     final entry = row.entry!;
-    return SessionTile(
+    final tile = SessionTile(
       title: _titleFor(entry, subagent: row.isChild),
       subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
       // The folder basename IS the group header — a per-tile cwd label
@@ -297,6 +397,10 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
       subagent: row.isChild,
       indent: row.isChild && !row.orphaned ? sessionChildIndent : 0,
     );
+    // AC2: a parent pulled in as search context renders faintly — it is
+    // scaffolding for the matching child, not a hit. Still tappable.
+    if (!row.dimmed) return tile;
+    return Opacity(opacity: 0.45, child: tile);
   }
 
   /// The 3-dot tile menu: rename (via the shared rename dialog, like the
@@ -380,6 +484,9 @@ class _SidebarSessionsListState extends State<SidebarSessionsList> {
   }
 }
 
+/// Left indent of a subagent child tile under its parent (both hosts).
+const sessionChildIndent = 20.0;
+
 /// One row in the expanded list: a live [FlutterManagedSession] or a
 /// persisted-only [SessionMetadata] still sitting on disk. Shared by the
 /// wide sidebar and the mobile sessions drawer (issue #198: both hosts
@@ -410,11 +517,6 @@ final class SessionEntry {
   final SessionMetadata? persisted;
 }
 
-/// Left indent of a subagent child tile under its parent (both hosts).
-const sessionChildIndent = 20.0;
-
-/// One rendered row of a session list — the wide sidebar and the mobile
-/// drawer consume the SAME model (issue #198): a folder header, a main
 /// tile (a parent heads its subagent children: [childCount] > 0 plus the
 /// group's [expanded] state), or a subagent child tile ([isChild]; an
 /// [orphaned] child renders top-level with the agent glyph).
@@ -426,6 +528,7 @@ final class SessionListRow {
     this.expanded = false,
     this.isChild = false,
     this.orphaned = false,
+    this.dimmed = false,
   });
 
   /// Folder-header label (set iff this is a header row).
@@ -446,6 +549,10 @@ final class SessionListRow {
   /// A subagent whose parent is missing from the listed set.
   final bool orphaned;
 
+  /// Search context (issue #200 AC2): the row's own fields did not match
+  /// the query — it renders only as dimmed context for a matching child.
+  final bool dimmed;
+
   bool get isHeader => label != null;
 }
 
@@ -455,6 +562,8 @@ final class SessionListRow {
 /// — collapsed unless [expandedIds] opts in or the ACTIVE session is one
 /// of the group's children (E2: the group forces open so the active row
 /// stays visible). Orphaned subagents surface top-level with the glyph.
+/// Parents in [dimmedIds] (issue #200 AC2: pulled in as search context
+/// for a matching child) carry `dimmed` for the host to render faintly.
 /// Pure projection over [metadataById] — no extra I/O (AC5): entries
 /// missing from it (presence-only rows, pre-feature headers) are mains.
 List<SessionListRow> sessionTreeRows(
@@ -463,6 +572,7 @@ List<SessionListRow> sessionTreeRows(
   required String personalLabel,
   String? activeSessionId,
   Set<String> expandedIds = const {},
+  Set<String> dimmedIds = const {},
 }) {
   // Folder groups in first-appearance order (entries arrive pre-sorted).
   final byFolder = <String, List<SessionEntry>>{};
@@ -507,6 +617,7 @@ List<SessionListRow> sessionTreeRows(
           entry: entry,
           childCount: group.children.length,
           expanded: expanded,
+          dimmed: dimmedIds.contains(entry.id),
         ),
       );
       if (expanded) {

@@ -13,6 +13,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa_ui/fa_ui.dart' show FaAttachGlyph, TrajectoryScreen;
@@ -1130,6 +1131,89 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
     });
   });
+  group('sessions drawer search (issue #200)', () {
+    Future<void> typeQuery(WidgetTester tester, String text) async {
+      await tester.enterText(find.byType(SessionSearchField), text);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    testWidgets('the drawer filters by id and hides non-matches; clear '
+        'restores (AC1, AC4)', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+
+      await typeQuery(tester, 'sess-a');
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsNothing,
+      );
+
+      await tester.tap(find.byIcon(Icons.cancel));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('no matches shows the empty state (E1)', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+
+      await typeQuery(tester, 'zzz');
+      expect(find.text('No sessions match "zzz"'), findsOneWidget);
+      expect(find.text('Clear'), findsOneWidget);
+      await tester.tap(find.text('Clear'));
+      await tester.pumpAndSettle();
+      expect(find.text('No sessions match "zzz"'), findsNothing);
+    });
+
+    testWidgets('closing the drawer drops the query: reopening shows the '
+        'full list', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+      await typeQuery(tester, 'sess-a');
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsNothing,
+      );
+
+      // Scrim tap closes the drawer.
+      await tester.tapAt(const Offset(700, 100));
+      await tester.pumpAndSettle();
+      await _openDrawer(tester);
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the keyboard does not overflow the 320pt drawer '
+        '(AC4)', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+      tester.view.viewInsets = FakeViewPadding(bottom: 336);
+      await tester.pump();
+      await typeQuery(tester, 'sess');
+
+      expect(tester.takeException(), isNull);
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
+        findsOneWidget,
+      );
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pump();
+    });
+  });
 
   group('SessionChatSheet apps collapse toggle (issue #224)', () {
     const panelAppsKey = ValueKey('sessionChatPanelApps');
@@ -1174,8 +1258,9 @@ void main() {
       expect(find.byKey(_panelKey), findsOneWidget);
     });
 
-    testWidgets('toggling persists the mode for the next boot (AC2)',
-        (tester) async {
+    testWidgets('toggling persists the mode for the next boot (AC2)', (
+      tester,
+    ) async {
       final env = MemoryExecutionEnv();
       final store = await AppsHomeModeStore.load(env);
       await store.setChatExpanded(false); // user's last state: apps home
