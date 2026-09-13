@@ -243,6 +243,17 @@ String resolveProviderKey(
   };
 }
 
+/// The keyless-request guard (issue #329): true when [provider] is a
+/// custom entry that PERSISTED a key ([CustomProvider.requiresKey]) but
+/// resolves none on this surface — the request must fail with
+/// [FaUiStrings.missingKeyOnDevice] instead of a raw provider 401.
+/// Keyless-by-design entries (Ollama/llama.cpp, never had a key) and
+/// resolved keys return false.
+bool isKeyMissingOnSurface(Object provider, {ProviderRegistry? registry}) =>
+    provider is CustomProvider &&
+    provider.requiresKey &&
+    (registry?.keyFor(provider.id) ?? '').isEmpty;
+
 /// The host part of [baseUrl] for row summaries (the raw string when it
 /// does not parse as a URI with a host).
 String providerHostOf(String baseUrl) {

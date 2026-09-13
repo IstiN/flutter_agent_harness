@@ -123,6 +123,11 @@ abstract class FaUiStrings {
   /// Key-storage note of the provider editor (secure-storage wording).
   String get settingsEditorKeyNoteSecure;
 
+  /// The keyless-request guard (issue #329): an entry that persisted a
+  /// key resolves none on this device — the request fails with this
+  /// named message instead of a raw provider 401.
+  String missingKeyOnDevice(String name);
+
   /// CORS note of the Ollama Cloud preset.
   String get settingsCorsNoteOllama;
 
@@ -382,6 +387,10 @@ class FaUiStringsEn extends FaUiStrings {
   String get settingsEditorKeyNoteSecure =>
       'Name, URL and model are saved; the key is stored in the Keychain on '
       'this device.';
+
+  @override
+  String missingKeyOnDevice(String name) =>
+      '$name: no API key on this device — re-enter it.';
   @override
   String get settingsCorsNoteOllama =>
       'Calls go straight from your browser to ollama.com, which currently '
@@ -607,6 +616,10 @@ class FaUiStringsRu extends FaUiStrings {
   String get settingsEditorKeyNoteSecure =>
       'Имя, URL и модель сохраняются; ключ хранится в Keychain на этом '
       'устройстве.';
+
+  @override
+  String missingKeyOnDevice(String name) =>
+      '$name: на этом устройстве нет API-ключа — введите его заново.';
   @override
   String get settingsCorsNoteOllama =>
       'Запросы идут напрямую из браузера на ollama.com, который сейчас не '

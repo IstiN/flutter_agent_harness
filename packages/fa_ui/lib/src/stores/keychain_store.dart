@@ -5,25 +5,29 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// App-scoped Keychain storage for API keys on iOS and macOS, backed by the
-/// `fah/keychain` method channel (service `fa.app`; entries never leave the
-/// device — `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`).
+/// App-scoped Keychain storage for API keys on iOS, macOS and Android,
+/// backed by the `fah/keychain` method channel (service `fa.app` on
+/// iOS/macOS; Keystore-encrypted preferences on Android — entries never
+/// leave the device, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` /
+/// non-exportable AndroidKeyStore key).
 ///
-/// Every call degrades gracefully: unsupported platforms (web, Android,
-/// Linux, Windows) report [isSupported] == false, and channel errors read
+/// Every call degrades gracefully: unsupported platforms (web, Linux,
+/// Windows) report [isSupported] == false, and channel errors read
 /// as empty / write as false so callers can fall back to file persistence.
 final class KeychainStore {
   const KeychainStore();
 
   static const _channel = MethodChannel('fah/keychain');
 
-  /// Whether the secure backend exists on this platform (iOS/macOS only).
-  /// Platform-checks go through [defaultTargetPlatform] so this file still
-  /// compiles for web (no `dart:io`).
+  /// Whether the secure backend exists on this platform (iOS/macOS run the
+  /// native Keychain; Android the Keystore-encrypted channel handler —
+  /// issue #329). Platform-checks go through [defaultTargetPlatform] so
+  /// this file still compiles for web (no `dart:io`).
   static bool get isSupported =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.macOS);
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.android);
 
   /// Probes the channel; false on any error (a broken channel must never
   /// block boot).

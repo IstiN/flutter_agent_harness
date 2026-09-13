@@ -562,6 +562,11 @@ AgentConfig? restorableBootConfig({
   if (key.isEmpty) {
     key = settingsKeyEnv('OPENROUTER_API_KEY', sessionKeysStore);
   }
+  // Issue #329: an entry that PERSISTED a key but resolves none on this
+  // surface (secure store lost/broken) never boots keyless — a doomed
+  // auto-connect would only 401 on the first turn. The setup screen shows
+  // instead; selecting the entry in the picker names the problem.
+  if (key.isEmpty && custom != null && custom.requiresKey) return null;
   if (key.isEmpty && custom == null) return null;
   return AgentConfig(
     providerKind: kind,
