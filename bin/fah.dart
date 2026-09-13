@@ -470,6 +470,19 @@ bool _envTruthy(String name) {
   return value == '1' || value == 'true' || value == 'yes' || value == 'on';
 }
 
+/// Tri-state env-var check: `1/true/yes/on` → true, `0/false/no/off` →
+/// false, unset or unrecognized (e.g. `auto`) → null. Strict sets — any
+/// other garbage must not silently force the flag on.
+bool? _envTristate(String name) {
+  final raw = Platform.environment[name]?.trim().toLowerCase();
+  if (raw == null || raw.isEmpty) return null;
+  const on = {'1', 'true', 'yes', 'on'};
+  const off = {'0', 'false', 'no', 'off'};
+  if (on.contains(raw)) return true;
+  if (off.contains(raw)) return false;
+  return null;
+}
+
 /// [CliIO] bound to the real terminal: stdin lines, stdout writes, and a
 /// broadcast interrupt channel fed by the SIGINT handler in `main`.
 ///
@@ -2021,6 +2034,9 @@ Future<void> _runApp(List<String> args) async {
       // without capture two-finger scroll does nothing). FA_TUI_MOUSE=0
       // opts out for always-on native select-to-copy.
       tuiMouseCapture: _envNotFalsy('FA_TUI_MOUSE'),
+      // DEC 2026 synchronized output: auto-detect by default; FA_TUI_SYNC
+      // forces it on (terminals without DECRQM answers) or off (fallback).
+      tuiSyncOutput: _envTristate('FA_TUI_SYNC'),
     ),
     io: io,
   );

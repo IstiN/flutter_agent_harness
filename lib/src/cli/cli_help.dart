@@ -544,7 +544,10 @@ TERMINAL
   (the alternate screen has no native scrollback). Select-to-copy still
   works through your terminal's bypass modifier — hold Shift and drag
   in most terminals. FA_TUI_MOUSE=0 hands the mouse back to the
-  terminal for always-on native selection instead.
+  terminal for always-on native selection instead. Frames repaint
+  differentially (only changed cells; a scroll is one scroll op) and are
+  wrapped in DEC 2026 synchronized output when the terminal supports it —
+  FA_TUI_SYNC=1/0 forces it on/off.
   While a run streams, Enter queues the message (❯ rows above the input);
   ↑ pops the last queued message back for editing. With an empty input
   ↑/↓ browses the submitted-message history (shell-style); PgUp/PgDn

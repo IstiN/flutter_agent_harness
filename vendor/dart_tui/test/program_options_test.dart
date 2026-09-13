@@ -214,6 +214,39 @@ void main() {
       expect(receivedWidth, 120);
       expect(receivedHeight, 40);
     });
+    test('changed WindowSizeMsg invalidates the cell renderer (E1 wiring)',
+        () async {
+      final chunks = <String>[];
+      final controller = StreamController<List<int>>();
+      controller.stream.listen((data) => chunks.add(utf8.decode(data)));
+      final sink = IOSink(controller.sink);
+
+      final model = _ResizeRepaintModel();
+      await Program(
+        options: [
+          withInput(null),
+          withOutput(sink),
+          withWindowSize(100, 40),
+          withCellRenderer(),
+        ],
+      ).run(model);
+
+      await sink.flush();
+      final out = chunks.join();
+      await sink.close();
+      await controller.close();
+
+      // Both WindowSizeMsgs reached the model — the program invalidates
+      // the renderer without swallowing the message.
+      expect(model.sizeMsgs, 2);
+      // The post-resize frame is a FULL repaint: the clear pass
+      // (CUP + EL) reappears and no stale-row diff walk (row 3) remains.
+      final resized = out.substring(out.indexOf('a4') + 2);
+      expect(resized, contains('\x1b[1;1H\x1b[K'));
+      expect(resized, contains('\x1b[2;1H\x1b[K'));
+      expect(resized, contains('b2'));
+      expect(resized, isNot(contains('\x1b[3;1H')));
+    });
   });
 
   group('withLogFile()', () {
@@ -250,4 +283,36 @@ final class _WindowSizeCapture extends Model {
 
   @override
   View view() => newView('');
+}
+
+/// Paints a 4-row grid, then re-enqueues a smaller WindowSizeMsg; the
+/// program must invalidate the renderer so the shrunk 2-row view is ONE
+/// full repaint (issue #274 E1).
+final class _ResizeRepaintModel extends Model {
+  int sizeMsgs = 0;
+  bool _rearmed = false;
+
+  @override
+  (Model, Cmd?) update(Msg msg) {
+    if (msg is WindowSizeMsg) {
+      sizeMsgs++;
+      if (!_rearmed) {
+        _rearmed = true;
+        return (this, () => WindowSizeMsg(80, 24));
+      }
+      // Defer quit past the next batch so the resized frame still renders
+      // (a sync quit drains in the same batch and skips the final paint).
+      return (
+        this,
+        () async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          return quit();
+        }
+      );
+    }
+    return (this, null);
+  }
+
+  @override
+  View view() => sizeMsgs > 1 ? newView('b1\nb2') : newView('a1\na2\na3\na4');
 }
