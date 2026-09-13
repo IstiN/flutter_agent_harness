@@ -827,6 +827,19 @@ final class AgentHost implements UiHostBackend {
     _emitStatus();
     try {
       await _agent.prompt(await _turnTextWithTabContext(text));
+      // Issue #314 (E3): a steer arriving between the loop's last boundary
+      // poll and this teardown line is queued but never delivered - the run
+      // was "running" from the panel's view, so sendUser routed it to
+      // steer(), and the loop had already stopped polling. continueRun()
+      // drains the queue as the next turn (never dropped, never error).
+      var steeringWakes = 0;
+      while (_agent.hasSteering &&
+          steeringWakes < 8 &&
+          _agent.state.messages.isNotEmpty &&
+          _agent.state.messages.last.role == 'assistant') {
+        steeringWakes++;
+        await _agent.continueRun();
+      }
     } on Object catch (error) {
       _sink({'type': 'error', 'error': '$error'});
     } finally {
