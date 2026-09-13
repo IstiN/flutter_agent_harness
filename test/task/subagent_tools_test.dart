@@ -231,6 +231,48 @@ void main() {
       expect(text, isNot(contains('sess1/main — 1 pending  [')));
     });
 
+    test('agent_directory marks hub-sourced peers (issue #304 AC3)', () async {
+      final fabricMgr = SubagentManager(
+        parentSessionId: 'p',
+        messaging: _FakeMessagingRepository(
+          entries: const [
+            MailboxEntry(id: 'sess1/main'),
+            MailboxEntry(
+              id: '0123456789abcdef',
+              name: 'Browser',
+              presence: AgentPresence.live,
+              source: mailboxSourceHub,
+            ),
+          ],
+        ),
+      )..mailboxPrefix = 'sess1';
+      await fabricMgr.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'a1',
+          text: 'self note',
+          sentAt: '2026-01-01T00:00:00Z',
+        ),
+      );
+
+      final tools = subagentMonitoringTools(manager: fabricMgr);
+      final directory = tools.firstWhere((t) => t.name == 'agent_directory');
+      final result = await directory.execute(const {}, null, null);
+      final text = (result.content.first as dynamic).text as String;
+      expect(
+        text,
+        contains('Browser (01234567…) — 0 pending — live  [hub]'),
+        reason: 'hub peers render with name, presence and the hub marker',
+      );
+      // File/legacy entries carry NO marker — the line shape outside the
+      // marker is unchanged (REG-legacy, byte-identical with fabric off).
+      expect(text, contains('sess1/main — 1 pending'));
+      final mainLine = text
+          .split('\n')
+          .firstWhere((l) => l.contains('sess1/main'));
+      expect(mainLine.contains('[hub]'), isFalse);
+    });
+
     test(
       'agent_directory without a fabric still lists registered children',
       () async {
