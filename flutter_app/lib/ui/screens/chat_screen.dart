@@ -207,14 +207,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// The dynamic-message host hooks are package-level statics resolved at
   /// render time against [ChatScreen.service] — always the active
-  /// session's service, so session switches need no re-install.
+  /// session's service, so session switches need no re-install. (The
+  /// inline widget tile itself is passed to [fa_ui.FaChatScreen] in
+  /// [build] — per surface, not process-wide: issue #336.)
   void _installDynamicHosts() {
-    fa_ui.FaChatHost.dynamicWidgetTileBuilder = (context, message) =>
-        DynamicWidgetTile(
-          service: widget.service.dynamicMessages,
-          message: message,
-          onSaveAsApp: _graduateWidget,
-        );
     // The ✦ affordance (issue #102) as an adaptive-header action
     // (issue #225): the host-styled button stays the inline bar widget,
     // and its label/handler feed the ⋮ menu when the action demotes on
@@ -264,7 +260,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _uninstallDynamicHosts() {
-    fa_ui.FaChatHost.dynamicWidgetTileBuilder = null;
     fa_ui.FaChatHost.dynamicMessagesButtonBuilder = null;
     fa_ui.FaChatHost.appsToggleButtonBuilder = null;
   }
@@ -353,12 +348,23 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// The live dynamic-message tile for this surface's transcript
+  /// (issue #336): resolved per render against this screen's service.
+  Widget? _buildDynamicTile(BuildContext context, fa_ui.FaChatMessage message) {
+    return DynamicWidgetTile(
+      service: widget.service.dynamicMessages,
+      message: message,
+      onSaveAsApp: _graduateWidget,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final service = widget.service;
     return fa_ui.FaChatScreen(
       service: service,
       title: context.l10n.appTitle,
+      dynamicWidgetTileBuilder: _buildDynamicTile,
       // Issue #207: "High-quality image previews" — the scope notifies on
       // toggle, so the open transcript re-decodes live. Null = full
       // resolution; the default keeps the downscaled 600px previews.

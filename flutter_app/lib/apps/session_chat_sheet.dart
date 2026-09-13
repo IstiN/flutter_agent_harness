@@ -21,6 +21,7 @@ import 'package:fa_ui/fa_ui.dart'
 
 import 'package:path/path.dart' as p;
 
+import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/chat_text_store.dart';
@@ -1468,10 +1469,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
         iconSize: 20,
         leading: IconButton(
           key: const ValueKey('sessionChatPanelSessions'),
-          icon: SessionsGlyph(
-            color: colors.dim,
-            background: colors.panelAlt,
-          ),
+          icon: SessionsGlyph(color: colors.dim, background: colors.panelAlt),
           tooltip: context.l10n.sidebarSessionsHeader,
           visualDensity: VisualDensity.compact,
           onPressed: () => unawaited(_toggleDrawer()),
@@ -1685,6 +1683,13 @@ class _SessionTranscriptState extends State<_SessionTranscript>
               messageFontSize: ChatTextScope.maybeOf(context)?.fontSize,
               audioControllerFactory: widget.audioControllerFactory,
               videoControllerFactory: widget.videoControllerFactory,
+              // The launcher panel never mounts a ChatScreen, so it wires
+              // its own widget-tile builder (issue #336): without one the
+              // live widget degrades to the plain tool card.
+              dynamicWidgetTileBuilder: (context, message) => DynamicWidgetTile(
+                service: widget.service.dynamicMessages,
+                message: message,
+              ),
             );
           },
         );

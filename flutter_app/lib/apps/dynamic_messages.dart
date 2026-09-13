@@ -108,7 +108,7 @@ class DynamicMessagesService extends ChangeNotifier {
   static Duration noUiGrace = const Duration(seconds: 10);
 
   /// The transcript marker role for dynamic widgets (fa_ui renders it
-  /// through [FaChatHost.dynamicWidgetTileBuilder]).
+  /// through each surface's `dynamicWidgetTileBuilder`).
   static const String markerRole = 'widget';
 
   /// The CustomRecord `customType` persisting widget definitions.
