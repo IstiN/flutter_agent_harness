@@ -3443,6 +3443,15 @@
 - fix(catalog): web installs widgets from CORS-friendly raw URLs (#231)
 - fix(ctx): footer meter, over-window guard and compaction share one request-size basis (#217)
 
+## 0.1.365
+
+- fix(142): unblock tb runs — LPT shards, doubled timeouts, buildable debian task images (#253)
+- fix(fa_ui): hide the "Load earlier" banner on empty sessions (#223) (#247)
+- test(233): triage + fix the 13+4 integration-failure clusters (#248)
+- feat(224): apps collapse toggle - Apps icon in the chat header actions (#245)
+- fix(215): split agent_service.dart and settings.dart under the 2800-line gate (#244)
+- fix(234): latch the web boot signal; e2e waits on it, not the transient splash class (#242)
+
 ## Unreleased
 
 ## Unreleased
