@@ -324,6 +324,12 @@ factual: paths, commands, invariants — no essays.
   help: add an external pinger, e.g. a cron/launchd entry that messages
   the session's mailbox — mail to an asleep session already launches a
   headless wake run that drains the inbox and sweeps due records.
+ Failure isolation (issue #270): a throwing `send` is contained per
+ record (logged via `onError` — CLI `[sched]` line, app `AppLog`), the
+ record stays for the next sweep, and the post-failure re-arm floors the
+ leg at `failureBackoff` (60s) so a poison record cannot spin a
+ zero-delay timer; sweeps deliver in due-time order, and the app's
+ turn-start sweep is awaited so the fresh turn sees the fired reminder.
  Records carry the scheduling instance's `owner` (mailbox prefix): a
  sweeper re-addresses a self-addressed record only when the stored owner
  matches its own prefix, and never deletes another instance's record -
