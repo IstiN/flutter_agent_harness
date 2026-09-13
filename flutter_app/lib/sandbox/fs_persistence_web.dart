@@ -2,34 +2,38 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'dart:async';
 import 'dart:js_interop';
 
 import 'package:fa/sandbox/fs_persistence.dart';
 
 @JS()
-external JSBoolean get _fahFsLoadDefined;
+external JSBoolean get _fahFsGetAllDefined;
 
-@JS('__fahFsLoad')
-external JSPromise _fahFsLoadJs();
+@JS('__fahFsGetAll')
+external JSPromise<JSObject?> _fahFsGetAllJs();
 
-@JS('__fahFsSave')
-external JSPromise _fahFsSaveJs(String snapshot);
+@JS('__fahFsSet')
+external JSPromise _fahFsSetJs(JSObject items);
+
+@JS('__fahFsRemove')
+external JSPromise _fahFsRemoveJs(JSArray keys);
 
 /// IndexedDB-backed [FsSnapshotStore] for the browser.
 ///
-/// IndexedDB is used instead of localStorage on purpose: snapshots carry
+/// IndexedDB is used instead of localStorage on purpose: records carry
 /// arbitrary uploaded binaries (base64 inside the JSON envelope), and
 /// localStorage is string-only, synchronous, and capped around 5 MB, while
 /// IndexedDB stores large payloads asynchronously under the real per-origin
-/// storage quota. The whole sandbox tree lives behind one key; each save
-/// replaces it, so the database never grows unboundedly across saves.
+/// storage quota. Records are flat key→string pairs — the envelope under
+/// one key, one record per session file (issue #237) — so the database
+/// never grows unboundedly and one bad write costs one record.
 ///
 /// The IndexedDB calls live in `web/fs_store.js`, referenced from
 /// `web/index.html` like the other externalized scripts. The helper used
-/// to be injected as an inline `<script>` (the same pattern `WebInterpreters`
-/// uses for its CDN runners), but MV3 extension pages forbid inline code in
-/// their CSP, which turned every save into a console error in the panel.
+/// to be injected as an inline `<script>` (the same pattern
+/// `WebInterpreters` uses for its CDN runners), but MV3 extension pages
+/// forbid inline code in their CSP, which turned every save into a console
+/// error in the panel.
 final class IdbFsSnapshotStore implements FsSnapshotStore {
   static bool _scriptChecked = false;
 
@@ -38,7 +42,7 @@ final class IdbFsSnapshotStore implements FsSnapshotStore {
     // The helper ships as web/fs_store.js. Injecting it as an inline
     // <script> violates the MV3 extension CSP (extension_pages forbids
     // inline code), so the panel build needs the file, not an injection.
-    _scriptChecked = _fahFsLoadDefined.toDart;
+    _scriptChecked = _fahFsGetAllDefined.toDart;
     if (!_scriptChecked) {
       throw StateError(
         'fs_store.js is not loaded: add <script src="fs_store.js">'
@@ -48,16 +52,26 @@ final class IdbFsSnapshotStore implements FsSnapshotStore {
   }
 
   @override
-  Future<String?> load() async {
+  Future<Map<String, String>> load() async {
     _ensureScript();
-    final result = await _fahFsLoadJs().toDart;
-    return result == null ? null : (result as JSString).toDart;
+    final result = await _fahFsGetAllJs().toDart;
+    if (result == null) return {};
+    final dartified = result.dartify() as Map<Object?, Object?>;
+    return {
+      for (final entry in dartified.entries) '${entry.key}': '${entry.value}',
+    };
   }
 
   @override
-  Future<void> save(String snapshot) async {
+  Future<void> save(Map<String, String> records) async {
     _ensureScript();
-    await _fahFsSaveJs(snapshot).toDart;
+    await _fahFsSetJs(records.jsify() as JSObject).toDart;
+  }
+
+  @override
+  Future<void> remove(Iterable<String> keys) async {
+    _ensureScript();
+    await _fahFsRemoveJs([for (final key in keys) key.toJS].toJS).toDart;
   }
 }
 

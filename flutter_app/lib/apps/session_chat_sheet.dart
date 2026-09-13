@@ -6,7 +6,6 @@ import 'dart:async';
 
 import 'dart:math' as math;
 
-import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,6 +20,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/chat_text_store.dart';
+import 'package:fa/services/apps_mode_store.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/attached_session_controller.dart';
@@ -115,6 +115,7 @@ class SessionChatSheet extends StatefulWidget {
     this.audioControllerFactory,
     this.videoControllerFactory,
     this.panelFraction = SessionChatSheetState.defaultPanelFraction,
+    this.restoreAppsMode = false,
   });
 
   /// The multi-session manager the drawer and the panel are driven by.
@@ -138,6 +139,14 @@ class SessionChatSheet extends StatefulWidget {
   /// app's own header or hero content visible above it) pass a smaller
   /// fraction; defaults to [SessionChatSheetState.defaultPanelFraction].
   final double panelFraction;
+
+  /// Restore the persisted apps↔chat surface mode (issue #224) when the
+  /// sheet mounts: a relaunch (or a wide→narrow rotation) reopens the chat
+  /// panel exactly as the user last left it — chat expanded by default
+  /// ([AppsHomeModeStore] first-run default), apps expanded once the user
+  /// collapsed the chat. Off in tests/goldens, which pin the launcher's
+  /// historical resting state (apps expanded) deterministically.
+  final bool restoreAppsMode;
 
   /// Microphone backend override for the composer (tests).
   final AsrApi? asr;
@@ -168,6 +177,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   late final AnimationController _panelAnim;
   late final AnimationController _drawerAnim;
+
+  /// The persisted apps↔chat mode (null until restored; sheets without
+  /// [SessionChatSheet.restoreAppsMode] never load one, so toggles animate
+  /// without persisting).
+  AppsHomeModeStore? _appsMode;
+
+  /// Set on the first user-driven open/close so a late store load can never
+  /// clobber what the user just did (the load resolves within the first
+  /// frames, well before any realistic interaction).
+  var _userToggledApps = false;
   SessionNamesStore? _namesStore;
 
   /// Live-session presence (sessions a running `fa` CLI owns).
@@ -205,6 +224,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
     setState(() => _drawerQuery = '');
     _drawerSearchController.clear();
   }
+
+  /// Session id → on-disk header (the `agent`/`parent` classification
+  /// source for the drawer's session tree, issue #198), from the last
+  /// listing.
+  Map<String, SessionMetadata> _metadataById = const {};
+
+  /// Parent session ids the user expanded in the drawer's tree — the
+  /// SAME model as the wide sidebar (groups start collapsed; an active
+  /// descendant forces its parent open).
+  final Set<String> _expandedParents = {};
 
   /// The session the user just tapped (an open is in flight): its row
   /// highlights AND sorts to the top immediately — the SAME rule the wide
@@ -304,6 +333,18 @@ class SessionChatSheetState extends State<SessionChatSheet>
     // up front; later changes (streaming row, multiline field) come through
     // the notification.
     WidgetsBinding.instance.addPostFrameCallback((_) => _measureBarHeight());
+    // Apps↔chat surface mode (issue #224): restore the persisted toggle
+    // state once — chat expanded by default on a first run.
+    if (widget.restoreAppsMode) unawaited(_restoreAppsMode());
+  }
+
+  /// Loads the persisted mode and jumps the panel to it (no boot
+  /// animation). A toggle that already happened wins over the file.
+  Future<void> _restoreAppsMode() async {
+    final mode = await AppsHomeModeStore.load(widget.manager.env);
+    if (!mounted || _userToggledApps) return;
+    _appsMode = mode;
+    _panelAnim.value = mode.chatExpanded ? 1 : 0;
   }
 
   /// Reads the bar's real laid-out height into [_barHeight] (no-op when
@@ -408,6 +449,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
               if (m.lastUpdatedAt != null) m.id: m.lastUpdatedAt!,
           };
           _cwdById = {for (final m in all) m.id: m.cwd};
+          _metadataById = {for (final m in all) m.id: m};
         });
       }
     } on Object {
@@ -460,6 +502,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
   void expand() => unawaited(_openPanel());
 
   Future<void> _openPanel() {
+    _userToggledApps = true;
+    unawaited(_appsMode?.setChatExpanded(true));
     AppAnalytics.instance.chatSheetState('expanded');
     if (_drawerAnim.value > 0) {
       unawaited(
@@ -474,6 +518,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
   }
 
   Future<void> _closePanel() {
+    _userToggledApps = true;
+    unawaited(_appsMode?.setChatExpanded(false));
     AppAnalytics.instance.chatSheetState('collapsed');
     // Dismiss the keyboard together with the panel: a still-focused
     // composer in the docked bar would keep the keyboard floating over the
@@ -698,6 +744,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
           asrTranscriber: widget.asrTranscriber,
           audioControllerFactory: widget.audioControllerFactory,
           videoControllerFactory: widget.videoControllerFactory,
+          // The full chat's Apps button (issue #224) pops back here AND
+          // collapses the panel, so the tap really lands on the apps grid.
+          onAppsToggle: () => unawaited(_closePanel()),
         ),
       ),
     );
@@ -982,18 +1031,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
     // The dot moves the moment the row is tapped, not a beat later.
     final activeId = _selectedSessionId;
     final entries =
-        <
-            ({
-              String id,
-              DateTime createdAt,
-              DateTime lastUpdatedAt,
-              String? cwd,
-              FlutterManagedSession? live,
-              SessionMetadata? persisted,
-            })
-          >[
+        <SessionEntry>[
             for (final s in _liveSessions)
-              (
+              SessionEntry(
                 id: s.id,
                 // Hosted sessions: the slot's stamps are pinned at boot —
                 // after a session switch (broadcast adoption) the SW poll
@@ -1007,15 +1047,13 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 // even when the app's current mount moved elsewhere.
                 cwd: _cwdById[s.id] ?? s.service.env.sessionCwd,
                 live: s,
-                persisted: null,
               ),
             for (final m in _persisted)
-              (
+              SessionEntry(
                 id: m.id,
                 createdAt: m.createdAt,
                 lastUpdatedAt: m.lastUpdatedAt ?? m.createdAt,
                 cwd: m.cwd,
-                live: null,
                 persisted: m,
               ),
             // Presence-only rows: a `fa` CLI just started and its session
@@ -1024,15 +1062,13 @@ class SessionChatSheetState extends State<SessionChatSheet>
             for (final id in (_presence?.live.keys ?? const <String>[]))
               if (!_liveSessions.any((s) => s.id == id) &&
                   !_persisted.any((m) => m.id == id))
-                (
+                SessionEntry(
                   id: id,
                   createdAt:
                       DateTime.tryParse(_presence!.live[id]!.startedAt) ??
                       DateTime.now(),
                   lastUpdatedAt: DateTime.now(),
                   cwd: _cwdById[id],
-                  live: null,
-                  persisted: null,
                 ),
           ]
           // STABLE order, same rule as the wide sidebar: creation time
@@ -1041,7 +1077,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
           // switch (archive mtime bump + fresh slot stamp).
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     // Live search over the drawer's rows (issue #200): a pure filter on
-    // the in-memory projection, name matches rank first.
+    // the in-memory projection, name matches rank first. A blank query
+    // keeps the list exactly as it was.
+    final query = _drawerQuery.trim();
     final visible = rankSessionEntries(entries, _drawerQuery, (e) {
       return (
         title:
@@ -1052,15 +1090,43 @@ class SessionChatSheetState extends State<SessionChatSheet>
         updatedAt: e.lastUpdatedAt,
       );
     });
-    // Folder-grouped rows (headers + tiles): the sessions of one project
-    // stay together under the folder basename, most recently active
-    // project first (entries are activity-sorted, groups follow).
-    final drawerRows = <_DrawerRow>[
-      for (final group in _groupDrawerEntries(visible, l10n)) ...[
-        _DrawerRow.header(group.label),
-        for (final e in group.entries) _DrawerRow.tile(e),
-      ],
-    ];
+    // AC2 (tree interop): a matching subagent surfaces under its dimmed
+    // parent — the SAME composition the wide sidebar applies.
+    final contextParents = <String>{};
+    if (query.isNotEmpty) {
+      final visibleIds = {for (final e in visible) e.id};
+      final entryById = {for (final e in entries) e.id: e};
+      for (final e in visible) {
+        final parentId = subagentParentId(
+          _metadataById[e.id] ??
+              SessionMetadata(
+                id: e.id,
+                createdAt: e.createdAt,
+                cwd: e.cwd ?? '',
+                path: '',
+              ),
+        );
+        if (parentId != null &&
+            entryById.containsKey(parentId) &&
+            !visibleIds.contains(parentId)) {
+          contextParents.add(parentId);
+        }
+      }
+      visible.addAll([for (final id in contextParents) entryById[id]!]);
+    }
+    // Folder-grouped, parent-nested rows (issue #198): the SAME tree row
+    // model the wide sidebar renders — subagent sessions collapse under
+    // their parent's count badge, orphans surface top-level marked.
+    final drawerRows = sessionTreeRows(
+      visible,
+      metadataById: _metadataById,
+      personalLabel: l10n.sessionFolderPersonal,
+      activeSessionId: activeId,
+      expandedIds: query.isEmpty
+          ? _expandedParents
+          : {..._expandedParents, ...contextParents},
+      dimmedIds: contextParents,
+    );
     return Container(
       key: const ValueKey('sessionChatDrawer'),
       clipBehavior: Clip.antiAlias,
@@ -1177,21 +1243,18 @@ class SessionChatSheetState extends State<SessionChatSheet>
                           );
                         }
                         final entry = row.entry!;
-                        // ONE selection rule with the wide sidebar:
-                        // entry.id == selectedId, nothing else. (The old
-                        // `entry.live` guard was redundant — a row whose id
-                        // equals the manager's active id always has a slot.)
+                        // AC2: a parent pulled in as search context renders
+                        // faintly — scaffolding for the matching child,
+                        // still tappable.
                         final isActive = entry.id == activeId;
-                        final title =
-                            _namesStore?.titleFor(entry.id) ??
-                            derivedSessionTitle(
-                              context,
-                              id: entry.id,
-                              createdAt: entry.createdAt,
-                            );
-                        return SessionTile(
+                        final tile = SessionTile(
                           key: ValueKey('sessionChatDrawerEntry:${entry.id}'),
-                          title: title,
+                          title: sessionEntryTitle(
+                            context,
+                            entry,
+                            namesStore: _namesStore,
+                            subagent: row.isChild,
+                          ),
                           subtitle: sessionTileSubtitle(entry.lastUpdatedAt),
                           // The folder basename IS the group header — a
                           // per-tile cwd label would duplicate it.
@@ -1217,7 +1280,26 @@ class SessionChatSheetState extends State<SessionChatSheet>
                               onDeleted: () => unawaited(_reloadPersisted()),
                             ),
                           ),
+                          // The SAME tree furniture as the wide sidebar
+                          // (issue #198): parents collapse their subagent
+                          // children behind a count badge, children indent
+                          // with the agent glyph.
+                          childCount: row.childCount,
+                          expanded: row.expanded,
+                          onToggleExpand: row.childCount > 0
+                              ? () => setState(() {
+                                  if (!_expandedParents.remove(entry.id)) {
+                                    _expandedParents.add(entry.id);
+                                  }
+                                })
+                              : null,
+                          subagent: row.isChild,
+                          indent: row.isChild && !row.orphaned
+                              ? sessionChildIndent
+                              : 0,
                         );
+                        if (!row.dimmed) return tile;
+                        return Opacity(opacity: 0.45, child: tile);
                       },
                     ),
             ),
@@ -1225,28 +1307,6 @@ class SessionChatSheetState extends State<SessionChatSheet>
         ),
       ),
     );
-  }
-
-  /// Groups drawer entries by their project folder (the session's origin
-  /// cwd basename); groups follow the entries' activity order.
-  List<({String label, List entries})> _groupDrawerEntries(
-    List entries,
-    AppLocalizations l10n,
-  ) {
-    final groups = <String, List<dynamic>>{};
-    final order = <String>[];
-    for (final entry in entries) {
-      final label = sessionFolderGroupLabel(
-        entry.cwd as String?,
-        l10n.sessionFolderPersonal,
-      );
-      if (!groups.containsKey(label)) {
-        groups[label] = [];
-        order.add(label);
-      }
-      groups[label]!.add(entry);
-    }
-    return [for (final label in order) (label: label, entries: groups[label]!)];
   }
 
   /// Opens the shared rename dialog for the active session (Save / Clear /
@@ -1371,6 +1431,17 @@ class SessionChatSheetState extends State<SessionChatSheet>
                 tooltip: context.l10n.appsOpenTrajectoryTooltip,
                 visualDensity: VisualDensity.compact,
                 onPressed: () => unawaited(_openTrajectory()),
+              ),
+              // The apps-collapse toggle (issue #224): one tap hands the
+              // screen back to the apps grid — the chat collapses to the
+              // pinned composer bar, which stays reachable for the reverse
+              // direction (focus, send, or the work bar's expand).
+              IconButton(
+                key: const ValueKey('sessionChatPanelApps'),
+                icon: const Icon(Icons.apps, size: 20),
+                tooltip: context.l10n.appsShowAppsTooltip,
+                visualDensity: VisualDensity.compact,
+                onPressed: () => unawaited(_closePanel()),
               ),
               PopupMenuButton<String>(
                 key: const ValueKey('sessionChatMenu'),
@@ -1649,19 +1720,6 @@ class _SessionsGlyphPainter extends CustomPainter {
   @override
   bool shouldRepaint(_SessionsGlyphPainter old) =>
       old.color != color || old.background != background;
-}
-
-/// One row of the sessions drawer: a folder-group header or a session
-/// tile. The drawer groups sessions by their project folder (the origin
-/// cwd basename) — the sessions of one project stay together.
-final class _DrawerRow {
-  const _DrawerRow.header(String this.label) : entry = null, isHeader = true;
-
-  const _DrawerRow.tile(this.entry) : label = null, isHeader = false;
-
-  final String? label;
-  final dynamic entry;
-  final bool isHeader;
 }
 
 /// The mobile trajectory ledger page (issue #168): the shared fa_ui

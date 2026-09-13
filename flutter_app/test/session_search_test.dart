@@ -5,14 +5,10 @@
 /// The shared session-search filter (issue #200): `UT-filter` (AC1), the
 /// instrumented zero-I/O budget (AC5) and the Unicode folding edge (E5).
 /// The function is a pure filter over in-memory rows — no repo, no env.
-import 'package:fa/ui/widgets/session_search_field.dart';
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_test/flutter_test.dart';
+library;
 
-/// Flips true when #198/#220 (sessions tree grouping) has landed: AC2's
-/// dimmed-parent/hidden-sibling tree cases run then. The filter function
-/// itself is tree-agnostic by contract — it ranks plain rows.
-const bool kSessionsTreeLanded = false;
+import 'package:fa/ui/widgets/session_search_field.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 /// One row of the test fixture: a plain projection of a session.
 class _Row {
@@ -120,17 +116,4 @@ void main() {
       expect(watch.elapsed, lessThan(const Duration(milliseconds: 16)));
     });
   });
-
-  test(
-    'a matching child surfaces under its dimmed parent with non-matching '
-    'siblings hidden (AC2, IT-tree-filter)',
-    () {
-      // Implemented when #198/#220 lands: rank the tree rows, keep a
-      // matched child's parent as dimmed auto-expanded context.
-    },
-    skip: kSessionsTreeLanded
-        ? null
-        : 'AC2 rides #198/#220 tree grouping; the filter function is '
-              'tree-agnostic by contract and is pinned by UT-filter above',
-  );
 }

@@ -120,6 +120,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appsGridTitle => 'Apps';
 
   @override
+  String get appsHideAppsTooltip => 'Hide apps';
+
+  @override
   String appsLoadError(Object error) {
     return 'Failed to load apps: $error';
   }
@@ -258,6 +261,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appsSendTooltip => 'Send';
+
+  @override
+  String get appsShowAppsTooltip => 'Show apps';
 
   @override
   String appsStartError(Object error, Object name) {
@@ -1552,6 +1558,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sidebarSessionsHeader => 'Sessions';
+
+  @override
+  String sidebarSubagentSessionCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count agents',
+      one: '1 agent',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String sidebarSubagentTitle(String id) {
+    return 'subagent $id';
+  }
 
   @override
   String get tjsCacheTitle => 'Downloaded models (transformers.js)';

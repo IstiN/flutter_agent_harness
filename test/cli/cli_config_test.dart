@@ -303,7 +303,9 @@ prompts:
     test('parses the images section and round-trips it', () async {
       final file = File('${tmp.path}/.fah/config.yaml');
       file.createSync(recursive: true);
-      file.writeAsStringSync('images:\n  registry: false\n  maxPerRequest: 4\n');
+      file.writeAsStringSync(
+        'images:\n  registry: false\n  maxPerRequest: 4\n',
+      );
       final loaded = loadCliConfig(tmp.path);
       expect(loaded.images?.enabled, isFalse);
       expect(loaded.images?.maxPerRequest, 4);
@@ -359,6 +361,61 @@ prompts:
           ),
         ),
       );
+    });
+
+    test('rejects a non-map images section (issue #195 F1)', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('images: 42\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('images must be a map'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a negative images.maxPerRequest (issue #195 F1)', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('images:\n  maxPerRequest: -3\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('images.maxPerRequest'),
+          ),
+        ),
+      );
+    });
+
+    test('an empty images section keeps the defaults (issue #195 F1)', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('images: {}\n');
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.images, isNull);
+    });
+
+    test('partial images section round-trips with core defaults '
+        '(issue #195 F1)', () async {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('images:\n  maxPerRequest: 7\n');
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.images?.enabled, isTrue);
+      expect(loaded.images?.maxPerRequest, 7);
+
+      await saveCliConfig(tmp.path, loaded);
+      final reloaded = loadCliConfig(tmp.path);
+      expect(reloaded.images?.enabled, isTrue);
+      expect(reloaded.images?.maxPerRequest, 7);
     });
 
     group('skills section', () {
@@ -657,6 +714,20 @@ prompts:
         resolveStartupCubeSource(project: const CubeSettings(enabled: true)),
         isNull,
         reason: 'enabled with no config path has nothing to resolve',
+      );
+    });
+  });
+  group('logFileFromEnv', () {
+    test('absent or blank yields null', () {
+      expect(logFileFromEnv({}), isNull);
+      expect(logFileFromEnv({'FA_LOG_FILE': ''}), isNull);
+      expect(logFileFromEnv({'FA_LOG_FILE': '   '}), isNull);
+    });
+
+    test('returns the path', () {
+      expect(
+        logFileFromEnv({'FA_LOG_FILE': '/tmp/trace.log'}),
+        '/tmp/trace.log',
       );
     });
   });

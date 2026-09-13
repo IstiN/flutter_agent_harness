@@ -27,8 +27,9 @@ const APP_URL = `${BASE}/app/index.html`;
 declare global {
   interface Window {
     /** Sandbox FS helper surface from flutter_app/web/fs_store.js. */
-    __fahFsSave?: (snapshot: unknown) => Promise<null>;
-    __fahFsLoad?: () => Promise<unknown>;
+    __fahFsSet?: (items: Record<string, unknown>) => Promise<null>;
+    __fahFsGetAll?: () => Promise<Record<string, unknown>>;
+    __fahBootDone?: boolean;
     __inlineRan?: boolean;
   }
 }
@@ -88,9 +89,17 @@ async function engineUp(page: Page) {
   );
 }
 
-/** Waits until the app rendered its first frame (splash fades out). */
+/** Waits until the boot-complete latch fires (splash hidden: first frame,
+ * or the 12s alive-behind-splash net). The fah-done class is transient
+ * (element removed ≤500ms later), and a webkit main-thread stall (canvaskit
+ * shader compile on loaded CI) can blind the poll exactly across that
+ * window — boot succeeds, the window slips by, and the old wait times out
+ * on an element that no longer exists (issue #234). The latch is monotonic:
+ * any post-stall tick observes it. */
 async function firstFrame(page: Page) {
-  await expect(page.locator('#fah-splash.fah-done')).toHaveClass(/fah-done/, { timeout: 100_000 });
+  await page.waitForFunction(() => window.__fahBootDone === true, undefined, {
+    timeout: 100_000,
+  });
 }
 
 // NOTE: the office branch itself (FA_HOST=office → outlook.* registry) is
@@ -177,11 +186,15 @@ test('sandbox IndexedDB FS persists across pane reloads', async ({ page }) => {
   await openAppPane(page);
   await engineUp(page);
   const marker = { test: 'issue-182', at: Date.now() };
-  await page.evaluate((m) => window.__fahFsSave?.(m), marker);
+  await page.evaluate(
+    (m) =>
+      window.__fahFsSet?.({ 'sandbox.e2e': JSON.stringify(m) }) ?? null,
+    marker,
+  );
   await page.reload({ waitUntil: 'load' });
   await engineUp(page);
-  const loaded = await page.evaluate(() => window.__fahFsLoad?.());
-  expect(loaded).toEqual(marker);
+  const loaded = await page.evaluate(() => window.__fahFsGetAll?.());
+  expect(JSON.parse(loaded?.['sandbox.e2e'] as string)).toEqual(marker);
 });
 
 test('a History-less iframe (OWA sandbox) still boots to the first frame', async ({ page }) => {

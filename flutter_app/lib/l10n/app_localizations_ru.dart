@@ -122,6 +122,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get appsGridTitle => 'Приложения';
 
   @override
+  String get appsHideAppsTooltip => 'Скрыть приложения';
+
+  @override
   String appsLoadError(Object error) {
     return 'Не удалось загрузить приложения: $error';
   }
@@ -260,6 +263,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get appsSendTooltip => 'Отправить';
+
+  @override
+  String get appsShowAppsTooltip => 'Показать приложения';
 
   @override
   String appsStartError(Object error, Object name) {
@@ -1567,6 +1573,24 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get sidebarSessionsHeader => 'Сессии';
+
+  @override
+  String sidebarSubagentSessionCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count агентов',
+      many: '$count агентов',
+      few: '$count агента',
+      one: '$count агент',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String sidebarSubagentTitle(String id) {
+    return 'субагент $id';
+  }
 
   @override
   String get tjsCacheTitle => 'Загруженные модели (transformers.js)';

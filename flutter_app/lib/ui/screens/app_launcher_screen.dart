@@ -72,6 +72,7 @@ class AppLauncherScreen extends StatefulWidget {
     this.videoControllerFactory,
     this.tileEngineFactory,
     this.hideChatSheet = false,
+    this.restoreAppsMode = false,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -117,6 +118,11 @@ class AppLauncherScreen extends StatefulWidget {
   /// When true the [SessionChatSheet] floating overlay is NOT rendered —
   /// the wide-screen [WideLayoutShell] owns chat instead.
   final bool hideChatSheet;
+
+  /// Restore the persisted apps↔chat surface mode (issue #224) in the
+  /// chat sheet; forwarded from [faHomeScreen]. Tests/goldens keep the
+  /// default false — the apps grid stays the deterministic resting state.
+  final bool restoreAppsMode;
 
   @override
   State<AppLauncherScreen> createState() => _AppLauncherScreenState();
@@ -759,10 +765,12 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// on the next apps reload.
   Future<void> _removeApp(JsAppInfo app) async {
     final l10n = context.l10n;
+    final appName =
+        app.displayName(Localizations.localeOf(context).toLanguageTag());
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.launcherRemoveWidgetTitle(app.name)),
+        title: Text(l10n.launcherRemoveWidgetTitle(appName)),
         content: Text(l10n.launcherRemoveWidgetBody),
         actions: [
           TextButton(
@@ -997,6 +1005,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
                 asrTranscriber: widget.asrTranscriber,
                 audioControllerFactory: widget.audioControllerFactory,
                 videoControllerFactory: widget.videoControllerFactory,
+                restoreAppsMode: widget.restoreAppsMode,
               ),
             if (_openFolderId != null) ...[
               _buildFolderBarrier(colors),
@@ -1118,12 +1127,13 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   /// and folders stay exclusive to the main grid.
   Widget _buildSearchResults(FahColors colors) {
     final query = _searchController.text.trim().toLowerCase();
+    final locale = Localizations.localeOf(context).toLanguageTag();
     final matches = (_apps ?? const <JsAppInfo>[])
         .where(
           (app) =>
-              app.name.toLowerCase().contains(query) ||
+              app.displayName(locale).toLowerCase().contains(query) ||
               app.id.toLowerCase().contains(query) ||
-              app.description.toLowerCase().contains(query),
+              app.displayDescription(locale).toLowerCase().contains(query),
         )
         .toList();
     if (matches.isEmpty) {
@@ -1171,7 +1181,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
               AppIcon(app: app, env: widget.manager.env, size: 32),
               const SizedBox(height: 6),
               Text(
-                app.name,
+                app.displayName(
+                  Localizations.localeOf(context).toLanguageTag(),
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall,
@@ -1388,7 +1400,9 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
-                app.name,
+                app.displayName(
+                  Localizations.localeOf(context).toLanguageTag(),
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(
@@ -1709,6 +1723,8 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
 
   Future<void> _showSeedError(JsAppInfo app, String error) async {
     final l10n = context.l10n;
+    final appName =
+        app.displayName(Localizations.localeOf(context).toLanguageTag());
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -1717,7 +1733,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(app.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+            Text(appName, style: const TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 8),
             SelectableText(error),
             const SizedBox(height: 12),
