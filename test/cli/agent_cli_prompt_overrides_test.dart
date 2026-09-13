@@ -37,6 +37,9 @@ void main() {
           initialMode: initialMode,
           systemPrompt: systemPrompt,
           promptOverrides: promptOverrides,
+          // Issue #287: the classic summarizer prompts these tests
+          // override are the classic rollback engine's — pin it.
+          compactionEngine: CompactionEngine.classic,
         ),
         io: io,
         streamFunction: streamFunction ?? _emptyStream,

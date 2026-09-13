@@ -152,7 +152,10 @@ void main() {
     );
   }
 
-  AgentCli cliFor(ModelRolesResolver resolver) {
+  AgentCli cliFor(
+    ModelRolesResolver resolver, {
+    CompactionEngine? compactionEngine,
+  }) {
     return AgentCli(
       config: AgentCliConfig(
         model: _placeholderModel,
@@ -160,6 +163,7 @@ void main() {
         env: env,
         sessionRoot: '/sessions',
         modelRolesResolver: resolver,
+        compactionEngine: compactionEngine,
       ),
       io: io,
     );
@@ -275,7 +279,10 @@ void main() {
       'default': [ModelRef(provider: 'anthropic', modelId: 'claude-a')],
       'smol': [ModelRef(provider: 'anthropic', modelId: 'claude-smol')],
     });
-    final cli = cliFor(resolver);
+    // Issue #287: the smol-role summarizer ride is the classic rollback
+    // engine's flow — pin it (structured's judge/checkpoint rides smol
+    // too, but only once the transcript is over pressure).
+    final cli = cliFor(resolver, compactionEngine: CompactionEngine.classic);
     final run = cli.run();
 
     io.sendLine('q');
@@ -329,6 +336,8 @@ void main() {
         env: env,
         sessionRoot: '/sessions',
         modelRolesResolver: resolver,
+        // Issue #287: pins the classic rollback's smol summarizer wiring.
+        compactionEngine: CompactionEngine.classic,
       ),
       io: io,
       streamFunction: legacyStream,

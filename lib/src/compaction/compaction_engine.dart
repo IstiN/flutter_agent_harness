@@ -1,8 +1,9 @@
-/// The compaction engine selector (issue #148 D8/AC1).
+/// The compaction engine selector (issue #148 D8/AC1, default flip #287).
 ///
-/// Two engines coexist: `classic` (the lossy prefix summary, the default
-/// during incubation) and `structured` (hide → checkpoint + expand, issue
-/// #148). The setting resolves through the config chain —
+/// Two engines coexist: `classic` (the lossy prefix summary — the legacy
+/// 1.0 engine, kept as the in-settings rollback) and `structured`
+/// (hide → checkpoint + expand, issue #148) — the DEFAULT everywhere
+/// since #287. The setting resolves through the config chain —
 /// `compaction.engine` in `~/.fah/config.yaml` (global) < `.fah/config.yaml`
 /// (project) < a session override (runtime flag / settings surface) — with
 /// the deepest scope winning. The engines never mix WITHIN one compaction
@@ -15,10 +16,12 @@ import '../exceptions.dart';
 
 /// Which compaction engine a compaction run uses.
 enum CompactionEngine {
-  /// The classic lossy prefix summary.
+  /// The classic lossy prefix summary — the legacy 1.0 engine, kept as
+  /// the supported in-settings rollback (issue #287).
   classic('classic'),
 
   /// The structured engine: judge-hide pass, checkpoint pass, expand API.
+  /// The DEFAULT everywhere since issue #287.
   structured('structured');
 
   const CompactionEngine(this.value);
@@ -58,9 +61,10 @@ enum CompactionEngine {
 }
 
 /// Resolves the effective engine: global < project < session, deepest
-/// non-null wins, default [CompactionEngine.classic] (AC1).
+/// non-null wins, default [CompactionEngine.structured] (issue #287 —
+/// classic stays selectable as the supported rollback).
 CompactionEngine resolveCompactionEngine({
   CompactionEngine? global,
   CompactionEngine? project,
   CompactionEngine? session,
-}) => session ?? project ?? global ?? CompactionEngine.classic;
+}) => session ?? project ?? global ?? CompactionEngine.structured;

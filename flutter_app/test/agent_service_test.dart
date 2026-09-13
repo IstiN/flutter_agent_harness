@@ -1897,11 +1897,20 @@ void main() {
       await service.sendText('z' * 600);
       await service.waitForIdle();
 
-      // The first turn was summarized; the kept region starts at turn 2.
+      // The first two turns were checkpointed; the kept region starts at
+      // turn 2. Under the structured default (issue #287) the chat's first
+      // message is the checkpoint marker: [2-4:ckpt·…→…tok·covers:2,4]
+      // followed by the checkpoint text and the hidden-segments index.
       expect(service.messages, hasLength(5));
       expect(
         service.messages.first.content,
-        contains('compacted into the following summary'),
+        contains('ckpt·'),
+        reason: 'the structured checkpoint marker heads the chat',
+      );
+      expect(
+        service.messages.first.content,
+        contains('covers:2,4'),
+        reason: 'records 2-4 (turns one and two) are the covered range',
       );
       expect(service.messages.first.content, contains('reply'));
       expect(service.error, isNull);
