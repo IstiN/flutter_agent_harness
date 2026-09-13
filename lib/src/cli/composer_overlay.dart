@@ -92,7 +92,7 @@ FaTuiModel updateMenuForInput(FaTuiModel model, FaTuiCallbacks callbacks) {
 (int, String)? completionToken(String text, int cursor) {
   if (cursor > text.length) cursor = text.length;
   final before = text.substring(0, cursor);
-  bool space(String ch) => ch == ' ' || ch == '\t';
+  bool space(String ch) => ch == ' ' || ch == '\t' || ch == '\n';
   final at = before.lastIndexOf('@');
   if (at >= 0 && (at == 0 || space(before[at - 1]))) {
     final fragment = before.substring(at + 1);
@@ -115,7 +115,11 @@ FaTuiModel updateMenuForInput(FaTuiModel model, FaTuiCallbacks callbacks) {
 /// Fuzzy-ranks [items] by how well [needle] matches their label, keeps
 /// the best [limit], and rewrites labels with the matched runes
 /// highlighted (issue #275 AC1: scoring, grouping, highlight).
-List<MenuItem> fuzzyMenu(List<MenuItem> items, String needle, {int limit = 32}) {
+List<MenuItem> fuzzyMenu(
+  List<MenuItem> items,
+  String needle, {
+  int limit = 32,
+}) {
   if (needle.isEmpty || needle == '/') return items.take(limit).toList();
   final scored = <(FuzzyMatch, MenuItem)>[];
   for (final item in items) {

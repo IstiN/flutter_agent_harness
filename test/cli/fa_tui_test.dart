@@ -1706,16 +1706,31 @@ void main() {
       expect(model.inputText, 'a @x b');
     });
 
-    test('shell words on a bang line complete as paths', () {
+    test('shell words on a bang line complete as paths', () async {
+      final submitted = <String>[];
       var model = FaTuiModel(
-        callbacks: callbacks(pathCandidates: (_) => ['bin/fah.dart']),
+        callbacks: callbacks(
+          pathCandidates: (_) => ['bin/fah.dart'],
+          submitted: submitted,
+        ),
         isExited: () => false,
       );
       model = typed(model, '!fah');
       expect(model.menuOpen, isTrue);
       expect(model.menuItems.first.key, 'bin/fah.dart');
-      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      // Tab accepts the completion; Enter must SUBMIT the command instead
+      // of splicing (review: explicit accept only).
+      final result = model.update(
+        KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+      );
+      model = result.$1 as FaTuiModel;
+      await result.$2?.call();
+      expect(model.inputText, '');
+      expect(submitted, ['!fah']);
+      model = typed(model, '!fah');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.tab)));
       expect(model.inputText, '!bin/fah.dart ');
+      expect(model.menuOpen, isFalse);
     });
 
     test('no match closes the menu and esc dismisses it', () {
@@ -2496,8 +2511,6 @@ void main() {
       expect(fresh.inputText, '');
     });
 
-
-
     test('a ! line completes the trailing shell word from workspace paths', () {
       var model = FaTuiModel(
         callbacks: callbacks(pathCandidates: (_) => ['build/notes.md']),
@@ -2521,6 +2534,4 @@ void main() {
       expect(groupOf(const MenuItem(key: '/exit', label: '/exit')), 'commands');
     });
   });
-
-
 }

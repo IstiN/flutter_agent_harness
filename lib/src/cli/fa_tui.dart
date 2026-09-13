@@ -1159,8 +1159,17 @@ final class FaTuiModel extends Model {
     if (menuOpen && menuModelMode) return _handlePickerKey(msg);
 
     // Slash/menu mode: arrows navigate, enter/tab accept, esc closes, and
-    // typing keeps editing the input so `/models` can be typed in full.
-    if (menuOpen) return _handleSlashMenuKey(msg);
+    // typing keeps editing so `/models` can be typed in full. Path
+    // overlays (@token / !word) are passive — Tab accepts, Enter keeps
+    // submitting (issue #275 review).
+    if (menuOpen) {
+      if (menuTokenStart > 0) {
+        final pathKey = _handlePathMenuKey(msg);
+        if (pathKey != null) return pathKey;
+      } else {
+        return _handleSlashMenuKey(msg);
+      }
+    }
 
     // Normal input editing.
     return _handleControlKey(msg) ??
@@ -1175,6 +1184,22 @@ final class FaTuiModel extends Model {
     return _handleSlashMenuNavKey(msg) ??
         _handleSlashMenuAcceptKey(msg) ??
         _handleSlashMenuEditKey(msg);
+  }
+
+  /// Path-completion overlay keys: Tab accepts, arrows navigate, esc
+  /// closes; everything else falls through (Enter SUBMITS, editing edits).
+  (Model, Cmd?)? _handlePathMenuKey(KeyMsg msg) {
+    switch (msg.key) {
+      case 'tab':
+        return _acceptSlashMenuItem();
+      case 'esc':
+        return (copyWith(menuOpen: false, menuTokenStart: -1), null);
+      case 'up':
+      case 'down':
+        return _handleSlashMenuNavKey(msg);
+      default:
+        return null;
+    }
   }
 
   /// Slash-menu navigation keys (esc/up/down); null when the key belongs to
@@ -1314,9 +1339,15 @@ final class FaTuiModel extends Model {
         return _handleEnterKey();
       case 'ctrl+s':
         if (busy) {
-          // Busy Ctrl+S steers the pending input plus every queued message
-          // into the running agent (kimi-cli semantics).
-          return _steerAll();
+          // Marks the pending input as a steering row (AC2 badge has a
+          // production producer), then steers the whole queue — the
+          // steered payload is unchanged.
+          final pending = inputText.trim();
+          var model = this;
+          if (pending.isNotEmpty) {
+            model = model._enqueue(pending, steer: true).$1;
+          }
+          return model._steerAll(includePending: false);
         }
         // Ctrl+S always submits, regardless of terminal Shift+Enter support.
         final text = inputText.trim();
@@ -1922,7 +1953,7 @@ final class FaTuiModel extends Model {
     // message echo — an empty backgrounded block would read as a glitch.
     if (inputText.isEmpty) {
       return (
-        copyWith(inputText: '', cursor: 0),
+        copyWith(inputText: '', cursor: 0, menuOpen: false, menuTokenStart: -1),
         () async {
           await callbacks.onSubmit(text);
           return null;
@@ -1948,6 +1979,8 @@ final class FaTuiModel extends Model {
       historyIndex: -1,
       historyDraft: null,
       outputLines: echoed,
+      menuOpen: false,
+      menuTokenStart: -1,
       stickyLines: [rule, '$bg$shown$reset$more'],
       stickyIndex: outputLines.length,
       stickyEchoLineCount: 2 + inputText.split('\n').length,
@@ -1990,6 +2023,8 @@ final class FaTuiModel extends Model {
       copyWith(
         inputText: '',
         cursor: 0,
+        menuOpen: false,
+        menuTokenStart: -1,
         queue: [
           ...queue,
           QueuedMessage(text, steer: steer),
@@ -1999,13 +2034,15 @@ final class FaTuiModel extends Model {
     );
   }
 
-  /// Busy-mode Ctrl+S: steers the pending input plus every queued message
-  /// into the running agent (each becomes a separate user message), echoing
-  /// them into the history first.
-  (FaTuiModel, Cmd?) _steerAll() {
+  /// Busy-mode Ctrl+S: steers the queue into the running agent (each
+  /// message becomes a separate user turn), echoing them into the history
+  /// first. Steering rows go before follow-ups.
+  (FaTuiModel, Cmd?) _steerAll({bool includePending = true}) {
     final messages = [
-      if (inputText.trim().isNotEmpty) inputText.trim(),
-      ...[for (final m in queue) m.text],
+      if (includePending && inputText.trim().isNotEmpty) inputText.trim(),
+      // Steering rows interrupt first; follow-ups keep queue order.
+      ...[for (final m in queue.where((m) => m.steer)) m.text],
+      ...[for (final m in queue.where((m) => !m.steer)) m.text],
     ];
     if (messages.isEmpty) return (this, null);
     var lines = outputLines;
@@ -2076,7 +2113,6 @@ final class FaTuiModel extends Model {
 
   FaTuiModel _updateMenuForInput(FaTuiModel model) =>
       updateMenuForInput(model, callbacks);
-
 
   @override
   View view() {
@@ -2203,6 +2239,10 @@ final class FaTuiModel extends Model {
             _accent2Plain(progressText) +
             _dim('─' * (rightWidth < 0 ? 0 : rightWidth)),
       );
+    } else {
+      // The row is always reserved (progressH): skipping the blank row
+      // while following shifted every later row on scroll.
+      b.writeln();
     }
   }
 
