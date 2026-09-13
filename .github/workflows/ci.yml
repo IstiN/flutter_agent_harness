@@ -737,6 +737,49 @@ jobs:
           HUGGINGFACE_TOKEN=
           EOF
 
+      # The google-services Gradle plugin (applied unconditionally in
+      # android/app/build.gradle.kts) refuses to run without this file.
+      # #299 commits a placeholder (negated in .gitignore) and the release
+      # path overwrites it from GOOGLE_SERVICES_JSON_BASE64; PR legs have no
+      # such secret, so seed the same structurally-valid placeholder with
+      # the #299 release identity (dev.fa1.app) — debug APKs never talk to
+      # Firebase with it; the goal here is compile truth (#280).
+      - name: Create placeholder google-services.json
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > android/app/google-services.json << 'EOF'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "fa1-placeholder",
+              "storage_bucket": "fa1-placeholder.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+                  "android_client_info": {
+                    "package_name": "dev.fa1.app"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyA-PLACEHOLDER-KEY-FOR-DEBUG-BUILDS-000000"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
       - run: cd flutter_app && flutter pub get

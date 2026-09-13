@@ -11,7 +11,12 @@ buildscript {
 
     dependencies {
         // The Android Gradle Plugin knows how to build native code with the NDK.
-        classpath 'com.android.tools.build:gradle:7.2.0'
+        // NOTE: when this plugin is built by a Flutter app (the normal path
+        // here), the AGP version is governed by the app's
+        // android/settings.gradle.kts pluginManagement (currently 9.0.1); this
+        // classpath only matters for standalone builds. Keep it in sync with
+        // the app so no legacy AGP that cannot run on Gradle 9.1.0 ships here.
+        classpath 'com.android.tools.build:gradle:9.0.1'
     }
 }
 
