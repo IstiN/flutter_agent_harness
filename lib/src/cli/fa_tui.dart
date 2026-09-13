@@ -16,6 +16,7 @@ import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
 
 part 'fa_tui_messages.dart';
+part 'fa_tui_hub.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -906,44 +907,6 @@ final class FaTuiModel extends Model {
     }
     if (msg is _QuitRequestedMsg) return (this, () => quit());
     return _handleTerminalMsg(msg);
-  }
-
-  /// Host push of fresh hub content (open or refresh): carries the local
-  /// interactive bits over so a re-push never resets the user's selection
-  /// or scroll anchor.
-  (Model, Cmd?) _handleHubStateMsg(HubStateMsg msg) {
-    return (copyWith(hub: msg.state.carryingFrom(hub)), null);
-  }
-
-  /// The open hub overlay owns every key; wheel scrolling moves its tree
-  /// selection instead of the chat history.
-  (Model, Cmd?) _handleHubKey(KeyMsg msg) {
-    // ctrl+c outranks the modal: abort + quit, exactly as on the main path.
-    if (msg.key == 'ctrl+c') {
-      callbacks.onInterrupt?.call();
-      return (this, () => quit());
-    }
-    final current = hub!;
-    final (next, action) = current.handleKey(
-      msg.key,
-      viewport: _viewportHeight - 3,
-    );
-    switch (action) {
-      case FaHubAction.none:
-        return (copyWith(hub: next), null);
-      case FaHubAction.enter:
-      case FaHubAction.back:
-      case FaHubAction.close:
-        final cleared = action == FaHubAction.close;
-        return (
-          // clearHub: a plain hub: null keeps the old state (no close).
-          copyWith(hub: next, clearHub: cleared),
-          () async {
-            await callbacks.onHubAction?.call(action.name, current.selectedKey);
-            return null;
-          },
-        );
-    }
   }
 
   /// Terminal events: window resizes, mouse wheel scrolling, pastes, and
