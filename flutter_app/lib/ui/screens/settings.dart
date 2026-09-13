@@ -21,6 +21,7 @@ import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/copilot_connect_flow.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/github_account_store.dart';
+import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/provider_selection_list.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -2075,6 +2076,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const Divider(),
               const SizedBox(height: 16),
               const ChatTextSection(),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              // Issue #207: chat image previews decode downscaled (600px)
+              // by default; this switch lifts the constraint live.
+              const ImagePreviewsSection(),
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
