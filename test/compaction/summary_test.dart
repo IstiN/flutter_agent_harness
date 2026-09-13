@@ -317,6 +317,79 @@ void main() {
       expect(result.isSuccess, isTrue);
       expect(plainCalls, 1);
     });
+
+    test('issue #290: a gateway 500 through the host retry wrapper recovers '
+        '(AC3)', () async {
+      const incident =
+          '500: Internal network failure, error id: X, please try again later.';
+      final savedSleeper = transientRetrySleeper;
+      addTearDown(() => transientRetrySleeper = savedSleeper);
+      transientRetrySleeper = (delay, token) async => true;
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) {
+          final message = responseOf(
+            '',
+            stopReason: StopReason.error,
+            errorMessage: incident,
+          );
+          return streamOf([
+            StartEvent(partial: message),
+            ErrorEvent(reason: StopReason.error, error: message),
+          ]);
+        }
+        final message = responseOf('recovered summary');
+        return streamOf([
+          StartEvent(partial: message),
+          DoneEvent(reason: StopReason.stop, message: message),
+        ]);
+      });
+      final summarize = streamFunctionSummarizer(wrapped, model);
+
+      final result = await summarize(const SummarizationRequest(prompt: 'P'));
+
+      expect(calls, 2, reason: 'the compaction call must be replayed');
+      expect(result.isSuccess, isTrue);
+      expect(result.text, 'recovered summary');
+    });
+
+    test('issue #290: an exhausted retry budget still degrades to a failure '
+        'result (failure-safe, AC3)', () async {
+      const incident =
+          '500: Internal network failure, error id: X, please try again later.';
+      final savedSleeper = transientRetrySleeper;
+      addTearDown(() => transientRetrySleeper = savedSleeper);
+      transientRetrySleeper = (delay, token) async => true;
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final message = responseOf(
+          '',
+          stopReason: StopReason.error,
+          errorMessage: incident,
+        );
+        return streamOf([
+          StartEvent(partial: message),
+          ErrorEvent(reason: StopReason.error, error: message),
+        ]);
+      });
+      final summarize = streamFunctionSummarizer(wrapped, model);
+
+      final result = await summarize(const SummarizationRequest(prompt: 'P'));
+
+      expect(calls, 3, reason: 'the wrapper spent its full budget');
+      expect(result.isSuccess, isFalse);
+      expect(result.error, contains('Provider call failed after 3 attempt(s)'));
+    });
   });
 
   group('CompactionManager.compact', () {
