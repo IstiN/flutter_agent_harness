@@ -1003,6 +1003,47 @@ void main() {
         ]);
         expect(notices, isEmpty);
       });
+      test('a post-commit classified failure wraps into the mid-answer '
+          'story (no replay)', () async {
+        final a = _model('openai', 'gpt-a');
+        final partial = _msg(a);
+        final probe = _Probe({
+          'v-a': [
+            [
+              StartEvent(partial: partial),
+              TextStartEvent(contentIndex: 0, partial: partial),
+              TextDeltaEvent(contentIndex: 0, delta: 'half', partial: partial),
+              ErrorEvent(
+                reason: StopReason.error,
+                error: _msg(
+                  a,
+                  stop: StopReason.error,
+                  error: 'Provider finish_reason: unexpected_state',
+                  raw: 'unexpected_state',
+                ),
+              ),
+            ],
+          ],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ]);
+
+        final events = await run(w);
+
+        // The deltas are already committed: a replay would duplicate the
+        // transcript, so the failure lands as the mid-answer terminal.
+        expect(probe.calls, ['v-a']);
+        expect(events, [
+          'start:${a.id}',
+          'textStart',
+          'delta:half',
+          'error(error):${a.id}:Provider failed mid-answer: the stream died '
+              'after output was already delivered (not retried — a replay '
+              'would duplicate the transcript). Provider error: Provider '
+              'finish_reason: unexpected_state',
+        ]);
+      });
 
       test('a provider failing every call fails over to the next entry '
           '(E2)', () async {

@@ -153,7 +153,14 @@ final class _Style implements TuiStyle {
 /// Run-notice wiring for [AgentCli], split from agent_cli.dart to keep it
 /// under the repo's 2800-line size gate. Same library (a `part of`), so
 /// the extension sees the class's private members.
-extension on AgentCli {
+extension AgentCliRunNotices on AgentCli {
+  /// Test hook: wires the run notices without a full [AgentCli.run] (the
+  /// size-gate split moved them beyond a plain unit test's reach).
+  void wireRunNoticesForTesting() {
+    _wireTransientRetryNotice();
+    _wireImageDropNotice();
+  }
+
   /// Transient network retry visibility (the Wi-Fi-switch case): the
   /// retry itself lives in providerStreamFunction; here it gets a voice —
   /// a dim transcript line + an fa.log entry instead of a silent 5s pause.
