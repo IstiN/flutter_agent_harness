@@ -210,12 +210,176 @@ jobs:
           files=$(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*')
           flutter test --exclude-tags integration $files
 
+  # Issue #280 AC3: nightly RELEASE-mode build matrix. The PR legs in
+  # ci.yml build --debug (compile-truth); release-only concerns —
+  # tree-shaking, R8/minify, dart2js optimisation, icon stripping — are
+  # verified here, plus linux/windows bonus targets (the app does not ship
+  # there officially yet, so they stay nightly-only per the card's
+  # non-goals). A red leg feeds the deduped nightly-red issue via the
+  # auto-issue job below.
+  build-release:
+    name: Build ${{ matrix.target }} (release)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos
+            runner: macos-latest
+            cmd: flutter build macos --release
+          - target: ios
+            runner: macos-latest
+            cmd: flutter build ios --release --no-codesign
+          - target: android
+            runner: ubuntu-latest
+            cmd: flutter build apk --release
+          - target: web
+            runner: ubuntu-latest
+            cmd: flutter build web --release
+          - target: linux
+            runner: ubuntu-latest
+            cmd: flutter build linux --release
+          - target: windows
+            runner: windows-latest
+            cmd: flutter build windows --release
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same pinned SDK as the PR build legs and the release path (#281).
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      - uses: actions/setup-java@v5
+        if: matrix.target == 'android'
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      # Linux desktop toolchain + plugin native deps (gtk3 for the runner,
+      # gstreamer for audioplayers_linux).
+      - name: Install Linux desktop toolchain
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      - name: Create placeholder firebase_options.dart
+        shell: bash
+        run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      # bf81411e made Runner/GoogleService-Info.plist a hard build input
+      # (Runner resources + Crashlytics dSYM-phase inputPaths); the real
+      # file is gitignored and written from a release secret these legs
+      # don't have — seed the same placeholder as the ci.yml PR legs.
+      - name: Write placeholder GoogleService-Info.plist (Apple targets)
+        if: matrix.target == 'ios' || matrix.target == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_ID="dev.fa1.${{ matrix.target }}"
+          GOOGLE_APP_ID="1:000000000000:${{ matrix.target }}:0000000000000000000000"
+          cat > "flutter_app/${{ matrix.target }}/Runner/GoogleService-Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>GOOGLE_APP_ID</key>
+          	<string>$GOOGLE_APP_ID</string>
+          	<key>API_KEY</key>
+          	<string>AIzaSyA-PLACEHOLDER-KEY-FOR-DEBUG-BUILDS-000000</string>
+          	<key>PROJECT_ID</key>
+          	<string>fa1-placeholder</string>
+          	<key>PROJECT_NUMBER</key>
+          	<string>000000000000</string>
+          	<key>BUNDLE_ID</key>
+          	<string>$BUNDLE_ID</string>
+          	<key>GCM_SENDER_ID</key>
+          	<string>000000000000</string>
+          	<key>IS_ANALYTICS_ENABLED</key>
+          	<false/>
+          	<key>IS_CRASHLYTICS_ENABLED</key>
+          	<false/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint "flutter_app/${{ matrix.target }}/Runner/GoogleService-Info.plist"
+
+      # The prebuilt WasmRun XCFramework is excluded from git; Apple builds
+      # fail in the Podfile FFI-symbol check without it. Pinned upstream
+      # release, same fallback as the ci.yml build legs.
+      - name: Restore vendored WasmRun framework (Apple targets)
+        if: matrix.target == 'ios' || matrix.target == 'macos'
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          DEST="vendor/wasm_run_flutter/${{ matrix.target }}/Frameworks"
+          rm -rf "$DEST/WasmRun.xcframework"
+          mkdir -p "$DEST"
+          curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+            -o /tmp/WasmRun.xcframework.zip \
+            https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
+          unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
+          ls -la "$DEST/WasmRun.xcframework"
+
+      # The macOS Podfile bundles the LiteRT-LM companion dylibs via a
+      # Runner script phase that fails on a fresh runner ("Could not find
+      # macOS companion dylibs") — seed from the pinned upstream native
+      # release, sha256-verified (same incantation as build-macos.yml).
+      - name: Ensure flutter_gemma macOS companion dylibs
+        if: matrix.target == 'macos'
+        run: |
+          set -euo pipefail
+          GEMMA_CACHE="$HOME/Library/Caches/flutter_gemma/native/macos_arm64"
+          if [ -f "$GEMMA_CACHE/libGemmaModelConstraintProvider.dylib" ]; then
+            echo "companion dylibs already cached"
+          else
+            echo "seeding companion dylibs from flutter_gemma native-v0.16.0"
+            mkdir -p "$GEMMA_CACHE"
+            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+              -o /tmp/litertlm-macos_arm64.tar.gz \
+              https://github.com/DenisovAV/flutter_gemma/releases/download/native-v0.16.0/litertlm-macos_arm64.tar.gz
+            echo "c597554a7a5cdf099658227099a54ef4916c5802b9182757e656e1788f9426b6  /tmp/litertlm-macos_arm64.tar.gz" | shasum -a 256 -c -
+            tar xzf /tmp/litertlm-macos_arm64.tar.gz -C "$GEMMA_CACHE"
+          fi
+          ls -la "$GEMMA_CACHE"
+
+      - name: Install Flutter dependencies
+        working-directory: flutter_app
+        shell: bash
+        run: flutter pub get
+
+      - name: ${{ matrix.cmd }}
+        working-directory: flutter_app
+        shell: bash
+        run: ${{ matrix.cmd }}
+
   # Files ONE deduped issue when the scheduled nightly run goes red: the
   # open `nightly-red` issue is searched first and only commented on, so a
   # persistent failure never spams duplicates.
   auto-issue:
     name: File nightly-red issue
-    needs: [full-quality, pty-integration, cli-visual, flutter-app-macos]
+    needs: [full-quality, pty-integration, cli-visual, flutter-app-macos, build-release]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
