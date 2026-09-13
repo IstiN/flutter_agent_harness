@@ -394,7 +394,11 @@ class DapHubController {
         } else {
           say('stopping the DAP hub');
         }
-        final state = _readPidState();
+        var state = _readPidState();
+        // Pid-recycling guard: a stale state file whose port does not
+        // match this hub must never name an innocent process. Treat it
+        // as absent (the honest manual hint below covers the rest).
+        if (state != null && state.port != _uri.port) state = null;
         if (state == null) {
           say(
             'no pid state in ${_pidFile.path} — stop the hub process '
