@@ -202,9 +202,18 @@ jobs:
             https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
           echo "Checked out: $(git -C $GITHUB_WORKSPACE log -1 --oneline)"
 
+      - name: Setup Flutter (self-hosted)
+        # Pinned install — the hardcoded $HOME/.local/flutter on the
+        # runner is a stale 3.44.4, below the repo floor >=3.47.0
+        # (daily-publish #260).
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
       - name: Setup environment (self-hosted)
         run: |
-          echo "$HOME/.local/flutter/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
@@ -460,7 +469,6 @@ jobs:
 
       - name: Setup environment (self-hosted)
         run: |
-          echo "$HOME/.local/flutter/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
