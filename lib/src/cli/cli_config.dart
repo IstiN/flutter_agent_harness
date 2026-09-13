@@ -532,16 +532,23 @@ final class CliConfig {
     if (contextWindowCap != null) {
       buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
     }
+    buffer.write(_powerYaml());
+    return buffer.toString();
+  }
+
+  /// The `power:` section (issue #325), only when sleep prevention or hold
+  /// is explicitly configured; defaults are never written so the file stays
+  /// minimal.
+  String _powerYaml() {
     final sleepPrevention = powerSleepPrevention;
     final hold = powerHold;
-    if (sleepPrevention != null || hold != null) {
-      buffer.write('power:\n');
-      if (sleepPrevention != null) {
-        buffer.write('  sleepPrevention: ${sleepPrevention.value}\n');
-      }
-      if (hold != null) {
-        buffer.write('  hold: ${hold.value}\n');
-      }
+    if (sleepPrevention == null && hold == null) return '';
+    final buffer = StringBuffer('power:\n');
+    if (sleepPrevention != null) {
+      buffer.write('  sleepPrevention: ${sleepPrevention.value}\n');
+    }
+    if (hold != null) {
+      buffer.write('  hold: ${hold.value}\n');
     }
     return buffer.toString();
   }
