@@ -13,6 +13,7 @@ import 'package:flutter_agent_harness/src/approval/approval.dart';
 
 import 'dap_client.dart';
 import 'dap_frames.dart';
+import 'bound_session_routing.dart';
 
 /// faDap settings from chrome.storage plus the persistence seams for the
 /// identity key file (stored as `faDapKey` in the key-file format, so an
@@ -24,7 +25,7 @@ final class DapConfig {
     required this.loadKeyFile,
     required this.saveKeyFile,
     this.secret = '',
-    this.boundSessionMode = 'current',
+    this.boundSessionMode = kDefaultBoundSessionMode,
     this.boundSessionId,
     this.persistBoundSessionId,
   });
@@ -43,8 +44,9 @@ final class DapConfig {
   final Future<void> Function(String) saveKeyFile;
 
   /// Inbound hub-mail routing (`faDap.boundSession.mode`):
-  /// `current` (zero-config — mail lands in the open session),
-  /// `dedicated` (one agent-owned session; created lazily on first mail),
+  /// `dedicated` (the DEFAULT — one agent-owned 'DAP Inbox' session,
+  /// created lazily on first mail; `current` and `named` are opt-in),
+  /// `current` (mail lands in the open session),
   /// `named` (a user-picked session id in [boundSessionId]).
   final String boundSessionMode;
 

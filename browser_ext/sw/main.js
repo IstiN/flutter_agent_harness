@@ -208,23 +208,55 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         agent?.boot({ provider: cur.faProvider, approvalMode: cur.faApproval, dap: next });
         return { ok: true };
       }
+      case 'hub.bind.get': {
+        // Read side for the panel's routing picker (issue #321): routing
+        // fields ONLY — {mode, sessionId?, title?}. The hub secret (and
+        // everything else in faDap) never crosses to the UI — 'UI holds
+        // no keys'. Null binding = nothing saved yet (panel default:
+        // dedicated).
+        const cur = (await store.get(['faDap'])).faDap;
+        const bound = cur?.boundSession;
+        if (!bound?.mode) return { ok: true, binding: null };
+        const binding = { mode: String(bound.mode) };
+        if (bound.sessionId) binding.sessionId = String(bound.sessionId);
+        if (bound.title) binding.title = String(bound.title);
+        return { ok: true, binding };
+      }
       case 'hub.bind': {
-        // Inbound-mail routing (faDap.boundSession): {mode: current|dedicated|named, sessionId?, title?}.
-        // Merged into faDap — the url/name stay untouched; no binding clears the key.
+        // Inbound-mail routing (faDap.boundSession): {mode: dedicated|current|named, sessionId?, title?}.
+        // Merged into faDap — url/name/secret/savedConnections stay untouched.
+        // EVERY mode persists a binding ('current' included — {mode:'current'}
+        // — so the panel choice round-trips sticky instead of silently
+        // snapping back to dedicated on the next read). Default mode:
+        // dedicated, the #304 owner UX.
         const cur = (await store.get(['faDap'])).faDap;
         if (!cur || !cur.url) return { ok: false, error: 'no hub connection to bind' };
-        const mode = String(msg.mode ?? 'current');
-        const next = { url: String(cur.url), name: String(cur.name ?? '') };
-        if (cur.secret) next.secret = cur.secret; // the hub password survives rebinds
+        // Default AND fallback for a garbled mode: dedicated — same contract
+        // as the panel picker and the Dart config layer (issue #321).
+        const mode = ['dedicated', 'current', 'named'].includes(msg.mode)
+          ? msg.mode
+          : 'dedicated';
+        const prev = cur.boundSession ?? {};
+        const next = {
+          url: String(cur.url),
+          name: String(cur.name ?? ''),
+          ...(cur.secret ? { secret: cur.secret } : {}), // the hub password survives rebinds
+          ...(Array.isArray(cur.savedConnections) ? { savedConnections: cur.savedConnections } : {}),
+        };
+        next.boundSession = { mode };
         if (mode === 'dedicated' || mode === 'named') {
-          next.boundSession = { mode };
           if (msg.sessionId) next.boundSession.sessionId = String(msg.sessionId);
           if (msg.title) next.boundSession.title = String(msg.title);
+          // A dedicated rebind that keeps the session id but sends no title
+          // preserves the minted one ('DAP Inbox') — the title stays visible.
+          else if (mode === 'dedicated' && prev.mode === 'dedicated' && prev.title) {
+            next.boundSession.title = String(prev.title);
+          }
         }
         await store.set({ faDap: next });
         const prov = await store.get(['faProvider', 'faApproval']);
         agent?.boot({ provider: prov.faProvider, approvalMode: prov.faApproval, dap: next });
-        return { ok: true };
+        return { ok: true, binding: next.boundSession };
       }
       case 'hub.sessions': {
         if (!agent || !agent.sessionsList) return { ok: true, sessions: [] };
