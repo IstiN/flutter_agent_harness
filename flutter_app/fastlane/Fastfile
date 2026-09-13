@@ -795,4 +795,35 @@ platform :android do
       store_summary_line("Android #{store_pubspec_version} uploaded to the Play '#{track}' track — #{File.basename(aab)}")
     end
   end
+
+  desc "Deploy the Google Play store listing (metadata + images + screenshots, no binary). PLAY_DEPLOY_METADATA=false skips texts, PLAY_DEPLOY_IMAGES=false skips icon/featureGraphic/screenshots, PLAY_VALIDATE_ONLY=1 authenticates and resolves the track without uploading"
+  lane :play_store do
+    # The store-listing half of the Android release (issue #289), the
+    # supply twin of the iOS/mac `app_store` lanes: the texts live in
+    # fastlane/metadata/android/<locale>/ and the images are COMMITTED
+    # GOLDENS rendered by test/golden/store_screenshots_test.dart and
+    # test/golden/play_store_assets_test.dart (sizes enforced by
+    # test/play_store_listing_guard_test.dart). Never a binary — AABs ride
+    # upload_only — and never changelogs (Play release notes need a
+    # version code and belong to the binary upload).
+    do_metadata = ENV.fetch("PLAY_DEPLOY_METADATA", "true") == "true"
+    do_images = ENV.fetch("PLAY_DEPLOY_IMAGES", "true") == "true"
+    track = PlayUploadPreflight.track!(ENV)
+    validate_only = PlayUploadPreflight.validate_only?(ENV)
+    UI.message("Play store listing deploy: metadata=#{do_metadata}, images=#{do_images}, track=#{track}, validate_only=#{validate_only}")
+
+    upload_to_play_store(
+      PlayUploadPreflight
+        .supply_listing_options(
+          track: track, metadata: do_metadata, images: do_images,
+          validate_only: validate_only
+        )
+        .merge(json_key_data: PlayUploadPreflight.play_json_key!(ENV))
+    )
+    if validate_only
+      UI.success("✅ Play listing validate-only pass: authenticated, track '#{track}' resolved — nothing uploaded")
+    else
+      store_summary_line("Google Play store listing updated (metadata=#{do_metadata}, images=#{do_images})")
+    end
+  end
 end

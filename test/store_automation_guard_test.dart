@@ -29,6 +29,7 @@ void main() {
   final buildMacos = read('.github/workflows/build-macos.yml');
   final daily = read('.github/workflows/daily-publish.yml');
   final releaseAppstore = read('.github/workflows/release-appstore.yml');
+  final storeMetadata = read('.github/workflows/store-metadata.yml');
 
   group('AC1 — submit_only lanes distribute externally', () {
     test('both lanes render distribute_external: true', () {

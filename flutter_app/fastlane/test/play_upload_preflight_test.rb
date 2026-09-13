@@ -109,5 +109,43 @@ if $PROGRAM_NAME == __FILE__
   raise "FAIL: validate-only must skip the AAB upload" unless dry[:skip_upload_aab] == true
   ok("validate-only: every upload skip flag on (auth + track validated only)")
 
+  # ── supply options: store-listing lane (issue #289, play_store) ────────
+  # The listing lane never ships a binary: AABs ride upload_only, this one
+  # uploads metadata texts + images (icon/featureGraphic) + screenshots.
+  listing = PlayUploadPreflight.supply_listing_options(
+    track: "internal", metadata: true, images: true, validate_only: false)
+  raise "FAIL: listing lane must never upload an AAB" unless
+    listing[:skip_upload_aab] == true && !listing.key?(:aab)
+  raise "FAIL: listing defaults must upload metadata + images + screenshots" unless
+    listing[:skip_upload_metadata] == false && listing[:skip_upload_images] == false &&
+    listing[:skip_upload_screenshots] == false
+  raise "FAIL: listing lane must not invent release notes" unless
+    listing[:skip_upload_changelogs] == true
+  raise "FAIL: track not mapped on the listing options" unless listing[:track] == "internal"
+  ok("listing options: no binary, metadata + images + screenshots on")
+
+  # Env gates split content types (the store-metadata.yml android leg).
+  texts_only = PlayUploadPreflight.supply_listing_options(
+    track: "internal", metadata: true, images: false, validate_only: false)
+  raise "FAIL: images=false must skip images + screenshots, keep metadata" unless
+    texts_only[:skip_upload_images] == true && texts_only[:skip_upload_screenshots] == true &&
+    texts_only[:skip_upload_metadata] == false
+  ok("listing options: images=false skips images + screenshots only")
+
+  images_only = PlayUploadPreflight.supply_listing_options(
+    track: "internal", metadata: false, images: true, validate_only: false)
+  raise "FAIL: metadata=false must skip texts, keep images" unless
+    images_only[:skip_upload_metadata] == true && images_only[:skip_upload_images] == false
+  ok("listing options: metadata=false skips texts only")
+
+  listing_dry = PlayUploadPreflight.supply_listing_options(
+    track: "beta", metadata: true, images: true, validate_only: true)
+  raise "FAIL: validate-only must flip every upload skip on" unless
+    listing_dry[:skip_upload_aab] == true && listing_dry[:skip_upload_metadata] == true &&
+    listing_dry[:skip_upload_images] == true && listing_dry[:skip_upload_screenshots] == true
+  raise "FAIL: validate-only must keep the track for resolution" unless listing_dry[:track] == "beta"
+  ok("listing validate-only: every upload skip flag on (auth + track resolved)")
+
+   puts "play_upload_preflight: #{$checks} checks passed"
   puts "play_upload_preflight: #{$checks} checks passed"
 end
