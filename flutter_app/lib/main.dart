@@ -550,14 +550,15 @@ AgentConfig? restorableBootConfig({
   if (key.isEmpty) {
     // Hosted catalog kinds resolve their standard key names
     // (GOOGLE_API_KEY, ANTHROPIC_API_KEY, …) from the saved-keys chain.
+    // Hosted env names (OPENROUTER_API_KEY, KIMI_API_KEY, ...) resolve
+    // only for KNOWN catalog endpoints (issue #327 review MINOR): a
+    // custom or unknown base URL must not consume another provider's
+    // key. Catalog endpoints keep the kind-first resolution contract.
+    final isCatalogEndpoint = providerCatalog.values
+        .any((s) => s.defaultBaseUrl == baseUrl);
     for (final spec in providerCatalog.values) {
       if (spec.kind != kind) continue;
-      // Endpoint-specific names (OPENROUTER_API_KEY, KIMI_API_KEY, ...)
-      // ride their own endpoint only (issue #327 review MINOR): a custom
-      // or unrelated base URL must not consume another provider's key.
-      if (spec.defaultBaseUrl.isNotEmpty && spec.defaultBaseUrl != baseUrl) {
-        continue;
-      }
+      if (!isCatalogEndpoint) break;
       for (final name in spec.apiKeyEnvNames) {
         key = settingsKeyEnv(name, sessionKeysStore);
         if (key.isNotEmpty) break;
