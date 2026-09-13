@@ -35,6 +35,7 @@ import '../model_roles/model_resolver.dart';
 import '../session/session_tree.dart';
 import '../prompts/prompts.g.dart';
 import 'agent_registry.dart';
+import 'child_session_io.dart';
 import 'output_manager.dart';
 import 'parallel.dart';
 import 'subagent.dart';
@@ -158,6 +159,7 @@ final class TaskToolConfig {
     TaskJobManager? jobManager,
     this.subagentManager,
     this.childSessionFactory,
+    this.childSessionOpener,
     this.a2aManager,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
@@ -216,26 +218,41 @@ final class TaskToolConfig {
   final Future<Session> Function(String parentSessionId, String childId)?
   childSessionFactory;
 
+  /// Optional child-session opener (issue #222): when present, the shared
+  /// [executor] can resume a failed/idle/completed child IN ITS OWN JSONL
+  /// session (`task_resume` / `task_send`) — same session file, same
+  /// mailbox id, never a `name-2` clone. Null disables the resume path;
+  /// the tools advertise the missing `child-resume` capability.
+  final ChildSessionOpener? childSessionOpener;
+
   /// Optional A2A remote-agent manager (Phase 5a). When present, the agent
   /// type `a2a:<name>` runs items against the configured remote agent.
   final A2aManager? a2aManager;
+
+  /// The session-shared executor (issue #222): the `task` tool runs
+  /// through it, and hosts pass [TaskExecutor.resumeChild] to
+  /// `subagentMonitoringTools` so `task_resume`/`task_send` continue
+  /// children in their own sessions. Lazy — identical construction to the
+  /// executor `taskTool` used to build per call.
+  late final TaskExecutor executor = TaskExecutor(
+    childTools: childTools,
+    streamFunction: streamFunction,
+    model: model,
+    registry: TaskAgentRegistry(agentTypes),
+    semaphore: semaphore,
+    store: outputs,
+    rolesResolver: rolesResolver,
+    subagentManager: subagentManager,
+    a2aManager: a2aManager,
+    childSessionFactory: childSessionFactory,
+    childSessionOpener: childSessionOpener,
+  );
 }
 
 /// Creates the `task` tool bound to [config] (omp's `TaskTool`).
 AgentTool taskTool({required TaskToolConfig config}) {
-  final registry = TaskAgentRegistry(config.agentTypes);
-  final executor = TaskExecutor(
-    childTools: config.childTools,
-    streamFunction: config.streamFunction,
-    model: config.model,
-    registry: registry,
-    semaphore: config.semaphore,
-    store: config.outputs,
-    rolesResolver: config.rolesResolver,
-    subagentManager: config.subagentManager,
-    a2aManager: config.a2aManager,
-    childSessionFactory: config.childSessionFactory,
-  );
+  final registry = config.executor.registry;
+  final executor = config.executor;
 
   final a2aNames = [
     for (final name in config.a2aManager?.servers.keys ?? const <String>[])

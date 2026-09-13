@@ -33,9 +33,11 @@ import '../model.dart';
 import '../model_roles/model_resolver.dart';
 import '../model_roles/roles_config.dart';
 import '../prompts/prompts.g.dart';
+import '../session/session_record.dart';
 import '../session/session_tree.dart';
 import '../types.dart';
 import 'agent_registry.dart';
+import 'child_session_io.dart';
 import 'output_manager.dart';
 import 'parallel.dart';
 import 'subagent.dart';
@@ -76,6 +78,7 @@ final class TaskExecutor {
     this.subagentManager,
     this.a2aManager,
     this.childSessionFactory,
+    this.childSessionOpener,
   });
 
   /// The parent tool pool (already minus any host-hidden tools).
@@ -114,6 +117,14 @@ final class TaskExecutor {
   /// child and writes its transcript into it.
   final Future<Session> Function(String parentSessionId, String childId)?
   childSessionFactory;
+
+  /// Optional child-session opener (issue #222): when present, [resumeChild]
+  /// reopens a retained child's JSONL session from
+  /// [SubagentHandle.sessionId] and continues the run in the SAME file —
+  /// same session, same mailbox id, same display name, never a `name-2`
+  /// clone. Null disables resume (the tools advertise the missing
+  /// `child-resume` capability up front).
+  final ChildSessionOpener? childSessionOpener;
 
   /// Runs one batch item to completion. Never throws: cancellation and
   /// failure are reported as [TaskSingleResult] error entries.
@@ -193,6 +204,131 @@ final class TaskExecutor {
   String? currentSubagentId() =>
       _currentSubagentIds.isEmpty ? null : _currentSubagentIds.last;
 
+  /// Ids with a resume run in flight — the in-process half of the
+  /// duplicate-resume guard (the handle's running status is the other).
+  final _resumesInFlight = <String>{};
+
+  /// Resumes a failed/idle/completed child IN ITS OWN SESSION (issue
+  /// #222): the prior transcript is reloaded from the child's JSONL file,
+  /// the follow-up [message] is prompted on top, and new records append to
+  /// the SAME file — same session id, same mailbox id, same display name,
+  /// never a `name-2` clone.
+  ///
+  /// Guards: a running child (or an in-flight resume) is rejected (E4);
+  /// aborted children take no resume; a missing/unreadable session file is
+  /// a named error, never a silently minted new session (E3); a failing
+  /// resume (e.g. the provider role is still quota-limited) returns the
+  /// child to failed-resumable with the resolver's error recorded (E2).
+  Future<void> resumeChild(String id, String message) async {
+    final manager = subagentManager;
+    final handle = manager?[id];
+    if (manager == null || handle == null) {
+      throw StateError('no subagent with id "$id"');
+    }
+    if (handle.status == SubagentStatus.running ||
+        handle.status == SubagentStatus.queued ||
+        _resumesInFlight.contains(id)) {
+      throw StateError(
+        'subagent "$id" is already running — duplicate resume rejected',
+      );
+    }
+    if (handle.status == SubagentStatus.aborted) {
+      throw StateError('subagent "$id" is aborted and cannot be resumed');
+    }
+    if (handle.agentType.startsWith('a2a:')) {
+      throw StateError(
+        'subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
+        'it has no local session to resume; follow up with a new task item '
+        '(agent ${handle.agentType}) carrying your message in its task text',
+      );
+    }
+    final session = await _resumeSession(id, handle);
+    final prior = await session.buildContextMessages();
+    _childSessions[id] = session;
+    _childSessionWrites[id] = await _appendedMessageCount(session);
+    _resumesInFlight.add(id);
+    _currentSubagentIds.add(id);
+    await manager.update(id, status: SubagentStatus.running, clearError: true);
+    await semaphore.acquire();
+    Agent? child;
+    try {
+      final definition = _resolveDefinition(handle.agentType);
+      final wiring = _resolveChildWiring(definition);
+      child = Agent(
+        model: wiring.model,
+        // The ORIGINAL batch context rides along (persisted on the handle):
+        // the transcript does not carry the system prompt, so a resume that
+        // rebuilt the prompt without it would silently drop the batch's
+        // shared background.
+        systemPrompt: _buildSystemPrompt(definition, handle.context),
+        streamFunction: wiring.stream,
+        toolRegistry: _childToolRegistry(definition),
+        externalSteeringSource: () => _inboxSteeringMessages(id),
+      );
+      child.state.messages = prior;
+      await child.prompt(message);
+      // The agent loop surfaces provider failures as an error-tagged final
+      // assistant message, not a throw — the same check `_run` relies on.
+      _finalAssistantText(child);
+      await _flushChildTranscript(id, child);
+      // Only the RESUME run's usage is added: the prior transcript is
+      // seeded into the child, so counting from zero would double-bill the
+      // original run (its usage is already on the handle).
+      final usage = _usageStats(child, from: prior.length);
+      await manager.update(
+        id,
+        status: SubagentStatus.completed,
+        tokens: usage.tokens,
+        requests: usage.requests,
+        modelId: wiring.model.id,
+      );
+    } on Object catch (error) {
+      if (child != null) unawaited(_flushChildTranscript(id, child));
+      await _updateSubagentStatus(id, SubagentStatus.failed, error: '$error');
+      throw StateError('$error');
+    } finally {
+      semaphore.release();
+      _resumesInFlight.remove(id);
+      _currentSubagentIds.remove(id);
+    }
+  }
+
+  /// Reopens the child's JSONL session for a resume: the still-open
+  /// executor session wins; otherwise the injected [childSessionOpener]
+  /// reads [SubagentHandle.sessionId]. A missing file is a NAMED error
+  /// (E3) — resume never silently mints a new session.
+  Future<Session> _resumeSession(String id, SubagentHandle handle) async {
+    // A failure-path transcript flush is fire-and-forget: wait out the
+    // pending chain so the session is attached before we try to reopen it.
+    await _childFlushChains[id];
+    final open = _childSessions[id];
+    if (open != null) return open;
+    final opener = childSessionOpener;
+    if (opener == null) {
+      throw StateError(
+        'this host cannot reopen child sessions (capability: '
+        'child-session-open) — cannot resume "$id"',
+      );
+    }
+    final path = handle.sessionId;
+    try {
+      return await opener(path);
+    } on Object catch (error) {
+      throw StateError(
+        'child session file for "$id" is unreadable at $path ($error) — '
+        'resume refused; spawn a fresh agent with task instead of silently '
+        'cloning',
+      );
+    }
+  }
+
+  /// The number of transcript messages already appended to [session] —
+  /// the flush-counter seed for a resume so only NEW messages append.
+  Future<int> _appendedMessageCount(Session session) async {
+    final branch = await session.getBranch();
+    return branch.whereType<MessageRecord>().length;
+  }
+
   Future<TaskSingleResult> _run(
     TaskItem item,
     int index,
@@ -225,6 +361,9 @@ final class TaskExecutor {
         name: taskItemNameBase(item),
         agentType: agentName,
         task: item.task,
+        // Persisted so a later resume (issue #222) can re-render the batch
+        // context into the child's system prompt.
+        context: context,
       );
       await subagentManager!.update(id, status: SubagentStatus.running);
     }
@@ -593,11 +732,15 @@ final class TaskExecutor {
     return userPrompt.toString();
   }
 
-  /// Token/request totals across the child's assistant messages.
-  static ({int tokens, int requests}) _usageStats(Agent child) {
+  /// Token/request totals across the child's assistant messages — from
+  /// [from] on (index into the message list), so a resumed child reports
+  /// only its NEW usage instead of re-counting the seeded transcript.
+  static ({int tokens, int requests}) _usageStats(Agent child, {int from = 0}) {
     var tokens = 0;
     var requests = 0;
-    for (final message in child.state.messages) {
+    final messages = child.state.messages;
+    for (var i = from; i < messages.length; i++) {
+      final message = messages[i];
       if (message is AssistantMessage) {
         requests++;
         tokens +=

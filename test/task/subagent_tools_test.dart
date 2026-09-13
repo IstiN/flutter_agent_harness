@@ -75,15 +75,16 @@ void main() {
       expect(subagentMonitoringTools(manager: null), isEmpty);
     });
 
-    test('returns 6 tools', () {
+    test('returns 7 tools', () {
       final tools = subagentMonitoringTools(manager: mgr);
-      expect(tools.length, 6);
+      expect(tools.length, 7);
       expect(
         tools.map((t) => t.name),
         containsAll([
           'task_status',
           'task_observe',
           'task_send',
+          'task_resume',
           'reply',
           'agent_message',
           'agent_directory',
@@ -297,8 +298,9 @@ void main() {
       var sentMessage = '';
       final tools = subagentMonitoringTools(
         manager: mgr,
-        sendToChild: (sessionId, message) async {
+        resumeChild: (id, message) async {
           sentMessage = message;
+          await mgr.update(id, status: SubagentStatus.completed);
         },
       );
       final sendTool = tools.firstWhere((t) => t.name == 'task_send');
@@ -309,11 +311,11 @@ void main() {
       );
       final text = (result.content.first as dynamic).text as String;
       expect(text, contains('sent message to "a1"'));
+      expect(text, contains('child resumed'));
       expect(sentMessage, 'look deeper');
-      expect(mgr['a1']!.status, SubagentStatus.running);
     });
 
-    test('task_send rejects failed subagent', () async {
+    test('task_send points a failed subagent at task_resume', () async {
       await mgr.register(
         id: 'failed-1',
         name: 'f',
@@ -323,7 +325,7 @@ void main() {
       await mgr.update('failed-1', status: SubagentStatus.failed, error: 'x');
       final tools = subagentMonitoringTools(
         manager: mgr,
-        sendToChild: (_, _) async {},
+        resumeChild: (_, _) async {},
       );
       final sendTool = tools.firstWhere((t) => t.name == 'task_send');
       final result = await sendTool.execute(
@@ -332,13 +334,13 @@ void main() {
         null,
       );
       final text = (result.content.first as dynamic).text as String;
-      expect(text, contains('cannot send to failed'));
+      expect(text, contains('task_resume'));
     });
 
     test('task_send empty message is error', () async {
       final tools = subagentMonitoringTools(
         manager: mgr,
-        sendToChild: (_, _) async {},
+        resumeChild: (_, _) async {},
       );
       final sendTool = tools.firstWhere((t) => t.name == 'task_send');
       final result = await sendTool.execute(
@@ -984,7 +986,7 @@ void main() {
       final text = await render(mgr);
       expect(
         text,
-        contains('task-2 — subagent (failed — resume with task_send)'),
+        contains('task-2 — subagent (failed — resume with task_resume)'),
       );
       expect(text, contains('task-1 — subagent (completed)'));
     });

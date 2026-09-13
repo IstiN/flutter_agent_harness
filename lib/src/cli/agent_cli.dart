@@ -46,6 +46,7 @@ import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import 'agent_tree.dart';
 import '../task/agent_discovery.dart';
+import '../task/child_session_io.dart';
 import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
 import '../task/subagent_tools.dart';
@@ -444,10 +445,18 @@ class AgentCli {
         );
         return session;
       },
+      // Issue #222: the resume path reopens a child's JSONL session by
+      // path so task_resume/task_send continue the child in the SAME file.
+      childSessionOpener: jsonlChildSessionOpener(_env),
     );
     final monitoringTools = subagentMonitoringTools(
       manager: _subagentManager,
       jobs: _taskConfig.jobManager,
+      // Issue #222: child messaging IS available on this host — observe
+      // reads the child's JSONL transcript; send/resume continue the child
+      // in its own session via the session-shared executor.
+      readMessages: jsonlChildMessageReader(_env),
+      resumeChild: _taskConfig.executor.resumeChild,
     );
     _toolRegistry = ToolRegistry([
       ...coreTools,
@@ -824,6 +833,12 @@ class AgentCli {
   /// The session's retained-subagent registry (tests, the app settings
   /// Agents panel, hosts observing children).
   SubagentManager get subagentManager => _subagentManager;
+
+  /// The session's task-tool wiring (job registry, subagent registry,
+  /// child-session opener) — tests and hosts verifying the lifecycle
+  /// wiring read it instead of reaching into private state.
+  TaskToolConfig get taskConfig => _taskConfig;
+
   late final A2aManager _a2aManager;
 
   /// Agent types discovered from `.fah/agents/` + `.agents/agents/`.

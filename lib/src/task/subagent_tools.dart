@@ -28,9 +28,13 @@ typedef ChildMessageReader =
       int tail,
     });
 
-/// Callback to send a message to a child (resume/steer).
-typedef ChildMessageSender =
-    Future<void> Function(String sessionId, String message);
+/// Callback to resume a child IN ITS OWN SESSION with a follow-up message
+/// (issue #222): the run appends to the same JSONL transcript, keeping the
+/// same mailbox id and display name. Backs `task_resume` (failed children)
+/// and `task_send` (idle/completed children). Null on hosts that cannot
+/// reopen child sessions — the tool descriptors then advertise the missing
+/// `child-resume` capability up front.
+typedef ChildResumeRunner = Future<void> Function(String id, String message);
 
 /// Callback resolving the CURRENT subagent id, or null outside a child run.
 /// The executor sets this per-spawn so the child-only `reply`/`agent_message`
@@ -43,7 +47,7 @@ typedef CurrentSubagentIdProvider = String? Function();
 List<AgentTool> subagentMonitoringTools({
   required SubagentManager? manager,
   ChildMessageReader? readMessages,
-  ChildMessageSender? sendToChild,
+  ChildResumeRunner? resumeChild,
   CurrentSubagentIdProvider? currentSubagentId,
   TaskJobManager? jobs,
 }) {
@@ -51,7 +55,8 @@ List<AgentTool> subagentMonitoringTools({
   return [
     _taskStatusTool(manager),
     _taskObserveTool(manager, readMessages),
-    _taskSendTool(manager, sendToChild),
+    _taskSendTool(manager, resumeChild),
+    _taskResumeTool(manager, resumeChild),
     if (jobs != null) _taskCancelTool(jobs),
     _replyTool(manager, currentSubagentId),
     _agentMessageTool(manager, currentSubagentId),
@@ -170,18 +175,28 @@ Future<String> _renderAgentDirectory(
       ..write(line);
   }
   // Registered children get mailboxes on first mail — list them
-  // explicitly so they are addressable before that.
+  // explicitly so they are addressable before that. Superseded generations
+  // (issue #222) collapse into their chain head: one logical entry per
+  // respawn chain.
   final knownIds = entries.map((e) => e.id).toSet();
+  final supersededIds = {
+    for (final h in manager.handles)
+      if (h.supersedes != null) h.supersedes!,
+  };
   for (final handle in manager.handles) {
+    if (supersededIds.contains(handle.id)) continue;
     final mailbox = manager.mailboxOf(handle.id);
     if (knownIds.contains(mailbox)) continue;
     final status = switch (handle.status) {
-      SubagentStatus.failed => 'failed — resume with task_send',
+      SubagentStatus.failed => 'failed — resume with task_resume',
       _ => handle.status.name,
     };
     buffer
       ..writeln()
       ..write('  ${handle.name} — subagent ($status)');
+    if (handle.supersedes != null) {
+      buffer.write(' · supersedes ${handle.supersedes}');
+    }
   }
   if (stale > 0) {
     buffer
@@ -535,6 +550,65 @@ Future<(String, String?)> _resolveFabricAddress(
   if (suffixError != null) return (stripped, suffixError);
   to = stripped;
   if (to == manager.selfId || manager[to] != null) return (to, null);
+  final local = _resolveLocalChildName(manager, to);
+  if (local != null) return local;
+  return _resolveDirectoryAddress(fabric, to);
+}
+
+/// Session-local child-name resolution for [_resolveFabricAddress]
+/// (issue #222): subagent mailboxes are addressable cross-session as
+/// `<parentSessionId>/<agentName>`; bare child names resolve
+/// session-locally. Both go through the LOCAL registry first — a
+/// name-based address must land in the child's real mailbox
+/// (`<prefix>/<childId>`), never in a freshly minted lookalike. Returns
+/// null when [to] names no local child concern — the caller falls
+/// through to the fabric directory.
+(String, String?)? _resolveLocalChildName(SubagentManager manager, String to) {
+  final prefix = manager.mailboxPrefix.isNotEmpty
+      ? manager.mailboxPrefix
+      : manager.parentSessionId;
+  final slash = to.indexOf('/');
+  if (slash > 0 && to.substring(0, slash) == prefix) {
+    return _resolvePrefixedTail(manager, to, to.substring(slash + 1));
+  }
+  if (slash < 0) return _resolveBareChildName(manager, to);
+  return null;
+}
+
+/// Resolves the `<prefix>/<tail>` form against the local registry: the
+/// tail is this agent itself, a child id, or a unique child display name
+/// — a name match must land in the child's REAL mailbox, not a lookalike.
+(String, String?)? _resolvePrefixedTail(
+  SubagentManager manager,
+  String to,
+  String tail,
+) {
+  if (tail == manager.selfId) return (to, null);
+  final byId = manager[tail];
+  if (byId != null) return (manager.mailboxOf(byId.id), null);
+  final named = manager.handles.where((h) => h.name == tail).toList();
+  if (named.length == 1) return (manager.mailboxOf(named.single.id), null);
+  if (named.length > 1) return (to, _ambiguousChildName(tail, named));
+  return null;
+}
+
+/// Resolves a bare child display name: unique → the child's own id,
+/// ambiguous → error; null when nothing local matches.
+(String, String?)? _resolveBareChildName(SubagentManager manager, String to) {
+  final named = manager.handles.where((h) => h.name == to).toList();
+  if (named.length == 1) return (named.single.id, null);
+  if (named.length > 1) return (to, _ambiguousChildName(to, named));
+  return null;
+}
+
+/// Fabric-directory resolution for [_resolveFabricAddress]: an exact
+/// mailbox id passes through; a session display NAME resolves to the one
+/// live mailbox, or errors when ambiguous. An unknown name returns [to]
+/// unchanged so the manager's own unknown-recipient error applies.
+Future<(String, String?)> _resolveDirectoryAddress(
+  MessagingRepository fabric,
+  String to,
+) async {
   final entries = await fabric.directory();
   if (entries.any((entry) => entry.id == to)) return (to, null);
   final matches = _nameMatches(entries, to);
@@ -548,8 +622,8 @@ Future<(String, String?)> _resolveFabricAddress(
     final (prefixTarget, prefixError) = _resolveTruncatedId(entries, to);
     if (prefixError != null) return (to, prefixError);
     if (prefixTarget != null) return (prefixTarget, null);
+    return (to, null);
   }
-  if (matches.isEmpty) return (to, null);
   if (matches.length > 1) {
     return (
       to,
@@ -566,6 +640,13 @@ String _listMailboxes(List<MailboxEntry> matches) => matches
       (entry) => '  ${entry.id}${entry.cwd == null ? '' : '  [${entry.cwd}]'}',
     )
     .join('\n');
+
+/// Formats an ambiguous child-NAME error (issue #222): a respawn chain
+/// shares one display name across generations, so a bare name can hit
+/// several handles — the error lists the candidate ids to pick from.
+String _ambiguousChildName(String name, List<SubagentHandle> matches) =>
+    'subagent name "$name" is ambiguous — pick an id:\n'
+    '${matches.map((h) => '  ${h.id} (${h.status.name})').join('\n')}';
 
 /// Strips a `name@machine` suffix that names this host. Returns the bare
 /// name for local delivery, the address unchanged (routed through the A2A
@@ -678,18 +759,33 @@ AgentTool _taskObserveTool(
   );
 }
 
-/// `task_send` — send a follow-up message to a subagent.
+/// `task_send` — send a follow-up message to a subagent. Steering a
+/// RUNNING child works on every host (the message lands in the child's
+/// inbox and is delivered at the next turn boundary); resuming an
+/// idle/completed child needs the host's [ChildResumeRunner] — when it is
+/// missing, the descriptor says so up front (`steering: unavailable`) and
+/// the error names the capability. Remote `a2a:` children are rejected
+/// outright: they have no local inbox loop, so queued mail would never be
+/// delivered (the error names the actual delivery channel instead).
 AgentTool _taskSendTool(
   SubagentManager manager,
-  ChildMessageSender? sendToChild,
+  ChildResumeRunner? resumeChild,
 ) {
+  final unavailableNote = resumeChild == null
+      ? ' NOTE: this host can steer RUNNING children only — follow-ups to '
+            'idle/completed children are unavailable here '
+            '(steering: unavailable, capability: child-resume).'
+      : '';
   return AgentTool(
     name: 'task_send',
     description:
-        'Send a follow-up message to a subagent. Works with idle '
-        '(waiting for input) and completed children — a completed child is '
-        'resumed with the new message. Failed/aborted children cannot '
-        'receive messages.',
+        'Send a follow-up message to a subagent. A running child receives '
+        'it in its inbox at the next turn boundary; an idle (waiting for '
+        'input) or completed child is resumed in its SAME session with the '
+        'message. Failed children are continued with task_resume instead. '
+        'Remote a2a:<name> children cannot be steered or resumed — they '
+        'have no local session or inbox; follow up with a new task item.'
+        '$unavailableNote',
     parameters: {
       'type': 'object',
       'properties': {
@@ -702,31 +798,260 @@ AgentTool _taskSendTool(
       'required': ['id', 'message'],
     },
     tier: ApprovalTier.write,
-    execute: (args, cancelToken, onUpdate) async {
-      final id = args['id'] as String;
-      final message = args['message'] as String? ?? '';
-      if (message.trim().isEmpty) {
-        return ToolExecutionResult.text('error: message is required');
-      }
-      final handle = manager[id];
-      if (handle == null) {
-        return ToolExecutionResult.text('no subagent with id "$id"');
-      }
-      if (handle.status == SubagentStatus.failed ||
-          handle.status == SubagentStatus.aborted) {
-        return ToolExecutionResult.text(
-          'cannot send to ${handle.status.name} subagent "$id"',
-        );
-      }
-      if (sendToChild == null) {
-        return ToolExecutionResult.text(
-          'child messaging not available on this host',
-        );
-      }
-      await sendToChild(handle.sessionId, message);
-      await manager.update(id, status: SubagentStatus.running);
-      return ToolExecutionResult.text('sent message to "$id" — child resumed');
+    execute: (args, cancelToken, onUpdate) =>
+        _runTaskSend(manager, resumeChild, args),
+  );
+}
+
+/// Body of the `task_send` executor: validates input, refuses remote
+/// `a2a:` children (whatever their status — they have no local loop
+/// draining an inbox, so "queued … delivered at the next turn boundary"
+/// would be a lie and the mail would sit undelivered forever), then
+/// dispatches by child status.
+Future<ToolExecutionResult> _runTaskSend(
+  SubagentManager manager,
+  ChildResumeRunner? resumeChild,
+  Map<String, dynamic> args,
+) async {
+  final id = args['id'] as String;
+  final message = args['message'] as String? ?? '';
+  if (message.trim().isEmpty) {
+    return ToolExecutionResult.text('error: message is required');
+  }
+  final handle = manager[id];
+  if (handle == null) {
+    return ToolExecutionResult.text('no subagent with id "$id"');
+  }
+  // Remote `a2a:` children first, whatever their status: they have no
+  // local loop draining an inbox (the remote prompt is assembled once,
+  // at send time) — name the actual delivery channel instead.
+  if (handle.agentType.startsWith('a2a:')) {
+    return ToolExecutionResult.text(
+      'cannot send to "$id": it runs remotely as ${handle.agentType} — '
+      'a remote a2a child has no local session or inbox to steer. '
+      'Follow up with a new task item (agent ${handle.agentType}) '
+      'carrying your message in its task text.',
+    );
+  }
+  return _sendByChildStatus(manager, resumeChild, id, handle, message);
+}
+
+/// `task_send` dispatch on child status: failed/aborted refuse, active
+/// children are steered through their inbox, idle/completed children are
+/// resumed in the same session.
+Future<ToolExecutionResult> _sendByChildStatus(
+  SubagentManager manager,
+  ChildResumeRunner? resumeChild,
+  String id,
+  SubagentHandle handle,
+  String message,
+) async {
+  switch (handle.status) {
+    case SubagentStatus.failed:
+      return ToolExecutionResult.text(
+        'subagent "$id" failed — resume it with task_resume (task_send '
+        'only steers running/idle/completed children)',
+      );
+    case SubagentStatus.aborted:
+      return ToolExecutionResult.text(
+        'cannot send to aborted subagent "$id"',
+      );
+    case SubagentStatus.queued:
+    case SubagentStatus.running:
+      return _enqueueFollowUp(manager, id, message);
+    case SubagentStatus.idle:
+    case SubagentStatus.completed:
+      return _resumeIdleChild(manager, resumeChild, id, handle, message);
+  }
+}
+
+/// Steering a queued/running child: the message lands in its inbox and is
+/// delivered at the next turn boundary.
+Future<ToolExecutionResult> _enqueueFollowUp(
+  SubagentManager manager,
+  String id,
+  String message,
+) async {
+  try {
+    await manager.enqueueMessage(
+      id,
+      SubagentMessage(
+        fromId: manager.selfId,
+        text: message,
+        sentAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+  } on StateError catch (error) {
+    return ToolExecutionResult.text('error: $error');
+  }
+  return ToolExecutionResult.text(
+    'queued message for running subagent "$id" — delivered at the '
+    'next turn boundary',
+  );
+}
+
+/// Follow-up to an idle/completed child: resume it in its SAME session
+/// with the message — needs the host's child-resume capability.
+Future<ToolExecutionResult> _resumeIdleChild(
+  SubagentManager manager,
+  ChildResumeRunner? resumeChild,
+  String id,
+  SubagentHandle handle,
+  String message,
+) async {
+  if (resumeChild == null) {
+    return ToolExecutionResult.text(
+      'cannot resume ${handle.status.name} subagent "$id": child '
+      'resume not available on this host '
+      '(capability: child-resume)',
+    );
+  }
+  try {
+    await resumeChild(id, message);
+  } on Object catch (error) {
+    return ToolExecutionResult.text('resume of "$id" failed: $error');
+  }
+  return ToolExecutionResult.text(
+    'sent message to "$id" — child resumed '
+    '(status: ${manager[id]?.status.name ?? 'unknown'})',
+  );
+}
+
+/// `task_resume` — continue a FAILED child in its SAME session (issue
+/// #222): one verb, one job. The run appends to the existing JSONL
+/// transcript with the same mailbox id and display name — never a cloned
+/// `name-2` session. Needs the host's [ChildResumeRunner]; without it the
+/// descriptor and the error name the missing capability.
+AgentTool _taskResumeTool(
+  SubagentManager manager,
+  ChildResumeRunner? resumeChild,
+) {
+  final unavailableNote = resumeChild == null
+      ? ' UNAVAILABLE on this host (capability: child-resume).'
+      : '';
+  return AgentTool(
+    name: 'task_resume',
+    description:
+        'Resume a FAILED subagent, continuing the SAME session: the run '
+        'appends to the existing JSONL transcript, keeps the same mailbox '
+        'id and display name, and never mints a cloned "name-2" session. '
+        'Use this after transient failures (provider quota, network). '
+        'Steering running/idle/completed children is task_send; respawning '
+        'a fresh agent is task (the new child links supersedes).'
+        '$unavailableNote',
+    parameters: {
+      'type': 'object',
+      'properties': {
+        'id': {'type': 'string', 'description': 'The failed subagent id.'},
+        'message': {
+          'type': 'string',
+          'description':
+              'Optional resume instruction. Default: continue the original '
+              'task from where the child stopped.',
+        },
+      },
+      'required': ['id'],
     },
+    tier: ApprovalTier.write,
+    execute: (args, cancelToken, onUpdate) =>
+        _runTaskResume(manager, resumeChild, args),
+  );
+}
+
+/// Body of the `task_resume` executor: validates the target, refuses
+/// remote `a2a:` children (no local session to resume), then dispatches
+/// by child status.
+Future<ToolExecutionResult> _runTaskResume(
+  SubagentManager manager,
+  ChildResumeRunner? resumeChild,
+  Map<String, dynamic> args,
+) async {
+  final id = args['id'] as String;
+  final message = _resumeInstruction(args);
+  final handle = manager[id];
+  if (handle == null) {
+    return ToolExecutionResult.text('no subagent with id "$id"');
+  }
+  // Remote a2a children have no local session to resume — point at the
+  // actual channel up front instead of a doomed capability dance.
+  if (handle.agentType.startsWith('a2a:')) {
+    return ToolExecutionResult.text(
+      'cannot resume "$id": it runs remotely as ${handle.agentType} — '
+      'there is no local session to continue. Follow up with a new task '
+      'item (agent ${handle.agentType}) carrying your message in its '
+      'task text.',
+    );
+  }
+  return _resumeByChildStatus(manager, resumeChild, id, handle, message);
+}
+
+/// The `task_resume` instruction: an explicit non-blank message, else the
+/// default "continue the original task" wording.
+String _resumeInstruction(Map<String, dynamic> args) {
+  final message = (args['message'] as String?)?.trim() ?? '';
+  return message.isNotEmpty
+      ? message
+      : 'Continue your task from where you stopped.';
+}
+
+/// `task_resume` dispatch on child status: only failed children resume;
+/// everything else explains why not (and where to go instead).
+Future<ToolExecutionResult> _resumeByChildStatus(
+  SubagentManager manager,
+  ChildResumeRunner? resumeChild,
+  String id,
+  SubagentHandle handle,
+  String message,
+) async {
+  switch (handle.status) {
+    case SubagentStatus.queued:
+    case SubagentStatus.running:
+      return ToolExecutionResult.text(
+        'subagent "$id" is already running — duplicate resume rejected',
+      );
+    case SubagentStatus.idle:
+    case SubagentStatus.completed:
+      return ToolExecutionResult.text(
+        'subagent "$id" is ${handle.status.name}, not failed — steer '
+        'it with task_send',
+      );
+    case SubagentStatus.aborted:
+      return ToolExecutionResult.text(
+        'aborted subagent "$id" cannot be resumed',
+      );
+    case SubagentStatus.failed:
+      return _resumeFailedChild(manager, resumeChild, id, message);
+  }
+}
+
+/// Resumes a failed child in its SAME session; a failed resume leaves the
+/// child failed and resumable.
+Future<ToolExecutionResult> _resumeFailedChild(
+  SubagentManager manager,
+  ChildResumeRunner? resumeChild,
+  String id,
+  String message,
+) async {
+  if (resumeChild == null) {
+    return ToolExecutionResult.text(
+      'resume not available on this host '
+      '(capability: child-resume) — the child stays failed',
+    );
+  }
+  try {
+    await resumeChild(id, message);
+  } on Object catch (error) {
+    final detail = error is StateError ? error.message : '$error';
+    return ToolExecutionResult.text(
+      'resume of "$id" failed: $detail — the child stays failed '
+      'and resumable',
+    );
+  }
+  final sessionPath = manager[id]?.sessionId;
+  final cwdNote = sessionPath == null ? '' : ' [session: $sessionPath]';
+  return ToolExecutionResult.text(
+    'resumed "$id" — child ${manager[id]?.status.name ?? 'unknown'}'
+    '$cwdNote',
   );
 }
 
