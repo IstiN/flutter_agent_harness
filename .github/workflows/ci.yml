@@ -527,11 +527,19 @@ jobs:
 
       # Issue #239 AC3: the App Store submission pre-flight matrix is plain
       # ruby over flutter_app/fastlane/appstore_preflight.rb — no gems,
-      # runs in under a second on the runner's stock ruby. Shard 0 only:
-      # once is enough.
-      - name: App Store pre-flight matrix (ruby)
+      # runs in under a second on the runner's stock ruby.
+      # Issue #289 adds the fastlane guard/preflight suites (android id
+      # guard + Play upload pre-flight) — same plain-ruby contract, so the
+      # step loops over every fastlane test file. Shard 0 only: once is
+      # enough (fa PR #333).
+      - name: Fastlane pre-flight suites (ruby)
         if: matrix.shard == 0
-        run: ruby flutter_app/fastlane/test/appstore_preflight_test.rb
+        run: |
+          for t in flutter_app/fastlane/test/*_test.rb; do
+            echo "::group::ruby $t"
+            ruby "$t"
+            echo "::endgroup::"
+          done
 
   # Issue #283: fa_ui tests sharded ×3 by the test-core template — a
   # duration-balanced manifest (scripts/faui_test_shards.json, rebalanced
