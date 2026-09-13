@@ -170,6 +170,7 @@ extension AgentServiceSessions on AgentService {
       streamFunction: _agent.streamFunction,
       // Clones inherit the external-watch setting (tests disable it).
       watchExternalSessions: _watchExternalSessions,
+      includeSharedSessionRoots: _includeSharedSessionRoots,
       resolveSecretName: _resolveSecretName,
       // Clones share the live secrets env and the Keys store, so a
       // `request_secret` grant in one session is live and persisted for all.
