@@ -71,8 +71,7 @@ void main() {
       expect(fileOnlyConfigKeys.containsKey('brand_new_setting'), isFalse);
     });
 
-    test('every SharedSetting owns a yaml key or is a documented non-yaml',
-        () {
+    test('every SharedSetting owns a yaml key or is a documented non-yaml', () {
       for (final setting in SharedSetting.values) {
         final ownsYaml = sharedSettingMetadata[setting]!.yamlKeys.isNotEmpty;
         expect(
@@ -96,7 +95,8 @@ void main() {
           expect(
             owners.containsKey(key),
             isFalse,
-            reason: 'yaml key "$key" is claimed by both '
+            reason:
+                'yaml key "$key" is claimed by both '
                 '${owners[key]?.name} and ${setting.name}.',
           );
           owners[key] = setting;
@@ -107,7 +107,8 @@ void main() {
       expect(
         owners.length + fileOnlyConfigKeys.length,
         allKeys.length,
-        reason: 'N keys = shared(${owners.length}) + '
+        reason:
+            'N keys = shared(${owners.length}) + '
             'file-only(${fileOnlyConfigKeys.length})',
       );
     });
@@ -166,7 +167,8 @@ void main() {
     test('absent surfaces always name a capability (E3)', () {
       for (final entry in settingSurfaces.entries) {
         final surfaces = entry.value;
-        final absent = !surfaces.macos ||
+        final absent =
+            !surfaces.macos ||
             !surfaces.ios ||
             !surfaces.web ||
             !surfaces.extensionPanel;
@@ -194,6 +196,32 @@ void main() {
               'it — either implement it there or fix the classification.',
         );
       }
+    });
+  });
+
+  group('surface claims are pinned to real code (AC5)', () {
+    // The registry's web claims ride on the flutter_app sources (the
+    // web build compiles the same SettingsScreen — the appRef greps in
+    // settings_parity_test.dart pin those). The claims that live in
+    // SEPARATE code bases are pinned here.
+
+    test('the extension panel really exposes provider + approval', () {
+      final panel = File('browser_ext/panel/panel.js').readAsStringSync();
+      // provider.save: the settings_put field-merge (baseUrl/apiKey/model).
+      expect(panel, contains('provider.save'));
+      // The approval mode rides the agent status line.
+      expect(panel, contains('approval'));
+    });
+
+    test('the web compaction gap is real: the web loader keeps classic', () {
+      // The registry says compactionEngine is web=false because the web
+      // loader has no shared ~/.fah/config.yaml — pin the loader stub
+      // that implements exactly that.
+      final stub = File(
+        'flutter_app/lib/services/compaction_engine_loader_stub.dart',
+      ).readAsStringSync();
+      expect(stub, contains('=> null'));
+      expect(stub, contains('classic'));
     });
   });
 }
