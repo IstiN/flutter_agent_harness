@@ -966,9 +966,15 @@ void main() {
       agent.state.tools = registry.tools;
       agent.state.messages = List.of(view);
       await agent.prompt('what was the error?');
-      // ponytail: CI interleaving can resolve prompt one microtask before
-      // the tool-loop's second stream call lands; pump the queue first.
-      await pumpEventQueue();
+      // ponytail: on CI the tool-loop's second stream call can land after
+      // prompt() resolves (slow-FS tool exec behind a real timer); poll
+      // briefly for turn 2 instead of asserting instantly, still failing
+      // if the expansion never reaches the model context.
+      for (var waited = 0;
+          fake.contexts.length < 2 && waited < 5000;
+          waited += 50) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
 
       // Turn 1 saw the marker; turn 2's context carried the expansion
       // and the scripted answer landed.
