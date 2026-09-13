@@ -31,6 +31,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/a2a': (cli, rest) async => cli._printA2aStatus(),
   '/terminal-setup': (cli, rest) async => cli._printTerminalSetup(),
   '/ext': (cli, rest) async => cli._extSlash(rest),
+  '/power': (cli, rest) async => cli._powerSlash(),
 };
 
 /// Slash-command dispatch on [AgentCli].
@@ -99,6 +100,44 @@ extension SlashCommandDispatch on AgentCli {
     for (final line in lines) {
       io.writeln(line);
     }
+  }
+
+  /// The session's sleep-prevention controller (issue #325) — null when
+  /// no runner was injected. Exposed so wiring tests can assert the
+  /// acquire/release lifecycle without spawning a real helper.
+  @visibleForTesting
+  PowerAssertionController? get powerAssertionsForTesting =>
+      _powerAssertions;
+
+  /// Acquires the sleep-prevention assertion for the session (issue #325,
+  /// ported from oh-my-pi's `#acquirePowerAssertion`): idempotent, and a
+  /// failure only warns — the session continues unguarded. No-op without
+  /// an injected runner (tests, web).
+  @visibleForTesting
+  Future<void> acquirePowerAssertions() async =>
+      await _powerAssertions?.acquire();
+
+  /// Releases the sleep-prevention assertion (idempotent, warn-not-crash).
+  @visibleForTesting
+  Future<void> releasePowerAssertions() async =>
+      await _powerAssertions?.release();
+
+  /// `/power`: the configured `power.sleepPrevention` level and whether
+  /// the assertion is held right now.
+  Future<void> _powerSlash() async {
+    final controller = _powerAssertions;
+    if (controller == null) {
+      io.writeln(
+        'sleepPrevention=${config.powerSleepPrevention.value} held=no '
+        '(no runner on this host)',
+      );
+    } else {
+      io.writeln(controller.status().toString());
+    }
+    io.writeln(
+      'configure: power.sleepPrevention: off|idle|display|system '
+      '(~/.fah/config.yaml, default idle)',
+    );
   }
 
   /// `/exit`, `/help`, `/stats`, `/tasks`.

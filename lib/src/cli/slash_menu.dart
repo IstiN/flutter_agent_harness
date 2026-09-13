@@ -146,6 +146,7 @@ const builtinSlashCommands = <String, String>{
   '/tasks': '[cancel <id>] — list background agents',
   '/queue': '[clear] — queued follow-up messages (strip above the input)',
   '/memory': '[maintain] — memory stats or run consolidation',
+  '/power': 'show sleep prevention (caffeinate) level and state',
   '/redact': '[on|off|block on|block off|stats|layers] — secret redaction',
   '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',

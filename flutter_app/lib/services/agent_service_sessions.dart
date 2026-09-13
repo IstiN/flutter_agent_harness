@@ -55,6 +55,9 @@ extension AgentServiceSessions on AgentService {
     // The watcher only exists with a messaging fabric (production ctor);
     // lightweight test services never start a timer.
     if (_subagentManager != null) _startInboxWatcher();
+    // Sleep prevention (issue #325): hold the machine awake for the
+    // session's lifetime; a failure logs and the session continues.
+    unawaited(powerAssertion?.acquire());
   }
 
   /// Removes every legacy empty `.jsonl` (only header) left on disk by the

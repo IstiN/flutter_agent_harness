@@ -1863,6 +1863,14 @@ Future<void> _runApp(List<String> args) async {
       // can attach. Null where the root is process-local (tests).
       presenceStore: FileSessionPresenceStore(env: cliEnv, root: sessionRoot),
       processId: pid,
+      // Sleep prevention (issue #325, oh-my-pi port): one assertion for
+      // the whole session — caffeinate on macOS (bound to our pid by
+      // `-w`), systemd-inhibit on Linux, a clean no-op elsewhere. The
+      // runner is the injection seam: tests never get one, so no unit
+      // test spawns a real helper.
+      powerSleepPrevention:
+          saved.powerSleepPrevention ?? PowerAssertionLevel.idle,
+      powerRunner: hostPowerRunner(pid: pid),
       sessionName: effective.session,
       visionConfig: visionConfig,
       transcribeConfig: transcribeConfig,
@@ -2104,6 +2112,9 @@ Future<void> _runApp(List<String> args) async {
         providerTimeouts: saved.providerTimeouts,
         images: saved.images,
         fabric: saved.fabric,
+        // Static per session: keep the loaded `power:` section so a save
+        // never drops the user's sleep-prevention level.
+        powerSleepPrevention: saved.powerSleepPrevention,
       ),
     );
   };
