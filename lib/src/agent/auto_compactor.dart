@@ -595,7 +595,7 @@ class AutoCompactorFactory {
     this.force = false,
     this.attemptBudget = const Duration(seconds: 90),
     this.totalBudget = const Duration(minutes: 4),
-    this.engine = CompactionEngine.classic,
+    this.engine = CompactionEngine.structured,
   });
 
   final Session session;
@@ -611,10 +611,11 @@ class AutoCompactorFactory {
   final Duration baseBackoff;
   final bool force;
 
-  /// Which engine compactions use (issue #148 D8): [CompactionEngine.classic]
-  /// (this factory's historical behavior) or [CompactionEngine.structured]
-  /// (judge-hide → checkpoint, with a classic fallback when it cannot get
-  /// the context under the window).
+  /// Which engine compactions use (issue #148 D8):
+  /// [CompactionEngine.structured] (the default since issue #287) or
+  /// [CompactionEngine.classic] (the legacy 1.0 rollback — lossy prefix
+  /// summary; the structured engine also falls back to it when it cannot
+  /// get the context under the window).
   final CompactionEngine engine;
 
   /// Per-attempt wall-clock budget, forwarded to the built [AutoCompactor].
@@ -628,19 +629,37 @@ class AutoCompactorFactory {
   /// [build] instead.
   Future<bool> run() async {
     if (engine == CompactionEngine.structured) {
-      if (await _runStructured()) return true;
+      final adapter = _StructuredHooksAdapter(hooks);
+      final ok = await _runStructured(adapter: adapter);
+      if (ok) {
+        // Close the hooks bracket the classic [AutoCompactor.run] closes
+        // on every terminal path: hosts key off [AutoCompactorHooks.onDone]
+        // (the CLI's HEP `compaction_end` frame, the Flutter chat sheet),
+        // so a structured run that skips it leaves them open forever.
+        hooks.onDone(adapter.passCount, _requestTokens());
+        return true;
+      }
       // Fall through: the classic prefix compactor is the residual
       // fallback (issue #148 flowchart S7/D4) — its summary then renders
       // under structured projection as an opaque legacy-ckpt segment.
+      // Its own run() closes the bracket.
     }
     return build().run();
   }
+
+  /// The live request-size estimate on the same basis the structured
+  /// engine enforces (transcript + system-prompt/tool-schema overhead).
+  int _requestTokens() => estimateRequestTokens(
+    state.messages,
+    systemPrompt: state.systemPrompt,
+    tools: state.tools,
+  );
 
   /// Runs the structured engine (issue #148): pass 1 judge-hides over the
   /// ledger, pass 2 text checkpoints with covers. Judge and summarizer ride
   /// the `smol` role (falling back to the main stream) exactly like the
   /// classic summarizers.
-  Future<bool> _runStructured() async {
+  Future<bool> _runStructured({_StructuredHooksAdapter? adapter}) async {
     final smolStream = sources.smolStream ?? sources.mainStream;
     final smolModel = sources.smolModel ?? sources.mainModel;
     final compactor = StructuredCompactor(
@@ -656,7 +675,7 @@ class AutoCompactorFactory {
       ),
       summarize: streamFunctionSummarizer(smolStream, smolModel),
       checkpointPrompt: prompts.structuredCheckpoint,
-      hooks: _StructuredHooksAdapter(hooks),
+      hooks: adapter ?? _StructuredHooksAdapter(hooks),
     );
     return compactor.run(force: force);
   }
@@ -701,22 +720,29 @@ class AutoCompactorFactory {
 /// Adapts [StructuredCompactorHooks] onto [AutoCompactorHooks] so host UIs
 /// (CLI busy row, Flutter chat sheet) observe structured passes unchanged.
 final class _StructuredHooksAdapter implements StructuredCompactorHooks {
-  const _StructuredHooksAdapter(this._hooks);
+  _StructuredHooksAdapter(this._hooks);
 
   final AutoCompactorHooks _hooks;
+
+  /// Completed structured passes — the factory reports the count through
+  /// [AutoCompactorHooks.onDone] when the run succeeds.
+  int passCount = 0;
 
   @override
   void onDelta(String delta) => _hooks.onDelta(delta);
 
   @override
-  void onPass(StructuredCompactionPass pass) => _hooks.onPass(
-    AutoCompactorPass(
-      pass: pass.pass,
-      tokensBefore: pass.tokensBefore,
-      tokensAfter: pass.tokensAfter,
-      fallback: 'smol',
-      ok: pass.ok,
-      error: pass.error,
-    ),
-  );
+  void onPass(StructuredCompactionPass pass) {
+    passCount++;
+    _hooks.onPass(
+      AutoCompactorPass(
+        pass: pass.pass,
+        tokensBefore: pass.tokensBefore,
+        tokensAfter: pass.tokensAfter,
+        fallback: 'smol',
+        ok: pass.ok,
+        error: pass.error,
+      ),
+    );
+  }
 }

@@ -3392,6 +3392,84 @@ abstract class AppLocalizations {
   /// **'Theme pack \"{name}\" installed'**
   String themePackImported(String name);
 
+  /// Title of the Settings compaction-engine section (issue #287)
+  ///
+  /// In en, this message translates to:
+  /// **'Compaction'**
+  String get settingsCompactionLabel;
+
+  /// One-line explainer under the compaction section title (issue #287)
+  ///
+  /// In en, this message translates to:
+  /// **'How the context is compacted when it nears the model\'s window. Applies at the next compaction.'**
+  String get settingsCompactionHelper;
+
+  /// Picker item: the structured 2.0 engine (issue #287)
+  ///
+  /// In en, this message translates to:
+  /// **'Structured (recommended)'**
+  String get settingsCompactionStructured;
+
+  /// Tradeoff copy for the structured engine (issue #287, E1: no health-check claim)
+  ///
+  /// In en, this message translates to:
+  /// **'Hides consumed records in place, expandable on demand — requires a configured model for the judge pass.'**
+  String get settingsCompactionStructuredHint;
+
+  /// Picker item: the classic 1.0 engine, the supported rollback (issue #287)
+  ///
+  /// In en, this message translates to:
+  /// **'Classic (legacy 1.0)'**
+  String get settingsCompactionClassic;
+
+  /// Tradeoff copy for the classic engine (issue #287)
+  ///
+  /// In en, this message translates to:
+  /// **'Lossy prefix summary — zero extra model calls.'**
+  String get settingsCompactionClassicHint;
+
+  /// Source-layer caption when the project config wins (issue #287 AC2)
+  ///
+  /// In en, this message translates to:
+  /// **'effective from the project .fah/config.yaml'**
+  String get settingsCompactionSourceProject;
+
+  /// Source-layer caption when the user config wins (issue #287 AC2)
+  ///
+  /// In en, this message translates to:
+  /// **'effective from the user ~/.fah/config.yaml'**
+  String get settingsCompactionSourceUser;
+
+  /// Source-layer caption when no config states a choice (issue #287 AC2)
+  ///
+  /// In en, this message translates to:
+  /// **'structured default — no compaction setting in any config'**
+  String get settingsCompactionSourceFallback;
+
+  /// Note shown instead of the picker on the web stub (issue #287 AC5)
+  ///
+  /// In en, this message translates to:
+  /// **'Not configurable on the web — there is no config file here, so the structured engine applies.'**
+  String get settingsCompactionWebNote;
+
+  /// No description provided for @settingsCompactionSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved to {file} — applies at the next compaction.'**
+  String settingsCompactionSaved(String file);
+
+  /// No description provided for @settingsCompactionSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the compaction engine: {error}'**
+  String settingsCompactionSaveFailed(String error);
+
+  /// Link to the compaction documentation from the settings section (issue #287)
+  ///
+  /// In en, this message translates to:
+  /// **'Compaction docs'**
+  String get settingsCompactionDocs;
+
   /// No description provided for @themePackImportFailed.
   ///
   /// In en, this message translates to:

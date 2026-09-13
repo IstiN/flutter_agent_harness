@@ -35,6 +35,7 @@ void main() {
     Future<void> Function(Model model)? onModelChanged,
     String? providerKind,
     SkillsAccess? skillsAccess,
+    CompactionEngine? compactionEngine,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -54,6 +55,10 @@ void main() {
         // Matches AgentCliConfig's own default: third-party discovery is ON
         // (opt-out); consent-dialog tests pass SkillsAccess.ask explicitly.
         skillsAccess: skillsAccess ?? SkillsAccess.granted,
+        // Issue #287: the default engine is structured; compaction-flow
+        // tests pin the classic rollback explicitly (its summary records,
+        // prompts and failure UX are what they assert).
+        compactionEngine: compactionEngine,
       ),
       io: io,
       streamFunction: streamFunction,
@@ -799,7 +804,10 @@ void main() {
       textTurn('SUMMARY'),
       textTurn('after'),
     ]);
-    final cli = cliFor(fake.call);
+    // Issue #287: the classic prefix summary is the explicit rollback
+    // engine — its summary record and <summary> projection are exactly
+    // what this test asserts.
+    final cli = cliFor(fake.call, compactionEngine: CompactionEngine.classic);
     final run = cli.run();
 
     io.sendLine('q');
@@ -843,7 +851,12 @@ void main() {
       textTurn('a' * 20000),
       textTurn('AUTO SUMMARY'),
     ]);
-    final cli = cliFor(fake.call, model: tinyWindow);
+    // Issue #287: pins the classic rollback's CompactionRecord outcome.
+    final cli = cliFor(
+      fake.call,
+      model: tinyWindow,
+      compactionEngine: CompactionEngine.classic,
+    );
     final run = cli.run();
 
     io.sendLine('q');
@@ -901,7 +914,14 @@ void main() {
     ]);
     final shell = FakeShell(stdout: 'x' * 32800);
     final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
-    final cli = cliFor(fake.call, model: window32k, envOverride: shellEnv);
+    // Issue #287: the guard→classic-summarizer→auto-continue recovery is
+    // the classic rollback path under test.
+    final cli = cliFor(
+      fake.call,
+      model: window32k,
+      envOverride: shellEnv,
+      compactionEngine: CompactionEngine.classic,
+    );
     final run = cli.run();
 
     io.sendLine('go');
@@ -1432,7 +1452,9 @@ void main() {
       ],
       textTurn('after'),
     ]);
-    final cli = cliFor(fake.call);
+    // Issue #287: the failure UX ('compaction both roles failed', history
+    // kept) is the classic rollback's contract.
+    final cli = cliFor(fake.call, compactionEngine: CompactionEngine.classic);
     final run = cli.run();
 
     io.sendLine('q');

@@ -267,7 +267,9 @@ extension AgentCliCompactionRun on AgentCli {
       ),
       hooks: _AutoCompactorCliHooks(this),
       prompts: CompactionPrompts.fromOverrides(config.promptOverrides),
-      engine: config.compactionEngine ?? CompactionEngine.classic,
+      // Issue #287: structured is the default fallback; an explicit
+      // config/flag choice (config.compactionEngine) still wins.
+      engine: config.compactionEngine ?? CompactionEngine.structured,
       memoryExtractionHook: (text) async {
         final tui = _tuiController;
         tui?.setBusyPhase('Extracting memory…');
