@@ -15,7 +15,7 @@ AssistantMessage _assistant(String text, {List<ToolCall>? calls}) {
   return AssistantMessage(
     content: [
       TextContent(text: text),
-      if (calls != null) ...calls,
+      ...?calls,
     ],
     api: 'anthropic-messages',
     provider: 'p',

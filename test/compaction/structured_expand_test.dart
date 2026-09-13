@@ -7,6 +7,7 @@
 /// answer with ONE honest message each, discovery lists hidden segments
 /// (query-filterable, free), paging footers state the exact continue
 /// call, and successes report the per-turn budget left.
+library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/expand_tool.dart';
@@ -69,9 +70,9 @@ void main() {
   }) async {
     final result = await controller.tool.execute(
       {
-        if (target != null) 'target': target,
-        if (query != null) 'query': query,
-        if (page != null) 'page': page,
+        'target': ?target,
+        'query': ?query,
+        'page': ?page,
       },
       null,
       null,

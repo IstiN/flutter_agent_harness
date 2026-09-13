@@ -6,18 +6,17 @@
 /// config chain, losslessness property, addressing stability, marker
 /// budget, pair integrity, two-pass relief, agent recall (incl. nesting),
 /// wire shape, replay, and classic/structured coexistence.
+library;
 
-import 'dart:io';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
-import 'package:flutter_agent_harness/src/compaction/structured/expand_tool.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/markers.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/judge.dart';
-import 'package:flutter_agent_harness/src/trajectory/trajectory_snapshot_builder.dart';
 import 'package:test/test.dart';
 
 const _model = Model(
@@ -33,7 +32,7 @@ AssistantMessage _assistant(String text, {List<ToolCall>? calls}) {
   return AssistantMessage(
     content: [
       TextContent(text: text),
-      if (calls != null) ...calls,
+      ...?calls,
     ],
     api: 'anthropic-messages',
     provider: 'p',
@@ -195,10 +194,11 @@ void main() {
       seqs.shuffle(random);
       final picks = seqs.take(1 + random.nextInt(seqs.length)).toList()..sort();
       final out = <String>[for (final n in picks) '$n'];
-      if (random.nextBool())
+      if (random.nextBool()) {
         out
           ..add('bogus')
           ..add('999999');
+      }
       return jsonEncode(out);
     };
   }
@@ -1023,12 +1023,6 @@ void main() {
         flattenedRecordIds: const [],
       );
       final seqs = RecordSeqIndex(await session.getEntries());
-      final outerSeq = seqs.seqOf(
-        (await session.getEntries())
-            .whereType<CompactCheckpointRecord>()
-            .last
-            .id,
-      )!;
       final factSeq = seqs.seqOf(ids0[2])!;
 
       final view = await session.buildContextMessages();
