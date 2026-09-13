@@ -317,11 +317,14 @@ error naming the port, never an enrollment), spawns `fa hub serve`
 detached when nothing answers — the hub outlives the CLI — writes a
 pid/state file to `~/.dap/hub.pid`, and enrolls:
 
-* **Master key.** Asked for ONCE, hidden (never echoed/persisted as a
-  client credential), only when a protected hub is being created or
-  joined. On a fresh interactive start the entered key becomes the
-  hub password (`~/.dap/hub.json`, 0600); empty keeps the hub OPEN —
-  the zero-config default the browser extension dials. A non-interactive
+* **Master key.** Asked for ONCE, hidden — never echoed to the
+  terminal, never written to a log, and never persisted as a CLIENT
+  credential (`~/.dap/config.json` only ever holds the hub-issued
+  per-client secret). It IS persisted hub-side when it becomes the hub
+  password: an entered key is stored in `~/.dap/hub.json` (mode 0600)
+  — the same hub-side password store `fa hub serve` writes (§8.3) — so
+  a restart re-enrolls with no prompt. Empty keeps the hub OPEN — the
+  zero-config default the browser extension dials. A non-interactive
   start with no stored password starts an open hub and prompts nothing
   (AC: zero further user action). A stored `~/.dap/hub.json` password
   restarts and re-enrolls with NO prompt.
@@ -341,9 +344,28 @@ peers (e.g. `1 peer(s) connected: Browser`), SIGTERMs the pid from
 `~/.dap/hub.pid` — which works from ANY CLI instance, exactly once,
 no zombie pid — and the messaging fabric transparently falls back to
 its file inboxes (queued hub mail is forwarded when the hub returns).
-**`fa dap status`** reports running/stopped, url, pid and peers. The
-`/dap` menu mirrors all of it: the leading row is state-dependent —
-"Start DAP locally (one step)" when stopped, "Stop DAP" when running.
+The paths are per-platform where dart:io forces it: the hub watches
+SIGTERM on POSIX only (`ProcessSignal.sigterm.watch` is unavailable on
+Windows — Ctrl-C still exits gracefully there), and on a Windows stop
+the pid is hard-terminated (the signal parameter is ignored) with the
+hub PORT draining as the "gone" signal — `kill -0` pid probing does
+not exist there, so a pid-only check would false-fail a stop that
+already worked. **`fa dap status`** reports running/stopped, url, pid
+and peers. The `/dap` menu mirrors all of it: the leading row is
+state-dependent — "Start DAP locally (one step)" when stopped, "Stop
+DAP" when running.
+
+**Targeting a hub.** All three verbs default to the zero-config
+`ws://127.0.0.1:8787/ws`; `--port N`, `--url U`, or the
+`DAP_LOCAL_HUB_URL` environment variable retarget them. `--url` and
+`DAP_LOCAL_HUB_URL` are deliberately NOT loopback-restricted: any
+`ws://`/`wss://` URL works — an SSH-tunneled hub (§10.2), a LAN hub,
+or a TLS-fronted proxy (§8.2) — and the probe, enrollment and
+pid-state bookkeeping all follow that URL (`stop` matches the recorded
+pid state against the URL's port before signaling anything). Note the
+pid state file names ONE hub — the last one started — so stopping a
+differently-URLed hub says "no pid state — stop the hub process
+manually" rather than guessing.
 
 The hub layer of the messaging fabric has a kill switch: `fabric.hub:
 false` in `~/.fah/config.yaml` disables the hub primary even with the

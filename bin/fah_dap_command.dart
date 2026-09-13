@@ -88,7 +88,14 @@ class DapHubController {
   }) : environment = environment ?? Platform.environment,
        url = url ?? resolveDapLocalHubUrl(environment ?? Platform.environment),
        _spawnHub = spawnHub ?? _defaultSpawn,
-       _terminateHub = terminateHub ?? _defaultTerminate {
+       _terminateHub = terminateHub ??
+           ((pid) => defaultDapTerminate(
+                 pid,
+                 url ??
+                     resolveDapLocalHubUrl(
+                       environment ?? Platform.environment,
+                     ),
+               )) {
     _out = out;
   }
 
@@ -529,11 +536,19 @@ class DapHubController {
     }
     try {
       final answer = Completer<List<String>>();
+      // The probe's frame id: the answer must echo it as `replyTo`
+      // (protocol §presence). Matching on it keeps an unsolicited
+      // presence PUSH (a broadcast racing the query answer) from
+      // completing the probe with a partial roster.
+      final probeId = 'fa-dap-probe-${_nonce()}';
       late final StreamSubscription sub;
       sub = ws.listen((dynamic data) {
         try {
           final frame = jsonDecode(data as String);
-          if (frame is Map && frame['op'] == 'presence') {
+          if (frame is Map &&
+              frame['op'] == 'presence' &&
+              frame['replyTo'] == probeId &&
+              !answer.isCompleted) {
             final agents = frame['agents'];
             answer.complete([
               if (agents is List)
@@ -549,10 +564,7 @@ class DapHubController {
           // "running, roster unknown" rather than guessing.
         }
       });
-      ws.add(jsonEncode({
-        'op': 'presence_query',
-        'id': 'fa-dap-probe-${_nonce()}',
-      }));
+      ws.add(jsonEncode({'op': 'presence_query', 'id': probeId}));
       final peers = await answer.future.timeout(const Duration(seconds: 3));
       await sub.cancel();
       return peers;
@@ -658,39 +670,103 @@ class DapHubController {
     );
     return process.pid;
   }
+}
 
-  /// SIGTERM the owning pid, wait for the port to drain (≤5s), then
-  /// SIGKILL. True when the hub is gone.
-  static Future<bool> _defaultTerminate(int pid) async {
-    try {
-      Process.killPid(pid, ProcessSignal.sigterm);
-    } on Object {
-      return false;
-    }
-    for (var i = 0; i < 50; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      if (!_pidAlive(pid)) return true;
-    }
-    try {
-      Process.killPid(pid, ProcessSignal.sigkill);
-    } on Object {
-      // Already gone, or unkillable — the liveness check decides.
-    }
-    for (var i = 0; i < 20; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      if (!_pidAlive(pid)) return true;
-    }
-    return !_pidAlive(pid);
-  }
+/// Whether the host can probe pid liveness the POSIX way (the
+/// `kill -0` dance). Windows cannot — dart:io has no liveness probe
+/// there — so the default terminate uses the port check instead (see
+/// [defaultDapTerminate]).
+bool get dapPidProbePosix => Platform.isLinux || Platform.isMacOS;
 
-  /// Whether [pid] is still a live process (signal 0 dance: Dart has no
-  /// kill(pid, 0), so we ask the shell — POSIX only; non-POSIX hosts
-  /// report alive and rely on the port check).
-  static bool _pidAlive(int pid) {
-    if (!Platform.isLinux && !Platform.isMacOS) return true;
-    final result = Process.runSync('kill', ['-0', '$pid']);
-    return result.exitCode == 0;
+/// Whether anything still accepts connections on the hub port ([uri])
+/// — a live hub answers; a terminated one releases its listener. This
+/// is the stop path's liveness signal on hosts without a pid probe
+/// (Windows).
+Future<bool> dapPortAnswers(Uri uri) async {
+  try {
+    final socket = await Socket.connect(
+      uri.host,
+      uri.port,
+      timeout: const Duration(milliseconds: 500),
+    );
+    socket.destroy();
+    return true;
+  } on Object {
+    return false;
   }
+}
+
+/// Signals [pid] (SIGTERM, escalating to SIGKILL after [grace]) and
+/// waits until [gone] reports the hub dead — ≤[grace] after the
+/// SIGTERM, ≤[force] after the SIGKILL; true when it is gone. [gone]
+/// is the host liveness probe and [kill] the signal seam (tests
+/// inject recorders; production wires `Process.killPid`).
+Future<bool> dapTerminateHub(
+  int pid,
+  Future<bool> Function() gone, {
+  void Function(int pid, ProcessSignal signal)? kill,
+  Duration grace = const Duration(seconds: 5),
+  Duration force = const Duration(seconds: 2),
+}) async {
+  final killer = kill ?? Process.killPid;
+  try {
+    killer(pid, ProcessSignal.sigterm);
+  } on Object {
+    return false;
+  }
+  for (var i = 0; i < grace.inMilliseconds ~/ 100; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    if (await gone()) return true;
+  }
+  try {
+    killer(pid, ProcessSignal.sigkill);
+  } on Object {
+    // Already gone, or unkillable — the liveness probe decides.
+  }
+  for (var i = 0; i < force.inMilliseconds ~/ 100; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    if (await gone()) return true;
+  }
+  return await gone();
+}
+
+/// The default terminate seam: stop the hub owning [pid] at [url] and
+/// report whether it is gone. POSIX hosts probe the pid (`kill -0`);
+/// hosts without a pid probe (Windows) watch the hub PORT drain —
+/// there `Process.killPid` hard-terminates regardless of signal (the
+/// SDK ignores the signal parameter on Windows) but no liveness probe
+/// exists, so a pid-only check would report "alive" forever and
+/// false-fail a stop that already worked (exit 1 + a stale pid file).
+/// [pidProbePosix] pins the branch so tests drive the Windows path on
+/// any OS; [kill]/[grace]/[force] are the remaining seams.
+Future<bool> defaultDapTerminate(
+  int pid,
+  String url, {
+  bool? pidProbePosix,
+  void Function(int pid, ProcessSignal signal)? kill,
+  Duration grace = const Duration(seconds: 5),
+  Duration force = const Duration(seconds: 2),
+}) {
+  final posix = pidProbePosix ?? dapPidProbePosix;
+  final uri = Uri.parse(url);
+  return dapTerminateHub(
+    pid,
+    posix
+        ? () async => !_pidAlive(pid)
+        : () async => !await dapPortAnswers(uri),
+    kill: kill,
+    grace: grace,
+    force: force,
+  );
+}
+
+/// Whether [pid] is still a live process (signal 0 dance: Dart has no
+/// kill(pid, 0), so we ask the shell — POSIX only; hosts without it
+/// report alive and [defaultDapTerminate] uses the port check).
+bool _pidAlive(int pid) {
+  if (!Platform.isLinux && !Platform.isMacOS) return true;
+  final result = Process.runSync('kill', ['-0', '$pid']);
+  return result.exitCode == 0;
 }
 
 class _WsUnauthorized implements Exception {}

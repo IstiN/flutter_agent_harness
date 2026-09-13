@@ -83,25 +83,53 @@ Future<int> runHubCommand(List<String> args) async {
   // pid state, and exit 0 (a detached hub has no terminal — signals are
   // how `fa dap stop` reaches it).
   final done = Completer<void>();
-  StreamSubscription? sigterm;
-  StreamSubscription? sigint;
-  sigterm = ProcessSignal.sigterm.watch().listen((_) async {
-    await sigterm?.cancel();
-    await sigint?.cancel();
+  final signalSubs = <StreamSubscription<ProcessSignal>>[];
+  Future<void> gracefulExit() async {
+    for (final sub in signalSubs) {
+      try {
+        await sub.cancel();
+      } on Object {
+        // A stuck signal subscription never blocks shutdown.
+      }
+    }
     await hub.stop();
     _clearPidState(pidFile);
     exit(0);
-  });
-  // A Ctrl-C in the foreground still goes through the graceful path.
-  sigint = ProcessSignal.sigint.watch().listen((_) async {
-    await sigterm?.cancel();
-    await sigint?.cancel();
-    await hub.stop();
-    _clearPidState(pidFile);
-    exit(0);
-  });
+  }
+
+  signalSubs.addAll(watchHubTerminateSignals(() => unawaited(gracefulExit())));
   await done.future; // run until killed
   return 0;
+}
+
+/// The graceful-termination wiring: SIGINT (Ctrl-C) is watched on every
+/// host; SIGTERM only where the platform offers it —
+/// `ProcessSignal.sigterm.watch()` is "Not available on Windows"
+/// (dart:io `ProcessSignal` docs), and listening there raises
+/// `SignalException` as an unhandled stream error that kills the hub
+/// mid-serve. Windows reaches the same graceful exit via Ctrl-C, and
+/// `fa dap stop` hard-terminates the pid (see `defaultDapTerminate`).
+///
+/// [sigtermWatchable] is the per-platform guard, injectable so tests
+/// pin the Windows shape (`false`) on any OS. Returns the live
+/// subscriptions — the terminate path cancels them before `exit(0)`.
+List<StreamSubscription<ProcessSignal>> watchHubTerminateSignals(
+  void Function() onTerminate, {
+  bool? sigtermWatchable,
+}) {
+  final watchSigterm =
+      sigtermWatchable ?? (Platform.isLinux || Platform.isMacOS);
+  final subscriptions = <StreamSubscription<ProcessSignal>>[
+    // Ctrl-C in the foreground still goes through the graceful path —
+    // SIGINT is watchable everywhere, Windows included.
+    ProcessSignal.sigint.watch().listen((_) => onTerminate()),
+  ];
+  if (watchSigterm) {
+    subscriptions.add(
+      ProcessSignal.sigterm.watch().listen((_) => onTerminate()),
+    );
+  }
+  return subscriptions;
 }
 
 void _writePidState(File pidFile, int pid, int port) {

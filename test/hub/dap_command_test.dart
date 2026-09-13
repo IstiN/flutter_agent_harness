@@ -9,6 +9,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert' show jsonDecode, jsonEncode;
 import 'dart:io';
 
 import 'package:fa_hub_client/fa_hub_client.dart' as client;
@@ -446,6 +447,188 @@ void main() {
         isFalse,
       );
     });
+  });
+
+  group('stop on hosts without a pid probe (the Windows fix)', () {
+    // dart:io cannot probe pid liveness on Windows (`kill -0` does not
+    // exist), so the default terminate used to report "alive" forever:
+    // `fa dap stop` false-failed with exit 1 and left a stale pid file
+    // while the hub was already dead. The promised fallback: the hub
+    // PORT draining is the liveness signal. `pidProbePosix: false`
+    // pins the Windows path on any OS; the kill seam records signals
+    // so no real process is touched.
+    test('dapPortAnswers: a live listener answers, a drained one does not',
+        () async {
+      final server = await ServerSocket.bind('127.0.0.1', 0);
+      addTearDown(() => server.close());
+      final url = Uri.parse('ws://127.0.0.1:${server.port}/ws');
+      expect(await dapPortAnswers(url), isTrue);
+      await server.close();
+      expect(await dapPortAnswers(url), isFalse);
+    });
+
+    test(
+      'no pid probe: the port draining (not the pid) decides, no escalation',
+      () async {
+        final server = await ServerSocket.bind('127.0.0.1', 0);
+        final url = 'ws://127.0.0.1:${server.port}/ws';
+        // The "hub" dies mid-grace — the port check must see it drain
+        // and report stopped even though the pid can never be probed.
+        final timer = Timer(
+          const Duration(milliseconds: 300),
+          () => unawaited(server.close()),
+        );
+        addTearDown(timer.cancel);
+        final signals = <ProcessSignal>[];
+        final stopped = await defaultDapTerminate(
+          4190203, // never signaled: the kill seam records only
+          url,
+          pidProbePosix: false,
+          kill: (pid, signal) => signals.add(signal),
+          grace: const Duration(seconds: 2),
+          force: const Duration(seconds: 1),
+        );
+        expect(stopped, isTrue, reason: 'the port drained → hub gone');
+        expect(
+          signals,
+          [ProcessSignal.sigterm],
+          reason: 'no SIGKILL escalation once the port drains',
+        );
+      },
+      timeout: timeout,
+    );
+
+    test(
+      'port never drains: SIGTERM → SIGKILL escalation, then honest false '
+      '(no false success, no stale "stopped" claim)',
+      () async {
+        final server = await ServerSocket.bind('127.0.0.1', 0);
+        addTearDown(() => server.close());
+        final signals = <ProcessSignal>[];
+        final stopped = await defaultDapTerminate(
+          4190203,
+          'ws://127.0.0.1:${server.port}/ws',
+          pidProbePosix: false,
+          kill: (pid, signal) => signals.add(signal),
+          grace: const Duration(milliseconds: 400),
+          force: const Duration(milliseconds: 300),
+        );
+        expect(stopped, isFalse);
+        expect(signals, [ProcessSignal.sigterm, ProcessSignal.sigkill]);
+      },
+      timeout: timeout,
+    );
+
+    test('POSIX path still probes the pid (platform-guarded)', () async {
+      // kill -0 is a POSIX shell dance — Windows hosts skip this test.
+      if (!Platform.isLinux && !Platform.isMacOS) return;
+      final signals = <ProcessSignal>[];
+      final stopped = await defaultDapTerminate(
+        4190203, // certainly dead: the first poll sees it gone
+        'ws://127.0.0.1:1/ws',
+        pidProbePosix: true,
+        kill: (pid, signal) => signals.add(signal),
+      );
+      expect(stopped, isTrue);
+      expect(signals, [ProcessSignal.sigterm]);
+    }, timeout: timeout);
+  });
+
+  group('presence probe matches the ANSWER by replyTo', () {
+    // A DAP-shaped endpoint that PUSHES an unsolicited partial presence
+    // frame on connect (a broadcast racing the query answer) before
+    // answering the actual presence_query with the full roster. The
+    // probe must take the replyTo-matched ANSWER, not the racing push —
+    // otherwise stop/status can report a partial roster.
+    test('a racing presence push (no replyTo) never completes the probe',
+        () async {
+      final server = await HttpServer.bind('127.0.0.1', 0);
+      addTearDown(() => server.close(force: true));
+      unawaited(
+        server.listen((request) async {
+          if (request.uri.path == '/healthz') {
+            request.response.statusCode = 200;
+            await request.response.close();
+            return;
+          }
+          if (request.uri.path != '/ws') {
+            request.response.statusCode = 404;
+            await request.response.close();
+            return;
+          }
+          final ws = await WebSocketTransformer.upgrade(request);
+          // The racing broadcast: presence with NO replyTo and a
+          // partial (online-only) roster.
+          ws.add(jsonEncode({
+            'op': 'presence',
+            'agents': [
+              {'name': 'Browser', 'online': true},
+            ],
+          }));
+          ws.listen((dynamic data) {
+            final frame = jsonDecode(data as String);
+            if (frame is Map && frame['op'] == 'presence_query') {
+              ws.add(jsonEncode({
+                'op': 'presence',
+                'replyTo': frame['id'],
+                'agents': [
+                  {'name': 'Browser', 'online': true},
+                  {'name': 'Editor', 'online': true},
+                  {'name': 'Ghost', 'online': false},
+                ],
+              }));
+            }
+          });
+        }).asFuture<void>(),
+      );
+
+      final controller = attachUrl('ws://127.0.0.1:${server.port}/ws');
+      final probe = await controller.probeHub();
+      expect(probe.kind, DapHubProbeKind.running);
+      expect(
+        probe.peers,
+        ['Browser', 'Editor'],
+        reason: 'the ANSWER roster (replyTo-matched, online-only), not '
+            'the racing partial push',
+      );
+    }, timeout: timeout);
+
+    test(
+      'a hub that never echoes replyTo degrades to "roster unknown", '
+      'not a partial guess',
+      () async {
+        final server = await HttpServer.bind('127.0.0.1', 0);
+        addTearDown(() => server.close(force: true));
+        unawaited(
+          server.listen((request) async {
+            if (request.uri.path == '/healthz') {
+              request.response.statusCode = 200;
+              await request.response.close();
+              return;
+            }
+            if (request.uri.path != '/ws') {
+              request.response.statusCode = 404;
+              await request.response.close();
+              return;
+            }
+            final ws = await WebSocketTransformer.upgrade(request);
+            ws.add(jsonEncode({
+              'op': 'presence', // legacy shape: no replyTo echo
+              'agents': [
+                {'name': 'Browser', 'online': true},
+              ],
+            }));
+          }).asFuture<void>(),
+        );
+
+        final controller = attachUrl('ws://127.0.0.1:${server.port}/ws');
+        final probe = await controller.probeHub();
+        expect(probe.kind, DapHubProbeKind.running);
+        expect(probe.peers, isEmpty,
+            reason: 'no replyTo-matched answer → running, roster unknown');
+      },
+      timeout: timeout,
+    );
   });
 }
 
