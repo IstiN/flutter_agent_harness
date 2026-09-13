@@ -60,6 +60,7 @@ export 'src/compaction/token_estimation.dart';
 export 'src/context.dart';
 export 'src/cube/cube.dart';
 export 'src/env/execution_env.dart';
+export 'src/env/session_parse_executor.dart';
 export 'src/a2a/a2a_client.dart';
 export 'src/a2a/a2a_mail_gateway.dart';
 export 'src/a2a/a2a_server.dart';
