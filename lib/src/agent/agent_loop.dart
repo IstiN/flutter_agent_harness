@@ -381,6 +381,7 @@ final class AgentLoopConfig {
     this.hasPendingSteering,
     this.maxEmptyRetries = 1,
     this.maxSteeringTurns = 20,
+    this.contextWindowCap,
   });
 
   /// The model to call each turn.
@@ -438,6 +439,13 @@ final class AgentLoopConfig {
   /// by the next run (whose own wake caps apply). Default: 20.
   final int maxSteeringTurns;
 
+  /// Owner-side effective context cap (`agent.contextWindowCap`, issue
+  /// #273). The over-window guard measures the outgoing request against
+  /// [effectiveContextWindow] of the model window — a 1M-window model run
+  /// under a 256k owner cap trips the guard at 256k, not 1M. `null` =
+  /// uncapped: the raw model window, byte-identical to the pre-cap loop.
+  final int? contextWindowCap;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -453,6 +461,7 @@ final class AgentLoopConfig {
       hasPendingSteering: hasPendingSteering,
       maxEmptyRetries: maxEmptyRetries,
       maxSteeringTurns: maxSteeringTurns,
+      contextWindowCap: contextWindowCap,
     );
   }
 }
@@ -1160,7 +1169,10 @@ Future<AssistantMessage> _streamAssistantResponse(
     // this (past the window itself): between the compaction trigger
     // (window - reserve) and the window, the normal post-run compaction
     // flow still owns the decision.
-    final window = config.model.contextWindow;
+    final window = effectiveContextWindow(
+      config.model.contextWindow,
+      config.contextWindowCap,
+    );
     if (window > 0) {
       // The same accounting basis as the host's ctx meter and the
       // compaction threshold: transcript estimate PLUS the system-prompt /
@@ -1174,7 +1186,7 @@ Future<AssistantMessage> _streamAssistantResponse(
         tools: requestContext.tools ?? const [],
       );
       if (tokens > window) {
-        return _finishWithoutStream(
+      return _finishWithoutStream(
           context,
           emit,
           _terminalMessage(
@@ -1182,9 +1194,9 @@ Future<AssistantMessage> _streamAssistantResponse(
             StopReason.error,
             '$contextWindowExhaustedMarker: the outgoing context is '
             '~$tokens tokens, '
-            'the ${config.model.id} window is $window. The request was not '
-            'sent. Auto-compaction runs next; if it keeps failing, run '
-            '/compact or start a fresh session.',
+            'the ${config.model.id} effective window is $window. The request '
+            'was not sent. Auto-compaction runs next; if it keeps failing, '
+            'run /compact or start a fresh session.',
           ),
         );
       }

@@ -54,6 +54,7 @@ const _nestedKeySources = <String, String>{
   'memory.userPath': 'lib/src/memory_config.dart',
   'cube.enabled': 'lib/src/cube/config/cube_settings.dart',
   'cube.config': 'lib/src/cube/config/cube_settings.dart',
+  'agent.contextWindowCap': 'lib/src/cli/cli_config.dart',
   'providerTimeouts.connectTimeoutMs': 'lib/src/cli/cli_config.dart',
   'providerTimeouts.streamIdleTimeoutMs': 'lib/src/cli/cli_config.dart',
   'images.registry': 'lib/src/cli/cli_config.dart',

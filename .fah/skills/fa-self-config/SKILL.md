@@ -234,6 +234,8 @@ retry:                         # chain fallback policy
 providerTimeouts:              # strict: only these two keys
   connectTimeoutMs: 180000
   streamIdleTimeoutMs: 300000
+agent:                         # strict: only contextWindowCap (issue #273)
+  contextWindowCap: 262144     # owner context cap; min 16384 = the compaction reserve
 images:                        # session image registry (strict): send-once
   registry: true               # kill switch — false = byte-for-byte legacy
   maxPerRequest: 20            # per-request unique-image cap (default 20)
