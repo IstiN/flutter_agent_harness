@@ -74,6 +74,17 @@ void main() {
         isFalse,
       );
     });
+
+    test('a cut stream (no finish_reason) is transport (issue #312)', () {
+      expect(
+        isTransientNetworkError(
+          errorMsg(
+            'stream ended without finish_reason — the reply may be truncated',
+          ),
+        ),
+        isTrue,
+      );
+    });
   });
 
   group('transientRetryStreamFunction', () {
@@ -91,6 +102,33 @@ void main() {
               usage: Usage.zero,
               stopReason: StopReason.error,
               errorMessage: text,
+              timestamp: DateTime.utc(2026),
+            ),
+          ),
+        );
+        stream.end();
+      });
+      return stream;
+    }
+
+    /// A stream-terminal finish_reason failure (issue #312): the message
+    /// carries the raw reason verbatim; the wire `rawStopReason` rides for
+    /// the structured classification.
+    AssistantMessageEventStream failFinish(String raw) {
+      final stream = AssistantMessageEventStream();
+      scheduleMicrotask(() {
+        stream.push(
+          ErrorEvent(
+            reason: StopReason.error,
+            error: AssistantMessage(
+              content: const [],
+              api: 'test-api',
+              provider: 'test-provider',
+              model: 'test-model',
+              usage: Usage.zero,
+              stopReason: StopReason.error,
+              rawStopReason: raw,
+              errorMessage: 'Provider finish_reason: $raw',
               timestamp: DateTime.utc(2026),
             ),
           ),
@@ -286,6 +324,296 @@ void main() {
       await probe(testModel, const Context(messages: [])).result;
       expect(calls, 3);
       expect(stream, isNotNull);
+    });
+
+    test('a vendor finish_reason classified transient replays '
+        '(issue #312)', () async {
+      // Kimi k3 gateway: `unexpected_state` is its word for an internal
+      // transient failure — the turn must replay, not die.
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) return failFinish('unexpected_state');
+        return FakeStreamFunction([
+          textTurn('recovered'),
+        ]).call(model, context, cancelToken: cancelToken);
+      });
+
+      final message = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).result;
+
+      expect(calls, 2, reason: 'unexpected_state is transient — replayed');
+      expect(message.stopReason, StopReason.stop);
+      expect(message.content.whereType<TextContent>().single.text, 'recovered');
+    });
+
+    test('a TERMINAL finish_reason never replays (safety)', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        return failFinish('content_filter');
+      });
+
+      final message = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).result;
+
+      expect(calls, 1, reason: 'retrying a filter is a safety bug');
+      expect(message.stopReason, StopReason.error);
+      expect(message.errorMessage, 'Provider finish_reason: content_filter');
+    });
+
+    test('an UNKNOWN vendor finish_reason defaults transient', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        if (calls == 1) return failFinish('upstream_restarted');
+        return FakeStreamFunction([
+          textTurn('recovered'),
+        ]).call(model, context, cancelToken: cancelToken);
+      });
+
+      final message = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).result;
+
+      expect(calls, 2, reason: 'unknown words degrade to retry, not death');
+      expect(message.stopReason, StopReason.stop);
+    });
+
+    test('a classified failure AFTER content stands (no replay)', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          stream
+            ..push(
+              TextDeltaEvent(
+                delta: 'partial',
+                contentIndex: 0,
+                partial: AssistantMessage(
+                  content: const [TextContent(text: 'partial')],
+                  api: 'test-api',
+                  provider: 'test-provider',
+                  model: 'test-model',
+                  usage: Usage.zero,
+                  stopReason: StopReason.stop,
+                  timestamp: DateTime.utc(2026),
+                ),
+              ),
+            )
+            ..push(
+              ErrorEvent(
+                reason: StopReason.error,
+                error: AssistantMessage(
+                  content: const [],
+                  api: 'test-api',
+                  provider: 'test-provider',
+                  model: 'test-model',
+                  usage: Usage.zero,
+                  stopReason: StopReason.error,
+                  rawStopReason: 'unexpected_state',
+                  errorMessage: 'Provider finish_reason: unexpected_state',
+                  timestamp: DateTime.utc(2026),
+                ),
+              ),
+            );
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(
+        calls,
+        1,
+        reason:
+            'the classification never bypasses the observable-output '
+            'guard',
+      );
+      expect(events.whereType<TextDeltaEvent>(), hasLength(1));
+      expect(events.whereType<ErrorEvent>(), hasLength(1));
+    });
+
+    test(
+      'a stream closing without any terminal event flushes the buffer',
+      () async {
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            stream.push(
+              StartEvent(
+                partial: AssistantMessage(
+                  content: const [],
+                  api: 'test-api',
+                  provider: 'test-provider',
+                  model: 'test-model',
+                  usage: Usage.zero,
+                  stopReason: StopReason.stop,
+                  timestamp: DateTime.utc(2026),
+                ),
+              ),
+            );
+            stream.end();
+          });
+          return stream;
+        });
+
+        final events = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).toList();
+
+        expect(calls, 1);
+        expect(
+          events.whereType<StartEvent>(),
+          hasLength(1),
+          reason: 'the held partial is flushed, not dropped',
+        );
+      },
+    );
+
+    test('a natural stop with nothing committed flushes and ends', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          stream.push(
+            StartEvent(
+              partial: AssistantMessage(
+                content: const [],
+                api: 'test-api',
+                provider: 'test-provider',
+                model: 'test-model',
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.utc(2026),
+              ),
+            ),
+          );
+          stream.push(
+            DoneEvent(
+              reason: StopReason.stop,
+              message: AssistantMessage(
+                content: const [],
+                api: 'test-api',
+                provider: 'test-provider',
+                model: 'test-model',
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.utc(2026),
+              ),
+            ),
+          );
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(calls, 1, reason: 'a natural stop is never replayed');
+      expect(events.whereType<StartEvent>(), hasLength(1));
+      expect(events.whereType<DoneEvent>(), hasLength(1));
+    });
+
+    test('a post-commit non-error terminal stands verbatim', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          stream.push(
+            TextDeltaEvent(
+              contentIndex: 0,
+              delta: 'half',
+              partial: AssistantMessage(
+                content: const [TextContent(text: 'half')],
+                api: 'test-api',
+                provider: 'test-provider',
+                model: 'test-model',
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.utc(2026),
+              ),
+            ),
+          );
+          stream.push(
+            ErrorEvent(
+              reason: StopReason.aborted,
+              error: AssistantMessage(
+                content: const [],
+                api: 'test-api',
+                provider: 'test-provider',
+                model: 'test-model',
+                usage: Usage.zero,
+                stopReason: StopReason.aborted,
+                errorMessage: 'Request was aborted',
+                timestamp: DateTime.utc(2026),
+              ),
+            ),
+          );
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(calls, 1, reason: 'an aborted turn is never replayed');
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(terminal.reason, StopReason.aborted);
+      expect(
+        terminal.error.errorMessage,
+        'Request was aborted',
+        reason: 'non-error terminals skip the mid-answer wrap',
+      );
     });
   });
   group('issue #290 — gateway 5xx coverage (the retry-free hole)', () {

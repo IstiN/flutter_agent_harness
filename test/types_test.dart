@@ -202,4 +202,92 @@ void main() {
       expect(end.partial, same(partial));
     });
   });
+
+  group('classifyFinishReason (issue #312)', () {
+    test('vendor-tagged table sorts transient, terminal, unknown', () {
+      expect(
+        classifyFinishReason('network_error'),
+        FinishReasonClass.transient,
+      );
+      expect(
+        classifyFinishReason('unexpected_state'),
+        FinishReasonClass.transient,
+      );
+      expect(
+        classifyFinishReason('content_filter'),
+        FinishReasonClass.terminal,
+      );
+      expect(
+        classifyFinishReason('content_policy_violation'),
+        FinishReasonClass.terminal,
+      );
+      expect(classifyFinishReason('refusal'), FinishReasonClass.terminal);
+      // Unknown vendor words default transient (loud-logged elsewhere) —
+      // the terminal-by-default was the #312 bug.
+      expect(
+        classifyFinishReason('upstream_restarted'),
+        FinishReasonClass.unknown,
+      );
+      expect(
+        classifyFinishReason('Unexpected_State'),
+        FinishReasonClass.transient,
+      );
+    });
+
+    test('finishReasonRetryClass reads the wire verdict off the message', () {
+      AssistantMessage withRaw(
+        String? raw, {
+        StopReason stop = StopReason.error,
+        String? errorMessage = 'Provider finish_reason: network_error',
+      }) => AssistantMessage(
+        content: const [],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: stop,
+        errorMessage: errorMessage,
+        rawStopReason: raw,
+        timestamp: DateTime.utc(2026),
+      );
+      expect(
+        finishReasonRetryClass(withRaw('unexpected_state')),
+        FinishReasonClass.transient,
+      );
+      expect(
+        finishReasonRetryClass(withRaw('content_filter')),
+        FinishReasonClass.terminal,
+      );
+      expect(finishReasonRetryClass(withRaw(null)), isNull);
+      expect(
+        finishReasonRetryClass(withRaw('stop', stop: StopReason.stop)),
+        isNull,
+        reason: 'only error stops carry a retry verdict',
+      );
+      // Scoped to the openai-completions finish_reason family (REG for the
+      // review blocker): Google sets rawStopReason for every finish reason —
+      // its filter-shaped words (SAFETY, RECITATION, sensitive) must keep
+      // the terminal behavior they had before the table existed.
+      expect(
+        finishReasonRetryClass(
+          withRaw('SAFETY', errorMessage: 'Provider finishReason: SAFETY'),
+        ),
+        isNull,
+      );
+      expect(
+        finishReasonRetryClass(
+          withRaw(
+            'sensitive',
+            errorMessage: 'Provider finishReason: sensitive',
+          ),
+        ),
+        isNull,
+      );
+      expect(
+        finishReasonRetryClass(withRaw('unexpected_state', errorMessage: null)),
+        isNull,
+        reason: 'no marker - not the vocabulary this table catalogues',
+      );
+    });
+  });
 }
