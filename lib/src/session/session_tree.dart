@@ -407,7 +407,8 @@ final class Session {
   /// projected per pi's `buildSessionContext` + `convertToLlm`.
   Future<List<Message>> buildContextMessages() async {
     final path = await getBranch();
-    return _projectMessages(_applyCompactionTransform(path));
+    final (kept, dropped) = _applyCompactionTransform(path);
+    return _projectMessages(kept, classicHidden: dropped);
   }
 
   /// Projects an explicit record path (root-first) into messages — the
@@ -415,18 +416,19 @@ final class Session {
   /// windowed host keeps its own accumulated view path (storage residency
   /// is tail-anchored and drops old records), so the transcript renders
   /// through this instead of a second storage walk.
-  List<Message> projectPath(List<SessionRecord> path) => [
-    for (final entry in _applyCompactionTransform(path))
-      ..._entryToMessages(entry),
-  ];
+  List<Message> projectPath(List<SessionRecord> path) {
+    final (kept, _) = _applyCompactionTransform(path);
+    return [for (final entry in kept) ..._entryToMessages(entry)];
+  }
 
   /// Rebuilds the full [SessionContext] (messages plus derived model state)
   /// for the active branch.
   Future<SessionContext> buildContext() async {
     final path = await getBranch();
     final state = _deriveState(path);
+    final (kept, dropped) = _applyCompactionTransform(path);
     return SessionContext(
-      messages: await _projectMessages(_applyCompactionTransform(path)),
+      messages: await _projectMessages(kept, classicHidden: dropped),
       thinkingLevel: state.thinkingLevel,
       model: state.model,
       activeToolNames: state.activeToolNames,
@@ -442,17 +444,33 @@ final class Session {
   /// (records before `firstKeptEntryId`) loses its effect on the kept
   /// region — benign: the covered records simply render fully again, and
   /// the next structured pass re-derives hides from scratch.
-  Future<List<Message>> _projectMessages(List<SessionRecord> path) async {
+  ///
+  /// [classicHidden] are the records a classic summary folded away; they
+  /// ride the summary as a hidden-segments index (issue #266 F1a) so the
+  /// agent can consult and reopen what it can no longer see.
+  Future<List<Message>> _projectMessages(
+    List<SessionRecord> path, {
+    List<SessionRecord> classicHidden = const [],
+  }) async {
     final hasStructured = path.any(
       (entry) => entry is HiddenRangeRecord || entry is CompactCheckpointRecord,
     );
     if (!hasStructured) {
-      return [for (final entry in path) ..._entryToMessages(entry)];
+      if (classicHidden.isEmpty) {
+        return [for (final entry in path) ..._entryToMessages(entry)];
+      }
+      final seqs = RecordSeqIndex(await getEntries());
+      return [
+        for (final entry in path)
+          ..._entryToMessages(entry, classicHidden: classicHidden, seqs: seqs),
+      ];
     }
+    final seqs = RecordSeqIndex(await getEntries());
     return renderStructuredMessages(
       path: path,
-      seqs: RecordSeqIndex(await getEntries()),
-      projectEntry: _entryToMessages,
+      seqs: seqs,
+      projectEntry: (record) =>
+          _entryToMessages(record, classicHidden: classicHidden, seqs: seqs),
     );
   }
 
@@ -485,27 +503,45 @@ final class Session {
     );
   }
 
-  List<SessionRecord> _applyCompactionTransform(List<SessionRecord> path) {
+  /// The classic compaction cut: everything before the LAST
+  /// [CompactionRecord]'s first-kept entry drops away; returns
+  /// `(kept, dropped)` — dropped is what the summary folded away
+  /// (issue #266 F1a). A path with no classic compaction passes through
+  /// unchanged.
+  (List<SessionRecord>, List<SessionRecord>) _applyCompactionTransform(
+    List<SessionRecord> path,
+  ) {
     CompactionRecord? compaction;
-    for (final entry in path) {
-      if (entry is CompactionRecord) compaction = entry;
+    var compactionIndex = -1;
+    for (var i = 0; i < path.length; i++) {
+      if (path[i] is CompactionRecord) {
+        compaction = path[i] as CompactionRecord;
+        compactionIndex = i;
+      }
     }
-    if (compaction == null) return [...path];
-    final entries = <SessionRecord>[compaction];
-    final compactionIndex = path.indexOf(compaction);
+    if (compaction == null) return (path, const []);
+    final kept = <SessionRecord>[compaction];
+    final dropped = <SessionRecord>[];
     var foundFirstKept = false;
     for (var i = 0; i < compactionIndex; i++) {
-      final entry = path[i];
-      if (entry.id == compaction.firstKeptEntryId) foundFirstKept = true;
-      if (foundFirstKept) entries.add(entry);
+      if (path[i].id == compaction.firstKeptEntryId) foundFirstKept = true;
+      if (foundFirstKept) {
+        kept.add(path[i]);
+      } else {
+        dropped.add(path[i]);
+      }
     }
     for (var i = compactionIndex + 1; i < path.length; i++) {
-      entries.add(path[i]);
+      kept.add(path[i]);
     }
-    return entries;
+    return (kept, dropped);
   }
 
-  List<Message> _entryToMessages(SessionRecord entry) {
+  List<Message> _entryToMessages(
+    SessionRecord entry, {
+    List<SessionRecord> classicHidden = const [],
+    RecordSeqIndex? seqs,
+  }) {
     return switch (entry) {
       MessageRecord(:final message) => [message],
       CustomMessageRecord(:final content, :final timestamp) => [
@@ -513,7 +549,8 @@ final class Session {
       ],
       CompactionRecord(:final summary, :final timestamp) => [
         UserMessage.text(
-          '$compactionSummaryPrefix$summary$compactionSummarySuffix',
+          '$compactionSummaryPrefix$summary$compactionSummarySuffix'
+          '${_classicHiddenIndex(classicHidden, seqs)}',
           timestamp: timestamp,
         ),
       ],
@@ -529,4 +566,11 @@ final class Session {
       _ => const [],
     };
   }
+
+  /// The hidden-segments index a classic summary carries (issue #266
+  /// F1a) — empty unless the cut actually folded records away.
+  String _classicHiddenIndex(
+    List<SessionRecord> hidden,
+    RecordSeqIndex? seqs,
+  ) => seqs == null || hidden.isEmpty ? '' : hiddenIndexSection(hidden, seqs);
 }

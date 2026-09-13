@@ -25,11 +25,20 @@ import '../cancel_token.dart';
 import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';
+import '../overflow.dart' show isContextOverflow;
 import '../types.dart';
 
 /// Patterns classifying a provider error as a transient network failure:
 /// the wordings `dart:io` sockets and the http client produce when the
-/// link drops (Wi-Fi switch, VPN flap, gateway restart).
+/// link drops (Wi-Fi switch, VPN flap, gateway restart), plus the gateway
+/// 5xx family (issue #290): production gateways fail whole turns with
+/// one-off "500: Internal network failure, ..., please try again later"
+/// lines. This wrapper is the BASE stream of every host (app main loop,
+/// legacy CLI wiring, compaction smol streams) — without the 5xx family a
+/// classified-retryable error killed the turn wherever the roles fallback
+/// engine was not in front. Mirrors the roles layer's transport set
+/// (`model_roles/fallback_stream.dart`); duplicated because providers/ sits
+/// below model_roles/.
 final _transientNetworkPatterns = [
   RegExp(r'connection reset', caseSensitive: false),
   RegExp(r'socketexception', caseSensitive: false),
@@ -45,16 +54,45 @@ final _transientNetworkPatterns = [
   // Truncation class (issue #312): a stream that closes without a
   // finish_reason and without content is a cut transport.
   RegExp(r'stream ended without finish_reason'),
+  RegExp(r'\b50[0234]\b'),
+  RegExp(r'bad gateway', caseSensitive: false),
+  RegExp(r'service unavailable', caseSensitive: false),
+  RegExp(r'gateway time-?out', caseSensitive: false),
+  RegExp(r'internal (server|network) error', caseSensitive: false),
+  RegExp(r'internal network failure', caseSensitive: false),
+  RegExp(r'please try again later', caseSensitive: false),
 ];
 
-/// Whether [message] is a transient socket-level failure worth replaying.
-/// Requires an error stop with a message; certificate problems are excluded
-/// (a bad cert never heals in 5 seconds — that's a config error).
+/// Rate-limit wordings that OWN the failure upstream (the roles rotation
+/// policy): never in-place retried here even when the text also carries a
+/// transport-ish phrase ("429: rate limit exceeded, please try again
+/// later"). Mirrors the roles layer's rate-limit set.
+final _rateLimitGuardPatterns = [
+  RegExp(r'rate.?limit', caseSensitive: false),
+  RegExp(r'too many requests', caseSensitive: false),
+  RegExp(r'\b429\b'),
+  RegExp(r'quota', caseSensitive: false),
+  RegExp(r'resource.{0,30}exhausted', caseSensitive: false),
+  RegExp(r'usage.?limit', caseSensitive: false),
+  RegExp(r'throttl', caseSensitive: false),
+];
+
+/// Whether [message] is a transient failure worth replaying: socket-level
+/// drops and gateway 5xx. Rate limits stay with the roles layer (the
+/// `FallbackStreamFunction` rotation policy — checked FIRST, a 429 may
+/// quote "please try again later"), auth failures stand, context overflow
+/// belongs to compaction, and the idle watchdog's own `TimeoutException`
+/// wording deliberately does NOT match (that error means "the endpoint
+/// went silent", which a retry re-arms anyway).
 bool isTransientNetworkError(AssistantMessage message) {
   if (message.stopReason != StopReason.error) return false;
   final text = message.errorMessage;
   if (text == null || text.isEmpty) return false;
   if (text.toLowerCase().contains('certificate')) return false;
+  if (isContextOverflow(message)) return false;
+  if (_rateLimitGuardPatterns.any((pattern) => pattern.hasMatch(text))) {
+    return false;
+  }
   return _transientNetworkPatterns.any((pattern) => pattern.hasMatch(text));
 }
 
@@ -131,6 +169,8 @@ Future<void> _drive(
   int maxAttempts,
   Duration delay,
 ) async {
+  final startedAt = DateTime.now();
+  final attemptLog = <String>[];
   AssistantMessage? lastFailure;
   for (var attempt = 1; attempt <= maxAttempts; attempt++) {
     if (cancelToken?.isCancelled ?? false) {
@@ -143,17 +183,24 @@ Future<void> _drive(
         return;
       case _TransientFailure(:final error):
         lastFailure = error;
+        attemptLog.add(_shortReason(error.errorMessage));
         if (attempt >= maxAttempts) {
-          // Budget exhausted: the last failure stands (forward verbatim).
-          out.push(ErrorEvent(reason: StopReason.error, error: error));
+          // Budget exhausted (issue #290 AC2): the surfaced error carries
+          // the retry story — attempts, elapsed, per-attempt outcomes,
+          // next-step hint — never the naked provider line as headline.
+          out.push(
+            ErrorEvent(
+              reason: StopReason.error,
+              error: _exhausted(model, attemptLog, startedAt),
+            ),
+          );
           return;
         }
-        final reason = (error.errorMessage ?? 'network error');
         transientRetryNotice?.call(
           attempt,
           maxAttempts,
           delay,
-          reason.length > 120 ? reason.substring(0, 120) : reason,
+          _shortReason(error.errorMessage),
         );
         final survived = await transientRetrySleeper(delay, cancelToken);
         if (!survived) {
@@ -162,6 +209,45 @@ Future<void> _drive(
         }
     }
   }
+}
+
+/// The first line of a provider error, bounded for notices and the
+/// per-attempt log.
+String _shortReason(String? errorMessage) {
+  final text = errorMessage ?? 'network error';
+  final line = text.split('\n').first;
+  return line.length <= 120 ? line : '${line.substring(0, 120)}...';
+}
+
+/// The exhaustion terminal message (issue #290 AC2): the story is the
+/// headline; the raw provider lines ride inside as per-attempt evidence.
+AssistantMessage _exhausted(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+) {
+  final elapsed = DateTime.now().difference(startedAt);
+  final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
+  final log = attemptLog
+      .map(
+        (line) =>
+            line.endsWith('.') ? line.substring(0, line.length - 1) : line,
+      )
+      .join('; ');
+  return AssistantMessage(
+    content: const [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: Usage.zero,
+    stopReason: StopReason.error,
+    errorMessage:
+        'Provider call failed after ${attemptLog.length} attempt(s) '
+        'over $elapsedText — the endpoint kept failing. '
+        'Attempts: $log. '
+        'Check the provider status or try again later.',
+    timestamp: DateTime.now(),
+  );
 }
 
 /// Pushes a terminal aborted event, reusing the last failure's text when
@@ -219,8 +305,12 @@ Future<_AttemptOutcome> _runAttempt(
   var committed = false;
   await for (final event in inner(model, context, cancelToken: cancelToken)) {
     if (committed) {
+      if (event is ErrorEvent) {
+        out.push(_midAnswer(event));
+        return const _Forwarded();
+      }
       out.push(event);
-      if (event is DoneEvent || event is ErrorEvent) {
+      if (event is DoneEvent) {
         return const _Forwarded();
       }
       continue;
@@ -257,4 +347,32 @@ Future<_AttemptOutcome> _runAttempt(
   // The stream closed without a terminal event: flush what we held.
   buffer.forEach(out.push);
   return const _Forwarded();
+}
+
+/// A post-commit transport failure stands (issue #290 AC4 — the transcript
+/// already holds the deltas; a replay would duplicate text), but it must
+/// not surface as a naked provider dump either: the terminal error names
+/// the mid-answer failure and keeps the provider line as evidence.
+ErrorEvent _midAnswer(ErrorEvent event) {
+  final error = event.error;
+  if (event.reason != StopReason.error || !isTransientNetworkError(error)) {
+    return event;
+  }
+  return ErrorEvent(
+    reason: event.reason,
+    retryAfter: event.retryAfter,
+    error: AssistantMessage(
+      content: error.content,
+      api: error.api,
+      provider: error.provider,
+      model: error.model,
+      usage: error.usage,
+      stopReason: error.stopReason,
+      errorMessage:
+          'Provider failed mid-answer: the stream died after output was '
+          'already delivered (not retried — a replay would duplicate the '
+          'transcript). Provider error: ${_shortReason(error.errorMessage)}',
+      timestamp: error.timestamp,
+    ),
+  );
 }

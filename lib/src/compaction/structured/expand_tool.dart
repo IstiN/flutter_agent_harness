@@ -1,18 +1,26 @@
-/// The `compact_expand` tool (issue #148 D3): pulls a hidden or compacted
-/// context segment back into the conversation by its numeric marker id.
+/// The `compact_expand` tool (issue #148 D3, agent UX #266): pulls a
+/// hidden or compacted context segment back into the conversation by its
+/// numeric marker id — and, with no `target`, surfaces what is hidden at
+/// all.
 ///
-/// Context markers (`[3:hidden·tool_result·4.2k]`,
+/// Context markers (`[3:hidden·tool_result·4.2k·"first line…"]`,
 /// `[2-6:ckpt·38k→40tok·covers:3,5]`) are render-time projections — the
-/// underlying records stay in the session file. This tool resolves the
-/// marker's numeric id (or range) through [RecordSeqIndex] and returns the
-/// original content with the record wrapper stripped, paged for giant
-/// segments and capped by a per-turn expand budget (Q6: 32k tokens/turn) —
-/// an expand storm returns a structured note, never a crash.
+/// underlying records stay in the session file. With a `target` the tool
+/// resolves the marker's numeric id (or range) through [RecordSeqIndex]
+/// and returns the original content with the record wrapper stripped,
+/// paged for giant segments and capped by a per-turn expand budget (Q6:
+/// 32k tokens/turn); every success states the budget left. Only hidden /
+/// checkpoint-covered / summary-folded records expand — a visible record
+/// is told apart honestly (one message per failure class, #266 F2).
+///
+/// With no `target` the tool returns the hidden-segment index (id, kind,
+/// size, preview, page count); a `query` filters and ranks it, scanning
+/// hidden content too (F1b). Discovery never consumes the budget.
 ///
 /// The session file never changes: expanded content enters context as a
 /// normal tool result and may be re-hidden by the next pressure event.
-/// The zero-tool fallback — `read $FAH_SESSION_FILE:<line>` — resolves the
-/// same records raw.
+/// The zero-tool fallback — `read $FAH_SESSION_FILE:<line>` — resolves
+/// the same records raw.
 library;
 
 import '../../agent/agent.dart' show Agent;
@@ -26,8 +34,16 @@ import '../../prompts/prompts.g.dart' show compactExpandToolDescriptionPrompt;
 import '../../session/session_record.dart';
 import '../../session/session_tree.dart' show Session;
 import '../../types.dart';
-import 'markers.dart' show idsToRanges;
-import 'projection.dart' show RecordSeqIndex;
+import 'engine.dart' show classicTransform;
+import 'markers.dart' show hiddenMarker, idsToRanges, markerPreview;
+import 'projection.dart'
+    show
+        RecordSeqIndex,
+        buildStructuredViewState,
+        hiddenIndexHeading,
+        markerKindFor,
+        recordPreviewSource,
+        recordTokens;
 
 // ignore_for_file: prefer_initializing_formals
 
@@ -41,12 +57,48 @@ const defaultExpandTurnBudgetTokens = 32 * 1024;
 /// `read` tool's 50 KB cap so a giant segment pages instead of truncating.
 const defaultExpandPageChars = 96 * 1024;
 
+/// Index rows returned per discovery call before the agent is told to
+/// narrow with `query` (# ponytail: fixed cap; raise when sessions hide
+/// thousands of segments routinely).
+const maxDiscoverRows = 200;
+
 /// The production chars/4 heuristic (see `token_estimation.dart`).
 int _tokensForChars(int chars) => chars ~/ 4;
 
 /// Extracts the numeric id or range from a marker or bare target:
 /// `5`, `2-6`, or a pasted `[5:hidden·tool_result·4.5k]`.
 final RegExp _targetPattern = RegExp(r'(\d+)(?:-(\d+))?');
+
+/// One honest message per failure class (issue #266 F2 / AC3) — the
+/// exact strings `UT-msgs` snapshot-pins. One fact, one phrasing.
+
+/// Out of range: `no record 1 — valid ids 2-2397`.
+String expandNoRecordMsg(String label, String validIds) =>
+    'no record $label — valid ids $validIds';
+
+/// Target exists but renders in context: nothing to reopen.
+String expandVisibleMsg(String label) =>
+    'record $label is visible, nothing to expand';
+
+/// Hide-state or system record with no expandable text.
+String expandNoContentMsg(String label) =>
+    'record $label carries no content to expand';
+
+/// Per-turn budget spent (#266 F2: the reset is part of the fact).
+String expandBudgetMsg(int budgetTokens) =>
+    'expand budget exhausted for this turn '
+    '(${budgetTokens ~/ 1024}k tokens) — it resets on the next user turn';
+
+/// Remaining per-turn budget appended to every SUCCESS response (AC3):
+/// `expand budget left: ~18k tokens`.
+String expandBudgetLeft(int remainingTokens) => remainingTokens >= 1024
+    ? 'expand budget left: ~${remainingTokens ~/ 1024}k tokens'
+    : 'expand budget left: ~$remainingTokens tokens';
+
+/// The valid-id range over a session's file order (`2-2397`): the header
+/// is line 1, records are lines 2..N+1.
+String expandValidIds(int entryCount) =>
+    entryCount == 0 ? 'none (session is empty)' : '2-${entryCount + 1}';
 
 /// Owns the per-turn expand budget and the [compact_expand] tool for one
 /// agent. Created next to [builtinTools] (see [CheckpointRewindController]);
@@ -83,7 +135,13 @@ final class CompactExpandController {
           'type': 'string',
           'description':
               'Numeric id or range from a context marker, '
-              'e.g. "5" or "2-6"',
+              'e.g. "5" or "2-6". Omit to list the hidden-segment index.',
+        },
+        'query': {
+          'type': 'string',
+          'description':
+              'Search the hidden segments (preview and full content) when '
+              'you know WHAT you need but not the id. Free — no budget.',
         },
         'page': {
           'type': 'integer',
@@ -91,7 +149,7 @@ final class CompactExpandController {
           'minimum': 1,
         },
       },
-      'required': ['target'],
+      'required': [],
     },
     execute: _execute,
   );
@@ -121,30 +179,87 @@ final class CompactExpandController {
     if (live == null) {
       return ToolExecutionResult.text('no active session to expand from');
     }
-    final range = _parseTarget(args['target']);
+    final entries = await live.getEntries();
+    final seqs = RecordSeqIndex(entries);
+    final validIds = expandValidIds(entries.length);
+
+    final (range, parseError) = _parseRangeArg(args['target']);
+    if (parseError != null) return ToolExecutionResult.text(parseError);
     if (range == null) {
+      // Discovery is free (AC2): the index never consumes the budget.
       return ToolExecutionResult.text(
-        'target must be a numeric id or range from a marker, '
-        'e.g. "5" or "2-6" (got: ${args['target']})',
-      );
-    }
-    final (start, end) = range;
-    if (end < start) {
-      return ToolExecutionResult.text(
-        'inverted range $start-$end — use "min-max"',
+        await _discover(live, seqs, validIds, query: args['query'] as String?),
       );
     }
 
-    final seqs = RecordSeqIndex(await live.getEntries());
-    final (blocks, skipped) = _gatherBlocks(seqs, start, end);
-    final label = _rangeLabel(start, end);
+    final expandable = await _expandabilityOf(live);
+    final (blocks, skipped, blocked, label) = _gatherBlocks(
+      seqs,
+      range.$1,
+      range.$2,
+      (record) => expandable(record.id),
+    );
     if (blocks.isEmpty) {
       return ToolExecutionResult.text(
-        'no expandable records at $label (valid ids: 2-${seqs.entries.length + 1})'
-        '${skipped.isEmpty ? '' : '; out of range: ${idsToRanges(skipped)}'}',
+        _emptyReason(skipped, blocked, label, validIds),
       );
     }
+    return _paged(args, blocks, skipped, blocked, label);
+  }
 
+  /// Parses + validates the `target` arg: `(null, null)` = discovery mode,
+  /// `(range, null)` = expand mode, `(_, error)` = honest failure.
+  ((int, int)?, String?) _parseRangeArg(Object? rawTarget) {
+    final range = rawTarget == null ? null : _parseTarget(rawTarget);
+    if (rawTarget != null && range == null) {
+      return (
+        null,
+        'target must be a numeric id or range from a marker, '
+            'e.g. "5" or "2-6" (got: $rawTarget)',
+      );
+    }
+    if (range == null) return (null, null);
+    final (start, end) = range;
+    if (end < start) {
+      return (null, 'inverted range $start-$end — use "min-max"');
+    }
+    return (range, null);
+  }
+
+  /// The F2 predicate: hidden, checkpoint-covered, folded away by a
+  /// classic summary, or off-branch → expandable (visible is not).
+  Future<bool Function(String id)> _expandabilityOf(Session live) async {
+    final path = classicTransform(await live.getBranch());
+    final state = buildStructuredViewState(path);
+    final pathIds = {for (final record in path) record.id};
+    bool expandable(String id) =>
+        !pathIds.contains(id) ||
+        state.hiddenRecordIds.contains(id) ||
+        state.isCovered(id);
+    return expandable;
+  }
+
+  /// One honest message per empty-gather failure class (AC3).
+  String _emptyReason(
+    List<int> skipped,
+    List<int> blocked,
+    String label,
+    String validIds,
+  ) {
+    if (skipped.isNotEmpty) return expandNoRecordMsg(label, validIds);
+    if (blocked.isNotEmpty) return expandVisibleMsg(label);
+    return expandNoContentMsg(label);
+  }
+
+  /// Validates the page arg, charges the delivered page against the
+  /// per-turn budget (S6), and renders header + slice + paging footer.
+  ToolExecutionResult _paged(
+    Map<String, dynamic> args,
+    List<String> blocks,
+    List<int> skipped,
+    List<int> blocked,
+    String label,
+  ) {
     final content = blocks.join('\n\n');
     final pages = (content.length / pageChars).ceil();
     final page = (args['page'] as num?)?.toInt() ?? 1;
@@ -159,23 +274,121 @@ final class CompactExpandController {
     // pages converges to the segment cost (S6).
     final cost = _tokensForChars(slice.length + 1);
     if (_spentTokens + cost > turnBudgetTokens) {
-      return ToolExecutionResult.text(
-        '($_spentTokens/$turnBudgetTokens tokens spent; page $page of $pages '
-        'would add ~$cost). Expand selectively; smaller targets fit.',
-      );
+      return ToolExecutionResult.text(expandBudgetMsg(turnBudgetTokens));
     }
     _spentTokens += cost;
+    return ToolExecutionResult.text(
+      '${_header(label, skipped, blocked)}\n$slice${_footer(label, page, pages)}',
+    );
+  }
 
+  String _header(String label, List<int> skipped, List<int> blocked) {
     final header = StringBuffer('[expand $label');
     if (skipped.isNotEmpty) {
       header.write(' · out of range: ${idsToRanges(skipped)}');
     }
-    header.write(']');
-    final footer = pages > 1
-        ? '\n\n[page $page/$pages — compact_expand '
-              'target=$label, page: ${page + 1} continues]'
-        : '';
-    return ToolExecutionResult.text('$header\n$slice$footer');
+    if (blocked.isNotEmpty) {
+      header.write(' · visible: ${idsToRanges(blocked)}');
+    }
+    header.write(' · ${expandBudgetLeft(turnBudgetTokens - _spentTokens)}]');
+    return header.toString();
+  }
+
+  String _footer(String label, int page, int pages) {
+    if (pages <= 1) return '';
+    if (page < pages) {
+      return '\n\n[page $page/$pages — continue with compact_expand '
+          '{"target": "$label", "page": ${page + 1}}]';
+    }
+    return '\n\n[end of record $label]';
+  }
+
+  /// The hidden-segment index (no `target`), optionally filtered and
+  /// ranked by [query] (F1b): preview/kind hits rank above content hits.
+  Future<String> _discover(
+    Session live,
+    RecordSeqIndex seqs,
+    String validIds, {
+    String? query,
+  }) async {
+    final expandable = await _expandabilityOf(live);
+    final rows = <(int, int, String)>[];
+    for (var seq = 2; seq <= seqs.entries.length + 1; seq++) {
+      final record = seqs.recordAt(seq)!;
+      if (!expandable(record.id)) continue; // renders in context
+      final row = _discoverRow(seq, record, query);
+      if (row != null) rows.add(row);
+    }
+    // seq is the tiebreak so equal ranks stay in file order regardless
+    // of sort stability.
+    rows.sort((a, b) => a.$1 != b.$1 ? b.$1 - a.$1 : a.$2 - b.$2);
+    return _formatIndex(rows, query, validIds);
+  }
+
+  /// `(rank, seq, marker)` for one hidden segment; null when [query]
+  /// filters it out.
+  (int, int, String)? _discoverRow(
+    int seq,
+    SessionRecord record,
+    String? query,
+  ) {
+    final content = recordPreviewSource(record);
+    final block = _renderRecord(seq, record) ?? content;
+    final pages = (block.length / pageChars).ceil();
+    final preview = markerPreview(content);
+    final rank = _rank(preview, content, markerKindFor(record), query);
+    if (rank == 0) return null;
+    var marker = hiddenMarker(
+      seq: seq,
+      kind: markerKindFor(record),
+      tokens: recordTokens(record),
+      preview: preview,
+    );
+    if (pages > 1) {
+      marker = '${marker.substring(0, marker.length - 1)}·pages:$pages]';
+    }
+    return (rank, seq, marker);
+  }
+
+  int _rank(String preview, String content, String kind, String? query) {
+    final needle = query?.toLowerCase();
+    if (needle == null) return 1;
+    if (preview.toLowerCase().contains(needle) || kind.contains(needle)) {
+      return 2;
+    }
+    if (content.toLowerCase().contains(needle)) return 1;
+    return 0;
+  }
+
+  String _formatIndex(
+    List<(int, int, String)> rows,
+    String? query,
+    String validIds,
+  ) {
+    if (query == null) {
+      if (rows.isEmpty) {
+        return 'no hidden segments — everything in this session is visible '
+            'in context';
+      }
+      return '$hiddenIndexHeading\n${_topRows(rows)}';
+    }
+    if (rows.isEmpty) {
+      return 'no hidden segments match "$query" — valid ids $validIds '
+          '(drop query for the full index)';
+    }
+    return '${rows.length} hidden segments match "$query" (best first):\n'
+        '${_topRows(rows, hint: 'narrow query')}';
+  }
+
+  String _topRows(
+    List<(int, int, String)> rows, {
+    String hint = 'narrow with query',
+  }) {
+    final lines = [for (final row in rows.take(maxDiscoverRows)) row.$3];
+    if (rows.length > maxDiscoverRows) {
+      lines.add('…and ${rows.length - maxDiscoverRows} more — $hint');
+    }
+    return lines.join('\n');
   }
 }
 
@@ -190,24 +403,34 @@ final class CompactExpandController {
 }
 
 /// Renders every expandable record in `start..end`; ids with no record
-/// land in the skipped list for the out-of-range note.
-(List<String>, List<int>) _gatherBlocks(
+/// land in `skipped`, visible ids in `blocked` — each feeds its honest
+/// failure class or success note.
+(List<String>, List<int>, List<int>, String) _gatherBlocks(
   RecordSeqIndex seqs,
   int start,
   int end,
+  bool Function(SessionRecord) expandable,
 ) {
   final blocks = <String>[];
   final skipped = <int>[];
+  final blocked = <int>[];
   for (var seq = start; seq <= end; seq++) {
     final record = seqs.recordAt(seq);
     if (record == null) {
       skipped.add(seq);
       continue;
     }
+    if (record is HiddenRangeRecord) {
+      continue; // pure hide state — the ids it names expand directly
+    }
+    if (!expandable(record)) {
+      blocked.add(seq);
+      continue;
+    }
     final block = _renderRecord(seq, record);
     if (block != null) blocks.add(block);
   }
-  return (blocks, skipped);
+  return (blocks, skipped, blocked, _rangeLabel(start, end));
 }
 
 /// `'5'` or `'2-6'` — the range label used in every expand string.
