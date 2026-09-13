@@ -609,35 +609,6 @@ void main() {
         },
       );
 
-      test(
-        'IT — the #201 unload-flush path carries session data too',
-        () async {
-          final store = InMemoryFsSnapshotStore();
-          final env = await _restoreEnv(
-            store,
-            persistDelay: const Duration(hours: 1),
-          );
-          (await env.writeFile(
-            '/sessions/--w--/live.jsonl',
-            '{"tail":true}\n',
-          )).getOrThrow();
-          expect(env.hasPendingChanges, isTrue);
-
-          await env.onPageUnload();
-          expect(env.hasPendingChanges, isFalse);
-          env.dispose();
-
-          final reloaded = await _restoreEnv(store);
-          expect(
-            (await reloaded.readTextFile(
-              '/sessions/--w--/live.jsonl',
-            )).getOrThrow(),
-            '{"tail":true}\n',
-          );
-          reloaded.dispose();
-        },
-      );
-
       test('flush awaits an in-flight save before returning', () async {
         final store = _GatedStore();
         final env = await _restoreEnv(
@@ -775,6 +746,48 @@ void main() {
           );
         });
       });
+
+      test(
+        'IT — the #201 unload-flush path carries session data too',
+        () async {
+          final store = InMemoryFsSnapshotStore();
+          final env = await _restoreEnv(
+            store,
+            persistDelay: const Duration(hours: 1),
+          );
+          // The session tail lands eagerly (issue #240 port); the
+          // ordinary mutation arms the debounced dirty flag the unload
+          // flush must drain.
+          (await env.writeFile(
+            '/sessions/--w--/live.jsonl',
+            '{"tail":true}\n',
+          )).getOrThrow();
+          (await env.writeFile(
+            '/apps/calculator/widget.js',
+            'code',
+          )).getOrThrow();
+          expect(env.hasPendingChanges, isTrue);
+
+          await env.onPageUnload();
+          expect(env.hasPendingChanges, isFalse);
+          env.dispose();
+
+          final reloaded = await _restoreEnv(store);
+          expect(
+            (await reloaded.readTextFile(
+              '/sessions/--w--/live.jsonl',
+            )).getOrThrow(),
+            '{"tail":true}\n',
+          );
+          expect(
+            (await reloaded.readTextFile(
+              '/apps/calculator/widget.js',
+            )).getOrThrow(),
+            'code',
+          );
+          reloaded.dispose();
+        },
+      );
     });
   });
 }

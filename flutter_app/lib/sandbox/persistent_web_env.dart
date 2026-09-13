@@ -43,6 +43,15 @@ import 'package:fa/sandbox/fs_persistence.dart';
 ///
 /// Restore happens in [restore], awaited by `createPlatformEnv` before the
 /// `AgentService` is built.
+///
+/// Two ordering guarantees pin the migration promise (issue #238, ported
+/// with #240): the v1 envelope is replaced by the session-stripped v2
+/// shape only in a pass that wrote EVERY session record — until then it
+/// is the only durable copy of the sessions, so a failed record write
+/// leaves it untouched — and stale-record eviction runs FIRST, so a later
+/// failure in the pass cannot resurrect a deleted session. Residual: a
+/// crash between the fs removal and the eviction step resurrects that
+/// one session on next boot — deletion metadata, never chat data.
 final class PersistentWebExecutionEnv
     implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
   PersistentWebExecutionEnv._(this._delegate, this._store, this._persistDelay);
@@ -71,6 +80,16 @@ final class PersistentWebExecutionEnv
 
   static bool _isSessionPath(String path) => _sessionPathPattern.hasMatch(path);
 
+  /// True when a mutation at [path] touches session data: the session
+  /// files themselves, the sessions root (a recursive wipe takes the
+  /// sessions with it), or the fs root. Session-affecting mutations
+  /// persist eagerly (skip the debounce).
+  static bool _affectsSessions(String path) =>
+      _isSessionPath(path) ||
+      path == '/' ||
+      path.isEmpty ||
+      path == '/sessions';
+
   /// Maps a store key back to its session path, or null when the key is
   /// not a session record (validated against the session path shape so a
   /// foreign `sandbox.session…`-ish key can't inject arbitrary paths).
@@ -94,6 +113,12 @@ final class PersistentWebExecutionEnv
   /// keys whose session file the user deleted — never live session data
   /// (issue #237, eviction vector).
   Set<String> _knownSessionKeys = {};
+
+  /// True while the stored envelope is still the pre-migration v1
+  /// (sessions inline): the only durable copy of the chat history until a
+  /// save pass writes every session record and replaces it with v2
+  /// (issue #238 F1, ported with #240).
+  bool _envelopeIsV1 = false;
 
   /// One console warning per failure burst; reset by the next successful
   /// save so a NEW outage is reported again.
@@ -174,6 +199,10 @@ final class PersistentWebExecutionEnv
       for (final (path, bytes) in files) {
         await _delegate.writeBinaryFile(path, bytes);
       }
+      // A v1 envelope just came back to life: until a save pass has
+      // written every session record and replaced it, it stays the only
+      // durable copy of the sessions (issue #238 F1).
+      _envelopeIsV1 = version == 1;
       return true;
     } on Object {
       // Corrupt snapshot → clean start, never crash boot.
@@ -216,19 +245,43 @@ final class PersistentWebExecutionEnv
     return (dirs, files);
   }
 
-  void _schedulePersist() {
+  void _schedulePersist({bool session = false}) {
     if (_disposed) return;
     _dirty = true;
     _timer?.cancel();
     _timer = Timer(_persistDelay, () => unawaited(_persistNow()));
+    if (session) {
+      // Session mutations skip the debounce (issue #228 vector 3, ported
+      // with #240): the page can crash at any moment and
+      // beforeunload/visibilitychange only cover graceful unloads — a
+      // pending window is how a transcript tail vanishes. Saves serialize
+      // through _persistNow, so a burst of appends coalesces into the
+      // in-flight loop's next pass; the timer stays armed as the
+      // backstop for the join-a-dying-save race.
+      unawaited(_persistNow());
+    }
   }
 
   /// Persists immediately when changes are pending. Awaits any in-flight
-  /// save (an earlier trigger may already hold the loop with [_dirty]
-  /// cleared), so after [flush] returns all mutations so far are stored.
+  /// save (an eager session save may already hold the loop with [_dirty]
+  /// cleared) — and since a mutation racing that pass re-arms [_dirty],
+  /// gives the re-armed pass one turn too, so after [flush] returns all
+  /// mutations so far are stored (a failed pass stays dirty for the next
+  /// mutation or flush retry).
   Future<void> flush() async {
     _timer?.cancel();
-    if (_dirty) await _persistNow();
+    if (_dirty) {
+      final joined = _saving;
+      if (joined != null) {
+        await joined;
+        if (_dirty) {
+          _timer?.cancel();
+          await _persistNow();
+        }
+      } else {
+        await _persistNow();
+      }
+    }
     final inFlight = _saving;
     if (inFlight != null) await inFlight;
   }
@@ -261,11 +314,16 @@ final class PersistentWebExecutionEnv
     }
   }
 
-  /// One save pass: session records first (each its own store record, so
-  /// an over-quota session fails ALONE and previously-saved records are
-  /// never touched), then the session-free envelope, then removal of
-  /// records whose session file was deleted. Throws when anything failed —
-  /// the caller re-arms the retry (issue #237).
+  /// One save pass: eviction of records whose session file was deleted
+  /// FIRST (issue #238 F2 — a later failure in the pass must not
+  /// resurrect a deleted session), then session records (each its own
+  /// store record, so an over-quota session fails ALONE and
+  /// previously-saved records are never touched), then the session-free
+  /// envelope — but never while the stored envelope is still the v1
+  /// migration source and a record write failed: until every session
+  /// record is durable, that envelope is the only durable copy of the
+  /// sessions (issue #237 vector 2 × #238 F1). Throws when anything
+  /// failed — the caller re-arms the retry.
   Future<void> _saveOnce() async {
     final (dirs, treeFiles) = await _exportTree();
     final envelopeFiles = <Map<String, String>>[];
@@ -279,12 +337,37 @@ final class PersistentWebExecutionEnv
       }
     }
     var failed = false;
+    // Evict ONLY records whose session file is gone from the tree (user
+    // delete / session reset); live session data is never dropped (issue
+    // #237 vector 1). Runs before the writes so nothing later in the
+    // pass can skip it.
+    final stale = _knownSessionKeys.difference(sessionRecords.keys.toSet());
+    if (stale.isNotEmpty) {
+      try {
+        await _store.remove(stale);
+        _knownSessionKeys.removeAll(stale);
+      } on Object {
+        failed = true; // retried by the next pass
+      }
+    }
     for (final record in sessionRecords.entries) {
       try {
         await _store.save({record.key: record.value});
       } on Object {
         failed = true; // This session stays dirty; the rest keep saving.
       }
+    }
+    if (failed && _envelopeIsV1) {
+      // Migration ordering (issue #238 F1): overwriting the v1 envelope
+      // with the session-stripped v2 shape while a record write failed
+      // would destroy the only durable copy of the sessions. Already-v2
+      // envelopes keep flowing below: their sessions live in their own
+      // records, so a failed record costs at most that session's
+      // unsaved tail.
+      throw StateError(
+        'a session record could not be saved (quota?); keeping the v1 '
+        'envelope as the only durable copy of the sessions',
+      );
     }
     await _store.save({
       storageKey: jsonEncode({
@@ -296,11 +379,7 @@ final class PersistentWebExecutionEnv
     if (failed) {
       throw StateError('a session record could not be saved (quota?)');
     }
-    // Evict ONLY records whose session file is gone from the tree (user
-    // delete / session reset); live session data is never dropped (issue
-    // #237 vector 1).
-    final stale = _knownSessionKeys.difference(sessionRecords.keys.toSet());
-    if (stale.isNotEmpty) await _store.remove(stale);
+    _envelopeIsV1 = false;
     _knownSessionKeys = sessionRecords.keys.toSet();
   }
 
@@ -386,14 +465,14 @@ final class PersistentWebExecutionEnv
     Uint8List content,
   ) async {
     final result = await _delegate.writeBinaryFile(path, content);
-    if (result.isOk) _schedulePersist();
+    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
     return result;
   }
 
   @override
   Future<Result<void, FileError>> writeFile(String path, String content) async {
     final result = await _delegate.writeFile(path, content);
-    if (result.isOk) _schedulePersist();
+    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
     return result;
   }
 
@@ -403,7 +482,7 @@ final class PersistentWebExecutionEnv
     String content,
   ) async {
     final result = await _delegate.appendFile(path, content);
-    if (result.isOk) _schedulePersist();
+    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
     return result;
   }
 
@@ -413,7 +492,7 @@ final class PersistentWebExecutionEnv
     bool recursive = true,
   }) async {
     final result = await _delegate.createDir(path, recursive: recursive);
-    if (result.isOk) _schedulePersist();
+    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
     return result;
   }
 
@@ -428,7 +507,7 @@ final class PersistentWebExecutionEnv
       recursive: recursive,
       force: force,
     );
-    if (result.isOk) _schedulePersist();
+    if (result.isOk) _schedulePersist(session: _affectsSessions(path));
     return result;
   }
 
