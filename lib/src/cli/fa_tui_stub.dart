@@ -37,6 +37,7 @@ final class FaTuiCallbacks {
     this.onPickerSelected,
     this.onPickerCancelled,
     this.onSteer,
+    this.pathCandidates,
   });
 
   final Future<void> Function(String line) onSubmit;
@@ -51,6 +52,7 @@ final class FaTuiCallbacks {
   final Future<void> Function(String pickerId, String key)? onPickerSelected;
   final void Function(String pickerId)? onPickerCancelled;
   final Future<void> Function(List<String> messages)? onSteer;
+  final List<String> Function(String fragment)? pathCandidates;
 }
 
 /// No-op stand-in for the real TUI controller (never run on web).
@@ -103,6 +105,8 @@ final class FaTuiController {
   Future<TuiPromptAnswer?> openPrompt(TuiPromptSpec spec) async => null;
 
   Future<List<String>> drainQueue() async => const [];
+
+  void clearQueue() {}
 
   Future<void> run() async {}
 }
