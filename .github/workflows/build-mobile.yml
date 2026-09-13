@@ -530,6 +530,10 @@ jobs:
       - name: Checkout repository
         if: needs.build-android.result == 'success' || needs.build-ios.result == 'success'
         uses: actions/checkout@v4
+        with:
+          # Full history: release_notes.sh falls back to "commits since the
+          # previous tag" when the CHANGELOG has no section for this version.
+          fetch-depth: 0
 
       - name: Download iOS IPA artifact
         if: needs.build-ios.result == 'success'
@@ -567,21 +571,30 @@ jobs:
           [ -n "$AAB" ] && ASSETS+=("$AAB")
           [ -n "$IPA" ] && ASSETS+=("$IPA")
 
-          if gh release view "$RELEASE_TAG" --repo ${{ github.repository }} &>/dev/null; then
-            echo "Release $RELEASE_TAG already exists — uploading mobile assets..."
-            for asset in "${ASSETS[@]}"; do
-              gh release upload "$RELEASE_TAG" "$asset" --clobber --repo ${{ github.repository }}
-            done
-            echo "✅ Uploaded mobile assets to existing release $RELEASE_TAG"
-          else
-            printf 'Fa %s run #%s\n\n## Installation\n- **Android**: Download the AAB and upload to Play Store, or use `flutter install`.\n- **iOS**: Download the IPA and upload to TestFlight via Xcode or Transporter.\n- **macOS**: Download the DMG from the macOS build workflow.\n' \
-              "$RELEASE_TAG" "${{ github.run_number }}" > release-notes.md
+          # Notes come from the CHANGELOG section for this version, with a
+          # conventional-commit fallback (issue #282: no more filler
+          # bodies); the install hints stay as a footer.
+          bash scripts/release_notes.sh "$RELEASE_TAG" > release-notes.md || true
+          printf '\n## Installation\n- **Android**: Download the AAB and upload to Play Store, or use `flutter install`.\n- **iOS**: Download the IPA and upload to TestFlight via Xcode or Transporter.\n- **macOS**: Download the DMG from the macOS build workflow.\n' >> release-notes.md
 
-            gh release create "$RELEASE_TAG" \
-              --repo ${{ github.repository }} \
-              --title "Fa $RELEASE_TAG" \
-              --notes-file release-notes.md \
-              --latest \
-              "${ASSETS[@]}"
-            echo "✅ Created release $RELEASE_TAG with mobile assets"
-          fi
+          # Attach-or-create (issue #282 E3 + review of #294): idempotent
+          # against the view->create race - a lost race uploads into the
+          # winner's release instead of failing - and the create stamps an
+          # ownership marker into the draft body, so the guard step below
+          # only ever deletes THIS job's draft, never the macOS leg's
+          # mid-upload draft on the same derived tag.
+          bash scripts/release_attach_or_create.sh "$RELEASE_TAG" "${ASSETS[@]}"
+
+      # Draft lifecycle invariant (issue #282): the create above uploads
+      # assets through a draft — a failed/cancelled run must delete it,
+      # never orphan it (the v0.1.190 rot). Ownership-scoped (review of
+      # #294): the guard deletes only a draft whose body carries THIS
+      # run+job's marker — a sibling leg's draft is never touched.
+      - name: Draft lifecycle guard (delete orphaned draft on failure)
+        if: >-
+          always() && job.status != 'success' &&
+          (needs.build-android.result == 'success' || needs.build-ios.result == 'success')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: bash scripts/release_draft_guard.sh "$RELEASE_TAG"
