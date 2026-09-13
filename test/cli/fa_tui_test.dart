@@ -2580,6 +2580,59 @@ void main() {
     });
 
     test(
+      'tree aliases: hjkl move/collapse, q closes, unknown is a no-op',
+      () async {
+        final actions = <String, String?>{};
+        var model = FaTuiModel(
+          callbacks: hubCallbacks(
+            onAction: (action, key) async => actions[action] = key,
+          ),
+          isExited: () => false,
+          hub: tree(),
+        );
+        // vi aliases drive the same moves as the arrows.
+        model = send(
+          model,
+          KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'j')),
+        );
+        expect(model.hub!.selectedKey, 'a1');
+        model = send(
+          model,
+          KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'k')),
+        );
+        expect(model.hub!.selectedKey, 'main');
+
+        // h/l collapse and re-expand the selected row's branch.
+        model = send(
+          model,
+          KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'l')),
+        );
+        expect(model.hub!.visibleRows.length, 1, reason: 'a1 collapses away');
+        model = send(
+          model,
+          KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'h')),
+        );
+        expect(model.hub!.visibleRows.length, 2, reason: 'a1 is visible again');
+
+        // A rune with no binding changes nothing.
+        model = send(
+          model,
+          KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'x')),
+        );
+        expect(model.hub!.selectedKey, 'main');
+
+        // q closes like esc.
+        final (next, cmd) = model.update(
+          KeyPressMsg(const TeaKey(code: KeyCode.rune, text: 'q')),
+        );
+        model = next as FaTuiModel;
+        expect(model.hub, isNull);
+        await cmd?.call();
+        expect(actions['close'], 'main');
+      },
+    );
+
+    test(
       'enter keeps the overlay open and calls back with the selection',
       () async {
         final actions = <String, String?>{};

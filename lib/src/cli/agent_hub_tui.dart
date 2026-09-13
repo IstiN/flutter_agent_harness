@@ -184,18 +184,25 @@ final class FaHubState {
     return 0;
   }
 
-  /// Toggles collapse for the selected row (no-op when it has no children —
-  /// the next visible row is not deeper).
+  /// Toggles collapse for the selected row. A collapsed row toggles
+  /// straight back open (its children are hidden, so the has-children
+  /// guard below cannot see them); an expanded row collapses only when
+  /// the next visible row is deeper (it has children at all).
   FaHubState toggleCollapseSelected() {
     final rows = visibleRows;
     final index = _selectedIndex(rows);
-    if (index == null || index + 1 >= rows.length) return this;
+    if (index == null) return this;
     final key = rows[index].key;
     if (key == null) return this;
+    if (collapsedKeys.contains(key)) {
+      collapsedKeys.remove(key);
+      return this;
+    }
+    if (index + 1 >= rows.length) return this;
     if (_rowDepth(rows[index + 1].text) <= _rowDepth(rows[index].text)) {
       return this;
     }
-    if (!collapsedKeys.add(key)) collapsedKeys.remove(key);
+    collapsedKeys.add(key);
     return this;
   }
 
