@@ -229,15 +229,17 @@ void main() {
       expect(panel, contains('approval'));
     });
 
-    test('the web compaction gap is real: the web loader keeps classic', () {
+    test('the web compaction gap is real: the web loader has no yaml', () {
       // The registry says compactionEngine is web=false because the web
       // loader has no shared ~/.fah/config.yaml — pin the loader stub
-      // that implements exactly that.
+      // that implements exactly that. Since #295 the resolved fallback
+      // everywhere (web included) is STRUCTURED — the stub reports null
+      // (no parsed engine) plus the structured fallback, never classic.
       final stub = File(
         'flutter_app/lib/services/compaction_engine_loader_stub.dart',
       ).readAsStringSync();
       expect(stub, contains('=> null'));
-      expect(stub, contains('classic'));
+      expect(stub, contains('structured'));
     });
   });
 }
