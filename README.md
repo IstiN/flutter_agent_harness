@@ -182,11 +182,33 @@ capabilities and limits). The device-flow client id is overridable via
 `FA_COPILOT_CLIENT_ID` — that GitHub endpoint is undocumented, so a
 custom client id carries an account-ban risk; override only with cause.
 
+### Sleep prevention (`power.sleepPrevention`)
+
+Long-running sessions die with the machine: when the Mac sleeps mid-run,
+scheduled wake-ups never deliver. Each session (CLI and app) holds one
+power assertion for its lifetime, controlled by `~/.fah/config.yaml`:
+
+```yaml
+power:
+  sleepPrevention: idle # off | idle (default) | display | system
+```
+
+Levels are cumulative — `idle` prevents idle sleep (`caffeinate -i`),
+`display` also keeps the display awake (`-i -d`), `system` also blocks
+AC system sleep and declares the user active (`-i -d -s -u`). macOS runs
+`caffeinate -w <fa pid>` (it self-exits with fa, so the assertion can
+never leak); Linux tries `systemd-inhibit --what=idle:sleep` behind a
+pid watchdog; other platforms no-op. A failed assertion logs a warning
+and the session continues. `/power` shows the level and whether the
+assertion is currently held (`pmset -g assertions` on macOS shows the
+real thing). Windows (`SetThreadExecutionState`) is a tracked stub.
+
 ### Slash commands (selection)
+
 
 `/provider`, `/models`, `/model`, `/approval`, `/allow`, `/tools`,
 `/skills`, `/agents`, `/tasks`, `/trajectory [view|cost|tail|inspect]`,
-`/memory [maintain]`, `/compact`, `/reset`, `/checkpoint`/`/rewind`,
+`/memory [maintain]`, `/power`, `/compact`, `/reset`, `/checkpoint`/`/rewind`,
 `/mcp`, `/a2a`, `/dap`, `/stats`, `/mouse`, `/settings`, `/help` — plus
 every discovered skill as `/skill:<name>` (a bare `/<name>` alias works
 too). While a run streams, typed input steers the agent; Ctrl-C aborts

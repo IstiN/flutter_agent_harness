@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- feat(325): sleep-resilient sessions — power assertions ported from
+  oh-my-pi's `power.sleepPrevention`. A new `power:` config section
+  (`sleepPrevention: off|idle|display|system`, default `idle`, strict
+  parse — a bad value throws `ConfigException`) picks a cumulative
+  sleep-prevention level; the CLI (`AgentCli`) and app (`AgentService`)
+  each hold one assertion from session start to dispose. macOS runs
+  `caffeinate -i [-d] [-s] [-u] -w <fa pid>` (self-exits with fa, never
+  orphaned), Linux tries `systemd-inhibit --what=idle[:sleep]` behind a
+  pid watchdog (best-effort), other platforms no-op (Windows is a
+  tracked stub); failures log a warning and the session continues. New
+  `/power` slash command shows the level and held state. Core model +
+  lifecycle are pure Dart in `lib/src/power_*.dart` with the runner
+  injected by the host (`lib/io.dart`), so no unit test spawns a real
+  helper process.
+
 ## 0.1.358
 
 - fix(259): sleep-resilient scheduled wake-ups for `schedule_message`.
