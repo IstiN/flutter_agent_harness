@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:fa/services/agent_service.dart' show AgentConfig, ProviderConnectionException;
 import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa_browser_agent/fa_browser_agent.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -695,6 +696,35 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(service.messages.last.content, faEmptyResponsePlaceholder);
     addTearDown(channel.close);
+  });
+
+  test('reconfigure runs the mixed-row guard BEFORE settings_put '
+      '(issue #327)', () async {
+    final (:service, :channel) = await _attached();
+    addTearDown(service.dispose);
+    final registry = ProviderRegistry.inMemory();
+    await registry.add(
+      name: 'OpenRouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      modelId: 'z-ai/glm-5.3-flash',
+    );
+    // The boot wiring hands the panel registry to the relay service.
+    service.providerRegistry = registry;
+    // An OpenRouter-format model id riding a different host's connection:
+    // the #327 fingerprint - refused, no settings_put ever dispatched.
+    await expectLater(
+      service.reconfigure(
+        AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'z-ai/glm-5.3-flash',
+          baseUrl: 'https://acme.example.com/code-assistant-api/v1',
+          apiKey: 'k',
+        ),
+      ),
+      throwsA(isA<ProviderConnectionException>()),
+    );
+    expect(channel.sentOf('settings_put'), isNull);
+    expect(service.error, isNotNull);
   });
 }
 

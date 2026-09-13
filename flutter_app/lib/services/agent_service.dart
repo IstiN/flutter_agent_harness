@@ -24,6 +24,7 @@ import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
 import 'agent_tool_availability.dart';
+import 'relay/ext_runtime.dart';
 import 'session_names_store.dart';
 
 import 'package:fa/apps/apps_store.dart';
@@ -84,102 +85,9 @@ part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
 part 'agent_service_sessions.dart';
 part 'agent_service_runs.dart';
+part 'agent_service_connection_guard.dart';
 
 /// A UI-facing chat message.
-/// the adapter skips `Authorization: Bearer` when the key is empty.
-bool isCodeMieProvider(String baseUrl) =>
-    baseUrl.contains('/code-assistant-api/');
-
-/// Thrown when a would-be connection assembles model and auth from
-/// DIFFERENT provider rows, or rides a hosted/CodeMie endpoint with no
-/// resolvable credential on this surface (issue #327). The message is
-/// user-facing: it names the owning rows so the fix is obvious.
-class ProviderConnectionException implements Exception {
-  ProviderConnectionException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
-/// The display name of the row serving [baseUrl]: the custom registry
-/// entry, else the built-in hosted preset (name capitalized), else null.
-String? _connectionDisplayName(ProviderRegistry? registry, String baseUrl) {
-  final provider = providerForBaseUrl(baseUrl, registry);
-  if (provider == null) return null;
-  return switch (provider) {
-    ProviderPreset preset => switch (preset) {
-      ProviderPreset.openrouter => 'OpenRouter',
-      ProviderPreset.ollamaCloud => 'Ollama Cloud',
-      ProviderPreset.gemini => 'Google Gemini',
-      ProviderPreset.aiin => 'AIIN',
-      ProviderPreset.dial => 'DIAL',
-      ProviderPreset.minimax => 'MiniMax',
-      _ => preset.name,
-    },
-    final CustomProvider custom => custom.name,
-    _ => provider.toString(),
-  };
-}
-
-/// Issue #327: `null` when [config] can assemble model AND auth from the
-/// same provider row on this surface; otherwise a user-facing reason
-/// naming the broken row(s). Pure: no I/O, safe from boot and pickers.
-String? providerConnectionProblem(
-  ProviderRegistry? registry,
-  AgentConfig config,
-) {
-  if (AgentService._isOnDeviceKind(config.providerKind)) return null;
-  return _modelRowMismatch(registry, config) ??
-      _missingCredential(registry, config);
-}
-
-/// Fails when [config.modelId] is owned by a registry row OTHER than the
-/// one serving [config.baseUrl] — the #327 fingerprint: an OpenRouter
-/// model id riding a CodeMie (or any other) endpoint sends the request to
-/// an endpoint/auth pair that never heard of the model.
-String? _modelRowMismatch(ProviderRegistry? registry, AgentConfig config) {
-  if (registry == null) return null;
-  final entries = registry.providers;
-  final serving = entries.where((e) => e.baseUrl == config.baseUrl);
-  if (serving.any((e) => e.modelId == config.modelId)) return null;
-  final owners = entries
-      .where((e) => e.modelId == config.modelId && e.baseUrl != config.baseUrl)
-      .toList();
-  if (owners.isEmpty) return null;
-  final servingName =
-      _connectionDisplayName(registry, config.baseUrl) ?? config.baseUrl;
-  final ownerNames = owners.map((e) => e.name).toSet().join("', '");
-  return "Model ${config.modelId} belongs to provider '$ownerNames' "
-      '(${owners.first.baseUrl}), active connection is $servingName '
-      '(${config.baseUrl}). Pick the model from the SAME provider row as '
-      'the endpoint you are connecting to.';
-}
-
-/// Fails when a hosted-preset or CodeMie endpoint has no key/sign-in on
-/// THIS surface (per-surface partitions, issue #221 D2): an empty key on
-/// those endpoints is a guaranteed 401 ("No cookie auth credentials
-/// found" for CodeMie). Custom self-hosted endpoints (localhost Ollama,
-/// private gateways) stay keyless-legal.
-String? _missingCredential(ProviderRegistry? registry, AgentConfig config) {
-  if (config.apiKey.isNotEmpty) return null;
-  final baseUrl = config.baseUrl;
-  if (isCodeMieProvider(baseUrl)) {
-    final name = _connectionDisplayName(registry, baseUrl) ?? 'CodeMie';
-    return '$name: no sign-in on this surface — sign in here or sync the '
-        'account from a surface that has it.';
-  }
-  for (final preset in hostedProviderPresets) {
-    if (preset.baseUrl != null && preset.baseUrl == baseUrl) {
-      final name = _connectionDisplayName(registry, baseUrl) ?? preset.name;
-      final keyName = hostedProviderKeyName(preset) ?? 'API key';
-      return '$name: no API key on this surface — add $keyName here or '
-          'sync it from a surface that has it.';
-    }
-  }
-  return null;
-}
 
 /// Shown in place of an assistant bubble when a completed turn produced
 /// neither text nor tool calls — a small on-device model occasionally
@@ -927,63 +835,6 @@ class AgentService extends ChangeNotifier
     );
   }
 
-  /// Wraps [inner] so HTTP auth failures (401/403, key/cookie/credentials
-  /// wording) carry a `'[<entry>] '` prefix naming the provider row the
-  /// request went out with. [label] resolving to null (no known row)
-  /// leaves every event untouched. Pure stream plumbing — visible for the
-  /// issue #327 decoration tests.
-  @visibleForTesting
-  static StreamFunction decorateAuthErrors(
-    StreamFunction inner,
-    String? Function() label,
-  ) {
-    final authFailure = RegExp(r'^40[13]:|^[45]\d\d:?.*(unauthorized|api key|credentials|sign in)', caseSensitive: false);
-    return (model, context, {cancelToken}) {
-      final owner = label();
-      final stream = inner(model, context, cancelToken: cancelToken);
-      if (owner == null || owner.isEmpty) return stream;
-      final controller = AssistantMessageEventStream();
-      Future<void> pump() async {
-        try {
-          await for (final event in stream) {
-            var outgoing = event;
-            if (event is ErrorEvent) {
-              final text = event.error.errorMessage ?? '';
-              if (authFailure.hasMatch(text.trim())) {
-                final patched = event.error.copyWith(
-                  errorMessage: '[$owner] $text',
-                );
-                outgoing = ErrorEvent(
-                  reason: event.reason,
-                  error: patched,
-                );
-              }
-            }
-            controller.push(outgoing);
-          }
-        } on Object catch (error) {
-          controller.push(
-            ErrorEvent(
-              reason: StopReason.error,
-              error: AssistantMessage(
-                content: const [],
-                api: model.api,
-                provider: model.provider,
-                model: model.id,
-                usage: Usage.zero,
-                stopReason: StopReason.error,
-                errorMessage: '[internal] $error',
-                timestamp: DateTime.now(),
-              ),
-            ),
-          );
-        }
-        controller.end();
-      }
-      unawaited(pump());
-      return controller;
-    };
-  }
 
   /// The system prompt plus a secret-name hint (names only, never values).
   ///
@@ -2383,6 +2234,12 @@ class AgentService extends ChangeNotifier
       notifyListeners();
       return;
     }
+    final rowProblem = _liveConnectionRowProblem();
+    if (rowProblem != null) {
+      error = rowProblem;
+      notifyListeners();
+      return;
+    }
     // Wall-clock catch-up (issue #259): records that came due while the
     // host slept are swept at turn start, not at the next timer tick, so
     // the fresh turn's steering poll already sees the fired reminder.
@@ -2491,6 +2348,12 @@ class AgentService extends ChangeNotifier
     ];
     final inline = images.isNotEmpty && inlinesImageAttachments;
     _clearError();
+    final rowProblem = _liveConnectionRowProblem();
+    if (rowProblem != null) {
+      error = rowProblem;
+      notifyListeners();
+      return;
+    }
     // Gemini's inlineData limit is ~4 MB of raw image bytes — base64
     // inflates by ~4/3, so a 3 MB PNG becomes a 4 MB payload. Cap at
     // 3 MB so the backend never sees an oversized inlineData (its
@@ -2533,6 +2396,12 @@ class AgentService extends ChangeNotifier
     String text = '',
   }) async {
     _clearError();
+    final rowProblem = _liveConnectionRowProblem();
+    if (rowProblem != null) {
+      error = rowProblem;
+      notifyListeners();
+      return;
+    }
     final content = <ContentBlock>[
       if (text.isNotEmpty) TextContent(text: text),
       ImageContent(data: base64Encode(bytes), mimeType: mimeType),
@@ -2636,7 +2505,11 @@ class AgentService extends ChangeNotifier
     // DIFFERENT registry rows, or a hosted/CodeMie endpoint with no
     // credential on this surface — before any state changes (fail fast,
     // no side effects; pickers surface the message verbatim).
-    final problem = providerConnectionProblem(_providerRegistry, config);
+    final problem = providerConnectionProblem(
+      _providerRegistry,
+      config,
+      extensionHost: isExtensionHost(),
+    );
     if (problem != null) {
       debugPrint('[Fa] reconfigure refused: $problem');
       throw ProviderConnectionException(problem);

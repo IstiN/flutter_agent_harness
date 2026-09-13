@@ -214,21 +214,25 @@ void main() {
       );
     });
 
-    test('a model of entry X persisted onto entry Y refuses to boot',
+    test('a model of entry X persisted onto entry Y restores degraded - '
+        'the row-naming refusal moves to request time (review MAJOR 2)',
         () async {
       final registry = await _registry();
-      expect(
-        restorableBootConfig(
-          connection: const LastConnection(
-            providerKind: 'openai-completions',
-            modelId: 'z-ai/glm-5.3-flash',
-            baseUrl: _codeMieUrl,
-          ),
-          registry: registry,
-          sessionKeysStore: SessionKeysStore.inMemory(),
+      final config = restorableBootConfig(
+        connection: const LastConnection(
+          providerKind: 'openai-completions',
+          modelId: 'z-ai/glm-5.3-flash',
+          baseUrl: _codeMieUrl,
         ),
-        isNull,
+        registry: registry,
+        sessionKeysStore: SessionKeysStore.inMemory(),
       );
+      // The mismatched connection must not brick the session (a stale
+      // persisted row would otherwise erase the transcript): it boots,
+      // and the first request is refused with the same row-naming
+      // message.
+      expect(config, isNotNull);
+      expect(config!.modelId, 'z-ai/glm-5.3-flash');
     });
 
     test('REG: keyless local entries still restore', () async {
@@ -284,7 +288,7 @@ void main() {
 
     test('a 401 error event is prefixed with the entry name', () async {
       final inner = AssistantMessageEventStream();
-      final labeled = AgentService.decorateAuthErrors(
+      final labeled = decorateAuthErrors(
         (m, context, {cancelToken}) => inner,
         () => 'CodeMie',
       );
@@ -307,7 +311,7 @@ void main() {
 
     test('a non-auth error passes through untouched', () async {
       final inner = AssistantMessageEventStream();
-      final labeled = AgentService.decorateAuthErrors(
+      final labeled = decorateAuthErrors(
         (m, context, {cancelToken}) => inner,
         () => 'CodeMie',
       );
@@ -328,7 +332,7 @@ void main() {
 
     test('a done event passes through untouched', () async {
       final inner = AssistantMessageEventStream();
-      final labeled = AgentService.decorateAuthErrors(
+      final labeled = decorateAuthErrors(
         (m, context, {cancelToken}) => inner,
         () => 'CodeMie',
       );
@@ -340,6 +344,109 @@ void main() {
       final events = await collected;
       expect(events.whereType<DoneEvent>(), isNotEmpty);
       expect(events.whereType<ErrorEvent>(), isEmpty);
+    });
+  });
+  group('review fixes: the guard breaks nothing it should not (issue #327)',
+      () {
+    test('MAJOR 1: extension-host CodeMie cookie sign-in keeps its empty '
+        'key - plain web still refuses it', () async {
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'CodeMie',
+        baseUrl: _codeMieUrl,
+        modelId: 'gpt-4o',
+      );
+      final config = _config(_codeMieUrl, 'gpt-4o', apiKey: '');
+      // The extension hosts the app web build; its cookie sign-in stores
+      // an EMPTY key BY DESIGN (the SW fetch attaches the shared jar).
+      expect(
+        providerConnectionProblem(registry, config, extensionHost: true),
+        isNull,
+      );
+      // A plain web/desktop surface has no cookie jar on the fetch -
+      // keyless CodeMie still refuses.
+      expect(
+        providerConnectionProblem(registry, config, extensionHost: false),
+        isNotNull,
+      );
+    });
+
+    test('MAJOR 3: same-host rows are one provider - a path variant does '
+        'not flag', () async {
+      final registry = await _registry();
+      // Two rows on the SAME host serving the same model: picking the
+      // row on the same host is the endpoint's own business. (The id is
+      // served by the mirror only - the CodeMie row serves gpt-4o.)
+      await registry.add(
+        name: 'OpenRouter mirror',
+        baseUrl: 'https://openrouter.ai/api/v1/',
+        modelId: 'gpt-4o-mini',
+      );
+      expect(
+        providerConnectionProblem(
+          registry,
+          _config(_openRouterUrl, 'gpt-4o-mini'),
+        ),
+        isNull,
+      );
+    });
+
+    test('MAJOR 3: the incident shape stays flagged (different host)',
+        () async {
+      final registry = await _registry();
+      expect(
+        providerConnectionProblem(
+          registry,
+          _config(_codeMieUrl, 'z-ai/glm-5.3-flash'),
+        ),
+        isNotNull,
+      );
+    });
+
+    test('MAJOR 2: a boot-restored mismatched connection refuses the '
+        'REQUEST, not the boot', () async {
+      final registry = await _registry();
+      // Simulates the degraded restore: the agent boots on the
+      // mismatched pairing (CodeMie endpoint, OpenRouter's model).
+      final service = await AgentService.create(
+        config: _config(_codeMieUrl, 'z-ai/glm-5.3-flash'),
+        env: MemoryExecutionEnv(cwd: '/'),
+        providerRegistry: registry,
+        streamFunction: _okResponse(),
+      );
+      addTearDown(service.dispose);
+      await service.sendText('hi');
+      expect(
+        service.error,
+        allOf(
+          contains('z-ai/glm-5.3-flash'),
+          contains('OpenRouter'),
+          contains('CodeMie'),
+        ),
+      );
+    });
+
+    test('MINOR: the OpenRouter env key no longer launders onto other '
+        'endpoints', () async {
+      final keys = SessionKeysStore.inMemory();
+      await keys.set('OPENROUTER_API_KEY', 'sk-or-env');
+      final registry = ProviderRegistry.inMemory();
+      await registry.add(
+        name: 'Local',
+        baseUrl: _localUrl,
+        modelId: 'llama-3.2',
+      );
+      final config = restorableBootConfig(
+        connection: LastConnection(
+          providerKind: 'openai-completions',
+          modelId: 'llama-3.2',
+          baseUrl: _localUrl,
+        ),
+        registry: registry,
+        sessionKeysStore: keys,
+      );
+      expect(config, isNotNull);
+      expect(config!.apiKey, isEmpty);
     });
   });
 }
