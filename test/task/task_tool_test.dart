@@ -851,6 +851,36 @@ void main() {
       },
     );
 
+    test('starts fires when a job registers, before it settles', () async {
+      final gates = {'job a': Completer<void>()};
+      final h = gatedHarness(gates);
+      final started = <TaskJob>[];
+      final sub = h.config.jobManager.starts.listen(started.add);
+
+      final result = await h.tool.execute(
+        {
+          'context': 'ctx',
+          'background': true,
+          'tasks': [
+            {'name': 'A', 'task': 'job a'},
+          ],
+        },
+        null,
+        null,
+      );
+      expect(_resultText(result), contains('Spawned 1 background agent'));
+      await pumpEventQueue();
+      // The start event precedes any completion (the gate is still closed).
+      expect([for (final j in started) j.id], ['A']);
+      expect(h.config.jobManager.job('A')!.status, TaskJobStatus.running);
+
+      gates['job a']!.complete();
+      await h.config.jobManager.settled;
+      await pumpEventQueue();
+      expect([for (final j in started) j.id], ['A']); // no duplicate on settle
+      await sub.cancel();
+    });
+
     test(
       'a settled failed child marks its job failed, not the batch',
       () async {
