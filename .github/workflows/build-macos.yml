@@ -68,7 +68,10 @@ jobs:
     name: Build macOS ${{ matrix.arch }}
     needs: version
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 60
+    # Issue #239: TestFlight submit now waits for Apple processing (bounded,
+    # default 90 min) + a 15-min distribution verify AFTER the build/notarize
+    # work — the job ceiling must cover the worst case, not just the build.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -608,31 +611,6 @@ jobs:
             --sign "$MACOS_INSTALLER_CERT_ID"
           echo "pkg_name=$PKG_NAME" >> $GITHUB_OUTPUT
 
-      - name: Submit PKG to TestFlight
-        if: steps.testflight_pkg.outputs.pkg_name != ''
-        working-directory: flutter_app
-        env:
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
-          MACOS_PKG_PATH: ${{ github.workspace }}/${{ steps.testflight_pkg.outputs.pkg_name }}
-        run: |
-          set -euo pipefail
-          if [ -z "${APP_STORE_CONNECT_KEY_CONTENT:-}" ]; then
-            echo "::notice::App Store Connect API key not configured — skipping TestFlight upload (the PKG stays in artifacts)."
-            exit 0
-          fi
-          bundle install
-          bundle exec fastlane mac submit_only
-
-      - name: Upload TestFlight PKG artifact
-        if: steps.testflight_pkg.outputs.pkg_name != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: fa-macos-testflight-pkg
-          path: ${{ steps.testflight_pkg.outputs.pkg_name }}
-          retention-days: 14
-
       - name: Notarize DMG
         if: steps.signing.outputs.signed == 'true'
         env:
@@ -653,6 +631,37 @@ jobs:
             --wait
           xcrun stapler staple "$DMG_NAME"
           echo "✅ Notarization complete"
+
+      - name: Submit PKG to TestFlight
+        if: steps.testflight_pkg.outputs.pkg_name != ''
+        working-directory: flutter_app
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+          MACOS_PKG_PATH: ${{ github.workspace }}/${{ steps.testflight_pkg.outputs.pkg_name }}
+          # External TestFlight distribution (issue #239): lanes fail
+          # loudly when these are unset — set them once as repo variables.
+          TESTFLIGHT_EXTERNAL_GROUP: ${{ vars.TESTFLIGHT_EXTERNAL_GROUP }}
+          BETA_APP_FEEDBACK_EMAIL: ${{ vars.BETA_APP_FEEDBACK_EMAIL }}
+          BETA_REVIEW_CONTACT_EMAIL: ${{ vars.BETA_REVIEW_CONTACT_EMAIL }}
+          BETA_REVIEW_CONTACT_PHONE: ${{ vars.BETA_REVIEW_CONTACT_PHONE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_STORE_CONNECT_KEY_CONTENT:-}" ]; then
+            echo "::notice::App Store Connect API key not configured — skipping TestFlight upload (the PKG stays in artifacts)."
+            exit 0
+          fi
+          bundle install
+          bundle exec fastlane mac submit_only
+
+      - name: Upload TestFlight PKG artifact
+        if: steps.testflight_pkg.outputs.pkg_name != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: fa-macos-testflight-pkg
+          path: ${{ steps.testflight_pkg.outputs.pkg_name }}
+          retention-days: 14
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
