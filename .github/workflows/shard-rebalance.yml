@@ -90,10 +90,14 @@ jobs:
 
       - name: Run the rebalancer
         run: |
+          # Core is file-level ×4 (test/cli was half the suite as a single
+          # dir-unit — undivisible; see ci.yml test-core comment).
           if [ "${{ steps.timings.outputs.mode-core }}" = "junit" ]; then
-            python3 scripts/rebalance_shards.py --from-junit .timings-core
+            python3 scripts/rebalance_shards.py --from-junit .timings-core \
+              --unit-style files --shards 4
           else
-            python3 scripts/rebalance_shards.py --from-filecount
+            python3 scripts/rebalance_shards.py --from-filecount \
+              --unit-style files --shards 4
           fi
           # fa_ui (issue #283): flat layout → file-level units; goldens are
           # host-locked and stay out of the shards. Units are stored
