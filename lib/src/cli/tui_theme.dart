@@ -33,8 +33,10 @@ library;
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:dart_tui/dart_tui.dart'
-    show ColorProfile, RgbColor, Style, Theme;
+// The PURE entry point: the barrel (dart_tui.dart) drags in
+// program/windows_terminal -> dart:ffi, which the web build cannot
+// compile (fa_tui_stub -> tui_prompt -> tui_theme ships to web).
+import 'package:dart_tui/style.dart' show ColorProfile, RgbColor, Style, Theme;
 
 /// The boot default: the historical site palette (site/styles.css teal +
 /// indigo). Truecolor output is byte-identical to the pre-theming CLI.
