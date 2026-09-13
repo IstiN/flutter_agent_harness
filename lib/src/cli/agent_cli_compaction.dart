@@ -45,6 +45,10 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
   /// as "auto-compacted".
   final bool auto;
 
+  /// Whether [onPass] rendered a real report block this run — the
+  /// manual-compact no-op note must not fire over a printed report.
+  bool reportedPass = false;
+
   DateTime? _lastDeltaPhase;
   String _compactionTail = '';
 
@@ -116,6 +120,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
       return;
     }
     cli._printCompactionReport(pass, auto: auto);
+    reportedPass = true;
     cli._logDiagnostic(
       'auto-compact pass ${pass.pass} '
       'fallback=${pass.fallback ?? '-'} '
@@ -192,22 +197,31 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
 /// repo's 2800-line size gate). Same library, so private state is in scope.
 
 /// Formats the in-chat compaction report block (issue #276): tokens
-/// before → after, freed count/percent, and the summary in a fenced block
-/// so the user can eyeball — and copy — what the transcript was condensed
-/// to. Pure; [_AgentCliCompactionReportPrinter.print] renders it.
+/// before → after, freed count/percent, WHICH ENGINE did the summarizing
+/// (the `smol`/`main` role — review major 3: a report that doesn't name
+/// the engine can't be judged), how many records were hidden vs
+/// summarized, and the summary in a fenced block so the user can eyeball
+/// — and copy — what the transcript was condensed to. Pure;
+/// [_AgentCliCompactionReportPrinter.print] renders it.
 List<String> formatCompactionReport(
   AutoCompactorPass pass, {
   required bool auto,
 }) {
-  final freed = pass.tokensBefore - pass.tokensAfter;
+  final freedRaw = pass.tokensBefore - pass.tokensAfter;
+  // A restamped estimator can report a slightly larger after-count (same
+  // clamp as onDone's HEP end frame): "-30 freed" reads as a bug.
+  final freed = freedRaw < 0 ? 0 : freedRaw;
   final pct = pass.tokensBefore == 0
       ? 0
       : (freed * 100 / pass.tokensBefore).round();
+  final engine = pass.fallback == null ? '' : ' · ${pass.fallback}';
+  final passSuffix = pass.pass == 1 ? '' : ' · pass ${pass.pass}';
   return [
-    '${auto ? 'auto-compacted' : 'compacted'}'
-        '${pass.pass == 1 ? '' : ' · pass ${pass.pass}'}',
+    '${auto ? 'auto-compacted' : 'compacted'}$engine$passSuffix',
     'tokens: ${pass.tokensBefore} → ${pass.tokensAfter} '
         '($freed freed · $pct%)',
+    'records: ${pass.hiddenRecords} hidden · '
+        '${pass.summarizedMessages} summarized',
     'summary:',
     '```',
     pass.summary?.trim() ?? '',
@@ -283,10 +297,13 @@ extension AgentCliCompactionRun on AgentCli {
     }
     _tuiController?.setBusyPhase('Compacting context…');
     final before = _liveRequestTokens();
-    await _runAutoCompact('[compacted]');
-    if (_liveRequestTokens() >= before) {
+    final reported = await _runAutoCompact('[compacted]');
+    if (!reported && _liveRequestTokens() >= before) {
       // A no-op manual /compact (already compacted at the leaf) prints no
       // report block — say why instead of looking like a silent hang.
+      // A run that DID report (or trimmed) never gets the note: its
+      // receipt is already on screen, and a tiny transcript can free
+      // nothing while still really compacting.
       io.writeln(
         _style.dim(
           'nothing to compact — every message is already summarized or '
@@ -299,13 +316,18 @@ extension AgentCliCompactionRun on AgentCli {
   /// Builds the per-host smol/main summarizers and runs the shared
   /// [AutoCompactor]. Used by both [_maybeAutoCompact] (gated by
   /// [shouldCompact]) and [_runManualCompact] (unconditional).
-  Future<void> _runAutoCompact(String label) async {
+  /// Returns whether a pass reported success (a rendered report block).
+  Future<bool> _runAutoCompact(String label) async {
     // Backend agent mode (issue #155): bracket the run so the supervisor
     // sees why a turn stalled. Pre-flight runs carry the upcoming turn id
     // (the following agent_start reuses it). The end frame comes from the
     // pass result in [_AutoCompactorCliHooks.onPass] — the honest numbers.
     _hep?.compactionStart();
     final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
+    final hooks = _AutoCompactorCliHooks(
+      this,
+      auto: label == '[auto-compacted]',
+    );
     await AutoCompactorFactory(
       session: _session!,
       state: _agent.state,
@@ -317,7 +339,7 @@ extension AgentCliCompactionRun on AgentCli {
         mainStream: _streamFunction,
         mainModel: _agent.state.model,
       ),
-      hooks: _AutoCompactorCliHooks(this, auto: label == '[auto-compacted]'),
+      hooks: hooks,
       prompts: CompactionPrompts.fromOverrides(config.promptOverrides),
       // Issue #287: structured is the default fallback; an explicit
       // config choice (config.compactionEngine) or a live override from
@@ -363,5 +385,6 @@ extension AgentCliCompactionRun on AgentCli {
       force: label == '[compacted]',
     ).run();
     _persistedCount = _agent.state.messages.length;
+    return hooks.reportedPass;
   }
 }

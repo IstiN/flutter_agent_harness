@@ -16,12 +16,34 @@
 library;
 
 import 'dart:io';
+import 'dart:typed_data' show BytesBuilder;
 
 import 'paste_image.dart';
 
-/// Runs a process to completion (injectable `Process.run`).
+/// Runs a process to completion with stdout captured as RAW BYTES
+/// (injectable `Process.run`). Binary mode is load-bearing: the default
+/// text-mode decoding (UTF-8 on Linux) mangles pasteboard image bytes, so
+/// the sniff downstream sees replacement chars instead of magic bytes.
 typedef ProcessRunner =
     Future<ProcessResult> Function(String executable, List<String> args);
+
+/// The default [ProcessRunner]: `Process.start` + an explicit stdout byte
+/// fold — `Process.run` has no bytes mode, so the raw pipe is the only
+/// lossless path. stderr is drained and discarded (exit codes carry
+/// failures).
+Future<ProcessResult> _runBinaryProcess(
+  String executable,
+  List<String> args,
+) async {
+  final process = await Process.start(executable, args);
+  final stdout = await process.stdout.fold(
+    BytesBuilder(),
+    (builder, chunk) => builder..add(chunk),
+  );
+  await process.stderr.drain<void>();
+  final exitCode = await process.exitCode;
+  return ProcessResult(process.pid, exitCode, stdout.toBytes(), null);
+}
 
 /// Reads the platform pasteboard's image content, trying each platform path
 /// in order. Never throws — every failure becomes [PasteboardUnavailable].
@@ -30,7 +52,7 @@ Future<PasteboardRead> readPasteboardImage({
   Directory? tempDir,
   Map<String, String> environment = const {},
 }) async {
-  final run = runner ?? Process.run;
+  final run = runner ?? _runBinaryProcess;
   final fake = environment['FA_FAKE_PASTEBOARD'];
   if (fake != null && fake.isNotEmpty) {
     try {
@@ -40,9 +62,16 @@ Future<PasteboardRead> readPasteboardImage({
     }
   }
   final tmp = tempDir ?? Directory.systemTemp;
-  if (Platform.isMacOS) return _readMacos(run, tmp);
-  if (Platform.isLinux) return _readLinux(run);
-  if (Platform.isWindows) return _readWindows(run, tmp);
+  // Never throws (doc): a missing xclip/osascript/powershell surfaces as
+  // a ProcessException here — turn it into the named unavailable result
+  // the transcript prints as a clean note (edge E1).
+  try {
+    if (Platform.isMacOS) return await _readMacos(run, tmp);
+    if (Platform.isLinux) return await _readLinux(run);
+    if (Platform.isWindows) return await _readWindows(run, tmp);
+  } on Object catch (error) {
+    return PasteboardUnavailable('pasteboard read failed: $error');
+  }
   return const PasteboardUnavailable('no pasteboard reader for this platform');
 }
 
@@ -72,7 +101,11 @@ Future<PasteboardRead> _readMacos(ProcessRunner runner, Directory tmp) async {
     ]);
     if (result.exitCode == 0) {
       try {
-        return PasteboardImage(File(target).readAsBytesSync());
+        final bytes = File(target).readAsBytesSync();
+        // Read OK: drop the scratch file — a golden run pastes many
+        // images and each would otherwise litter the temp dir.
+        File(target).deleteSync();
+        return PasteboardImage(bytes);
       } on Object {
         // Fall through to the next class / the unavailable path.
       }
@@ -81,22 +114,19 @@ Future<PasteboardRead> _readMacos(ProcessRunner runner, Directory tmp) async {
   return const PasteboardUnavailable('clipboard holds no image');
 }
 
+/// Linux: `xclip -selection clipboard -t image/png -o`, falling back to
+/// `wl-paste --type image/png` (Wayland). The runner hands stdout back as
+/// raw bytes — image payloads are binary, and text-mode decoding would
+/// mangle the magic bytes the sniff depends on (review major 2).
 Future<PasteboardRead> _readLinux(ProcessRunner runner) async {
   for (final (executable, args) in [
     ('xclip', ['-selection', 'clipboard', '-t', 'image/png', '-o']),
     ('wl-paste', ['--type', 'image/png', '--no-newline']),
   ]) {
     final result = await runner(executable, args);
-    if (result.exitCode == 0) {
-      final stdout = result.stdout;
-      if (stdout is List<int> && stdout.isNotEmpty) {
-        return PasteboardImage(stdout);
-      }
-      if (stdout is String && stdout.codeUnits.isNotEmpty) {
-        // Process.run decodes text mode by default; latin-1 round-trip keeps
-        // the raw bytes intact for the magic-byte sniff downstream.
-        return PasteboardImage(stdout.codeUnits);
-      }
+    final stdout = result.stdout;
+    if (result.exitCode == 0 && stdout is List<int> && stdout.isNotEmpty) {
+      return PasteboardImage(stdout);
     }
   }
   return const PasteboardUnavailable(
@@ -117,7 +147,9 @@ Future<PasteboardRead> _readWindows(ProcessRunner runner, Directory tmp) async {
   final result = await runner('powershell', ['-NoProfile', '-Command', script]);
   if (result.exitCode == 0) {
     try {
-      return PasteboardImage(File(target).readAsBytesSync());
+      final bytes = File(target).readAsBytesSync();
+      File(target).deleteSync();
+      return PasteboardImage(bytes);
     } on Object {
       // Fall through.
     }

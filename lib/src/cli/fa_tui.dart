@@ -794,8 +794,9 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleOutputMsg(OutputMsg msg) {
-    // System-notice blocks render as dim blockquotes, not raw tags.
-    final displayText = msg.text.contains('<system-notice>')
+    // System-notice blocks and service lines (the compaction report
+    // header) render as dim blockquotes, not raw text.
+    final displayText = needsSystemNoticeRewrite(msg.text)
         ? renderSystemNoticeLines(msg.text).join('\n')
         : msg.text;
     final newLines = _appendOutput(outputLines, displayText, msg.newline);

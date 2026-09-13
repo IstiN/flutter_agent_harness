@@ -15,17 +15,20 @@ const _taskOpenPrefix = '<task-result';
 const _taskCloseTag = '</task-result>';
 
 /// Line prefixes of plain-text service notes that get the same quote
-/// treatment: compaction and maintenance receipts written by the harness.
+/// treatment: the compaction report header (`● compacted` / `●
+/// auto-compacted`, issue #276) and maintenance receipts written by the
+/// harness.
 const _servicePrefixes = [
-  '[auto-compacted',
+  '● compacted',
+  '● auto-compacted',
   '[context trimmed',
   '[memory maintained',
 ];
 
-/// Splits [text] into transcript lines with notice blocks restyled.
-/// Streaming-safe for the complete-block writes notices actually use; an
-/// unterminated open tag renders as a quote from that line onward.
-bool _needsRewrite(String text) =>
+/// Whether [text] contains anything the restyler rewrites (notice tags or
+/// a service-line prefix) — the TUI output gate uses it instead of
+/// re-implementing the match.
+bool needsSystemNoticeRewrite(String text) =>
     text.contains(_openTag) ||
     text.contains(_taskOpenPrefix) ||
     _servicePrefixes.any(text.contains);
@@ -61,7 +64,7 @@ int _taskOpenerEnd(String rest, int from) {
 }
 
 List<String> renderSystemNoticeLines(String text) {
-  if (!_needsRewrite(text)) return text.split('\n');
+  if (!needsSystemNoticeRewrite(text)) return text.split('\n');
   final out = <String>[];
   var inside = false;
   var closer = '';
