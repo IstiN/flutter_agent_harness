@@ -2496,6 +2496,8 @@ void main() {
       expect(fresh.inputText, '');
     });
 
+
+
     test('a ! line completes the trailing shell word from workspace paths', () {
       var model = FaTuiModel(
         callbacks: callbacks(pathCandidates: (_) => ['build/notes.md']),
@@ -2519,4 +2521,6 @@ void main() {
       expect(groupOf(const MenuItem(key: '/exit', label: '/exit')), 'commands');
     });
   });
+
+
 }

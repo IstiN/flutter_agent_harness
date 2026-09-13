@@ -139,10 +139,11 @@ void main() {
       expect(ed.transpose().text, 'ba');
     });
 
-    test('backspace deletes one char and pushes it on the ring', () {
+    test('backspace deletes one char and stays OFF the kill ring', () {
       final ed = atEnd('ab').backspace();
       expect(ed.text, 'a');
-      expect(ed.yank().text, 'ab');
+      expect(ed.canYank, isFalse, reason: 'plain backspace is not a kill');
+      expect(ed.undo().text, 'ab');
     });
 
     test('withBuffer preserves ring and undo, replaces text+cursor', () {
@@ -171,21 +172,23 @@ void main() {
   group('undo restores singleton non-word runs exactly', () {
     test('undoing a kill after typing restores the full pre-kill line', () {
       var ed = const LineEditor.empty();
-      for (final ch in 'kept'.split('')) {
+      for (final ch in 'foo bar'.split('')) {
         ed = ed.insert(ch);
       }
       final killed = ed.killWordBefore();
-      expect(killed.text, '');
-      expect(killed.undo().text, 'kept');
+      expect(killed.text, 'foo ');
+      expect(killed.undo().text, 'foo bar');
+      // And a second undo drops the typed word run before the kill.
+      expect(killed.undo().undo().text, 'foo ');
     });
 
-    test('undoing a yank after typing removes the yanked span only', () {
-      var ed = const LineEditor.empty().insert('ok');
-      ed = ed.backspace(); // ring: 'k'
+    test('undoing a yank removes the yanked span, not the kill below', () {
+      var ed = const LineEditor.empty().insert('src');
+      ed = ed.killToLineStart(); // ring: 'src'
+      expect(ed.text, '');
       final yanked = ed.yank();
-      expect(yanked.text, 'ok');
-      // Yank itself records no undo step: undo removes the kill instead.
-      expect(yanked.undo().text, 'ok');
+      expect(yanked.text, 'src');
+      expect(yanked.undo().text, '');
     });
   });
 }

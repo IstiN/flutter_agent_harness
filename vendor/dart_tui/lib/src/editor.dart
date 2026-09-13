@@ -119,17 +119,16 @@ class LineEditor {
     return _push(next, group);
   }
 
-  /// Deletes [count] chars back from the caret, pushing the killed text on
-  /// the ring. ctrl-u alias with count = cursor.
+  /// Deletes the char before the caret. Readline keeps plain backspace
+  /// OFF the kill ring - only explicit kills (ctrl-w/u/k) yank back.
   LineEditor backspace() {
     final b = buffer;
     if (b.cursor == 0) return this;
-    final killed = b.text.substring(b.cursor - 1, b.cursor);
     final next = LineBuffer(
       b.text.substring(0, b.cursor - 1) + b.after,
       b.cursor - 1,
     );
-    return _push(next, const _KillGroup())._ringPush(killed);
+    return _push(next, const _KillGroup());
   }
 
   /// Deletes the char under the caret (forward delete), no ring entry
@@ -183,11 +182,14 @@ class LineEditor {
     final b = buffer;
     final next =
         LineBuffer(b.before + killed + b.after, b.cursor + killed.length);
+    // Keep the pushed undo step: undo after a yank removes the yanked
+    // span (a discarded step made undo restore garbage instead).
+    final pushed = _push(next, _YankGroup);
     return LineEditor._(
-      _push(next, _YankGroup).buffer,
+      pushed.buffer,
       killRing: killRing,
       killIndex: index,
-      undoStack: undoStack,
+      undoStack: pushed.undoStack,
       lastActionWasYank: true,
     );
   }
@@ -209,11 +211,12 @@ class LineEditor {
         : b.before + killed + b.after;
     final nextCursor =
         replaced ? start + killed.length : b.cursor + killed.length;
+    final pushed = _push(LineBuffer(nextText, nextCursor), _YankGroup);
     return LineEditor._(
-      _push(LineBuffer(nextText, nextCursor), _YankGroup).buffer,
+      pushed.buffer,
       killRing: killRing,
       killIndex: next,
-      undoStack: undoStack,
+      undoStack: pushed.undoStack,
       lastActionWasYank: true,
     );
   }

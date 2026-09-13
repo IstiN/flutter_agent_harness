@@ -909,16 +909,22 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       await harness.settle(settleMs: 200);
       harness.sendText('Y');
       await harness.settle(settleMs: 200);
-      // Unhandled combos must never leak their base letter.
-      harness.sendText('\x18\x07\x1a'); // ctrl+x, ctrl+g, ctrl+z
+      // ctrl+x is the #275 queue-row delete (no queue -> no-op) and
+      // ctrl+g stays unhandled: neither may leak its base letter.
+      harness.sendText('\x18\x07'); // ctrl+x, ctrl+g
       await harness.settle(settleMs: 200);
-      harness.sendText('Z');
+      harness.sendText(' Z'); // a fresh word: one undo group of its own
       await harness.settle(settleMs: 300);
+      // ctrl+z is grouped undo since #275: the Z inserts, then undo
+      // removes it again — visible undo in the real terminal.
+      harness.sendText('\x1a'); // ctrl+z
+      await harness.settle(settleMs: 200);
 
       await harness.screenshot(shotsDir, '102_composer_ctrl_keys');
       final flat = harness.screenText.replaceAll('\n', '');
-      expect(flat, contains('Xhello worldYZ'));
-      expect(flat, isNot(contains('Xhello worldYZxgz')));
+      expect(flat, contains('Xhello worldY'));
+      expect(flat, isNot(contains('Xhello worldYZ')));
+      expect(flat, isNot(contains('Xhello worldYxg')));
 
       await harness.close();
       tempHome.deleteSync(recursive: true);

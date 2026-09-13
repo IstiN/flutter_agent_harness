@@ -51,12 +51,14 @@ bool _listEquals(List<int> a, List<int> b) {
 
 /// Word-boundary separators: after these the next alphanumerics start a
 /// camel/snake/kebab word.
+final _upperCase = RegExp(r'[A-Z]');
+
 bool _isBoundary(String prev, String ch) {
   if (prev.isEmpty) return true;
   final p = prev.codeUnitAt(0);
   final isSep = p == 0x5F || p == 0x2D || p == 0x20 || p == 0x2F || p == 0x3A;
   final prevLower = p >= 0x61 && p <= 0x7A;
-  final chUpper = ch.contains(RegExp(r'[A-Z]'));
+  final chUpper = _upperCase.hasMatch(ch);
   // snake/kebab/space/path separators and camelCase humps are boundaries.
   return isSep || (prevLower && chUpper);
 }
@@ -103,7 +105,11 @@ FuzzyMatch? scoreFuzzy(String haystack, String needle, {int maxIndices = 256}) {
   // Prefer tight matches: penalize trailing haystack.
   score -= (haystack.length - needle.length).clamp(0, 16);
   if (indices.length > maxIndices) {
-    return FuzzyMatch(score, indices.sublist(indices.length - maxIndices), haystack);
+    return FuzzyMatch(
+      score,
+      indices.sublist(indices.length - maxIndices),
+      haystack,
+    );
   }
   return FuzzyMatch(score, indices, haystack);
 }
@@ -116,7 +122,10 @@ List<FuzzyMatch> rankFuzzy(
   int limit = 64,
 }) {
   if (needle.isEmpty) {
-    return candidates.take(limit).map((t) => FuzzyMatch(0, const [], t)).toList();
+    return candidates
+        .take(limit)
+        .map((t) => FuzzyMatch(0, const [], t))
+        .toList();
   }
   final matches = <FuzzyMatch>[];
   for (final text in candidates) {
