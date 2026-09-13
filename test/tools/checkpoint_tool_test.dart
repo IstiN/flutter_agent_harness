@@ -58,6 +58,11 @@ class _FakeStreamFunction {
   final List<List<AssistantMessageEvent>> turns;
   final contexts = <Context>[];
 
+  /// Optional hook fired at the START of each provider call (0-based),
+  /// before the scripted turn replays — the seam for mid-run steering:
+  /// a message steered here is drained at the following turn boundary.
+  void Function(int callIndex)? onCall;
+
   int get calls => contexts.length;
 
   AssistantMessageEventStream call(
@@ -65,6 +70,7 @@ class _FakeStreamFunction {
     Context context, {
     CancelToken? cancelToken,
   }) {
+    final callIndex = contexts.length;
     contexts.add(
       Context(
         systemPrompt: context.systemPrompt,
@@ -72,6 +78,7 @@ class _FakeStreamFunction {
         tools: context.tools,
       ),
     );
+    onCall?.call(callIndex);
     final stream = AssistantMessageEventStream();
     for (final event in turns.removeAt(0)) {
       stream.push(event);
@@ -530,8 +537,7 @@ void main() {
     });
 
     test('a checkpoint whose anchored span is gone after a transcript '
-        'rebuild (session reload) auto-closes instead of blocking',
-        () async {
+        'rebuild (session reload) auto-closes instead of blocking', () async {
       final fake = _FakeStreamFunction([
         _toolTurn([probeCall('/warm', 'c0')]),
         _toolTurn([checkpointCall('c1', 'long detour')]),
@@ -562,94 +568,263 @@ void main() {
       );
     });
 
-    test('compaction over the anchor region auto-closes the checkpoint',
-        () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([probeCall('/warm', 'c0')]),
-        _toolTurn([checkpointCall('c1', 'probe the ledger')]),
-        _textTurn('run one done'),
-        _toolTurn([checkpointCall('c2', 'after compaction')]),
-        _textTurn('done'),
-      ]);
-      final h = await harness(fake);
-      await h.agent.prompt('run one');
-      await h.host.flush(h.agent);
-      // Compaction replaced the anchor region with a summary rebuild (the
-      // structured engine's _refreshState): the anchor no longer resolves.
-      h.agent.state.messages = [UserMessage.text('summary of earlier work')];
-      await h.agent.prompt('run two');
+    test(
+      'compaction over the anchor region auto-closes the checkpoint',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([probeCall('/warm', 'c0')]),
+          _toolTurn([checkpointCall('c1', 'probe the ledger')]),
+          _textTurn('run one done'),
+          _toolTurn([checkpointCall('c2', 'after compaction')]),
+          _textTurn('done'),
+        ]);
+        final h = await harness(fake);
+        await h.agent.prompt('run one');
+        await h.host.flush(h.agent);
+        // Compaction replaced the anchor region with a summary rebuild (the
+        // structured engine's _refreshState): the anchor no longer resolves.
+        h.agent.state.messages = [UserMessage.text('summary of earlier work')];
+        await h.agent.prompt('run two');
 
-      final text = await resultText(h.agent, 'c2');
-      expect(text, isNot(contains('Checkpoint already active')));
-      expect(h.controller.activeCheckpoint!.goal, 'after compaction');
+        final text = await resultText(h.agent, 'c2');
+        expect(text, isNot(contains('Checkpoint already active')));
+        expect(h.controller.activeCheckpoint!.goal, 'after compaction');
 
-      final records = await autoClosedRecords(h.host.session!);
-      expect(records, hasLength(1));
-      expect(
-        (records.single.details! as Map<String, Object?>)['reason'],
-        'anchorGone',
-      );
-      expect(records.single.content, contains('probe the ledger'));
-    });
+        final records = await autoClosedRecords(h.host.session!);
+        expect(records, hasLength(1));
+        expect(
+          (records.single.details! as Map<String, Object?>)['reason'],
+          'anchorGone',
+        );
+        expect(records.single.content, contains('probe the ledger'));
+      },
+    );
 
-    test('repeated stale checkpoints each close with their own audit record; '
-        'rewind after the last close errors cleanly (idempotent close)',
-        () async {
+    test(
+      'repeated stale checkpoints each close with their own audit record; '
+      'rewind after the last close errors cleanly (idempotent close)',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([checkpointCall('c1', 'first detour')]),
+          _textTurn('run one done'),
+          _toolTurn([checkpointCall('c2', 'second detour')]),
+          _textTurn('run two done'),
+          _textTurn('run three done'),
+        ]);
+        final h = await harness(fake);
+        await h.agent.prompt('run one');
+        await h.agent.prompt('run two');
+        await h.agent.prompt('run three');
+
+        // Each stale checkpoint closed exactly once, with its own goal kept.
+        final records = await autoClosedRecords(h.host.session!);
+        expect(records, hasLength(1));
+        expect(records.single.content, contains('first detour'));
+        expect(records.single.content, isNot(contains('second detour')));
+
+        // The second checkpoint is still active (never auto-closed twice, no
+        // cross-checkpoint interference); a rewind against it behaves as
+        // before — and after it completes, no second close ever fires.
+        expect(h.controller.activeCheckpoint!.goal, 'second detour');
+        final rewind = h.controller.tools.firstWhere(
+          (t) => t.name == rewindToolName,
+        );
+        final result = await rewind.execute(
+          {'report': 'late findings'},
+          null,
+          null,
+        );
+        expect(
+          result.content.whereType<TextContent>().single.text,
+          contains('Rewind requested'),
+        );
+        final afterRewind = await autoClosedRecords(h.host.session!);
+        expect(afterRewind, hasLength(1));
+      },
+    );
+
+    test(
+      'the refusal names the active checkpoint and how to clear it',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([checkpointCall('c1', 'audit the cache')]),
+          _toolTurn([checkpointCall('c2')]),
+          _textTurn('done'),
+        ]);
+        final h = await harness(fake);
+        await h.agent.prompt('start');
+
+        final result = h.agent.state.messages
+            .whereType<ToolResultMessage>()
+            .last;
+        expect(result.isError, isTrue);
+        final text = result.content.whereType<TextContent>().first.text;
+        expect(text, contains('Checkpoint already active'));
+        expect(text, contains('goal: audit the cache'));
+        expect(text, contains('age:'));
+        expect(text, contains('anchored at message'));
+        expect(text, contains('rewind'));
+        // The scoped checkpoint survives the refusal untouched.
+        expect(h.controller.activeCheckpoint!.goal, 'audit the cache');
+      },
+    );
+
+    // Review of PR #292 (blocker): steering arrived mid-detour and the
+    // model answered with ONE batched [rewind, checkpoint] tool phase. The
+    // rewind applies lazily at turn end, so the checkpoint call still saw
+    // _active != null, the staleness signal fired on the steering turn,
+    // and the auto-close destroyed the very checkpoint the rewind was
+    // closing — the queued report attached to the NEW checkpoint instead.
+    test('a batched [rewind, checkpoint] after mid-detour steering does '
+        'not destroy the checkpoint being rewound', () async {
+      const report = 'FINDINGS: the detour closed via the queued rewind';
       final fake = _FakeStreamFunction([
         _toolTurn([checkpointCall('c1', 'first detour')]),
-        _textTurn('run one done'),
-        _toolTurn([checkpointCall('c2', 'second detour')]),
-        _textTurn('run two done'),
-        _textTurn('run three done'),
+        // ONE tool phase, rewind first (sequential order): the checkpoint
+        // call executes with a report already queued for _active.
+        _toolTurn([
+          rewindCall(report, 'c2'),
+          checkpointCall('c3', 'second detour'),
+        ]),
+        _textTurn('done'),
       ]);
       final h = await harness(fake);
-      await h.agent.prompt('run one');
-      await h.agent.prompt('run two');
-      await h.agent.prompt('run three');
+      fake.onCall = (index) {
+        if (index == 0) {
+          // Mid-detour steering: a user turn lands inside the detour span
+          // while the run is in flight.
+          h.agent.steer(UserMessage.text('steer: check /b instead'));
+        }
+      };
+      await h.agent.prompt('start');
 
-      // Each stale checkpoint closed exactly once, with its own goal kept.
-      final records = await autoClosedRecords(h.host.session!);
-      expect(records, hasLength(1));
-      expect(records.single.content, contains('first detour'));
-      expect(records.single.content, isNot(contains('second detour')));
+      // The queued rewind applied to the checkpoint it closed: the detour
+      // (steering + the batched exchange, refused checkpoint call included)
+      // is pruned from the live context, the report kept verbatim at the
+      // mark, nothing attached to a "new" checkpoint.
+      final messages = h.agent.state.messages;
+      expect(messages, hasLength(5));
+      expect(messages[4], isA<AssistantMessage>());
+      final retained = messages[3] as UserMessage;
+      expect(retained.content, report);
+      expect(fake.contexts.last.messages, hasLength(4));
+      expect((fake.contexts.last.messages.last as UserMessage).content, report);
 
-      // The second checkpoint is still active (never auto-closed twice, no
-      // cross-checkpoint interference); a rewind against it behaves as
-      // before — and after it completes, no second close ever fires.
-      expect(h.controller.activeCheckpoint!.goal, 'second detour');
-      final rewind = h.controller.tools.firstWhere(
-        (t) => t.name == rewindToolName,
-      );
-      final result = await rewind.execute({'report': 'late findings'}, null,
-          null);
+      // No zombie and no auto-close audit: the checkpoint closed via the
+      // rewind (branch summary + rewind report), not via auto-close.
+      expect(h.controller.activeCheckpoint, isNull);
+      expect(h.controller.lastCompletedRewind!.report, report);
+      final session = h.host.session!;
+      final branch = await activeBranch(session);
       expect(
-        result.content.whereType<TextContent>().single.text,
-        contains('Rewind requested'),
+        branch.whereType<CustomMessageRecord>().where(
+          (r) => r.customType == checkpointAutoClosedCustomType,
+        ),
+        isEmpty,
       );
-      final afterRewind = await autoClosedRecords(h.host.session!);
-      expect(afterRewind, hasLength(1));
+      final rewindReport = branch
+          .whereType<CustomMessageRecord>()
+          .single; // the rewind-report record
+      expect(rewindReport.customType, rewindReportCustomType);
+
+      // Nothing is lost: the detour stayed in the tree on the abandoned
+      // branch — the steering message, the batched exchange, and the
+      // checkpoint call's clean refusal (it never auto-closed).
+      final abandoned = (await session.getEntries())
+          .whereType<MessageRecord>()
+          .map((r) => r.message)
+          .toList();
+      expect(
+        abandoned.whereType<UserMessage>().map((m) => m.content),
+        contains('steer: check /b instead'),
+      );
+      final refused = abandoned.whereType<ToolResultMessage>().firstWhere(
+        (m) => m.toolCallId == 'c3',
+      );
+      expect(refused.isError, isTrue);
+      expect(
+        refused.content.whereType<TextContent>().first.text,
+        contains('Rewind already requested'),
+      );
     });
 
-    test('the refusal names the active checkpoint and how to clear it',
-        () async {
+    // Review of PR #292 (minor): the auto-close audit record was appended
+    // without flushing the host-pending detour first, so the tree placed
+    // the close BEFORE the messages it closes over.
+    test(
+      'auto-close flushes the pending detour before the audit record',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([checkpointCall('c1', 'first detour')]),
+          _textTurn('run one done'),
+          _toolTurn([checkpointCall('c2', 'second detour')]),
+          _textTurn('done'),
+        ]);
+        final h = await harness(fake);
+        await h.agent.prompt('run one');
+        // The run-one tail (the closing assistant message) is host-pending;
+        // run two's prompt lands after it in the transcript.
+        await h.agent.prompt('run two');
+
+        final branch = await activeBranch(h.host.session!);
+        int indexWhereMessage(bool Function(Message message) test) =>
+            branch.indexWhere((r) => r is MessageRecord && test(r.message));
+        final auditIndex = branch.indexWhere(
+          (r) =>
+              r is CustomMessageRecord &&
+              r.customType == checkpointAutoClosedCustomType,
+        );
+        final runOneTail = indexWhereMessage(
+          (m) =>
+              m is AssistantMessage &&
+              m.content.whereType<TextContent>().any(
+                (b) => b.text == 'run one done',
+              ),
+        );
+        final runTwoPrompt = indexWhereMessage(
+          (m) => m is UserMessage && m.content == 'run two',
+        );
+        expect(auditIndex, greaterThan(runOneTail));
+        expect(auditIndex, greaterThan(runTwoPrompt));
+      },
+    );
+
+    // Review of PR #292 (minor): the userTurn staleness signal fired on
+    // non-turn user-role injections — widget events above all — ending a
+    // detour scope nobody ended. Only real user turns close the scope.
+    test('non-turn user-role injections (widget events, system notices) do '
+        'not make an in-scope checkpoint stale', () async {
       final fake = _FakeStreamFunction([
-        _toolTurn([checkpointCall('c1', 'audit the cache')]),
-        _toolTurn([checkpointCall('c2')]),
-        _textTurn('done'),
+        _toolTurn([checkpointCall('c1', 'ui detour')]),
+        _toolTurn([probeCall('/a', 'c2')]),
+        _textTurn('run one done'),
+        _textTurn('acknowledged the widget event'),
+        _toolTurn([checkpointCall('c3')]),
       ]);
       final h = await harness(fake);
       await h.agent.prompt('start');
+      // Widget interactions arrive as user messages prefixed
+      // `[widget <title>]` (dynamic_message contract)…
+      await h.agent.prompt('[widget Counter] clicked twice');
+      // …and background-job notices as `<system-notice>` envelopes. Both
+      // are user-ROLE injections, never the user's turn.
+      await h.agent.prompt(
+        '<system-notice>\nBackground shell job sh-1 exited(0).\n'
+        '</system-notice>',
+      );
 
-      final result = h.agent.state.messages.whereType<ToolResultMessage>().last;
+      // The checkpoint is still inside its detour scope: the next
+      // checkpoint gets the clean in-scope refusal, not an auto-close.
+      final result = h.agent.state.messages
+          .whereType<ToolResultMessage>()
+          .firstWhere((m) => m.toolCallId == 'c3');
       expect(result.isError, isTrue);
-      final text = result.content.whereType<TextContent>().first.text;
-      expect(text, contains('Checkpoint already active'));
-      expect(text, contains('goal: audit the cache'));
-      expect(text, contains('age:'));
-      expect(text, contains('anchored at message'));
-      expect(text, contains('rewind'));
-      // The scoped checkpoint survives the refusal untouched.
-      expect(h.controller.activeCheckpoint!.goal, 'audit the cache');
+      expect(
+        result.content.whereType<TextContent>().first.text,
+        contains('Checkpoint already active'),
+      );
+      expect(h.controller.activeCheckpoint!.goal, 'ui detour');
+      expect(await autoClosedRecords(h.host.session!), isEmpty);
     });
   });
 }
