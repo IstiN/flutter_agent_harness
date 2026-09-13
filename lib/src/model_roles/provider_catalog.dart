@@ -280,8 +280,119 @@ ProviderSpec? catalogProvider(String name) {
   return spec;
 }
 
+/// Per-family maximum OUTPUT token ceilings for Claude models, ported from
+/// kimi-code's `_modelOutputCeilings` (issue #273): `family ->
+/// 'major.minor' -> maxOutputTokens`. Anthropic raised output caps from
+/// 4096 (3.x) through 32768/64000 (4.x) to 128000 (4.6+), but the provider
+/// specs' blanket `maxTokens: 16384` clamps every model to the old floor;
+/// this table is the per-model correction.
+const _modelOutputCeilings = <String, Map<String, int>>{
+  'opus': {
+    '3.0': 4096,
+    '4.0': 32768,
+    '4.1': 32768,
+    '4.5': 64000,
+    '4.6': 128000,
+    '4.7': 128000,
+    '4.8': 128000,
+  },
+  'sonnet': {
+    '3.0': 4096,
+    '3.5': 8192,
+    '3.7': 8192,
+    '4.0': 64000,
+    '4.1': 64000,
+    '4.2': 64000,
+    '4.3': 64000,
+    '4.4': 64000,
+    '4.5': 64000,
+    '4.6': 128000,
+    '5.0': 128000,
+  },
+  'haiku': {
+    '3.0': 4096,
+    '3.5': 8192,
+    '4.5': 64000,
+  },
+};
+
+/// Conservative fallback for a Claude model the table cannot pin (kimi-code's
+/// unknown-fallback): allow the largest documented cap and let the API
+/// reject, rather than silently truncating a modern response at 16384.
+const int _unknownClaudeOutputCeiling = 128000;
+
+/// The ceiling-table step of max-output-token resolution for [modelId]:
+/// per-model config override (caller-side) > this table > provider default
+/// (caller-side). Null is the table MISS — ids without `claude`
+/// (openai-compatible custom models, glm, kimi, ...) ride the caller's
+/// provider default unchanged.
+///
+/// Ported from kimi-code (issue #273). Resolution over the normalized id
+/// (lowercased, `_` → `-`):
+/// - no `claude` substring → null;
+/// - family (`opus`|`sonnet`|`haiku`) + version, from two regexes:
+///   (a) version AFTER the family:
+///   `(?:^|-)(opus|sonnet|haiku)(?:-?(\d{1,2})(?:[.-](\d{1,2}))?(?=[-.]|$))?`
+///   — `claude-opus-4-5-20251101` → (4,5), `claude-opus-4.5` → (4,5),
+///   `claude-opus-4` → (4,0); the `\d{1,2}` + `[-.]|$` lookahead rejects
+///   date suffixes (`claude-3-opus-20240229` never parses `20240229`);
+///   (b) no version from (a): one BEFORE the family, matched over the text
+///   preceding it with `(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)` —
+///   `claude-3-opus` → (3,0), `claude-3-5-sonnet` → (3,5);
+/// - the largest catalogued (major,minor) ≤ the parsed version wins (an
+///   exact hit is that maximum, so one scan serves both: opus-4.9 rides
+///   4.8's 128000, sonnet-4.7 falls to 4.6's); nothing catalogued ≤ it, an
+///   unparseable version, or no known family → [_unknownClaudeOutputCeiling]
+///   (AC2: totally unknown Claude → conservative fallback).
+int? resolveModelMaxOutputTokens(String modelId) {
+  final id = modelId.toLowerCase().replaceAll('_', '-');
+  if (!id.contains('claude')) return null;
+
+  final match = RegExp(
+    r'(?:^|-)(opus|sonnet|haiku)(?:-?(\d{1,2})(?:[.-](\d{1,2}))?(?=[-.]|$))?',
+  ).firstMatch(id);
+  if (match == null) return _unknownClaudeOutputCeiling;
+  final table = _modelOutputCeilings[match.group(1)!]!;
+
+  int major;
+  int minor;
+  final after = match.group(2);
+  if (after != null) {
+    major = int.parse(after);
+    minor = match.group(3) == null ? 0 : int.parse(match.group(3)!);
+  } else {
+    final before = RegExp(r'(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)')
+        .firstMatch(id.substring(0, match.start));
+    if (before == null) return _unknownClaudeOutputCeiling;
+    major = int.parse(before.group(1)!);
+    minor = before.group(2) == null ? 0 : int.parse(before.group(2)!);
+  }
+
+  // Largest catalogued version ≤ the parsed one; monotonic
+  // `major*100+minor` keys keep the comparison integer-simple.
+  final given = major * 100 + minor;
+  int? bestCeiling;
+  var bestVersion = -1;
+  for (final entry in table.entries) {
+    final dot = entry.key.indexOf('.');
+    final version =
+        int.parse(entry.key.substring(0, dot)) * 100 +
+        int.parse(entry.key.substring(dot + 1));
+    if (version > given) continue;
+    if (version > bestVersion) {
+      bestVersion = version;
+      bestCeiling = entry.value;
+    }
+  }
+  return bestCeiling ?? _unknownClaudeOutputCeiling;
+}
+
 /// Builds a [Model] for [provider]/[modelId] with catalog defaults, overrid-
 /// able per reference (see `ModelRef`).
+///
+/// `maxTokens` resolution order: the explicit override, then the Claude
+/// ceiling table ([resolveModelMaxOutputTokens]), then the provider spec
+/// default — per-model reality beats the blanket 16384.
 ///
 /// Throws [ConfigException] for unknown providers.
 Model buildCatalogModel(
@@ -307,7 +418,10 @@ Model buildCatalogModel(
     reasoning: spec.reasoning,
     input: spec.input,
     contextWindow: contextWindow ?? spec.contextWindow,
-    maxTokens: maxTokens ?? spec.maxTokens,
+    maxTokens:
+        maxTokens ??
+        resolveModelMaxOutputTokens(modelId) ??
+        spec.maxTokens,
   );
 }
 
@@ -321,6 +435,8 @@ Model buildCatalogModel(
 ///
 /// Historical behavior preserved: `openai-completions` with a custom
 /// [baseUrl] reports provider `openai` instead of `openrouter`.
+/// `maxTokens` resolves like [buildCatalogModel]: ceiling table
+/// ([resolveModelMaxOutputTokens]) first, provider spec default on a miss.
 Model buildCliDefaultModel(
   String providerKind, {
   String? modelId,
@@ -346,6 +462,7 @@ Model buildCliDefaultModel(
     // No provider has a default model — the choice is always explicit.
     throw ConfigException('provider "$providerKind" requires --model <id>');
   }
+  final maxTokens = resolveModelMaxOutputTokens(id) ?? spec.maxTokens;
   return Model(
     id: id,
     name: id,
@@ -355,7 +472,7 @@ Model buildCliDefaultModel(
     reasoning: spec.reasoning,
     input: spec.input,
     contextWindow: spec.contextWindow,
-    maxTokens: spec.maxTokens,
+    maxTokens: maxTokens,
   );
 }
 

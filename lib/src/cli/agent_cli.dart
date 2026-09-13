@@ -465,6 +465,7 @@ class AgentCli {
       // lands in fa.log with the session id.
       onRunIdleTimeout: (error) =>
           _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
+      contextWindowCap: config.contextWindowCap,
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
@@ -2735,8 +2736,18 @@ class AgentCli {
   CompactionSettings get _effectiveCompactionSettings {
     final override = config.compactionSettings;
     if (override != null) return override;
-    return CompactionSettings.forWindow(_agent.state.model.contextWindow);
+    return CompactionSettings.forWindow(_effectiveContextWindow);
   }
+
+  /// The effective context window of the live model under the owner cap
+  /// (`agent.contextWindowCap`, issue #273): the compaction thresholds,
+  /// the ctx meter/footer, and the loop's over-window guard all key off
+  /// this basis — one clamp point ([effectiveContextWindow]), not one per
+  /// consumer.
+  int get _effectiveContextWindow => effectiveContextWindow(
+    _agent.state.model.contextWindow,
+    config.contextWindowCap,
+  );
 
   /// Writes a diagnostic line to the log file (`~/.fah/logs/fa.log`).
   /// TUI/stderr stay clean — the AutoCompactor hook streams progress to

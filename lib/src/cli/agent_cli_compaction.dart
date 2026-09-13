@@ -191,7 +191,7 @@ extension AgentCliCompactionRun on AgentCli {
     final tokens = _liveRequestTokens();
     if (!shouldCompact(
       tokens,
-      _agent.state.model.contextWindow,
+      _effectiveContextWindow,
       _effectiveCompactionSettings,
     )) {
       return false;
@@ -244,7 +244,7 @@ extension AgentCliCompactionRun on AgentCli {
     final ok = await AutoCompactorFactory(
       session: _session!,
       state: _agent.state,
-      window: _agent.state.model.contextWindow,
+      window: _effectiveContextWindow,
       settings: _effectiveCompactionSettings,
       sources: AutoCompactorSources(
         smolStream: smol?.stream,

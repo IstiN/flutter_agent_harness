@@ -128,6 +128,35 @@ void main() {
     });
   });
 
+  group('owner cap math (issue #273)', () {
+    test('effectiveContextWindow clamps the model window', () {
+      expect(effectiveContextWindow(1000000, 256000), 256000);
+      // At or above the model window the cap is a no-op.
+      expect(effectiveContextWindow(100000, 256000), 100000);
+      // Absent (or non-positive) cap = the raw window, byte-identical.
+      expect(effectiveContextWindow(100000, null), 100000);
+      expect(effectiveContextWindow(100000, 0), 100000);
+    });
+
+    test('the compaction threshold rides the capped window', () {
+      // A 1M-window model under a 256k cap triggers at the 256k basis
+      // (forWindow reserve 16384 → trigger 239616), never at the 1M one;
+      // uncapped, the same model triggers at 983616. The meter, the
+      // threshold and the loop guard all consume the same
+      // effectiveContextWindow basis.
+      final capped = effectiveContextWindow(1000000, 256000);
+      final uncapped = effectiveContextWindow(1000000, null);
+      expect(
+        shouldCompact(240000, capped, CompactionSettings.forWindow(capped)),
+        isTrue,
+      );
+      expect(
+        shouldCompact(240000, uncapped, CompactionSettings.forWindow(uncapped)),
+        isFalse,
+      );
+    });
+  });
+
   group('findCutPoint', () {
     test('keeps approximately keepRecentTokens, cutting on a user boundary', () {
       // Six messages of 100 tokens each (400 chars / 4).
