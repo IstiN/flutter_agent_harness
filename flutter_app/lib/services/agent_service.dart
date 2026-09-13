@@ -2702,19 +2702,22 @@ class AgentService extends ChangeNotifier
     if (session == null) return;
     final gen = _loadGeneration;
     _trajectory.reset();
-    var folded = 0;
-    for (final record in records ?? await session.getBranch()) {
-      _trajectory.append(record);
-      // Chunked fold (issue #199): yield the event loop every 100 records
-      // so long ledger rebuilds interleave frames instead of blocking one.
-      // A generation bump or session swap mid-fold stops the stale fold —
-      // it must not keep appending to the swapped session's ledger.
-      if (++folded % 100 == 0) {
-        if (gen != _loadGeneration || !identical(session, _session)) return;
-        await Future<void>.delayed(Duration.zero);
-        if (gen != _loadGeneration || !identical(session, _session)) return;
-      }
-    }
+    final sw = Stopwatch()..start();
+    final branch = records ?? await session.getBranch();
+    if (gen != _loadGeneration || !identical(session, _session)) return;
+    // One bulk snapshot (issue #262): the whole backfill is synchronous
+    // O(n) work — no intermediate snapshots exist to render, and the old
+    // per-append materialization was the O(n²) open stall. With no awaits
+    // inside, the fold is atomic for the event loop: a generation bump or
+    // session swap lands either fully before or fully after it (the #199
+    // E1 guard, now checked around the single synchronous block).
+    _trajectory.appendAll(branch);
+    AppLog.i(
+      'trajectory',
+      'backfill: ${branch.length} records, '
+          '${_trajectory.latest.records.length} rows in '
+          '${sw.elapsedMilliseconds}ms',
+    );
   }
 
   @override
