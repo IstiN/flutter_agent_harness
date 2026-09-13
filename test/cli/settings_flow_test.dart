@@ -36,12 +36,14 @@ void main() {
     Future<void> Function({String? url, String? name})? onDapHubConfigChanged,
     ModelRolesResolver? modelRolesResolver,
     MemoryConfig? memoryConfig,
+    String? homeDir,
   }) {
     return AgentCli(
       config: AgentCliConfig(
         model: model,
         apiKey: 'test-key',
         env: env,
+        homeDir: homeDir,
         sessionRoot: '/sessions',
         modelsConfig: modelsConfig,
         onModelsConfigChanged: onModelsConfigChanged,
@@ -1076,6 +1078,153 @@ void main() {
               'session-scope "no file change" promise leaks through the '
               'boot/change-hook config save',
         );
+      },
+    );
+
+    test('cancelled at the engine pick changes nothing', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      final flow = cli.startCompactionEngineFlow();
+      await waitForIt(() => io.out.toString().contains('compaction engine'));
+      io.interrupt();
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.config.liveCompactionEngine, isNull);
+      // The scope prompt never ran.
+      expect(
+        io.out.toString(),
+        isNot(contains('compaction engine — scope')),
+      );
+      final untouched = await env.readTextFile('/work/.fah/config.yaml');
+      expect(untouched.valueOrNull, isNull);
+      expect(fake.calls, 0);
+    });
+
+    test('cancelled at the scope pick changes nothing', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      final flow = cli.startCompactionEngineFlow();
+      await waitForIt(() => io.out.toString().contains('compaction engine'));
+      io.sendLine('1'); // classic
+      await waitForIt(
+        () => io.out.toString().contains('compaction engine — scope'),
+      );
+      io.interrupt();
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.config.liveCompactionEngine, isNull);
+      final untouched = await env.readTextFile('/work/.fah/config.yaml');
+      expect(untouched.valueOrNull, isNull);
+      expect(fake.calls, 0);
+    });
+
+    test(
+      'global scope writes the user config and goes live',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call, homeDir: '/home/u');
+        final run = cli.run();
+
+        final flow = cli.startCompactionEngineFlow();
+        await waitForIt(() => io.out.toString().contains('compaction engine'));
+        io.sendLine('2'); // structured
+        await waitForIt(
+          () => io.out.toString().contains('compaction engine — scope'),
+        );
+        io.sendLine('3'); // global
+        await waitForIt(
+          () => io.out.toString().contains(
+            'compaction.engine = structured → /home/u/.fah/config.yaml',
+          ),
+        );
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        expect(cli.config.liveCompactionEngine, CompactionEngine.structured);
+        final written = (await env.readTextFile(
+          '/home/u/.fah/config.yaml',
+        )).valueOrNull;
+        expect(written, isNotNull);
+        // The written file parses through the REAL boot parser.
+        final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+        expect(parsed.compactionEngine, CompactionEngine.structured);
+        // The project config is untouched by a global-scope pick.
+        final project = await env.readTextFile('/work/.fah/config.yaml');
+        expect(project.valueOrNull, isNull);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'global scope without a home directory refuses to save',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call); // homeDir is null in the test config
+        final run = cli.run();
+
+        final flow = cli.startCompactionEngineFlow();
+        await waitForIt(() => io.out.toString().contains('compaction engine'));
+        io.sendLine('2'); // structured
+        await waitForIt(
+          () => io.out.toString().contains('compaction engine — scope'),
+        );
+        io.sendLine('3'); // global
+        await waitForIt(
+          () => io.out.toString().contains(
+            'compaction: no user config on this host — not saved',
+          ),
+        );
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        // Refused before any write — nothing went live, nothing on disk.
+        expect(cli.config.liveCompactionEngine, isNull);
+        final untouched = await env.readTextFile('/work/.fah/config.yaml');
+        expect(untouched.valueOrNull, isNull);
+        expect(fake.calls, 0);
+      },
+    );
+
+    test(
+      'project scope keeps the live engine when the config read fails',
+      () async {
+        final fake = FakeStreamFunction([textTurn('ok')]);
+        final cli = cliFor(fake.call);
+        final run = cli.run();
+        // A directory where the project config should be — the upsert
+        // must refuse to clobber it and must not go live.
+        await env.createDir('/work');
+        await env.createDir('/work/.fah');
+        await env.createDir('/work/.fah/config.yaml');
+
+        final flow = cli.startCompactionEngineFlow();
+        await waitForIt(() => io.out.toString().contains('compaction engine'));
+        io.sendLine('2'); // structured
+        await waitForIt(
+          () => io.out.toString().contains('compaction engine — scope'),
+        );
+        io.sendLine('2'); // project
+        await waitForIt(
+          () => io.out.toString().contains(
+            'cannot read /work/.fah/config.yaml',
+          ),
+        );
+        await flow;
+        io.sendLine('/exit');
+        await run;
+
+        expect(cli.config.liveCompactionEngine, isNull);
+        expect(fake.calls, 0);
       },
     );
   });

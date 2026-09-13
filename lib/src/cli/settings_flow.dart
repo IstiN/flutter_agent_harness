@@ -412,67 +412,102 @@ extension SettingsFlow on AgentCli {
   /// write is surgical (other sections survive byte-for-byte) and the
   /// edited file is validated with the REAL parser before it is written —
   /// the flow can never persist a file the next boot would reject.
+  /// Cancelling either pick aborts silently.
   Future<void> startCompactionEngineFlow() async {
-    const engines = [CompactionEngine.classic, CompactionEngine.structured];
-    final current = _effectiveCompactionEngine();
-    final picked = await _pickOption('compaction engine', [
-      for (final engine in engines)
-        (
-          engine.value,
-          engine == CompactionEngine.classic ? 'Classic' : 'Structured',
-          engine == CompactionEngine.classic
-              ? 'lossy prefix summary'
-              : 'judge-hide + checkpoint passes',
-        ),
-    ], initialKey: current.value);
-    if (picked == null) return;
-    final engine = CompactionEngine.tryParse(picked, label: 'settings')!;
-    final scope = await _pickOption('compaction engine — scope', [
-      ('session', 'Session', 'this session only (no file change)'),
-      ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
-      ('global', 'Global', _userConfigPath() ?? 'unavailable on this host'),
-    ]);
+    final engine = await _pickCompactionEngine();
+    if (engine == null) return;
+    final scope = await _pickCompactionScope();
     if (scope == null) return;
-    switch (scope) {
-      case 'session':
-        config.liveCompactionEngine = engine;
-        io.writeln(
-          'compaction engine → ${engine.value} (this session; applies at '
-          'the next compaction)',
-        );
-      case 'project':
-        if (await _upsertConfigYaml(
-          const ['compaction', 'engine'],
-          engine.value,
-          projectScope: true,
-          validate: (node) =>
-              CompactionEngine.fromSection(node, label: 'settings flow'),
-        )) {
-          config.liveCompactionEngine = engine;
-        }
-      case 'global':
-        final path = _userConfigPath();
-        if (path == null) {
-          io.writeln('compaction: no user config on this host — not saved');
-          return;
-        }
-        if (await _upsertConfigYaml(
-          const ['compaction', 'engine'],
-          engine.value,
-          projectScope: false,
-          validate: (node) =>
-              CompactionEngine.fromSection(node, label: 'settings flow'),
-        )) {
-          config.liveCompactionEngine = engine;
-        }
+    await _applyCompactionEngineScope(engine, scope);
+  }
+
+  /// The engine menu of [_pickCompactionEngine]: one row per engine, the
+  /// effective one marked `(current)` by the picker. Pure builder.
+  List<FlowOption> _compactionEngineOptions() => [
+        for (final engine in const [
+          CompactionEngine.classic,
+          CompactionEngine.structured,
+        ])
+          (
+            engine.value,
+            engine == CompactionEngine.classic ? 'Classic' : 'Structured',
+            engine == CompactionEngine.classic
+                ? 'lossy prefix summary'
+                : 'judge-hide + checkpoint passes',
+          ),
+      ];
+
+  /// Step 1 of [startCompactionEngineFlow]: pick the engine (the current
+  /// effective one preselected); null on cancel.
+  Future<CompactionEngine?> _pickCompactionEngine() async {
+    final picked = await _pickOption(
+      'compaction engine',
+      _compactionEngineOptions(),
+      initialKey: _effectiveCompactionEngine().value,
+    );
+    return picked == null
+        ? null
+        : CompactionEngine.tryParse(picked, label: 'settings');
+  }
+
+  /// Step 2 of [startCompactionEngineFlow]: pick the scope the engine
+  /// applies in (session = live only); null on cancel.
+  Future<String?> _pickCompactionScope() => _pickOption(
+        'compaction engine — scope',
+        [
+          ('session', 'Session', 'this session only (no file change)'),
+          ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
+          ('global', 'Global', _userConfigPath() ?? 'unavailable on this host'),
+        ],
+      );
+
+  /// Step 3 of [startCompactionEngineFlow]: apply [engine] in [scope] —
+  /// `session` flips the live override only; `project`/`global` persist
+  /// the validated yaml section first and go live only when the write
+  /// lands.
+  Future<void> _applyCompactionEngineScope(
+    CompactionEngine engine,
+    String scope,
+  ) async {
+    if (scope == 'session') {
+      config.liveCompactionEngine = engine;
+      io.writeln(
+        'compaction engine → ${engine.value} (this session; applies at '
+        'the next compaction)',
+      );
+      return;
+    }
+    final projectScope = scope == 'project';
+    if (!projectScope && _userConfigPath() == null) {
+      io.writeln('compaction: no user config on this host — not saved');
+      return;
+    }
+    if (await _writeCompactionEngineYaml(engine, projectScope: projectScope)) {
+      config.liveCompactionEngine = engine;
     }
   }
 
-  /// The engine the next compaction pass will use (live override wins).
+  /// The confirm/write step shared by the `project` and `global` scopes:
+  /// the surgical `compaction.engine` upsert, validated with the real
+  /// parser before the file is written.
+  Future<bool> _writeCompactionEngineYaml(
+    CompactionEngine engine, {
+    required bool projectScope,
+  }) =>
+      _upsertConfigYaml(
+        const ['compaction', 'engine'],
+        engine.value,
+        projectScope: projectScope,
+        validate: (node) =>
+            CompactionEngine.fromSection(node, label: 'settings flow'),
+      );
+
+  /// The engine the next compaction pass will use (live override wins;
+  /// structured is the resolved default since #287/#295).
   CompactionEngine _effectiveCompactionEngine() =>
       config.liveCompactionEngine ??
       config.compactionEngine ??
-      CompactionEngine.classic;
+      CompactionEngine.structured;
 
   /// The settings-hub row and `/settings` summary label for the engine.
   String _compactionStatusLabel() => _effectiveCompactionEngine().value;
