@@ -117,6 +117,8 @@ final class Program {
   int _fps = 60;
   int? _width;
   int? _height;
+  int? _lastCols;
+  int? _lastRows;
   bool _disableInput = false;
   bool _disableRenderer = false;
   bool _disableCatchPanics = false;
@@ -507,6 +509,17 @@ final class Program {
           (msg.value == 1 || msg.value == 2 || msg.value == 3)) {
         _unicodeCoreSupported = true;
         _renderer?.setUnicodeCore(true);
+      }
+      if (msg is WindowSizeMsg &&
+          (msg.width != _lastCols || msg.height != _lastRows)) {
+        // Geometry changed: drop every cached frame assumption so the next
+        // paint is ONE full repaint and the diff resumes from the new size
+        // (issue #274 MAJOR2 — a shrink can no longer walk stale rows into
+        // the clamped bottom row). The message still reaches model.update
+        // below so models can re-layout.
+        _lastCols = msg.width;
+        _lastRows = msg.height;
+        _renderer?.invalidate();
       }
       if (msg is MouseMsg) {
         final onMouse = lastRenderedView?.onMouse;

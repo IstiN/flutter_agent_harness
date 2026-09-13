@@ -305,8 +305,7 @@ void main() {
 
     test('AC1: scroll-by-1 down is one SD op plus only the new top row', () {
       final prev = [for (var i = 0; i < 10; i++) 'row-$i'].join('\n');
-      final next = ['row-new', for (var i = 0; i < 9; i++) 'row-$i']
-          .join('\n');
+      final next = ['row-new', for (var i = 0; i < 9; i++) 'row-$i'].join('\n');
       renderer.render(newView(prev));
       buf.clear();
       renderer.render(newView(next));
@@ -314,9 +313,10 @@ void main() {
     });
 
     test('AC1: styled rows ride the scroll — op + plain tail only', () {
-      final styled = const Style(foregroundRgb: RgbColor(0, 255, 0)).render('g4');
-      final prev = [for (var i = 0; i < 10; i++) i == 4 ? styled : 'row-$i']
-          .join('\n');
+      final styled =
+          const Style(foregroundRgb: RgbColor(0, 255, 0)).render('g4');
+      final prev =
+          [for (var i = 0; i < 10; i++) i == 4 ? styled : 'row-$i'].join('\n');
       final next = [
         for (var i = 1; i <= 10; i++) i == 4 ? styled : 'row-$i',
       ].join('\n');
@@ -336,29 +336,59 @@ void main() {
       expect(buf.toString(), '');
     });
 
-    test('AC1: styled rows outside a pure scroll take the cell-diff path', () {
+    test('AC3: budget-exceeded noise falls back to the cell diff', () {
       final styled =
-          const Style(foregroundRgb: RgbColor(0, 255, 0)).render('g0');
-      final prev = [for (var i = 0; i < 5; i++) 'r$i', styled].join('\n');
-      final next = [for (var i = 1; i <= 5; i++) 'r$i', styled].join('\n');
+          const Style(foregroundRgb: RgbColor(0, 255, 0)).render('g4');
+      final prev = [for (var i = 0; i < 4; i++) 'r$i', styled].join('\n');
+      final next = ['r1', 'x2', 'x3', 'r4', styled].join('\n');
       renderer.render(newView(prev));
       buf.clear();
       renderer.render(newView(next));
-      // A pinned bottom row breaks the pure-scroll shape — the frame falls
-      // back to the optimal cell diff (5 changed cells, one CUP each).
-      final cups = RegExp(r'\x1b\[\d+;\d+H').allMatches(buf.toString());
-      expect(cups.length, 5);
+      final out = buf.toString();
+      // Three noisy overlap rows blow the mismatch budget, and no smaller
+      // shift matches a majority — no scroll op may fire for any k (also
+      // rules out the degenerate zero-match k a budget-only check allows).
+      expect(out.contains('S') || out.contains('T'), isFalse);
+      // Styled row unchanged; 4 changed rows, one CUP each — the optimal
+      // cell-diff fallback.
+      expect(RegExp(r'\x1b\[\d+;\d+H').allMatches(out).length, 4);
     });
 
-    test('E1: reflow repaints every row once, then diffs cleanly', () {
-      renderer.render(newView('aaaa\nbbbb'));
+    test('E1: resize (invalidate) is ONE full repaint, then diffs cleanly', () {
+      renderer.render(newView('aaaa\nbbbb\ncccc\ndddd'));
       buf.clear();
-      renderer.render(newView('aa\nbb'));
-      final out = buf.toString();
-      expect(RegExp(r'\x1b\[\d+;\d+H').allMatches(out).length, 2);
+      renderer.invalidate();
+      renderer.render(newView('ee\nff'));
+      // One full repaint: every row cleared and rewritten from column 1 —
+      // never the shrink-era stale-row CUP walk.
+      expect(
+        buf.toString(),
+        '\x1b[1;1H\x1b[K\x1b[2;1H\x1b[K\x1b[1;1Hee\x1b[2;1Hff',
+      );
       buf.clear();
-      renderer.render(newView('aa\nbb'));
-      expect(buf.toString(), '');
+      renderer.render(newView('ee\nfX'));
+      expect(buf.toString(), '\x1b[2;2HX');
+    });
+
+    test('AC3: one noisy chrome row keeps the scroll op and is repainted', () {
+      final prev = [for (var i = 0; i < 10; i++) 'row-$i'].join('\n');
+      final next = [
+        'row-1',
+        'row-2',
+        'spinner', // live chrome rewrote this overlap row across the shift
+        'row-4',
+        'row-5',
+        'row-6',
+        'row-7',
+        'row-8',
+        'row-9',
+        'row-10',
+      ].join('\n');
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      expect(buf.toString(),
+          '\x1b[1S\x1b[10;1Hrow-10\x1b[K\x1b[3;1Hspinner\x1b[K');
     });
 
     test('E2: without sync negotiation no 2026 escapes ever appear', () {
