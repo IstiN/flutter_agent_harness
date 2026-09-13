@@ -202,7 +202,9 @@ void main() {
     final outer = (messages[0] as UserMessage).content as String;
     expect(outer, startsWith('[2-7:ckpt'));
     expect(outer, contains('long debugging arc'));
-    expect(outer, isNot(contains('arc one')));
+    // The hidden-segments index names every covered segment (issue #266
+    // C1) — the inner checkpoint appears as its own row, preview-only.
+    expect(outer, matches(RegExp(r'\[\d+:hidden·ckpt·\d+·"arc one"\]')));
     expect((messages[1] as UserMessage).content as String, 'thanks');
     expect(validateToolPairing(messages), isEmpty);
   });
@@ -325,16 +327,17 @@ void main() {
         .join('\n');
     // Visible legacy projects through the classic projection.
     expect(text, contains('PROJECTED r2'));
-    // Hidden legacy/branch records never leak their summaries.
-    expect(text, isNot(contains('hidden legacy summary')));
-    expect(text, isNot(contains('old branch text')));
-    // And render as one-line markers with their kind.
-    expect(text, matches(RegExp(r'\[5:hidden·legacy-ckpt·\d+\]')));
-    expect(text, contains('[6:hidden·branch-summary·'));
+    // Hidden legacy/branch records never leak their FULL summaries — the
+    // marker preview (issue #266 F4) shows the first line only.
+    expect(
+      text,
+      matches(RegExp(r'\[5:hidden·legacy-ckpt·\d+·"hidden legacy summary"\]')),
+    );
+    expect(text, matches(RegExp(r'\[6:hidden·branch-summary·\d+·')));
     expect(
       text,
       contains('[7:hidden·branch-summary·0]'),
-      reason: 'empty branch summary tokenizes to zero',
+      reason: 'empty branch summary tokenizes to zero and previews empty',
     );
   });
 

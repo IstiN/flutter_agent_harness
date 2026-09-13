@@ -387,6 +387,17 @@ void main() {
               null,
             );
             final text = _flat(result.content);
+            // Visible records refuse honestly — their bytes never left
+            // the context. Hidden/covered/folded ones expand with the
+            // original content (issue #266 F2).
+            if (text.endsWith('is visible, nothing to expand')) {
+              expect(
+                text,
+                'record ${entry.key} is visible, nothing to expand',
+                reason: 'seq ${entry.key} refused as visible (seed $seed)',
+              );
+              continue;
+            }
             expect(
               text,
               contains(originalTexts[entry.key]!),
@@ -1026,14 +1037,17 @@ void main() {
       expect(viewText, contains('level-2'));
       expect(viewText, isNot(contains('rotate the keys')));
 
-      // The model expands the outer checkpoint first (sees its text and
-      // what it covers), then digs the buried record by its flat id.
+      // The outer checkpoint marker is visible — its text and covered
+      // index already render, so expanding its id is refused (F2). The
+      // two-expand dig goes through the INNER checkpoint (covered →
+      // expandable), whose own index names the buried record.
+      final innerSeq = seqs.seqOf(ckpt1.id)!;
       final fake = _FakeStream([
         _toolTurn([
           ToolCall(
             id: 'e1',
             name: compactExpandToolName,
-            arguments: {'target': '$outerSeq'},
+            arguments: {'target': '$innerSeq'},
           ),
         ]),
         _toolTurn([
@@ -1071,7 +1085,7 @@ void main() {
                 .toList(),
           )
           .toList();
-      expect(expansions.first.join('\n'), contains('level-2'));
+      expect(expansions.first.join('\n'), contains('level-1'));
       expect(expansions.last.join('\n'), contains('rotate the keys on Friday'));
       final answer = agent.state.messages.last as AssistantMessage;
       expect(_textOf(answer), contains('rotate the keys on Friday'));

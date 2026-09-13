@@ -173,13 +173,23 @@ void main() {
       final messages = await session.buildContextMessages();
       expect(messages.first, isA<UserMessage>());
       expect((messages.first as UserMessage).content, contains('SECOND'));
+      // Only the latest compaction projects a summary. The folded FIRST
+      // checkpoint survives solely as a hidden-segments index row riding
+      // the SECOND summary (issue #266 F1a) — discoverable, not a
+      // standalone message.
+      final firstMentions = messages
+          .where(
+            (m) =>
+                m is UserMessage &&
+                m.content is String &&
+                (m.content as String).contains('FIRST'),
+          )
+          .toList();
+      expect(firstMentions, hasLength(1));
+      expect(firstMentions.single, same(messages.first));
       expect(
-        messages.where((m) {
-          return m is UserMessage &&
-              m.content is String &&
-              (m.content as String).contains('FIRST');
-        }),
-        isEmpty,
+        (firstMentions.single as UserMessage).content as String,
+        matches(RegExp(r'\[\d+:hidden·legacy-ckpt·\d+·"FIRST')),
       );
     });
 
