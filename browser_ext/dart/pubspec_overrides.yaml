@@ -1,7 +1,8 @@
-# The root package pins the patched vendored dart_tui fork
-# (keyboard-protocol fixes, LineEditor) via its own pubspec_overrides.yaml;
-# path overrides do not travel through the fah path dep, so this package
-# needs the same pin or fa_tui.dart fails to load against hosted dart_tui.
+# Local + CI builds resolve the SAME patched vendored dart_tui fork as the
+# root package (keyboard protocol fixes + LineEditor from #275/#307);
+# without this override browser_ext/dart pulls hosted dart_tui 2.x, which
+# has no LineEditor - and any test compiling the root package's fa_tui
+# fails (issue #314 CI). This file never ships to pub.dev.
 dependency_overrides:
   dart_tui:
     path: ../../vendor/dart_tui
