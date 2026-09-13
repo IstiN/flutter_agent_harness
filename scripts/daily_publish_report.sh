@@ -197,6 +197,8 @@ esac
 
 process_leg testflight "TestFlight" "${LEG_TESTFLIGHT:-}" "${LEG_TESTFLIGHT_URL:-}" \
   "$next_tag (est.)" "[release](https://github.com/${repo}/releases/tag/${next_tag})"
+process_leg play "Play (Android beta)" "${LEG_PLAY:-}" "${LEG_PLAY_URL:-}" \
+  "$next_tag (est.)" "[release](https://github.com/${repo}/releases/tag/${next_tag})"
 process_leg pubdev "pub.dev" "${LEG_PUBDEV:-}" "${LEG_PUBDEV_URL:-}" \
   "${LEG_PUBDEV_PUBSPEC:-}" "[pub.dev](https://pub.dev/packages/flutter_agent_harness)" "$pubdev_override"
 process_leg cli "CLI + macOS desktop" "${LEG_CLI:-}" "${LEG_CLI_URL:-}" \
