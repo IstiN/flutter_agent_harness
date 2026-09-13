@@ -803,7 +803,18 @@ extension ApprovalCommands on AgentCli {
       return;
     }
     if (jobs.isNotEmpty) {
-      for (final line in taskJobLines(jobs, dim: _style.dim)) {
+      // Issue #222 AC5: the supersedes chain from the retained-subagent
+      // registry folds respawn generations into ONE logical /tasks entry.
+      final handles = _taskConfig.subagentManager?.handles ?? const [];
+      final supersedesOf = <String, String>{
+        for (final handle in handles)
+          if (handle.supersedes != null) handle.id: handle.supersedes!,
+      };
+      for (final line in taskJobLines(
+        jobs,
+        dim: _style.dim,
+        supersedesOf: supersedesOf,
+      )) {
         io.writeln(line);
       }
     }

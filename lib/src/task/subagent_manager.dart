@@ -171,6 +171,7 @@ final class SubagentManager {
     required String name,
     required String agentType,
     required String task,
+    String context = '',
   }) async {
     final now = DateTime.now().toUtc().toIso8601String();
     final handle = SubagentHandle(
@@ -181,14 +182,28 @@ final class SubagentManager {
       sessionId: '$parentSessionId/$id',
       createdAt: now,
       task: task,
+      context: context,
     )..lastActivity = now;
+    // Issue #222: an explicit fresh respawn after a failed same-named child
+    // links back to the latest previous generation so UIs can collapse the
+    // chain (no silent clones — the link makes the chain visible). LIVE
+    // same-named children never link: two parallel batches may share a
+    // display name, and a live child is not a superseded generation —
+    // linking it would hide a running agent from the collapsed views.
+    for (final existing in _handles.values) {
+      if (existing.name == name && existing.isTerminal) {
+        handle.supersedes = existing.id;
+      }
+    }
     _handles[id] = handle;
     _emit(handle);
     _persist();
     return handle;
   }
 
-  /// Updates a handle's status and emits an event.
+  /// Updates a handle's status and emits an event. [clearError] drops the
+  /// recorded failure — the resume path (issue #222) clears the old error
+  /// when a failed child goes back to running.
   Future<void> update(
     String id, {
     SubagentStatus? status,
@@ -196,6 +211,7 @@ final class SubagentManager {
     int? requests,
     String? modelId,
     String? error,
+    bool clearError = false,
   }) async {
     final handle = _handles[id];
     if (handle == null) return;
@@ -204,6 +220,7 @@ final class SubagentManager {
     if (requests != null) handle.requests += requests;
     if (modelId != null) handle.modelId = modelId;
     if (error != null) handle.error = error;
+    if (clearError) handle.error = null;
     handle.lastActivity = DateTime.now().toUtc().toIso8601String();
     _emit(handle);
     _persist();
@@ -275,21 +292,47 @@ final class SubagentManager {
   /// (fabric only), a foreign `name@machine` address when the A2A gateway
   /// is wired (issue #27 phase 3), or a hub target the routing fabric
   /// resolves — hub peers (16-hex ids, display names, `#channels`) have no
-  /// local handle. Aborted children refuse messages.
+  /// local handle. Aborted children refuse messages; remote `a2a:` children
+  /// refuse them too (nothing drains their local inbox — see the guard).
   Future<void> _guardRecipient(String id, SubagentHandle? handle) async {
-    final deliverable =
-        handle != null ||
-        (id == selfId || id.contains('/')) && messaging != null ||
-        id.contains('@') && a2aGateway != null ||
-        await _hubResolvable(id);
-    if (!deliverable) {
+    if (!await _isDeliverable(id, handle)) {
       throw StateError(
         'unknown subagent "$id" — available: ${_handles.keys.join(', ')}',
       );
     }
+    final refusal = _localInboxRefusal(id, handle);
+    if (refusal != null) throw StateError(refusal);
+  }
+
+  /// Whether [id] names an address this manager can deliver into: a known
+  /// local handle, the [selfId] inbox or an absolute cross-instance
+  /// mailbox when the fabric is wired, a foreign `name@machine` address
+  /// when the A2A gateway is, or a hub target the routing fabric resolves.
+  Future<bool> _isDeliverable(String id, SubagentHandle? handle) async {
+    if (handle != null) return true;
+    if ((id == selfId || id.contains('/')) && messaging != null) return true;
+    if (id.contains('@') && a2aGateway != null) return true;
+    return _hubResolvable(id);
+  }
+
+  /// Why [handle] takes no further messages, or null when it does:
+  /// aborted children refuse everything; a remote `a2a:` child has NO
+  /// local loop draining its inbox (the remote prompt is assembled once,
+  /// at send time) — queueing mail for it is silent mail loss. Name the
+  /// real channel instead.
+  String? _localInboxRefusal(String id, SubagentHandle? handle) {
     if (handle?.status == SubagentStatus.aborted) {
-      throw StateError('subagent "$id" is aborted and takes no messages');
+      return 'subagent "$id" is aborted and takes no messages';
     }
+    if (handle != null && handle.agentType.startsWith('a2a:')) {
+      return (
+        'subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
+        'it has no local inbox to deliver into; follow up with a new '
+        'task item (agent ${handle.agentType}) carrying your message in '
+        'its task text'
+      );
+    }
+    return null;
   }
 
   /// Whether [id] resolves on the routing (hub) transport — consulted only
