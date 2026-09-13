@@ -106,6 +106,7 @@ export 'src/providers/openrouter_oauth.dart';
 export 'src/providers/provider_common.dart';
 export 'src/providers/transient_retry_stream.dart';
 export 'src/providers/remote_catalog.dart';
+export 'src/providers/thinking.dart';
 export 'src/redact/redaction_cli.dart';
 export 'src/redact/redaction_hooks.dart';
 export 'src/redact/redaction_pipeline.dart';

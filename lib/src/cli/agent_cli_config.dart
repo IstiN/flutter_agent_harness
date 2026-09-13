@@ -76,6 +76,7 @@ final class AgentCliConfig {
     this.codeMieGuidedSetupFn,
     this.compactionSettings,
     this.compactionEngine,
+    this.contextWindowCap,
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -119,6 +120,12 @@ final class AgentCliConfig {
   /// (global < project < `--compaction-engine` runtime flag). `null` keeps
   /// the classic engine — the default during structured incubation.
   final CompactionEngine? compactionEngine;
+
+  /// Owner-side effective context cap (`agent.contextWindowCap`, issue
+  /// #273), threaded into the [Agent] (loop guard) and into every consumer
+  /// of the effective window (compaction thresholds, ctx meter/footer).
+  /// `null` = uncapped.
+  final int? contextWindowCap;
 
   /// Optional fa_cube sandbox spec applied for the whole session (from the
   /// `--cube`/`--cube-config` flags or the `cube:` config section). The

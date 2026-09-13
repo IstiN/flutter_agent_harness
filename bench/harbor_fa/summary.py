@@ -9,8 +9,9 @@ top-level result.json is a file, not a dir, so the glob skips it) and
 prints a GitHub-flavoured-markdown resolution table, also appending it to
 $GITHUB_STEP_SUMMARY when set.
 
-Jobs whose dir name contains "modal" count as the GPU split; everything
-else is CPU (bench-4.0.yml names jobs fa-4.0-{docker,modal}-<shard>).
+Jobs named fa-4.0-<env>-gpu-<shard> count as the GPU split; everything
+else is CPU (bench-4.0.yml names jobs fa-4.0-<env>-<kind>-<shard>; the
+legacy fa-4.0-{docker,modal}-<shard> names map modal -> GPU).
 
 A trial is resolved when every verifier reward is 1.0; the resolution rate
 is resolved trials / attempted trials. harbor exits 0 even with unresolved
@@ -48,7 +49,14 @@ def main() -> int:
     splits: dict[str, list[dict]] = {"cpu": [], "gpu": []}
     job_dirs = [d for d in sorted(args.jobs_dir.glob("*")) if d.is_dir()]
     for job_dir in job_dirs:
-        split = "gpu" if "modal" in job_dir.name else "cpu"
+        name = job_dir.name
+        if "-gpu-" in name:
+            split = "gpu"
+        elif "-cpu-" in name:
+            split = "cpu"
+        else:
+            # legacy scheme: docker shards were CPU, modal was the GPU leg
+            split = "gpu" if "modal" in name else "cpu"
         splits[split].extend(_trial_rows(job_dir))
 
     lines = ["### fa on Terminal-Bench 4.0", ""]
@@ -60,20 +68,19 @@ def main() -> int:
     else:
         total_resolved = total_rows = 0
         table = ["| split | resolved | rate |", "|---|---|---|"]
-        for split, label in (("cpu", "CPU (docker)"), ("gpu", "GPU (Modal)")):
+        for split, label in (("cpu", "CPU shards"), ("gpu", "GPU shards")):
             rows = splits[split]
             if not rows:
                 table.append(f"| {label} | 0/0 | no trials |")
                 continue
-            resolved = sum(1 for r in rows if r["resolved"])
+            scored = [r for r in rows if not r["exception"]]
+            errored = len(rows) - len(scored)
+            resolved = sum(1 for r in scored if r["resolved"])
             total_resolved += resolved
-            total_rows += len(rows)
-            table.append(
-                f"| {label} | {resolved}/{len(rows)} | {resolved / len(rows):.1%} |"
-            )
-
-        rate = total_resolved / total_rows if total_rows else 0.0
-        lines.append(f"**Resolution: {total_resolved}/{total_rows} = {rate:.1%}**")
+            total_rows += len(scored)
+            note = f"{errored} errored" if errored else f"{resolved / len(scored):.1%}"
+            table.append(f"| {label} | {resolved}/{len(scored)} | {note} |")
+        lines.append(f"**Resolution: {total_resolved}/{total_rows} scored trials**")
         lines.append("")
         lines.extend(table)
 
@@ -85,8 +92,11 @@ def main() -> int:
         if exceptions:
             lines.append("")
             lines.append(
-                "Errored trials: "
+                "Errored trials (harness/infra failure, not scored): "
                 + ", ".join(f"{k} ×{v}" for k, v in sorted(exceptions.items()))
+            )
+            problems.append(
+                f"{sum(exceptions.values())} trial(s) errored before producing a verdict"
             )
 
         expected = args.expected_trials

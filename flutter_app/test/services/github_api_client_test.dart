@@ -152,7 +152,7 @@ void main() {
     });
 
     test(
-      'createRepo defaults to PUBLIC (catalog submodules clone anonymously)',
+      'createRepo defaults to PUBLIC (codeload fetches the pin anonymously)',
       () async {
         final gh = _ScriptedGithub()
           ..on('POST', '/user/repos', {
@@ -207,7 +207,7 @@ void main() {
       expect(naps, greaterThanOrEqualTo(1));
     });
 
-    test('git data flow: blob → tree (gitlink) → commit → ref', () async {
+    test('git data flow: blob → tree → commit → ref', () async {
       final gh = _ScriptedGithub()
         ..on('GET', '/repos/o/r/git/ref/heads/main', {
           'object': {'sha': 'parent-sha'},
@@ -227,15 +227,14 @@ void main() {
       );
       final tree = await client.createTree('o', 'r', [
         GithubTreeEntry.file('widgets/x/overlay.json', blob),
-        GithubTreeEntry.submodule('vendor/external/x', 'ext-commit-sha'),
       ], baseTreeSha: 'parent-sha');
       expect(tree, 'tree-1');
       final treeBody = jsonDecode(gh.requests[2].body) as Map<String, dynamic>;
       final entries = treeBody['tree'] as List;
+      expect(entries, hasLength(1));
       expect(entries[0]['mode'], '100644');
-      expect(entries[1]['mode'], '160000');
-      expect(entries[1]['type'], 'commit');
-      expect(entries[1]['sha'], 'ext-commit-sha');
+      expect(entries[0]['type'], 'blob');
+      expect(entries[0]['sha'], 'blob-1');
       final commit = await client.createCommit(
         'o',
         'r',
