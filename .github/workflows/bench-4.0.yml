@@ -194,7 +194,7 @@ jobs:
           # job's downloads cannot collide on harbor's timestamped default.
           .bench-venv/bin/harbor run -d "$DATASET" -a fa_agent:FaAgent \
             -e "$ENV_TYPE" -m "$MODEL" -k "$ATTEMPTS" -n "$NCONC" \
-            --job-name "fa-4.0-${ENV_TYPE}-${{ matrix.i }}" -o jobs \
+            --job-name "fa-4.0-${ENV_TYPE}-${{ matrix.kind }}-${{ matrix.i }}" -o jobs \
             "${args[@]}"
 
       - name: Upload harbor job (shard ${{ matrix.i }})

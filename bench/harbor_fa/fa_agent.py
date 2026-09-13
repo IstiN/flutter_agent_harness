@@ -82,6 +82,22 @@ class FaAgent(BaseInstalledAgent):
                 "chmod +x /opt/fa/bin/fah && ln -sf /opt/fa/bin/fah /usr/local/bin/fa"
             ),
         )
+        # Task images ship without CA roots — Dart TLS then dies with
+        # CERTIFICATE_VERIFY_FAILED on the provider handshake (live smoke,
+        # run 34741686224). Best-effort bootstrap across common distros;
+        # a no-op where the store already exists.
+        await self.exec_as_root(
+            environment,
+            command=(
+                "if [ ! -e /etc/ssl/certs/ca-certificates.crt ]; then "
+                "if command -v apt-get >/dev/null; then "
+                "apt-get update -qq && apt-get install -y -qq ca-certificates; "
+                "elif command -v apk >/dev/null; then apk add --no-cache ca-certificates; "
+                "elif command -v dnf >/dev/null; then dnf install -y ca-certificates; "
+                "elif command -v yum >/dev/null; then yum install -y ca-certificates; "
+                "fi; fi || true"
+            ),
+        )
         # No user is present during benchmark runs; unattended skips the
         # critical-pattern bash interceptor that headless mode would deny.
         await self.exec_as_agent(
