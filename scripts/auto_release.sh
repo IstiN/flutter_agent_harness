@@ -98,9 +98,15 @@ PY
     echo "Released v$next"
     # Create the GitHub Release so the binaries job can attach assets to it.
     # Use the PAT for write access; `gh` is preinstalled on GitHub runners.
+    # Notes come from the CHANGELOG section just written above (curated
+    # Unreleased or generated conventional-commit bullets) — issue #282
+    # retired the literal "Release v$next" filler body. Bare vX.Y.Z title
+    # (one naming scheme), latest explicit (drafts never carry the badge).
+    notes=$(bash "$(dirname "$0")/release_notes.sh" "$next") || notes="Release v$next"
     gh release create "v$next" \
       --title "v$next" \
-      --notes "Release v$next" \
+      --notes "$notes" \
+      --latest \
       --repo "$GITHUB_REPOSITORY" || true
     exit 0
   fi
