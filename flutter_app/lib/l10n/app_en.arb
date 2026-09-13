@@ -456,6 +456,8 @@
   "settingsThemeDark": "Dark",
   "settingsThemeLabel": "Theme",
   "settingsChatTextLabel": "Chat text size",
+  "settingsImagePreviewsLabel": "High-quality image previews",
+  "settingsImagePreviewsHelper": "Decode chat image previews at full resolution. Off keeps the faster 600px downscale.",
   "settingsThemeLight": "Light",
   "settingsThemeSystem": "System",
   "settingsStartChat": "Start chat",

@@ -1400,6 +1400,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsChatTextLabel => 'Chat text size';
 
   @override
+  String get settingsImagePreviewsLabel => 'High-quality image previews';
+
+  @override
+  String get settingsImagePreviewsHelper =>
+      'Decode chat image previews at full resolution. Off keeps the faster 600px downscale.';
+
+  @override
   String get settingsThemeLight => 'Light';
 
   @override
