@@ -837,6 +837,84 @@ a2a:
       await saveCliConfig(tmp.path, CliConfig());
       expect(file.readAsStringSync(), contains(seed.trimRight()));
     });
+
+    test('only a column-0 `key:` line counts as rendered — a scalar or '
+        'nested key mentioning the section does not', () async {
+      // The guard was an unanchored contains('memory:'): any scalar
+      // (a prompt override's text, an `xmemory:`-style key, a comment)
+      // containing the substring `memory:`/`a2a:` made the saver
+      // believe the caller had rendered the section, silently dropping
+      // the real on-disk block. The match must be anchored: a top-level
+      // `key:` line at column 0.
+      final seed = '''
+memory:
+  projectPath: ./memory
+  userPath: ~/longterm
+a2a:
+  servers:
+    translator:
+      url: https://agents.example.com/translator
+''';
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(seed);
+
+      // The caller renders the prompts and roles sections; the poison
+      // rides both shapes an unanchored contains would bite on — a
+      // scalar VALUE mentioning `memory:`/`a2a:` as plain words, and a
+      // NESTED key line (`  memory:` under `roles:`, the `xmemory:`
+      // shape from the review) whose text contains the substring.
+      final roles = ModelRolesConfig.fromYaml(
+        loadYaml('''
+roles:
+  memory:
+    - openrouter/anthropic/claude-sonnet-4
+''')
+            as YamlMap,
+      );
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(
+          promptOverrides: {
+            'compaction/summary': 'consult memory: and a2a: before answering',
+          },
+          modelRoles: roles,
+        ),
+      );
+
+      final saved = loadCliConfig(tmp.path);
+      expect(saved.memory?.projectPath, './memory');
+      expect(saved.memory?.userPath, '~/longterm');
+      expect(
+        saved.a2a?.servers['translator']?.url,
+        'https://agents.example.com/translator',
+      );
+    });
+
+    test(
+      'a column-0 comment inside a preserved section does not truncate it',
+      () async {
+        // Comments are invisible to yaml indentation: a `# …` line at
+        // column 0 between the section's own lines is still INSIDE the
+        // section. The block extractor used to stop at it, preserving
+        // only the lines above the comment (here: losing userPath).
+        final seed = '''
+memory:
+  projectPath: ./memory
+# userPath is referenced by the weekly export
+  userPath: ~/longterm
+''';
+        File('${tmp.path}/.fah/config.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(seed);
+
+        await saveCliConfig(tmp.path, CliConfig());
+
+        final saved = loadCliConfig(tmp.path);
+        expect(saved.memory?.projectPath, './memory');
+        expect(saved.memory?.userPath, '~/longterm');
+      },
+    );
   });
 
   group('startup cube precedence', () {

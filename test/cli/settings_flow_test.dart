@@ -1054,6 +1054,30 @@ void main() {
         expect(fake.calls, 0);
       },
     );
+
+    test(
+      'the session-scoped engine is never persisted by the host save hook',
+      () {
+        // Ratchet over bin/fah.dart (a script — not importable here): the
+        // whole-file config save must NEVER carry liveCompactionEngine.
+        // The session scope promises "no file change", and the
+        // project/global scopes write their yaml through the targeted
+        // upsert already — persisting the live override would leak a
+        // session pick (or a project pick!) into ~/.fah/config.yaml on
+        // the next boot or change hook. The on-disk `compaction:` block
+        // survives the whole-file rewrite via saveCliConfig's disk-block
+        // preservation instead.
+        final host = File('bin/fah.dart').readAsStringSync();
+        expect(
+          host,
+          isNot(contains('liveCompactionEngine')),
+          reason:
+              'bin/fah.dart persists liveCompactionEngine — the '
+              'session-scope "no file change" promise leaks through the '
+              'boot/change-hook config save',
+        );
+      },
+    );
   });
 
   group('memory stores flow (issue #288)', () {

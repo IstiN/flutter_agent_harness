@@ -589,10 +589,51 @@ jobs:
   # Aggregate required check: branch protection requires ONE stable context.
   # Skipped legs (path-filtered out) count as pass — a docs PR must go green
   # on static alone.
+  cli-visual-settings:
+    name: Settings screenshots (PTY)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # Same placeholder assets the nightly cli-visual job and the ubuntu
+      # flutter-tests leg create (see those jobs for the why).
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: touch .env
+
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - run: cd flutter_app && flutter pub get
+
+      - name: flutter test cli_visual (settings hub flows only)
+        run: >-
+          cd flutter_app && flutter test test/cli_visual/fa_cli_visual_test.dart
+          --tags integration --name "settings hub → (compaction|memory)"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cli-visual-settings-screenshots
+          path: test/integration/screenshots/
+          retention-days: 7
+
+  # Aggregate required check: branch protection requires ONE stable context.
+  # Skipped legs (path-filtered out) count as pass — a docs PR must go green
+  # on static alone.
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, perf-gate]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, perf-gate, cli-visual-settings]
     if: always()
     timeout-minutes: 5
     permissions:

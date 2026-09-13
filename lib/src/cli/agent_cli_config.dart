@@ -129,9 +129,12 @@ final class AgentCliConfig {
 
   /// Live compaction-engine override set by the settings-hub Compaction
   /// flow (session scope, or after a yaml write). Wins over the
-  /// boot-resolved [compactionEngine] for the rest of the session; hosts
-  /// persist it through their config save hook. Mutable by design — the
-  /// same live-override pattern as [modelRolesResolver].
+  /// boot-resolved [compactionEngine] for the rest of the session.
+  /// NEVER persisted by the host config save: the session scope promises
+  /// "no file change", and the project/global scopes write their yaml
+  /// through the targeted upsert themselves — the whole-file save keeps
+  /// the on-disk `compaction:` block untouched instead. Mutable by
+  /// design — the same live-override pattern as [modelRolesResolver].
   CompactionEngine? liveCompactionEngine;
 
   /// Optional fa_cube sandbox spec applied for the whole session (from the

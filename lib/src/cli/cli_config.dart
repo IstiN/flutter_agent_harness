@@ -894,12 +894,16 @@ const _diskPreservedSections = {
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to
 /// [emitted] when the emitter did not render them itself (the caller
-/// wins wherever it rendered the section).
+/// wins wherever it rendered the section). "Rendered" means a top-level
+/// `key:` line at column 0 — an ANCHORED match: an unanchored substring
+/// check would let a scalar or nested key mentioning `memory:` (or an
+/// `xmemory:`-style key) count as rendered and silently drop the real
+/// on-disk section.
 String _preserveDiskSections(String diskText, String emitted) {
   var result = emitted;
   if (diskText.trim().isEmpty) return result;
   for (final key in _diskPreservedSections) {
-    if (result.contains('$key:')) continue;
+    if (_topLevelYamlBlockOf(result, key) != null) continue;
     final block = _topLevelYamlBlockOf(diskText, key);
     if (block != null) result = '$result$block';
   }
@@ -907,7 +911,11 @@ String _preserveDiskSections(String diskText, String emitted) {
 }
 
 /// The `key:` top-level block of [text] (key line + indented body) as a
-/// trailing-newline-terminated string, or null when absent.
+/// trailing-newline-terminated string, or null when absent. Column-0
+/// comment lines continue the block: comments are invisible to yaml
+/// indentation, so a `# …` line between the section's own lines is
+/// still inside the section (stopping at it would truncate the block
+/// and silently drop every line below the comment).
 String? _topLevelYamlBlockOf(String text, String key) {
   final lines = text.split('\n');
   var start = -1;
@@ -922,7 +930,8 @@ String? _topLevelYamlBlockOf(String text, String key) {
   while (end < lines.length &&
       (lines[end].isEmpty ||
           lines[end].startsWith(' ') ||
-          lines[end].startsWith('\t'))) {
+          lines[end].startsWith('\t') ||
+          lines[end].startsWith('#'))) {
     end++;
   }
   return '${lines.sublist(start, end).join('\n').trimRight()}\n';

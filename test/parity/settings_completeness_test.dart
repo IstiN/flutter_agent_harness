@@ -25,12 +25,22 @@ void main() {
     for (final path in _parserSources) File(path).readAsStringSync(),
   ];
 
-  /// Top-level keys the real parsers read. Leaf reads inside section
-  /// bodies (e.g. a chain entry's `map['model']`) coincide with top-level
-  /// names, so the extraction stays sound for the gate's purpose.
+  /// Top-level keys the real parsers read. The extraction matches
+  /// whole-config map reads — receivers named `map` (the user-config
+  /// loaders) or `doc` (the project-config loaders) — in EITHER quote
+  /// style, with keys allowed digits/underscores: the old
+  /// `map\['([a-zA-Z]+)'\]` shape silently missed digit-bearing keys
+  /// (`a2a`), double-quoted reads, and the `doc['…']` project loaders
+  /// (drift holes — a new key landing unclassified still passed the
+  /// gate). Section bodies read `node['…']`/`entry['…']` leaves and env
+  /// maps read `environment['…']` — deliberately out of scope (leaf
+  /// names that coincide with top-level keys stay sound; env vars are
+  /// not yaml keys).
   final parserReadKeys = <String>{
     for (final body in bodies)
-      for (final match in RegExp(r"map\['([a-zA-Z]+)'\]").allMatches(body))
+      for (final match in RegExp(
+        r"""\b(?:map|doc)\[['"]([A-Za-z_][A-Za-z0-9_]*)['"]\]""",
+      ).allMatches(body))
         match.group(1)!,
   };
 
@@ -41,8 +51,14 @@ void main() {
   group('yaml schema completeness (AC1)', () {
     test('the parser sources actually describe a schema', () {
       // Guard the guard: if the regex or the sources break, the gate must
-      // not silently pass over an empty key set.
-      expect(parserReadKeys, containsAll(['provider', 'roles', 'compaction']));
+      // not silently pass over an empty key set. `a2a` pins the drift
+      // holes the old `map\['([a-zA-Z]+)'\]` regex had: digit-bearing
+      // keys, double-quoted reads, and whole-config reads off receivers
+      // other than `map` (the project loaders read `doc['…']`).
+      expect(
+        parserReadKeys,
+        containsAll(['provider', 'roles', 'compaction', 'a2a']),
+      );
       expect(parserReadKeys.length, greaterThan(20));
     });
 

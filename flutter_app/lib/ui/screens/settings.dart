@@ -2135,13 +2135,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'main/docs',
                   ),
                 ),
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-                // Registry-classified CLI-only settings, listed with their
-                // reasons — never a silent absence (issue #288 AC4).
-                const CliOnlySettingsSection(),
               ],
+              // Registry-classified CLI-only settings, listed with their
+              // reasons — never a silent absence (issue #288 AC4).
+              // Deliberately OUTSIDE the `service != null` gate: the
+              // listing is registry-driven and static, so a fresh install
+              // with no service yet still shows WHY those settings are
+              // CLI-only.
+              const CliOnlySettingsSection(),
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
               WebLlmCacheSection(engine: widget.webLlmEngine),
               // The transformers.js section is web-only (its provider is);
               // the Gemma section hides where its provider is unsupported —
