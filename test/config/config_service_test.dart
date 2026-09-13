@@ -255,10 +255,10 @@ void main() {
       await env.writeFile(
         _globalConfig,
         '$_validGlobal\n'
-            'fabric:\n'
-            '  capabilities:\n'
-            '    - name: yoclip.render\n'
-            '      description: Render the open project\n',
+        'fabric:\n'
+        '  capabilities:\n'
+        '    - name: yoclip.render\n'
+        '      description: Render the open project\n',
       );
       final result = await service.get('fabric');
       expect(result.found, isTrue);
@@ -267,6 +267,18 @@ void main() {
       final report = await service.check();
       expect(report.ok, isTrue);
       expect(report.warnings, isEmpty);
+
+      // ...and rejects what the parser rejects (unknown fabric key).
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\nfabric:\n  bogus: true\n',
+      );
+      final bad = await service.check();
+      expect(bad.ok, isFalse);
+      expect(
+        bad.errors.map((e) => e.message),
+        contains('fabric: unknown "fabric" key: bogus'),
+      );
     });
   });
 
