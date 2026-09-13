@@ -474,6 +474,33 @@ jobs:
           echo "status=recovered" >> "$GITHUB_OUTPUT"
           echo "::notice::recovered — re-ran the $tag publish run, pub.dev now serves $pubspec"
 
+  # ── Release-draft sweeper (issue #282) ────────────────────────────────────
+  # Hygiene leg: no pipeline step may leave a draft release behind (the
+  # 3-week-old v0.1.190 rot). The per-job guards in build-macos/build-mobile
+  # own the failure path; this sweeper is the daily backstop — anything that
+  # slips through (a cancelled run, a path without a guard) is deleted after
+  # 24h and a deduplicated self-closing issue names the creating run so a
+  # RECURRING stuck draft points at its broken step instead of rotting.
+  # Runs on every daily (and manual) invocation regardless of leg results —
+  # change-gating must not gate hygiene.
+  sweep-drafts:
+    name: Sweep stale release drafts
+    needs: plan
+    if: always() # even when plan failed or all legs skipped
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # delete draft releases
+      actions: read # name each swept draft's creating run (gh run list 403s without it, review of #294)
+      issues: write # deduplicated self-closing sweep issue
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delete drafts older than 24h and file the dedup issue
+        run: bash scripts/sweep_stale_drafts.sh
+
   # ── Report + self-healing issues ─────────────────────────────────────────
   report:
     name: Summary + self-filed issues
