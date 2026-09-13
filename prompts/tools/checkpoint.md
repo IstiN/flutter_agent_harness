@@ -8,7 +8,10 @@ Use this when you need to investigate with many intermediate tool calls (read/gr
 
 Rules:
 - You MUST call `rewind` before finishing after starting a checkpoint.
-- You NEVER call `checkpoint` while another checkpoint is active.
+- You NEVER call `checkpoint` while another checkpoint is active in the
+  same turn. A checkpoint never spans user turns: if one is left unrewound
+  when the turn ends, the next `checkpoint` call auto-closes it (the tool
+  result names the closed checkpoint) and proceeds.
 
 Typical flow:
 1. `checkpoint(goal: …)`

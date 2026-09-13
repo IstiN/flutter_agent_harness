@@ -533,7 +533,7 @@ void main() {
         'rebuild (session reload) auto-closes instead of blocking',
         () async {
       final fake = _FakeStreamFunction([
-        _textTurn('warming up'),
+        _toolTurn([probeCall('/warm', 'c0')]),
         _toolTurn([checkpointCall('c1', 'long detour')]),
         _textTurn('run one done'),
         _toolTurn([checkpointCall('c2', 'fresh start')]),
@@ -565,7 +565,7 @@ void main() {
     test('compaction over the anchor region auto-closes the checkpoint',
         () async {
       final fake = _FakeStreamFunction([
-        _textTurn('warming up'),
+        _toolTurn([probeCall('/warm', 'c0')]),
         _toolTurn([checkpointCall('c1', 'probe the ledger')]),
         _textTurn('run one done'),
         _toolTurn([checkpointCall('c2', 'after compaction')]),

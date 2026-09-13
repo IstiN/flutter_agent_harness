@@ -43,6 +43,11 @@ factual: paths, commands, invariants — no essays.
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.
+  Lifecycle (issue #286): a checkpoint is scoped to its detour — when the
+  next `checkpoint` call finds it stale (a user turn arrived inside the
+  detour, or the anchored span was rebuilt away by reload/compaction), it
+  is auto-closed with a note + `checkpoint_auto_closed` session record
+  instead of refusing; `rewind` semantics are unchanged.
 - `lib/src/compaction/branch_summarization.dart` — `generateBranchSummary` +
   `navigateSessionTree` (use instead of `Session.moveTo` for tree
   navigation); summary is a `branch_summary` record on the entered branch.

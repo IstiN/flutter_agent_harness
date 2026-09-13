@@ -15,6 +15,7 @@ import 'dart:convert';
 import '../agent/agent_loop.dart';
 import '../context.dart';
 import '../session/session_record.dart';
+import '../tools/checkpoint_tool.dart';
 import '../types.dart';
 import 'event_projection.dart';
 import 'trajectory_record.dart';
@@ -91,6 +92,11 @@ final class TrajectorySnapshotBuilder {
         _appendSystem(record);
       case CustomMessageRecord(display: true, customType: 'context'):
         _appendContext(record);
+      case CustomMessageRecord(customType: final customType)
+          when customType == checkpointAutoClosedCustomType:
+        // The checkpoint lifecycle audit trail (issue #286): renders as a
+        // system row so the trajectory shows why protection ended.
+        _appendSystem(record);
       case CustomRecord(customType: 'model_request_summary', data: final data):
         _applyRequestSummary(record, data);
       default:
@@ -365,6 +371,30 @@ final class TrajectorySnapshotBuilder {
   }
 
   void _appendSystem(SessionRecord record) {
+    // The checkpoint auto-close audit record (issue #286) is a custom
+    // message, not a system record; give it its own system row here.
+    if (record is CustomMessageRecord &&
+        record.customType == checkpointAutoClosedCustomType) {
+      final (change, text) = (
+        TrajectorySystemChange.checkpointAutoClosed,
+        textPayloadOf(record.content),
+      );
+      _records.add(
+        TrajectorySystemRecord(
+          index: _records.length + 1,
+          recordId: trajectoryRecordId(
+            kind: 'system',
+            recordId: record.id,
+            index: _records.length + 1,
+          ),
+          text: text,
+          change: change,
+          detail: text,
+          time: record.timestamp,
+        ),
+      );
+      return;
+    }
     final (change, text) = switch (record) {
       ModelChangeRecord(:final provider, :final modelId) => (
         TrajectorySystemChange.modelChange,
