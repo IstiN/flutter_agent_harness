@@ -1415,6 +1415,14 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsChatTextLabel => 'Размер текста в чате';
 
   @override
+  String get settingsImagePreviewsLabel =>
+      'Превью изображений в высоком качестве';
+
+  @override
+  String get settingsImagePreviewsHelper =>
+      'Декодировать превью изображений в чате в полном разрешении. Выкл. — быстрое уменьшение до 600px.';
+
+  @override
   String get settingsThemeLight => 'Светлая';
 
   @override
