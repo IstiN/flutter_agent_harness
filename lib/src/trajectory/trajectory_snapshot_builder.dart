@@ -64,14 +64,42 @@ final class TrajectorySnapshotBuilder {
   int _eventCounter = 0;
   int _revision = 0;
 
-  /// Projects [record] and returns the updated snapshot.
-  TrajectorySnapshot append(SessionRecord record) =>
-      _appendRecord(record, synthetic: false);
+  /// How many snapshots [_snapshot] has materialized. Hosts bulk-loading a
+  /// session must see exactly one; the per-append live tail grows this by
+  /// one per record/event.
+  int get snapshotsBuilt => _snapshotsBuilt;
+  int _snapshotsBuilt = 0;
 
-  TrajectorySnapshot _appendRecord(
-    SessionRecord record, {
-    required bool synthetic,
-  }) {
+  // Incremental turn/step fold over the appended record chain (issue #262):
+  // `_turnStep`'s full parent-chain walk per user/assistant record is O(n)
+  // per append — O(n²) over a backfill. These track the fold state through
+  // the chain tip so a record extending the tip folds in O(1); any other
+  // parent (branching, replayed tails) falls back to the walk and re-adopts
+  // the state from its result.
+  String? _incTipId;
+  int _incTurn = 0;
+  int _incStep = 0;
+  bool _incPrevWasUser = false;
+
+  /// Projects [record] and returns the updated snapshot.
+  TrajectorySnapshot append(SessionRecord record) {
+    _appendRecord(record, synthetic: false);
+    return _snapshot();
+  }
+
+  /// Projects a whole backfill — a session open or branch page-in — and
+  /// builds exactly ONE snapshot at the end. Intermediate snapshots are
+  /// suppressed: nobody renders them, and per-append materialization is
+  /// O(n²) over a 30k-record session (issue #262). The live tail keeps
+  /// using [append] with its per-record snapshots.
+  TrajectorySnapshot appendAll(Iterable<SessionRecord> records) {
+    for (final record in records) {
+      _appendRecord(record, synthetic: false);
+    }
+    return _snapshot();
+  }
+
+  void _appendRecord(SessionRecord record, {required bool synthetic}) {
     _byId[record.id] = record;
     _revision++;
     final rowsBefore = _records.length;
@@ -102,16 +130,23 @@ final class TrajectorySnapshotBuilder {
       _prevAbsTime = record.timestamp;
     }
     _lastRecordId = record.id;
-    return _snapshot();
+    // The chain tip advanced: the next record parented here folds in O(1).
+    if (_chainsToTip(record)) _incTipId = record.id;
   }
+
+  /// Whether [record] extends the tracked chain tip (or starts the chain).
+  bool _chainsToTip(SessionRecord record) =>
+      record.parentId == _incTipId ||
+      (_incTipId == null && record.parentId == null);
 
   TrajectorySnapshot applyEvent(AgentEvent event) {
     switch (event) {
       case MessageEndEvent(message: final message):
-        return _appendRecord(
+        _appendRecord(
           _syntheticRecord(_eventRole(message), message),
           synthetic: true,
         );
+
       case MessageStartEvent(message: final AssistantMessage message):
         _beginAssistantStream(message);
       case MessageStartEvent(message: UserMessage()):
@@ -182,6 +217,11 @@ final class TrajectorySnapshotBuilder {
     _prevAbsTime = null;
     _eventCounter = 0;
     _revision = 0;
+    _snapshotsBuilt = 0;
+    _incTipId = null;
+    _incTurn = 0;
+    _incStep = 0;
+    _incPrevWasUser = false;
   }
 
   MessageRecord _syntheticRecord(String kind, Message message) {
@@ -207,7 +247,8 @@ final class TrajectorySnapshotBuilder {
   }
 
   int _appendUser(MessageRecord record, {bool synthetic = false}) {
-    final turn = _turnStep(record).turn;
+    final resolved = _resolveTurnStep(record);
+    final turn = resolved.turn;
     final discarded = _discardSyntheticRows('u\u0000$turn');
     final index = _records.length + 1;
     _records.add(
@@ -219,7 +260,9 @@ final class TrajectorySnapshotBuilder {
           recordId: record.id,
           index: index,
         ),
-        opensTurn: _openedTurnByUser(record),
+        // A user message opens a turn unless the previous message on its
+        // chain is another user message — the fold's carried flag.
+        opensTurn: !resolved.previousWasUser,
       ),
     );
     if (synthetic) _registerSyntheticRows('u\u0000$turn', index - 1);
@@ -230,7 +273,9 @@ final class TrajectorySnapshotBuilder {
 
   int _appendAssistant(MessageRecord record, {bool synthetic = false}) {
     final message = record.message as AssistantMessage;
-    final (:turn, :step) = _turnStep(record);
+    final resolved = _resolveTurnStep(record);
+    final turn = resolved.turn;
+    final step = resolved.step;
     final discarded = _discardSyntheticRows('$turn\u0000$step');
     final index = _records.length + 1;
     _records.add(
@@ -499,7 +544,13 @@ final class TrajectorySnapshotBuilder {
   /// so the chain walk yields the upcoming turn and the step AFTER it (+1).
   void _applyRequestSummary(SessionRecord record, Object? data) {
     if (data is! Map) return;
-    final (:turn, :step) = _turnStep(record);
+    // The summary record is not a ledger row: chained appends leave the
+    // fold state untouched, so the upcoming assistant sits at
+    // (tip turn, tip step + 1) without a walk; a non-chained record falls
+    // back to the pure chain walk.
+    final (:turn, :step) = _chainsToTip(record)
+        ? (turn: _incTurn, step: _incStep)
+        : _turnStep(record);
     _attachRequestDetail((
       turn,
       step + 1,
@@ -608,6 +659,54 @@ final class TrajectorySnapshotBuilder {
     return (turn: turn, step: step);
   }
 
+  /// Turn/step of a user or assistant [record] plus the previous-message
+  /// role flag its projection needs, folding the chain incrementally
+  /// (issue #262): a record extending the tracked chain tip reuses the
+  /// carried fold state in O(1); anything else (a branch point, a durable
+  /// record landing after streamed rows) walks the parent chain once and
+  /// re-adopts the carried state from the walk's result.
+  ({int turn, int step, bool previousWasUser}) _resolveTurnStep(
+    MessageRecord record,
+  ) {
+    var previousWasUserBefore = _incPrevWasUser;
+    if (_chainsToTip(record)) {
+      switch (record.message.role) {
+        case 'user':
+          if (!previousWasUserBefore) _incTurn++;
+          _incStep = 0;
+          _incPrevWasUser = true;
+        case 'assistant':
+          _incStep++;
+          _incPrevWasUser = false;
+      }
+      return (
+        turn: _incTurn,
+        step: _incStep,
+        previousWasUser: previousWasUserBefore,
+      );
+    }
+    var turn = 0;
+    var step = 0;
+    var previousWasUser = false;
+    for (final entry in _chainToRoot(record).reversed) {
+      if (entry is! MessageRecord) continue;
+      previousWasUserBefore = previousWasUser;
+      switch (entry.message.role) {
+        case 'user':
+          if (!previousWasUser) turn++;
+          previousWasUser = true;
+          step = 0;
+        case 'assistant':
+          previousWasUser = false;
+          step++;
+      }
+    }
+    _incTurn = turn;
+    _incStep = step;
+    _incPrevWasUser = previousWasUser;
+    return (turn: turn, step: step, previousWasUser: previousWasUserBefore);
+  }
+
   /// Turn of [record]'s parent chain without counting the record itself.
   int _chainTurn(SessionRecord record) {
     var turn = 0;
@@ -620,18 +719,6 @@ final class TrajectorySnapshotBuilder {
     return turn;
   }
 
-  /// Whether [record] is a user message that opens a turn: the previous
-  /// message on its chain is not another user message.
-  bool _openedTurnByUser(MessageRecord record) =>
-      _previousMessageRole(record) != 'user';
-
-  String? _previousMessageRole(SessionRecord record) {
-    for (final entry in _chainToRoot(record)) {
-      if (identical(entry, record)) continue;
-      if (entry is MessageRecord) return entry.message.role;
-    }
-    return null;
-  }
 
   /// Records from [record] (inclusive) to the root, leaf-first.
   List<SessionRecord> _chainToRoot(SessionRecord record) {
@@ -670,6 +757,7 @@ final class TrajectorySnapshotBuilder {
   }
 
   TrajectorySnapshot _snapshot() {
+    _snapshotsBuilt++;
     final locations = <String, int>{
       for (final record in _records) record.recordId: record.index - 1,
     };

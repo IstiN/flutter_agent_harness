@@ -27,12 +27,10 @@ const trajectoryMaxLines = 200;
 
 /// Projects finalized session records (the active branch) into a snapshot.
 TrajectorySnapshot trajectorySnapshotOf(List<SessionRecord> records) {
-  final builder = TrajectorySnapshotBuilder();
-  var snapshot = TrajectorySnapshot.empty;
-  for (final record in records) {
-    snapshot = builder.append(record);
-  }
-  return snapshot;
+  // One snapshot for the whole backfill (issue #262): per-append
+  // materialization is O(n²) over a large session and nobody renders the
+  // intermediates.
+  return TrajectorySnapshotBuilder().appendAll(records);
 }
 
 /// The snapshot as it stood at trajectory record [at]: records are appended
