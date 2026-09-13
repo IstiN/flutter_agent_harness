@@ -499,3 +499,80 @@ class _CompactionSectionState extends State<CompactionSection> {
     );
   }
 }
+/// The settings "CLI-only" section (issue #288 AC4): settings the registry
+/// classifies as CLI-only are listed here WITH their reason — never a
+/// silent absence. The list and the justifications come straight from the
+/// shared registry (`cliOnlySettings` + `cliOnlyJustifications`), so the
+/// app cannot drift from the parity contract; only the labels are
+/// localized (the reasons name host capabilities and stay verbatim).
+class CliOnlySettingsSection extends StatelessWidget {
+  const CliOnlySettingsSection({super.key});
+
+  String _label(AppLocalizations l10n, SharedSetting setting) =>
+      switch (setting) {
+        SharedSetting.mcpServers => l10n.settingsCliOnlyMcpServers,
+        SharedSetting.ttsrRules => l10n.settingsCliOnlyTtsrRules,
+        SharedSetting.cubeSandbox => l10n.settingsCliOnlyCubeSandbox,
+        SharedSetting.promptOverrides => l10n.settingsCliOnlyPromptOverrides,
+        SharedSetting.agentMode => l10n.settingsCliOnlyAgentMode,
+        SharedSetting.memoryStores => l10n.settingsCliOnlyMemoryStores,
+        _ => setting.name,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          context.l10n.settingsCliOnlyTitle,
+          style: theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          context.l10n.settingsCliOnlyLead,
+          style: TextStyle(
+            color: theme.textTheme.bodySmall?.color,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 8),
+        for (final setting in cliOnlySettings)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(
+                    Icons.terminal,
+                    size: 16,
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_label(context.l10n, setting)),
+                      Text(
+                        cliOnlyJustifications[setting] ?? '',
+                        style: TextStyle(
+                          color: theme.textTheme.bodySmall?.color,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}

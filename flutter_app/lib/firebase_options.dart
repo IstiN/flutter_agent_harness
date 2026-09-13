@@ -1,7 +1,9 @@
 // Generated file: placeholder values. Replace by running:
 //   flutterfire configure --project=<your-firebase-project>
 // after creating a Firebase project and registering apps with bundle IDs:
-//   iOS: dev.fa1.ios, Android: dev.fa1.android, macOS: dev.fa1.macos, Web: fa1.dev
+//   iOS: dev.fa1.ios, Android: dev.fa1.app (was dev.fa1.android before
+//   issue #289 — Firebase console registration must match), macOS:
+//   dev.fa1.macos, Web: fa1.dev
 //
 // The real firebase_options.dart produced by FlutterFire contains private API
 // keys; treat it like a secret and do not commit the real version to a public

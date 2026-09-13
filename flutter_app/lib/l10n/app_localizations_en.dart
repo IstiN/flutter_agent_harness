@@ -1076,6 +1076,31 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsBaseUrlRequired => 'Base URL is required';
 
   @override
+  String get settingsCliOnlyTitle => 'CLI-only settings';
+
+  @override
+  String get settingsCliOnlyLead =>
+      'These settings live in the CLI and its config file — this app cannot host them:';
+
+  @override
+  String get settingsCliOnlyMcpServers => 'MCP servers';
+
+  @override
+  String get settingsCliOnlyTtsrRules => 'Stream rules (TTSR)';
+
+  @override
+  String get settingsCliOnlyCubeSandbox => 'Cube sandbox';
+
+  @override
+  String get settingsCliOnlyPromptOverrides => 'Prompt overrides';
+
+  @override
+  String get settingsCliOnlyAgentMode => 'Agent mode';
+
+  @override
+  String get settingsCliOnlyMemoryStores => 'Memory stores';
+
+  @override
   String get settingsCancelButton => 'Cancel';
 
   @override

@@ -135,7 +135,8 @@ final step of every edit:
 - **What check reports as errors** (non-zero exit / `config check: failed`):
   yaml syntax errors, strict-section schema errors (`mcp:`, `memory:`,
   `cube:`, `tools:`, `providerTimeouts:`, `skills:`, `images:`, `roles:`,
-  `ttsr:`, `models.custom`), and bad scalar types — each naming file+section.
+  `ttsr:`, `models.custom`, `fabric:`), and bad scalar types — each naming
+  file+section.
 - **Warnings**: unknown top-level keys (the runtime silently ignores them;
   the check does not — a typo must not survive) and dead project-file keys.
 - **At next boot, semantic errors in strict sections are FATAL**:
@@ -453,6 +454,10 @@ a2a:                            # remote Agent2Agent endpoints
     peer:
       url: https://peer.example:8080
       token: ${PEER_TOKEN}      # env-resolved at boot — never a literal secret
+fabric:                         # host discovery announcements (read-only:
+  capabilities:                 # written by hosts, never user-edited)
+    - name: yoclip.render
+      description: Render the open project to MP4
 ```
 
 `a2a` servers are remote-only (a `url`, like remote MCP servers), so they

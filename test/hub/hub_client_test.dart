@@ -411,6 +411,16 @@ void main() {
     final newSecret = hub2.issued.single;
     expect(newSecret, isNot(hub1.issued.single));
     await _persistedSecret(cfgFile, newSecret);
+    // The notice fires AFTER the async persist completes (fa_hub_client
+    // _persistEnrolled: await persistDapConfig -> onNotice), so the file
+    // poll above can observe the secret first — on a loaded CI runner the
+    // gap widens past an instant expect. Wait for the notice with the
+    // same deadline budget instead of racing it.
+    final noticeDeadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!notices.contains('enrolled: client secret persisted')) {
+      if (DateTime.now().isAfter(noticeDeadline)) break;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
     expect(notices, contains('enrolled: client secret persisted'));
     await client2.disconnect();
   }, timeout: timeout);

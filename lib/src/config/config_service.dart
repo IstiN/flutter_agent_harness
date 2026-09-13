@@ -35,6 +35,7 @@ import '../compaction/compaction_engine.dart';
 import '../cube/config/cube_settings.dart';
 import '../env/execution_env.dart';
 import '../exceptions.dart';
+import '../messaging/fabric_config.dart';
 import '../mcp/mcp_config.dart';
 import '../memory_config.dart';
 import '../model_roles/model_roles.dart';
@@ -74,6 +75,7 @@ const configTopLevelKeys = <String>{
   'agent',
   'images',
   'skills',
+  'fabric',
 };
 
 /// Top-level keys that carry a plain string value.
@@ -1048,15 +1050,14 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'tools': (value, _) => ToolsConfig.fromYaml(value),
   'mcp': (value, _) => McpConfig.fromYaml(value),
   'redact': (value, _) => RedactionConfig.fromYaml(value),
-  'compaction': (value, label) => CompactionEngine.fromSection(
-    value,
-    label: label,
-  ),
+  'compaction': (value, label) =>
+      CompactionEngine.fromSection(value, label: label),
   'models': (value, _) => ModelsConfig.fromYaml(value),
   'customProviders': (value, _) => _validateCustomProviders(value),
   'ttsr': (value, label) => TtsrConfig.fromYaml(value, sourcePath: label),
   'images': (value, _) => _validateImagesSection(value),
   'a2a': (value, _) => A2aConfig.fromYaml(value, (name) => '\${$name}'),
+  'fabric': (value, _) => FabricConfig.fromYaml(value),
   'providerTimeouts': (value, _) => _validateProviderTimeouts(value),
   'agent': (value, _) => _validateAgentSection(value),
   'skills': (value, _) => _validateSkillsSection(value),
@@ -1138,7 +1139,8 @@ void _validateImagesSection(Object? node) {
         final value = entry.value;
         if (value is! int || value <= 0) {
           throw ConfigException(
-              '"images.maxPerRequest" must be a positive integer');
+            '"images.maxPerRequest" must be a positive integer',
+          );
         }
       default:
         throw ConfigException('unknown "images" key: $key');

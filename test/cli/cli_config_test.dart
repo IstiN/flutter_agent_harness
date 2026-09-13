@@ -735,6 +735,188 @@ prompts:
     });
   });
 
+  group('save preserves every parsed section (issue #288 drift)', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-config-save-');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    test(
+      'a caller that carries no static sections keeps them on disk',
+      () async {
+        // The shape of bin/fah.dart's persistConfig before the fix: the
+        // caller re-saves the LOADED config minus the sections it forgot to
+        // carry — the file must not lose them.
+        final seed = '''
+provider: openai-completions
+model: openai/gpt-4o-mini
+baseUrl: https://openrouter.ai/api/v1
+mode: code
+approvalMode: yolo
+memory:
+  projectPath: ./memory
+  userPath: ~/longterm
+compaction:
+  engine: structured
+a2a:
+  servers:
+    translator:
+      url: https://agents.example.com/translator
+      token: literal-token
+providerTimeouts:
+  connectTimeoutMs: 8000
+''';
+        File('${tmp.path}/.fah/config.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(seed);
+        final loaded = loadCliConfig(tmp.path);
+
+        // The forgetful caller: carries only what persistConfig used to.
+        await saveCliConfig(
+          tmp.path,
+          CliConfig(
+            providerKind: loaded.providerKind,
+            modelId: loaded.modelId,
+            baseUrl: loaded.baseUrl,
+            mode: loaded.mode,
+            approvalMode: loaded.approvalMode,
+          ),
+        );
+
+        final saved = loadCliConfig(tmp.path);
+        expect(saved.memory?.projectPath, './memory');
+        expect(saved.memory?.userPath, '~/longterm');
+        expect(saved.compactionEngine, CompactionEngine.structured);
+        expect(
+          saved.a2a?.servers['translator']?.url,
+          'https://agents.example.com/translator',
+        );
+        expect(saved.providerTimeouts?.connect?.inMilliseconds, 8000);
+      },
+    );
+
+    test('a rendered section still wins over the disk block', () async {
+      final seed = '''
+compaction:
+  engine: classic
+''';
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(seed);
+
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(compactionEngine: CompactionEngine.structured),
+      );
+
+      expect(
+        loadCliConfig(tmp.path).compactionEngine,
+        CompactionEngine.structured,
+      );
+    });
+
+    test('the disk a2a block survives verbatim (byte-for-byte)', () async {
+      // The block is copied as raw text, never re-rendered from the typed
+      // config — `${NAME}` env-token references stay literal (a typed
+      // round-trip would materialize the resolved secret into the file).
+      final seed = '''
+a2a:
+  servers:
+    translator:
+      url: https://agents.example.com/translator
+      token: literal-token
+''';
+      final file = File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(seed);
+      await saveCliConfig(tmp.path, CliConfig());
+      expect(file.readAsStringSync(), contains(seed.trimRight()));
+    });
+
+    test('only a column-0 `key:` line counts as rendered — a scalar or '
+        'nested key mentioning the section does not', () async {
+      // The guard was an unanchored contains('memory:'): any scalar
+      // (a prompt override's text, an `xmemory:`-style key, a comment)
+      // containing the substring `memory:`/`a2a:` made the saver
+      // believe the caller had rendered the section, silently dropping
+      // the real on-disk block. The match must be anchored: a top-level
+      // `key:` line at column 0.
+      final seed = '''
+memory:
+  projectPath: ./memory
+  userPath: ~/longterm
+a2a:
+  servers:
+    translator:
+      url: https://agents.example.com/translator
+''';
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(seed);
+
+      // The caller renders the prompts and roles sections; the poison
+      // rides both shapes an unanchored contains would bite on — a
+      // scalar VALUE mentioning `memory:`/`a2a:` as plain words, and a
+      // NESTED key line (`  memory:` under `roles:`, the `xmemory:`
+      // shape from the review) whose text contains the substring.
+      final roles = ModelRolesConfig.fromYaml(
+        loadYaml('''
+roles:
+  memory:
+    - openrouter/anthropic/claude-sonnet-4
+''')
+            as YamlMap,
+      );
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(
+          promptOverrides: {
+            'compaction/summary': 'consult memory: and a2a: before answering',
+          },
+          modelRoles: roles,
+        ),
+      );
+
+      final saved = loadCliConfig(tmp.path);
+      expect(saved.memory?.projectPath, './memory');
+      expect(saved.memory?.userPath, '~/longterm');
+      expect(
+        saved.a2a?.servers['translator']?.url,
+        'https://agents.example.com/translator',
+      );
+    });
+
+    test(
+      'a column-0 comment inside a preserved section does not truncate it',
+      () async {
+        // Comments are invisible to yaml indentation: a `# …` line at
+        // column 0 between the section's own lines is still INSIDE the
+        // section. The block extractor used to stop at it, preserving
+        // only the lines above the comment (here: losing userPath).
+        final seed = '''
+memory:
+  projectPath: ./memory
+# userPath is referenced by the weekly export
+  userPath: ~/longterm
+''';
+        File('${tmp.path}/.fah/config.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(seed);
+
+        await saveCliConfig(tmp.path, CliConfig());
+
+        final saved = loadCliConfig(tmp.path);
+        expect(saved.memory?.projectPath, './memory');
+        expect(saved.memory?.userPath, '~/longterm');
+      },
+    );
+  });
+
   group('startup cube precedence', () {
     const project = CubeSettings(configPath: '.fah/cubes/dev.yaml');
     const user = CubeSettings(configPath: '.fah/cubes/user.yaml');

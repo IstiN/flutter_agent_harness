@@ -564,6 +564,112 @@ void main() {
       await harness.close();
       tempHome.deleteSync(recursive: true);
     });
+
+    testWidgets('/settings hub → compaction engine: pick → scope → set', (
+      tester,
+    ) async {
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      await harness.runSlashCommand('/settings');
+      await harness.liveWaitForText(
+        'Chat model',
+        timeout: const Duration(seconds: 15),
+      );
+
+      // The hub carries the Compaction entry (issue #288: every yaml key
+      // reachable from the settings TUI); the picker viewport is shorter
+      // than the list, so type-to-filter narrows it to the entry.
+      harness.sendText('compaction');
+      await harness.liveWaitForText(
+        'Settings: compaction',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '89_settings_compaction_hub');
+
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'Structured',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '89_settings_compaction_picker');
+
+      harness.sendArrowDown(); // → Structured
+      await harness.settle(settleMs: 300);
+      harness.sendEnter();
+
+      // The scope picker (session / project / global).
+      await harness.liveWaitForText(
+        'Session',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '89_settings_compaction_scope');
+
+      // Global scope: writes the temp HOME config (2nd arrow-down).
+      for (var i = 0; i < 2; i++) {
+        harness.sendArrowDown();
+      }
+      await harness.settle(settleMs: 300);
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'compaction.engine = structured',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '89_settings_compaction_set');
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+
+    testWidgets('/settings hub → memory stores: path → set', (tester) async {
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      await harness.runSlashCommand('/settings');
+      await harness.liveWaitForText(
+        'Chat model',
+        timeout: const Duration(seconds: 15),
+      );
+
+      // Memory entry via type-to-filter (below the fold otherwise).
+      harness.sendText('memory');
+      await harness.liveWaitForText(
+        'Settings: memory',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '89_settings_memory_hub');
+
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'User memory',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '89_settings_memory_stores');
+
+      harness.sendArrowDown(); // → User memory (writes the HOME config)
+      await harness.settle(settleMs: 300);
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'user memory path',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '89_settings_memory_prompt');
+
+      harness.sendText('~/fa-visual-memory');
+      await harness.liveWaitForText(
+        'fa-visual-memory',
+        timeout: const Duration(seconds: 15),
+      );
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'memory.userPath = ~/fa-visual-memory',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '89_settings_memory_set');
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
   });
 
   group('mcp', () {
