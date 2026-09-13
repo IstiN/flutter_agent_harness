@@ -19,6 +19,7 @@ final class MenuItem {
     required this.key,
     required this.label,
     this.description = '',
+    this.group = '',
   });
 
   /// The text inserted when the item is accepted (e.g. `/model`).
@@ -26,6 +27,10 @@ final class MenuItem {
 
   /// The visible label.
   final String label;
+
+  /// Menu section this item belongs to ('commands' | 'skills' | 'paths');
+  /// '' renders without a section header (issue #275 fuzzy overlay).
+  final String group;
 
   /// Optional one-line description shown to the right.
   final String description;

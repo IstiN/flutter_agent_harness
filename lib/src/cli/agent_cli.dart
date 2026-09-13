@@ -26,6 +26,7 @@ import '../hashline/hashline.dart';
 import '../agent/agent.dart';
 import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
+import 'path_candidates.dart';
 import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
 import 'headless_prompt.dart';
@@ -1482,6 +1483,7 @@ class AgentCli {
         onPickerSelected: _tuiPickerSelected,
         onPickerCancelled: _tuiPickerCancelled,
         onSteer: _steerTuiMessages,
+        pathCandidates: pathCandidatesFor,
       ),
       isExited: () => _exited,
       programHooks: config.tuiProgramHooks,

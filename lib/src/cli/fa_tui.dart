@@ -6,6 +6,7 @@ import 'dart:io'
 
 import 'package:dart_tui/dart_tui.dart';
 
+import 'composer_overlay.dart';
 import 'ansi_markdown.dart';
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
@@ -51,6 +52,7 @@ final class FaTuiCallbacks {
     this.onPickerSelected,
     this.onPickerCancelled,
     this.onSteer,
+    this.pathCandidates,
   });
 
   /// Called when the user submits a non-empty input line.
@@ -96,6 +98,12 @@ final class FaTuiCallbacks {
   /// kimi-cli semantics): each message is injected as a separate user
   /// message mid-turn.
   final Future<void> Function(List<String> messages)? onSteer;
+
+  /// Workspace file paths for the composer's fuzzy path completion
+  /// (`@token` and shell words on a `!` line, issue #275 AC1). Called per
+  /// keystroke — the host must cache the listing (the issue's "candidates
+  /// cached" clause). Null disables path completion.
+  final List<String> Function(String fragment)? pathCandidates;
 }
 
 /// Message carrying host output into the TUI.
@@ -270,6 +278,7 @@ final class FaTuiModel extends Model {
     this.menuOpen = false,
     this.menuModelMode = false,
     this.menuSelected = 0,
+    this.menuTokenStart = -1,
     this.modelFilter = '',
     this.menuItems = const [],
     this.menuAllItems = const [],
@@ -336,6 +345,12 @@ final class FaTuiModel extends Model {
   final bool menuOpen;
   final bool menuModelMode;
   final int menuSelected;
+
+  /// Where the completed token starts inside [inputText] (issue #275):
+  /// 0 for a slash command line, the offset after '@' or the shell-word
+  /// start for path completion. -1 = no token (whole-input replace on
+  /// accept, the legacy slash/picker behavior).
+  final int menuTokenStart;
   final String modelFilter;
   final List<MenuItem> menuItems;
 
@@ -532,9 +547,23 @@ final class FaTuiModel extends Model {
     if (!menuOpen || menuItems.isEmpty) return 0;
     final (start, end) = _menuWindow();
     var lines = 1 + (end - start); // title + items
+    lines += _groupHeadersIn(start, end); // section headers
     if (start > 0) lines++; // '↑ more'
     if (end < menuItems.length) lines++; // '↓ more'
     return lines;
+  }
+
+  /// Group-header rows the visible window renders (one per group change,
+  /// issue #275) — the height math and the renderer must agree.
+  int _groupHeadersIn(int start, int end) {
+    var count = 0;
+    var last = '';
+    for (var i = start; i < end; i++) {
+      final group = menuItems[i].group;
+      if (group.isNotEmpty && group != last) count++;
+      last = group;
+    }
+    return count;
   }
 
   /// Applies a user scroll: moves the offset (clamped) and re-evaluates the
@@ -557,7 +586,8 @@ final class FaTuiModel extends Model {
     final busyH = busy ? 1 : 0;
     final scheduledH = scheduledCount > 0 ? 1 : 0;
     final stickyH = _stickyActive ? stickyLines.length : 0;
-    final queueH = queue.isEmpty ? 0 : queue.length + 1; // + hint line
+    // + count badge and hint rows around the message rows (issue #275).
+    final queueH = queue.isEmpty ? 0 : queue.length + 2;
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
     final used =
         progressH +
@@ -618,6 +648,7 @@ final class FaTuiModel extends Model {
     bool? menuOpen,
     bool? menuModelMode,
     int? menuSelected,
+    int? menuTokenStart,
     String? modelFilter,
     List<MenuItem>? menuItems,
     List<MenuItem>? menuAllItems,
@@ -663,6 +694,7 @@ final class FaTuiModel extends Model {
       menuOpen: menuOpen ?? this.menuOpen,
       menuModelMode: menuModelMode ?? this.menuModelMode,
       menuSelected: menuSelected ?? this.menuSelected,
+      menuTokenStart: menuTokenStart ?? this.menuTokenStart,
       modelFilter: modelFilter ?? this.modelFilter,
       menuItems: menuItems ?? this.menuItems,
       menuAllItems: menuAllItems ?? this.menuAllItems,
@@ -939,7 +971,12 @@ final class FaTuiModel extends Model {
     if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
     if (msg is _SetInputTextMsg) {
       return (
-        copyWith(inputText: msg.text, cursor: msg.text.length, menuOpen: false),
+        copyWith(
+          inputText: msg.text,
+          cursor: msg.text.length,
+          menuOpen: false,
+          menuTokenStart: -1,
+        ),
         null,
       );
     }
@@ -1145,7 +1182,7 @@ final class FaTuiModel extends Model {
   (Model, Cmd?)? _handleSlashMenuNavKey(KeyMsg msg) {
     switch (msg.key) {
       case 'esc':
-        return (copyWith(menuOpen: false), null);
+        return (copyWith(menuOpen: false, menuTokenStart: -1), null);
       case 'up':
         return (
           copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
@@ -1230,8 +1267,33 @@ final class FaTuiModel extends Model {
         },
       );
     }
+    // Token splice (issue #275): replace just the completed token — an
+    // `@`-fragment or a shell word after '!' — with the chosen path plus a
+    // trailing space that ends the token. Slash commands (tokenStart == 0,
+    // line-start) keep the legacy whole-input replace below.
+    if (menuTokenStart > 0) {
+      final head = inputText.substring(0, menuTokenStart);
+      final tail = inputText.substring(
+        cursor.clamp(menuTokenStart, inputText.length),
+      );
+      final inserted = '${item.key} ';
+      return (
+        copyWith(
+          inputText: head + inserted + tail,
+          cursor: menuTokenStart + inserted.length,
+          menuOpen: false,
+          menuTokenStart: -1,
+        ),
+        null,
+      );
+    }
     return (
-      copyWith(inputText: item.key, cursor: item.key.length, menuOpen: false),
+      copyWith(
+        inputText: item.key,
+        cursor: item.key.length,
+        menuOpen: false,
+        menuTokenStart: -1,
+      ),
       null,
     );
   }
@@ -1439,9 +1501,15 @@ final class FaTuiModel extends Model {
   /// Normal-mode cursor motion keys; null when the key belongs to another
   /// cluster.
   (Model, Cmd?)? _handleCursorNavKey(KeyMsg msg) {
-    return _handleLeftRightKey(msg) ??
+    final result =
+        _handleLeftRightKey(msg) ??
         _handleWordNavKey(msg) ??
         _handleHomeEndKey(msg);
+    if (result == null) return null;
+    // The completion token is cursor-anchored: motion re-evaluates the
+    // overlay (issue #275) — moving off a token closes it, moving onto
+    // one opens it.
+    return (_updateMenuForInput(result.$1 as FaTuiModel), result.$2);
   }
 
   /// Normal-mode left/right arrow keys; null when the key belongs to
@@ -2006,49 +2074,9 @@ final class FaTuiModel extends Model {
     return i;
   }
 
-  FaTuiModel _updateMenuForInput(FaTuiModel model) {
-    final text = model.inputText;
+  FaTuiModel _updateMenuForInput(FaTuiModel model) =>
+      updateMenuForInput(model, callbacks);
 
-    // `/models <filter>` opens the picker with a pre-filled filter.
-    final filterMatch = _modelsFilterPrefix.firstMatch(text);
-    if (filterMatch != null) {
-      final filter = filterMatch.group(1)!;
-      return model.copyWith(
-        menuOpen: true,
-        menuModelMode: true,
-        modelFilter: filter,
-        menuItems: callbacks.buildModelMenu(filter),
-        menuSelected: 0,
-        pickerId: 'models',
-        pickerTitle: '',
-      );
-    }
-
-    if (text == '/models') {
-      return model.copyWith(
-        menuOpen: true,
-        menuModelMode: true,
-        modelFilter: '',
-        menuItems: callbacks.buildModelMenu(''),
-        menuSelected: 0,
-        pickerId: 'models',
-        pickerTitle: '',
-      );
-    }
-    if (text.startsWith('/')) {
-      final items = callbacks.buildSlashMenu(text);
-      if (items.isEmpty) {
-        return model.copyWith(menuOpen: false);
-      }
-      return model.copyWith(
-        menuOpen: true,
-        menuModelMode: false,
-        menuItems: items,
-        menuSelected: 0,
-      );
-    }
-    return model.copyWith(menuOpen: false);
-  }
 
   @override
   View view() {
@@ -2175,13 +2203,11 @@ final class FaTuiModel extends Model {
             _accent2Plain(progressText) +
             _dim('─' * (rightWidth < 0 ? 0 : rightWidth)),
       );
-    } else {
-      b.writeln();
     }
   }
 
-  /// The menu header row: pickers echo their type-to-filter query
-  /// (`[title: query]`), the slash menu is plain '[Commands]'.
+  /// The menu title row: '[Commands]' for the slash menu, otherwise the
+  /// picker title with the active filter.
   String _menuTitle() {
     if (!menuModelMode) return '[Commands]';
     final title = pickerId == 'models' ? 'Select model' : pickerTitle;
@@ -2209,7 +2235,13 @@ final class FaTuiModel extends Model {
   void _writeMenuItems(StringBuffer b) {
     final (start, end) = _menuWindow();
     if (start > 0) b.writeln(_dim('  ↑ more'));
+    var lastGroup = '';
     for (var i = start; i < end; i++) {
+      final group = menuItems[i].group;
+      if (group.isNotEmpty && group != lastGroup) {
+        b.writeln(_dim('  ── $group ──'));
+        lastGroup = group;
+      }
       b.writeln(_menuItemRow(menuItems[i], i == menuSelected));
     }
     if (end < menuItems.length) b.writeln(_dim('  ↓ more'));
@@ -2378,10 +2410,6 @@ final class FaTuiModel extends Model {
   /// markdown walk (ansi_markdown.dart `_fenceRe`): parity over the
   /// retained history must agree with what the renderer will compute.
   static final RegExp _fenceLineStart = RegExp(r'^\s*```');
-
-  /// `/models <filter>` prefix — allocated once: `_updateMenuForInput` runs
-  /// on EVERY keystroke and used to recompile this per keypress.
-  static final RegExp _modelsFilterPrefix = RegExp(r'^/models\s+(.*)$');
 
   static List<String> _appendOutput(
     List<String> lines,
