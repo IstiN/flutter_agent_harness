@@ -28,6 +28,7 @@ abstract class FaChatStrings {
 
   String get appTitle;
   String get chatAbortTooltip;
+  String get chatMoreTooltip;
   String get chatFilesTooltip;
   String get chatCopySessionTooltip;
   String get chatSettingsTooltip;
@@ -105,6 +106,8 @@ class FaChatStringsEn extends FaChatStrings {
   String get appTitle => 'Fa';
   @override
   String get chatAbortTooltip => 'Abort';
+  @override
+  String get chatMoreTooltip => 'More actions';
   @override
   String get chatFilesTooltip => 'Files';
   @override
@@ -260,6 +263,8 @@ class FaChatStringsRu extends FaChatStrings {
   String get appTitle => 'Fa';
   @override
   String get chatAbortTooltip => 'Прервать';
+  @override
+  String get chatMoreTooltip => 'Ещё действия';
   @override
   String get chatFilesTooltip => 'Файлы';
   @override

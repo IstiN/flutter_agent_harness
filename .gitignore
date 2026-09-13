@@ -144,3 +144,4 @@ browser_ext/vendor/
 __pycache__/
 # dart test --file-reporter outputs (local shard runs)
 test-results/
+packages/fa_ui/test/trajectory/golden/failures/
