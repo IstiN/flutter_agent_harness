@@ -704,5 +704,53 @@
   "themePackWallpaperChip": "wallpaper",
   "themePackImported": "Theme pack \"{name}\" installed",
   "@themePackImported": { "placeholders": { "name": { "type": "String" } } },
+  "settingsCompactionLabel": "Compaction",
+  "@settingsCompactionLabel": {
+    "description": "Title of the Settings compaction-engine section (issue #287)"
+  },
+  "settingsCompactionHelper": "How the context is compacted when it nears the model's window. Applies at the next compaction.",
+  "@settingsCompactionHelper": {
+    "description": "One-line explainer under the compaction section title (issue #287)"
+  },
+  "settingsCompactionStructured": "Structured (recommended)",
+  "@settingsCompactionStructured": {
+    "description": "Picker item: the structured 2.0 engine (issue #287)"
+  },
+  "settingsCompactionStructuredHint": "Hides consumed records in place, expandable on demand — requires a configured model for the judge pass.",
+  "@settingsCompactionStructuredHint": {
+    "description": "Tradeoff copy for the structured engine (issue #287, E1: no health-check claim)"
+  },
+  "settingsCompactionClassic": "Classic (legacy 1.0)",
+  "@settingsCompactionClassic": {
+    "description": "Picker item: the classic 1.0 engine, the supported rollback (issue #287)"
+  },
+  "settingsCompactionClassicHint": "Lossy prefix summary — zero extra model calls.",
+  "@settingsCompactionClassicHint": {
+    "description": "Tradeoff copy for the classic engine (issue #287)"
+  },
+  "settingsCompactionSourceProject": "effective from the project .fah/config.yaml",
+  "@settingsCompactionSourceProject": {
+    "description": "Source-layer caption when the project config wins (issue #287 AC2)"
+  },
+  "settingsCompactionSourceUser": "effective from the user ~/.fah/config.yaml",
+  "@settingsCompactionSourceUser": {
+    "description": "Source-layer caption when the user config wins (issue #287 AC2)"
+  },
+  "settingsCompactionSourceFallback": "structured default — no compaction setting in any config",
+  "@settingsCompactionSourceFallback": {
+    "description": "Source-layer caption when no config states a choice (issue #287 AC2)"
+  },
+  "settingsCompactionWebNote": "Not configurable on the web — there is no config file here, so the structured engine applies.",
+  "@settingsCompactionWebNote": {
+    "description": "Note shown instead of the picker on the web stub (issue #287 AC5)"
+  },
+  "settingsCompactionSaved": "Saved to {file} — applies at the next compaction.",
+  "@settingsCompactionSaved": { "placeholders": { "file": { "type": "String" } } },
+  "settingsCompactionSaveFailed": "Could not save the compaction engine: {error}",
+  "@settingsCompactionSaveFailed": { "placeholders": { "error": { "type": "String" } } },
+  "settingsCompactionDocs": "Compaction docs",
+  "@settingsCompactionDocs": {
+    "description": "Link to the compaction documentation from the settings section (issue #287)"
+  },
   "themePackImportFailed": "Theme pack rejected"
 }

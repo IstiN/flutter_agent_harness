@@ -57,8 +57,8 @@ enum SharedSetting {
   /// Capability-gated tool availability (hide unavailable/disabled tools).
   tools,
 
-  /// Compaction engine choice (classic prefix summary vs structured
-  /// hide/checkpoint, issue #148).
+  /// Compaction engine choice (structured 2.0 default, issue #287; the
+  /// classic 1.0 prefix summary stays as the in-settings rollback).
   compactionEngine,
 }
 
@@ -162,8 +162,9 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
   ),
   SharedSetting.compactionEngine: _SettingMeta(
     cliRef: 'compactionEngine',
-    appRef: 'loadAppCompactionEngine',
-    description: 'Compaction engine (classic | structured).',
+    appRef: 'CompactionSection',
+    description:
+        'Compaction engine (structured default | classic rollback, #287).',
   ),
 };
 

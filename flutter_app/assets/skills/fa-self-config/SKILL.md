@@ -380,14 +380,17 @@ wins):
 
 ```yaml
 compaction:
-  engine: structured           # classic | structured (default classic)
+  engine: structured           # structured (default) | classic (rollback)
 ```
 
-`classic` keeps the lossy summary compaction; `structured` hides records in
-place behind one-line addressable markers (`compact_expand` restores any id
-or range under a per-turn token budget). Runtime override:
-`fa --compaction-engine structured`; resolution is
-session < project < global < flag. Applies at session boot.
+`structured` (the default since issue #287) hides records in place behind
+one-line addressable markers (`compact_expand` restores any id or range
+under a per-turn token budget); `classic` keeps the lossy summary
+compaction — the legacy 1.0 rollback, selected through Settings →
+Compaction (the app) or an explicit yaml/flag choice. Runtime override:
+`fa --compaction-engine classic`; resolution is
+flag > project > global > the structured default. Applies at
+the next compaction.
 
 ## Skills access
 

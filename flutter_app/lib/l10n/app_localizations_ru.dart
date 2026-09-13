@@ -1931,5 +1931,56 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
+  String get settingsCompactionLabel => 'Компакция';
+
+  @override
+  String get settingsCompactionHelper =>
+      'Как сжимается контекст при приближении к окну модели. Применяется при следующей компакции.';
+
+  @override
+  String get settingsCompactionStructured =>
+      'Структурированная (рекомендуется)';
+
+  @override
+  String get settingsCompactionStructuredHint =>
+      'Скрывает использованные записи на месте с раскрываемыми контрольными точками — для judge-прохода нужна настроенная модель.';
+
+  @override
+  String get settingsCompactionClassic => 'Классическая (устаревшая 1.0)';
+
+  @override
+  String get settingsCompactionClassicHint =>
+      'Сжатие с потерями в виде резюме префикса — без дополнительных вызовов модели.';
+
+  @override
+  String get settingsCompactionSourceProject =>
+      'действует из проекта .fah/config.yaml';
+
+  @override
+  String get settingsCompactionSourceUser =>
+      'действует из пользовательского ~/.fah/config.yaml';
+
+  @override
+  String get settingsCompactionSourceFallback =>
+      'структурированная по умолчанию — compaction в конфигах не задан';
+
+  @override
+  String get settingsCompactionWebNote =>
+      'На вебе настройка недоступна — здесь нет файла конфигурации, применяется структурированный движок.';
+
+  @override
+  String settingsCompactionSaved(String file) {
+    return 'Сохранено в $file — применится при следующей компакции.';
+  }
+
+  @override
+  String settingsCompactionSaveFailed(String error) {
+    return 'Не удалось сохранить движок компакции: $error';
+  }
+
+  @override
+  String get settingsCompactionDocs => 'Документация по компакции';
+
+  @override
   String get themePackImportFailed => 'Тема отклонена';
 }
