@@ -346,6 +346,92 @@ $('saveHub').addEventListener('click', async () => {
   $('hubSecret').value = '';
 });
 
+// --- DAP inbound-mail routing (faDap.boundSession) -----------------------
+// The panel reads faDap.boundSession from chrome.storage (the same source
+// of truth hub.bind writes) and saves via call({type:'hub.bind'}) — the SW
+// merges the binding into faDap preserving url/name/secret and reboots the
+// agent with the new routing (sw/main.js hub.bind).
+//
+// Default when nothing is stored: 'dedicated' — the first inbound mail
+// mints the 'DAP Inbox' session; the SW persists its id back into
+// faDap.boundSession.sessionId so it survives SW restarts.
+//
+// Mode switches never lose already-received mail: routing is forward-only
+// (boundSessionAction decides the pre-turn move for FUTURE mail; archived
+// sessions stay put, and a dangling bound id degrades to the live session).
+//
+// TODO(unread-badge contract, v2 Flutter panel owns the session drawer):
+// SW adds `dapUnread: <count>` to the status payload per bound session
+// (hub mails routed there since it was last opened); the v2 panel renders
+// it as a badge on the session list entry and clears on open. NOT
+// implemented in this v1 panel — no session drawer here.
+
+async function loadDapBind() {
+  let bound = null;
+  try {
+    const stored = await chrome.storage.local.get(['faDap']);
+    bound = stored?.faDap?.boundSession ?? null;
+  } catch (e) {
+    log('dap bind: storage read failed: ' + e);
+  }
+  const mode = bound && (bound.mode === 'current' || bound.mode === 'named')
+    ? bound.mode
+    : 'dedicated'; // default: dedicated (also for missing/garbled config)
+  const radio = document.querySelector(`input[name="dapBindMode"][value="${mode}"]`);
+  if (radio) radio.checked = true;
+  $('dapBindNamedRow').hidden = mode !== 'named';
+  if (bound?.sessionId) $('dapBindSession').dataset.boundId = bound.sessionId;
+  await refreshDapBindSessions(bound?.sessionId ?? '');
+  $('dapBindStatus').textContent = bound
+    ? `routing: ${mode}${bound.sessionId ? ' → ' + bound.sessionId : ''}`
+    : 'routing: dedicated (default)';
+}
+
+async function refreshDapBindSessions(selectedId) {
+  const sel = $('dapBindSession');
+  sel.innerHTML = '';
+  const res = await call({ type: 'hub.sessions' });
+  const sessions = res?.ok ? (res.sessions ?? []) : [];
+  for (const s of sessions) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = `${s.id} (${s.messages ?? 0} msgs${s.running ? ', running' : ''})`;
+    sel.appendChild(opt);
+  }
+  if (selectedId) sel.value = selectedId;
+}
+
+for (const r of document.querySelectorAll('input[name="dapBindMode"]')) {
+  r.addEventListener('change', () => {
+    $('dapBindNamedRow').hidden =
+      document.querySelector('input[name="dapBindMode"]:checked')?.value !== 'named';
+  });
+}
+
+$('saveDapBind').addEventListener('click', async () => {
+  const mode = document.querySelector('input[name="dapBindMode"]:checked')?.value ?? 'dedicated';
+  const msg = { type: 'hub.bind', mode };
+  if (mode === 'named') {
+    const sessionId = $('dapBindSession').value;
+    if (!sessionId) { $('dapBindStatus').textContent = 'pick a session for named mode'; return; }
+    msg.sessionId = sessionId;
+    msg.title = $('dapBindSession').selectedOptions[0]?.textContent ?? '';
+  } else if (mode === 'dedicated') {
+    const kept = $('dapBindSession').dataset.boundId ?? '';
+    if (kept) msg.sessionId = kept; // rebind preserves the existing dedicated session
+    else msg.title = 'DAP Inbox';   // first inbound mail mints it under this title
+  }
+  const res = await call(msg);
+  if (res?.ok) {
+    log(`dap bind saved: ${mode}${msg.sessionId ? ' → ' + msg.sessionId : ''}`);
+    $('dapBindStatus').textContent = `routing: ${mode}${msg.sessionId ? ' → ' + msg.sessionId : ''}`;
+  } else {
+    $('dapBindStatus').textContent = `save failed: ${res?.error ?? 'no response'}`;
+  }
+});
+
+loadDapBind();
+
 // -- Advanced: Settings-gated power tools (issue #34 AC4d) --------------------
 // Each toggle is the user gesture Chrome requires: enabling requests the
 // tool's optional permission, disabling revokes it, then the enabled-map

@@ -116,6 +116,21 @@
     </section>
 
     <section>
+      <h2>Inbound mail routing</h2>
+      <div class="dim">Where hub DMs land: a dedicated agent session (default), the current session, or a picked one.</div>
+      <label><input type="radio" name="dapBindMode" value="dedicated" checked> Dedicated "DAP Inbox" session</label>
+      <label><input type="radio" name="dapBindMode" value="current"> Current session</label>
+      <label><input type="radio" name="dapBindMode" value="named"> Named session</label>
+      <div id="dapBindNamedRow" hidden>
+        <label>Session
+          <select id="dapBindSession"></select>
+        </label>
+      </div>
+      <button id="saveDapBind">Save routing</button>
+      <div id="dapBindStatus" class="dim"></div>
+    </section>
+
+    <section>
       <h2>Advanced — power tools</h2>
       <div class="dim">
         Each toggle asks Chrome for the tool's optional permission. Enabled

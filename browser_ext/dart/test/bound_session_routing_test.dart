@@ -120,5 +120,46 @@ void main() {
         BoundSessionAction.createDedicated,
       );
     });
+
+    test('dedicated with a remembered id opens it even when live is pristine',
+        () {
+      // Mode switch current → dedicated must not mint a second session:
+      // the remembered binding wins; adopt-vs-new happens only on create.
+      expect(
+        boundSessionAction(
+          mode: 'dedicated',
+          boundId: 'ded1',
+          currentId: 'live',
+          pristineLive: true,
+        ),
+        BoundSessionAction.openBound,
+      );
+    });
+
+    test('dedicated stays on repeat mail once the bound session is live', () {
+      // Idempotent: after the first mail created + adopted the dedicated
+      // session, the next mail (even into a pristine one) must not re-mint.
+      expect(
+        boundSessionAction(
+          mode: 'dedicated',
+          boundId: 'ded1',
+          currentId: 'ded1',
+          pristineLive: true,
+        ),
+        BoundSessionAction.stay,
+      );
+    });
+
+    test('named rebind to the live session stays — no mail moved', () {
+      expect(
+        boundSessionAction(
+          mode: 'named',
+          boundId: 'live',
+          currentId: 'live',
+          pristineLive: false,
+        ),
+        BoundSessionAction.stay,
+      );
+    });
   });
 }
