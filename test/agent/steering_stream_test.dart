@@ -160,4 +160,44 @@ void main() {
       anyElement('streamed'),
     );
   });
+
+  test('UT-steer-teardown: a steer landing in the run stop-check window '
+      'opens its own turn inside the SAME run (never left queued)', () async {
+    final stream = _BlockingStream();
+    // Loop polls steering: 1 - run start, 2 - turn boundary, 3 - (fix)
+    // final stop-check drain. The race: the steer enqueues only AFTER
+    // poll 2, simulating a message arriving while the loop is already
+    // tearing down (the e2e AC3-parity flake on issue #314).
+    var polls = 0;
+    final runFuture = runAgentLoop(
+      prompts: [UserMessage.text('weather?')],
+      context: Context(messages: [UserMessage.text('weather?')]),
+      config: AgentLoopConfig(
+        model: _model,
+        getSteeringMessages: () async {
+          polls++;
+          return polls == 3
+              ? <Message>[UserMessage.text('LATE-STEER')]
+              : const <Message>[];
+        },
+      ),
+      streamFunction: stream.call,
+      toolExecutor: (call, token, onUpdate) async =>
+          ToolExecutionResult.text(''),
+      emit: (_) {},
+    );
+    // The first stream call gates mid-stream; release it once the run has
+    // passed the start (poll 1) so the loop can reach the boundary and the
+    // stop-check.
+    await stream.started.future;
+    stream.gate.complete();
+    final messages = await runFuture;
+
+    final roles = messages.map((m) => m.role).toList();
+    expect(roles, containsAll(['user', 'assistant']));
+    expect(
+      messages.whereType<UserMessage>().map((m) => m.content),
+      contains('LATE-STEER'),
+    );
+  });
 }
