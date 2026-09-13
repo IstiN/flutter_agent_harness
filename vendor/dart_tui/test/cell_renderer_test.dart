@@ -252,6 +252,139 @@ void main() {
       expect(output, contains('hello'));
     });
   });
+
+  // ── Differential renderer — issue #274 (AC1, E1, E2, E3) ──────────────────
+
+  group('CellRenderer differential #274', () {
+    late StringBuffer buf;
+    late _StringSink sink;
+    late CellRenderer renderer;
+
+    setUp(() {
+      buf = StringBuffer();
+      sink = _StringSink(buf);
+      renderer = CellRenderer(
+        output: sink,
+        logSink: null,
+        defaultAltScreen: false,
+        defaultHideCursor: false,
+      );
+    });
+
+    test('AC1: one char changed emits exactly one CUP + the char', () {
+      renderer.render(newView('hello'));
+      buf.clear();
+      renderer.render(newView('hellX'));
+      expect(buf.toString(), '\x1b[1;5HX');
+    });
+
+    test('AC1: one line inserted repaints only the shifted tail', () {
+      renderer.render(newView('a\nb\nc'));
+      buf.clear();
+      renderer.render(newView('a\nX\nb\nc'));
+      expect(buf.toString(), '\x1b[2;1HX\x1b[3;1Hb\x1b[4;1Hc');
+    });
+
+    test('AC1: style-only change repaints the cells with new SGR only', () {
+      final red = const Style(foregroundRgb: RgbColor(255, 0, 0)).render('ab');
+      final blue = const Style(foregroundRgb: RgbColor(0, 0, 255)).render('ab');
+      renderer.render(newView(red));
+      buf.clear();
+      renderer.render(newView(blue));
+      expect(buf.toString(), '\x1b[1;1H\x1b[38;2;0;0;255mab\x1b[0m');
+    });
+
+    test('AC1: scroll-by-1 up is one SU op plus only the new bottom row', () {
+      final prev = [for (var i = 0; i < 10; i++) 'row-$i'].join('\n');
+      final next = [for (var i = 1; i <= 10; i++) 'row-$i'].join('\n');
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      expect(buf.toString(), '\x1b[1S\x1b[10;1Hrow-10\x1b[K');
+    });
+
+    test('AC1: scroll-by-1 down is one SD op plus only the new top row', () {
+      final prev = [for (var i = 0; i < 10; i++) 'row-$i'].join('\n');
+      final next = ['row-new', for (var i = 0; i < 9; i++) 'row-$i']
+          .join('\n');
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      expect(buf.toString(), '\x1b[1T\x1b[1;1Hrow-new\x1b[K');
+    });
+
+    test('AC1: styled rows ride the scroll — op + plain tail only', () {
+      final styled = const Style(foregroundRgb: RgbColor(0, 255, 0)).render('g4');
+      final prev = [for (var i = 0; i < 10; i++) i == 4 ? styled : 'row-$i']
+          .join('\n');
+      final next = [
+        for (var i = 1; i <= 10; i++) i == 4 ? styled : 'row-$i',
+      ].join('\n');
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      expect(buf.toString(), '\x1b[1S\x1b[10;1Hrow-10\x1b[K');
+    });
+
+    test('scroll frame leaves the diff cache intact (next idle = 0 bytes)', () {
+      final prev = [for (var i = 0; i < 10; i++) 'row-$i'].join('\n');
+      final next = [for (var i = 1; i <= 10; i++) 'row-$i'].join('\n');
+      renderer.render(newView(prev));
+      renderer.render(newView(next));
+      buf.clear();
+      renderer.render(newView(next));
+      expect(buf.toString(), '');
+    });
+
+    test('AC1: styled rows outside a pure scroll take the cell-diff path', () {
+      final styled =
+          const Style(foregroundRgb: RgbColor(0, 255, 0)).render('g0');
+      final prev = [for (var i = 0; i < 5; i++) 'r$i', styled].join('\n');
+      final next = [for (var i = 1; i <= 5; i++) 'r$i', styled].join('\n');
+      renderer.render(newView(prev));
+      buf.clear();
+      renderer.render(newView(next));
+      // A pinned bottom row breaks the pure-scroll shape — the frame falls
+      // back to the optimal cell diff (5 changed cells, one CUP each).
+      final cups = RegExp(r'\x1b\[\d+;\d+H').allMatches(buf.toString());
+      expect(cups.length, 5);
+    });
+
+    test('E1: reflow repaints every row once, then diffs cleanly', () {
+      renderer.render(newView('aaaa\nbbbb'));
+      buf.clear();
+      renderer.render(newView('aa\nbb'));
+      final out = buf.toString();
+      expect(RegExp(r'\x1b\[\d+;\d+H').allMatches(out).length, 2);
+      buf.clear();
+      renderer.render(newView('aa\nbb'));
+      expect(buf.toString(), '');
+    });
+
+    test('E2: without sync negotiation no 2026 escapes ever appear', () {
+      renderer.render(newView('hello'));
+      buf.clear();
+      renderer.render(newView('hellX'));
+      renderer.render(newView('hello'));
+      expect(buf.toString(), isNot(contains('?2026')));
+    });
+
+    test('E3: diff at a wide-glyph boundary never splits the pair', () {
+      renderer.render(newView('中文'));
+      buf.clear();
+      renderer.render(newView('X文'));
+      // The continuation cell is never written independently — only the
+      // changed leading cell is.
+      expect(buf.toString(), '\x1b[1;1HX文 ');
+    });
+
+    test('E3: a wide glyph replacing ASCII moves as one unit', () {
+      renderer.render(newView('X文'));
+      buf.clear();
+      renderer.render(newView('中X'));
+      expect(buf.toString(), '\x1b[1;1H中X');
+    });
+  });
 }
 
 class _StringSink implements IOSink {

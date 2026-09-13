@@ -2441,6 +2441,7 @@ final class FaTuiController {
     required this.isExited,
     this.programHooks,
     this.mouseCapture = true,
+    this.syncOutput,
   });
 
   final FaTuiCallbacks callbacks;
@@ -2450,6 +2451,11 @@ final class FaTuiController {
   /// terminal keeps its native text selection. See
   /// [FaTuiModel.mouseCapture].
   final bool mouseCapture;
+
+  /// DEC 2026 synchronized output tri-state: true forces BSU/ESU framing,
+  /// false forces legacy writes, null = auto-detect via DECRQM
+  /// (`FA_TUI_SYNC`, see [AgentCliConfig.tuiSyncOutput]).
+  final bool? syncOutput;
 
   /// Headless test hooks (scripted key bytes, captured frames) — null in
   /// production, where the program reads stdin and renders to stdout.
@@ -2465,6 +2471,13 @@ final class FaTuiController {
       withAltScreen(),
       withHideCursor(false),
       if (mouseCapture) withMouseCellMotion(),
+      // Differential cell renderer (#274): cell-level diff + pure-scroll
+      // ops + BSU/ESU framing — the line renderer repaints every shifted
+      // row on scroll and has no atomic frames.
+      withCellRenderer(),
+      // FA_TUI_SYNC tri-state: force on, force off, or auto (DECRQM).
+      if (syncOutput != null)
+        syncOutput! ? withSyncUpdates() : withoutSyncUpdates(),
       ..._programHookOptions(programHooks),
     ],
   );

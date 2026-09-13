@@ -50,6 +50,15 @@ ProgramOption withoutSignalHandler() => (p) => p._disableSignalHandler = true;
 ProgramOption withoutCatchPanics() => (p) => p._disableCatchPanics = true;
 ProgramOption withoutRenderer() => (p) => p._disableRenderer = true;
 ProgramOption withCellRenderer() => (p) => p._useCellRenderer = true;
+
+/// Forces DEC 2026 synchronized output (BSU/ESU around every painted frame)
+/// without waiting for the terminal's DECRQM answer. For emulators that
+/// support ?2026 but not the query, and for tests; unset, detection rules.
+ProgramOption withSyncUpdates() => (p) => p._forceSyncUpdates = true;
+
+/// Forbids synchronized output even when the terminal reports ?2026
+/// support — the deterministic fallback path (`FA_TUI_SYNC=0`).
+ProgramOption withoutSyncUpdates() => (p) => p._blockSyncUpdates = true;
 ProgramOption withFilter(Msg? Function(Model model, Msg msg) filter) =>
     (p) => p._filter = filter;
 
@@ -113,6 +122,8 @@ final class Program {
   bool _disableCatchPanics = false;
   bool _disableSignalHandler = false;
   bool _useCellRenderer = false;
+  bool _forceSyncUpdates = false;
+  bool _blockSyncUpdates = false;
   FrameTracer? _tracer;
 
   bool _altScreen = false;
@@ -487,7 +498,8 @@ final class Program {
 
       if (msg is ModeReportMsg &&
           msg.mode == 2026 &&
-          (msg.value == 1 || msg.value == 2)) {
+          (msg.value == 1 || msg.value == 2) &&
+          !_blockSyncUpdates) {
         _renderer?.setSyncUpdates(true);
       }
       if (msg is ModeReportMsg &&
@@ -551,6 +563,7 @@ final class Program {
                   defaultMouseMode: _defaultMouseMode,
                   defaultReportFocus: _defaultReportFocus,
                 );
+      if (_forceSyncUpdates) _renderer?.setSyncUpdates(true);
       if (!_disableRenderer) {
         _setRawMode(true);
       }

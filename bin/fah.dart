@@ -470,6 +470,16 @@ bool _envTruthy(String name) {
   return value == '1' || value == 'true' || value == 'yes' || value == 'on';
 }
 
+/// Tri-state env-var check: truthy → true, falsy → false, unset → null.
+bool? _envTristate(String name) {
+  final raw = Platform.environment[name]?.trim().toLowerCase();
+  if (raw == null || raw.isEmpty) return null;
+  if (raw == '0' || raw == 'false' || raw == 'no' || raw == 'off') {
+    return false;
+  }
+  return true;
+}
+
 /// [CliIO] bound to the real terminal: stdin lines, stdout writes, and a
 /// broadcast interrupt channel fed by the SIGINT handler in `main`.
 ///
@@ -2000,6 +2010,9 @@ Future<void> _runApp(List<String> args) async {
       // without capture two-finger scroll does nothing). FA_TUI_MOUSE=0
       // opts out for always-on native select-to-copy.
       tuiMouseCapture: _envNotFalsy('FA_TUI_MOUSE'),
+      // DEC 2026 synchronized output: auto-detect by default; FA_TUI_SYNC
+      // forces it on (terminals without DECRQM answers) or off (fallback).
+      tuiSyncOutput: _envTristate('FA_TUI_SYNC'),
     ),
     io: io,
   );
