@@ -587,7 +587,19 @@ void main() {
     final availability = service.toolAvailability;
     expect(
       availability.keys,
-      unorderedEquals(['browser_active_tab', 'browser_inject_js']),
+      unorderedEquals([
+        'browser_active_tab',
+        'browser_inject_js',
+        // The host-bound office family gates even when the SW never
+        // reports it (issue #327 AC5).
+        'outlook',
+      ]),
+    );
+    expect(availability['outlook']!.capabilityPresent, isFalse);
+    expect(availability['outlook']!.enabled, isFalse);
+    expect(
+      availability['outlook']!.reason,
+      'available in the Outlook add-in host only',
     );
     expect(availability['browser_active_tab']!.enabled, isTrue);
     expect(availability['browser_active_tab']!.capabilityPresent, isTrue);

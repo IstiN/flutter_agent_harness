@@ -714,6 +714,15 @@ final class RelayAgentService extends AgentService {
   /// every SW tool is capability-present; the enabled flag is the SW's.
   @override
   Map<String, ResolvedToolAvailability> get toolAvailability => {
+    // Host-bound family (issue #327 AC5): the extension never hosts
+    // Office.js, so the outlook.* tools render as a gated row with the
+    // add-in-only reason instead of staying silent.
+    'outlook': const ResolvedToolAvailability(
+      enabled: false,
+      scope: ToolScope.builtin,
+      capabilityPresent: false,
+      reason: 'available in the Outlook add-in host only',
+    ),
     for (final entry in _swTools.entries)
       entry.key: ResolvedToolAvailability(
         enabled: entry.value,

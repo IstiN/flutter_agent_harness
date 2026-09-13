@@ -130,6 +130,34 @@ void main() {
       expect(find.byIcon(Icons.check), findsNothing);
     });
 
+    testWidgets('saved rows carry the provenance badge — local vs '
+        'synced (issue #327 AC4)', (tester) async {
+      // A pane partition's registry can hold entries added here (local)
+      // and synced seeds (synced-from-cli@…); the badges make the
+      // provenance visible, and pre-provenance entries read as local.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      await env.writeFile(
+        '/work/${ProviderRegistry.fileName}',
+        '{"version":1,"providers":['
+            '{"id":"p-local","name":"Mine","baseUrl":"https://mine.example/v1",'
+            '"modelId":"m1","provenance":"local"},'
+            '{"id":"p-synced","name":"Cli row","baseUrl":"https://cli.example/v1",'
+            '"modelId":"m2","provenance":"synced-from-cli@desk"},'
+            '{"id":"p-legacy","name":"Legacy","baseUrl":"https://legacy.example/v1",'
+            '"modelId":"m3"}]}',
+      );
+      final registry = await ProviderRegistry.load(env);
+      await _pump(tester, ProvidersSection(registry: registry));
+
+      expect(registry.providers.map((p) => p.provenance), [
+        'local',
+        'synced-from-cli@desk',
+        'local',
+      ]);
+      expect(find.text('[local]'), findsNWidgets(2));
+      expect(find.text('[synced]'), findsOneWidget);
+    });
+
     testWidgets('add provider: the editor page persists via the registry', (
       tester,
     ) async {

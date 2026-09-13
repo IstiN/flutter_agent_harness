@@ -172,6 +172,11 @@ extension AgentCliTools on AgentCli {
       'dap': (_toolGroupsById['dap']?.isNotEmpty ?? false)
           ? on
           : const ToolCapability.absent('no hub configured'),
+      // Office tools are office-host-bound (issue #327 AC5): the CLI never
+      // hosts Office.js — the gated row names the host that does.
+      'outlook': const ToolCapability.absent(
+        'available in the Outlook add-in host only',
+      ),
     };
   }
 

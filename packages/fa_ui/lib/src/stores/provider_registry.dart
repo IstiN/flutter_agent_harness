@@ -10,6 +10,14 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa_ui/src/stores/keychain_store.dart';
 import 'package:fa_ui/src/stores/session_keys_store.dart';
 
+/// Provenance of a registry entry (issue #327 AC4): [localProviderProvenance]
+/// for entries added on this surface (panel edit, preset connect, SSO flow);
+/// anything else is a synced seed (`synced-from-cli@<host>` — the
+/// extension's faProviders wording). The providers panel renders the matching
+/// `[local]`/`[synced]` badge so a partition holding only synced (or only
+/// local) rows is visible, not silent.
+const localProviderProvenance = 'local';
+
 /// A user-added OpenAI-compatible provider definition.
 ///
 /// Definitions are non-secret (name, endpoint, default model) and are
@@ -23,14 +31,17 @@ final class CustomProvider {
     required this.name,
     required this.baseUrl,
     required this.modelId,
+    this.provenance = localProviderProvenance,
   });
 
-  /// Restores a definition from its JSON form (see [toJson]).
+  /// Restores a definition from its JSON form (see [toJson]). Entries
+  /// persisted before provenance existed read as [localProviderProvenance].
   factory CustomProvider.fromJson(Map<String, dynamic> json) => CustomProvider(
     id: json['id'] as String,
     name: json['name'] as String,
     baseUrl: json['baseUrl'] as String,
     modelId: json['modelId'] as String,
+    provenance: (json['provenance'] as String?) ?? localProviderProvenance,
   );
 
   /// Stable unique id (assigned by the registry at add time).
@@ -45,12 +56,17 @@ final class CustomProvider {
   /// Default model id, prefilled when the provider is selected.
   final String modelId;
 
+  /// Where this entry came from: [localProviderProvenance] or a synced
+  /// seed (`synced-from-cli@<host>`). Drives the panel's provenance badge.
+  final String provenance;
+
   /// JSON form persisted in the registry file.
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
     'baseUrl': baseUrl,
     'modelId': modelId,
+    'provenance': provenance,
   };
 
   /// Identity is the [id], so edited copies match dropdown selections made

@@ -61,6 +61,7 @@ scope (keeping the last good one), it never crashes startup.
 | `dap` | The `dap_*` hub tools (docs/dap.md). Present only when a hub is configured. |
 | `browser` | The browser family: all eleven `browser_*` tools (`browser_navigate`, `browser_tabs`, `browser_switch_tab`, `browser_click`, `browser_type`, `browser_press_key`, `browser_select`, `browser_read_dom`, `browser_eval`, `browser_screenshot`, `browser_wait_for`). Present only while a browser extension is paired on the bridge; a disconnect hides the family live and the prompt is rebuilt with the reason. |
 | `browser_eval` | `browser_eval` alone — its own id so in-page JS evaluation can be disabled without hiding the rest of the browser family (issue #23). |
+| `outlook` | The office family: `outlook.read_current_item`, `outlook.read_attachment`, `outlook.insert_draft_body`. Office.js is host-bound — the tools register only inside the Outlook add-in; every other surface lists a gated row with the add-in-only reason instead of staying silent (issue #327). |
 | anything else | Unknown id: one warning line, then ignored — never fatal. |
 
 ## Scopes
