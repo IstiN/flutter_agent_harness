@@ -2528,6 +2528,18 @@ abstract class AppLocalizations {
   /// **'Chat text size'**
   String get settingsChatTextLabel;
 
+  /// No description provided for @settingsImagePreviewsLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'High-quality image previews'**
+  String get settingsImagePreviewsLabel;
+
+  /// No description provided for @settingsImagePreviewsHelper.
+  ///
+  /// In en, this message translates to:
+  /// **'Decode chat image previews at full resolution. Off keeps the faster 600px downscale.'**
+  String get settingsImagePreviewsHelper;
+
   /// No description provided for @settingsThemeLight.
   ///
   /// In en, this message translates to:
