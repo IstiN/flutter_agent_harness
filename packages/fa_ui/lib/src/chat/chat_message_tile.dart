@@ -54,6 +54,7 @@ class ChatMessageTile extends StatelessWidget {
     this.onAuthRecovery,
     this.compact = false,
     this.messageFontSize,
+    this.dynamicWidgetTileBuilder,
   });
 
   /// The message to render (`user` / `assistant` / `thinking` / `tool` /
@@ -94,19 +95,23 @@ class ChatMessageTile extends StatelessWidget {
   /// [fahMarkdownStyleSheet]; null renders at the theme's body size.
   final double? messageFontSize;
 
+  /// Renders a `widget`-role message as the host's live dynamic-message
+  /// tile; null (or a null return) renders the stock system tile. Every
+  /// transcript surface wires its own so the tile renders wherever the
+  /// transcript does (issue #336).
+  final FaDynamicWidgetTileBuilder? dynamicWidgetTileBuilder;
+
   @override
   Widget build(BuildContext context) {
-    // Resolution happens inside build: hosts install the builder at
-    // startup, after the first frames may already have been built.
     final dynamicTile = message.role == 'widget'
-        ? FaChatHost.dynamicWidgetTileBuilder?.call(context, message)
+        ? dynamicWidgetTileBuilder?.call(context, message)
         : null;
     final tile = switch (message.role) {
       'widget' when dynamicTile != null => dynamicTile,
       'user' => _textBubble(context, isUser: true),
       'assistant' => _textBubble(context, isUser: false),
       'thinking' => _thinkingTile(context),
-      // 'tool', 'system' and anything else (incl. 'widget' with no host
+      // 'tool', 'system' and anything else (incl. 'widget' with no
       // builder or a null tile).
       _ => _toolOrSystemTile(context),
     };

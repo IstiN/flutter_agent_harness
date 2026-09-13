@@ -14,6 +14,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/fa_mark.dart';
+import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 
@@ -314,6 +315,13 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
       messageFontSize: ChatTextScope.maybeOf(context)?.fontSize,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
+      // The overlay lives inside app views, far from any ChatScreen, so it
+      // wires its own widget-tile builder (issue #336): without one the
+      // live widget degrades to the plain tool card.
+      dynamicWidgetTileBuilder: (context, m) => DynamicWidgetTile(
+        service: widget.service.dynamicMessages,
+        message: m,
+      ),
     );
   }
 
