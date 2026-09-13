@@ -6,6 +6,10 @@ plugins {
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
     id("com.google.gms.google-services")
+    // firebase_crashlytics injects its build ID; without the plugin the
+    // native FirebaseInitProvider hard-crashes at startup (issue #289
+    // emulator DoD).
+    id("com.google.firebase.crashlytics")
 }
 
 android {
@@ -37,14 +41,12 @@ android {
     // gitignored android/key.properties (storeFile/storePassword/keyAlias/
     // keyPassword) works too. Debug builds are untouched.
     val signingEnv = System.getenv()
-    val keyProps = java.util.Properties().apply {
-        val propsFile = rootProject.file("key.properties")
-        if (!propsFile.exists()) {
-            val appPropsFile = project.file("key.properties")
-            if (appPropsFile.exists()) appPropsFile.inputStream().use { load(it) }
-        } else {
-            propsFile.inputStream().use { load(it) }
-        }
+    val keyProps = Properties()
+    val rootPropsFile = rootProject.file("key.properties")
+    val appPropsFile = project.file("key.properties")
+    val propsFile = if (rootPropsFile.exists()) rootPropsFile else appPropsFile
+    if (propsFile.exists()) {
+        propsFile.inputStream().use { keyProps.load(it) }
     }
     val keystoreFromEnv: File? =
         signingEnv["ANDROID_KEYSTORE_BASE64"]?.takeIf { it.isNotBlank() }?.let { encoded ->

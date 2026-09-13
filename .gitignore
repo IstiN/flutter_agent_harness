@@ -150,3 +150,9 @@ packages/fa_ui/test/trajectory/golden/failures/
 # Gradle plugin hard-fails without it); CI overwrites it from the
 # GOOGLE_SERVICES_JSON_BASE64 secret when present (issue #289).
 !flutter_app/android/app/google-services.json
+
+# wasm_run_flutter android build artifacts (NDK/CMake output + the
+# downloaded runtime tarball the plugin gradle extracts into jniLibs).
+vendor/wasm_run_flutter/android/.cxx/
+vendor/wasm_run_flutter/android/*.tar.gz
+vendor/wasm_run_flutter/android/src/main/jniLibs/

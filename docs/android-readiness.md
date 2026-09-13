@@ -33,6 +33,12 @@ Companion doc: `docs/js-system-apis.md` (channel checklist §3, gap table §4).
   plugin hard-fails without the file; CI overwrites it from the
   `GOOGLE_SERVICES_JSON_BASE64` secret. The Firebase console's Android app
   registration must use `dev.fa1.app`.
+- **Local AAB builds**: `flutter build appbundle --release` runs a post-build
+  debug-symbol check that needs the Android SDK cmdline-tools; without them
+  the AAB is still produced and bundletool-valid but the flutter tool exits
+  1 ("Release app bundle failed to strip debug symbols"). CI runner images
+  ship cmdline-tools; locally install them into
+  `$ANDROID_HOME/cmdline-tools/latest` if the exit code matters.
 
 ## 1. The interface + conditional-import contract (already Android-shaped)
 
