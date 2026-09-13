@@ -1546,6 +1546,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get sidebarSearchHint => 'Search sessions';
+
+  @override
+  String get sidebarSearchClearTooltip => 'Clear search';
+
+  @override
+  String sidebarSearchNoMatches(Object query) {
+    return 'No sessions match \"$query\"';
+  }
+
+  @override
   String get sidebarSessionsHeader => 'Sessions';
 
   @override

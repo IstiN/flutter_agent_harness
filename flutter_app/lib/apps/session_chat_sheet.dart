@@ -42,6 +42,7 @@ import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:fa/ui/widgets/rename_session_dialog.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart' show faIsMacOSDesktop;
 
@@ -212,6 +213,18 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// Persisted sessions with an open in flight (drawer double-tap guard).
   final Set<String> _opening = {};
 
+  /// The drawer's applied (debounced) search query — a transient lookup,
+  /// reset when the drawer closes (reopening shows the full list).
+  String _drawerQuery = '';
+  final TextEditingController _drawerSearchController = TextEditingController();
+
+  /// The empty state's Clear affordance: reset the query and the field —
+  /// the full list restores instantly.
+  void _clearDrawerSearch() {
+    setState(() => _drawerQuery = '');
+    _drawerSearchController.clear();
+  }
+
   /// Session id → on-disk header (the `agent`/`parent` classification
   /// source for the drawer's session tree, issue #198), from the last
   /// listing.
@@ -356,6 +369,7 @@ class SessionChatSheetState extends State<SessionChatSheet>
     _persistedTimer?.cancel();
     _panelAnim.dispose();
     _drawerAnim.dispose();
+    _drawerSearchController.dispose();
     super.dispose();
   }
 
@@ -556,6 +570,10 @@ class SessionChatSheetState extends State<SessionChatSheet>
 
   Future<void> _toggleDrawer() {
     if (_drawerAnim.value > 0.5) {
+      // The search is a transient lookup: closing the drawer drops it, so
+      // reopening always shows the full list.
+      _drawerQuery = '';
+      _drawerSearchController.clear();
       return _drawerAnim.animateTo(
         0,
         duration: const Duration(milliseconds: 200),
@@ -1058,15 +1076,56 @@ class SessionChatSheetState extends State<SessionChatSheet>
           // activity sort teleported the clicked row to the top on every
           // switch (archive mtime bump + fresh slot stamp).
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // Live search over the drawer's rows (issue #200): a pure filter on
+    // the in-memory projection, name matches rank first. A blank query
+    // keeps the list exactly as it was.
+    final query = _drawerQuery.trim();
+    final visible = rankSessionEntries(entries, _drawerQuery, (e) {
+      return (
+        title:
+            _namesStore?.titleFor(e.id) ??
+            derivedSessionTitle(context, id: e.id, createdAt: e.createdAt),
+        id: e.id,
+        cwd: e.cwd,
+        updatedAt: e.lastUpdatedAt,
+      );
+    });
+    // AC2 (tree interop): a matching subagent surfaces under its dimmed
+    // parent — the SAME composition the wide sidebar applies.
+    final contextParents = <String>{};
+    if (query.isNotEmpty) {
+      final visibleIds = {for (final e in visible) e.id};
+      final entryById = {for (final e in entries) e.id: e};
+      for (final e in visible) {
+        final parentId = subagentParentId(
+          _metadataById[e.id] ??
+              SessionMetadata(
+                id: e.id,
+                createdAt: e.createdAt,
+                cwd: e.cwd ?? '',
+                path: '',
+              ),
+        );
+        if (parentId != null &&
+            entryById.containsKey(parentId) &&
+            !visibleIds.contains(parentId)) {
+          contextParents.add(parentId);
+        }
+      }
+      visible.addAll([for (final id in contextParents) entryById[id]!]);
+    }
     // Folder-grouped, parent-nested rows (issue #198): the SAME tree row
     // model the wide sidebar renders — subagent sessions collapse under
     // their parent's count badge, orphans surface top-level marked.
     final drawerRows = sessionTreeRows(
-      entries,
+      visible,
       metadataById: _metadataById,
       personalLabel: l10n.sessionFolderPersonal,
       activeSessionId: activeId,
-      expandedIds: _expandedParents,
+      expandedIds: query.isEmpty
+          ? _expandedParents
+          : {..._expandedParents, ...contextParents},
+      dimmedIds: contextParents,
     );
     return Container(
       key: const ValueKey('sessionChatDrawer'),
@@ -1123,6 +1182,15 @@ class SessionChatSheetState extends State<SessionChatSheet>
               title: Text(l10n.sidebarNewSessionTooltip),
               onTap: () => unawaited(_newSessionFromDrawer()),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              child: SessionSearchField(
+                controller: _drawerSearchController,
+                onQueryChanged: (q) {
+                  if (q != _drawerQuery) setState(() => _drawerQuery = q);
+                },
+              ),
+            ),
             Divider(height: 1, color: colors.border),
             Expanded(
               child: entries.isEmpty
@@ -1137,6 +1205,15 @@ class SessionChatSheetState extends State<SessionChatSheet>
                           ).textTheme.bodySmall?.copyWith(color: colors.dim),
                         ),
                       ),
+                    )
+                  : drawerRows.isEmpty
+                  // E1: the query matched nothing — say so, offer a
+                  // way out; never a blank void.
+                  ? sessionSearchEmptyState(
+                      context,
+                      colors,
+                      _drawerQuery.trim(),
+                      _clearDrawerSearch,
                     )
                   : ListView.builder(
                       // The drawer slides out UNDER the input bar: pad the
@@ -1166,12 +1243,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
                           );
                         }
                         final entry = row.entry!;
-                        // ONE selection rule with the wide sidebar:
-                        // entry.id == selectedId, nothing else. (The old
-                        // `entry.live` guard was redundant — a row whose id
-                        // equals the manager's active id always has a slot.)
+                        // AC2: a parent pulled in as search context renders
+                        // faintly — scaffolding for the matching child,
+                        // still tappable.
                         final isActive = entry.id == activeId;
-                        return SessionTile(
+                        final tile = SessionTile(
                           key: ValueKey('sessionChatDrawerEntry:${entry.id}'),
                           title: sessionEntryTitle(
                             context,
@@ -1222,6 +1298,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
                               ? sessionChildIndent
                               : 0,
                         );
+                        if (!row.dimmed) return tile;
+                        return Opacity(opacity: 0.45, child: tile);
                       },
                     ),
             ),

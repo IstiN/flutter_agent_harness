@@ -498,6 +498,14 @@
   "sidebarRenameSessionTooltip": "Переименовать сессию",
   "sidebarRetry": "Повторить",
   "sidebarSessionTitle": "сессия {id}",
+  "sidebarSearchHint": "Поиск по сессиям",
+  "sidebarSearchClearTooltip": "Очистить поиск",
+  "sidebarSearchNoMatches": "Нет сессий по запросу «{query}»",
+  "@sidebarSearchNoMatches": {
+    "placeholders": {
+      "query": {}
+    }
+  },
   "sidebarSessionsHeader": "Сессии",
   "sidebarSubagentSessionCount": "{count, plural, one{{count} агент} few{{count} агента} many{{count} агентов} other{{count} агентов}}",
   "@sidebarSubagentSessionCount": {
