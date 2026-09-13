@@ -171,9 +171,13 @@ Future<CopilotDeviceGrant> requestCopilotDeviceGrant({
 /// cumulatively; the loop is bounded by the grant's `expires_in`.
 /// [onStatus] receives prompt-free waiting lines.
 ///
-/// Throws [CopilotDeviceFlowError]: expired (code lifetime exhausted or
-/// GitHub said so), denied, endpointDisabled (404/JSON error at the poll
-/// endpoint), or transport.
+/// Socket-level poll failures (lost connection, background suspension —
+/// issue #229) are TRANSIENT: reported through [onStatus] as a retrying
+/// line and retried on the normal cadence, bounded by the same
+/// `expires_in` budget. Only terminal states throw
+/// [CopilotDeviceFlowError]: expired (code lifetime exhausted or GitHub
+/// said so), denied, endpointDisabled (404/JSON error at the poll
+/// endpoint), or transport (malformed/unclassified responses).
 Future<String> pollCopilotDeviceGrant({
   required CopilotDeviceGrant grant,
   required String clientId,
@@ -207,13 +211,17 @@ Future<String> pollCopilotDeviceGrant({
             },
           )
           .timeout(effectiveProviderConnectTimeout);
-    } on CopilotDeviceFlowError {
-      rethrow;
-    } on Object catch (error) {
-      throw CopilotDeviceFlowError(
-        CopilotDeviceFlowErrorKind.transport,
-        'Copilot device-flow poll failed: $error',
+    } on Object {
+      // Issue #229: a lost connection (the app backgrounded while the
+      // user authorizes — iOS suspends networking, NSURLErrorDomain
+      // -1005 — or a flaky link) is TRANSIENT: surface it as a status
+      // line and retry on the normal cadence. The loop stays bounded by
+      // the expires_in check above, so a dead network still ends in the
+      // expired error instead of spinning forever.
+      onStatus?.call(
+        'connection lost — retrying... (${waited.inSeconds}s elapsed)',
       );
+      continue;
     }
     switch (classifyCopilotPollResponse(response, clientId: clientId)) {
       case CopilotPollSuccess(:final token):
