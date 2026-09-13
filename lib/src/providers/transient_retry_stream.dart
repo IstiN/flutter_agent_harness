@@ -355,7 +355,17 @@ Future<_AttemptOutcome> _runAttempt(
 /// the mid-answer failure and keeps the provider line as evidence.
 ErrorEvent _midAnswer(ErrorEvent event) {
   final error = event.error;
-  if (event.reason != StopReason.error || !isTransientNetworkError(error)) {
+  if (event.reason != StopReason.error) {
+    return event;
+  }
+  // Issue #312: a classified non-terminal finish_reason mid-answer gets
+  // the same hygiene wrap (the transcript already holds the deltas); a
+  // TERMINAL verdict (content_filter family) keeps its verbatim story.
+  final retryClass = finishReasonRetryClass(error);
+  final transient = retryClass != null
+      ? retryClass != FinishReasonClass.terminal
+      : isTransientNetworkError(error);
+  if (!transient) {
     return event;
   }
   return ErrorEvent(
@@ -372,6 +382,7 @@ ErrorEvent _midAnswer(ErrorEvent event) {
           'Provider failed mid-answer: the stream died after output was '
           'already delivered (not retried — a replay would duplicate the '
           'transcript). Provider error: ${_shortReason(error.errorMessage)}',
+      rawStopReason: error.rawStopReason,
       timestamp: error.timestamp,
     ),
   );

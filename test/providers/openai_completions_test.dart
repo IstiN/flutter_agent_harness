@@ -1181,7 +1181,7 @@ void main() {
       });
 
       test('AC3: content_filter stays terminal — zero retries, partial '
-          'text preserved', () async {
+          'text preserved verbatim', () async {
         const contentFilterSse =
             'data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"par'
             'tial"}}]}\n\n'
@@ -1204,8 +1204,44 @@ void main() {
         expect(calls, 1, reason: 'retrying a filter is a safety bug');
         expect(error.reason, StopReason.error);
         expect(
+          error.error.errorMessage,
+          'Provider finish_reason: content_filter',
+          reason:
+              'a TERMINAL verdict keeps its verbatim story — '
+              'no mid-answer hygiene wrap',
+        );
+        expect(
           error.error.content.whereType<TextContent>().single.text,
           'partial',
+        );
+      });
+
+      test('AC3: pre-commit content_filter is vetoed by the verdict, not '
+          'the text nets', () async {
+        // No committed content: the only thing standing between the
+        // filter word and an in-place replay is the classification.
+        const contentFilterSse =
+            'data: {"id":"chatcmpl-1","choices":[{"delta":{},'
+            '"finish_reason":"content_filter"}]}\n\n'
+            'data: [DONE]\n\n';
+        var calls = 0;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          calls++;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(contentFilterSse)),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+
+        final events = await wrappedCall(client).toList();
+        final error = events.last as ErrorEvent;
+
+        expect(calls, 1, reason: 'retrying a filter is a safety bug');
+        expect(error.reason, StopReason.error);
+        expect(
+          error.error.errorMessage,
+          'Provider finish_reason: content_filter',
         );
       });
 

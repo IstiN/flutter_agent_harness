@@ -291,10 +291,15 @@ final class _DriveState {
 /// overflow — those policies own them).
 ErrorEvent _midAnswerEvent(ErrorEvent event) {
   final error = event.error;
+  // Issue #312: a classified non-terminal finish_reason mid-answer gets
+  // the same hygiene wrap (the transcript already holds the deltas); a
+  // TERMINAL verdict (content_filter family) keeps its verbatim story.
+  final retryClass = finishReasonRetryClass(error);
   final retryable =
       event.reason == StopReason.error &&
       (isRateLimitOrQuota(error, retryAfter: event.retryAfter) ||
-          isTransientTransportError(error));
+          isTransientTransportError(error) ||
+          (retryClass != null && retryClass != FinishReasonClass.terminal));
   if (!retryable) return event;
   return ErrorEvent(
     reason: event.reason,
@@ -311,6 +316,7 @@ ErrorEvent _midAnswerEvent(ErrorEvent event) {
           'already delivered (not retried — a replay would duplicate the '
           'transcript). Provider error: '
           '${FallbackStreamFunction._shortReasonText(error)}',
+      rawStopReason: error.rawStopReason,
       timestamp: error.timestamp,
     ),
   );

@@ -83,6 +83,16 @@ void Function(String reason)? onUnknownFinishReason;
 /// every retry.
 FinishReasonClass? finishReasonRetryClass(AssistantMessage message) {
   if (message.stopReason != StopReason.error) return null;
+  // Scoped to the openai-completions finish_reason family: its error
+  // wording is the marker that the wire word came through the vocabulary
+  // this table catalogues. Other adapters set rawStopReason too (Google
+  // SAFETY/RECITATION, Anthropic sensitive) - refused content keeps the
+  // terminal behavior it had before this table existed; replaying it is
+  // a safety bug.
+  final text = message.errorMessage;
+  if (text == null || !text.startsWith('Provider finish_reason: ')) {
+    return null;
+  }
   final raw = message.rawStopReason;
   if (raw == null || raw.isEmpty) return null;
   return classifyFinishReason(raw);

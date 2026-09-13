@@ -238,6 +238,7 @@ void main() {
       AssistantMessage withRaw(
         String? raw, {
         StopReason stop = StopReason.error,
+        String? errorMessage = 'Provider finish_reason: network_error',
       }) => AssistantMessage(
         content: const [],
         api: 'test-api',
@@ -245,6 +246,7 @@ void main() {
         model: 'test-model',
         usage: Usage.zero,
         stopReason: stop,
+        errorMessage: errorMessage,
         rawStopReason: raw,
         timestamp: DateTime.utc(2026),
       );
@@ -261,6 +263,30 @@ void main() {
         finishReasonRetryClass(withRaw('stop', stop: StopReason.stop)),
         isNull,
         reason: 'only error stops carry a retry verdict',
+      );
+      // Scoped to the openai-completions finish_reason family (REG for the
+      // review blocker): Google sets rawStopReason for every finish reason —
+      // its filter-shaped words (SAFETY, RECITATION, sensitive) must keep
+      // the terminal behavior they had before the table existed.
+      expect(
+        finishReasonRetryClass(
+          withRaw('SAFETY', errorMessage: 'Provider finishReason: SAFETY'),
+        ),
+        isNull,
+      );
+      expect(
+        finishReasonRetryClass(
+          withRaw(
+            'sensitive',
+            errorMessage: 'Provider finishReason: sensitive',
+          ),
+        ),
+        isNull,
+      );
+      expect(
+        finishReasonRetryClass(withRaw('unexpected_state', errorMessage: null)),
+        isNull,
+        reason: 'no marker - not the vocabulary this table catalogues',
       );
     });
   });
