@@ -77,6 +77,19 @@ void main() {
     expect(k.modifiers, {KeyMod.ctrl});
   });
 
+  // Issue #275: the LineEditor cluster rides raw control bytes — pin the
+  // whole set the editor binds (w/u/k/y/t), not just ctrl+a.
+  test('parseKeyFromBuffer parses the editor ctrl-key cluster', () {
+    final cases = {0x17: 'w', 0x15: 'u', 0x0b: 'k', 0x19: 'y', 0x14: 't'};
+    for (final MapEntry(:key, :value) in cases.entries) {
+      final b = <int>[key];
+      final k = parseKeyFromBuffer(b)!;
+      expect(k.code, KeyCode.rune, reason: 'byte 0x${key.toRadixString(16)}');
+      expect(k.text, value);
+      expect(k.modifiers, {KeyMod.ctrl});
+    }
+  });
+
   test('parseKeyFromBuffer parses backspace', () {
     final b = <int>[0x7f];
     final k = parseKeyFromBuffer(b)!;

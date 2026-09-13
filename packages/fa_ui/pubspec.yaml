@@ -67,6 +67,10 @@ dependency_overrides:
   # ^0.1.0 while this package pins the path version — force the path one.
   fa_llm:
     path: ../fa_llm
+  # The composer (lib/src/cli/fa_tui.dart) uses LineEditor, which only
+  # exists in the vendored dart_tui — the hosted 2.x predates it.
+  dart_tui:
+    path: ../../vendor/dart_tui
 
 flutter:
   uses-material-design: true
