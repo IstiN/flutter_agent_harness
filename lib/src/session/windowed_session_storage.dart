@@ -24,6 +24,7 @@ import 'dart:convert';
 
 import '../env/execution_env.dart';
 import '../exceptions.dart';
+import '../env/session_parse_executor.dart';
 import 'session_chunk_reader.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
@@ -181,8 +182,13 @@ final class WindowedSessionStorage
     int chunkBytes = defaultChunkBytes,
     int? residentRecords,
     int? residentBytes,
+    SessionParseExecutor? parseExecutor,
   }) async {
-    final reader = SessionChunkReader(fs: fs, path: filePath);
+    final reader = SessionChunkReader(
+      fs: fs,
+      path: filePath,
+      parseExecutor: parseExecutor,
+    );
     final header = await reader.readHeader();
     final chunk = await reader.readTail(
       maxRecords: chunkRecords,

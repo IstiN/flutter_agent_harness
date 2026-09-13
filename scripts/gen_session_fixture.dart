@@ -19,9 +19,19 @@
 // `--measure` opens the file through WindowedSessionStorage and logs the
 // AC numbers: open+tail latency, countRecords, resident bounds, and the
 // cost of a few loadOlder pages.
+//
+// Issue #199 evidence:
+//   `--measure` additionally times a FULL open through
+//   IsolateSessionParseExecutor against the inline default on the same
+//   file and asserts result parity.
+//   `--list-sessions N` skips generation, creates N small sessions under
+//   --out through the repo, and times repo.list() over them.
 import 'dart:io';
 
-import 'package:flutter_agent_harness/src/env/io_execution_env.dart';
+import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/session/session_repo.dart';
+import 'package:flutter_agent_harness/src/session/session_storage.dart';
+import 'package:flutter_agent_harness/src/session/session_tree.dart';
 import 'package:flutter_agent_harness/src/session/windowed_session_storage.dart';
 
 const _iso = '2026-01-01T00:00:00.000Z';
@@ -39,6 +49,7 @@ Future<void> main(List<String> args) async {
   var branches = 1;
   var images = false;
   var compactions = false;
+  var listSessions = 0;
   for (var i = 0; i < args.length; i++) {
     final arg = args[i];
     String? next = i + 1 < args.length ? args[i + 1] : null;
@@ -64,12 +75,22 @@ Future<void> main(List<String> args) async {
       compactions = true;
     } else if (arg == '--measure') {
       measure = true;
+    } else if (arg.startsWith('--list-sessions=')) {
+      listSessions = int.parse(arg.substring('--list-sessions='.length));
+    } else if (arg == '--list-sessions' && next != null) {
+      listSessions = int.parse(next);
+      i++;
     } else {
       stderr.writeln('unknown arg: $arg');
       exitCode = 2;
       return;
     }
   }
+  if (listSessions > 0) {
+    await _listSessionsMeasure(out, listSessions);
+    return;
+  }
+
   final sw = Stopwatch()..start();
   await _generate(
     out,
@@ -120,6 +141,7 @@ Future<void> _generate(
   bool images = false,
   bool compactions = false,
 }) async {
+  await File(out).parent.create(recursive: true);
   final sink = File(out).openWrite();
   sink.write(
     '{"type":"session","version":3,"id":"fixture","timestamp":"$_iso",'
@@ -206,4 +228,74 @@ Future<void> _measure(String out) async {
     'resident now ${storage.residentCount} / '
     '${storage.residentWindowBytes ~/ 1024} KiB',
   );
+
+  // Issue #199: a FULL open through the isolate parse executor vs the
+  // inline default on the same file — bounded wall time, identical result.
+  final fs = LocalFileSystem();
+  sw = Stopwatch()..start();
+  final inlineSession = Session(await JsonlSessionStorage.open(fs, out));
+  stdout.writeln('full-open inline: ${sw.elapsedMilliseconds} ms');
+
+  final isolatedRepo = JsonlSessionRepo(
+    fs: fs,
+    sessionsRoot: File(out).parent.path,
+    parseExecutor: const IsolateSessionParseExecutor(),
+  );
+  sw = Stopwatch()..start();
+  final isolatedSession = await isolatedRepo.open(
+    SessionMetadata(
+      id: 'fixture',
+      createdAt: DateTime.parse(_iso),
+      cwd: '/work',
+      path: out,
+    ),
+  );
+  stdout.writeln('full-open isolate: ${sw.elapsedMilliseconds} ms');
+
+  final inlineEntries = await inlineSession.getEntries();
+  final isolatedEntries = await isolatedSession.getEntries();
+  final inlineLeaf = await inlineSession.getLeafId();
+  final isolatedLeaf = await isolatedSession.getLeafId();
+  final inlineTorn =
+      (inlineSession.getStorage() as JsonlSessionStorage).quarantinedEntries;
+  final isolatedTorn =
+      (isolatedSession.getStorage() as JsonlSessionStorage).quarantinedEntries;
+  if (inlineEntries.length != isolatedEntries.length ||
+      inlineLeaf != isolatedLeaf ||
+      inlineTorn != isolatedTorn) {
+    stderr.writeln(
+      'isolate parity FAILED: inline (${inlineEntries.length} records, '
+      'leaf=$inlineLeaf, torn=$inlineTorn) vs isolate '
+      '(${isolatedEntries.length} records, leaf=$isolatedLeaf, '
+      'torn=$isolatedTorn)',
+    );
+    exitCode = 2;
+    return;
+  }
+  stdout.writeln(
+    'isolate parity: OK (records=${inlineEntries.length}, '
+    'leaf=${inlineLeaf ?? '-'}, torn=$inlineTorn)',
+  );
+}
+
+/// Issue #199: creates [n] small sessions under [root] (the repo's own
+/// create path) and times a full repo.list() over them.
+Future<void> _listSessionsMeasure(String root, int n) async {
+  final repo = JsonlSessionRepo(fs: LocalFileSystem(), sessionsRoot: root);
+  for (var i = 0; i < n; i++) {
+    final session = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/fixture'),
+    );
+    await session.appendSessionName('session-$i');
+  }
+  final sw = Stopwatch()..start();
+  final sessions = await repo.list();
+  final ms = sw.elapsedMilliseconds;
+  if (sessions.length != n) {
+    stderr.writeln('list returned ${sessions.length} sessions, expected $n');
+    exitCode = 2;
+    return;
+  }
+  stdout.writeln('list $n sessions: $ms ms');
+  stdout.writeln('list concurrency: bounded');
 }

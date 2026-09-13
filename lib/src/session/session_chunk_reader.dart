@@ -18,6 +18,7 @@ import 'dart:typed_data';
 
 import '../env/execution_env.dart';
 import '../exceptions.dart';
+import '../env/session_parse_executor.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
 
@@ -100,11 +101,16 @@ final class SessionChunkReader {
     required this.fs,
     required this.path,
     this.startWindowBytes = 128 << 10,
+    this.parseExecutor,
   });
 
   /// The store backing [path].
   final FileSystem fs;
   final String path;
+
+  /// Where record parsing runs — `null` keeps the inline batched path
+  /// (web); IO hosts inject the isolate executor (issue #199).
+  final SessionParseExecutor? parseExecutor;
   final int startWindowBytes;
 
   /// Whether the backing filesystem supports byte-range reads. Hosts without
@@ -215,7 +221,7 @@ final class SessionChunkReader {
     }
     final bytes = await _readRange(fromOffset, info.size);
     final lines = _splitLines(bytes, fromOffset);
-    final entries = _parseAllLines(lines);
+    final entries = await _parseAllLines(lines);
     return SessionChunk(
       entries: entries,
       fileSize: info.size,
@@ -302,6 +308,7 @@ final class SessionChunkReader {
       final end = offset + block < size ? offset + block : size;
       final bytes = await _readRange(offset, end);
       var scan = 0;
+      final blockLines = <(int, Uint8List)>[];
       while (scan < bytes.length) {
         final nl = bytes.indexOf(0x0A, scan);
         if (nl < 0) {
@@ -312,18 +319,23 @@ final class SessionChunkReader {
         }
         torn.add(Uint8List.sublistView(bytes, scan, nl));
         final raw = torn.takeBytes();
-        final lineStart = tornStart;
-        final lineEnd = offset + nl + 1;
-        tornStart = lineEnd;
+        blockLines.add((tornStart, raw));
+        tornStart = offset + nl + 1;
         scan = nl + 1;
-        final added = _keepEntry(raw, lineStart, lineEnd, entries);
-        if (added > 0) {
-          lastKeptEnd = lineEnd;
-          totalBytes += added;
-        }
-        if (entries.length >= maxRecords || totalBytes >= maxBytes) {
-          capped = true;
-          break;
+      }
+      // The block parses in bounded executor batches (issue #199); caps
+      // still stop at the first record that fills them, so the cursor
+      // semantics (lastKeptEnd / totalBytes) are unchanged.
+      if (blockLines.isNotEmpty) {
+        final parsed = await _parseAllLines(blockLines);
+        for (final entry in parsed) {
+          entries.add(entry);
+          lastKeptEnd = entry.offset + entry.bytes + 1;
+          totalBytes += entry.bytes + 1;
+          if (entries.length >= maxRecords || totalBytes >= maxBytes) {
+            capped = true;
+            break;
+          }
         }
       }
       offset = end;
@@ -335,26 +347,6 @@ final class SessionChunkReader {
       hasOlder: false,
       limitOffset: lastKeptEnd,
     );
-  }
-
-  /// Parses one complete line and, on success, records it; returns the
-  /// line's byte weight (0 when the line is skipped - torn or foreign).
-  int _keepEntry(
-    Uint8List raw,
-    int lineStart,
-    int lineEnd,
-    List<SessionChunkEntry> entries,
-  ) {
-    if (raw.isEmpty) return 0;
-    try {
-      final record = parseSessionEntryLine(utf8.decode(raw), '', lineStart);
-      entries.add(
-        SessionChunkEntry(offset: lineStart, bytes: raw.length, record: record),
-      );
-      return raw.length + 1;
-    } on Object {
-      return 0;
-    }
   }
 
   /// Streams the file counting newlines — no JSON decode (~1 s per 300 MB).
@@ -467,7 +459,7 @@ final class SessionChunkReader {
       // When the window does not reach the file (anchor) start, the first
       // line segment is the TAIL of a record that begins above the window —
       final parseable = lo > 0 && lines.isNotEmpty ? lines.sublist(1) : lines;
-      final entries = _collectNewest(
+      final entries = await _collectNewest(
         parseable,
         maxRecords: maxRecords,
         maxBytes: maxBytes,
@@ -583,52 +575,91 @@ final class SessionChunkReader {
   /// least one parseable record is always kept (a single multi-MB record
   /// still opens). Returns the kept records OLDEST-first. Torn lines are
   /// skipped. [maxBytes] < 0 disables the byte cap (live-tail ingest).
-  static List<SessionChunkEntry> _collectNewest(
+  ///
+  /// Parsing runs in bounded batches through [parseExecutor] (issue #199);
+  /// the newest-side walk order — and therefore the caps' early break — is
+  /// unchanged. One batch may parse a few records past the cap break; the
+  /// overshoot is bounded by a single transfer.
+  Future<List<SessionChunkEntry>> _collectNewest(
     List<(int offset, Uint8List bytes)> lines, {
     required int maxRecords,
     required int maxBytes,
-  }) {
+  }) async {
+    final decoded = _decodeLines(lines);
+    if (decoded.isEmpty) return const [];
+    final batches = splitSessionParseBatches(
+      [for (final (_, text, _) in decoded) text],
+      filePath: path,
+      firstLineNumber: decoded.first.$1,
+    );
     final picked = <SessionChunkEntry>[];
     var totalBytes = 0;
-    for (var i = lines.length - 1; i >= 0; i--) {
-      if (picked.length >= maxRecords) break;
-      if (maxBytes >= 0 && picked.isNotEmpty && totalBytes >= maxBytes) {
-        break;
+    for (var b = batches.length - 1; b >= 0; b--) {
+      final batch = batches[b];
+      // firstLineNumber was the first decoded offset; the delta recovers
+      // this batch's start index within [decoded].
+      final base = batch.firstLineNumber - decoded.first.$1;
+      final result = parseExecutor == null
+          ? parseSessionEntryLinesSync(batch)
+          : await parseExecutor!.parse(batch);
+      for (var i = result.records.length - 1; i >= 0; i--) {
+        if (picked.length >= maxRecords) {
+          return picked.reversed.toList(growable: false);
+        }
+        if (maxBytes >= 0 && picked.isNotEmpty && totalBytes >= maxBytes) {
+          return picked.reversed.toList(growable: false);
+        }
+        final record = result.records[i];
+        if (record == null) continue;
+        final (offset, _, weight) = decoded[base + i];
+        picked.add(
+          SessionChunkEntry(offset: offset, bytes: weight, record: record),
+        );
+        totalBytes += weight + 1;
       }
-      final (offset, raw) = lines[i];
-      if (raw.isEmpty) continue;
-      final SessionRecord record;
-      try {
-        record = parseSessionEntryLine(utf8.decode(raw), '', offset);
-      } on Object {
-        continue; // torn or foreign line: never fatal in a windowed read
-      }
-      picked.add(
-        SessionChunkEntry(offset: offset, bytes: raw.length, record: record),
-      );
-      totalBytes += raw.length + 1;
     }
-    return picked.reversed.toList();
+    return picked.reversed.toList(growable: false);
   }
 
-  /// Parses lines oldest-first, skipping torn ones.
-  static List<SessionChunkEntry> _parseAllLines(
+  /// Parses lines oldest-first through the executor, skipping torn ones.
+  Future<List<SessionChunkEntry>> _parseAllLines(
+    List<(int offset, Uint8List bytes)> lines,
+  ) async {
+    final decoded = _decodeLines(lines);
+    if (decoded.isEmpty) return const [];
+    final parsed = await parseSessionLines(
+      [for (final (_, text, _) in decoded) text],
+      filePath: path,
+      firstLineNumber: decoded.first.$1,
+      executor: parseExecutor,
+    );
+    return [
+      for (var i = 0; i < parsed.length; i++)
+        if (parsed[i] != null)
+          SessionChunkEntry(
+            offset: decoded[i].$1,
+            bytes: decoded[i].$3,
+            record: parsed[i]!,
+          ),
+    ];
+  }
+
+  /// Strict-UTF8 decodes candidate lines, dropping empty or undecodable
+  /// ones — the same skip semantics the inline parser had, applied BEFORE
+  /// any executor transfer. Returns (offset, text, byteWeight) triples.
+  static List<(int, String, int)> _decodeLines(
     List<(int offset, Uint8List bytes)> lines,
   ) {
-    final picked = <SessionChunkEntry>[];
+    final decoded = <(int, String, int)>[];
     for (final (offset, raw) in lines) {
       if (raw.isEmpty) continue;
-      final SessionRecord record;
       try {
-        record = parseSessionEntryLine(utf8.decode(raw), '', offset);
+        decoded.add((offset, utf8.decode(raw), raw.length));
       } on Object {
         continue;
       }
-      picked.add(
-        SessionChunkEntry(offset: offset, bytes: raw.length, record: record),
-      );
     }
-    return picked;
+    return decoded;
   }
 
   static int _bytesOf(List<SessionChunkEntry> entries) =>
