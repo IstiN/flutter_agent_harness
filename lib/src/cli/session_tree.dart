@@ -125,6 +125,10 @@ Future<Map<String, String>> sessionDisplayNames(
   SessionRepo repo,
   List<SessionMetadata> sessions,
 ) async {
+  // Issue #199: the concrete JSONL repo scans tails backward with a
+  // bounded fan-out — no open at all per session. Other repos keep the
+  // windowed-open fallback.
+  if (repo is JsonlSessionRepo) return repo.sessionNamesQuick(sessions);
   final names = <String, String>{};
   for (final metadata in sessions) {
     try {

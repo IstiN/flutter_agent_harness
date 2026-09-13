@@ -58,6 +58,7 @@ import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_parse_factory.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
@@ -226,6 +227,11 @@ class AgentService extends ChangeNotifier
     @visibleForTesting bool watchExternalSessions = true,
     String? sessionsRoot,
     OfficeApi? officeApi,
+
+    /// Overrides the platform session-parse executor (issue #199). Tests
+    /// inject a fake to keep parsing deterministic; production passes
+    /// `createSessionParseExecutor()` (null on web → inline parsing).
+    @visibleForTesting SessionParseExecutor? parseExecutor,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -271,6 +277,7 @@ class AgentService extends ChangeNotifier
       streamFunction: streamFunction,
       watchExternalSessions: watchExternalSessions,
       taskModelsStore: taskModelsStore,
+      parseExecutor: parseExecutor ?? createSessionParseExecutor(),
       sessionsRoot: resolvedSessionsRoot,
       officeApi: officeApi ?? bootOfficeApi(),
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
@@ -389,6 +396,10 @@ class AgentService extends ChangeNotifier
     bool watchExternalSessions = true,
     MediaKeyResolver? resolveSecretName,
     OfficeApi? officeApi,
+    // The session-parse executor (issue #199): non-null routes ALL record
+    // parsing through it (background isolates in production); null keeps
+    // inline parsing (tests stay deterministic).
+    SessionParseExecutor? parseExecutor,
     this._secretsEnv,
     this._sessionKeys,
     this._taskModelsStore,
@@ -419,7 +430,11 @@ class AgentService extends ChangeNotifier
              : officeToolApprovalOverrides(),
        ),
        sessionsRoot = sessionsRoot,
-       _repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
+       _repo = JsonlSessionRepo(
+         fs: env,
+         sessionsRoot: sessionsRoot,
+         parseExecutor: parseExecutor,
+       ) {
     _wireImageDropNotice();
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
@@ -1626,27 +1641,35 @@ class AgentService extends ChangeNotifier
   Future<void> _reloadExternalMessages() async {
     final session = _session;
     if (session == null || isStreaming) return;
+    final gen = _loadGeneration;
     try {
       if (session.getStorage() case final WindowedSessionStorage windowed) {
         final ingest = await windowed.ingestAppended();
+        if (gen != _loadGeneration) return;
         if (ingest.reanchored) {
           // Truncation/rotation: the view (and the provider context)
           // reset to the new tail — stale anything is never kept.
           _viewBranch = ingest.delta;
           await _applyViewBranch();
+          if (gen != _loadGeneration) return;
           final context = await session.buildContext();
+          if (gen != _loadGeneration) return;
           _agent.state.messages = context.messages;
           _persistedCount = context.messages.length;
         } else if (ingest.delta.isNotEmpty) {
           _viewBranch?.addAll(ingest.delta);
           await _applyViewBranch();
+          if (gen != _loadGeneration) return;
           await _growProviderContext(session, ingest.delta);
+          if (gen != _loadGeneration) return;
         }
         unawaited(_refreshHistoryAbove());
         return;
       }
       final metadata = await session.getMetadata();
+      if (gen != _loadGeneration) return;
       final fresh = await _repo.open(metadata);
+      if (gen != _loadGeneration) return;
       _session = fresh;
       await _reprojectLoadedWindow(fresh);
     } on Object {
@@ -1757,15 +1780,18 @@ class AgentService extends ChangeNotifier
     if (_loadingHistory || isStreaming) return;
     final windowed = _windowed;
     if (windowed == null) return;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       final joined = await windowed.loadOlder();
+      if (gen != _loadGeneration) return;
       if (joined.isNotEmpty) {
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
       }
       await _refreshHistoryAbove();
+      if (gen != _loadGeneration) return;
       if (_historyLoadError != null) {
         _historyLoadError = null;
         notifyListeners();
@@ -1787,15 +1813,18 @@ class AgentService extends ChangeNotifier
     if (_loadingHistory || isStreaming) return;
     final windowed = _windowed;
     if (windowed == null) return;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       final joined = await windowed.loadNewer();
+      if (gen != _loadGeneration) return;
       if (joined.isNotEmpty) {
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
       }
       await _refreshHistoryAbove();
+      if (gen != _loadGeneration) return;
       _historyLoadError = null;
       notifyListeners();
     } on Object catch (e) {
@@ -1830,13 +1859,14 @@ class AgentService extends ChangeNotifier
     final index = _positionalRow(messageId);
     if (index == null) return false;
     if (_loadingHistory || isStreaming) return index < messages.length;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     var reached = index < messages.length;
     try {
       for (var pass = 0; !reached && pass < 100 && windowed.hasOlder; pass++) {
         final joined = await windowed.loadOlder();
-        if (joined.isEmpty) break;
+        if (joined.isEmpty || gen != _loadGeneration) break;
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
         reached = index < messages.length;
@@ -1885,14 +1915,17 @@ class AgentService extends ChangeNotifier
     String recordId,
   ) async {
     if (_loadingHistory || isStreaming) return false;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       final branch = await windowed.jumpToRecord(recordId);
-      if (branch.isEmpty) return false;
+      if (branch.isEmpty || gen != _loadGeneration) return false;
       await _syncViewToWindow(windowed);
       await _applyViewBranch();
+      if (gen != _loadGeneration) return false;
       await _refreshHistoryAbove();
+      if (gen != _loadGeneration) return false;
       _historyLoadError = null;
       return true;
     } on Object catch (e) {
@@ -1911,7 +1944,9 @@ class AgentService extends ChangeNotifier
   Future<void> _refreshHistoryAbove() async {
     final windowed = _windowed;
     if (windowed == null) return;
+    final gen = _loadGeneration;
     final count = await windowed.countAbove();
+    if (gen != _loadGeneration) return;
     if (_historyAboveCount != count || windowed.cachedTotalRecords != null) {
       _historyAboveCount = count;
       notifyListeners();
@@ -1954,6 +1989,13 @@ class AgentService extends ChangeNotifier
   String? _sessionId;
   String? _sessionFile;
   int _persistedCount = 0;
+
+  /// Monotonic load-generation counter (issue #199 AC5/E3): bumped by
+  /// every path that swaps or clears the session ([loadSession], [reset],
+  /// [initialize], [deleteSession]); page loads, external refreshes, and
+  /// ledger folds capture it and bail when it moved — stale work must
+  /// never land in the new session's state.
+  int _loadGeneration = 0;
 
   /// Request summaries captured live (ModelRequestEvent) but not yet
   /// written; flushed at the head of every [_persistUnchecked] pass.
@@ -2638,9 +2680,20 @@ class AgentService extends ChangeNotifier
   Future<void> _rebuildTrajectory({List<SessionRecord>? records}) async {
     final session = _session;
     if (session == null) return;
+    final gen = _loadGeneration;
     _trajectory.reset();
+    var folded = 0;
     for (final record in records ?? await session.getBranch()) {
       _trajectory.append(record);
+      // Chunked fold (issue #199): yield the event loop every 100 records
+      // so long ledger rebuilds interleave frames instead of blocking one.
+      // A generation bump or session swap mid-fold stops the stale fold —
+      // it must not keep appending to the swapped session's ledger.
+      if (++folded % 100 == 0) {
+        if (gen != _loadGeneration || !identical(session, _session)) return;
+        await Future<void>.delayed(Duration.zero);
+        if (gen != _loadGeneration || !identical(session, _session)) return;
+      }
     }
   }
 

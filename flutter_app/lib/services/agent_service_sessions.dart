@@ -30,6 +30,8 @@ extension AgentServiceSessions on AgentService {
   /// behind. [loadSession] still creates an OS-backed [_session] for the
   /// restored session.
   Future<void> initialize() async {
+    // A fresh/cleared session invalidates in-flight loaders (issue #199).
+    _loadGeneration++;
     // The session FILE materialises lazily on the first persist (an
     // untouched session never hits the disk), but the id is allocated
     // eagerly: hosts (FlutterSessionManager) key sessions by id from the
@@ -108,6 +110,8 @@ extension AgentServiceSessions on AgentService {
 
   /// Clears the in-memory transcript and starts a new session.
   Future<void> reset() async {
+    // Any in-flight load/page/fold for the outgoing session goes stale.
+    _loadGeneration++;
     await deleteSessionIfEmpty();
     // Detach the old session so [initialize] allocates a fresh id — the
     // old file (when it has content) stays on disk for the session list.
@@ -192,8 +196,20 @@ extension AgentServiceSessions on AgentService {
   /// in the CLI and the app appends one) is restored: the DEFAULT chat
   /// model only applies to NEW sessions, not to reopening an old one.
   Future<void> loadSession(SessionMetadata metadata) async {
+    // Generation guard (issue #199 AC5/E3): every await below re-checks —
+    // a newer load owns the state and a stale loader abandons silently.
+    final gen = ++_loadGeneration;
     abort();
     await waitForIdle();
+    if (gen != _loadGeneration) return;
+    // Skeleton-first (issue #199 AC2): the session shell renders BEFORE
+    // the history parses, so the composer is live while the open runs.
+    _sessionId = metadata.id;
+    _sessionFile = metadata.path;
+    _sessionCwd = metadata.cwd;
+    _historyAboveCount = null;
+    messages.clear();
+    _notify();
     // Windowed open (issue #135): header + newest chunk only; older
     // records page in through loadOlderHistory. Small sessions load
     // completely either way. A windowed-open failure (a corrupt tail,
@@ -206,24 +222,25 @@ extension AgentServiceSessions on AgentService {
     } on Object {
       session = await _repo.open(metadata);
     }
+    if (gen != _loadGeneration) return;
     // The count belongs to the session being opened; the background
     // refresh at the end of this method fills it in.
     _historyAboveCount = null;
     _viewBranch = await session.getBranch();
+    if (gen != _loadGeneration) return;
     final context = await session.buildContext();
+    if (gen != _loadGeneration) return;
     final contextMessages = context.messages;
     _agent.reset();
     _agent.state.messages = contextMessages;
     _session = session;
-    _sessionId = metadata.id;
-    _sessionFile = metadata.path;
-    _sessionCwd = metadata.cwd;
     _setMailboxPrefix(metadata.id);
     // Follow external appends (a running fa CLI on the same session).
     _startSessionWatch();
     // The ledger re-projects the active branch (records carry richer
     // structure than the rebuilt message list).
     await _rebuildTrajectory(records: _viewBranch);
+    if (gen != _loadGeneration) return;
     // Restore the session's own model: same wire kind → modelId override;
     // the provider itself stays the configured connection (its key lives
     // in the Keychain, not in the session). An unresolvable or
@@ -283,9 +300,11 @@ extension AgentServiceSessions on AgentService {
     // position — the branch walk counts message records, so each marker
     // lands right after the reply that emitted it.
     await dynamicMessages.forgetAll();
+    if (gen != _loadGeneration) return;
     final widgetMarkers = await dynamicMessages.adoptBranch(
       await session.getBranch(),
     );
+    if (gen != _loadGeneration) return;
     final rebuilt = contextMessages.map(AgentService._toChatMessage).toList();
     for (final (index, marker) in widgetMarkers) {
       final at = index > rebuilt.length ? rebuilt.length : index;
@@ -306,6 +325,8 @@ extension AgentServiceSessions on AgentService {
   Future<void> deleteSession(SessionMetadata metadata) async {
     final isActive = metadata.id == _sessionId;
     if (isActive) {
+      // In-flight loaders/pager work must not land on a deleted session.
+      _loadGeneration++;
       // Stop any in-flight run and let its persistence settle before the
       // session file disappears underneath it.
       abort();

@@ -11,6 +11,7 @@ library;
 import 'dart:convert';
 
 import '../env/execution_env.dart';
+import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
 import 'session_record.dart';
 import 'uuid.dart';
@@ -335,12 +336,17 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// reported through [quarantinedEntries].
   static Future<JsonlSessionStorage> open(
     FileSystem fs,
-    String filePath,
-  ) async => withSessionFileLock(filePath, () => _openLocked(fs, filePath));
+    String filePath, {
+    SessionParseExecutor? parseExecutor,
+  }) async => withSessionFileLock(
+    filePath,
+    () => _openLocked(fs, filePath, parseExecutor),
+  );
 
   static Future<JsonlSessionStorage> _openLocked(
     FileSystem fs,
     String filePath,
+    SessionParseExecutor? parseExecutor,
   ) async {
     final content = _fsOrThrow(
       await fs.readTextFile(filePath),
@@ -352,21 +358,32 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     ];
     if (allLines.isEmpty) _invalidSession(filePath, 'missing session header');
     final header = parseSessionHeaderLine(allLines.first, filePath);
+    // The body (everything below the header) parses in bounded batches
+    // through [parseSessionLines] — inside a background isolate when a
+    // [SessionParseExecutor] is injected, inline-batched otherwise
+    // (issue #199). Torn lines come back as null slots and keep the exact
+    // quarantine flow below.
+    final parsed = await parseSessionLines(
+      allLines.sublist(1),
+      filePath: filePath,
+      firstLineNumber: 2,
+      executor: parseExecutor,
+    );
     final entries = <SessionRecord>[];
     final goodLines = <String>[allLines.first];
     final tornLines = <String>[];
     String? leafId;
-    for (var i = 1; i < allLines.length; i++) {
-      try {
-        final entry = parseSessionEntryLine(allLines[i], filePath, i + 1);
-        entries.add(entry);
-        goodLines.add(allLines[i]);
-        leafId = leafIdAfterSessionRecord(entry);
-      } on Object {
+    for (var i = 0; i < parsed.length; i++) {
+      final entry = parsed[i];
+      if (entry == null) {
         // A malformed line is a torn write: drop the record, keep the raw
         // bytes for the sidecar below. Never fatal.
-        tornLines.add(allLines[i]);
+        tornLines.add(allLines[i + 1]);
+        continue;
       }
+      entries.add(entry);
+      goodLines.add(allLines[i + 1]);
+      leafId = leafIdAfterSessionRecord(entry);
     }
     var quarantined = 0;
     if (tornLines.isNotEmpty) {
