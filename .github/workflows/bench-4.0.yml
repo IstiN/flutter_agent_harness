@@ -139,18 +139,18 @@ jobs:
           name: fa-bundle
 
       # The self-hosted runner is a macOS box: setup-python cannot write the
-      # hosted tool cache there (mkdir /Users/runner denied). Build a venv on
-      # the runner's own python3 instead. Guard the version: harbor is fine
-      # on 3.13, typer-based CLIs break on 3.14.
-      - name: Install harbor (venv)
+      # hosted tool cache there (mkdir /Users/runner denied) and the runner's
+      # own python3 is 3.14 — typer-based CLIs (harbor) break on 3.14. Get a
+      # uv-managed CPython 3.13 in user space instead (no admin, no tool
+      # cache); uv is also the canonical harbor install per the 4.0 docs.
+      - name: Install harbor (uv-managed python 3.13)
         run: |
-          pyver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-          case "$pyver" in 3.1[0-3]) ;; *)
-            echo "::error::runner python3 is $pyver; harbor needs 3.10-3.13 (typer breaks on 3.14)"
-            exit 1 ;;
-          esac
-          python3 -m venv .bench-venv
-          .bench-venv/bin/pip install 'harbor[modal]==0.23.0'
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv --python 3.13 .bench-venv
+          uv pip install --python .bench-venv/bin/python 'harbor[modal]==0.23.0'
+          .bench-venv/bin/python -c 'import sys; print("venv python:", sys.version.split()[0])'
 
       - name: Run harbor (fa agent, ${{ matrix.env }} env)
         env:
