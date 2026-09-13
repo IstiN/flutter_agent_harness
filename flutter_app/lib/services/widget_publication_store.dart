@@ -128,7 +128,7 @@ final class WidgetPublication {
   /// The user's widget repository as `<owner>/<name>`.
   final String repoFullName;
 
-  /// The commit sha of [repoFullName] the catalog gitlink pins.
+  /// The commit sha of [repoFullName] the overlay `source.commit` pins.
   final String repoCommit;
 
   /// The catalog pull request number, once [step] is [stepPrOpened].
