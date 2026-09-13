@@ -258,7 +258,11 @@ factual: paths, commands, invariants — no essays.
   detached from the sequential line REPL like the guided provider flows).
 - `lib/src/task/` — `task` tool: parallel subagents, batch form
   `{context, tasks[]}` + `background` flag; children never get `task` (no
-  nesting); roles: `explore`→`smol`, `review`→`slow`, `plan`→`plan`;
+  nesting); roles: `explore`→`smol`, `review`→`slow`, `plan`→`plan` — a
+  role resolves through the roles resolver only when explicitly pinned
+  (`ModelRolesConfig.pinsRole`); an unpinned role keeps the parent's live
+  wiring, so the child inherits the parent's runtime-resolved output cap
+  instead of the default chain's rebuilt catalog default (issue #302);
   `outputSchema` with
   ONE fix retry; child failure = per-item error, never batch failure.
   Agent types: built-ins (`task`/`explore`/`review`/`plan`) plus discovered
@@ -591,8 +595,11 @@ factual: paths, commands, invariants — no essays.
   Issue #273 token architecture: `buildCatalogModel`/`buildCliDefaultModel`
   resolve `maxTokens` as config override > `resolveModelMaxOutputTokens`
   (the kimi-code per-family Claude OUTPUT ceiling table with
-  nearest-lower-minor fallback, 128000 conservative unknown fallback) >
-  provider spec default; `lib/src/providers/thinking.dart` ports pi's
+  nearest-lower-minor fallback, 128000 conservative unknown fallback —
+  scoped to the `anthropic-messages` api family, `anthropicMessagesApi`;
+  claude ids on other dialects keep the provider default, issue #302) >
+  provider spec default;
+  `lib/src/providers/thinking.dart` ports pi's
   thinking ladder (budgets 1024/2048/8192/16384, `minAnswerTokens` 1024,
   `adjustMaxTokensForThinking` — thinking fits INSIDE `max_tokens`),
   wired into the anthropic adapter via `AnthropicOptions.thinkingLevel`.
