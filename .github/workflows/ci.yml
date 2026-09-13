@@ -866,8 +866,6 @@ jobs:
           flutter-version: '3.47.x'
           channel: stable
           cache: true
-          channel: stable
-          cache: true
 
       - name: Create placeholder .env asset
         working-directory: flutter_app
