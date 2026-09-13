@@ -37,6 +37,12 @@ final class TrajectoryServiceFeed {
   TrajectorySnapshot append(SessionRecord record) =>
       _emit(_builder.append(record));
 
+  /// Bulk-projects a backfill (session open, branch page-in) and emits
+  /// exactly ONE snapshot — the per-append path above stays for the live
+  /// tail (issue #262).
+  TrajectorySnapshot appendAll(Iterable<SessionRecord> records) =>
+      _emit(_builder.appendAll(records));
+
   /// Projects a streaming agent event and emits the new snapshot.
   TrajectorySnapshot applyEvent(AgentEvent event) =>
       _emit(_builder.applyEvent(event));
