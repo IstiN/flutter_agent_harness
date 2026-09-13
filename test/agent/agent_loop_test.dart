@@ -154,6 +154,39 @@ void main() {
       expect(isContextWindowExhaustedError('provider exploded'), isFalse);
       expect(isContextWindowExhaustedError(null), isFalse);
     });
+    test('the over-window guard trips at the capped window, not the model '
+        'window (issue #273)', () async {
+      // A huge-window model run under a tiny owner cap: the guard must
+      // measure against [effectiveContextWindow] — the cap — so the run
+      // stops BEFORE the request that would blow the owner's budget.
+      final bigWindowModel = const Model(
+        id: 'big-window',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 100000,
+        maxTokens: 4096,
+      );
+      final fake = _FakeStreamFunction([_textTurn('never')]);
+      final prompt = UserMessage.text('x' * 800);
+      final stream = agentLoop(
+        prompts: [prompt],
+        context: const Context(messages: []),
+        config: AgentLoopConfig(
+          model: bigWindowModel,
+          contextWindowCap: 100,
+        ),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      );
+
+      final messages = await stream.result as List<dynamic>;
+      expect(fake.calls, 0);
+      final assistant = messages.whereType<AssistantMessage>().single;
+      expect(assistant.stopReason, StopReason.error);
+      expect(assistant.errorMessage, contains(contextWindowExhaustedMarker));
+      expect(assistant.errorMessage, contains('effective window is 100'));
+    });
     test('the over-window guard counts the system prompt and tool schemas '
         'when no usage anchor covers them', () async {
       final tinyWindow = const Model(

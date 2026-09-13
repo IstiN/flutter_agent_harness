@@ -59,9 +59,12 @@ final class GithubNotConnectedException implements Exception {
 }
 
 /// Publish orchestration (card `goal/widget-publishing-github.md`, issue
-/// #35): pre-flight validation → user repo create-or-update → commit widget
-/// sources → fork `IstiN/fa_widgets` → branch + external submodule pin +
-/// overlay → open (or reuse) the PR → record the submission in the ledger.
+/// #35; #232 pin-only PRs): pre-flight validation → user repo
+/// create-or-update → commit widget sources → fork `IstiN/fa_widgets` →
+/// branch + `widgets/<id>/overlay.json` carrying the `source: {repo,
+/// commit}` pin → open (or reuse) the PR → record the submission in the
+/// ledger. The PR touches exactly ONE file — the overlay — so parallel
+/// publishes from any number of devices never conflict (#232).
 ///
 /// The service writes ONLY to the connected user's own repositories and
 /// their fork; the catalog repo is written exclusively through the PR.
@@ -387,7 +390,7 @@ class WidgetPublishService {
       );
     }
 
-    // PR step: fork → branch + overlay + gitlink → open/reuse the PR.
+    // PR step: fork → branch + overlay (source pin only) → open/reuse the PR.
     final fork = await client.ensureFork(
       owner: GithubApiClient.catalogOwner,
       repo: GithubApiClient.catalogRepo,
@@ -420,15 +423,8 @@ class WidgetPublishService {
       catalogRepo,
       const JsonEncoder.withIndent('  ').convert(overlay),
     );
-    final gitmodulesBlob = await client.createBlob(
-      login,
-      catalogRepo,
-      _buildGitmodules(widgetId: app.id, repoFullName: '$owner/$name'),
-    );
     final prTreeSha = await client.createTree(login, catalogRepo, [
-      GithubTreeEntry.file('.gitmodules', gitmodulesBlob),
       GithubTreeEntry.file('widgets/${app.id}/overlay.json', overlayBlob),
-      GithubTreeEntry.submodule('vendor/external/${app.id}', repoCommit),
     ], baseTreeSha: baseSha);
     final prCommit = await client.createCommit(
       login,
@@ -649,36 +645,4 @@ class WidgetPublishService {
     return files;
   }
 
-  /// Reconstructs the fork's `.gitmodules` with the runtime submodule, every
-  /// `vendor/external/*` entry the ledger knows about, and this widget.
-  ///
-  /// LIMITATION: the current `GithubApiClient` has no contents/blob fetch,
-  /// so the existing `.gitmodules` cannot be read — entries published from
-  /// OTHER devices (not in this ledger) would be dropped from the file
-  /// content written here. The gitlinks in the tree base are unaffected;
-  /// only the `.gitmodules` blob is rewritten. Acceptable for v1 (single
-  /// publishing device per account).
-  String _buildGitmodules({
-    required String widgetId,
-    required String repoFullName,
-  }) {
-    final external = <String, String>{
-      for (final p in _ledger.publications)
-        if (p.widgetId != widgetId) p.widgetId: p.repoFullName,
-      widgetId: repoFullName,
-    };
-    final buffer = StringBuffer()
-      ..writeln('[submodule "vendor/js_widget_runtime"]')
-      ..writeln('\tpath = vendor/js_widget_runtime')
-      ..writeln(
-        '\turl = https://github.com/IstiN/flutter_js_widget_runtime.git',
-      );
-    for (final id in external.keys.toList()..sort()) {
-      buffer
-        ..writeln('[submodule "vendor/external/$id"]')
-        ..writeln('\tpath = vendor/external/$id')
-        ..writeln('\turl = https://github.com/${external[id]}.git');
-    }
-    return buffer.toString();
-  }
 }

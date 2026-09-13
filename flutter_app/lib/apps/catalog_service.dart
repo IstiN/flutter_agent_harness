@@ -359,8 +359,8 @@ class CatalogService {
   /// raw URLs the catalog carries in `preview.manifest` / `preview.js`,
   /// because the release zip URL is unreachable from a browser (no CORS
   /// headers on release-assets.githubusercontent.com). The preview URLs
-  /// MUST be used verbatim: EXTERNAL-kind widgets (user-repo submodules)
-  /// have NO sources under `fa_widgets/widgets/<id>/` at all — their
+  /// MUST be used verbatim: EXTERNAL-kind widgets (pinned source repos,
+  /// #232) have NO sources under `fa_widgets/widgets/<id>/` at all — their
   /// preview URLs point at the origin repo pinned by commit sha. The icon
   /// is always mirrored into fa_widgets itself, so it joins against
   /// [_rawBaseUrl] exactly like the in-app gallery already does.

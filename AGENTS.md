@@ -212,7 +212,13 @@ factual: paths, commands, invariants — no essays.
   `MediaModelsStore` + strict yaml slot entry) and `models_config.dart`
   (the `models:` section — per-slot media overrides + named custom model
   definitions `/model <name>` resolves; mutable like the custom-provider
-  registry, persisted by the host).
+  registry, persisted by the host). Owner context cap (issue #273):
+  `agent:`/`contextWindowCap` in `~/.fah/config.yaml` (strict section,
+  minimum 16384 = the compaction reserve) clamps the EFFECTIVE context
+  window via `effectiveContextWindow` (model.dart) for the compaction
+  thresholds, the CLI ctx meter/footer and the loop's over-window guard;
+  uncapped runs are byte-identical. Threaded: CliConfig → AgentCliConfig
+  (bin/fah.dart) → Agent → AgentLoopConfig.
 - `lib/src/ttsr/` — time-traveling stream rules: regex matched against
   streaming deltas; on match abort, inject rule bodies as hidden
   `<system-interrupt>` message, retry after 50ms. Persisted via
@@ -324,6 +330,12 @@ factual: paths, commands, invariants — no essays.
   help: add an external pinger, e.g. a cron/launchd entry that messages
   the session's mailbox — mail to an asleep session already launches a
   headless wake run that drains the inbox and sweeps due records.
+ Failure isolation (issue #270): a throwing `send` is contained per
+ record (logged via `onError` — CLI `[sched]` line, app `AppLog`), the
+ record stays for the next sweep, and the post-failure re-arm floors the
+ leg at `failureBackoff` (60s) so a poison record cannot spin a
+ zero-delay timer; sweeps deliver in due-time order, and the app's
+ turn-start sweep is awaited so the fresh turn sees the fired reminder.
  Records carry the scheduling instance's `owner` (mailbox prefix): a
  sweeper re-addresses a self-addressed record only when the stored owner
  matches its own prefix, and never deletes another instance's record -
@@ -576,6 +588,14 @@ factual: paths, commands, invariants — no essays.
   per build — `enabledProviders`/`providerEnabledInBuild`/`catalogProvider`
   all honor it, default is everything on
   (`test/build_filter/provider_filter_test.dart`).
+  Issue #273 token architecture: `buildCatalogModel`/`buildCliDefaultModel`
+  resolve `maxTokens` as config override > `resolveModelMaxOutputTokens`
+  (the kimi-code per-family Claude OUTPUT ceiling table with
+  nearest-lower-minor fallback, 128000 conservative unknown fallback) >
+  provider spec default; `lib/src/providers/thinking.dart` ports pi's
+  thinking ladder (budgets 1024/2048/8192/16384, `minAnswerTokens` 1024,
+  `adjustMaxTokensForThinking` — thinking fits INSIDE `max_tokens`),
+  wired into the anthropic adapter via `AnthropicOptions.thinkingLevel`.
   `lib/src/providers/chatgpt_oauth.dart` + `chatgpt_codex.dart` — ChatGPT
   account sign-in (PKCE against auth.openai.com, Codex CLI client id) and
   the Responses-API SSE adapter (`store: false` — the backend rejects
