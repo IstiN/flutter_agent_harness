@@ -27,8 +27,8 @@ const APP_URL = `${BASE}/app/index.html`;
 declare global {
   interface Window {
     /** Sandbox FS helper surface from flutter_app/web/fs_store.js. */
-    __fahFsSave?: (snapshot: unknown) => Promise<null>;
-    __fahFsLoad?: () => Promise<unknown>;
+    __fahFsSet?: (items: Record<string, unknown>) => Promise<null>;
+    __fahFsGetAll?: () => Promise<Record<string, unknown>>;
     __fahBootDone?: boolean;
     __inlineRan?: boolean;
   }
@@ -186,11 +186,15 @@ test('sandbox IndexedDB FS persists across pane reloads', async ({ page }) => {
   await openAppPane(page);
   await engineUp(page);
   const marker = { test: 'issue-182', at: Date.now() };
-  await page.evaluate((m) => window.__fahFsSave?.(m), marker);
+  await page.evaluate(
+    (m) =>
+      window.__fahFsSet?.({ 'sandbox.e2e': JSON.stringify(m) }) ?? null,
+    marker,
+  );
   await page.reload({ waitUntil: 'load' });
   await engineUp(page);
-  const loaded = await page.evaluate(() => window.__fahFsLoad?.());
-  expect(loaded).toEqual(marker);
+  const loaded = await page.evaluate(() => window.__fahFsGetAll?.());
+  expect(JSON.parse(loaded?.['sandbox.e2e'] as string)).toEqual(marker);
 });
 
 test('a History-less iframe (OWA sandbox) still boots to the first frame', async ({ page }) => {
