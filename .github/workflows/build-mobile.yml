@@ -112,16 +112,31 @@ jobs:
         working-directory: flutter_app
         run: flutter pub get
 
+      # Mirrors the iOS GoogleService-Info.plist step: the committed
+      # google-services.json is a placeholder (the google-services Gradle
+      # plugin hard-fails without the file); overwrite it from the secret
+      # when available.
+      - name: Write google-services.json (Android)
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > flutter_app/android/app/google-services.json
+            echo "google-services.json written (package: $(python3 -c "import json;print(json.load(open('flutter_app/android/app/google-services.json'))['client'][0]['client_info']['android_client_info']['package_name'])"))"
+          else
+            echo "⚠️ GOOGLE_SERVICES_JSON_BASE64 not set — building with the committed placeholder google-services.json"
+          fi
+
       - name: Validate Android secrets
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          PLAY_STORE_JSON_KEY: ${{ secrets.PLAY_STORE_JSON_KEY }}
+          PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
         run: |
-          if [ -z "$PLAY_STORE_JSON_KEY" ]; then
-            echo "::error::PLAY_STORE_JSON_KEY secret is not set"
+          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ]; then
+            echo "::error::PLAY_STORE_SERVICE_ACCOUNT_JSON secret is not set — the Play Developer API service-account JSON key is required"
             exit 1
           fi
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then echo "::error::ANDROID_KEYSTORE_BASE64 secret is not set"; exit 1; fi
@@ -130,32 +145,41 @@ jobs:
           if [ -z "$ANDROID_KEY_ALIAS" ]; then echo "::error::ANDROID_KEY_ALIAS secret is not set"; exit 1; fi
           echo "All required Android secrets are present"
 
-      - name: Decode Android keystore
-        run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > flutter_app/android/app/upload-keystore.jks
+      - name: Install fastlane
+        working-directory: flutter_app
+        run: bundle install
 
-      - name: Create key.properties
-        working-directory: flutter_app/android
-        run: |
-          cat > key.properties << EOF
-          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          storeFile=upload-keystore.jks
-          EOF
-
+      # The lane wraps `flutter build appbundle --release`; the upload
+      # keystore rides the ANDROID_* env vars (issue #289) and is decoded
+      # by app/build.gradle.kts into the (gitignored) build dir — no
+      # key.properties dance. ANDROID_STRICT_RELEASE_SIGNING makes a
+      # secret-less release build fail LOUDLY instead of debug-signing.
       - name: Build Android AAB
         working-directory: flutter_app
-        run: flutter build appbundle --release --build-number=${{ github.run_number }}
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_STRICT_RELEASE_SIGNING: 'true'
+        run: bundle exec fastlane android build_release
 
-      - name: Verify AAB exists
+      - name: Verify AAB and validate bundle
         run: |
+          set -euo pipefail
           AAB_PATH="flutter_app/build/app/outputs/bundle/release/app-release.aab"
           if [ ! -f "$AAB_PATH" ]; then
             echo "::error::AAB file not found at $AAB_PATH"
             exit 1
           fi
           echo "AAB built successfully: $(ls -la $AAB_PATH)"
+          # bundletool validate (issue #289 AC3): catches malformed bundles
+          # before they ever reach Play's upload pipeline.
+          curl -fsSL --retry 3 -o /tmp/bundletool.jar \
+            https://github.com/google/bundletool/releases/download/1.17.0/bundletool-all-1.17.0.jar
+          java -jar /tmp/bundletool.jar validate --bundle "$AAB_PATH"
+          echo "✅ bundletool validate green"
 
       - name: Upload AAB Artifact
         uses: actions/upload-artifact@v4
@@ -164,11 +188,56 @@ jobs:
           path: flutter_app/build/app/outputs/bundle/release/app-release.aab
           retention-days: 14
 
-      - name: Cleanup
-        if: always()
+  submit-android:
+    name: Submit Android to Play
+    needs: [build-android]
+    runs-on: ubuntu-latest
+    if: needs.build-android.result == 'success'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Download AAB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-aab
+          path: flutter_app/aab/
+
+      - name: Install fastlane
+        working-directory: flutter_app
+        run: bundle install
+
+      # Mirrors submit-ios: without the Play service account the upload
+      # skips neutrally (the AAB stays on the GitHub release / artifacts).
+      # Track policy (issue #289): manual dispatches default to the
+      # internal track; the daily Play leg passes beta (external/open
+      # testing). PLAY_VALIDATE_ONLY=1 flips the lane into a dry run.
+      - name: Upload AAB to Google Play
+        working-directory: flutter_app
+        env:
+          PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+          PLAY_TRACK: ${{ inputs.android_track }}
         run: |
-          rm -f flutter_app/android/app/upload-keystore.jks
-          rm -f flutter_app/android/key.properties
+          set -euo pipefail
+          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ]; then
+            echo "::notice::Play service account not configured — skipping the Play upload (the AAB stays on the GitHub release / artifacts)."
+            exit 0
+          fi
+          AAB_PATH="$(find "$GITHUB_WORKSPACE/flutter_app/aab" -name '*.aab' -type f | head -1)"
+          echo "Uploading $AAB_PATH to the Play '$PLAY_TRACK' track..."
+          ANDROID_AAB_PATH="$AAB_PATH" bundle exec fastlane android upload_only
 
   build-ios:
     name: Build iOS IPA
