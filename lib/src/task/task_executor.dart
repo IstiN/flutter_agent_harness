@@ -237,8 +237,9 @@ final class TaskExecutor {
     }
     if (handle.agentType.startsWith('a2a:')) {
       throw StateError(
-        'subagent "$id" runs on a remote a2a server — steer it with '
-        'task_send (remote input), not task_resume',
+        'subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
+        'it has no local session to resume; follow up with a new task item '
+        '(agent ${handle.agentType}) carrying your message in its task text',
       );
     }
     final session = await _resumeSession(id, handle);
@@ -255,7 +256,11 @@ final class TaskExecutor {
       final wiring = _resolveChildWiring(definition);
       child = Agent(
         model: wiring.model,
-        systemPrompt: _buildSystemPrompt(definition, ''),
+        // The ORIGINAL batch context rides along (persisted on the handle):
+        // the transcript does not carry the system prompt, so a resume that
+        // rebuilt the prompt without it would silently drop the batch's
+        // shared background.
+        systemPrompt: _buildSystemPrompt(definition, handle.context),
         streamFunction: wiring.stream,
         toolRegistry: _childToolRegistry(definition),
         externalSteeringSource: () => _inboxSteeringMessages(id),
@@ -266,7 +271,10 @@ final class TaskExecutor {
       // assistant message, not a throw — the same check `_run` relies on.
       _finalAssistantText(child);
       await _flushChildTranscript(id, child);
-      final usage = _usageStats(child);
+      // Only the RESUME run's usage is added: the prior transcript is
+      // seeded into the child, so counting from zero would double-bill the
+      // original run (its usage is already on the handle).
+      final usage = _usageStats(child, from: prior.length);
       await manager.update(
         id,
         status: SubagentStatus.completed,
@@ -353,6 +361,9 @@ final class TaskExecutor {
         name: taskItemNameBase(item),
         agentType: agentName,
         task: item.task,
+        // Persisted so a later resume (issue #222) can re-render the batch
+        // context into the child's system prompt.
+        context: context,
       );
       await subagentManager!.update(id, status: SubagentStatus.running);
     }
@@ -721,11 +732,15 @@ final class TaskExecutor {
     return userPrompt.toString();
   }
 
-  /// Token/request totals across the child's assistant messages.
-  static ({int tokens, int requests}) _usageStats(Agent child) {
+  /// Token/request totals across the child's assistant messages — from
+  /// [from] on (index into the message list), so a resumed child reports
+  /// only its NEW usage instead of re-counting the seeded transcript.
+  static ({int tokens, int requests}) _usageStats(Agent child, {int from = 0}) {
     var tokens = 0;
     var requests = 0;
-    for (final message in child.state.messages) {
+    final messages = child.state.messages;
+    for (var i = from; i < messages.length; i++) {
+      final message = messages[i];
       if (message is AssistantMessage) {
         requests++;
         tokens +=

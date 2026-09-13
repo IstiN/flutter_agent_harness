@@ -833,6 +833,12 @@ class AgentCli {
   /// The session's retained-subagent registry (tests, the app settings
   /// Agents panel, hosts observing children).
   SubagentManager get subagentManager => _subagentManager;
+
+  /// The session's task-tool wiring (job registry, subagent registry,
+  /// child-session opener) — tests and hosts verifying the lifecycle
+  /// wiring read it instead of reaching into private state.
+  TaskToolConfig get taskConfig => _taskConfig;
+
   late final A2aManager _a2aManager;
 
   /// Agent types discovered from `.fah/agents/` + `.agents/agents/`.

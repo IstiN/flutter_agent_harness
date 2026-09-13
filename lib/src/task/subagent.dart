@@ -69,6 +69,7 @@ final class SubagentHandle {
     required this.sessionId,
     required this.createdAt,
     this.task = '',
+    this.context = '',
   }) : status = SubagentStatus.queued,
        lastActivity = createdAt,
        tokens = 0,
@@ -93,6 +94,12 @@ final class SubagentHandle {
 
   /// The initial task prompt.
   final String task;
+
+  /// The batch `context` the child was spawned with (issue #222 review):
+  /// the resume path re-renders it into the child's system prompt — the
+  /// JSONL transcript does not carry the system prompt, so the handle
+  /// persists it. Empty for children spawned without a batch context.
+  final String context;
 
   /// Current lifecycle state.
   SubagentStatus status;
@@ -146,6 +153,7 @@ final class SubagentHandle {
     'sessionId': sessionId,
     'createdAt': createdAt,
     'task': task,
+    if (context.isNotEmpty) 'context': context,
     'status': status.name,
     'lastActivity': lastActivity,
     'error': error,
@@ -166,6 +174,7 @@ final class SubagentHandle {
       sessionId: json['sessionId'] as String,
       createdAt: json['createdAt'] as String? ?? '',
       task: json['task'] as String? ?? '',
+      context: json['context'] as String? ?? '',
     );
     handle.status = SubagentStatus.values.byName(
       json['status'] as String? ?? 'completed',

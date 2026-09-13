@@ -23,13 +23,14 @@ AssistantMessage _assistant({
   List<ContentBlock> content = const [],
   StopReason stopReason = StopReason.stop,
   String? errorMessage,
+  Usage usage = Usage.zero,
 }) {
   return AssistantMessage(
     content: content,
     api: 'test-api',
     provider: 'test-provider',
     model: 'test-model',
-    usage: Usage.zero,
+    usage: usage,
     stopReason: stopReason,
     errorMessage: errorMessage,
     timestamp: DateTime.utc(2026),
@@ -37,9 +38,24 @@ AssistantMessage _assistant({
 }
 
 /// A scripted turn: stream start, text delta, done.
-List<AssistantMessageEvent> _textTurn(String text) {
+List<AssistantMessageEvent> _textTurn(String text) => _usageTurn(text);
+
+/// A scripted turn carrying token usage on the final message.
+List<AssistantMessageEvent> _usageTurn(String text, [Usage? usage]) {
   final empty = _assistant();
-  final partial = _assistant(content: [TextContent(text: text)]);
+  final partial = _assistant(
+    content: [TextContent(text: text)],
+    usage:
+        usage ??
+        Usage(
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: const UsageCost(),
+        ),
+  );
   return [
     StartEvent(partial: empty),
     TextStartEvent(contentIndex: 0, partial: empty),
@@ -47,6 +63,16 @@ List<AssistantMessageEvent> _textTurn(String text) {
     DoneEvent(reason: StopReason.stop, message: partial),
   ];
 }
+
+/// A fixed token usage for the accounting tests.
+Usage _usageOf(int input, int output) => Usage(
+  input: input,
+  output: output,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: input + output,
+  cost: const UsageCost(),
+);
 
 /// A scripted provider-error turn (e.g. a 5h-quota 403).
 List<AssistantMessageEvent> _errorTurn(String errorMessage) {
@@ -224,11 +250,15 @@ final class _Wiring {
   );
 
   /// Spawns one child named [name] whose task contains [taskMarker].
-  Future<TaskSingleResult> spawn(String name, String taskMarker) {
+  Future<TaskSingleResult> spawn(
+    String name,
+    String taskMarker, {
+    String context = '',
+  }) {
     return executor.runSpawn(
       item: TaskItem(name: name, task: taskMarker),
       index: 0,
-      context: '',
+      context: context,
     );
   }
 
@@ -328,109 +358,97 @@ void main() {
         task: 'x',
       );
       await w.manager.update('a1', status: SubagentStatus.running);
-      await expectLater(
-        w.executor.resumeChild('a1', 'go'),
-        throwsStateError,
-      );
+      await expectLater(w.executor.resumeChild('a1', 'go'), throwsStateError);
     });
 
-    test(
-      'resume with an externally deleted session file errors with a named, '
-      'actionable message and never mints a new session (E3)',
-      () async {
-        final w = _Wiring([
-          (match: 'explode', turns: [_errorTurn('provider 403: quota')]),
-        ]);
-        await w.spawn('manif_i18n', 'explode now');
-        await w.settle('manif_i18n');
-        final path = w.manager['manif_i18n']!.sessionId;
-        await w.env.remove(path);
-        // A process-restart-shaped executor: no in-memory child session.
-        await expectLater(
-          w.freshExecutor().resumeChild('manif_i18n', 'continue'),
-          throwsA(
-            isA<StateError>().having(
-              (e) => e.message,
-              'message',
-              allOf(contains('manif_i18n'), contains(path)),
-            ),
+    test('resume with an externally deleted session file errors with a named, '
+        'actionable message and never mints a new session (E3)', () async {
+      final w = _Wiring([
+        (match: 'explode', turns: [_errorTurn('provider 403: quota')]),
+      ]);
+      await w.spawn('manif_i18n', 'explode now');
+      await w.settle('manif_i18n');
+      final path = w.manager['manif_i18n']!.sessionId;
+      await w.env.remove(path);
+      // A process-restart-shaped executor: no in-memory child session.
+      await expectLater(
+        w.freshExecutor().resumeChild('manif_i18n', 'continue'),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('manif_i18n'), contains(path)),
           ),
-        );
-        expect(w.manager['manif_i18n']!.status, SubagentStatus.failed);
-        expect(await w.repo.list(cwd: '/work'), isEmpty);
-      },
-    );
+        ),
+      );
+      expect(w.manager['manif_i18n']!.status, SubagentStatus.failed);
+      expect(await w.repo.list(cwd: '/work'), isEmpty);
+    });
 
-    test(
-      'resume hitting a STILL quota-limited provider fails fast and the '
-      'child returns to failed-resumable, never to a clone (E2)',
-      () async {
-        final w = _Wiring([
-          (match: 'explode', turns: [_errorTurn('provider 403: quota')]),
-          (match: 'continue', turns: [_errorTurn('provider 403: still quota')]),
-        ]);
-        await w.spawn('manif_i18n', 'explode now');
-        await w.settle('manif_i18n');
-        final before = await w.recordCount('manif_i18n');
-        await expectLater(
-          w.executor.resumeChild('manif_i18n', 'continue now'),
-          throwsStateError,
-        );
-        final handle = w.manager['manif_i18n']!;
-        expect(handle.status, SubagentStatus.failed);
-        expect(handle.error, contains('still quota'));
-        // A later resume (quota rotated) still works on the same session.
-        await w.executor.resumeChild('manif_i18n', 'continue now');
-        expect(handle.status, SubagentStatus.completed);
-        expect(await w.recordCount('manif_i18n'), greaterThan(before));
-        expect(await w.repo.list(cwd: '/work'), hasLength(1));
-      },
-    );
+    test('resume hitting a STILL quota-limited provider fails fast and the '
+        'child returns to failed-resumable, never to a clone (E2)', () async {
+      final w = _Wiring([
+        (match: 'explode', turns: [_errorTurn('provider 403: quota')]),
+        (match: 'continue', turns: [_errorTurn('provider 403: still quota')]),
+      ]);
+      await w.spawn('manif_i18n', 'explode now');
+      await w.settle('manif_i18n');
+      final before = await w.recordCount('manif_i18n');
+      await expectLater(
+        w.executor.resumeChild('manif_i18n', 'continue now'),
+        throwsStateError,
+      );
+      final handle = w.manager['manif_i18n']!;
+      expect(handle.status, SubagentStatus.failed);
+      expect(handle.error, contains('still quota'));
+      // A later resume (quota rotated) still works on the same session.
+      await w.executor.resumeChild('manif_i18n', 'continue now');
+      expect(handle.status, SubagentStatus.completed);
+      expect(await w.recordCount('manif_i18n'), greaterThan(before));
+      expect(await w.repo.list(cwd: '/work'), hasLength(1));
+    });
   });
 
   group('UT-2: capability advertisement (AC1 second half)', () {
-    test(
-      'without a resume callback the descriptors advertise the missing '
-      'steering capability and errors name it',
-      () async {
-        final manager = SubagentManager(parentSessionId: 'p');
-        await manager.register(
-          id: 'a1',
-          name: 'a1',
-          agentType: 'task',
-          task: 'x',
-        );
-        await manager.update('a1', status: SubagentStatus.completed);
-        final tools = subagentMonitoringTools(manager: manager);
-        final send = tools.firstWhere((t) => t.name == 'task_send');
-        final resume = tools.firstWhere((t) => t.name == 'task_resume');
-        expect(send.description, contains('steering: unavailable'));
-        expect(resume.description, contains('capability: child-resume'));
+    test('without a resume callback the descriptors advertise the missing '
+        'steering capability and errors name it', () async {
+      final manager = SubagentManager(parentSessionId: 'p');
+      await manager.register(
+        id: 'a1',
+        name: 'a1',
+        agentType: 'task',
+        task: 'x',
+      );
+      await manager.update('a1', status: SubagentStatus.completed);
+      final tools = subagentMonitoringTools(manager: manager);
+      final send = tools.firstWhere((t) => t.name == 'task_send');
+      final resume = tools.firstWhere((t) => t.name == 'task_resume');
+      expect(send.description, contains('steering: unavailable'));
+      expect(resume.description, contains('capability: child-resume'));
 
-        final sendResult = await send.execute(
-          {'id': 'a1', 'message': 'hi'},
-          null,
-          null,
-        );
-        final sendText = sendResult.content
-            .whereType<TextContent>()
-            .map((b) => b.text)
-            .join();
-        expect(sendText, contains('capability: child-resume'));
+      final sendResult = await send.execute(
+        {'id': 'a1', 'message': 'hi'},
+        null,
+        null,
+      );
+      final sendText = sendResult.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join();
+      expect(sendText, contains('capability: child-resume'));
 
-        await manager.update('a1', status: SubagentStatus.failed);
-        final resumeResult = await resume.execute(
-          {'id': 'a1', 'message': 'hi'},
-          null,
-          null,
-        );
-        final resumeText = resumeResult.content
-            .whereType<TextContent>()
-            .map((b) => b.text)
-            .join();
-        expect(resumeText, contains('capability: child-resume'));
-      },
-    );
+      await manager.update('a1', status: SubagentStatus.failed);
+      final resumeResult = await resume.execute(
+        {'id': 'a1', 'message': 'hi'},
+        null,
+        null,
+      );
+      final resumeText = resumeResult.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join();
+      expect(resumeText, contains('capability: child-resume'));
+    });
 
     test('with a resume callback the descriptor does not cry unavailable', () {
       final manager = SubagentManager(parentSessionId: 'p');
@@ -447,10 +465,8 @@ void main() {
     test('a RUNNING child is steered through its inbox — no host callback '
         'needed', () async {
       final fabric = _FakeFabric();
-      final manager = SubagentManager(
-        parentSessionId: 'p',
-        messaging: fabric,
-      )..mailboxPrefix = 'p';
+      final manager = SubagentManager(parentSessionId: 'p', messaging: fabric)
+        ..mailboxPrefix = 'p';
       await manager.register(
         id: 'a1',
         name: 'a1',
@@ -585,79 +601,78 @@ void main() {
       expect(text, contains('resumable'));
     });
 
-    test('running children are rejected (E4), completed steer to task_send',
-        () async {
-      final manager = SubagentManager(parentSessionId: 'p');
-      await manager.register(
-        id: 'a1',
-        name: 'a1',
-        agentType: 'task',
-        task: 'x',
-      );
-      await manager.update('a1', status: SubagentStatus.running);
-      final tools = subagentMonitoringTools(
-        manager: manager,
-        resumeChild: (_, _) async {},
-      );
-      final resume = tools.firstWhere((t) => t.name == 'task_resume');
-      final running = await resume.execute({'id': 'a1'}, null, null);
-      expect(
-        running.content.whereType<TextContent>().map((b) => b.text).join(),
-        contains('already running'),
-      );
-      await manager.update('a1', status: SubagentStatus.completed);
-      final completed = await resume.execute({'id': 'a1'}, null, null);
-      expect(
-        completed.content.whereType<TextContent>().map((b) => b.text).join(),
-        contains('task_send'),
-      );
-    });
+    test(
+      'running children are rejected (E4), completed steer to task_send',
+      () async {
+        final manager = SubagentManager(parentSessionId: 'p');
+        await manager.register(
+          id: 'a1',
+          name: 'a1',
+          agentType: 'task',
+          task: 'x',
+        );
+        await manager.update('a1', status: SubagentStatus.running);
+        final tools = subagentMonitoringTools(
+          manager: manager,
+          resumeChild: (_, _) async {},
+        );
+        final resume = tools.firstWhere((t) => t.name == 'task_resume');
+        final running = await resume.execute({'id': 'a1'}, null, null);
+        expect(
+          running.content.whereType<TextContent>().map((b) => b.text).join(),
+          contains('already running'),
+        );
+        await manager.update('a1', status: SubagentStatus.completed);
+        final completed = await resume.execute({'id': 'a1'}, null, null);
+        expect(
+          completed.content.whereType<TextContent>().map((b) => b.text).join(),
+          contains('task_send'),
+        );
+      },
+    );
   });
 
   group('IT-1: full loop over the CLI-equivalent wiring (AC2/AC3)', () {
-    test(
-      '403 mid-run → task_resume → completion; same session, same id, '
-      'monotonic records, observable transcript',
-      () async {
-        final w = _Wiring([
-          (match: 'explode', turns: [_errorTurn('provider 403: quota')]),
-        ]);
-        await w.spawn('manif_i18n', 'explode now');
-        await w.settle('manif_i18n');
-        expect(
-          await w.execute('task_status', {'id': 'manif_i18n'}),
-          contains('status: failed'),
-        );
-        final before = await w.recordCount('manif_i18n');
+    test('403 mid-run → task_resume → completion; same session, same id, '
+        'monotonic records, observable transcript', () async {
+      final w = _Wiring([
+        (match: 'explode', turns: [_errorTurn('provider 403: quota')]),
+      ]);
+      await w.spawn('manif_i18n', 'explode now');
+      await w.settle('manif_i18n');
+      expect(
+        await w.execute('task_status', {'id': 'manif_i18n'}),
+        contains('status: failed'),
+      );
+      final before = await w.recordCount('manif_i18n');
 
-        final resumeText = await w.execute('task_resume', {
-          'id': 'manif_i18n',
-          'message': 'continue now',
-        });
-        expect(resumeText, contains('resumed "manif_i18n"'));
+      final resumeText = await w.execute('task_resume', {
+        'id': 'manif_i18n',
+        'message': 'continue now',
+      });
+      expect(resumeText, contains('resumed "manif_i18n"'));
 
-        expect(
-          await w.execute('task_status', {'id': 'manif_i18n'}),
-          contains('status: completed'),
-        );
-        expect(await w.recordCount('manif_i18n'), greaterThan(before));
-        expect(await w.repo.list(cwd: '/work'), hasLength(1));
+      expect(
+        await w.execute('task_status', {'id': 'manif_i18n'}),
+        contains('status: completed'),
+      );
+      expect(await w.recordCount('manif_i18n'), greaterThan(before));
+      expect(await w.repo.list(cwd: '/work'), hasLength(1));
 
-        // task_observe reads the SAME session's transcript.
-        final observed = await w.execute('task_observe', {'id': 'manif_i18n'});
-        expect(observed, contains('explode now'));
+      // task_observe reads the SAME session's transcript.
+      final observed = await w.execute('task_observe', {'id': 'manif_i18n'});
+      expect(observed, contains('explode now'));
 
-        // task_send to the now-completed child resumes it in place again.
-        final mid = await w.recordCount('manif_i18n');
-        final sendText = await w.execute('task_send', {
-          'id': 'manif_i18n',
-          'message': 'one more pass',
-        });
-        expect(sendText, contains('child resumed'));
-        expect(await w.recordCount('manif_i18n'), greaterThan(mid));
-        expect(await w.repo.list(cwd: '/work'), hasLength(1));
-      },
-    );
+      // task_send to the now-completed child resumes it in place again.
+      final mid = await w.recordCount('manif_i18n');
+      final sendText = await w.execute('task_send', {
+        'id': 'manif_i18n',
+        'message': 'one more pass',
+      });
+      expect(sendText, contains('child resumed'));
+      expect(await w.recordCount('manif_i18n'), greaterThan(mid));
+      expect(await w.repo.list(cwd: '/work'), hasLength(1));
+    });
   });
 
   group('AC4: cross-session child addressing', () {
@@ -745,6 +760,9 @@ void main() {
         agentType: 'task',
         task: 'x',
       );
+      // The link exists to collapse RESPAWNS of dead children — the first
+      // generation must have settled before a fresh spawn takes its name.
+      await manager.update('manif_i18n', status: SubagentStatus.failed);
       await manager.register(
         id: 'manif_i18n2',
         name: 'manif_i18n',
@@ -756,6 +774,39 @@ void main() {
         manager['manif_i18n2']!.toJson(),
       );
       expect(roundTripped.supersedes, 'manif_i18n');
+    });
+
+    test('LIVE same-named parallel children never link supersedes (the link '
+        'means "fold this dead generation into its successor")', () async {
+      final manager = SubagentManager(parentSessionId: 'p');
+      // Two same-named children alive at once — two parallel batches that
+      // happen to share a display name. Neither supersedes the other.
+      await manager.register(
+        id: 'scout',
+        name: 'scout',
+        agentType: 'task',
+        task: 'x',
+      );
+      await manager.update('scout', status: SubagentStatus.running);
+      await manager.register(
+        id: 'scout-2',
+        name: 'scout',
+        agentType: 'task',
+        task: 'y',
+      );
+      await manager.update('scout-2', status: SubagentStatus.running);
+      expect(manager['scout-2']!.supersedes, isNull);
+      // A later respawn AFTER the parallel run settled still links the
+      // then-dead generation.
+      await manager.update('scout', status: SubagentStatus.completed);
+      await manager.update('scout-2', status: SubagentStatus.failed);
+      await manager.register(
+        id: 'scout-3',
+        name: 'scout',
+        agentType: 'task',
+        task: 'z',
+      );
+      expect(manager['scout-3']!.supersedes, 'scout-2');
     });
 
     test('agent_directory renders the chain as ONE logical entry', () async {
@@ -788,6 +839,182 @@ void main() {
       expect(chainLines, hasLength(1), reason: text);
       expect(chainLines.single, contains('running'));
       expect(chainLines.single, contains('supersedes manif_i18n'));
+    });
+  });
+
+  group('a2a children: no silent mail loss (steering rejection)', () {
+    // A remote `a2a:<name>` child has NO local agent loop: nothing drains
+    // its fabric inbox (the remote prompt is assembled once, at send time).
+    // task_send used to answer "queued … delivered" for exactly those
+    // children — mail that could never be delivered.
+    test(
+      'task_send to a RUNNING a2a child is rejected and nothing is queued',
+      () async {
+        final fabric = _FakeFabric();
+        final manager = SubagentManager(parentSessionId: 'p', messaging: fabric)
+          ..mailboxPrefix = 'p';
+        await manager.register(
+          id: 'remote_1',
+          name: 'remote',
+          agentType: 'a2a:peer',
+          task: 'x',
+        );
+        await manager.update('remote_1', status: SubagentStatus.running);
+        final tools = subagentMonitoringTools(
+          manager: manager,
+          resumeChild: (_, _) async {},
+        );
+        final send = tools.firstWhere((t) => t.name == 'task_send');
+        final result = await send.execute(
+          {'id': 'remote_1', 'message': 'steer left'},
+          null,
+          null,
+        );
+        final text = result.content
+            .whereType<TextContent>()
+            .map((b) => b.text)
+            .join();
+        expect(text, isNot(contains('queued')));
+        expect(text, isNot(contains('delivered')));
+        // The rejection names the actual delivery channel: a fresh task
+        // item against the remote agent type.
+        expect(text, contains('a2a:peer'));
+        expect(text, contains('task'));
+        // No mail silently parked in an inbox nobody drains.
+        expect(await fabric.peek(manager.mailboxOf('remote_1')), isEmpty);
+      },
+    );
+
+    test('task_send to an IDLE a2a child is rejected up front — no circular '
+        'pointer back at task_send via the resume path', () async {
+      final manager = SubagentManager(parentSessionId: 'p');
+      await manager.register(
+        id: 'remote_1',
+        name: 'remote',
+        agentType: 'a2a:peer',
+        task: 'x',
+      );
+      await manager.update('remote_1', status: SubagentStatus.idle);
+      var resumeCalled = false;
+      final tools = subagentMonitoringTools(
+        manager: manager,
+        resumeChild: (_, _) async => resumeCalled = true,
+      );
+      final send = tools.firstWhere((t) => t.name == 'task_send');
+      final result = await send.execute(
+        {'id': 'remote_1', 'message': 'the answer is 42'},
+        null,
+        null,
+      );
+      final text = result.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join();
+      expect(resumeCalled, isFalse, reason: text);
+      expect(text, contains('a2a:peer'));
+      expect(
+        text,
+        isNot(contains('task_send')),
+        reason: 'must not point back at itself',
+      );
+      expect(text, contains('task'));
+    });
+
+    test('task_resume on a FAILED a2a child names the real channel instead of '
+        '"steer it with task_send"', () async {
+      final w = _Wiring();
+      await w.manager.register(
+        id: 'remote_1',
+        name: 'remote',
+        agentType: 'a2a:peer',
+        task: 'x',
+      );
+      await w.manager.update(
+        'remote_1',
+        status: SubagentStatus.failed,
+        error: 'remote task failed',
+      );
+      await expectLater(
+        w.executor.resumeChild('remote_1', 'retry'),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('a2a'),
+              isNot(contains('task_send')),
+              contains('task'),
+            ),
+          ),
+        ),
+      );
+      // The tool layer rejects a2a handles before the callback is even
+      // consulted (same message, no "stays failed and resumable" tease).
+      final text = await w.execute('task_resume', {'id': 'remote_1'});
+      expect(text, contains('a2a:peer'));
+      expect(text, isNot(contains('resumable')));
+    });
+  });
+
+  group('resume accounting', () {
+    test('steering a completed child adds only the RESUME run\'s usage — no '
+        'double-counting of the prior transcript', () async {
+      final w = _Wiring([
+        (
+          match: 'count usage',
+          turns: [_usageTurn('first pass', _usageOf(100, 20))],
+        ),
+        (
+          match: 'follow up',
+          turns: [_usageTurn('second pass', _usageOf(50, 10))],
+        ),
+      ]);
+      await w.spawn('scout', 'count usage now');
+      await w.settle('scout');
+      final handle = w.manager['scout']!;
+      expect(handle.status, SubagentStatus.completed);
+      expect(handle.tokens, 120, reason: 'first run: 100 in + 20 out');
+      expect(handle.requests, 1);
+
+      final text = await w.execute('task_send', {
+        'id': 'scout',
+        'message': 'follow up please',
+      });
+      expect(text, contains('child resumed'));
+      expect(handle.status, SubagentStatus.completed);
+      // 120 (first run, already recorded) + 60 (resume run only).
+      expect(handle.tokens, 180, reason: 'resume adds 50 in + 10 out');
+      expect(handle.requests, 2);
+    });
+
+    test('resume keeps the original batch # CONTEXT in the child\'s system '
+        'prompt (it is not recoverable from the transcript, so the handle '
+        'persists it)', () async {
+      final w = _Wiring([
+        (match: 'explode', turns: [_errorTurn('provider 403: quota')]),
+      ]);
+      await w.executor.runSpawn(
+        item: TaskItem(name: 'scout', task: 'explode now'),
+        index: 0,
+        context: 'KEY-CTX-42 shared constraints for the batch',
+      );
+      await w.settle('scout');
+      expect(w.manager['scout']!.status, SubagentStatus.failed);
+      // The ORIGINAL run rendered the batch context into its system
+      // prompt; the resume must not silently drop it.
+      expect(w.stream.contexts.first.systemPrompt, contains('KEY-CTX-42'));
+
+      await w.executor.resumeChild('scout', 'continue now');
+
+      final resumePrompt = w.stream.contexts.last.systemPrompt;
+      expect(resumePrompt, contains('# CONTEXT'));
+      expect(resumePrompt, contains('KEY-CTX-42'));
+      // The context survives registry persistence (a restart-shape
+      // resume through a fresh executor re-reads the handle).
+      final roundTripped = SubagentHandle.fromJson(
+        w.manager['scout']!.toJson(),
+      );
+      expect(roundTripped.context, contains('KEY-CTX-42'));
     });
   });
 }

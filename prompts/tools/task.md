@@ -21,9 +21,11 @@ Run subagents in parallel by passing multiple items in a single `tasks[]` batch.
 # Communication
 Subagents start blank — no conversation history. Put everything they need into `context` (shared) and `task` (per item). After spawn, the family stays connected:
 - `task_send {id, message}`: steer a running child, answer a waiting (idle) one, or RESUME a completed one with follow-up work.
+- `task_resume {id, message?}`: continue a FAILED child in its SAME session — same id, same transcript, same mailbox, never a cloned `name-2` session. Use it after transient failures (provider quota, network); `task_send` is for running/idle/completed children, a fresh `task` for a clean restart (the new child links `supersedes`).
 - `task_status` / `task_observe`: inspect the family at any time — status, tokens, and the child's recent transcript.
 - Children can `reply` (their explicit answer to you) and `agent_message` (sibling↔sibling hand-offs) — a child that finishes without replying surfaces a `completed_without_reply` notice with its final text preview.
 - Completed subagents stay addressable: send them more work instead of re-spawning duplicates.
+- Remote `a2a:<name>` children cannot be steered, resumed, or observed — they have no local session. Follow up with a new task item against the same `a2a:<name>` agent.
 
 # Format Contracts
 `context` format:

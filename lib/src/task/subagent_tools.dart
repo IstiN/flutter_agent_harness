@@ -728,8 +728,13 @@ AgentTool _taskObserveTool(
 /// inbox and is delivered at the next turn boundary); resuming an
 /// idle/completed child needs the host's [ChildResumeRunner] — when it is
 /// missing, the descriptor says so up front (`steering: unavailable`) and
-/// the error names the capability.
-AgentTool _taskSendTool(SubagentManager manager, ChildResumeRunner? resumeChild) {
+/// the error names the capability. Remote `a2a:` children are rejected
+/// outright: they have no local inbox loop, so queued mail would never be
+/// delivered (the error names the actual delivery channel instead).
+AgentTool _taskSendTool(
+  SubagentManager manager,
+  ChildResumeRunner? resumeChild,
+) {
   final unavailableNote = resumeChild == null
       ? ' NOTE: this host can steer RUNNING children only — follow-ups to '
             'idle/completed children are unavailable here '
@@ -741,7 +746,9 @@ AgentTool _taskSendTool(SubagentManager manager, ChildResumeRunner? resumeChild)
         'Send a follow-up message to a subagent. A running child receives '
         'it in its inbox at the next turn boundary; an idle (waiting for '
         'input) or completed child is resumed in its SAME session with the '
-        'message. Failed children are continued with task_resume instead.'
+        'message. Failed children are continued with task_resume instead. '
+        'Remote a2a:<name> children cannot be steered or resumed — they '
+        'have no local session or inbox; follow up with a new task item.'
         '$unavailableNote',
     parameters: {
       'type': 'object',
@@ -764,6 +771,19 @@ AgentTool _taskSendTool(SubagentManager manager, ChildResumeRunner? resumeChild)
       final handle = manager[id];
       if (handle == null) {
         return ToolExecutionResult.text('no subagent with id "$id"');
+      }
+      // Remote `a2a:` children first, whatever their status: they have no
+      // local loop draining an inbox (the remote prompt is assembled once,
+      // at send time), so "queued … delivered at the next turn boundary"
+      // would be a lie and the mail would sit undelivered forever. Name
+      // the actual delivery channel instead.
+      if (handle.agentType.startsWith('a2a:')) {
+        return ToolExecutionResult.text(
+          'cannot send to "$id": it runs remotely as ${handle.agentType} — '
+          'a remote a2a child has no local session or inbox to steer. '
+          'Follow up with a new task item (agent ${handle.agentType}) '
+          'carrying your message in its task text.',
+        );
       }
       switch (handle.status) {
         case SubagentStatus.failed:
@@ -854,13 +874,22 @@ AgentTool _taskResumeTool(
     tier: ApprovalTier.write,
     execute: (args, cancelToken, onUpdate) async {
       final id = args['id'] as String;
-      final message =
-          (args['message'] as String? ?? '').trim().isNotEmpty
+      final message = (args['message'] as String? ?? '').trim().isNotEmpty
           ? (args['message'] as String).trim()
           : 'Continue your task from where you stopped.';
       final handle = manager[id];
       if (handle == null) {
         return ToolExecutionResult.text('no subagent with id "$id"');
+      }
+      // Remote a2a children have no local session to resume — point at the
+      // actual channel up front instead of a doomed capability dance.
+      if (handle.agentType.startsWith('a2a:')) {
+        return ToolExecutionResult.text(
+          'cannot resume "$id": it runs remotely as ${handle.agentType} — '
+          'there is no local session to continue. Follow up with a new task '
+          'item (agent ${handle.agentType}) carrying your message in its '
+          'task text.',
+        );
       }
       switch (handle.status) {
         case SubagentStatus.queued:
