@@ -511,6 +511,10 @@ class AgentService extends ChangeNotifier
       // self-addressed record only when the stored prefix matches this
       // session — another instance's record stays with its owner (#59).
       ownerPrefix: () => _subagentManager?.mailboxPrefix ?? '',
+      // Failure isolation (issue #270): a failed delivery lands in the
+      // app log, never kills the delivery heartbeat — the record stays
+      // for the next sweep.
+      onError: (text) => AppLog.i('sched', text),
     );
     // Arm the delivery timer; best-effort (an unwritable root keeps the
     // app booting, the tools just report unavailable).
@@ -2210,7 +2214,13 @@ class AgentService extends ChangeNotifier
     // the fresh turn's steering poll already sees the fired reminder.
     // Lightweight test services (pre-constructed agent) have no fabric.
     if (_subagentManager != null) {
-      unawaited(_scheduledMessages.deliverDue().onError((_, _) => 0));
+      try {
+        // Awaited so the fresh turn really does see the fired reminder
+        // (issue #270); the queue isolates per-record send failures.
+        await _scheduledMessages.deliverDue();
+      } on Object {
+        // A sweep failure must never block the user's turn.
+      }
     }
     _runWithTimeout(() => _agent.prompt(trimmed));
   }
