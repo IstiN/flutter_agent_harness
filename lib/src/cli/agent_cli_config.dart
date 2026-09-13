@@ -30,6 +30,7 @@ final class AgentCliConfig {
     this.modelsFetcher,
     this.modelsHttpClient,
     this.tuiMouseCapture = true,
+    this.tuiSyncOutput,
     this.systemPrompt,
     this.promptOverrides,
     this.visionConfig,
@@ -460,6 +461,12 @@ final class AgentCliConfig {
   /// the terminal's bypass modifier (Shift in most). `FA_TUI_MOUSE=0` opts
   /// out for always-on native select-to-copy.
   final bool tuiMouseCapture;
+
+  /// DEC 2026 synchronized output tri-state for the TUI. Null (default) =
+  /// auto-detect via DECRQM; `FA_TUI_SYNC=1` forces BSU/ESU framing for
+  /// terminals that support ?2026 but not the query; `FA_TUI_SYNC=0` forces
+  /// legacy writes (deterministic fallback path).
+  final bool? tuiSyncOutput;
 
   /// System prompt override; defaults to [defaultAgentCliSystemPrompt].
   ///

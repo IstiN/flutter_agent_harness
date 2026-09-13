@@ -175,8 +175,18 @@ Future<void> main() async {
     // The card's budget: ledger projection (where the O(n²) lived) under
     // 1 s. Render is O(n) printing and reported, not budgeted.
     expect(buildMs, lessThanOrEqualTo(1000));
-    // Whole open pipeline (parse + projection + render) well under 36 s.
-    expect(totalMs, lessThanOrEqualTo(4000));
+    // Whole open pipeline (parse + projection + render). Budget
+    // recalibrated 4000 -> 6000 from CI data, not per-commit tuning: this
+    // gate is PR-only and the trajectory code it measures is identical to
+    // main. Observed totalMs over four consecutive runs (GitHub runs
+    // 34756684875, 34757563776, 34758642826, 34759682841):
+    // 5098 / 5010 / 5098 / 4737 — stable at ~4.7-5.1 s on CI runners, so
+    // the old 4000 ms line sat below the real, unchanging baseline and
+    // failed spuriously. 6000 keeps ~1 s of headroom over the observed
+    // ceiling; a regression past THAT still trips the gate. (The DoD
+    // budget from #262 is the buildMs <= 1000 line above; per-merge
+    // trending is wired by #305/#303.)
+    expect(totalMs, lessThanOrEqualTo(6000));
     // ignore: avoid_print
     print(
       'perf-gate: ${sizeMb.toStringAsFixed(1)} MB, parse=${parseMs}ms '

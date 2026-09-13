@@ -820,6 +820,21 @@ Key properties:
 | `AnsiRenderer` (default) | Line-level diff | Most terminals |
 | `CellRenderer` | Cell-level diff (per grapheme cluster) | Terminals without `?2026` sync |
 
+### Synchronized output (`CSI ?2026`) support matrix
+
+| Environment | Sync output | Notes |
+|-------------|-------------|-------|
+| Modern xterm/foot/kitty/WezTerm/alacritty, VTE ≥ 0.76 | passed through | Full BSU/ESU framing (`?2026h/l` + DECRQM probe). |
+| tmux ≥ 3.7 (default `allow-passthrough on`) | passed through | tmux forwards the CSI/DECRQM sequences to the outer terminal; the frame stays atomic inside the pane. |
+| tmux 3.3–3.6 | probe only | DECRQM reaches the outer terminal, but passthrough of BSU/ESU is stripped by default → the renderer stays on `?2026` only if the probe succeeds; otherwise it falls back silently. |
+| GNU screen (≤ 5.x) | not supported | screen swallows `?2026h/l` and the DECRQM reply never arrives → capability stays false, plain framing. |
+| Legacy xterm < 369 / pre-2026 VTE | not supported | Probe times out unanswered → `withoutSyncUpdates`-style plain output, zero stray escapes (asserted by E2). |
+
+The renderer never assumes support: it turns framing on only after a
+`DECRQM ?2026` report (or an explicit `withSyncUpdates()`), so a
+passthrough that strips the sequences degrades to plain output — never to
+a torn frame.
+
 ---
 
 ## License
