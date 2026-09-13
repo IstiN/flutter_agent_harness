@@ -241,6 +241,10 @@ Future<String?> _directoryLine(
   );
   line.write(' — ${pending.length} pending');
   line.write(_presenceSuffix(entry));
+  // Hub-sourced marker (issue #304 AC3): tells DAP peers apart from
+  // file-inbox mailboxes; file/legacy entries (null source) render
+  // exactly the legacy bytes (REG).
+  if (entry.source == mailboxSourceHub) line.write('  [hub]');
   if (entry.cwd case final cwd?) line.write('  [${_shortCwd(cwd, homeDir)}]');
   if (entry.id == self) line.write('  ← you');
   for (final capability in entry.capabilities) {

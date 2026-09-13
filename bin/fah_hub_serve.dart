@@ -16,6 +16,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/hub/dap_local_hub_state.dart';
+
+import 'fah_dap_command.dart' show envHubPidFile;
 
 /// The well-known zero-config port (mirrors the client default
 /// `ws://127.0.0.1:8787/ws`).
@@ -61,11 +64,69 @@ Future<int> runHubCommand(List<String> args) async {
     );
     return 1;
   }
+  // The pid/state file (issue #304): lets `fa dap stop` work from ANY
+  // CLI instance (not just the spawner) exactly once, with no zombie
+  // pid — this process owns the cleanup on a graceful exit.
+  final pidFile = File(
+    Platform.environment[envHubPidFile] ??
+        dapHubPidFileFor(
+          Platform.environment['HOME'] ??
+              Platform.environment['USERPROFILE'] ??
+              '.',
+        ),
+  );
+  _writePidState(pidFile, pid, port);
   stdout.writeln(
     'DAP hub on ${hub.url}${hub.isProtected ? ' (password-protected)' : ''}',
   );
-  await Completer<void>().future; // run until killed
+  // Graceful termination: SIGTERM/SIGINT stop the server, remove the
+  // pid state, and exit 0 (a detached hub has no terminal — signals are
+  // how `fa dap stop` reaches it).
+  final done = Completer<void>();
+  StreamSubscription? sigterm;
+  StreamSubscription? sigint;
+  sigterm = ProcessSignal.sigterm.watch().listen((_) async {
+    await sigterm?.cancel();
+    await sigint?.cancel();
+    await hub.stop();
+    _clearPidState(pidFile);
+    exit(0);
+  });
+  // A Ctrl-C in the foreground still goes through the graceful path.
+  sigint = ProcessSignal.sigint.watch().listen((_) async {
+    await sigterm?.cancel();
+    await sigint?.cancel();
+    await hub.stop();
+    _clearPidState(pidFile);
+    exit(0);
+  });
+  await done.future; // run until killed
   return 0;
+}
+
+void _writePidState(File pidFile, int pid, int port) {
+  try {
+    if (!pidFile.parent.existsSync()) {
+      pidFile.parent.createSync(recursive: true);
+    }
+    pidFile.writeAsStringSync(
+      renderDapLocalHubState((
+        pid: pid,
+        port: port,
+        startedAt: DateTime.now().toUtc().toIso8601String(),
+      )),
+    );
+  } on Object {
+    // Best-effort: `fa dap stop` still works via its own probe.
+  }
+}
+
+void _clearPidState(File pidFile) {
+  try {
+    if (pidFile.existsSync()) pidFile.deleteSync();
+  } on Object {
+    // A stuck pid file never blocks shutdown.
+  }
 }
 
 /// First-start password prompt: the one-button bring-up (`/dap start` or

@@ -21,7 +21,10 @@ void main() {
     test('slash menu shows the /dap hint', () async {
       final tempHome = _tempHome();
       final harness = await FaCliHarness.spawn(
-        extraEnv: {'HOME': tempHome.path},
+        extraEnv: {
+          'HOME': tempHome.path,
+          'DAP_LOCAL_HUB_URL': await deadLocalHubUrl(),
+        },
         args: ['--plugin', 'hub'],
         columns: 120,
         rows: 30,
@@ -55,7 +58,10 @@ void main() {
     test('bare /dap opens the menu; about prints the explainer', () async {
       final tempHome = _tempHome();
       final harness = await FaCliHarness.spawn(
-        extraEnv: {'HOME': tempHome.path},
+        extraEnv: {
+          'HOME': tempHome.path,
+          'DAP_LOCAL_HUB_URL': await deadLocalHubUrl(),
+        },
         args: ['--plugin', 'hub'],
         columns: 120,
         rows: 30,
@@ -72,8 +78,8 @@ void main() {
         timeout: const Duration(seconds: 20),
       );
       // Every menu label is visible, derived from the structural menu
-      // definition.
-      for (final option in dapMenuOptions) {
+      // definition (stopped state — no local hub in this temp HOME).
+      for (final option in dapMenuOptions()) {
         expect(harness.screenText, contains(option.$2));
       }
 
@@ -108,7 +114,10 @@ void main() {
       () async {
         final tempHome = _tempHome();
         final harness = await FaCliHarness.spawn(
-          extraEnv: {'HOME': tempHome.path},
+          extraEnv: {
+            'HOME': tempHome.path,
+            'DAP_LOCAL_HUB_URL': await deadLocalHubUrl(),
+          },
           args: ['--plugin', 'hub'],
           columns: 120,
           rows: 30,
@@ -143,7 +152,10 @@ void main() {
       addTearDown(fakeHub.stop);
       final tempHome = _tempHome(dapUrl: fakeHub.url.toString());
       final harness = await FaCliHarness.spawn(
-        extraEnv: {'HOME': tempHome.path},
+        extraEnv: {
+          'HOME': tempHome.path,
+          'DAP_LOCAL_HUB_URL': await deadLocalHubUrl(),
+        },
         args: ['--plugin', 'hub'],
         columns: 120,
         rows: 30,
@@ -187,6 +199,44 @@ void main() {
       await harness.runSlashCommand('/exit');
       await harness.waitForOutput();
     });
+
+    test(
+      'running hub: the leading row is Stop DAP (AC7, issue #304)',
+      () async {
+        final hub = FakeHub();
+        await hub.start();
+        addTearDown(hub.stop);
+        final tempHome = _tempHome();
+        final harness = await FaCliHarness.spawn(
+          extraEnv: {
+            'HOME': tempHome.path,
+            'DAP_LOCAL_HUB_URL': hub.url.toString(),
+          },
+          args: ['--plugin', 'hub'],
+          columns: 120,
+          rows: 30,
+        );
+        addTearDown(() async {
+          await harness.close();
+          tempHome.deleteSync(recursive: true);
+        });
+        await harness.waitForBoot();
+
+        await harness.runSlashCommand('/dap');
+        await harness.waitForText(
+          'Stop DAP',
+          timeout: const Duration(seconds: 20),
+        );
+        // The stopped-state row is gone; the rest of the menu is intact.
+        expect(harness.screenText, isNot(contains('Start DAP locally')));
+        for (final label in ['Connection status', 'Connect to a hub']) {
+          expect(harness.screenText, contains(label));
+        }
+
+        await harness.runSlashCommand('/exit');
+        await harness.waitForOutput();
+      },
+    );
 
     test('connect… prompts for the host and dials it', () async {
       final fakeHub = FakeHub();
@@ -245,11 +295,14 @@ void main() {
 /// the untagged assert in `test/cli/dap_menu_options_test.dart` at PR
 /// time instead of silently corrupting these offsets.
 int _arrowsTo(String key) {
-  final index = dapMenuOptions.indexWhere((option) => option.$1 == key);
+  // The stopped shape: the spawned CLI probes no local hub in its temp
+  // HOME, so the leading row is the one-step start (AC7).
+  final options = dapMenuOptions(hubRunning: false);
+  final index = options.indexWhere((option) => option.$1 == key);
   if (index < 0) {
     fail(
       'no "/dap" menu option "$key" — the menu defines '
-      '${[for (final option in dapMenuOptions) option.$1]}',
+      '${[for (final option in options) option.$1]}',
     );
   }
   return index;
@@ -262,6 +315,17 @@ Future<void> _selectMenuOption(FaCliHarness harness, String key) async {
     await Future<void>.delayed(const Duration(milliseconds: 150));
   }
   harness.sendEnter();
+}
+
+/// A dead local-hub url for the one-step start/stop surface: the menu's
+/// state probe must never see the machine's real zero-config 8787 hub
+/// (or a CI neighbor) — the tests pin the STOPPED state deterministically.
+Future<String> deadLocalHubUrl() async {
+  final probe = FakeHub();
+  await probe.start();
+  final port = probe.url.port;
+  await probe.stop();
+  return 'ws://127.0.0.1:$port/ws';
 }
 
 /// A temp HOME with a minimal config (no real API key needed) and an

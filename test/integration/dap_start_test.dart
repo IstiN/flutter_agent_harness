@@ -214,13 +214,55 @@ void main() {
     expect(saved, contains(running.url.toString()));
   });
 
-  test('the /dap menu leads with the one-step start', () async {
+  test('the /dap menu shows Stop DAP while the local hub runs (AC7)',
+      () async {
+    List<PluginMenuOption>? seenOptions;
+    final env = <String, String>{};
+    final stoppedUrls = <String>[];
+    const url = 'ws://127.0.0.1:5931/ws';
+    final host = HubPluginHost(
+      hub.HubPlugin(environment: env, home: tempHome.path),
+      environment: env,
+      home: tempHome.path,
+      localHubUrl: url,
+      hubHealthProbe: (port) async => true,
+      hubSpawner: (port) async {},
+      hubStopper: (url) async {
+        stoppedUrls.add(url);
+        return 0;
+      },
+    );
+    final io = _CapturingIo();
+    final context = PluginContext(
+      env: MemoryExecutionEnv(cwd: '/work'),
+      io: io,
+      pickOption: (title, options, {initialKey}) async {
+        seenOptions = options;
+        return options.first.$1; // activate the leading row: Stop DAP
+      },
+    );
+    host.register(context);
+    await context.slashCommands['/dap']!([]);
+    expect(seenOptions, isNotNull);
+    expect(seenOptions!.first.$1, 'stop');
+    expect(seenOptions!.first.$2, 'Stop DAP');
+    expect(
+      [for (final o in seenOptions!.skip(1)) o.$1],
+      ['status', 'connect', 'secret', 'about'],
+      reason: 'the other rows never shift',
+    );
+    expect(stoppedUrls, [url], reason: 'Stop DAP routes to the stop flow');
+  });
+
+  test('the /dap menu leads with the one-step start (AC7)', () async {
     List<PluginMenuOption>? seenOptions;
     final env = <String, String>{};
     final host = HubPluginHost(
       hub.HubPlugin(environment: env, home: tempHome.path),
       environment: env,
       home: tempHome.path,
+      // Deterministic stopped state — never probe the real port 8787.
+      hubHealthProbe: (port) async => false,
     );
     final context = PluginContext(
       env: MemoryExecutionEnv(cwd: '/work'),
