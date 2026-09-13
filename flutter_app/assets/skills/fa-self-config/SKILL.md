@@ -427,23 +427,29 @@ keys. Applies at next boot (the running session keeps its live mode).
 
 ## Power
 
-User file section (issue #325, oh-my-pi port). Sleep prevention for live
-sessions — one power assertion held from session start to exit so the
-machine cannot idle/sleep out from under a long run:
+User file section (issue #325, reworked in #326). Sleep prevention for
+live runs — by default ONE assertion PER RUN (acquired when the run
+goes in flight, released when it settles), so the machine cannot
+idle/sleep out from under a long run but CAN sleep while the agent
+idles between turns:
 
 ```yaml
 power:
   sleepPrevention: idle # off | idle | display | system (default idle)
+  hold: per-run # per-run | session (default per-run)
 ```
 
 Levels are cumulative: `idle` keeps the system from idle-sleeping
 (macOS `caffeinate -i`), `display` also keeps the display awake
 (`-i -d`), `system` also blocks AC system sleep and declares the user
-active (`-i -d -s -u`). macOS spawns `caffeinate -w <fa pid>` (exits
-with fa — never orphaned), Linux tries `systemd-inhibit` best-effort,
-other platforms no-op. A failed assertion is a warning, never a crash.
+active (`-i -d -s -u`). `hold: session` is the explicit opt-in that
+holds from session start to exit instead (always-on deployments).
+macOS spawns `caffeinate -w <fa pid>` (exits with fa — never
+orphaned), Linux tries `systemd-inhibit` best-effort, other platforms
+no-op. A failed assertion is a warning, never a crash.
 
-CLI equivalent: `/power` (level + held state). Applies at next boot.
+CLI equivalent: `/power` (level + hold + held state). Applies at next
+boot.
 
 ## Mode
 

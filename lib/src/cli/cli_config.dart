@@ -176,10 +176,14 @@ final class CliConfig {
     this.images,
     this.contextWindowCap,
     this.powerSleepPrevention,
+    this.powerHold,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
     final skillsSection = _parseSkillsSection(map['skills']);
+    // The power section (sleep-prevention level + hold lifecycle) is
+    // parsed once, strictly (issues #325/#326).
+    final powerSection = parsePowerSection(map['power']);
     return CliConfig(
       providerKind: map['provider'] as String? ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
@@ -255,7 +259,8 @@ final class CliConfig {
         label: '~/.fah/config.yaml',
       ),
       images: _parseImagesSection(map['images']),
-      powerSleepPrevention: parsePowerSection(map['power']),
+      powerSleepPrevention: powerSection.sleepPrevention,
+      powerHold: powerSection.hold,
       // The agent section (owner-side context cap, issue #273) is strict
       // too.
       contextWindowCap: _parseAgentSection(map['agent']),
@@ -420,12 +425,17 @@ final class CliConfig {
   final int? contextWindowCap;
 
   /// Sleep-prevention level from the `power:` section
-  /// (`power.sleepPrevention`, issue #325 — ported from oh-my-pi's
+  /// (`power.sleepPrevention`, issue #325 — after oh-my-pi's
   /// `power.sleepPrevention`). `null` means the section is absent; the
   /// host resolves the `idle` default, keeping "not configured" and
   /// "explicitly off" distinct.
   final PowerAssertionLevel? powerSleepPrevention;
 
+  /// Sleep-assertion hold lifecycle (`power.hold`, #326): `null` means
+  /// absent — the host resolves the `per-run` default (acquire at run
+  /// start, release at settle); `session` is the explicit hold-the-whole-
+  /// session opt-in.
+  final PowerAssertionHold? powerHold;
 
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
@@ -458,6 +468,7 @@ final class CliConfig {
       images: images,
       contextWindowCap: contextWindowCap,
       powerSleepPrevention: powerSleepPrevention,
+      powerHold: powerHold,
     );
   }
 
@@ -522,8 +533,15 @@ final class CliConfig {
       buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
     }
     final sleepPrevention = powerSleepPrevention;
-    if (sleepPrevention != null) {
-      buffer.write('power:\n  sleepPrevention: ${sleepPrevention.value}\n');
+    final hold = powerHold;
+    if (sleepPrevention != null || hold != null) {
+      buffer.write('power:\n');
+      if (sleepPrevention != null) {
+        buffer.write('  sleepPrevention: ${sleepPrevention.value}\n');
+      }
+      if (hold != null) {
+        buffer.write('  hold: ${hold.value}\n');
+      }
     }
     return buffer.toString();
   }

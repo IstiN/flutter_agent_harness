@@ -15,6 +15,8 @@
 /// spawning a real helper process.
 library;
 
+import 'dart:async';
+
 import 'dart:io';
 
 import '../power_config.dart';
@@ -22,15 +24,14 @@ import '../power_runner.dart';
 
 /// Spawns a helper process; `Process.start` in production, a fake in
 /// tests.
-typedef PowerProcessLauncher = Future<Process> Function(
-  String executable,
-  List<String> arguments,
-);
+typedef PowerProcessLauncher =
+    Future<Process> Function(String executable, List<String> arguments);
 
 Future<Process> _defaultLauncher(String executable, List<String> arguments) =>
     Process.start(executable, arguments);
 
-/// macOS runner: one `caffeinate` child per session, bound to the fa pid
+/// macOS runner: one `caffeinate` child per held assertion (per run by
+/// default, per session at `power.hold: session`), bound to the fa pid
 /// by `-w`. Kill-safe: [ProcessPowerAssertionHandle.release] terminates
 /// the child even though `-w` would also end it at process exit.
 final class CaffeinatePowerRunner implements PowerAssertionRunner {
@@ -55,7 +56,7 @@ final class CaffeinatePowerRunner implements PowerAssertionRunner {
 /// Linux runner (best-effort): `systemd-inhibit` holding idle (and, at
 /// the `system` level, sleep) inhibition while its watchdog command
 /// lives — the watchdog polls the fa pid, so the assertion dies with the
-/// session even if fa is SIGKILLed.
+/// fa process even if fa is SIGKILLed.
 final class SystemdInhibitPowerRunner implements PowerAssertionRunner {
   SystemdInhibitPowerRunner({required this.pid, PowerProcessLauncher? launcher})
     : _launcher = launcher ?? _defaultLauncher;
@@ -76,18 +77,29 @@ final class SystemdInhibitPowerRunner implements PowerAssertionRunner {
 }
 
 /// One spawned helper process holding an assertion. `release` kills the
-/// child (dropping the assertion immediately) and reaps its exit code;
-/// an unexpected helper death flips [held] so `/power` never reports a
+/// child (dropping the assertion immediately) and waits for its exit —
+/// BOUNDED by [killTimeout] (5s default): a helper that ignores SIGTERM
+/// gets one follow-up SIGKILL and release proceeds anyway (issue #326:
+/// an unbounded await on a stuck helper would hang the run's settle).
+/// An unexpected helper death flips [held] so `/power` never reports a
 /// dead assertion as live.
 final class ProcessPowerAssertionHandle implements PowerAssertionHandle {
   ProcessPowerAssertionHandle({
     required Process process,
     required this.description,
+    this.killTimeout = defaultKillTimeout,
   }) : _process = process {
     _exit = process.exitCode.whenComplete(() {
       _done = true;
     });
   }
+
+  /// How long [release] waits for the helper to die after SIGTERM before
+  /// escalating to SIGKILL and proceeding anyway.
+  static const defaultKillTimeout = Duration(seconds: 5);
+
+  /// Per-handle override of [defaultKillTimeout] (tests).
+  final Duration killTimeout;
 
   final Process _process;
   late final Future<int> _exit;
@@ -107,7 +119,13 @@ final class ProcessPowerAssertionHandle implements PowerAssertionHandle {
     // SIGTERM the helper: caffeinate drops its assertion, systemd-inhibit
     // ends the inhibition. kill() on an already-dead child is a no-op.
     _process.kill();
-    await _exit;
+    try {
+      await _exit.timeout(killTimeout);
+    } on TimeoutException {
+      // The helper ignored SIGTERM: escalate to SIGKILL, then proceed —
+      // release must return even when the helper refuses to die.
+      _process.kill(ProcessSignal.sigkill);
+    }
   }
 }
 

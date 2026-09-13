@@ -102,40 +102,57 @@ extension SlashCommandDispatch on AgentCli {
     }
   }
 
-  /// The session's sleep-prevention controller (issue #325) — null when
-  /// no runner was injected. Exposed so wiring tests can assert the
+  /// The session's sleep-prevention controller (issues #325/#326) — null
+  /// when no runner was injected. Exposed so wiring tests can assert the
   /// acquire/release lifecycle without spawning a real helper.
   @visibleForTesting
   PowerAssertionController? get powerAssertionsForTesting => _powerAssertions;
 
-  /// Acquires the sleep-prevention assertion for the session (issue #325,
-  /// ported from oh-my-pi's `#acquirePowerAssertion`): idempotent, and a
-  /// failure only warns — the session continues unguarded. No-op without
-  /// an injected runner (tests, web).
+  /// Session-open hook for the sleep-prevention assertion (#326):
+  /// acquires only in the explicit `power.hold: session` mode — the
+  /// DEFAULT is per-run (see [runPowerAssertionsStarted]), so an idle
+  /// agent never pins the machine awake. No-op without an injected
+  /// runner (tests, web).
   @visibleForTesting
   Future<void> acquirePowerAssertions() async =>
-      await _powerAssertions?.acquire();
+      await _powerAssertions?.onSessionOpened();
 
-  /// Releases the sleep-prevention assertion (idempotent, warn-not-crash).
+  /// Releases the sleep-prevention assertion (idempotent,
+  /// warn-not-crash) — both modes: the per-run mode's safety net for an
+  /// exit mid-run, the session mode's regular release.
   @visibleForTesting
   Future<void> releasePowerAssertions() async =>
-      await _powerAssertions?.release();
+      await _powerAssertions?.onSessionClosed();
 
-  /// `/power`: the configured `power.sleepPrevention` level and whether
-  /// the assertion is held right now.
+  /// Run-start hook (#326): the per-run hold acquires here, fire-and-
+  /// forget — sleep prevention must never delay the first streamed byte.
+  @visibleForTesting
+  void runPowerAssertionsStarted() => _powerAssertions?.onRunStarted();
+
+  /// Run-settle hook (#326): the per-run hold releases once the run has
+  /// fully settled (post-run compaction included).
+  @visibleForTesting
+  Future<void> runPowerAssertionsSettled() async =>
+      await _powerAssertions?.onRunSettled();
+
+  /// `/power`: the configured `power.sleepPrevention` level, the
+  /// `power.hold` lifecycle, and whether the assertion is held right
+  /// now.
   Future<void> _powerSlash() async {
     final controller = _powerAssertions;
     if (controller == null) {
       io.writeln(
-        'sleepPrevention=${config.powerSleepPrevention.value} held=no '
+        'sleepPrevention=${config.powerSleepPrevention.value} '
+        'hold=${config.powerSleepPreventionHold.value} held=no '
         '(no runner on this host)',
       );
     } else {
       io.writeln(controller.status().toString());
     }
     io.writeln(
-      'configure: power.sleepPrevention: off|idle|display|system '
-      '(~/.fah/config.yaml, default idle)',
+      'configure: power.sleepPrevention: off|idle|display|system, '
+      'power.hold: per-run|session (~/.fah/config.yaml, defaults '
+      'idle + per-run)',
     );
   }
 
@@ -408,9 +425,10 @@ extension SlashCommandDispatch on AgentCli {
   }
 }
 
-/// Builds the session's sleep-prevention controller (issue #325) from the
-/// host-injected runner + configured level; a null runner (tests, web)
-/// means no assertions — power is host-best-effort.
+/// Builds the session's sleep-prevention controller (issues #325/#326)
+/// from the host-injected runner + configured level + hold lifecycle; a
+/// null runner (tests, web) means no assertions — power is
+/// host-best-effort.
 PowerAssertionController? sessionPowerAssertions(
   AgentCliConfig config,
   void Function(String message) onWarn,
@@ -419,5 +437,6 @@ PowerAssertionController? sessionPowerAssertions(
     : PowerAssertionController(
         runner: config.powerRunner!,
         level: config.powerSleepPrevention,
+        hold: config.powerSleepPreventionHold,
         onWarn: onWarn,
       );

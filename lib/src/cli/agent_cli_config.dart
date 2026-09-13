@@ -67,6 +67,7 @@ final class AgentCliConfig {
     this.processId,
     this.homeDir,
     this.powerSleepPrevention = PowerAssertionLevel.idle,
+    this.powerSleepPreventionHold = PowerAssertionHold.perRun,
     this.powerRunner,
     this.tuiProgramHooks,
     this.openRouterOAuthExchangeFn,
@@ -398,10 +399,17 @@ final class AgentCliConfig {
   /// where the platform exposes no pid (web).
   final int? processId;
 
-  /// The effective `power.sleepPrevention` level (issue #325): the
-  /// session holds one sleep-prevention assertion from start to exit.
-  /// Defaults to [PowerAssertionLevel.idle] like oh-my-pi.
+  /// The effective `power.sleepPrevention` level (issue #325): what the
+  /// held sleep-prevention assertion asks the platform for. Defaults to
+  /// [PowerAssertionLevel.idle] like oh-my-pi.
   final PowerAssertionLevel powerSleepPrevention;
+
+  /// When the sleep-prevention assertion is held (`power.hold`, #326):
+  /// per-run by default — acquired at run start, released at settle, so
+  /// an idle agent never pins the machine awake;
+  /// [PowerAssertionHold.session] is the explicit hold-the-whole-session
+  /// opt-in.
+  final PowerAssertionHold powerSleepPreventionHold;
 
   /// The platform sleep-prevention runner (host-injected through
   /// `lib/io.dart`'s `hostPowerRunner`). Null disables assertions

@@ -2,20 +2,31 @@
 
 ## Unreleased
 
-- feat(325): sleep-resilient sessions — power assertions ported from
-  oh-my-pi's `power.sleepPrevention`. A new `power:` config section
+- feat!(325, #326 rework): per-run sleep assertions — the default hold is
+  now `per-run` (acquired when a run goes in flight, released when it
+  settles, so an idle agent never pins the machine awake); the previous
+  session-held lifecycle stays available as the explicit
+  `power.hold: session` opt-in. `power:` config gains a `hold` member
+  (`per-run | session`, default `per-run`, strict parse — a bad value
+  throws `ConfigException`) next to `sleepPrevention:
+  off|idle|display|system`. The CLI (`AgentCli`) fires the lifecycle
+  events around every REPL/headless run; the app (`AgentService`)
+  brackets them on its streaming state. macOS runs `caffeinate -i [-d]
+  [-s] [-u] -w <fa pid>` (self-exits with fa, never orphaned), Linux
+  tries `systemd-inhibit --what=idle[:sleep]` behind a pid watchdog
+  (best-effort), other platforms no-op (Windows is a tracked stub);
+  failures log a warning and the run continues. `/power` shows the
+  level, the hold, and the held state. Release is BOUNDED (5s SIGTERM
+  timeout → SIGKILL → proceed), and the app LOGS power config errors it
+  degrades from instead of swallowing them. Core model + lifecycle are
+  pure Dart in `lib/src/power_*.dart` with the runner injected by the
+  host (`lib/io.dart`), so no unit test spawns a real helper process.
+- feat(325): sleep-resilient sessions — power assertions after
+  oh-my-pi's `power.sleepPrevention`. A `power:` config section
   (`sleepPrevention: off|idle|display|system`, default `idle`, strict
   parse — a bad value throws `ConfigException`) picks a cumulative
-  sleep-prevention level; the CLI (`AgentCli`) and app (`AgentService`)
-  each hold one assertion from session start to dispose. macOS runs
-  `caffeinate -i [-d] [-s] [-u] -w <fa pid>` (self-exits with fa, never
-  orphaned), Linux tries `systemd-inhibit --what=idle[:sleep]` behind a
-  pid watchdog (best-effort), other platforms no-op (Windows is a
-  tracked stub); failures log a warning and the session continues. New
-  `/power` slash command shows the level and held state. Core model +
-  lifecycle are pure Dart in `lib/src/power_*.dart` with the runner
-  injected by the host (`lib/io.dart`), so no unit test spawns a real
-  helper process.
+  sleep-prevention level. New `/power` slash command shows the level
+  and held state.
 
 ## 0.1.358
 

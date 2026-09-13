@@ -1123,7 +1123,9 @@ class AgentCli {
     // revalidates on the first menu open (stale entries) — no boot HTTP.
     await _loadPersistedModelCache();
     _session = await _initializeSession();
-    // Sleep prevention (#325): hold the machine awake; failures warn.
+    // Sleep prevention (#325/#326): only the EXPLICIT session hold
+    // acquires here — the default per-run hold acquires at every run
+    // start instead, so an idle agent never pins the machine awake.
     await acquirePowerAssertions();
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
@@ -2134,8 +2136,11 @@ class AgentCli {
     }
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
-    // Sleep prevention (#325) — headless is the long-running case it guards.
+    // Sleep prevention (#325/#326) — headless wraps exactly ONE run, so
+    // both holds bracket it the same way: session-held acquires on the
+    // session open, per-run on the run start (the prompt below).
     await acquirePowerAssertions();
+    runPowerAssertionsStarted();
     // Warm the endpoint metadata (model list, dial features, reported
     // limits) BEFORE the first turn; failures are silent.
     await _warmModelCacheQuietly();
@@ -2355,6 +2360,10 @@ class AgentCli {
     // before the first streamed byte, and isBusy readers (inbox watcher,
     // shell-job settle, steer-vs-start) must not start a parallel run here.
     _runStarting = true;
+    // Per-run sleep prevention (#326): the default hold acquires with the
+    // run going in flight — fire-and-forget, never a reason to delay the
+    // turn.
+    runPowerAssertionsStarted();
     // Busy bracket HERE, not in the TUI submit handler: every run trigger
     // (submit, inbox wake, shell-job settle, scheduled message) must spin,
     // and an unbracketed trigger leaves the spinner on after the run
@@ -2378,6 +2387,9 @@ class AgentCli {
       settled.whenComplete(() {
         _tuiController?.sendBusy(false, source: 'run');
         _runStarting = false;
+        // Per-run sleep prevention (#326): the run has fully settled —
+        // drop the assertion so an idle agent lets the machine sleep.
+        unawaited(runPowerAssertionsSettled());
         _settleLeftoverSteering();
         if (!_exited) _writeIdlePrompt();
       }),

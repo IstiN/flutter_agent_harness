@@ -2,32 +2,69 @@ import 'package:flutter_agent_harness/src/exceptions.dart';
 import 'package:flutter_agent_harness/src/power_config.dart';
 import 'package:test/test.dart';
 
-/// The `power.sleepPrevention` model (issue #325, ported from
-/// oh-my-pi): strict section parse, cumulative levels, and the platform
-/// argument builders — pure Dart, no process ever spawned here.
+/// The `power:` section model (issue #325, hold lifecycle added in
+/// #326): strict section parse (level + hold), cumulative levels, and
+/// the platform argument builders — pure Dart, no process ever spawned
+/// here.
 void main() {
   group('parsePowerSection', () {
-    test('absent section parses to null (caller defaults to idle)', () {
-      expect(parsePowerSection(null), isNull);
-      expect(parsePowerSection(<String, Object?>{}), isNull);
+    test('absent section parses to the defaults (level null, hold null)', () {
+      expect(parsePowerSection(null), const PowerSection());
+      expect(parsePowerSection(<String, Object?>{}), const PowerSection());
     });
 
     test('parses every documented level', () {
       expect(
-        parsePowerSection(const {'sleepPrevention': 'off'}),
+        parsePowerSection(const {'sleepPrevention': 'off'}).sleepPrevention,
         PowerAssertionLevel.off,
       );
       expect(
-        parsePowerSection(const {'sleepPrevention': 'idle'}),
+        parsePowerSection(const {'sleepPrevention': 'idle'}).sleepPrevention,
         PowerAssertionLevel.idle,
       );
       expect(
-        parsePowerSection(const {'sleepPrevention': 'display'}),
+        parsePowerSection(const {'sleepPrevention': 'display'}).sleepPrevention,
         PowerAssertionLevel.display,
       );
       expect(
-        parsePowerSection(const {'sleepPrevention': 'system'}),
+        parsePowerSection(const {'sleepPrevention': 'system'}).sleepPrevention,
         PowerAssertionLevel.system,
+      );
+    });
+
+    test('parses the hold lifecycle (#326)', () {
+      expect(
+        parsePowerSection(const {'hold': 'per-run'}).hold,
+        PowerAssertionHold.perRun,
+      );
+      expect(
+        parsePowerSection(const {'hold': 'session'}).hold,
+        PowerAssertionHold.session,
+      );
+      expect(
+        parsePowerSection(const {
+          'sleepPrevention': 'display',
+          'hold': 'session',
+        }),
+        const PowerSection(
+          sleepPrevention: PowerAssertionLevel.display,
+          hold: PowerAssertionHold.session,
+        ),
+      );
+      // Absent hold stays null — the host applies the per-run default.
+      expect(parsePowerSection(const {'sleepPrevention': 'idle'}).hold, isNull);
+    });
+
+    test('a bad hold value throws ConfigException naming the key', () {
+      expect(
+        () => parsePowerSection(const {'hold': 'forever'}),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"power.hold" must be per-run or session'),
+          ),
+        ),
       );
     });
 
@@ -38,8 +75,10 @@ void main() {
           isA<ConfigException>().having(
             (e) => e.message,
             'message',
-            contains('"power.sleepPrevention" must be off, idle, display or '
-                'system'),
+            contains(
+              '"power.sleepPrevention" must be off, idle, display or '
+              'system',
+            ),
           ),
         ),
       );
@@ -136,10 +175,14 @@ void main() {
     });
 
     test('system: caffeinate -i -d -s -u -w <pid>', () {
-      expect(
-        caffeinateArguments(options(PowerAssertionLevel.system), pid: 1),
-        ['-i', '-d', '-s', '-u', '-w', '1'],
-      );
+      expect(caffeinateArguments(options(PowerAssertionLevel.system), pid: 1), [
+        '-i',
+        '-d',
+        '-s',
+        '-u',
+        '-w',
+        '1',
+      ]);
     });
   });
 
@@ -150,7 +193,7 @@ void main() {
         pid: 4242,
       );
       expect(args.first, '--what=idle');
-      expect(args, containsAll(['--who=fa', '--why=fa agent session']));
+      expect(args, containsAll(['--who=fa', '--why=fa agent run']));
       // The watchdog must reference the fa pid so the assertion dies
       // with the process.
       expect(args.join(' '), contains('kill -0 4242'));

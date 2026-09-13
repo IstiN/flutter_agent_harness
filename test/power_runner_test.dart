@@ -1,149 +1,218 @@
-import 'package:flutter_agent_harness/src/power_config.dart';
-import 'package:flutter_agent_harness/src/power_runner.dart';
+@TestOn('vm')
+library;
+
+/// PowerAssertionController lifecycle tests (issue #326 rework): the
+/// assertion is held PER RUN by default — acquired when a run goes in
+/// flight, released when it settles — and only the explicit
+/// `power.hold: session` opt-in holds from session open to close. The
+/// gated fake runner is the clock: an acquire left pending models a run
+/// that settles while the helper is still spawning (the in-flight
+/// branch), and the test opens the gate to advance it.
+
+import 'dart:async';
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-/// A runner that records acquisitions without spawning anything.
-class _FakeRunner implements PowerAssertionRunner {
-  _FakeRunner({this.error});
-
-  /// When set, acquire throws instead (spawn failure path).
-  final Object? error;
-
-  final acquisitions = <PowerAssertionOptions>[];
-  final handles = <_FakeHandle>[];
-
-  @override
-  Future<PowerAssertionHandle> acquire(PowerAssertionOptions options) async {
-    if (error != null) throw error!;
-    acquisitions.add(options);
-    final handle = _FakeHandle('fake ${options.reason}');
-    handles.add(handle);
-    return handle;
-  }
-}
-
+/// A handle that counts releases and can report itself dead.
 class _FakeHandle implements PowerAssertionHandle {
-  _FakeHandle(this.description);
-
   @override
   final String description;
 
+  _FakeHandle(this.description);
+
   var released = 0;
-  Object? releaseError;
 
   @override
   bool get held => released == 0;
 
   @override
-  Future<void> release() async {
-    if (releaseError != null) throw releaseError!;
-    released++;
+  Future<void> release() async => released++;
+}
+
+/// A runner whose `acquire` stays in flight until the test opens
+/// [gate] — the controllable "clock" for the in-flight lifecycle branch.
+/// With [gated] false (the default) the gate starts open: acquires
+/// finish on the next microtask, like a fast spawn.
+class _GatedRunner implements PowerAssertionRunner {
+  _GatedRunner({bool gated = false}) {
+    if (!gated) _gate.complete();
+  }
+
+  final _gate = Completer<void>();
+
+  /// Lets every pending (and future) acquire finish — the clock tick.
+  void tick() {
+    if (!_gate.isCompleted) _gate.complete();
+  }
+
+  var acquireCalls = 0;
+  final handles = <_FakeHandle>[];
+  Object? error;
+
+  @override
+  Future<PowerAssertionHandle> acquire(PowerAssertionOptions options) async {
+    acquireCalls++;
+    if (error != null) throw error!;
+    await _gate.future;
+    final handle = _FakeHandle('fake-caffeinate ${options.idle ? '-i' : ''}');
+    handles.add(handle);
+    return handle;
   }
 }
 
-/// The session lifecycle (issue #325, ported from oh-my-pi's
-/// AgentSession): idempotent acquire at session start, release on exit,
-/// warn-not-crash on both sides.
 void main() {
-  test('off acquires nothing', () async {
-    final runner = _FakeRunner();
-    final controller = PowerAssertionController(
-      runner: runner,
-      level: PowerAssertionLevel.off,
-    );
-    await controller.acquire();
-    expect(runner.acquisitions, isEmpty);
-    expect(controller.acquired, isFalse);
+  group('per-run hold (the default)', () {
+    test('onRunStarted acquires, onRunSettled releases', () async {
+      final runner = _GatedRunner();
+      final controller = PowerAssertionController(
+        runner: runner,
+        level: PowerAssertionLevel.idle,
+      );
+
+      await controller.onSessionOpened();
+      expect(runner.acquireCalls, 0, reason: 'session open must NOT acquire');
+
+      controller.onRunStarted();
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.acquired, isTrue);
+      expect(controller.status().held, isTrue);
+
+      await controller.onRunSettled();
+      expect(runner.handles.single.released, 1);
+      expect(controller.acquired, isFalse);
+      expect(controller.status().held, isFalse);
+    });
+
+    test('the next run re-acquires (acquire → release → acquire)', () async {
+      final runner = _GatedRunner();
+      final controller = PowerAssertionController(
+        runner: runner,
+        level: PowerAssertionLevel.idle,
+      );
+      for (var i = 0; i < 2; i++) {
+        controller.onRunStarted();
+        await Future<void>.delayed(Duration.zero);
+        await controller.onRunSettled();
+      }
+      expect(runner.acquireCalls, 2);
+      expect(runner.handles, hasLength(2));
+      expect(runner.handles.every((h) => h.released == 1), isTrue);
+    });
+
+    test('a run that settles while the spawn is still in flight strands '
+        'nothing: release waits the acquire out', () async {
+      final runner = _GatedRunner();
+      final controller = PowerAssertionController(
+        runner: runner,
+        level: PowerAssertionLevel.idle,
+      );
+
+      // The run starts — the spawn is now in flight, unfinished.
+      controller.onRunStarted();
+      expect(runner.acquireCalls, 1);
+      expect(controller.acquired, isFalse, reason: 'still spawning');
+
+      // The run settles BEFORE the spawn completed (a very short turn).
+      final settled = controller.onRunSettled();
+      await Future<void>.delayed(Duration.zero);
+      // Clock advances: the spawn finishes — and must be released by
+      // the pending settle, not stranded until session close.
+      runner.tick();
+      await settled;
+
+      expect(controller.acquired, isFalse);
+      expect(runner.handles.single.released, 1);
+      // And the safety release at session close is still a clean no-op.
+      await controller.onSessionClosed();
+      expect(runner.handles.single.released, 1);
+    });
+
+    test('a double run-start acquires once (idempotent)', () async {
+      final runner = _GatedRunner();
+      final controller = PowerAssertionController(
+        runner: runner,
+        level: PowerAssertionLevel.display,
+      );
+      controller.onRunStarted();
+      controller.onRunStarted();
+      await Future<void>.delayed(Duration.zero);
+      expect(runner.acquireCalls, 1);
+    });
+
+    test('a spawn failure warns and the run continues unguarded', () async {
+      final runner = _GatedRunner()..error = Exception('caffeinate missing');
+      final warnings = <String>[];
+      final controller = PowerAssertionController(
+        runner: runner,
+        level: PowerAssertionLevel.idle,
+        onWarn: warnings.add,
+      );
+      controller.onRunStarted();
+      await controller.acquire();
+      expect(warnings.single, contains('sleep prevention unavailable'));
+      // Settling after a failed acquire is a clean no-op, not an error.
+      await controller.onRunSettled();
+      expect(controller.acquired, isFalse);
+    });
+
+    test('level off never acquires', () async {
+      final runner = _GatedRunner();
+      final controller = PowerAssertionController(
+        runner: runner,
+        level: PowerAssertionLevel.off,
+      );
+      controller.onRunStarted();
+      await controller.onRunSettled();
+      await controller.onSessionOpened();
+      expect(runner.acquireCalls, 0);
+    });
   });
 
-  test('acquire delegates the translated options once; release ends it', () async {
-    final runner = _FakeRunner();
-    final controller = PowerAssertionController(
-      runner: runner,
-      level: PowerAssertionLevel.display,
-    );
-    await controller.acquire();
-    await controller.acquire(); // idempotent
-    expect(runner.acquisitions, hasLength(1));
-    expect(runner.acquisitions.single.idle, isTrue);
-    expect(runner.acquisitions.single.display, isTrue);
-    expect(controller.acquired, isTrue);
+  group('session hold (the explicit opt-in)', () {
+    test('session open acquires; runs neither acquire nor release', () async {
+      final runner = _GatedRunner();
+      final controller = PowerAssertionController(
+        runner: runner,
+        level: PowerAssertionLevel.idle,
+        hold: PowerAssertionHold.session,
+      );
 
-    await controller.release();
-    await controller.release(); // idempotent
-    expect(runner.handles.single.released, 1);
-    expect(controller.acquired, isFalse);
-  });
+      await controller.onSessionOpened();
+      expect(runner.acquireCalls, 1);
+      expect(controller.status().held, isTrue);
 
-  test('a spawn failure warns and the session continues unguarded', () async {
-    final warnings = <String>[];
-    final controller = PowerAssertionController(
-      runner: _FakeRunner(error: Exception('caffeinate: not found')),
-      level: PowerAssertionLevel.idle,
-      onWarn: warnings.add,
-    );
-    await controller.acquire();
-    expect(controller.acquired, isFalse);
-    expect(warnings.single, contains('power: sleep prevention unavailable'));
-    expect(warnings.single, contains('caffeinate: not found'));
-  });
+      // A run in flight must not touch the session-held assertion.
+      controller.onRunStarted();
+      await Future<void>.delayed(Duration.zero);
+      await controller.onRunSettled();
+      expect(runner.acquireCalls, 1, reason: 'no re-acquire per run');
+      expect(runner.handles.single.released, 0, reason: 'stays held');
+      expect(controller.status().held, isTrue);
 
-  test('a release failure warns but never throws', () async {
-    final warnings = <String>[];
-    final runner = _FakeRunner();
-    final controller = PowerAssertionController(
-      runner: runner,
-      level: PowerAssertionLevel.idle,
-      onWarn: warnings.add,
-    );
-    await controller.acquire();
-    runner.handles.single.releaseError = Exception('already reaped');
-    await controller.release();
-    expect(controller.acquired, isFalse);
-    expect(warnings.single, contains('power: sleep prevention release failed'));
-  });
+      await controller.onSessionClosed();
+      expect(runner.handles.single.released, 1);
+    });
 
-  test('status renders the level, held state and holder', () async {
-    final runner = _FakeRunner();
-    final controller = PowerAssertionController(
-      runner: runner,
-      level: PowerAssertionLevel.system,
-    );
-    expect(
-      controller.status().toString(),
-      'sleepPrevention=system held=no (not acquired)',
-    );
-    await controller.acquire();
-    expect(
-      controller.status().toString(),
-      'sleepPrevention=system held=yes (fake fa agent session)',
-    );
-    await controller.release();
-    expect(
-      controller.status().toString(),
-      'sleepPrevention=system held=no (not acquired)',
-    );
-  });
-
-  test('status explains the off level', () async {
-    final controller = PowerAssertionController(
-      runner: _FakeRunner(),
-      level: PowerAssertionLevel.off,
-    );
-    await controller.acquire();
-    expect(
-      controller.status().toString(),
-      'sleepPrevention=off held=no (disabled by config)',
-    );
-  });
-
-  test('NoopPowerAssertionRunner degrades cleanly', () async {
-    const runner = NoopPowerAssertionRunner('not implemented on windows yet');
-    final handle = await runner.acquire(
-      powerAssertionOptions(PowerAssertionLevel.idle)!,
-    );
-    expect(handle.held, isFalse);
-    expect(handle.description, contains('not implemented'));
-    await handle.release(); // no-op, never throws
+    test('the status line names the hold', () async {
+      final runner = _GatedRunner();
+      final perRun = PowerAssertionController(
+        runner: runner,
+        level: PowerAssertionLevel.idle,
+      );
+      expect(
+        perRun.status().toString(),
+        'sleepPrevention=idle hold=per-run held=no (not acquired)',
+      );
+      final session = PowerAssertionController(
+        runner: runner,
+        level: PowerAssertionLevel.system,
+        hold: PowerAssertionHold.session,
+      );
+      expect(
+        session.status().toString(),
+        startsWith('sleepPrevention=system hold=session held='),
+      );
+    });
   });
 }

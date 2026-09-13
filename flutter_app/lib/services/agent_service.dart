@@ -1512,6 +1512,10 @@ class AgentService extends ChangeNotifier
       // Keep the screen awake for the whole run — the OS must not lock the
       // phone mid-stream.
       unawaited(BackgroundExecution.setScreenAwake(true));
+      // Per-run sleep prevention (#326): the default hold acquires with
+      // the run going in flight (the session-held opt-in acquired at
+      // session open instead); fire-and-forget, never delays the turn.
+      powerAssertion?.onRunStarted();
       unawaited(
         LiveActivity.start(
           sessionTitle: 'Fa agent run',
@@ -1520,6 +1524,10 @@ class AgentService extends ChangeNotifier
       );
     } else {
       unawaited(BackgroundExecution.setScreenAwake(false));
+      // The run settled: drop the per-run sleep assertion so an idle
+      // agent lets the machine sleep (#326). Idempotent/no-op for the
+      // session-held mode's controller policy.
+      unawaited(powerAssertion?.onRunSettled());
       final id = _backgroundTaskId;
       _backgroundTaskId = null;
       unawaited(BackgroundExecution.end(id));
