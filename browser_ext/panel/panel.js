@@ -61,8 +61,18 @@ function bubble(role, text) {
 }
 
 let streamingBubble = null;
+// Issue #314: steering a running stream queues the message for the next
+// step boundary - show it instantly as a neutral pending row, never an
+// error. One marker per steer; popped when its user message lands.
+let steerMarkers = [];
+function popSteerMarker() {
+  steerMarkers.shift()?.remove();
+}
 function onAgentEvent(ev) {
   switch (ev?.type) {
+    case 'steer_queued':
+      steerMarkers.push(bubble('steer', 'steered - lands at the next step boundary'));
+      break;
     case 'delta':
       // ponytail: single trailing bubble per run; deltas arrive pre-coalesced.
       if (!streamingBubble) streamingBubble = bubble('assistant', '');
@@ -75,6 +85,7 @@ function onAgentEvent(ev) {
         streamingBubble = null;
       } else if (ev.role === 'user') {
         bubble('user', ev.text ?? '');
+        popSteerMarker();
       } else if (ev.role === 'toolResult') {
         bubble('tool', `${ev.toolName}: ${ev.text ?? ''}`);
       }
@@ -90,7 +101,11 @@ function onAgentEvent(ev) {
       log(`approval ${ev.id}: ${ev.allow ? 'allowed' : 'denied'}${ev.note ? ` (${ev.note})` : ''}`);
       break;
     case 'status':
-      if (ev.running !== undefined && !ev.running && streamingBubble) streamingBubble = null;
+      if (ev.running !== undefined && !ev.running) {
+        if (streamingBubble) streamingBubble = null;
+        steerMarkers.forEach((m) => m.remove());
+        steerMarkers = [];
+      }
       if (ev.hub) $('hubStatus').textContent = hubText(ev.hub);
       break;
     case 'error':

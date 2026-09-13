@@ -95,6 +95,14 @@ select {
   color: var(--dim);
   font-size: 11px;
 }
+.bubble.steer {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--accent);
+  color: var(--dim);
+  font-style: italic;
+  font-size: 11px;
+}
 .composer textarea { margin-top: 0; }
 .approval {
   border: 1px solid var(--warn);

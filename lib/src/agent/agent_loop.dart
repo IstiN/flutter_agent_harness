@@ -919,6 +919,12 @@ Future<List<Message>> _runAgentLoop({
       pendingMessages = followUpMessages;
       continue;
     }
+    // Final steering drain (issue #314): a steer landing between the last
+    // boundary poll and this stop-check would otherwise sit queued with no
+    // run left to deliver it - the loop is still alive here, so open the
+    // turn now. Cap-exhausted steering stays queued for the next run.
+    pendingMessages = await pollSteering(currentConfig);
+    if (pendingMessages.isNotEmpty) continue;
 
     break;
   }
