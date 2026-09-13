@@ -67,6 +67,10 @@ dependency_overrides:
   # ^0.1.0 while this package pins the path version — force the path one.
   fa_llm:
     path: ../fa_llm
+  # The repo pins the vendored dart_tui fork (root, flutter_app) — align
+  # this shard or its pub get mixes hosted dart_tui with path-only APIs.
+  dart_tui:
+    path: ../../vendor/dart_tui
 
 flutter:
   uses-material-design: true
