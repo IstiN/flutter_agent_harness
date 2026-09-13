@@ -1120,6 +1120,44 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       tempHome.deleteSync(recursive: true);
     });
   });
+
+  group('agents hub (issue 277)', () {
+    testWidgets('/agents opens the hub overlay; enter drills into the '
+        'transcript; esc unwinds', (tester) async {
+      final tempHome = _tempHomeWithProvider();
+      final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+      await harness.runSlashCommand('/agents');
+      await harness.liveWaitForText(
+        'agents hub',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '277_agents_hub');
+      expect(harness.screenText, contains('main'));
+
+      // Enter on the orchestrator row opens its transcript viewer.
+      harness.sendEnter();
+      await harness.liveWaitForText(
+        'transcript',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '277_hub_transcript');
+
+      // Esc returns to the hub, a second esc closes it back to the REPL.
+      harness.sendEscape();
+      await harness.liveWaitForText(
+        'agents hub',
+        timeout: const Duration(seconds: 15),
+      );
+      await harness.screenshot(shotsDir, '277_hub_back');
+      harness.sendEscape();
+      await harness.settle(settleMs: 300);
+      await harness.screenshot(shotsDir, '277_hub_closed');
+
+      await harness.close();
+      tempHome.deleteSync(recursive: true);
+    });
+  });
 }
 
 /// Walks up from the CWD until a directory containing `bin/fah.dart` is

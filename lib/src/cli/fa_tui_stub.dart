@@ -117,6 +117,10 @@ final class FaTuiController {
 
   Future<TuiPromptAnswer?> openPrompt(TuiPromptSpec spec) async => null;
 
+  /// Constant width on web (the stub never renders). Mirrors the real
+  /// controller's terminal width accessor.
+  int get termWidth => 80;
+
   Future<List<String>> drainQueue() async => const [];
 
   void clearQueue() {}

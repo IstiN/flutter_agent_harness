@@ -14,10 +14,11 @@ String hubDuration(Duration d) {
   final seconds = d.inSeconds < 0 ? 0 : d.inSeconds;
   if (seconds < 60) return '${seconds}s';
   final minutes = seconds ~/ 60;
-  if (minutes < 60) return '${minutes}m${(seconds % 60).toStringAsFixed(0).padLeft(2, '0')}s';
+  if (minutes < 60) {
+    return '${minutes}m${(seconds % 60).toStringAsFixed(0).padLeft(2, '0')}s';
+  }
   return '${minutes ~/ 60}h${(minutes % 60).toStringAsFixed(0).padLeft(2, '0')}m';
 }
-
 
 /// One tree row: indent · status icon · name id · status · metrics.
 /// Known metrics only — an unknown metric renders `—` and stays out of the
@@ -53,4 +54,3 @@ String hubFooterLine(HubFooter footer) {
   ];
   return segments.join(' · ');
 }
-

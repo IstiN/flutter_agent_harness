@@ -9,7 +9,6 @@
 /// routes keys and paints the frame.
 library;
 
-
 import 'tui_text_width.dart' show tuiTextWidth;
 
 /// `dim`/`inverse` ANSI wrappers (SGR-only, same style family as fa_tui).
@@ -80,8 +79,7 @@ final class FaHubState {
 
   static const defaultTreeHint =
       '↑↓ move · ←→ collapse · enter transcript · esc close';
-  static const defaultTranscriptHint =
-      '↑↓ scroll · end follow · esc back';
+  static const defaultTranscriptHint = '↑↓ scroll · end follow · esc back';
 
   final FaHubMode mode;
   final String title;
@@ -121,9 +119,12 @@ final class FaHubState {
     if (prev == null || prev.mode != mode) return this;
     if (mode == FaHubMode.tree) {
       final keys = [for (final line in lines) line.key];
-      final kept = selectedKey != null && keys.contains(selectedKey)
-          ? selectedKey
-          : (keys.isEmpty ? null : keys.first);
+      final wanted = prev.selectedKey;
+      final kept = wanted != null && keys.contains(wanted)
+          ? wanted
+          : keys.isEmpty
+          ? null
+          : keys.first;
       return copyWith(selectedKey: kept);
     }
     return copyWith(
@@ -132,11 +133,7 @@ final class FaHubState {
     );
   }
 
-  FaHubState copyWith({
-    String? selectedKey,
-    bool? follow,
-    int? topOffset,
-  }) {
+  FaHubState copyWith({String? selectedKey, bool? follow, int? topOffset}) {
     return FaHubState(
       mode: mode,
       title: title,

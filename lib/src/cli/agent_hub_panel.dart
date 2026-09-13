@@ -179,8 +179,7 @@ List<String> deferredPanelLines(DeferredPanel panel, {int width = 80}) {
     '┌─ ${_clip(header, inner - 3)}',
     for (final bodyLine in _wrapBody(panel.body, inner - 3))
       '│ ${_pad(bodyLine, inner - 3)}',
-    if (panel.source != null)
-      '│ ${_pad('source: ${panel.source}', inner - 3)}',
+    if (panel.source != null) '│ ${_pad('source: ${panel.source}', inner - 3)}',
     '└─ ${_pad(_actionHint(panel), inner - 3)}',
   ];
   return lines;
@@ -245,7 +244,8 @@ List<String> taskBlockLines(TaskBlock block, {int width = 80}) {
       : ' · ${hubDurationLike(block.elapsed!)}';
   final header = '${block.kind} ${block.id} · ${block.state.name}$elapsed';
   final lines = <String>['┌─ ${_clip(header, inner - 3)}'];
-  void body(String text) => lines.add('│ ${_pad(_clip(text, inner - 3), inner - 3)}');
+  void body(String text) =>
+      lines.add('│ ${_pad(_clip(text, inner - 3), inner - 3)}');
   body(block.label);
   if (block.detail != null) body(block.detail!);
   lines.add('└─${'─' * (inner - 2)}');

@@ -2581,6 +2581,10 @@ final class FaTuiController {
 
   FaTuiModel get model => _model;
 
+  /// The live terminal width (the hub driver's block/overlay rendering
+  /// width). Mirrored by the web stub as a constant 80.
+  int get termWidth => _model.termWidth;
+
   void _send(Msg msg) {
     if (msg is! OutputMsg) _flushOutput();
     if (_running) {
