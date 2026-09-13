@@ -21,6 +21,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -61,6 +62,7 @@ class ChatScreen extends StatefulWidget {
     this.asrTranscriber,
     this.audioControllerFactory,
     this.videoControllerFactory,
+    this.onAppsToggle,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -114,6 +116,12 @@ class ChatScreen extends StatefulWidget {
   /// `.webm` sandbox media); null uses the real `video_player`-backed
   /// controller. Tests/goldens inject fakes.
   final SandboxVideoControllerFactory? videoControllerFactory;
+
+  /// Invoked by the bar's Apps toggle (issue #224) right before popping:
+  /// on the narrow full-chat route the tap must land on the apps grid, so
+  /// the hosting sheet collapses itself underneath the popped route. The
+  /// wide shell passes null (the button is narrow-only anyway).
+  final VoidCallback? onAppsToggle;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -183,11 +191,30 @@ class _ChatScreenState extends State<ChatScreen> {
         onSaveAsApp: _graduateWidget,
       );
     };
+    // The Apps toggle (issue #224): narrow full-chat only in v1 — tapping
+    // pops back to the launcher home (apps expand; the sheet collapses
+    // itself via [ChatScreen.onAppsToggle]). The wide apps-panel wiring is
+    // a follow-up, so the wide bar renders exactly as before (null).
+    fa_ui.FaChatHost.appsToggleButtonBuilder = (context, chatService) {
+      if (MediaQuery.sizeOf(context).width >= fa_ui.kWideLayoutBreakpoint) {
+        return null;
+      }
+      return IconButton(
+        key: const ValueKey('chatAppsToggle'),
+        icon: const Icon(Icons.apps),
+        tooltip: context.l10n.appsShowAppsTooltip,
+        onPressed: () {
+          widget.onAppsToggle?.call();
+          Navigator.of(context).maybePop();
+        },
+      );
+    };
   }
 
   void _uninstallDynamicHosts() {
     fa_ui.FaChatHost.dynamicWidgetTileBuilder = null;
     fa_ui.FaChatHost.dynamicMessagesButtonBuilder = null;
+    fa_ui.FaChatHost.appsToggleButtonBuilder = null;
   }
 
   /// One-tap "save as app" (issue #102 AC7): installs the widget under a
@@ -280,6 +307,13 @@ class _ChatScreenState extends State<ChatScreen> {
     return fa_ui.FaChatScreen(
       service: service,
       title: context.l10n.appTitle,
+      // Issue #207: "High-quality image previews" — the scope notifies on
+      // toggle, so the open transcript re-decodes live. Null = full
+      // resolution; the default keeps the downscaled 600px previews.
+      imagePreviewCacheWidth:
+          ImagePreviewScope.maybeOf(context)?.highQuality ?? false
+          ? null
+          : fa_ui.kDefaultImagePreviewCacheWidth,
       settingsBuilder: (_) => SettingsScreen(
         service: service,
         env: service.env,

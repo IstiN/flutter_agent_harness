@@ -110,13 +110,11 @@ void main() {
     'memory.projectPath: identical value, project scope wins everywhere',
     () async {
       // The agent surface writes; every surface then reads the same value.
-      final setOut =
-          await (tool.execute(
-                {'op': 'set', 'key': 'memory.projectPath', 'value': './memory'},
-                null,
-                null,
-              )
-              as Future<ToolExecutionResult>);
+      final setOut = await tool.execute(
+        {'op': 'set', 'key': 'memory.projectPath', 'value': './memory'},
+        null,
+        null,
+      );
       final setText = setOut.content
           .whereType<TextContent>()
           .map((block) => block.text)
@@ -226,9 +224,7 @@ void main() {
       expect(code, 0);
       final report = await service.check();
       expect(out, renderConfigCheckReport(report));
-      final toolOut =
-          await (tool.execute(const {'op': 'check'}, null, null)
-              as Future<ToolExecutionResult>);
+      final toolOut = await tool.execute(const {'op': 'check'}, null, null);
       expect(
         toolOut.content.whereType<TextContent>().map((b) => b.text).join(),
         renderConfigCheckReport(report),

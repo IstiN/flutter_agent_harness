@@ -111,4 +111,12 @@ abstract final class FaChatHost {
   /// no dynamic messages).
   static Widget? Function(BuildContext context, FaChatService service)?
   dynamicMessagesButtonBuilder;
+
+  /// Builds the apps-collapse toggle for the top bar (issue #224: the Apps
+  /// icon that fully expands/collapses the apps surface). Same contract as
+  /// [dynamicMessagesButtonBuilder]: null/unset or a null return hides the
+  /// button, and the host widget decides its own visibility — hosts that
+  /// don't wire the slot render the bar exactly as before.
+  static Widget? Function(BuildContext context, FaChatService service)?
+  appsToggleButtonBuilder;
 }

@@ -2,7 +2,7 @@
 """Print the test dirs/files of one shard from scripts/test_shards.json.
 
 Usage:
-    python3 scripts/shard_files.py <manifest> <index>
+    python3 scripts/shard_files.py <manifest> <index> [--exclude STR]...
 
 Output: one path per line, suitable for
     dart test $(python3 scripts/shard_files.py scripts/test_shards.json 0)
@@ -10,13 +10,17 @@ Output: one path per line, suitable for
 Directory units are printed as-is (dart test accepts directories). The
 special unit "test" (loose *_test.dart files at the test root) is expanded
 to the individual root-level files so that `dart test` does not run the
-entire suite.
+entire suite. File-level manifests (every *_test.dart is a unit — e.g.
+packages/fa_ui, issue #283) print their units directly.
 
 Top-level test dirs that exist on disk but are MISSING from the manifest
 (a PR added one after the last weekly rebalance) are bin-packed across the
 shards at runtime by file count, so new suites run this PR — not at some
-future rebalance (issue #194, AC5). test/integration is excluded: it runs
-in its own CI job.
+future rebalance (issue #194, AC5). For file-level manifests the same
+runtime bin-pack applies per uncovered FILE (issue #283, E2).
+test/integration is excluded: it runs in its own CI job. --exclude STR
+drops paths containing STR (e.g. golden — host-locked suites stay out of
+the shards even when a PR adds one post-rebalance, issue #283 E4).
 
 Pure stdlib.
 """
@@ -40,6 +44,18 @@ def uncovered_units(covered: set, root: str) -> list:
     return out
 
 
+def uncovered_files(covered: set, root: str, exclude: list) -> list:
+    """Individual test files missing from a file-level manifest, as (path, 1)."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(root, "**", "*_test.dart"), recursive=True)):
+        norm = path.replace(os.sep, "/")
+        if "/integration/" in norm or any(x in norm for x in exclude):
+            continue  # integration runs in its own CI job; excludes stay out
+        if norm not in covered:
+            out.append((norm, 1))
+    return out
+
+
 def bin_pack_by_count(units: list, n: int) -> list:
     buckets = [[] for _ in range(n)]
     loads = [0] * n
@@ -51,10 +67,20 @@ def bin_pack_by_count(units: list, n: int) -> list:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    argv = sys.argv[1:]
+    exclude = []
+    while "--exclude" in argv:
+        i = argv.index("--exclude")
+        try:
+            exclude.append(argv[i + 1])
+        except IndexError:
+            print("ERROR: --exclude needs a value", file=sys.stderr)
+            return 2
+        del argv[i:i + 2]
+    if len(argv) != 2:
         print(__doc__.strip(), file=sys.stderr)
         return 2
-    manifest_path, index_s = sys.argv[1], sys.argv[2]
+    manifest_path, index_s = argv
     try:
         with open(manifest_path) as f:
             manifest = json.load(f)
@@ -71,7 +97,14 @@ def main() -> int:
 
     # Loose root files expand via glob below, so only directory units can
     # go stale; anything new under test/ runs THIS PR, not next rebalance.
-    extra = uncovered_units({u for s in shards for u in s}, "test")
+    covered = {u for s in shards for u in s}
+    file_level = any(u.replace(os.sep, "/").endswith("_test.dart")
+                     for s in shards for u in s)
+    if file_level:
+        # File-level manifest (issue #283): bin-pack uncovered FILES.
+        extra = uncovered_files(covered, "test", exclude)
+    else:
+        extra = uncovered_units(covered, "test")
     if extra:
         print(
             "WARNING: test dirs missing from the manifest (new since the "

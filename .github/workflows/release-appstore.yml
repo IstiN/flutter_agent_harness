@@ -1,0 +1,108 @@
+# Manual App Store review submission (issue #239 Track 2): submits the iOS
+# and/or macOS build of an already-processed TestFlight version straight to
+# App Store review. Nothing here builds or uploads a binary — the
+# `submit_for_review` lanes pre-flight against App Store Connect and fail
+# BEFORE any mutation:
+#   - the version must exist (create it via store-metadata.yml first)
+#   - a processed TestFlight build must exist for the version
+#   - a version already in review = green no-op notice (idempotent re-run)
+# `confirm` must repeat `version` exactly (fat-finger guard on an
+# irreversible-ish action).
+#
+# Release-after-approval stays a manual ASC click (owner decision for the
+# first month): flipping to automatic release is a one-line repo variable,
+# APP_STORE_AUTOMATIC_RELEASE=true (E5).
+#
+# Secrets: only the existing APP_STORE_CONNECT_* — no new credentials.
+
+name: App Store review submission
+
+run-name: "App Store review (${{ inputs.platforms }}): ${{ inputs.version }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'App version to submit (must match a processed TestFlight build, e.g. 1.2.3)'
+        required: true
+        type: string
+      platforms:
+        description: 'Platforms to submit'
+        required: true
+        default: both
+        type: choice
+        options:
+          - ios
+          - macos
+          - both
+      confirm:
+        description: 'Type the version string again to confirm'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Fat-finger guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Confirm must repeat the version
+        run: |
+          if [ "${{ inputs.confirm }}" != "${{ inputs.version }}" ]; then
+            echo "::error::confirm ('${{ inputs.confirm }}') does not equal version ('${{ inputs.version }}') — aborting before any mutation"
+            exit 1
+          fi
+          echo "Confirmed: submitting version ${{ inputs.version }} (${{ inputs.platforms }}) for App Store review"
+
+  ios:
+    name: Submit iOS for App Store review
+    needs: guard
+    if: inputs.platforms == 'ios' || inputs.platforms == 'both'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: flutter_app
+
+      - name: Submit for review (pre-flight fails before any mutation)
+        working-directory: flutter_app
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+          APP_STORE_VERSION: ${{ inputs.version }}
+          APP_STORE_CONFIRM: ${{ inputs.confirm }}
+        run: bundle exec fastlane ios submit_for_review
+
+  macos:
+    name: Submit macOS for App Store review
+    needs: guard
+    if: inputs.platforms == 'macos' || inputs.platforms == 'both'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+          working-directory: flutter_app
+
+      - name: Submit for review (pre-flight fails before any mutation)
+        working-directory: flutter_app
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+          APP_STORE_VERSION: ${{ inputs.version }}
+          APP_STORE_CONFIRM: ${{ inputs.confirm }}
+        run: bundle exec fastlane mac submit_for_review

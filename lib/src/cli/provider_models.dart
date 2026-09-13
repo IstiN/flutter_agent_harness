@@ -602,7 +602,13 @@ extension on AgentCli {
           // never learned the real window and the compaction thresholds
           // silently ran against the wrong number.
           final pinned = _rolesPinnedLimits(model);
-          if (!pinned.window) _applyDetectedContextWindow(model);
+          if (!pinned.window) {
+            if (_modelContextWindows.containsKey(model.id)) {
+              _applyDetectedContextWindow(model);
+            } else {
+              _noteUndetectedContextWindow(model);
+            }
+          }
           if (!pinned.cap) _applyDetectedMaxTokens(model);
         }
       }
@@ -653,6 +659,23 @@ extension on AgentCli {
       _replaceModelLimits(contextWindow: detected);
       io.writeln(_style.dim('model context window: $detected (from endpoint)'));
     }
+  }
+
+  /// The explicit fallback when the endpoint answered `/models` but
+  /// reported NO context window for the active model: the carried value
+  /// (catalog default, or whatever a previous model left behind) is
+  /// UNVERIFIED — say so once per model id instead of silently letting
+  /// the ctx meter, the compaction threshold, and the over-window guard
+  /// all divide by a number nobody confirmed.
+  void _noteUndetectedContextWindow(Model model) {
+    if (!_undetectedWindowNoteIds.add(model.id)) return;
+    io.writeln(
+      _style.dim(
+        'model context window: ${model.contextWindow} (not reported by the '
+        'endpoint; carried default — /model-edit contextWindow <n> to '
+        'override)',
+      ),
+    );
   }
 
   /// Applies the endpoint-reported max-tokens cap for [model] when it

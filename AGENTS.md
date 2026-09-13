@@ -64,9 +64,16 @@ factual: paths, commands, invariants — no essays.
   carriers `[{text:"[Image N]"},{image}]` anchor before the first
   referencing user message or after the tool-result run (never inside
   call/result pairs); the current user message rides images in place
-  (I3); the per-request cap (`images.maxPerRequest`, default 20) drops
-  current-first-then-newest with a drop notice (never silent); dangling
-  refs (compaction, cap) resolve to `(image no longer available)`.
+  (I3), each in-place image carrying its `[Image N]` label (issue #195
+  F3 — the model can cite what it sees); the per-request cap
+  (`images.maxPerRequest`, default 20) drops current-first-then-newest
+  with a drop notice (never silent; the app logs drops via `AppLog`,
+  issue #195 F4); dangling refs (compaction, cap) resolve to `(image no
+  longer available)`, and once a renumbering boundary exists (compaction
+  summary, structured marker, local-trim note) AUTHORED history
+  citations degrade to that note too — after renumbering an `[Image N]`
+  may name a different image, so silent rebinding is never allowed
+  (issue #195 F2; generated refs/labels stay content-keyed and fresh).
   Stateless per-request rebuild — determinism, compaction eviction and
   resume come free. Kill switch `images.registry: false` → byte-for-byte
   legacy shape. `agent_loop.dart` applies it in `_buildRequestContext`
@@ -303,6 +310,20 @@ factual: paths, commands, invariants — no essays.
   and would strand the reminder) — hosts re-arm on every mailbox change
   (CLI `_syncMailboxPrefix`, app `_setMailboxPrefix`) and sweep due records
   on their inbox ticks; `dispose()` cancels only the timer, the files stay.
+  Sleep resilience (issue #259): all due math rides an injectable wall
+  clock (`ScheduledMessageQueue(clock:)`), long waits are split into ≤60s
+  timer legs (`maxTimerLeg`) that recompute the remaining delay from the
+  wall clock on every fire — never accumulating duration drift — and
+  hosts run a catch-up sweep at every TURN START (CLI `_beginUserPrompt`,
+  app `sendText`) in addition to the idle inbox ticks, so the first
+  post-sleep turn delivers every overdue record immediately. Catch-up is
+  exactly-once per record (file removed on send + the `_delivering`
+  in-flight guard) — missed cycles of a recurring self-re-arm are NOT
+  replayed; the re-armed cycle simply resumes from "now". For true
+  sleep-proofing (delivery DURING lid sleep) no in-process timer can
+  help: add an external pinger, e.g. a cron/launchd entry that messages
+  the session's mailbox — mail to an asleep session already launches a
+  headless wake run that drains the inbox and sweeps due records.
  Records carry the scheduling instance's `owner` (mailbox prefix): a
  sweeper re-addresses a self-addressed record only when the stored owner
  matches its own prefix, and never deletes another instance's record -
@@ -413,6 +434,21 @@ factual: paths, commands, invariants — no essays.
   (uniform `task_status`/`task_send`); `/a2a` shows server status;
   `fa serve --a2a [--port N] [--token T]` mounts this agent as an endpoint
   (`bin/serve_a2a.dart`).
+- `lib/src/cli/hep.dart` + `agent_cli_hep_io.dart` — HEP v1, the Harness
+  Event Protocol (`fa --output events[=full]`, issue #155): strict JSONL
+  on stdout for server-side supervisors, one JSON object per line,
+  flushed per line. A TURN is one assistant LLM ROUND, not one user
+  message — a user turn that runs tools yields SEVERAL terminal frames
+  (`turn_done` per round, ids incrementing). `HepWriter` is
+  `AgentListener`-shaped (`agent.subscribe(hep.handleEvent)`); the
+  `HepEventsIO` decorator (a `part of agent_cli.dart`) drops
+  `CliIO.write` so stdout stays pure while diagnostics keep stderr.
+  Frame catalog, ordering/flush guarantees and versioning policy:
+  docs/hep.md; byte shape pinned by golden tests (test/cli/hep_test.dart).
+  `--attach` sniffs image mimes by magic bytes (png/jpeg/gif/webp ride
+  as base64 blocks); any other file passes through as an
+  `[attached file: …]` path reference appended to the prompt (issue
+  #196) — never an octet-stream image block.
 - `bin/fah.dart` — the `fah`/`fa` CLI. REPL (no args) or headless
   (`fa "prompt"` / `-p` / `--prompt-file <path>` (alias `-f`), mutually
   exclusive). First positional naming an EXISTING file is the prompt source
@@ -1392,6 +1428,23 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
   `_wire_compile_wasm` — Podfiles force-load + `-exported_symbol` +
   `STRIP_STYLE=non-global`, else white screen on TestFlight). Pods cached
   keyed by `Podfile.lock`.
+- TestFlight external distribution (issue #239): the `submit_only` lanes
+  (driven by build-mobile.yml / build-macos.yml) distribute every build
+  straight to the EXTERNAL group — REQUIRED repo variables
+  `TESTFLIGHT_EXTERNAL_GROUP`, `BETA_REVIEW_CONTACT_EMAIL`,
+  `BETA_REVIEW_CONTACT_PHONE`, `BETA_APP_FEEDBACK_EMAIL` (lanes fail loudly
+  at start without them). Pilot must WAIT for processing (skipping the wait
+  silently skips distribution); `verify_external_distribution!` asserts
+  group membership bounded — beta-review-pending is a neutral notice, a
+  build never reaching the group fails the leg (self-filed issue).
+- Manual App Store review: `release-appstore.yml` (workflow_dispatch:
+  `version` + `platforms` ios/macos/both + `confirm` repeating the version)
+  runs the `submit_for_review` lanes — pure pre-flight in
+  `flutter_app/fastlane/appstore_preflight.rb` (plain-ruby tested) fails
+  BEFORE any mutation; already-submitted versions are a green no-op;
+  release-after-approval stays a manual ASC click
+  (`APP_STORE_AUTOMATIC_RELEASE` repo variable flips it, E5). Grep-guards:
+  `test/store_automation_guard_test.dart`.
 - App Store content pipeline (no binary): store screenshots are COMMITTED
   goldens from `flutter_app/test/golden/store_screenshots_test.dart` (frame +
   inline en/ru copy in `store_marketing_frame.dart`) at

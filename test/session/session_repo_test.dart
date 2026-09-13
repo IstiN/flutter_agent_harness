@@ -1,5 +1,90 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
+
+/// Wraps a [FileSystem] and tracks how many session-header reads are
+/// in flight at once. The gate completes as soon as two overlap, so a
+/// sequential implementation stalls on its own first read until the
+/// timeout and fails the max-in-flight assertion below.
+class ProbeFs implements FileSystem {
+  ProbeFs(this._delegate);
+
+  final FileSystem _delegate;
+  int inFlight = 0;
+  int maxInFlight = 0;
+  final Completer<void> _twoInFlight = Completer<void>();
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) async {
+    final isHeaderRead = maxLines == 1;
+    if (isHeaderRead) {
+      inFlight++;
+      if (maxInFlight < inFlight) maxInFlight = inFlight;
+      if (inFlight >= 2 && !_twoInFlight.isCompleted) {
+        _twoInFlight.complete();
+      }
+      try {
+        await _twoInFlight.future.timeout(const Duration(seconds: 5));
+      } on TimeoutException {
+        // Sequential caller: the gate never opened.
+      } finally {
+        inFlight--;
+      }
+    }
+    return _delegate.readTextLines(path, maxLines: maxLines);
+  }
+
+  @override
+  String get cwd => _delegate.cwd;
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _delegate.readTextFile(path);
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(path, content);
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(path, content);
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(path);
+  @override
+  Future<Result<bool, FileError>> exists(String path) =>
+      _delegate.exists(path);
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+}
 
 void main() {
   late MemoryFileSystem fs;
@@ -306,6 +391,29 @@ void main() {
         );
       },
     );
+  });
+
+  group('issue #199 — parallel listing', () {
+    test('list fans header reads out concurrently, bounded pool', () async {
+      for (var i = 0; i < 40; i++) {
+        await repo.create(JsonlSessionCreateOptions(cwd: '/work', id: 's$i'));
+      }
+      final probe = ProbeFs(fs);
+      final probeRepo = JsonlSessionRepo(fs: probe, sessionsRoot: '/sessions');
+      final sessions = await probeRepo.list();
+      expect(sessions, hasLength(40));
+      expect(
+        probe.maxInFlight,
+        greaterThanOrEqualTo(2),
+        reason: 'sequential listing never overlaps header reads '
+            '(issue #199: latency adds up linearly)',
+      );
+      expect(
+        probe.maxInFlight,
+        lessThanOrEqualTo(16),
+        reason: 'concurrency pool must stay bounded (no fd exhaustion)',
+      );
+    });
   });
 
   group('sortSessionsCurrentFolderFirst', () {

@@ -10,8 +10,6 @@
 /// host's project config.
 library;
 
-import 'dart:async';
-
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/approval_mode_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -48,7 +46,7 @@ StreamFunction _configSetThenText(String key, String value, String finalText) {
             stopReason: StopReason.stop,
             timestamp: DateTime.now(),
           );
-    stream.push(DoneEvent(reason: message.stopReason!, message: message));
+    stream.push(DoneEvent(reason: message.stopReason, message: message));
     stream.end();
     return stream;
   };

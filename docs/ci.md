@@ -20,11 +20,18 @@ watches the run.
 
 | Leg | Runs | Publishes |
 | --- | --- | --- |
-| TestFlight | `build-mobile.yml` (`ios_content=all`, `android_content=none`) | iOS IPA → TestFlight + release asset. Android stays excluded (standing owner decision). |
+| TestFlight | `build-mobile.yml` (`ios_content=all`, `android_content=none`) | iOS IPA → TestFlight, distributed straight to the EXTERNAL group (`TESTFLIGHT_EXTERNAL_GROUP` repo variable + Beta App Review contact variables — lanes fail loudly without them). Android stays excluded (standing owner decision). |
 | pub.dev | in-job | **Verifier + recovery**, never publishes directly: pub.dev trusted publishing only accepts OIDC from tag-push runs, which a schedule/dispatch run can never be. When behind, it re-runs the failed ci.yml tag-publish run (a rerun keeps the original tag-push event/OIDC claims); unrecoverable states fail loudly → issue with a manual-publish instruction. |
 | CLI + desktop | `build-macos.yml` (`create_release=true`) | macOS DMG/ZIP (signed + notarized), macOS CLI bundles, `fa-extension.zip` → GitHub Release. |
 | Website | `pages.yml` | fa1.dev: landing + web demo + `/extension/` + `/outlook/` slice. |
 | Outlook add-in | `office-addin.yml` | Acceptance suite (manifest validation, dart2js taskpane, Node + Playwright e2e). The fa1.dev `/outlook` deploy itself rides the Website leg — `pages.yml` assembles the same add-in into the Pages artifact. |
+
+Manual, version-by-version: `release-appstore.yml` (workflow_dispatch) submits the
+version's latest processed TestFlight build straight to App Store review (iOS and/or
+macOS). Pre-flight fails before any mutation — version must exist (create it via
+`store-metadata.yml`), a processed build must exist, an already-submitted version is a
+green no-op — and `confirm` must repeat `version` exactly. Release-after-approval stays
+a manual ASC click (`APP_STORE_AUTOMATIC_RELEASE` repo variable flips it).
 
 `workflow_dispatch` input `legs` selects a single leg (`all` by default) —
 the safe way to smoke one channel.

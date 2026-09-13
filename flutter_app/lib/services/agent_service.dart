@@ -15,6 +15,7 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'app_log.dart';
 import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
@@ -57,6 +58,7 @@ import 'package:fa/gemma/gemma_stream_function.dart';
 import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/session_parse_factory.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
@@ -76,6 +78,8 @@ import 'package:fa/webllm/webllm_types.dart';
 part 'agent_service_compaction.dart';
 part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
+part 'agent_service_sessions.dart';
+part 'agent_service_runs.dart';
 
 /// A UI-facing chat message.
 /// the adapter skips `Authorization: Bearer` when the key is empty.
@@ -123,9 +127,12 @@ class AgentService extends ChangeNotifier
     Duration? responseTimeout,
     ApprovalMode? initialApprovalMode,
     @visibleForTesting bool watchExternalSessions = true,
+    @visibleForTesting bool includeSharedSessionRoots = true,
   }) : _resolveSecretName = null,
        // ignore: prefer_initializing_formals
        _watchExternalSessions = watchExternalSessions,
+       // ignore: prefer_initializing_formals
+       _includeSharedSessionRoots = includeSharedSessionRoots,
        _secretsEnv = null,
        _sessionKeys = null,
        _taskModelsStore = null,
@@ -144,6 +151,7 @@ class AgentService extends ChangeNotifier
     // endpoint-aware UI never reads an uninitialized late field.
     _activeBaseUrl = _agent.state.model.baseUrl;
     _activeApiKey = '';
+    _wireImageDropNotice();
     _redactor = redactor;
     _attachRedactor(redactor);
     _attachApproval();
@@ -161,6 +169,19 @@ class AgentService extends ChangeNotifier
       registry: null,
       rebuildPrompt: () {},
     );
+  }
+
+  /// F4: cap drops must never be silent — same rule as the CLI's dim
+  /// line, surfaced through the app debug log (logs/app.log). Armed from
+  /// every constructor (public, `_withEnv`, relay base delegates here).
+  static void _wireImageDropNotice() {
+    imageDropNotice = (index, keyPreview) {
+      AppLog.i(
+        'images',
+        'dropping [Image $index] (key $keyPreview…) '
+            '— per-request cap reached',
+      );
+    };
   }
 
   /// Relay-mode base construction (issue #34 item 1): builds the shell the
@@ -209,6 +230,11 @@ class AgentService extends ChangeNotifier
     @visibleForTesting bool watchExternalSessions = true,
     String? sessionsRoot,
     OfficeApi? officeApi,
+
+    /// Overrides the platform session-parse executor (issue #199). Tests
+    /// inject a fake to keep parsing deterministic; production passes
+    /// `createSessionParseExecutor()` (null on web → inline parsing).
+    @visibleForTesting SessionParseExecutor? parseExecutor,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -254,6 +280,7 @@ class AgentService extends ChangeNotifier
       streamFunction: streamFunction,
       watchExternalSessions: watchExternalSessions,
       taskModelsStore: taskModelsStore,
+      parseExecutor: parseExecutor ?? createSessionParseExecutor(),
       sessionsRoot: resolvedSessionsRoot,
       officeApi: officeApi ?? bootOfficeApi(),
       webSearchConfig: WebSearchConfig(secrets: secretsStore),
@@ -360,6 +387,7 @@ class AgentService extends ChangeNotifier
         formatSkillsForPrompt(skills),
     ].join('\n\n');
   }
+
   AgentService._withEnv({
     Map<String, String> bootSecrets = const {},
     required this.env,
@@ -369,8 +397,13 @@ class AgentService extends ChangeNotifier
     WebSearchConfig? webSearchConfig,
     StreamFunction? streamFunction,
     bool watchExternalSessions = true,
+    bool includeSharedSessionRoots = true,
     MediaKeyResolver? resolveSecretName,
     OfficeApi? officeApi,
+    // The session-parse executor (issue #199): non-null routes ALL record
+    // parsing through it (background isolates in production); null keeps
+    // inline parsing (tests stay deterministic).
+    SessionParseExecutor? parseExecutor,
     this._secretsEnv,
     this._sessionKeys,
     this._taskModelsStore,
@@ -387,6 +420,8 @@ class AgentService extends ChangeNotifier
     : _skillsHomeDir = skillsHomeDir,
        // ignore: prefer_initializing_formals
        _watchExternalSessions = watchExternalSessions,
+       // ignore: prefer_initializing_formals
+       _includeSharedSessionRoots = includeSharedSessionRoots,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
        _resolveSecretName = resolveSecretName,
@@ -396,11 +431,17 @@ class AgentService extends ChangeNotifier
          // attacker-controlled bytes and insert_draft_body rewrites the
          // user's draft — both prompt on EVERY call in EVERY session mode
          // (the override outranks mode, turn grants and always-allow).
-         overrides:
-             officeApi == null ? const {} : officeToolApprovalOverrides(),
+         overrides: officeApi == null
+             ? const {}
+             : officeToolApprovalOverrides(),
        ),
        sessionsRoot = sessionsRoot,
-       _repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
+       _repo = JsonlSessionRepo(
+         fs: env,
+         sessionsRoot: sessionsRoot,
+         parseExecutor: parseExecutor,
+       ) {
+    _wireImageDropNotice();
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
     _activeApiKey = config.apiKey;
@@ -1570,6 +1611,11 @@ class AgentService extends ChangeNotifier
   int _sessionWatchBytes = -1;
   final bool _watchExternalSessions;
 
+  /// Test-only escape hatch: on macOS dev machines [listSessions] merges the
+  /// shared App Group / `~/.fah/sessions` roots (host sessions leak into
+  /// hermetic tests); tests pass `includeSharedSessionRoots: false`.
+  final bool _includeSharedSessionRoots;
+
   void _startSessionWatch() {
     _stopSessionWatch();
     if (!_watchExternalSessions) return;
@@ -1606,27 +1652,35 @@ class AgentService extends ChangeNotifier
   Future<void> _reloadExternalMessages() async {
     final session = _session;
     if (session == null || isStreaming) return;
+    final gen = _loadGeneration;
     try {
       if (session.getStorage() case final WindowedSessionStorage windowed) {
         final ingest = await windowed.ingestAppended();
+        if (gen != _loadGeneration) return;
         if (ingest.reanchored) {
           // Truncation/rotation: the view (and the provider context)
           // reset to the new tail — stale anything is never kept.
           _viewBranch = ingest.delta;
           await _applyViewBranch();
+          if (gen != _loadGeneration) return;
           final context = await session.buildContext();
+          if (gen != _loadGeneration) return;
           _agent.state.messages = context.messages;
           _persistedCount = context.messages.length;
         } else if (ingest.delta.isNotEmpty) {
           _viewBranch?.addAll(ingest.delta);
           await _applyViewBranch();
+          if (gen != _loadGeneration) return;
           await _growProviderContext(session, ingest.delta);
+          if (gen != _loadGeneration) return;
         }
         unawaited(_refreshHistoryAbove());
         return;
       }
       final metadata = await session.getMetadata();
+      if (gen != _loadGeneration) return;
       final fresh = await _repo.open(metadata);
+      if (gen != _loadGeneration) return;
       _session = fresh;
       await _reprojectLoadedWindow(fresh);
     } on Object {
@@ -1737,15 +1791,18 @@ class AgentService extends ChangeNotifier
     if (_loadingHistory || isStreaming) return;
     final windowed = _windowed;
     if (windowed == null) return;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       final joined = await windowed.loadOlder();
+      if (gen != _loadGeneration) return;
       if (joined.isNotEmpty) {
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
       }
       await _refreshHistoryAbove();
+      if (gen != _loadGeneration) return;
       if (_historyLoadError != null) {
         _historyLoadError = null;
         notifyListeners();
@@ -1767,15 +1824,18 @@ class AgentService extends ChangeNotifier
     if (_loadingHistory || isStreaming) return;
     final windowed = _windowed;
     if (windowed == null) return;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       final joined = await windowed.loadNewer();
+      if (gen != _loadGeneration) return;
       if (joined.isNotEmpty) {
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
       }
       await _refreshHistoryAbove();
+      if (gen != _loadGeneration) return;
       _historyLoadError = null;
       notifyListeners();
     } on Object catch (e) {
@@ -1801,7 +1861,8 @@ class AgentService extends ChangeNotifier
     final windowed = _windowed;
     if (windowed == null) {
       final index = _positionalRow(messageId);
-      return index != null && index < messages.length;
+      if (index == null) return _jumpLoadedRecord(messageId);
+      return index >= 0 && index < messages.length;
     }
     if (!messageId.startsWith('msg-')) {
       return _jumpToRecord(windowed, messageId);
@@ -1809,13 +1870,14 @@ class AgentService extends ChangeNotifier
     final index = _positionalRow(messageId);
     if (index == null) return false;
     if (_loadingHistory || isStreaming) return index < messages.length;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     var reached = index < messages.length;
     try {
       for (var pass = 0; !reached && pass < 100 && windowed.hasOlder; pass++) {
         final joined = await windowed.loadOlder();
-        if (joined.isEmpty) break;
+        if (joined.isEmpty || gen != _loadGeneration) break;
         await _syncViewToWindow(windowed);
         await _applyViewBranch();
         reached = index < messages.length;
@@ -1834,20 +1896,47 @@ class AgentService extends ChangeNotifier
     return index == null || index < 0 ? null : index;
   }
 
+  /// A record-id jump on a FULL-OPEN session (the windowed-open
+  /// fallback, issue #197 defect 4): everything is already loaded, so
+  /// the jump is a scroll — resolve the record's transcript row and
+  /// hand it to the scroll surface. `false` on an unknown record or one
+  /// that projects no row. Fallback-open sessions are small by
+  /// definition (that is why the full open won), so the prefix
+  /// projection that finds the row costs nothing.
+  Future<bool> _jumpLoadedRecord(String recordId) async {
+    final session = _session;
+    if (session == null) return false;
+    try {
+      final branch = await session.getBranch();
+      final pos = branch.indexWhere((record) => record.id == recordId);
+      if (pos < 0) return false;
+      final index =
+          session.projectPath(branch.take(pos + 1).toList()).length - 1;
+      if (index < 0) return false;
+      scrollToMessageHandler?.call('msg-$index');
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
   /// The AC6 byte-offset seek: hit id → window re-center → view sync.
   Future<bool> _jumpToRecord(
     WindowedSessionStorage windowed,
     String recordId,
   ) async {
     if (_loadingHistory || isStreaming) return false;
+    final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       final branch = await windowed.jumpToRecord(recordId);
-      if (branch.isEmpty) return false;
+      if (branch.isEmpty || gen != _loadGeneration) return false;
       await _syncViewToWindow(windowed);
       await _applyViewBranch();
+      if (gen != _loadGeneration) return false;
       await _refreshHistoryAbove();
+      if (gen != _loadGeneration) return false;
       _historyLoadError = null;
       return true;
     } on Object catch (e) {
@@ -1866,7 +1955,9 @@ class AgentService extends ChangeNotifier
   Future<void> _refreshHistoryAbove() async {
     final windowed = _windowed;
     if (windowed == null) return;
+    final gen = _loadGeneration;
     final count = await windowed.countAbove();
+    if (gen != _loadGeneration) return;
     if (_historyAboveCount != count || windowed.cachedTotalRecords != null) {
       _historyAboveCount = count;
       notifyListeners();
@@ -1910,6 +2001,13 @@ class AgentService extends ChangeNotifier
   String? _sessionFile;
   int _persistedCount = 0;
 
+  /// Monotonic load-generation counter (issue #199 AC5/E3): bumped by
+  /// every path that swaps or clears the session ([loadSession], [reset],
+  /// [initialize], [deleteSession]); page loads, external refreshes, and
+  /// ledger folds capture it and bail when it moved — stale work must
+  /// never land in the new session's state.
+  int _loadGeneration = 0;
+
   /// Request summaries captured live (ModelRequestEvent) but not yet
   /// written; flushed at the head of every [_persistUnchecked] pass.
   final List<TrajectoryRequestDetail> _pendingRequestSummaries = [];
@@ -1930,98 +2028,6 @@ class AgentService extends ChangeNotifier
   /// Null until a session materializes.
   String? get currentSessionCwd => _sessionCwd;
   String? _sessionCwd;
-
-  /// Session-correlation env vars injected into bash tool executions (see
-  /// [SessionVarsExecutionEnv]). Read live per exec, so a session (re)load
-  /// or a provider/model switch is picked up by later commands. Never
-  /// secret values — ids, paths, provider kinds, model ids.
-  Map<String, String> _sessionEnvVars() => {
-    sessionIdEnvVar: ?_sessionId,
-    sessionFileEnvVar: ?_sessionFile,
-    providerEnvVar: _providerKind,
-    modelEnvVar: _agent.state.model.id,
-  };
-
-  /// Initializes session persistence — WITHOUT creating an empty JSONL file.
-  ///
-  /// The session file (and the agent's mailbox address in the messaging
-  /// fabric) are materialised lazily on the first [_persist] run; a service
-  /// that is initialised but never receives a user message leaves no file
-  /// behind. [loadSession] still creates an OS-backed [_session] for the
-  /// restored session.
-  Future<void> initialize() async {
-    // The session FILE materialises lazily on the first persist (an
-    // untouched session never hits the disk), but the id is allocated
-    // eagerly: hosts (FlutterSessionManager) key sessions by id from the
-    // moment the service exists, and the prompt's messaging section needs
-    // the real mailbox address before the first message.
-    if (_session == null && _sessionId == null) {
-      final id = createSessionId();
-      _sessionId = id;
-      _setMailboxPrefix(id);
-    }
-    // Compose the system prompt eagerly — messaging address defaults to the
-    // host's local id (`main`) until the session materialises (so a brand
-    // new, no-message service doesn't crash on prompt render).
-    final config = _config;
-    if (config != null) {
-      _agent.state.systemPrompt = _composeSystemPrompt(config);
-    }
-    // Best-effort cleanup of legacy empty sessions (no transcript — only the
-    // JSONL header). Runs in the background so it never slows startup.
-    unawaited(_cleanupLegacyEmptySessions());
-    // The watcher only exists with a messaging fabric (production ctor);
-    // lightweight test services never start a timer.
-    if (_subagentManager != null) _startInboxWatcher();
-  }
-
-  /// Removes every legacy empty `.jsonl` (only header) left on disk by the
-  /// previous eager session-creation code paths. Idempotent and silently
-  /// best-effort.
-  Future<void> _cleanupLegacyEmptySessions() async {
-    try {
-      await _repo.cleanupEmptySessions();
-    } on Object {
-      // Never propagate — cleanup is best-effort, the next launch will
-      // retry.
-    }
-  }
-
-  /// Materialises the JSONL session file the first time persistence is
-  /// required — no-op when the session is already open (e.g. loadSession).
-  /// All callers that may produce a transcript ([_persist], subagent
-  /// follow-up messages) must go through here.
-  Future<void> _materialiseSessionIfNeeded() async {
-    if (_session != null) return;
-    final session = await _repo.create(
-      JsonlSessionCreateOptions(
-        cwd: env.sessionCwd,
-        // Allocated eagerly in [initialize] — the file adopts it so the
-        // id the host already keyed this session by stays stable.
-        id: _sessionId,
-        metadata: {'agent': 'fa', 'model': _agent.state.model.id},
-      ),
-    );
-    _session = session;
-    final sessionMetadata = await session.getMetadata();
-    _sessionId = sessionMetadata.id;
-    _sessionFile = sessionMetadata.path;
-    _sessionCwd = sessionMetadata.cwd;
-    _setMailboxPrefix(sessionMetadata.id);
-    // Follow external appends (a running fa CLI on the same session).
-    _startSessionWatch();
-    // The messaging section now carries the real mailbox address.
-    final config = _config;
-    if (config != null) {
-      _agent.state.systemPrompt = _composeSystemPrompt(config);
-    }
-    // Presence in the messaging fabric once an id is available.
-    unawaited(
-      _subagentManager?.messaging?.register(
-        _subagentManager!.mailboxOf(_subagentManager!.selfId),
-      ),
-    );
-  }
 
   /// The inbox watcher: incoming inter-agent mail while IDLE wakes the
   /// agent into a turn (mid-run mail is already delivered by the steering
@@ -2199,6 +2205,13 @@ class AgentService extends ChangeNotifier
       notifyListeners();
       return;
     }
+    // Wall-clock catch-up (issue #259): records that came due while the
+    // host slept are swept at turn start, not at the next timer tick, so
+    // the fresh turn's steering poll already sees the fired reminder.
+    // Lightweight test services (pre-constructed agent) have no fabric.
+    if (_subagentManager != null) {
+      unawaited(_scheduledMessages.deliverDue().onError((_, _) => 0));
+    }
     _runWithTimeout(() => _agent.prompt(trimmed));
   }
 
@@ -2350,106 +2363,6 @@ class AgentService extends ChangeNotifier
     _runWithTimeout(() => _agent.promptMessage(message));
   }
 
-  /// LLM completion for host features (the `jsr.fa.llm*` bridge in JS apps).
-  /// Runs on a throwaway agent with no tools, so it never touches the session
-  /// transcript. `system` messages are folded into the system prompt; `user`
-  /// and `assistant` messages become the conversation, which should end with
-  /// a user message. When [onDelta] is given, streamed text deltas are
-  /// forwarded as they arrive.
-  Future<String> completeOnce(
-    List<FaLlmMessage> messages, {
-    void Function(String delta)? onDelta,
-  }) async {
-    final model = _agent.state.model;
-    final agent = Agent(
-      model: model,
-      systemPrompt: [
-        'You are a tiny assistant embedded inside a host '
-            'application. Answer briefly and plainly; no markdown fences unless '
-            'the caller asks for code.',
-        for (final message in messages)
-          if (message.role == 'system') message.content,
-      ].join('\n\n'),
-      streamFunction: _agent.streamFunction,
-      toolRegistry: ToolRegistry(const []),
-    );
-    if (onDelta != null) {
-      agent.subscribe((event, cancelToken) async {
-        if (event case MessageUpdateEvent(
-          assistantMessageEvent: TextDeltaEvent(:final delta),
-        )) {
-          onDelta(delta);
-        }
-      });
-    }
-    final conversation = [
-      for (final message in messages)
-        if (message.role == 'assistant')
-          AssistantMessage(
-            content: [TextContent(text: message.content)],
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
-            usage: Usage.zero,
-            stopReason: StopReason.stop,
-            timestamp: DateTime.now(),
-          )
-        else if (message.role == 'user')
-          UserMessage.text(message.content),
-    ];
-    if (conversation.isEmpty) {
-      throw StateError('messages must include at least one user message');
-    }
-    await agent.promptMessages(conversation);
-    final last = agent.state.messages.lastOrNull;
-    if (last is AssistantMessage) {
-      final text = last.content
-          .whereType<TextContent>()
-          .map((b) => b.text)
-          .join();
-      if (text.isNotEmpty) return text;
-      if (last.errorMessage != null) throw StateError(last.errorMessage!);
-    }
-    throw StateError('no completion returned');
-  }
-
-  /// Starts one agent run and settles the UI state no matter how it ends.
-  ///
-  /// [startRun] is invoked LAZILY inside a try/catch: `Agent.prompt*` throws
-  /// synchronously when a run is already active, and the composer calls the
-  /// send methods unawaited — a synchronous escape would surface as an
-  /// unhandled async error in the console (the "Uncaught Error" storm after
-  /// a provider failure) instead of the error banner. Timeouts and async
-  /// failures land in `catchError`, which always re-enables the UI.
-  void _runWithTimeout(Future<void> Function() startRun) {
-    final Future<void> run;
-    try {
-      // Multi-day sessions: re-compose the prompt so the model sees
-      // TODAY's date, not the session creation date.
-      final config = _config;
-      if (config != null) {
-        _agent.state.systemPrompt = _composeSystemPrompt(config);
-      }
-      _armIdleWatchdog();
-      run = startRun();
-    } on Object catch (e) {
-      _idleWatchdog?.cancel();
-      isStreaming = false;
-      error = e is StateError ? e.message : e.toString();
-      notifyListeners();
-      return;
-    }
-    run.catchError((Object e) {
-      _idleWatchdog?.cancel();
-      isStreaming = false;
-      error = e.toString();
-      // dispose() aborts an in-flight run — its error lands here after the
-      // service is gone; notifying a disposed ChangeNotifier throws.
-      if (_disposed) return;
-      notifyListeners();
-    });
-  }
-
   /// Idle watchdog: the run aborts only when NOTHING comes back for
   /// [_responseTimeout] — any event (tokens, tool calls) proves the model is
   /// alive and rearms it. Replaces the previous whole-run timeout, which
@@ -2524,49 +2437,6 @@ class AgentService extends ChangeNotifier
     super.dispose();
   }
 
-  /// Waits until the agent becomes idle.
-  Future<void> waitForIdle() => _agent.waitForIdle();
-
-  /// Clears the in-memory transcript and starts a new session.
-  Future<void> reset() async {
-    await deleteSessionIfEmpty();
-    // Detach the old session so [initialize] allocates a fresh id — the
-    // old file (when it has content) stays on disk for the session list.
-    _session = null;
-    _sessionId = null;
-    _sessionFile = null;
-    _agent.reset();
-    messages.clear();
-    await dynamicMessages.forgetAll();
-    error = null;
-    _persistedCount = 0;
-    _historyAboveCount = null;
-    _viewBranch = null;
-    _historyLoadError = null;
-    _loadingHistory = false;
-    _trajectory.reset();
-    _currentAssistantMessage = null;
-    await initialize();
-    notifyListeners();
-  }
-
-  /// Deletes the session file when nothing was ever said in it: a session
-  /// the user never typed into must not litter the session list. Called on
-  /// close/reset; best-effort — never throws.
-  Future<void> deleteSessionIfEmpty() async {
-    if (_agent.state.messages.isNotEmpty) return;
-    final session = _session;
-    if (session == null) return;
-    try {
-      await _repo.delete(await session.getMetadata());
-      _session = null;
-      _sessionId = null;
-      _sessionFile = null;
-    } on Object {
-      // Best-effort cleanup.
-    }
-  }
-
   /// Switches the backend (provider/model/key) for subsequent messages while
   /// keeping the visible transcript and the current session.
   ///
@@ -2612,50 +2482,13 @@ class AgentService extends ChangeNotifier
     }
   }
 
-  /// Creates a new [AgentService] with the same config and env, for a fresh
-  /// session. The clone shares the [env] and the session repository but owns
-  /// its own [Agent], transcript, and session persistence.
-  AgentService clone() {
-    final config = _config;
-    if (config == null) {
-      throw StateError(
-        'Cannot clone an AgentService built from a pre-constructed Agent',
-      );
-    }
-    // Reuse the current stream function so test doubles keep working; a real
-    // service would recreate it from the provider kind.
-    return AgentService._withEnv(
-      env: env,
-      config: config,
-      sessionsRoot: sessionsRoot,
-      redactor: _redactor,
-      streamFunction: _agent.streamFunction,
-      // Clones inherit the external-watch setting (tests disable it).
-      watchExternalSessions: _watchExternalSessions,
-      resolveSecretName: _resolveSecretName,
-      // Clones share the live secrets env and the Keys store, so a
-      // `request_secret` grant in one session is live and persisted for all.
-      secretsEnv: _secretsEnv,
-      sessionKeys: _sessionKeys,
-      taskModelsStore: _taskModelsStore,
-      // Clones inherit the CURRENT approval mode (not a fresh disk read) and
-      // share the store so their mode changes persist too.
-      initialApprovalMode: approval.mode,
-      approvalModeStore: _approvalModeStore,
-      // Same for the skills-access consent: the live choice + shared store.
-      initialSkillsAccess: _skillsAccess,
-      skillsAccessStore: _skillsAccessStore,
-      // Same for the per-tool availability: the live config + shared store.
-      initialToolsConfig: _toolsAvailability.config,
-      toolsAvailabilityStore: _toolsAvailabilityStore,
-    );
-  }
-
   /// Lists persisted sessions, newest first (across all provider dirs
   /// under [sessionsRoot]). Cheap: reads only the JSONL headers.
   Future<List<SessionMetadata>> listSessions() async {
     try {
-      final roots = allSessionRoots(sessionsRoot);
+      final roots = _includeSharedSessionRoots
+          ? allSessionRoots(sessionsRoot)
+          : [sessionsRoot];
       if (roots.length <= 1) {
         return await _repo.list();
       }
@@ -2687,136 +2520,6 @@ class AgentService extends ChangeNotifier
     } on Object {
       return _repo.list();
     }
-  }
-
-  /// Loads a persisted session into the chat: the agent's context and the
-  /// visible transcript are replaced by the session's active branch, and new
-  /// messages append to that session. The session's effective model (the
-  /// last `model_change` record at the leaf — every provider/model switch
-  /// in the CLI and the app appends one) is restored: the DEFAULT chat
-  /// model only applies to NEW sessions, not to reopening an old one.
-  Future<void> loadSession(SessionMetadata metadata) async {
-    abort();
-    await waitForIdle();
-    // Windowed open (issue #135): header + newest chunk only; older
-    // records page in through loadOlderHistory. Small sessions load
-    // completely either way. A windowed-open failure (a corrupt tail,
-    // an IO hiccup on the ranged-read path) falls back to the FULL
-    // open rather than failing the session — the compatibility path
-    // (round-4 review); paging surfaces stay null for full-open.
-    Session session;
-    try {
-      session = await _repo.open(metadata, windowed: true);
-    } on Object {
-      session = await _repo.open(metadata);
-    }
-    // The count belongs to the session being opened; the background
-    // refresh at the end of this method fills it in.
-    _historyAboveCount = null;
-    _viewBranch = await session.getBranch();
-    final context = await session.buildContext();
-    final contextMessages = context.messages;
-    _agent.reset();
-    _agent.state.messages = contextMessages;
-    _session = session;
-    _sessionId = metadata.id;
-    _sessionFile = metadata.path;
-    _sessionCwd = metadata.cwd;
-    _setMailboxPrefix(metadata.id);
-    // Follow external appends (a running fa CLI on the same session).
-    _startSessionWatch();
-    // The ledger re-projects the active branch (records carry richer
-    // structure than the rebuilt message list).
-    await _rebuildTrajectory(records: _viewBranch);
-    // Restore the session's own model: same wire kind → modelId override;
-    // the provider itself stays the configured connection (its key lives
-    // in the Keychain, not in the session). An unresolvable or
-    // cross-kind mismatch keeps the current model — reopening a session
-    // must never hard-fail on this. Works with a config-less service
-    // too (pre-constructed agents): the kind check then compares against
-    // the agent's live model.
-    final config = _config;
-    final sessionModel = context.model;
-    final activeApi = _agent.state.model.api;
-    if (sessionModel != null &&
-        sessionModel.modelId.isNotEmpty &&
-        sessionModel.modelId != _agent.state.model.id &&
-        (config == null
-            ? sessionModel.provider == activeApi
-            : (sessionModel.provider == config.providerKind ||
-                  sessionModel.provider == config.toModel().api))) {
-      if (config != null) {
-        reconfigure(config.withModelId(sessionModel.modelId));
-      } else {
-        final model = _agent.state.model;
-        _agent.state.model = Model(
-          id: sessionModel.modelId,
-          name: sessionModel.modelId,
-          api: model.api,
-          provider: model.provider,
-          baseUrl: model.baseUrl,
-          reasoning: model.reasoning,
-          input: inputModalitiesFor(sessionModel.modelId),
-          cost: model.cost,
-          contextWindow: model.contextWindow,
-          maxTokens: model.maxTokens,
-          headers: model.headers,
-          compat: model.compat,
-        );
-      }
-      debugPrint(
-        '[Fa] session model restored: ${sessionModel.provider}/'
-        '${sessionModel.modelId}',
-      );
-    }
-    // The prompt's messaging section carries the live mailbox address.
-    final activeConfig = _config;
-    if (activeConfig != null) {
-      _agent.state.systemPrompt = _composeSystemPrompt(activeConfig);
-    }
-    unawaited(
-      _subagentManager?.messaging?.register(
-        _subagentManager!.mailboxOf(_subagentManager!.selfId),
-      ),
-    );
-    _persistedCount = contextMessages.length;
-    _currentAssistantMessage = null;
-    error = null;
-    // Dynamic messages replay (issue #102): materialise the session's
-    // widget definitions and splice their transcript markers back into
-    // position — the branch walk counts message records, so each marker
-    // lands right after the reply that emitted it.
-    await dynamicMessages.forgetAll();
-    final widgetMarkers = await dynamicMessages.adoptBranch(
-      await session.getBranch(),
-    );
-    final rebuilt = contextMessages.map(_toChatMessage).toList();
-    for (final (index, marker) in widgetMarkers) {
-      final at = index > rebuilt.length ? rebuilt.length : index;
-      rebuilt.insert(at, marker);
-      dynamicMessages.byId(marker.data?.toString() ?? '')?.markerIndex = at;
-    }
-    messages
-      ..clear()
-      ..addAll(rebuilt);
-    notifyListeners();
-    // Background count of the records above the window (newline stream,
-    // no decode): fills in the banner count without blocking the load.
-    unawaited(_refreshHistoryAbove());
-  }
-
-  /// Deletes a persisted session. Deleting the ACTIVE session starts a new
-  /// empty one, so the chat never points at a removed file.
-  Future<void> deleteSession(SessionMetadata metadata) async {
-    final isActive = metadata.id == _sessionId;
-    if (isActive) {
-      // Stop any in-flight run and let its persistence settle before the
-      // session file disappears underneath it.
-      abort();
-      await waitForIdle();
-    }
-    await _repo.delete(metadata);
-    if (isActive) await reset();
   }
 
   /// Projects a persisted context [Message] back into the UI transcript.
@@ -2997,9 +2700,20 @@ class AgentService extends ChangeNotifier
   Future<void> _rebuildTrajectory({List<SessionRecord>? records}) async {
     final session = _session;
     if (session == null) return;
+    final gen = _loadGeneration;
     _trajectory.reset();
+    var folded = 0;
     for (final record in records ?? await session.getBranch()) {
       _trajectory.append(record);
+      // Chunked fold (issue #199): yield the event loop every 100 records
+      // so long ledger rebuilds interleave frames instead of blocking one.
+      // A generation bump or session swap mid-fold stops the stale fold —
+      // it must not keep appending to the swapped session's ledger.
+      if (++folded % 100 == 0) {
+        if (gen != _loadGeneration || !identical(session, _session)) return;
+        await Future<void>.delayed(Duration.zero);
+        if (gen != _loadGeneration || !identical(session, _session)) return;
+      }
     }
   }
 

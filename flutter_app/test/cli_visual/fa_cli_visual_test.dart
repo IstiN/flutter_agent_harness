@@ -890,8 +890,9 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       tempHome.deleteSync(recursive: true);
     });
 
-    testWidgets('request_secret sheet: Ctrl+U clears, dots mask, Ctrl+R '
-        'reveals, the saved secret never echoes', (tester) async {
+    testWidgets('request_secret sheet: value-first focus, dots mask, Ctrl+R '
+        'reveals, Ctrl+U clears, the saved secret never echoes',
+        (tester) async {
       final server = await _startAnsweringServer(
         tester,
         18780,
@@ -908,22 +909,19 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
         timeout: const Duration(seconds: 30),
       );
       await harness.screenshot(shotsDir, '103_secret_sheet_suggested_name');
+      // The suggested name renders as a dimmed ghost placeholder (issue #97
+      // F1) and focus starts on the value field so the first keystroke is
+      // the secret (issue #97 F2).
       expect(harness.screenText, contains('SUDO_PASSWORD'));
       expect(harness.screenText, contains('Ctrl+R reveals'));
 
-      // Ctrl+U on name focus: one keystroke erases the suggested name
-      // (the 16-backspace nuisance).
-      harness.sendText('\x15');
+      // Enter with an empty value explains itself (issue #97 F3).
+      harness.sendEnter();
       await harness.settle(settleMs: 300);
-      await harness.screenshot(shotsDir, '104_secret_name_cleared');
-      expect(harness.screenText, isNot(contains('SUDO_PASSWORD')));
-      expect(harness.screenText, contains('Name must match'));
+      await harness.screenshot(shotsDir, '104_secret_empty_value_blocked');
+      expect(harness.screenText, contains('Type the value first'));
 
-      // A fresh name, then Tab into the value field.
-      harness.sendText('SUDO_X');
-      await harness.settle(settleMs: 200);
-      harness.sendText('\t');
-      await harness.settle(settleMs: 200);
+      // The first keystroke lands in the masked value row.
       harness.sendText('hunter2');
       await harness.settle(settleMs: 300);
       await harness.screenshot(shotsDir, '105_secret_dots');
@@ -945,6 +943,16 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       final cleared = harness.screenText.replaceAll('\n', '');
       expect(cleared, isNot(contains('hunter2')));
       expect(cleared, isNot(contains('•••')));
+
+      // Tab renames: the committed name replaces the ghost suggestion.
+      harness.sendText('\t');
+      await harness.settle(settleMs: 200);
+      expect(harness.screenText, contains('Type to replace it'));
+      harness.sendText('SUDO_X');
+      await harness.settle(settleMs: 300);
+      expect(harness.screenText, contains('SUDO_X'));
+      harness.sendText('\t');
+      await harness.settle(settleMs: 200);
 
       // Retype and save: the grant completes the turn; the transcript
       // must NEVER echo the secret value.

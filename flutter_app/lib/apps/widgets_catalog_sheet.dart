@@ -454,6 +454,7 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
         if (!catalogIds.contains(app.id)) app,
     ];
     if (mine.isEmpty) return const [];
+    final locale = Localizations.localeOf(context).toLanguageTag();
     return [
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -497,15 +498,15 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      app.name,
+                      app.displayName(locale),
                       style: theme.textTheme.titleSmall,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (app.description.isNotEmpty)
+                    if (app.displayDescription(locale).isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
-                          app.description,
+                          app.displayDescription(locale),
                           style: theme.textTheme.bodySmall,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -581,6 +582,7 @@ class _CatalogTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final locale = Localizations.localeOf(context).toLanguageTag();
     final chips = <String>[
       for (final tag in entry.tags.take(2)) tag,
       if (entry.network) 'network',
@@ -609,15 +611,15 @@ class _CatalogTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${entry.name}  ·  v${entry.version}',
+                  '${entry.displayName(locale)}  ·  v${entry.version}',
                   style: theme.textTheme.titleSmall,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (entry.description.isNotEmpty)
+                if (entry.displayDescription(locale).isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
                     child: Text(
-                      entry.description,
+                      entry.displayDescription(locale),
                       style: theme.textTheme.bodySmall,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -754,7 +756,7 @@ class _CatalogIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     if (entry.iconFile == null || entry.iconFile!.isEmpty) {
-      return _fallback();
+      return _fallback(Localizations.localeOf(context).toLanguageTag());
     }
     return FutureBuilder<String?>(
       future: iconFuture,
@@ -798,8 +800,9 @@ class _CatalogIcon extends StatelessWidget {
     Color(0xFFDB2777),
   ];
 
-  Widget _fallback() {
+  Widget _fallback([String? locale]) {
     final color = _palette[entry.id.hashCode.abs() % _palette.length];
+    final label = entry.displayName(locale);
     return Container(
       width: 34,
       height: 34,
@@ -809,7 +812,7 @@ class _CatalogIcon extends StatelessWidget {
       ),
       child: Center(
         child: Text(
-          entry.name.isEmpty ? '?' : entry.name.characters.first.toUpperCase(),
+          label.isEmpty ? '?' : label.characters.first.toUpperCase(),
           style: const TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w700,

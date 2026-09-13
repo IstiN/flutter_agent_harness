@@ -34,6 +34,8 @@ void main() {
       '--cube-config',
       '--tools',
       '--log-file',
+      '--attach',
+      '--output',
       '--prompt',
       '-p',
       '--prompt-file',
@@ -166,6 +168,7 @@ void main() {
       'inspect_image',
       'transcribe_audio',
       'FA_TOOLS',
+      'FA_LOG_FILE',
       'tools:',
       '.fah/lsp.json',
       // Plugins and templates.

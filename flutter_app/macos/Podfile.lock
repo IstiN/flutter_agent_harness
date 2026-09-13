@@ -4,6 +4,8 @@ PODS:
   - audioplayers_darwin (0.0.1):
     - Flutter
     - FlutterMacOS
+  - connectivity_plus (0.0.1):
+    - FlutterMacOS
   - cupertino_http (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -76,7 +78,7 @@ PODS:
     - GoogleUtilities/UserDefaults (~> 8.1)
     - nanopb (~> 3.30910.0)
     - PromisesSwift (~> 2.1)
-  - flutter_gemma (1.7.0):
+  - flutter_gemma (1.8.0):
     - FlutterMacOS
   - flutter_js (0.0.1):
     - FlutterMacOS
@@ -161,6 +163,7 @@ PODS:
 DEPENDENCIES:
   - app_links (from `Flutter/ephemeral/.symlinks/plugins/app_links/macos`)
   - audioplayers_darwin (from `Flutter/ephemeral/.symlinks/plugins/audioplayers_darwin/darwin`)
+  - connectivity_plus (from `Flutter/ephemeral/.symlinks/plugins/connectivity_plus/macos`)
   - cupertino_http (from `Flutter/ephemeral/.symlinks/plugins/cupertino_http/darwin`)
   - file_selector_macos (from `Flutter/ephemeral/.symlinks/plugins/file_selector_macos/macos`)
   - firebase_analytics (from `Flutter/ephemeral/.symlinks/plugins/firebase_analytics/macos`)
@@ -200,6 +203,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/app_links/macos
   audioplayers_darwin:
     :path: Flutter/ephemeral/.symlinks/plugins/audioplayers_darwin/darwin
+  connectivity_plus:
+    :path: Flutter/ephemeral/.symlinks/plugins/connectivity_plus/macos
   cupertino_http:
     :path: Flutter/ephemeral/.symlinks/plugins/cupertino_http/darwin
   file_selector_macos:
@@ -234,6 +239,7 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   app_links: 05a6ec2341985eb05e9f97dc63f5837c39895c3f
   audioplayers_darwin: 835ced6edd4c9fc8ebb0a7cc9e294a91d99917d5
+  connectivity_plus: 4adf20a405e25b42b9c9f87feff8f4b6fde18a4e
   cupertino_http: 94ac07f5ff090b8effa6c5e2c47871d48ab7c86c
   file_selector_macos: 9e9e068e90ebee155097d00e89ae91edb2374db7
   Firebase: a8539b633d474fbeb654c7043f9c1649e274045b
@@ -248,9 +254,9 @@ SPEC CHECKSUMS:
   FirebaseInstallations: eb29ccbf64eaedf86fd5b2ccc7fabde567660b52
   FirebaseRemoteConfigInterop: 7e3d57ce4b1e958bb1d15403faa7178f46bbb5b7
   FirebaseSessions: acfe7eadca47cda94ac86592737204581bb1abf6
-  flutter_gemma: bc46608c511072d3b98dc3d4684d48bfeb115b90
+  flutter_gemma: 0ac27a9232eb695cc4e4f4f074df73fc102acea0
   flutter_js: 79c3c70d33ba464c67d8eb88639a61aa718cd8b8
-  FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+  FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
   GoogleAppMeasurement: a6d37949071d456e9147dac6789c4342e0e7a8c5
   GoogleDataTransport: aae35b7ea0c09004c3797d53c8c41f66f219d6a7
   GoogleUtilities: 766ace00c6b10d8148408f329d10c4f051931850

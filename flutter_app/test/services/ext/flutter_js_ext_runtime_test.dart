@@ -13,6 +13,7 @@ import 'dart:async';
 
 import 'package:fa/services/ext/flutter_js_ext_runtime.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_agent_harness/src/js_ext/ext_bootstrap_js.dart';
 import 'package:flutter_agent_harness/src/js_ext/ext_protocol.dart';
 import 'package:flutter_agent_harness/src/js_ext/jsr_runtime.dart';
 import 'package:flutter_js/flutter_js.dart';
@@ -37,13 +38,21 @@ const String _kBootstrapTransportOnly = '''
 })(globalThis);
 ''';
 
+/// Full test bootstrap: the verbatim transport above plus the shared core
+/// (`jsr`, `__extNextSeq`/`__extExpect`, commit/ping/invoke) exactly as
+/// AppExtensionService composes it for production. Without the core, main.js
+/// fails with "Can't find variable: jsr" — the tests only appeared green on
+/// hosts where the flutter_js engine probe failed and every test skipped.
+const String _kBootstrapJs =
+    '$_kBootstrapTransportOnly\n;\n$kExtBootstrapCoreJs';
+
 Future<FlutterJsExtRuntime> _start(
   String mainJs,
   ExtBridgeHandler bridges,
 ) async {
   final runtime = FlutterJsExtRuntime();
   await runtime.start(
-    bootstrapJs: _kBootstrapTransportOnly,
+    bootstrapJs: _kBootstrapJs,
     mainJs: mainJs,
     bridges: bridges,
   );
@@ -73,11 +82,15 @@ Future<bool> _probeEngine() async {
 /// bootstrap crashes the loader, so the probe cannot run at load time).
 var _engineAvailable = false;
 
-/// Skips the current test when the host cannot load a real engine.
-void _skipWithoutEngine() {
+/// Returns true when the host cannot load a real engine and the caller must
+/// bail. `markTestSkipped` only marks the test — execution continues, so a
+/// later engine-load throw would still fail it (the guard must halt too).
+bool _skipWithoutEngine() {
   if (!_engineAvailable) {
     markTestSkipped('flutter_js engine not available on this host');
+    return true;
   }
+  return false;
 }
 
 Future<void> main() async {
@@ -90,7 +103,7 @@ Future<void> main() async {
       _engineAvailable = await _probeEngine();
     });
     test('commit round-trip: registrations surface after start', () async {
-      _skipWithoutEngine();
+      if (_skipWithoutEngine()) return;
       final mainJs = '''
 jsr.ext.registerTool({ name: 'ext_hello', description: 'greets', call: function (args) { return { text: 'hi ' + args.name }; } });
 jsr.ext.onHook('onSessionEnd', function () {});
@@ -110,7 +123,7 @@ jsr.ext.onHook('onSessionEnd', function () {});
     });
 
     test('invoke round-trip: sync and Promise tool results', () async {
-      _skipWithoutEngine();
+      if (_skipWithoutEngine()) return;
       final mainJs = '''
 jsr.ext.registerTool({ name: 'sync_tool', call: function (args) { return { text: 'sync:' + args.v }; } });
 jsr.ext.registerTool({ name: 'async_tool', call: function (args) { return new Promise(function (resolve) { resolve({ text: 'async:' + args.v }); }); } });
@@ -137,7 +150,7 @@ jsr.ext.registerTool({ name: 'async_tool', call: function (args) { return new Pr
     });
 
     test('bridge round-trip: fs.readFile resolves through the host', () async {
-      _skipWithoutEngine();
+      if (_skipWithoutEngine()) return;
       final mainJs = '''
 jsr.ext.registerTool({
   name: 'read_notes',
@@ -168,7 +181,7 @@ jsr.ext.registerTool({
     });
 
     test('invoke timeout disposes the engine and throws', () async {
-      _skipWithoutEngine();
+      if (_skipWithoutEngine()) return;
       final mainJs = '''
 jsr.ext.registerTool({ name: 'hang', call: function () { return new Promise(function () {}); } });
 ''';
@@ -189,11 +202,11 @@ jsr.ext.registerTool({ name: 'hang', call: function () { return new Promise(func
     });
 
     test('main.js top-level throw surfaces as a start error', () async {
-      _skipWithoutEngine();
+      if (_skipWithoutEngine()) return;
       final runtime = FlutterJsExtRuntime();
       await expectLater(
         runtime.start(
-          bootstrapJs: _kBootstrapTransportOnly,
+          bootstrapJs: _kBootstrapJs,
           mainJs: 'throw new Error("boom-main");',
           bridges: _nullBridge,
         ),

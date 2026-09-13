@@ -82,6 +82,20 @@ if [ "$with_app" -eq 1 ]; then
   rm -rf browser_ext/panel/app
   mkdir -p browser_ext/panel/app
   cp -R flutter_app/build/web/. browser_ext/panel/app/
+  # CWS single-manifest rule (#291): the Flutter web build ships a PWA
+  # manifest (panel/app/manifest.json, <link rel=manifest> in its
+  # index.html) — the Chrome Web Store hard-rejects any package with more
+  # than one manifest.json, and inside an extension page the PWA manifest
+  # is functionally dead (extension pages are not installable PWAs). The
+  # STAGED copy is DELETED-and-delinked, not renamed: nothing in the
+  # extension consumes it, so an app.webmanifest rename would only ship
+  # dead weight and keep a dead link. Sources stay untouched — this dir
+  # is a gitignored build artifact re-copied from flutter_app/build/web
+  # on every --with-app run; the unpacked dev flow (AC5) loads the same
+  # stripped tree and boots identically (the panel never reads the PWA
+  # manifest). Idempotent: a Flutter template without the link tag is a
+  # no-op (#291 E3).
+  python3 scripts/ext_package_guard.py strip browser_ext/panel/app
   # The extension CSP forbids remote hosts: point the bootstrap at the
   # bundled canvaskit copy (FLUTTER_WEB_CANVASKIT_URL does not reach the
   # generated bootstrap in this flutter).
@@ -194,6 +208,15 @@ PY
 fi
 
 echo "build/fa-extension.zip: $(wc -c < build/fa-extension.zip) bytes"
+
+# CWS shape guard (#291): the store's structural rules asserted on the
+# REAL artifact every build — exactly one manifest.json at the root, no
+# duplicate/junk/empty entries, MV3 root manifest, referenced icons
+# present. Hard failure (::error + exit 1) so a nested manifest (a
+# Flutter upgrade, a new subdir) breaks HERE — in CI and locally — never
+# again at store upload. Runs for every zip this script makes, with or
+# without the bundled app.
+python3 scripts/ext_package_guard.py check build/fa-extension.zip
 
 # Keep an unpacked copy beside the zip: load THIS directory once via
 # chrome://extensions -> "Load unpacked"; after every rebuild a single

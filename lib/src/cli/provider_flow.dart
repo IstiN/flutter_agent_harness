@@ -233,14 +233,25 @@ Future<String?> _askProviderName(
   void Function() cancelled,
 ) async {
   final nameDefault = config.initialName ?? config.deriveName(baseUrl);
-  final nameAnswer = await config.askLine(
-    'provider name (empty = $nameDefault): ',
-  );
-  if (nameAnswer == null) {
-    cancelled();
-    return null;
+  var question = 'provider name (empty = $nameDefault): ';
+  while (true) {
+    final nameAnswer = await config.askLine(question);
+    if (nameAnswer == null) {
+      cancelled();
+      return null;
+    }
+    final name = nameAnswer.trim().isEmpty ? nameDefault : nameAnswer.trim();
+    // Issue #221 ghost guard: a saved entry named after a built-in
+    // provider shadows `/provider <name>` routing (the connect flow's
+    // name prompt rejects these already — the wizard did not).
+    if (providerCatalog.containsKey(name.toLowerCase())) {
+      question =
+          '"$name" is a built-in provider name — pick another '
+          '(empty = $nameDefault): ';
+      continue;
+    }
+    return name;
   }
-  return nameAnswer.trim().isEmpty ? nameDefault : nameAnswer.trim();
 }
 
 /// Step 4 — API key (empty = keyless; on edit an empty answer keeps the

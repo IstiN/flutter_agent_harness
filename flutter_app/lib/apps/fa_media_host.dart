@@ -34,9 +34,7 @@ class FaMediaHost extends JsMediaHost {
 /// stream-based [JsMediaController] interface.
 class VideoPlayerJsController extends JsVideoController {
   VideoPlayerJsController(String src) {
-    _controller = src.startsWith('http')
-        ? VideoPlayerController.networkUrl(Uri.parse(src))
-        : VideoPlayerController.asset(src);
+    _controller = buildPlayer(src);
     _controller.addListener(_onUpdate);
     _initFuture = _controller.initialize().then(
       (_) {
@@ -63,6 +61,29 @@ class VideoPlayerJsController extends JsVideoController {
 
   late final VideoPlayerController _controller;
   late final Future<void> _initFuture;
+
+  /// Builds the underlying controller. `mixWithOthers: false` is
+  /// load-bearing on iOS: video_player only upgrades the shared
+  /// AVAudioSession to `.playback` from plugin `initialize()` — called
+  /// once per platform instance — and from `setMixWithOthers`, which the
+  /// controller only invokes when explicit [VideoPlayerOptions] are
+  /// passed (video_player 2.14 / avfoundation 2.11). Passing them here
+  /// re-asserts the playback category at every controller creation, so a
+  /// video node still has sound after another component moved the
+  /// session to `.record` (e.g. the `fah/mic` channel) or `.ambient`.
+  /// macOS has no AVAudioSession, which is why the bug was iOS-only.
+  /// Static so tests can inspect the options without touching platform
+  /// channels (`initialize()` needs the plugin).
+  @visibleForTesting
+  static VideoPlayerController buildPlayer(String src) {
+    final options = VideoPlayerOptions(mixWithOthers: false);
+    return src.startsWith('http')
+        ? VideoPlayerController.networkUrl(
+            Uri.parse(src),
+            videoPlayerOptions: options,
+          )
+        : VideoPlayerController.asset(src, videoPlayerOptions: options);
+  }
 
   final _positionCtrl = StreamController<Duration>.broadcast();
   final _durationCtrl = StreamController<Duration>.broadcast();

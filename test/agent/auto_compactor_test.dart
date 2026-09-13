@@ -143,6 +143,44 @@ void main() {
     expect(hooks.donePasses, 1);
   });
 
+  test('the compaction gate counts request overhead (system prompt + tool '
+      'schemas) the transcript-only estimate misses', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // ~400 estimated transcript tokens with NO usage anchor (fully zero
+    // usage never anchors) — under the 900-token trigger
+    // (window 1000 - reserve 100) on its own…
+    AssistantMessage unanchored(String text) => AssistantMessage(
+      content: [TextContent(text: text)],
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.utc(2026),
+    );
+    await session.appendMessage(UserMessage.text('u1${'a' * 400}'));
+    await session.appendMessage(unanchored('b' * 400));
+    await session.appendMessage(UserMessage.text('u2${'a' * 400}'));
+    await session.appendMessage(unanchored('c' * 400));
+    final state = AgentState(
+      model: _model,
+      // …but every request also carries this system prompt (+600 tokens):
+      // 400 + 600 > 900 means the gate must fire, exactly like the loop's
+      // over-window guard and the ctx meter read it.
+      systemPrompt: 's' * 2400,
+      messages: await session.buildContextMessages(),
+    );
+    final fake = _FakeSummarizer([SummarizationResult.success('SUMMARY')]);
+    final hooks = _RecordingHooks();
+
+    final ok = await compactorFor(session, state, fake, hooks).run();
+
+    expect(ok, isTrue);
+    expect(fake.calls, 1);
+    expect(hooks.passes, hasLength(1));
+    expect(hooks.donePasses, 1);
+  });
+
   test('a no-op pass (already compacted at the leaf) stops the loop instead '
       'of spinning to maxPasses', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));

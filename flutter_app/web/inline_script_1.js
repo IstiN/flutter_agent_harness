@@ -1,6 +1,12 @@
 
     (function () {
       function hideSplash(reason) {
+        // Latch the boot-complete signal first: the fah-done class below is
+        // transient (element removed <=500ms later), and an observer stalled
+        // by the same busy main thread that delays boot (webkit canvaskit
+        // shader compile on loaded CI) can miss that window entirely — the
+        // e2e boot wait now reads this latch instead (issue #234).
+        window.__fahBootDone = true;
         var splash = document.getElementById('fah-splash');
         if (!splash) return;
         if (reason) console.warn('[fah] splash hidden without first frame: ' + reason);

@@ -11,7 +11,9 @@ import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -365,7 +367,15 @@ void main() {
     await tester.tap(find.text('Rename session'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'My chat');
+    await tester.enterText(
+      // Scope to the dialog: the sidebar itself now hosts the search
+      // field (issue #200), so an unscoped TextField finder is ambiguous.
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'My chat',
+    );
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
@@ -615,5 +625,476 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened, isNotNull);
     expect(opened.id, older.id);
+  });
+
+  group('session search (issue #200)', () {
+    EditableText editableOf(WidgetTester tester) => tester.widget<EditableText>(
+      find.descendant(
+        of: find.byType(SessionSearchField),
+        matching: find.byType(EditableText),
+      ),
+    );
+
+    Future<void> typeQuery(WidgetTester tester, String text) async {
+      await tester.enterText(find.byType(SessionSearchField), text);
+      // The filter is debounced (~150 ms) — one idle pump changes nothing.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    // A subagent child: the header metadata both hosts' child session
+    // factories write (`agent: subagent, parent: <mainSessionId>`) —
+    // the SAME helper the tree group uses.
+    Future<SessionMetadata> persistChild({
+      required String parentId,
+      String cwd = 'test',
+    }) async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(
+          cwd: cwd,
+          metadata: {'agent': 'subagent', 'parent': parentId},
+        ),
+      );
+      return session.getMetadata();
+    }
+
+    bool parentDimmed(WidgetTester tester, String title) => tester
+        .widgetList<Opacity>(
+          find.ancestor(of: find.text(title), matching: find.byType(Opacity)),
+        )
+        .any((o) => o.opacity == 0.45);
+
+    testWidgets('filters as-you-type: non-matches hide, clear restores '
+        '(AC1, IT-sidebar)', (tester) async {
+      final goal = await persistSession(
+        userText: 'goal work',
+        cwd: '/work/goal_builder',
+      );
+      final other = await persistSession(userText: 'other work');
+
+      await tester.pumpWidget(
+        harness(
+          persisted: [goal, other],
+          sessionInfoNames: {goal.id: 'goal_builder', other.id: 'Chores'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Chores'), findsOneWidget);
+
+      await typeQuery(tester, 'goal');
+      // Both the tile title AND its folder group header read
+      // 'goal_builder'; the non-matching row hides.
+      expect(find.text('goal_builder'), findsNWidgets(2));
+      expect(find.text('Chores'), findsNothing);
+
+      // The ✕ affordance restores the full list instantly.
+      await tester.tap(find.byIcon(Icons.cancel));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsNWidgets(2));
+      expect(find.text('Chores'), findsOneWidget);
+    });
+
+    testWidgets('matches id, cwd basename and folds Cyrillic case '
+        '(AC1, E5)', (tester) async {
+      final ru = await persistSession(userText: 'review');
+      final project = await persistSession(
+        userText: 'project',
+        cwd: '/work/goal_builder',
+      );
+      await tester.pumpWidget(
+        harness(
+          persisted: [ru, project],
+          sessionInfoNames: {ru.id: 'Ревью', project.id: 'x'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Unicode-aware lowercase: the query's case folds like the title's.
+      await typeQuery(tester, 'ревью');
+      expect(find.text('Ревью'), findsOneWidget);
+      expect(find.text('x'), findsNothing);
+
+      await typeQuery(tester, 'goal_builder');
+      expect(find.text('Ревью'), findsNothing);
+      // The matching row keeps its project folder group header (the
+      // finder is scoped to the list: the search FIELD itself holds the
+      // query text).
+      expect(
+        find.descendant(
+          of: find.byType(ListView),
+          matching: find.text('goal_builder'),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('name matches rank first (AC1)', (tester) async {
+      final byName = await persistSession(userText: 'named');
+      final byCwd = await persistSession(
+        userText: 'cwd match',
+        cwd: '/work/alpha',
+      );
+      // byCwd was created later, so it would be first unfiltered.
+      await tester.pumpWidget(
+        harness(
+          persisted: [byCwd, byName],
+          sessionInfoNames: {byCwd.id: 'gamma work', byName.id: 'Alpha'},
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(find.text('gamma work')).dy,
+        lessThan(tester.getTopLeft(find.text('Alpha')).dy),
+      );
+
+      await typeQuery(tester, 'alpha');
+      // The title hit jumps above the cwd hit.
+      expect(
+        tester.getTopLeft(find.text('Alpha')).dy,
+        lessThan(tester.getTopLeft(find.text('gamma work')).dy),
+      );
+    });
+
+    testWidgets('the filter is debounced: one keystroke frame changes '
+        'nothing yet (E3)', (tester) async {
+      final goal = await persistSession(
+        userText: 'goal work',
+        cwd: '/work/goal_builder',
+      );
+      final other = await persistSession(userText: 'other work');
+      await tester.pumpWidget(
+        harness(
+          persisted: [goal, other],
+          sessionInfoNames: {goal.id: 'goal_builder', other.id: 'Chores'},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(SessionSearchField), 'goal');
+      await tester.pump();
+      // Debounce has not fired: the full list is still there.
+      expect(find.text('Chores'), findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('Chores'), findsNothing);
+    });
+
+    testWidgets('no matches shows the empty state with a clear affordance; '
+        'the active marker survives the detour (E1, E2)', (tester) async {
+      final goal = await persistSession(
+        userText: 'goal work',
+        cwd: '/work/goal_builder',
+      );
+      await tester.pumpWidget(
+        harness(
+          persisted: [goal],
+          sessionInfoNames: {goal.id: 'goal_builder'},
+          selectedSessionId: goal.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await typeQuery(tester, 'zzz');
+      expect(find.text('No sessions match "zzz"'), findsOneWidget);
+      expect(find.text('Clear'), findsOneWidget);
+
+      await tester.tap(find.text('Clear'));
+      await tester.pumpAndSettle();
+      // The active row comes back with its selected styling (E2: nothing
+      // about the session state changed while it was filtered out).
+      expect(find.text('No sessions match "zzz"'), findsNothing);
+      expect(
+        tester
+            .widget<SessionTile>(
+              find.widgetWithText(SessionTile, 'goal_builder').first,
+            )
+            .isActive,
+        isTrue,
+      );
+    });
+
+    testWidgets('Cmd+F focuses the field, Esc clears and unfocuses '
+        '(AC3)', (tester) async {
+      final goal = await persistSession(
+        userText: 'goal work',
+        cwd: '/work/goal_builder',
+      );
+      await tester.pumpWidget(
+        harness(persisted: [goal], sessionInfoNames: {goal.id: 'goal_builder'}),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(
+        LogicalKeyboardKey.metaLeft,
+        platform: 'macos',
+      );
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyF, platform: 'macos');
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyF, platform: 'macos');
+      await tester.sendKeyUpEvent(
+        LogicalKeyboardKey.metaLeft,
+        platform: 'macos',
+      );
+      await tester.pump();
+      expect(editableOf(tester).focusNode.hasFocus, isTrue);
+
+      await typeQuery(tester, 'goal');
+      expect(find.text('Chores'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsNWidgets(2));
+      expect(editableOf(tester).focusNode.hasFocus, isFalse);
+    });
+
+    testWidgets('a matching child surfaces under its dimmed parent; '
+        'non-matching siblings hide (AC2, IT-tree-filter)', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+      final sibling = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'Main chat',
+            child.id: 'goal_builder',
+            sibling.id: 'scout',
+          }),
+          persisted: [main, child, sibling],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await typeQuery(tester, 'goal_builder');
+      // The matching child is in (scoped to the list: the field itself
+      // holds the query text); the non-matching sibling stays hidden.
+      expect(
+        find.descendant(
+          of: find.byType(ListView),
+          matching: find.text('goal_builder'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('scout'), findsNothing);
+      // The parent did NOT match — it renders only as dimmed context,
+      // force-expanded under the query.
+      expect(find.text('Main chat'), findsOneWidget);
+      expect(parentDimmed(tester, 'Main chat'), isTrue);
+    });
+
+    testWidgets('a matching parent keeps its collapse state; no dimming '
+        '(AC2)', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'goal_builder',
+            child.id: 'child session',
+          }),
+          persisted: [main, child],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await typeQuery(tester, 'goal_builder');
+      // The parent matched on its own: a normal (non-dimmed) row, the
+      // non-matching child stays collapsed away — nothing is forced.
+      expect(
+        find.descendant(
+          of: find.byType(ListView),
+          matching: find.text('goal_builder'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('child session'), findsNothing);
+      expect(parentDimmed(tester, 'goal_builder'), isFalse);
+    });
+  });
+  group('session tree (issue #198)', () {
+    // A subagent child: the header metadata both hosts' child session
+    // factories write (`agent: subagent, parent: <mainSessionId>`).
+    Future<SessionMetadata> persistChild({
+      required String parentId,
+      String cwd = 'test',
+    }) async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(
+          cwd: cwd,
+          metadata: {'agent': 'subagent', 'parent': parentId},
+        ),
+      );
+      return session.getMetadata();
+    }
+
+    testWidgets('subagent sessions collapse under a count badge by '
+        'default', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final childA = await persistChild(parentId: main.id);
+      final childB = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'Main chat',
+            childA.id: 'goal_builder',
+            childB.id: 'scout',
+          }),
+          persisted: [main, childA, childB],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Main chat'), findsOneWidget);
+      expect(find.text('2 agents'), findsOneWidget);
+      // Collapsed: the children stay hidden until the badge is tapped.
+      expect(find.text('goal_builder'), findsNothing);
+      expect(find.text('scout'), findsNothing);
+    });
+
+    testWidgets('the badge expands the child list and collapses it back', (
+      tester,
+    ) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'Main chat',
+            child.id: 'goal_builder',
+          }),
+          persisted: [main, child],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('1 agent'));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsOneWidget);
+      // Children indent under their parent.
+      expect(
+        tester.getTopLeft(find.text('goal_builder')).dx,
+        greaterThan(tester.getTopLeft(find.text('Main chat')).dx),
+      );
+
+      await tester.tap(find.text('1 agent'));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsNothing);
+    });
+
+    testWidgets('an active child auto-expands its parent group', (
+      tester,
+    ) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            main.id: 'Main chat',
+            child.id: 'goal_builder',
+          }),
+          persisted: [main, child],
+          selectedSessionId: child.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // No tap needed: the group forces open so the active row shows
+      // (E2) — and no badge double-renders over it.
+      expect(find.text('goal_builder'), findsOneWidget);
+      expect(find.text('1 agent'), findsOneWidget);
+    });
+
+    testWidgets('unnamed children show as subagent <short-id>', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({main.id: 'Main chat'}),
+          persisted: [main, child],
+          selectedSessionId: child.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('subagent ${child.id.substring(0, 8)}'), findsOneWidget);
+    });
+
+    testWidgets('an orphaned subagent renders top-level, marked', (
+      tester,
+    ) async {
+      // E1: the parent was deleted (or lives in another cwd) — the child
+      // stays visible, marked, and never crashes or cascades.
+      final orphan = await persistChild(parentId: 'deleted-parent');
+
+      await tester.pumpWidget(harness(persisted: [orphan]));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('subagent ${orphan.id.substring(0, 8)}'),
+        findsOneWidget,
+      );
+      // Top-level: no count badge anywhere.
+      expect(find.text('1 agent'), findsNothing);
+    });
+
+    testWidgets('pre-feature sessions (no header metadata) stay mains and '
+        'the tree nests inside folder groups', (tester) async {
+      final plainSession = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work/proj'),
+      );
+      final plain = await plainSession.getMetadata();
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+
+      await tester.pumpWidget(
+        harness(
+          names: SessionNamesStore.inMemory({
+            plain.id: 'Plain chat',
+            main.id: 'Main chat',
+            child.id: 'goal_builder',
+          }),
+          persisted: [plain, main, child],
+          selectedSessionId: child.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The metadata-less session heads its own (badge-less) row inside
+      // the same folder group as the family.
+      expect(find.text('Plain chat'), findsOneWidget);
+      expect(find.text('1 agent'), findsOneWidget);
+      expect(find.text('goal_builder'), findsOneWidget);
+    });
+
+    testWidgets('child tiles carry the same 3-dot actions', (tester) async {
+      final main = await persistSession(userText: 'main');
+      final child = await persistChild(parentId: main.id);
+      final names = SessionNamesStore.inMemory({
+        main.id: 'Main chat',
+        child.id: 'goal_builder',
+      });
+
+      await tester.pumpWidget(harness(names: names, persisted: [main, child]));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1 agent'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.more_horiz).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rename session'));
+      await tester.pumpAndSettle();
+      // The dialog's field is the topmost TextField (the search field
+      // coexists underneath).
+      await tester.enterText(find.byType(TextField).last, 'Renamed child');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(names.titleFor(child.id), 'Renamed child');
+      expect(find.text('Renamed child'), findsOneWidget);
+    });
   });
 }

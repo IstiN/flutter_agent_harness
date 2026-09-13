@@ -7,11 +7,13 @@ import 'dart:async';
 import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/apps_mode_store.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa/ui/widgets/session_search_field.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa_ui/fa_ui.dart' show FaAttachGlyph, TrajectoryScreen;
@@ -147,19 +149,25 @@ const _menuKey = ValueKey('sessionChatMenu');
 const _newSessionKey = ValueKey('sessionChatNewSession');
 
 class _Harness {
-  _Harness(this.manager, this.services);
+  _Harness(this.manager, this.services, this.env);
 
   final FlutterSessionManager manager;
 
   /// id → service, for per-session message seeding.
   final Map<String, AgentService> services;
+
+  /// The in-memory env backing the manager (persisted-store assertions).
+  final MemoryExecutionEnv env;
 }
 
 /// Pumps the sheet with two sessions; the second one (`sess-b`) is active.
+/// [restoreAppsMode] mirrors the production flag (issue #224) — the
+/// persisted apps↔chat mode is loaded on mount.
 Future<_Harness> _pumpSheet(
   WidgetTester tester, {
   Map<String, List<FahChatMessage>>? messages,
   SessionNamesStore? namesStore,
+  bool restoreAppsMode = false,
 }) async {
   final env = MemoryExecutionEnv();
   final services = {'sess-a': _fakeService(env), 'sess-b': _fakeService(env)};
@@ -177,12 +185,13 @@ Future<_Harness> _pumpSheet(
           manager: manager,
           sessionNamesStore: namesStore,
           asr: _FakeAsrApi(),
+          restoreAppsMode: restoreAppsMode,
         ),
       ),
     ),
   );
   await tester.pumpAndSettle();
-  return _Harness(manager, services);
+  return _Harness(manager, services, env);
 }
 
 Future<void> _openDrawer(WidgetTester tester) async {
@@ -955,10 +964,10 @@ void main() {
     /// finalized records (runAsync: the fake provider stream completes on
     /// the real event loop, not on FakeAsync pumps).
     Future<void> driveTurn(
-        WidgetTester tester,
-        AgentService service,
-        String text,
-      ) async {
+      WidgetTester tester,
+      AgentService service,
+      String text,
+    ) async {
       await tester.runAsync(() async {
         await service.initialize();
         await service.sendText(text);
@@ -969,9 +978,9 @@ void main() {
     /// Opens the panel and pushes the trajectory page; settles the
     /// controller's snapshot debounce.
     Future<AgentService> openTrajectoryPage(
-        WidgetTester tester,
-        _Harness harness,
-      ) async {
+      WidgetTester tester,
+      _Harness harness,
+    ) async {
       await _openPanelViaDrawer(tester, 'sess-b');
       await tester.tap(find.byKey(trajectoryButtonKey));
       await tester.pump(); // route push
@@ -980,10 +989,15 @@ void main() {
     }
 
     testWidgets('the panel header timeline button pushes the ledger page '
-        'rendering the session through the shared fa_ui widgets (AC1)',
-        (tester) async {
+        'rendering the session through the shared fa_ui widgets (AC1)', (
+      tester,
+    ) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       await openTrajectoryPage(tester, harness);
 
       expect(find.byType(TrajectoryScreen), findsOneWidget);
@@ -1022,7 +1036,11 @@ void main() {
     testWidgets('a turn landing while the page stays open appears without '
         'manual refresh (AC2)', (tester) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       final service = await openTrajectoryPage(tester, harness);
 
       await driveTurn(tester, service, 'check the logs');
@@ -1041,7 +1059,11 @@ void main() {
     testWidgets('a ledger row tap opens the details sheet; back returns to '
         'the page, back again to the sheet (AC3)', (tester) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       await openTrajectoryPage(tester, harness);
 
       await tester.tap(
@@ -1072,7 +1094,11 @@ void main() {
     testWidgets('a session switch while the page stays open follows the '
         'newly active session (E2: follow, pinned)', (tester) async {
       final harness = await _pumpSheet(tester);
-      await driveTurn(tester, harness.services['sess-b']!, 'deploy the service');
+      await driveTurn(
+        tester,
+        harness.services['sess-b']!,
+        'deploy the service',
+      );
       await driveTurn(tester, harness.services['sess-a']!, 'review the diff');
       await openTrajectoryPage(tester, harness);
       expect(
@@ -1103,6 +1129,331 @@ void main() {
         findsNothing,
       );
       await tester.pump(const Duration(seconds: 4));
+    });
+  });
+  group('sessions drawer search (issue #200)', () {
+    Future<void> typeQuery(WidgetTester tester, String text) async {
+      await tester.enterText(find.byType(SessionSearchField), text);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    testWidgets('the drawer filters by id and hides non-matches; clear '
+        'restores (AC1, AC4)', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+
+      await typeQuery(tester, 'sess-a');
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsNothing,
+      );
+
+      await tester.tap(find.byIcon(Icons.cancel));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('no matches shows the empty state (E1)', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+
+      await typeQuery(tester, 'zzz');
+      expect(find.text('No sessions match "zzz"'), findsOneWidget);
+      expect(find.text('Clear'), findsOneWidget);
+      await tester.tap(find.text('Clear'));
+      await tester.pumpAndSettle();
+      expect(find.text('No sessions match "zzz"'), findsNothing);
+    });
+
+    testWidgets('closing the drawer drops the query: reopening shows the '
+        'full list', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+      await typeQuery(tester, 'sess-a');
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsNothing,
+      );
+
+      // Scrim tap closes the drawer.
+      await tester.tapAt(const Offset(700, 100));
+      await tester.pumpAndSettle();
+      await _openDrawer(tester);
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-b')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the keyboard does not overflow the 320pt drawer '
+        '(AC4)', (tester) async {
+      await _pumpSheet(tester);
+      await _openDrawer(tester);
+      tester.view.viewInsets = FakeViewPadding(bottom: 336);
+      await tester.pump();
+      await typeQuery(tester, 'sess');
+
+      expect(tester.takeException(), isNull);
+      expect(
+        find.byKey(const ValueKey('sessionChatDrawerEntry:sess-a')),
+        findsOneWidget,
+      );
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pump();
+    });
+  });
+
+  group('SessionChatSheet apps collapse toggle (issue #224)', () {
+    const panelAppsKey = ValueKey('sessionChatPanelApps');
+
+    testWidgets('the header Apps icon collapses the panel; the input bar '
+        'stays (AC1)', (tester) async {
+      await _pumpSheet(tester);
+      await _openPanelViaDrawer(tester, 'sess-b');
+      expect(find.byKey(_panelKey), findsOneWidget);
+
+      await tester.tap(find.byKey(panelAppsKey));
+      await tester.pumpAndSettle();
+      expect(find.byKey(_panelKey), findsNothing);
+      expect(find.byKey(_barKey), findsOneWidget);
+    });
+
+    testWidgets('restore boots the panel expanded when the user last left '
+        'it so (AC2)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final store = await AppsHomeModeStore.load(env);
+      await store.setChatExpanded(true);
+      final services = {'sess-b': _fakeService(env)};
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-b', services['sess-b']!);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SessionChatSheet(manager: manager, restoreAppsMode: true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(_panelKey), findsOneWidget);
+    });
+
+    testWidgets('restore on a first run boots chat expanded (issue '
+        'default)', (tester) async {
+      await _pumpSheet(tester, restoreAppsMode: true);
+      expect(find.byKey(_panelKey), findsOneWidget);
+    });
+
+    testWidgets('toggling persists the mode for the next boot (AC2)', (
+      tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final store = await AppsHomeModeStore.load(env);
+      await store.setChatExpanded(false); // user's last state: apps home
+      final services = {'sess-b': _fakeService(env)};
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-b', services['sess-b']!);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SessionChatSheet(manager: manager, restoreAppsMode: true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(_panelKey), findsNothing);
+      // The user opens the chat again: the toggle records chat-expanded.
+      await _openPanelViaDrawer(tester, 'sess-b');
+      expect(find.byKey(_panelKey), findsOneWidget);
+      final persisted = await AppsHomeModeStore.load(env);
+      expect(persisted.chatExpanded, isTrue);
+    });
+
+    testWidgets('composer text survives the toggle in both directions '
+        '(AC3)', (tester) async {
+      await _pumpSheet(tester);
+      await tester.enterText(find.byType(TextField).first, 'draft reply');
+      await tester.pump();
+
+      // Chat -> apps: the bar's text must survive the panel close.
+      await _openPanelViaDrawer(tester, 'sess-b');
+      await tester.tap(find.byKey(panelAppsKey));
+      await tester.pumpAndSettle();
+      expect(find.text('draft reply'), findsOneWidget);
+
+      // Apps -> chat: opening the panel keeps the draft too.
+      await _openPanelViaDrawer(tester, 'sess-b');
+      expect(find.text('draft reply'), findsOneWidget);
+    });
+
+    testWidgets('a streaming run keeps streaming across the toggle; the '
+        'work bar stays reachable on the apps home (E1)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final service = _fakeService(env, _hungResponse());
+      addTearDown(service.dispose);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-h', service);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SessionChatSheet(manager: manager)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        unawaited(service.sendText('long task'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+
+      // Expand the chat while streaming through the status row's expand
+      // button (timed pumps — the orbit indicator never settles), then
+      // collapse it back through the header Apps icon.
+      await tester.tap(find.byIcon(Icons.open_in_full));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(_panelKey), findsOneWidget);
+      await tester.tap(find.byKey(ValueKey('sessionChatPanelApps')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(_panelKey), findsNothing);
+      expect(service.isStreaming, isTrue);
+      const orbitKey = ValueKey('faWorkBarOrbit');
+      for (var i = 0; i < 3; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byKey(orbitKey), findsOneWidget); // status row visible
+    });
+  });
+  group('SessionChatSheet session tree (issue #198)', () {
+    /// Seeds a main + subagent child pair on disk (the header metadata
+    /// both hosts' childSessionFactory writes) and returns their
+    /// metadata.
+    Future<(SessionMetadata, SessionMetadata)> seedFamily(
+      JsonlSessionRepo repo,
+    ) async {
+      final parentSession = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work/proj'),
+      );
+      final parent = await parentSession.getMetadata();
+      final childSession = await repo.create(
+        JsonlSessionCreateOptions(
+          cwd: '/work/proj',
+          metadata: {'agent': 'subagent', 'parent': parent.id},
+        ),
+      );
+      return (parent, await childSession.getMetadata());
+    }
+
+    Future<void> pumpTreeSheet(
+      WidgetTester tester, {
+      required MemoryExecutionEnv env,
+      required FlutterSessionManager manager,
+      SessionNamesStore? namesStore,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SessionChatSheet(
+              manager: manager,
+              sessionNamesStore: namesStore,
+              asr: _FakeAsrApi(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the drawer collapses subagent sessions under their parent '
+        'and expanding reveals them', (tester) async {
+      final env = MemoryExecutionEnv();
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final (parent, child) = await seedFamily(repo);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession(parent.id, _fakeService(env));
+      await pumpTreeSheet(
+        tester,
+        env: env,
+        manager: manager,
+        namesStore: SessionNamesStore.inMemory({
+          parent.id: 'Main chat',
+          child.id: 'goal_builder',
+        }),
+      );
+
+      await _openDrawer(tester);
+      // Collapsed by default: the parent's count badge shows, the child
+      // row does not.
+      expect(find.text('Main chat'), findsOneWidget);
+      expect(find.text('1 agent'), findsOneWidget);
+      expect(find.text('goal_builder'), findsNothing);
+
+      // Expanding from the drawer reveals the child with the SAME key
+      // scheme as before the tree.
+      await tester.tap(find.text('1 agent'));
+      await tester.pumpAndSettle();
+      expect(find.text('goal_builder'), findsOneWidget);
+      expect(
+        find.byKey(ValueKey('sessionChatDrawerEntry:${child.id}')),
+        findsOneWidget,
+      );
+
+      // Tapping the child row opens the panel on it.
+      await tester.tap(
+        find.byKey(ValueKey('sessionChatDrawerEntry:${child.id}')),
+      );
+      await tester.pumpAndSettle();
+      expect(manager.activeId, child.id);
+      expect(find.byKey(_panelKey), findsOneWidget);
+      expect(find.byKey(_drawerKey), findsNothing);
+    });
+
+    testWidgets('an active descendant forces its parent group open in the '
+        'drawer (same rule as the wide sidebar)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final (parent, child) = await seedFamily(repo);
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession(child.id, _fakeService(env));
+      await pumpTreeSheet(
+        tester,
+        env: env,
+        manager: manager,
+        namesStore: SessionNamesStore.inMemory({
+          parent.id: 'Main chat',
+          child.id: 'goal_builder',
+        }),
+      );
+
+      await _openDrawer(tester);
+      expect(find.text('Main chat'), findsOneWidget);
+      expect(find.text('1 agent'), findsOneWidget);
+      // No tap needed: the child IS the active session.
+      expect(find.text('goal_builder'), findsOneWidget);
     });
   });
 }

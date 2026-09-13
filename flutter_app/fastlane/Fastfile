@@ -5,6 +5,11 @@
 # these lanes only upload the produced artifacts with the App Store Connect
 # API key from the environment:
 #
+# The daily's submit_only lanes distribute straight to the EXTERNAL
+# TestFlight group (issue #239): the group name and Beta App Review contact
+# ride repo variables (TESTFLIGHT_EXTERNAL_GROUP, BETA_REVIEW_CONTACT_*,
+# BETA_APP_FEEDBACK_EMAIL). release-appstore.yml drives the manual
+# submit_for_review lanes (App Store review submission).
 #   APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID /
 #   APP_STORE_CONNECT_KEY_CONTENT
 #
@@ -12,6 +17,8 @@
 #         conventional location).
 # macOS:  MACOS_PKG_PATH points at the signed .pkg (Mac Installer
 #         Distribution cert) and MACOS_BUNDLE_ID overrides dev.fa1.app.
+
+require_relative "appstore_preflight"
 
 def asc_api_key
   app_store_connect_api_key(
@@ -44,6 +51,148 @@ def store_pubspec_version
   return "1.0.0" unless File.exist?(pubspec_path)
   match = File.read(pubspec_path).match(/version:\s+([0-9.]+)/)
   match ? match[1] : "1.0.0"
+end
+
+# ── External TestFlight distribution (issue #239) ─────────────────────────
+# A missing repo variable is a LOUD named failure at lane start (AC1) —
+# never a fastlane stack trace mid-upload. The variables are set once as
+# repo variables and passed through by build-mobile.yml / build-macos.yml.
+def require_env!(name, what)
+  value = ENV[name].to_s.strip
+  UI.user_error!("#{name} is not set — #{what}") if value.empty?
+  value
+end
+
+def external_testflight_group!
+  require_env!("TESTFLIGHT_EXTERNAL_GROUP",
+               "external TestFlight distribution needs the group name (create the 'External Beta' group in App Store Connect, then set the TESTFLIGHT_EXTERNAL_GROUP repo variable)")
+end
+
+# Beta App Review contact (AC2): external distribution only flips green
+# unattended when the review info is complete. The app is local-first —
+# it boots without any account or key, so no demo account is required.
+def beta_app_review_info!
+  {
+    contact_first_name: ENV.fetch("BETA_REVIEW_CONTACT_FIRST_NAME", "Uladzimir"),
+    contact_last_name: ENV.fetch("BETA_REVIEW_CONTACT_LAST_NAME", "Klyshevich"),
+    contact_email: require_env!("BETA_REVIEW_CONTACT_EMAIL", "Beta App Review needs a contact email (set the BETA_REVIEW_CONTACT_EMAIL repo variable)"),
+    contact_phone: require_env!("BETA_REVIEW_CONTACT_PHONE", "Beta App Review needs a contact phone (set the BETA_REVIEW_CONTACT_PHONE repo variable)"),
+    demo_account_required: false,
+    notes: "Local-first AI agent app. No account, sign-in or API key is required — the app boots fully on-device with local models, so there is nothing to sign into."
+  }
+end
+
+def beta_app_feedback_email!
+  require_env!("BETA_APP_FEEDBACK_EMAIL", "external TestFlight testing needs a feedback email (set the BETA_APP_FEEDBACK_EMAIL repo variable)")
+end
+
+# distribute_external requires a "What to Test" changelog — pilot raises in
+# non-interactive CI without one. Reuse the store release notes.
+def testflight_changelog
+  notes = store_latest_changelog("en")
+  notes.empty? ? "Bug fixes and improvements." : notes
+end
+
+# Bounded wait for ASC processing (E1): external distribution needs a
+# PROCESSED build — pilot silently SKIPS distribution when the wait is
+# skipped. Default 90 min; override with TESTFLIGHT_WAIT_TIMEOUT_SECONDS.
+def testflight_wait_timeout
+  seconds = ENV["TESTFLIGHT_WAIT_TIMEOUT_SECONDS"].to_i
+  seconds.positive? ? seconds : 5400
+end
+
+def asc_token!
+  require "spaceship"
+  Spaceship::ConnectAPI.token ||= Spaceship::ConnectAPI::Token.create(
+    key_id: ENV["APP_STORE_CONNECT_KEY_ID"],
+    issuer_id: ENV["APP_STORE_CONNECT_ISSUER_ID"],
+    key: ENV["APP_STORE_CONNECT_KEY_CONTENT"]
+  )
+end
+
+def asc_app!(bundle_id:)
+  require "spaceship"
+  app = Spaceship::ConnectAPI::App.find(bundle_id)
+  UI.user_error!("App #{bundle_id} not found in App Store Connect") if app.nil?
+  app
+end
+
+# E3: pilot resolves groups BY NAME and silently skips adding the build when
+# the name resolves to nothing — fail loudly instead, pointing at the
+# variable. Returns [app, matched_group].
+def find_external_testflight_group!(bundle_id:, group:)
+  asc_token!
+  app = asc_app!(bundle_id: bundle_id)
+  found = app.get_beta_groups(includes: nil, limit: 200).select { |g| g.name == group }
+  UI.user_error!("TestFlight external group '#{group}' (TESTFLIGHT_EXTERNAL_GROUP) not found in App Store Connect — create it or fix the repo variable. Nothing was uploaded.") if found.empty?
+  [app, found.first]
+end
+
+# AC4/E1: assert the build actually landed in the external group. Beta App
+# Review pending is NOT a failure — Apple flips external visibility
+# automatically on approval, so that path ends in a neutral notice. Only a
+# build that never appears in the group fails (the daily's self-filed
+# issue pattern). Bounded by TESTFLIGHT_VERIFY_TIMEOUT_SECONDS (15 min).
+def verify_external_distribution!(bundle_id:, group:, app_version:)
+  timeout = ENV["TESTFLIGHT_VERIFY_TIMEOUT_SECONDS"].to_i
+  timeout = 900 if timeout <= 0
+  app, beta_group = find_external_testflight_group!(bundle_id: bundle_id, group: group)
+  deadline = Time.now + timeout
+  loop do
+    # get_builds_for_beta_group ships NO includes (app_version would raise
+    # "No pre_release_version included"), so select by ID: the group's
+    # builds give the membership set, Build.all gives the full models with
+    # preReleaseVersion + buildBetaDetail attached.
+    group_build_ids = beta_group.fetch_builds.map(&:id)
+    build = Spaceship::ConnectAPI::Build.all(
+      app_id: app.id,
+      includes: "preReleaseVersion,buildBetaDetail",
+      processing_states: "VALID",
+      sort: "-uploadedDate",
+      limit: 100
+    ).select { |b| b.app_version == app_version && group_build_ids.include?(b.id) }
+     .max_by { |b| b.version.to_i }
+    if build
+      if build.ready_for_external_testing?
+        UI.success("✅ #{app_version} (build #{build.version}) is live to the external group '#{group}' — distributed with zero clicks")
+      else
+        UI.important("Build #{app_version} (#{build.version}) is in '#{group}' and waiting for Beta App Review — external visibility flips automatically on approval, no clicks needed.")
+      end
+      return
+    end
+    if Time.now > deadline
+      UI.user_error!("Build #{app_version} never appeared in the external group '#{group}' (TESTFLIGHT_EXTERNAL_GROUP) within #{timeout}s — check the Beta App Review state in App Store Connect.")
+    end
+    sleep(60)
+  end
+end
+
+# Read-only ASC facts for one platform → AppstorePreflight decision (AC3:
+# every check happens BEFORE any mutation).
+def appstore_submission_decision(bundle_id:, platform:, version:, confirm:)
+  app = asc_app!(bundle_id: bundle_id)
+  app_store_version = app
+                      .get_app_store_versions(filter: { platform: platform })
+                      .find { |v| v.version_string == version }
+  builds = Spaceship::ConnectAPI::Build.all(
+    app_id: app.id,
+    version: version,
+    platform: platform,
+    processing_states: "PROCESSING,VALID,FAILED,INVALID"
+  )
+  decision = AppstorePreflight.decide(
+    version: version,
+    confirm: confirm,
+    app_store_version: app_store_version && { "state" => app_store_version.app_store_state },
+    builds: builds.map { |b| { "number" => b.version, "state" => b.processing_state } }
+  )
+  [app, decision]
+end
+
+def store_summary_line(line)
+  path = ENV["GITHUB_STEP_SUMMARY"]
+  File.write(path, "#{line}\n", mode: "a") if path
+  UI.success(line)
 end
 
 # Builds a temp metadata dir for deliver from fastlane/metadata/<platform_key>/
@@ -229,19 +378,71 @@ platform :ios do
     )
   end
 
-  desc "Upload the built IPA to TestFlight (no metadata/screenshots)"
+  desc "Upload the built IPA to TestFlight and distribute to the external group (no metadata/screenshots)"
   lane :submit_only do
     ipa = ENV["IOS_IPA_PATH"] || File.expand_path("../build/ios/ipa/fa.ipa", __dir__)
     UI.user_error!("IPA not found: #{ipa} (set IOS_IPA_PATH)") unless File.exist?(ipa)
 
+    # Loud named failures at lane start (AC1) — a missing variable must
+    # never surface as a fastlane stack trace after the upload.
+    group = external_testflight_group!
+    review_info = beta_app_review_info!
+    feedback_email = beta_app_feedback_email!
+    bundle_id = ENV["IOS_BUNDLE_ID"] || "dev.fa1.app"
+    find_external_testflight_group!(bundle_id: bundle_id, group: group)
+
     upload_to_testflight(
       api_key: asc_api_key,
       ipa: ipa,
-      skip_waiting_for_build_processing: true,
-      skip_submission: true,
-      distribute_external: false,
-      notify_external_testers: false
+      # External distribution needs a PROCESSED build: skipping the wait
+      # makes pilot silently skip distribution (bounded, E1).
+      skip_waiting_for_build_processing: false,
+      wait_processing_timeout_duration: testflight_wait_timeout,
+      distribute_external: true,
+      groups: [group],
+      notify_external_testers: true,
+      changelog: testflight_changelog,
+      beta_app_review_info: review_info,
+      beta_app_feedback_email: feedback_email,
+      uses_non_exempt_encryption: false
     )
+
+    verify_external_distribution!(bundle_id: bundle_id, group: group, app_version: store_pubspec_version)
+  end
+
+  desc "Submit the version's latest processed TestFlight build to App Store review (release-appstore.yml)"
+  lane :submit_for_review do
+    version = require_env!("APP_STORE_VERSION", "the app version to submit, e.g. 1.2.3")
+    confirm = require_env!("APP_STORE_CONFIRM", "must repeat the version string exactly (fat-finger guard)")
+    # E5: flipping to automatic release stays a one-line repo variable.
+    automatic_release = ENV.fetch("APP_STORE_AUTOMATIC_RELEASE", "false") == "true"
+    bundle_id = ENV["IOS_BUNDLE_ID"] || "dev.fa1.app"
+
+    asc_token!
+    app, decision = appstore_submission_decision(bundle_id: bundle_id, platform: Spaceship::ConnectAPI::Platform::IOS, version: version, confirm: confirm)
+    UI.user_error!(decision["reason"]) if decision["action"] == "fail"
+    if decision["action"] == "noop"
+      UI.success("ℹ️ #{decision['reason']}")
+      next
+    end
+
+    UI.message("#{decision['reason']} (automatic_release=#{automatic_release})")
+    deliver(
+      app_identifier: bundle_id,
+      api_key: asc_api_key,
+      app_version: version,
+      build_number: decision["build_number"],
+      submit_for_review: true,
+      automatic_release: automatic_release,
+      phased_release: false,
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_screenshots: true,
+      force: true,
+      run_precheck_before_submit: false,
+      submission_information: { add_id_info_uses_idfa: false }
+    )
+    store_summary_line("iOS #{version} (build #{decision['build_number']}) submitted for App Store review — https://appstoreconnect.apple.com/apps/#{app.id}")
   end
 
   desc "Deploy iOS App Store metadata and screenshots (no binary)"
@@ -346,20 +547,68 @@ platform :ios do
 end
 
 platform :mac do
-  desc "Upload the built PKG to TestFlight (no metadata/screenshots)"
+  desc "Upload the built PKG to TestFlight and distribute to the external group (no metadata/screenshots)"
   lane :submit_only do
     pkg = ENV["MACOS_PKG_PATH"] || File.expand_path("../build/macos/fa.pkg", __dir__)
     UI.user_error!("PKG not found: #{pkg} (set MACOS_PKG_PATH)") unless File.exist?(pkg)
 
+    group = external_testflight_group!
+    review_info = beta_app_review_info!
+    feedback_email = beta_app_feedback_email!
+    bundle_id = ENV["MACOS_BUNDLE_ID"] || "dev.fa1.app"
+    find_external_testflight_group!(bundle_id: bundle_id, group: group)
+
     upload_to_testflight(
       api_key: asc_api_key,
       pkg: pkg,
-      app_identifier: ENV["MACOS_BUNDLE_ID"] || "dev.fa1.app",
-      skip_waiting_for_build_processing: true,
-      skip_submission: true,
-      distribute_external: false,
-      notify_external_testers: false
+      app_identifier: bundle_id,
+      skip_waiting_for_build_processing: false,
+      wait_processing_timeout_duration: testflight_wait_timeout,
+      distribute_external: true,
+      groups: [group],
+      notify_external_testers: true,
+      changelog: testflight_changelog,
+      beta_app_review_info: review_info,
+      beta_app_feedback_email: feedback_email,
+      uses_non_exempt_encryption: false
     )
+
+    verify_external_distribution!(bundle_id: bundle_id, group: group, app_version: store_pubspec_version)
+  end
+
+  desc "Submit the version's latest processed TestFlight build to App Store review (release-appstore.yml)"
+  lane :submit_for_review do
+    version = require_env!("APP_STORE_VERSION", "the app version to submit, e.g. 1.2.3")
+    confirm = require_env!("APP_STORE_CONFIRM", "must repeat the version string exactly (fat-finger guard)")
+    automatic_release = ENV.fetch("APP_STORE_AUTOMATIC_RELEASE", "false") == "true"
+    bundle_id = ENV["MACOS_BUNDLE_ID"] || "dev.fa1.app"
+
+    asc_token!
+    app, decision = appstore_submission_decision(bundle_id: bundle_id, platform: Spaceship::ConnectAPI::Platform::MAC_OS, version: version, confirm: confirm)
+    UI.user_error!(decision["reason"]) if decision["action"] == "fail"
+    if decision["action"] == "noop"
+      UI.success("ℹ️ #{decision['reason']}")
+      next
+    end
+
+    UI.message("#{decision['reason']} (automatic_release=#{automatic_release})")
+    deliver(
+      app_identifier: bundle_id,
+      api_key: asc_api_key,
+      platform: "osx",
+      app_version: version,
+      build_number: decision["build_number"],
+      submit_for_review: true,
+      automatic_release: automatic_release,
+      phased_release: false,
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_screenshots: true,
+      force: true,
+      run_precheck_before_submit: false,
+      submission_information: { add_id_info_uses_idfa: false }
+    )
+    store_summary_line("macOS #{version} (build #{decision['build_number']}) submitted for App Store review — https://appstoreconnect.apple.com/apps/#{app.id}")
   end
 
   desc "Deploy macOS App Store metadata and screenshots (no binary)"

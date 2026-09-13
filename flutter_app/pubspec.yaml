@@ -58,7 +58,7 @@ dependencies:
   # Flutter UI (QuickJS via flutter_js on VM, web worker on web).
   # Back on hosted pub: 0.4.79 ships the queued-callEvent-after-dispose guard
   # (5c3a733) and the restart-safe bridge channels the git pin carried.
-  js_widget_runtime: ^0.4.109
+  js_widget_runtime: ^0.4.121
 
   # TileProvider type for injecting offline map tiles (tests, custom hosts).
   flutter_map: ^8.2.2
@@ -175,10 +175,9 @@ dev_dependencies:
   pty2: ^0.5.3
 
 dependency_overrides:
-  # Flutter 3.44.4 pins meta 1.18.0; dart_tui 2.0.0 declares ^1.19.0 but does
-  # not appear to use 1.19-only APIs. Force the SDK-pinned version so the app
-  # can resolve while the core package migrates.
-  meta: 1.18.0
+  # (meta override removed with Flutter 3.47.4: the SDK now declares
+  # meta ^1.18.3 and dart_tui 2.x declares ^1.19.0, so meta 1.19.0
+  # resolves for both without an override.)
   freezed_annotation: ^3.1.0
   flutter_agent_memory: ^0.2.1
   fa_llm:

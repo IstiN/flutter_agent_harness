@@ -5,21 +5,28 @@
 /// supervisor consumes lifecycle frames to mirror UI progress, capture
 /// tool traffic, and react to cancels — without scraping human prose.
 ///
+/// A **turn is one assistant LLM round** — one model response plus the
+/// tool calls it triggered — NOT one user message. A user message that
+/// runs tools produces several rounds, so it yields SEVERAL terminal
+/// frames (one per round, turn ids incrementing); the LAST terminal
+/// frame of the run carries the user-visible answer.
+///
 /// Frame set:
 ///
 /// - `hep_header` — first line; protocol + fah versions and session id.
-/// - `agent_start` — the run began; carries the first `turn_id`.
+/// - `agent_start` — the run began; carries the first `turn_id` (once
+///   per run, never re-emitted on later rounds).
 /// - `message_start` / `message_delta` — assistant text streaming
 ///   (thinking deltas are NOT `message_delta` frames).
 /// - `tool_start` / `tool_delta` — tool calls and their partial output.
 /// - `turn_done` / `turn_error` / `cancelled` — exactly one terminal
-///   frame per turn, in order.
+///   frame per round, in order.
 /// - `compaction_start` / `compaction_end` — context compaction runs
-///   (pre-flight or post-turn), bracketed like a turn.
+///   (pre-flight or post-turn), bracketed like a round.
 ///
 /// Turn ids are small incrementing integers starting at 1; every frame of
-/// a turn carries the same id. Pre-flight compaction allocates the id of
-/// the turn it precedes, so the following `agent_start` reuses it.
+/// a round carries the same id. Pre-flight compaction allocates the id of
+/// the round it precedes, so the following `agent_start` reuses it.
 library;
 
 import 'dart:convert';

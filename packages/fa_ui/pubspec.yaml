@@ -60,11 +60,9 @@ dev_dependencies:
     sdk: flutter
 
 dependency_overrides:
-  # Same pin as flutter_app: Flutter 3.44.4 pins meta 1.18.0 while
-  # dart_tui 2.0.0 (via flutter_agent_harness) declares ^1.19.0 but does
-  # not appear to use 1.19-only APIs. Without this the package's own tests
-  # cannot resolve.
-  meta: 1.18.0
+  # (meta override removed with Flutter 3.47.4: the SDK declares
+  # meta ^1.18.3 and dart_tui 2.x declares ^1.19.0, so meta 1.19.0
+  # resolves for both without an override.)
   # flutter_agent_memory (hosted, ^0.0.4) depends on the hosted fa_llm
   # ^0.1.0 while this package pins the path version — force the path one.
   fa_llm:

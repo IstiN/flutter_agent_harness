@@ -202,9 +202,18 @@ jobs:
             https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
           echo "Checked out: $(git -C $GITHUB_WORKSPACE log -1 --oneline)"
 
+      - name: Setup Flutter (self-hosted)
+        # Pinned install — the hardcoded $HOME/.local/flutter on the
+        # runner is a stale 3.44.4, below the repo floor >=3.47.0
+        # (daily-publish #260).
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
       - name: Setup environment (self-hosted)
         run: |
-          echo "$HOME/.local/flutter/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
@@ -243,7 +252,9 @@ jobs:
             cp -R "$LOCAL_SRC" "$DEST/"
           else
             echo "Local framework not found, downloading from upstream release..."
-            curl -L --retry 3 --retry-delay 10 --max-time 600 \
+            # --retry alone skips transient mid-transfer resets (curl 56) —
+            # the run-34709113737 failure: reset 3s into the 92.7 MB asset.
+            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
               -o /tmp/WasmRun.xcframework.zip \
               https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
             unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
@@ -458,7 +469,6 @@ jobs:
 
       - name: Setup environment (self-hosted)
         run: |
-          echo "$HOME/.local/flutter/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
@@ -478,6 +488,12 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+          # External TestFlight distribution (issue #239): lanes fail
+          # loudly when these are unset — set them once as repo variables.
+          TESTFLIGHT_EXTERNAL_GROUP: ${{ vars.TESTFLIGHT_EXTERNAL_GROUP }}
+          BETA_APP_FEEDBACK_EMAIL: ${{ vars.BETA_APP_FEEDBACK_EMAIL }}
+          BETA_REVIEW_CONTACT_EMAIL: ${{ vars.BETA_REVIEW_CONTACT_EMAIL }}
+          BETA_REVIEW_CONTACT_PHONE: ${{ vars.BETA_REVIEW_CONTACT_PHONE }}
         run: |
           set -euo pipefail
           if [ -z "${APP_STORE_CONNECT_KEY_CONTENT:-}" ]; then

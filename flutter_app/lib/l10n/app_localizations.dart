@@ -296,6 +296,12 @@ abstract class AppLocalizations {
   /// **'Apps'**
   String get appsGridTitle;
 
+  /// No description provided for @appsHideAppsTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide apps'**
+  String get appsHideAppsTooltip;
+
   /// No description provided for @appsLoadError.
   ///
   /// In en, this message translates to:
@@ -535,6 +541,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Send'**
   String get appsSendTooltip;
+
+  /// No description provided for @appsShowAppsTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Show apps'**
+  String get appsShowAppsTooltip;
 
   /// No description provided for @appsStartError.
   ///
@@ -2516,6 +2528,18 @@ abstract class AppLocalizations {
   /// **'Chat text size'**
   String get settingsChatTextLabel;
 
+  /// No description provided for @settingsImagePreviewsLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'High-quality image previews'**
+  String get settingsImagePreviewsLabel;
+
+  /// No description provided for @settingsImagePreviewsHelper.
+  ///
+  /// In en, this message translates to:
+  /// **'Decode chat image previews at full resolution. Off keeps the faster 600px downscale.'**
+  String get settingsImagePreviewsHelper;
+
   /// No description provided for @settingsThemeLight.
   ///
   /// In en, this message translates to:
@@ -2786,11 +2810,41 @@ abstract class AppLocalizations {
   /// **'session {id}'**
   String sidebarSessionTitle(Object id);
 
+  /// No description provided for @sidebarSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Search sessions'**
+  String get sidebarSearchHint;
+
+  /// No description provided for @sidebarSearchClearTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear search'**
+  String get sidebarSearchClearTooltip;
+
+  /// No description provided for @sidebarSearchNoMatches.
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions match \"{query}\"'**
+  String sidebarSearchNoMatches(Object query);
+
   /// No description provided for @sidebarSessionsHeader.
   ///
   /// In en, this message translates to:
   /// **'Sessions'**
   String get sidebarSessionsHeader;
+
+  /// No description provided for @sidebarSubagentSessionCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 agent} other{{count} agents}}'**
+  String sidebarSubagentSessionCount(int count);
+
+  /// No description provided for @sidebarSubagentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'subagent {id}'**
+  String sidebarSubagentTitle(String id);
 
   /// No description provided for @tjsCacheTitle.
   ///

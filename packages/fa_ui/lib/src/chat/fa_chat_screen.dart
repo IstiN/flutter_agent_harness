@@ -53,11 +53,17 @@ const double kFaChatFilesPanelWidth = 300;
 typedef FaChatComposerBuilder =
     Widget Function(BuildContext context, FaChatService service);
 
+/// The default [FaChatScreen.imagePreviewCacheWidth]: attached-image
+/// previews decode downscaled to 600px wide (a display/memory
+/// optimization; the stored/sent bytes stay full fidelity).
+const kDefaultImagePreviewCacheWidth = 600;
+
 /// A chat UI over a single [FaChatService], built on top of
 /// `flutter_chat_ui`.
 ///
 /// Text messages are rendered as Markdown, tool calls/results are shown as
 /// distinct cards, and image attachments are supported. Multi-session
+/// management is the host's job: hand a different [service] and the screen
 /// re-subscribes and re-syncs in place. The optional affordances (files
 /// panel, settings gear, composer pickers/voice) come from [features], the
 /// constructor overrides, and the [FaChatHost] hooks.
@@ -77,10 +83,19 @@ class FaChatScreen extends StatefulWidget {
     this.onPermissionAction,
     this.audioControllerFactory,
     this.videoControllerFactory,
+    this.imagePreviewCacheWidth = kDefaultImagePreviewCacheWidth,
   });
 
   /// The session this screen renders and sends to.
   final FaChatService service;
+
+  /// Decode constraint for attached-image preview thumbnails (both the
+  /// memory and the file path). Defaults to
+  /// [kDefaultImagePreviewCacheWidth] — a display/memory optimization; the
+  /// stored and sent bytes are always full fidelity. Pass `null` to decode
+  /// previews at full resolution (issue #207: "High-quality image
+  /// previews").
+  final int? imagePreviewCacheWidth;
 
   /// Capability flags; everything optional degrades cleanly when off.
   final FaChatFeatures features;
@@ -552,6 +567,10 @@ class _FaChatScreenState extends State<FaChatScreen>
         ),
       );
       final newList = converted.toList();
+      // The top banner's empty-session escape (issue #223) reads the
+      // synced window; an emptiness flip must repaint it even when no
+      // service field changed (the initial history sync notifies nobody).
+      final emptinessFlipped = _lastSynced.isEmpty != newList.isEmpty;
 
       if (_lastSynced.isEmpty || newList.isEmpty) {
         // History load: instant, no set animation (messages are read from
@@ -603,6 +622,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       }
 
       _lastSynced = newList;
+      if (emptinessFlipped && mounted) setState(() {});
       // Drop jump anchors for ids the sync removed (edits rebuild ids).
       final liveIds = {for (final message in newList) message.id};
       _itemKeys.removeWhere((id, _) => !liveIds.contains(id));
@@ -758,14 +778,16 @@ class _FaChatScreenState extends State<FaChatScreen>
     MessageGroupStatus? groupStatus,
   }) {
     final source = message.source;
+    // Decode at thumbnail scale by default — full-res app screenshots
+    // would otherwise jank every chat rebuild. The host can lift the
+    // constraint (null) for full-quality previews (issue #207).
+    final cacheWidth = widget.imagePreviewCacheWidth;
     Widget image = source.startsWith('data:')
         ? Image.memory(
             base64Decode(source.split(',').last),
-            // Decode at thumbnail scale — full-res app screenshots would
-            // otherwise jank every chat rebuild.
-            cacheWidth: 600,
+            cacheWidth: cacheWidth,
           )
-        : Image.file(File(source), cacheWidth: 600);
+        : Image.file(File(source), cacheWidth: cacheWidth);
     image = ClipRRect(borderRadius: BorderRadius.circular(10), child: image);
     return _keyed(
       message.id,
@@ -955,8 +977,24 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// The top banner hides only on non-windowed hosts (no total, nothing
   /// above); a windowed host always shows it — count, spinner, or the
   /// terminal "Beginning of session" state (E6).
-  bool _topBannerVisible(int? historyAbove) =>
-      historyAbove == null || historyAbove > 0 || _historyTotal != null;
+  ///
+  /// Empty-session escape (issue #223): with no transcript rows loaded
+  /// and nothing above the window there is nothing to page in, so no
+  /// banner renders — even while the background count is still in flight
+  /// or has failed. The terminal state likewise never renders for a
+  /// header-only or single-record session (a "1 of 0"/"1 of 1" banner is
+  /// nonsense over an already-complete transcript).
+  bool _topBannerVisible(int? historyAbove) {
+    final total = _historyTotal;
+    if (historyAbove != null &&
+        historyAbove <= 0 &&
+        total != null &&
+        total <= 1) {
+      return false;
+    }
+    if (_lastSynced.isEmpty && (historyAbove ?? 0) <= 0) return false;
+    return historyAbove == null || historyAbove > 0 || total != null;
+  }
 
   String _topBannerLabel(FaChatStrings strings, int? historyAbove) {
     if (_historyLoadError != null) return strings.chatLoadEarlierFailed;
@@ -1024,6 +1062,10 @@ class _FaChatScreenState extends State<FaChatScreen>
     final fileBrowserBuilder = widget.features.fileBrowser
         ? _fileBrowserBuilder
         : null;
+    final appsToggleButton = FaChatHost.appsToggleButtonBuilder?.call(
+      context,
+      widget.service,
+    );
     final dynamicMessagesButton = FaChatHost.dynamicMessagesButtonBuilder?.call(
       context,
       widget.service,
@@ -1033,6 +1075,9 @@ class _FaChatScreenState extends State<FaChatScreen>
           ? AppBar(
               title: Text(widget.title),
               actions: [
+                // The host's apps-collapse toggle (issue #224: the Apps
+                // icon). Consulted when the bar builds; null = no button.
+                ?appsToggleButton,
                 // The host's dynamic-messages affordance (issue #102: the
                 // ✦ button). Consulted when the bar builds, so the host
                 // widget decides its own visibility; null = no button.

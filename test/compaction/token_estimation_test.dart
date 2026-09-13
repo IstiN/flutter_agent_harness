@@ -159,6 +159,151 @@ void main() {
       ];
       expect(estimateContextTokens(messages).lastUsageIndex, isNull);
     });
+
+    test('repeated images charge once plus the wire replacement '
+        '(issue #195 F5)', () {
+      // Two DISTINCT instances carrying the same bytes: the registry
+      // dedups them on the wire, so the estimate must too.
+      const image = ImageContent(data: 'AAAA', mimeType: 'image/png');
+      final messages = [
+        UserMessage(
+          content: [TextContent(text: 'a' * 40), image],
+          timestamp: DateTime.utc(2026),
+        ),
+        UserMessage(
+          content: [
+            TextContent(text: 'b' * 40),
+            const ImageContent(data: 'AAAA', mimeType: 'image/png'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      // First occurrence: 4800 chars; the repeat: a short note/label.
+      final expected = ((40 + 4800 + 40 + 32) / 4).ceil();
+      expect(estimateContextTokens(messages).tokens, expected);
+    });
+
+    test('distinct images each charge full (issue #195 F5)', () {
+      final messages = [
+        UserMessage(
+          content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
+          timestamp: DateTime.utc(2026),
+        ),
+        UserMessage(
+          content: [const ImageContent(data: 'BBBB', mimeType: 'image/png')],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      expect(estimateContextTokens(messages).tokens, (2 * 4800 / 4).ceil());
+    });
+
+    test('trailing repeats of anchor-era images stay cheap (issue #195 F5)',
+        () {
+      const usage = Usage(
+        input: 5000,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 5000,
+        cost: UsageCost(),
+      );
+      final messages = [
+        UserMessage(
+          content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
+          timestamp: DateTime.utc(2026),
+        ),
+        _assistant(content: [TextContent(text: 'b' * 40)], usage: usage),
+        UserMessage(
+          content: [const ImageContent(data: 'AAAA', mimeType: 'image/png')],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      // The trailing repeat estimates as the note, not a second image.
+      expect(estimateContextTokens(messages).trailingTokens, 8);
+    });
+
+    test('the content key matches the registry (drift pin, issue #195 F5)',
+        () {
+      const image = ImageContent(data: 'AAAA', mimeType: 'image/png');
+      expect(estimationImageKey(image), imageContentKey(image));
+    });
+
+    test('estimateTokens without a seen set charges every occurrence', () {
+      final message = UserMessage(
+        content: [
+          TextContent(text: 'a' * 40),
+          const ImageContent(data: 'AAAA', mimeType: 'image/png'),
+          const ImageContent(data: 'AAAA', mimeType: 'image/png'),
+        ],
+        timestamp: DateTime.utc(2026),
+      );
+      // (40 + 2 * 4800) / 4 = 2410 — per-message calls stay as before.
+      expect(estimateTokens(message), 2410);
+    });
+  });
+
+  group('estimateRequestOverheadTokens', () {
+    test('counts the system prompt and tool schemas at chars/4', () {
+      final tool = Tool(
+        name: 'read',
+        description: 'd' * 20,
+        parameters: const {
+          'type': 'object',
+          'properties': <String, dynamic>{},
+        },
+      );
+      final chars =
+          100 + 'read'.length + 20 + jsonEncode(tool.parameters).length;
+      expect(
+        estimateRequestOverheadTokens('s' * 100, [tool]),
+        (chars / 4).ceil(),
+      );
+    });
+
+    test('a null prompt and no tools cost nothing', () {
+      expect(estimateRequestOverheadTokens(null, const []), 0);
+      expect(estimateRequestOverheadTokens('', const []), 0);
+    });
+  });
+
+  group('estimateRequestTokens (the meter/guard shared basis)', () {
+    test('an unanchored transcript adds the system prompt and tool schemas',
+        () {
+      // 25 transcript tokens; the request additionally carries the system
+      // prompt and the tool schemas, which the transcript-only estimate
+      // silently drops (the resumed-session ctx-meter bug).
+      final messages = [UserMessage.text('a' * 100)];
+      final tools = [
+        Tool(name: 't', description: 'd' * 36, parameters: const {}),
+      ];
+      final overhead = estimateRequestOverheadTokens('s' * 100, tools);
+      expect(overhead, greaterThan(0));
+      expect(
+        estimateRequestTokens(messages, systemPrompt: 's' * 100, tools: tools),
+        25 + overhead,
+      );
+    });
+
+    test('an anchored transcript does NOT add overhead — provider usage '
+        'already prices the system prompt and tools', () {
+      final anchored = _assistant(
+        content: [TextContent(text: 'hi')],
+        usage: Usage.zero.copyWith(input: 100, totalTokens: 120),
+      );
+      final messages = [UserMessage.text('a' * 100), anchored];
+      // The 120-token anchor stands; the huge prompt must not be counted
+      // a second time on top of it.
+      expect(
+        estimateRequestTokens(
+          messages,
+          systemPrompt: 's' * 100000,
+          tools: [
+            Tool(name: 't', description: 'd' * 1000, parameters: const {}),
+          ],
+        ),
+        120,
+      );
+    });
   });
 
   group('SettledContextEstimate', () {
@@ -199,6 +344,30 @@ void main() {
       memo.settled(messages);
       memo.settled(messages);
       expect(memo.estimatorCalls, 1);
+    });
+
+    test('a fresh list COPY over the same settled messages still hits the '
+        'memo (the AgentState getter copies the list on every read)', () {
+      final memo = SettledContextEstimate();
+      final messages = [UserMessage.text('a' * 100)];
+      expect(memo.settled(List.unmodifiable(messages)), 25);
+      expect(memo.settled(List.unmodifiable(messages)), 25);
+      expect(memo.estimatorCalls, 1);
+    });
+
+    test('settledEstimate exposes the usage anchor so callers can add '
+        'request overhead only when unanchored', () {
+      final memo = SettledContextEstimate();
+      final unanchored = memo.settledEstimate([UserMessage.text('a' * 100)]);
+      expect(unanchored.lastUsageIndex, isNull);
+      final anchored = memo.settledEstimate([
+        _assistant(
+          content: [TextContent(text: 'hi')],
+          usage: Usage.zero.copyWith(input: 100, totalTokens: 120),
+        ),
+      ]);
+      expect(anchored.lastUsageIndex, 0);
+      expect(anchored.tokens, 120);
     });
   });
 

@@ -68,7 +68,10 @@ jobs:
     name: Build macOS ${{ matrix.arch }}
     needs: version
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 60
+    # Issue #239: TestFlight submit now waits for Apple processing (bounded,
+    # default 90 min) + a 15-min distribution verify AFTER the build/notarize
+    # work — the job ceiling must cover the worst case, not just the build.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -158,18 +161,20 @@ jobs:
           fi
 
       - name: Setup Flutter environment
+        # Pinned install instead of the runner's pre-installed SDK: the
+        # candidate-path loop picked up a stale 3.44.4 at
+        # ~/.local/flutter, which broke `flutter pub get` the moment the
+        # repo floor moved to >=3.47.0 (daily-publish #260/#261).
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      - name: Setup host toolchains
         run: |
-          for candidate in "$HOME/development/flutter/bin" "$HOME/.local/flutter/bin" "/Users/Uladzimir_Klyshevich/development/flutter/bin"; do
-            if [ -x "$candidate/flutter" ]; then
-              echo "$candidate" >> $GITHUB_PATH
-              export PATH="$candidate:$PATH"
-              echo "Found Flutter at: $candidate"
-              break
-            fi
-          done
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
-          export PATH="/opt/homebrew/opt/ruby/bin:/opt/homebrew/bin:$PATH"
           flutter --version
           dart --version
 
@@ -235,7 +240,9 @@ jobs:
           else
             echo "seeding companion dylibs from flutter_gemma native-v0.16.0"
             mkdir -p "$GEMMA_CACHE"
-            curl -L --retry 3 --retry-delay 10 --max-time 600 \
+            # --retry alone skips transient mid-transfer resets (curl 56);
+            # --retry-all-errors retries them (sha256 below guards corruption)
+            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
               -o /tmp/litertlm-macos_arm64.tar.gz \
               https://github.com/DenisovAV/flutter_gemma/releases/download/native-v0.16.0/litertlm-macos_arm64.tar.gz
             echo "c597554a7a5cdf099658227099a54ef4916c5802b9182757e656e1788f9426b6  /tmp/litertlm-macos_arm64.tar.gz" | shasum -a 256 -c -
@@ -290,7 +297,8 @@ jobs:
             cp -R "$LOCAL_SRC" "$DEST/"
           else
             echo "Local framework not found, downloading from upstream release..."
-            curl -L --retry 3 --retry-delay 10 --max-time 600 \
+            # --retry alone skips transient mid-transfer resets (curl 56)
+            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
               -o /tmp/WasmRun.xcframework.zip \
               https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
             unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
@@ -605,31 +613,6 @@ jobs:
             --sign "$MACOS_INSTALLER_CERT_ID"
           echo "pkg_name=$PKG_NAME" >> $GITHUB_OUTPUT
 
-      - name: Submit PKG to TestFlight
-        if: steps.testflight_pkg.outputs.pkg_name != ''
-        working-directory: flutter_app
-        env:
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
-          MACOS_PKG_PATH: ${{ github.workspace }}/${{ steps.testflight_pkg.outputs.pkg_name }}
-        run: |
-          set -euo pipefail
-          if [ -z "${APP_STORE_CONNECT_KEY_CONTENT:-}" ]; then
-            echo "::notice::App Store Connect API key not configured — skipping TestFlight upload (the PKG stays in artifacts)."
-            exit 0
-          fi
-          bundle install
-          bundle exec fastlane mac submit_only
-
-      - name: Upload TestFlight PKG artifact
-        if: steps.testflight_pkg.outputs.pkg_name != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: fa-macos-testflight-pkg
-          path: ${{ steps.testflight_pkg.outputs.pkg_name }}
-          retention-days: 14
-
       - name: Notarize DMG
         if: steps.signing.outputs.signed == 'true'
         env:
@@ -650,6 +633,37 @@ jobs:
             --wait
           xcrun stapler staple "$DMG_NAME"
           echo "✅ Notarization complete"
+
+      - name: Submit PKG to TestFlight
+        if: steps.testflight_pkg.outputs.pkg_name != ''
+        working-directory: flutter_app
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
+          MACOS_PKG_PATH: ${{ github.workspace }}/${{ steps.testflight_pkg.outputs.pkg_name }}
+          # External TestFlight distribution (issue #239): lanes fail
+          # loudly when these are unset — set them once as repo variables.
+          TESTFLIGHT_EXTERNAL_GROUP: ${{ vars.TESTFLIGHT_EXTERNAL_GROUP }}
+          BETA_APP_FEEDBACK_EMAIL: ${{ vars.BETA_APP_FEEDBACK_EMAIL }}
+          BETA_REVIEW_CONTACT_EMAIL: ${{ vars.BETA_REVIEW_CONTACT_EMAIL }}
+          BETA_REVIEW_CONTACT_PHONE: ${{ vars.BETA_REVIEW_CONTACT_PHONE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_STORE_CONNECT_KEY_CONTENT:-}" ]; then
+            echo "::notice::App Store Connect API key not configured — skipping TestFlight upload (the PKG stays in artifacts)."
+            exit 0
+          fi
+          bundle install
+          bundle exec fastlane mac submit_only
+
+      - name: Upload TestFlight PKG artifact
+        if: steps.testflight_pkg.outputs.pkg_name != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: fa-macos-testflight-pkg
+          path: ${{ steps.testflight_pkg.outputs.pkg_name }}
+          retention-days: 14
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4

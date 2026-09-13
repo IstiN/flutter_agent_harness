@@ -185,6 +185,7 @@ class _AppCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final locale = Localizations.localeOf(context).toLanguageTag();
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -197,14 +198,14 @@ class _AppCard extends StatelessWidget {
               AppIcon(app: app, env: env, size: 32),
               const Spacer(),
               Text(
-                app.name,
+                app.displayName(locale),
                 style: theme.textTheme.titleSmall,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 2),
               Text(
-                app.description,
+                app.displayDescription(locale),
                 style: theme.textTheme.bodySmall,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,

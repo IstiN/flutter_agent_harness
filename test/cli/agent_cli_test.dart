@@ -825,20 +825,22 @@ void main() {
   });
 
   test('auto-compacts after a turn over the threshold', () async {
-    // Window 800 (forWindow: reserve 200, keep 400, trigger at 600): the
-    // first request (~1 token) passes the loop's mid-turn over-window
-    // guard, while the ~700-token answer pushes the post-turn transcript
-    // over the compaction threshold.
+    // Window 16384 (forWindow: reserve 4096, keep 20000, trigger at 12288).
+    // Every request also carries ~8.4k of system prompt + tool schemas
+    // (counted while the transcript is unanchored), so the first request
+    // (~8.4k) still passes the loop's mid-turn over-window guard, while
+    // the ~5000-token answer pushes the post-turn request size over the
+    // compaction threshold.
     const tinyWindow = Model(
       id: 'tiny',
       api: 'test-api',
       provider: 'test-provider',
       baseUrl: 'https://example.test',
-      contextWindow: 800,
+      contextWindow: 16384,
       maxTokens: 4096,
     );
     final fake = FakeStreamFunction([
-      textTurn('a' * 2800),
+      textTurn('a' * 20000),
       textTurn('AUTO SUMMARY'),
     ]);
     final cli = cliFor(fake.call, model: tinyWindow);
@@ -860,18 +862,20 @@ void main() {
     // job: after the post-run auto-compaction frees the window, the CLI
     // must CONTINUE the interrupted task on its own — exactly once —
     // instead of idling until the user types "continue".
-    const window8k = Model(
+    const window32k = Model(
       id: 'test-model',
       api: 'test-api',
       provider: 'test-provider',
       baseUrl: 'https://example.test',
-      contextWindow: 8192,
+      contextWindow: 32768,
       maxTokens: 4096,
     );
     final fake = FakeStreamFunction([
-      // 1. Three tool calls whose outputs (~3000 tokens each) balloon the
-      //    next request past the window — each one is droppable (under the
-      //    4096-token keep region) so the summarizer can free the window.
+      // 1. Three tool calls whose outputs (~8200 tokens each) balloon the
+      //    next request past the window (3 × 8200 + the ~8.4k system
+      //    prompt/tool-schema overhead > 32768) — each one is droppable
+      //    (over the 20000-token keep region together) so the summarizer
+      //    can free the window.
       toolTurn([
         ToolCall(
           id: 'c1',
@@ -895,9 +899,9 @@ void main() {
       //    finishes the task against the compacted transcript.
       textTurn('continued after compaction'),
     ]);
-    final shell = FakeShell(stdout: 'x' * 12000);
+    final shell = FakeShell(stdout: 'x' * 32800);
     final shellEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
-    final cli = cliFor(fake.call, model: window8k, envOverride: shellEnv);
+    final cli = cliFor(fake.call, model: window32k, envOverride: shellEnv);
     final run = cli.run();
 
     io.sendLine('go');
@@ -1683,6 +1687,37 @@ void main() {
     );
   });
 
+  test('status line ctx counts the system prompt and tool schemas when no '
+      'usage anchor covers them', () async {
+    // The observed mismatch: a resumed session (usage anchors zeroed on
+    // load) showed `ctx 64% (127k/200k)` while the SAME transcript's next
+    // request tripped the loop's over-window guard — the meter counted
+    // only transcript messages, dropping the system prompt and the ~30
+    // tool schemas every request carries. The meter must read the same
+    // basis the guard enforces.
+    final fake = FakeStreamFunction([textTurn('hi')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    io.sendLine('/session fresh');
+    await waitForIt(
+      () => io.out.toString().contains("created session 'fresh'"),
+    );
+    io.sendLine('/exit');
+    await run;
+
+    final output = io.out.toString();
+    final lastStatus = output.lastIndexOf('· ctx ');
+    expect(lastStatus, isNonNegative);
+    final rest = output.substring(lastStatus);
+    final match = RegExp(r'· ctx (\d+)% \((\S+)/100k\)').firstMatch(rest);
+    expect(match, isNotNull);
+    // An empty, unanchored transcript is NOT "0 of 100k": the request
+    // overhead (system prompt + tool schemas) shows up.
+    expect(match!.group(2), isNot('0'));
+    expect(int.parse(match.group(1)!), greaterThan(0));
+  });
+
   test(
     'status line shows the saved provider entry name for its endpoint',
     () async {
@@ -1818,11 +1853,16 @@ void main() {
     final output = io.out.toString();
     final lastStatus = output.lastIndexOf('· ctx ');
     expect(lastStatus, isNonNegative);
-    // After the switch the meter reads zero — not the carried-over 15.
-    expect(
-      output.substring(lastStatus),
-      startsWith('· ctx 0% (0/100k) · 0tok'),
-    );
+    // The tok/cost/turn counters read zero — but the ctx meter is NOT
+    // zero: an unanchored (fresh) session still sends the system prompt
+    // and the tool schemas with every request, and the meter counts that
+    // overhead (same basis as the over-window guard).
+    final rest = output.substring(lastStatus);
+    final match = RegExp(
+      r'· ctx (\d+)% \((\S+)/100k\) · 0tok',
+    ).firstMatch(rest);
+    expect(match, isNotNull);
+    expect(match!.group(2), isNot('0'));
   });
 
   group('session management', () {

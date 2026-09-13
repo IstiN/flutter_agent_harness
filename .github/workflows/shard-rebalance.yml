@@ -35,77 +35,115 @@ jobs:
 
       # Timing artifacts come from recent successful CI runs on main; their
       # absence is fine — the rebalancer then falls back to file counts.
+      # Core (junit-shard-*) and fa_ui (junit-faui-shard-*, issue #283)
+      # timings are split into separate dirs so same-named suite paths can
+      # never cross-contaminate the other's weights.
       - name: Download recent JUnit timing artifacts (best effort)
         id: timings
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p .shard-timings
+          mkdir -p .shard-timings .timings-core .timings-faui
           for id in $(gh run list --workflow ci.yml --branch main \
               --status success --limit 5 --json databaseId --jq '.[].databaseId'); do
             gh run download "$id" --dir ".shard-timings/$id" \
               --pattern '*junit*' 2>/dev/null || true
           done
-          if find .shard-timings -name '*.xml' -print -quit | grep -q .; then
-            echo "mode=junit" >> "$GITHUB_OUTPUT"
-          else
-            echo "mode=filecount" >> "$GITHUB_OUTPUT"
-          fi
+          find .shard-timings -name '*.xml' | while read -r f; do
+            case "$f" in
+              *junit-faui-shard-*) cp "$f" ".timings-faui/$(echo "$f" | tr '/' '_')" ;;
+              *junit-shard-*)      cp "$f" ".timings-core/$(echo "$f" | tr '/' '_')" ;;
+            esac
+          done
+          for pkg in core faui; do
+            if find ".timings-$pkg" -name '*.xml' -print -quit | grep -q .; then
+              echo "mode-$pkg=junit" >> "$GITHUB_OUTPUT"
+            else
+              echo "mode-$pkg=filecount" >> "$GITHUB_OUTPUT"
+            fi
+          done
 
       # Skew is measured over WEIGHTS (summed meta.weights per shard — real
       # test durations once junit artifacts exist, file counts before), not
       # unit counts: counting units said nothing about balance (issue #194
       # pt 1). Units missing from weights (brand-new dirs) count as 1.0.
+      # Both manifests are measured (core + fa_ui, issue #283).
       - name: Skew before rebalance
         id: before
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
           import json
-          try:
-              m = json.load(open('scripts/test_shards.json'))
-              shards = m.get('shards', m) if isinstance(m, dict) else m
-              seq = shards.values() if isinstance(shards, dict) else shards
-              w = m.get('meta', {}).get('weights', {}) if isinstance(m, dict) else {}
-              loads = [sum(float(w.get(u, 1.0)) for u in s) for s in seq]
-              avg = sum(loads) / len(loads) if loads else 0
-              print(f"skew={max(loads) / avg if avg else 0}")
-          except Exception:
-              print("skew=missing")
+          def skew(path):
+              try:
+                  m = json.load(open(path))
+                  shards = m.get('shards', m) if isinstance(m, dict) else m
+                  seq = shards.values() if isinstance(shards, dict) else shards
+                  w = m.get('meta', {}).get('weights', {}) if isinstance(m, dict) else {}
+                  loads = [sum(float(w.get(u, 1.0)) for u in s) for s in seq]
+                  avg = sum(loads) / len(loads) if loads else 0
+                  return max(loads) / avg if avg else 0
+              except Exception:
+                  return "missing"
+          print(f"skew-core={skew('scripts/test_shards.json')}")
+          print(f"skew-faui={skew('scripts/faui_test_shards.json')}")
           EOF
 
       - name: Run the rebalancer
         run: |
-          if [ "${{ steps.timings.outputs.mode }}" = "junit" ]; then
-            python3 scripts/rebalance_shards.py --from-junit .shard-timings
+          if [ "${{ steps.timings.outputs.mode-core }}" = "junit" ]; then
+            python3 scripts/rebalance_shards.py --from-junit .timings-core
           else
             python3 scripts/rebalance_shards.py --from-filecount
           fi
+          # fa_ui (issue #283): flat layout → file-level units; goldens are
+          # host-locked and stay out of the shards. Units are stored
+          # relative to packages/fa_ui (same convention as core's test/).
+          cd packages/fa_ui
+          if [ "${{ steps.timings.outputs.mode-faui }}" = "junit" ]; then
+            python3 ../../scripts/rebalance_shards.py --from-junit ../../.timings-faui \
+              --unit-style files --exclude golden \
+              --output ../../scripts/faui_test_shards.json
+          else
+            python3 ../../scripts/rebalance_shards.py --from-filecount \
+              --unit-style files --exclude golden \
+              --output ../../scripts/faui_test_shards.json
+          fi
 
-      # Commit only when the manifest was missing or the skew (max shard
-      # size / mean shard size) strictly improved.
+      # Commit only when a manifest was missing or the skew (max shard
+      # size / mean shard size) strictly improved for EITHER suite (core
+      # or fa_ui, issue #283).
       - name: Decide whether to commit
         id: decide
         run: |
           after=$(python3 - <<'EOF'
           import json
-          try:
-              m = json.load(open('scripts/test_shards.json'))
-              shards = m.get('shards', m) if isinstance(m, dict) else m
-              seq = shards.values() if isinstance(shards, dict) else shards
-              w = m.get('meta', {}).get('weights', {}) if isinstance(m, dict) else {}
-              loads = [sum(float(w.get(u, 1.0)) for u in s) for s in seq]
-              avg = sum(loads) / len(loads) if loads else 0
-              print(max(loads) / avg if avg else 0)
-          except Exception:
-              print("missing")
+          def skew(path):
+              try:
+                  m = json.load(open(path))
+                  shards = m.get('shards', m) if isinstance(m, dict) else m
+                  seq = shards.values() if isinstance(shards, dict) else shards
+                  w = m.get('meta', {}).get('weights', {}) if isinstance(m, dict) else {}
+                  loads = [sum(float(w.get(u, 1.0)) for u in s) for s in seq]
+                  avg = sum(loads) / len(loads) if loads else 0
+                  return max(loads) / avg if avg else 0
+              except Exception:
+                  return "missing"
+          print(f"{skew('scripts/test_shards.json')} {skew('scripts/faui_test_shards.json')}")
           EOF
           )
-          before="${{ steps.before.outputs.skew }}"
-          echo "skew before=$before after=$after"
-          if [ "$before" = "missing" ]; then
-            echo "commit=true" >> "$GITHUB_OUTPUT"
-          elif [ "$after" != "missing" ] && \
-               awk -v a="$after" -v b="$before" 'BEGIN{exit !(a < b)}'; then
+          after_core=$(echo "$after" | cut -d' ' -f1)
+          after_faui=$(echo "$after" | cut -d' ' -f2)
+          before_core="${{ steps.before.outputs.skew-core }}"
+          before_faui="${{ steps.before.outputs.skew-faui }}"
+          echo "skew core: before=$before_core after=$after_core"
+          echo "skew faui: before=$before_faui after=$after_faui"
+          improved() {
+            [ "$1" = "missing" ] && return 0
+            [ "$2" != "missing" ] && \
+              awk -v a="$2" -v b="$1" 'BEGIN{exit !(a < b)}'
+          }
+          if improved "$before_core" "$after_core" || \
+             improved "$before_faui" "$after_faui"; then
             echo "commit=true" >> "$GITHUB_OUTPUT"
           else
             echo "commit=false" >> "$GITHUB_OUTPUT"
@@ -115,15 +153,15 @@ jobs:
         if: steps.decide.outputs.commit == 'true'
         run: |
           if [ -z "$RELEASE_PAT" ]; then
-            echo "::notice::RELEASE_PAT not configured; skipping push of scripts/test_shards.json"
+            echo "::notice::RELEASE_PAT not configured; skipping push of shard manifests"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "418982+github-actions[bot]@users.noreply.github.com"
-          git add scripts/test_shards.json
+          git add scripts/test_shards.json scripts/faui_test_shards.json
           if git diff --cached --quiet; then
             echo "Manifest unchanged; nothing to push."
             exit 0
           fi
-          git commit -m "chore(ci): rebalance test shards (issue #177)"
+          git commit -m "chore(ci): rebalance test shards (issues #177, #283)"
           git push origin HEAD:main

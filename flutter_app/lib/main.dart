@@ -44,6 +44,7 @@ import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/chat_text_store.dart';
+import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/services/theme_pack_store.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
@@ -191,6 +192,8 @@ Future<void> main() async {
   final mediaModels = await MediaModelsStore.load(env);
   final taskModels = await TaskModelsStore.load(env);
   final onDeviceConfig = await OnDeviceConfigStore.load(env);
+  final imagePreviews = ImagePreviewStore(env);
+  await imagePreviews.load();
   // fa_ui's provider UI resolves named keys through the app's chain
   // (dart-defines → saved keys → .env), exactly like the connection form.
   FaUiHost.keyResolver = (name) => settingsKeyEnv(name, sessionKeys);
@@ -277,6 +280,7 @@ Future<void> main() async {
       mediaModelsStore: mediaModels,
       taskModelsStore: taskModels,
       onDeviceConfigStore: onDeviceConfig,
+      imagePreviewStore: imagePreviews,
       analytics: analytics,
     ),
   );
@@ -314,6 +318,7 @@ class MyApp extends StatelessWidget {
     this.taskModelsStore,
     this.onDeviceConfigStore,
     this.chatTextStore,
+    this.imagePreviewStore,
     this.webLlmEngine,
     this.gemmaEngine,
     this.transformersJsEngine,
@@ -367,6 +372,11 @@ class MyApp extends StatelessWidget {
   /// The persisted chat text-size choice; `null` skips the scope (the
   /// settings Chat text section hides, transcripts render at the default).
   final ChatTextStore? chatTextStore;
+
+  /// The persisted "High-quality image previews" choice (issue #207);
+  /// `null` skips the scope (the settings section hides, previews stay
+  /// downscaled — the default).
+  final ImagePreviewStore? imagePreviewStore;
 
   /// Engine overrides for the on-device providers (tests); default to the
   /// platform singletons.
@@ -479,6 +489,10 @@ class MyApp extends StatelessWidget {
     final chatText = chatTextStore;
     if (chatText != null) {
       child = ChatTextScope(store: chatText, child: child);
+    }
+    final imagePreviews = imagePreviewStore;
+    if (imagePreviews != null) {
+      child = ImagePreviewScope(store: imagePreviews, child: child);
     }
     return child;
   }
@@ -593,6 +607,10 @@ Widget faHomeScreen({
   TileEngineFactory? tileEngineFactory,
   LauncherLayoutStore? layoutStore,
   AppsStore? appsStore,
+
+  /// Restore the persisted apps↔chat surface mode on the narrow home
+  /// (issue #224): true for the real production homes, false in tests.
+  bool restoreAppsMode = false,
 }) {
   final isWide = MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
   return WidgetPublicationResumeRefresher(
@@ -625,6 +643,7 @@ Widget faHomeScreen({
             tileEngineFactory: tileEngineFactory,
             layoutStore: layoutStore,
             appsStore: appsStore,
+            restoreAppsMode: restoreAppsMode,
           ),
   );
 }
@@ -872,6 +891,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
             context: navigator.context,
             manager: manager,
             registry: registry,
+            restoreAppsMode: true,
           ),
         ),
       );
@@ -926,6 +946,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
             manager: manager,
             registry: widget.registry,
             lastConnectionStore: widget.lastConnectionStore,
+            restoreAppsMode: true,
           ),
         ),
       );
@@ -1154,6 +1175,7 @@ class _EmptyManagerHomeState extends State<_EmptyManagerHome> {
         manager: manager,
         registry: widget.registry,
         lastConnectionStore: widget.lastConnectionStore,
+        restoreAppsMode: true,
       );
     }
     final error = _error;
@@ -1316,6 +1338,7 @@ class SetupScreen extends StatelessWidget {
           manager: manager,
           registry: registry,
           lastConnectionStore: lastConnectionStore,
+          restoreAppsMode: true,
         ),
       ),
     );

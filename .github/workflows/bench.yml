@@ -8,9 +8,19 @@ name: Bench
 # Sharded matrix (issue #132): the full terminal-bench-core 0.1.1 dataset
 # is 80 tasks at ~11 min each — ~14 h sequential, past even the 6 h job
 # cap. Shape: setup (build bundle, resolve task ids into shards) → one
-# matrix job per shard, each well under the job timeout → merge job
-# aggregating overall accuracy. Small `tasks` inputs degenerate to a
-# single-shard matrix, so the hello-world smoke path is unchanged.
+# matrix job per shard → merge job aggregating overall accuracy. Small
+# `tasks` inputs degenerate to a single-shard matrix, so the hello-world
+# smoke path is unchanged.
+#
+# Issue #142 (baseline run 34576017658, 26/80 = 32.5%): shards are balanced
+# by declared task budget (LPT) instead of contiguous split, tb runs with
+# --global-timeout-multiplier 2 (the dataset's declared timeouts — median
+# 360s agent / 60s test — assume fast models and warm container networks;
+# the baseline lost trials to agents killed mid-progress and to test
+# phases still apt-installing their own deps when the cap hit), and the
+# bench job patches the downloaded dataset so debian:-based task images
+# build again after Debian archived bullseye (expired Release file kills
+# `apt-get update` during docker compose build).
 
 on:
   workflow_dispatch:
@@ -77,10 +87,16 @@ jobs:
 
       - run: pip install terminal-bench
 
+      # stdlib-only unit tests for the bench scripts; a shard/patch bug
+      # costs a multi-hour run, so gate shard resolution on them.
+      - name: Unit-test bench scripts
+        run: python -m unittest discover -s bench/terminal_bench -v
+
       # Resolve the task-id list exactly like tb does (union of Path.glob
       # matches per -t pattern, against a dataset fetched via tb itself),
-      # then split into contiguous shards; empty shards are dropped, so a
-      # single-id smoke input degenerates to a one-job matrix.
+      # then balance shards longest-declared-budget-first (LPT, issue #142)
+      # so no shard's worst case exceeds the job timeout; empty shards are
+      # dropped, so a single-id smoke input degenerates to a one-job matrix.
       - name: Resolve task ids into shards
         id: shards
         env:
@@ -96,10 +112,11 @@ jobs:
     name: fa on terminal-bench, shard ${{ matrix.i }} (glm-5.3-flash)
     needs: setup
     runs-on: ubuntu-latest
-    # 10 tasks/shard x ~11 min/task ~= 110 min + build & variance headroom.
-    # --n-concurrent 1 keeps that math sequential-predictable and holds the
-    # total concurrent LLM load to max-parallel x 1 (z.ai rate limits).
-    timeout-minutes: 180
+    # Worst case per shard (LPT balance at multiplier 2) is ~4.5 h; 355 min
+    # covers it under the 6 h runner cap. --n-concurrent 1 keeps the math
+    # sequential-predictable and the total concurrent LLM load at
+    # max-parallel x 1 (z.ai rate limits).
+    timeout-minutes: 355
     strategy:
       fail-fast: false
       max-parallel: 5
@@ -117,6 +134,18 @@ jobs:
           python-version: '3.13'
 
       - run: pip install terminal-bench
+
+      # Populate tb's dataset cache, then patch it in place (tb run reuses a
+      # non-empty cache without overwriting): debian:-based task images
+      # cannot `apt-get update` during docker compose build since Debian
+      # archived bullseye (issue #142).
+      - name: Download & patch dataset
+        env:
+          DATASET: ${{ inputs.dataset }}
+        run: |
+          tb datasets download -d "$DATASET"
+          python bench/terminal_bench/patch_dataset.py \
+            "$HOME/.cache/terminal-bench/${DATASET%%==*}/${DATASET##*==}"
 
       - name: Run terminal-bench (fa agent)
         env:
@@ -140,6 +169,7 @@ jobs:
           # job's downloads cannot collide on tb's timestamped default.
           tb run -d "$DATASET" --agent-import-path fa_agent:FaAgent \
             --output-path tb-runs --no-cleanup --n-concurrent 1 \
+            --global-timeout-multiplier 2 \
             --run-id "shard-${{ matrix.i }}" "${args[@]}"
 
       - name: Upload tb runs (shard ${{ matrix.i }})

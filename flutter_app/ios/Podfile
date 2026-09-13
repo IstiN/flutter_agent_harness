@@ -145,6 +145,15 @@ post_install do |installer|
   exclude_x86_64_sim = { 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'x86_64' }
 
   # iOS 16 floor everywhere (pods + app target) for flutter_gemma.
+  # Project-level configs alone are not enough: pod TARGET-level build
+  # settings (declared by podspecs, e.g. Firebase's 15.0) override them, and
+  # newer Swift toolchains error when a 15.0 target imports a module built
+  # for 16.0 (Promises) — seen after the Flutter SDK bump.
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
+    end
+  end
   installer.pods_project.build_configurations.each do |config|
     config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
     exclude_x86_64_sim.each { |k, v| config.build_settings[k] = v }
