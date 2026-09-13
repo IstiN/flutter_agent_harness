@@ -3,7 +3,7 @@
 
 Usage:
     split_tasks.py <dataset-dir> [--filter <glob>[,<glob>...]] [--shards N]
-                   [--cpu-env ENV]
+                   [--cpu-env ENV] [--task-prefix PREFIX]
 
 Scans every <dataset-dir>/*/task.toml for a `gpus > 0` declaration.
 CPU tasks (gpus == 0 or absent) are chunked into `--shards` shards on the
@@ -11,6 +11,10 @@ env given by --cpu-env (default `modal`: the issue's own command uses
 `-e modal` and the self-hosted runner mac has no docker; pass docker once
 the runner gains it). GPU tasks always go on modal — the GPU split rides
 the same matrix as a shard with env=modal.
+
+harbor's `-i` filter matches fully-qualified task ids (`<org>/<name>`, as
+`get_name()` reports them), so --task-prefix (e.g. `terminal-bench/`, the
+org part of the dataset spec) is prepended to every emitted task name.
 
 With --shards, writes the workflow matrix to $GITHUB_OUTPUT (or stdout):
     matrix={"include": [{"i": 0, "env": "modal", "tasks": "a b c"}, ...,
@@ -86,6 +90,7 @@ def main() -> int:
     parser.add_argument("--filter", default="")
     parser.add_argument("--shards", type=int, default=0)
     parser.add_argument("--cpu-env", default="modal")
+    parser.add_argument("--task-prefix", default="")
     args = parser.parse_args()
 
     globs = [g.strip() for g in args.filter.split(",") if g.strip()]
@@ -102,12 +107,22 @@ def main() -> int:
         return 0
 
     include = [
-        {"i": i, "env": args.cpu_env, "tasks": " ".join(chunk)}
+        {
+            "i": i,
+            "env": args.cpu_env,
+            "tasks": " ".join(args.task_prefix + t for t in chunk),
+        }
         for i, chunk in enumerate(_chunk(cpu, args.shards))
         if chunk
     ]
     if gpu:
-        include.append({"i": len(include), "env": "modal", "tasks": " ".join(gpu)})
+        include.append(
+            {
+                "i": len(include),
+                "env": "modal",
+                "tasks": " ".join(args.task_prefix + t for t in gpu),
+            }
+        )
     _emit(
         [
             ("matrix", json.dumps({"include": include})),
