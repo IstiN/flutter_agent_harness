@@ -184,10 +184,10 @@ String _bound(String text, int cap) =>
 class HepWriter {
   /// Creates a writer emitting to [emit] (hosts pass a stdout line sink).
   HepWriter({
-    required void Function(String line) emit,
+    required this._emit,
     required this.fahVersion,
     this.toolArgs = HepToolArgs.summary,
-  }) : _emit = emit;
+  });
 
   final void Function(String line) _emit;
 

@@ -165,9 +165,7 @@ class LocalHub {
   /// AND may enroll; `{"t":"enroll"}` on a master connection issues a
   /// per-client secret (persisted in [stateFile]) that authenticates
   /// later connects. Null = open loopback hub (the zero-config default).
-  LocalHub({this.port = 0, String? masterSecret, File? stateFile})
-    : _masterSecret = masterSecret,
-      _stateFile = stateFile;
+  LocalHub({this.port = 0, this._masterSecret, this._stateFile});
 
   /// The port to bind (`0` = ephemeral, tests).
   final int port;
