@@ -58,9 +58,6 @@ if $PROGRAM_NAME == __FILE__
   raise "FAIL: PLAY_STORE_SERVICE_ACCOUNT_JSON must win" unless key == "{a:1}"
   ok("PLAY_STORE_SERVICE_ACCOUNT_JSON is the canonical secret")
 
-  legacy = PlayUploadPreflight.play_json_key!({ "PLAY_STORE_JSON_KEY" => "{b:2}" })
-  raise "FAIL: legacy PLAY_STORE_JSON_KEY must be honored" unless legacy == "{b:2}"
-  ok("legacy PLAY_STORE_JSON_KEY falls back")
 
   assert_raises_named("PLAY_STORE_SERVICE_ACCOUNT_JSON") do
     PlayUploadPreflight.play_json_key!({})

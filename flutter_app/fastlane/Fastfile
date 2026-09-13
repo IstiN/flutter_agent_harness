@@ -15,7 +15,7 @@
 #
 # Android (#289): the build_only/build_release + upload_only lanes follow
 # the same split against Google Play; the service-account JSON rides
-# PLAY_STORE_SERVICE_ACCOUNT_JSON (legacy PLAY_STORE_JSON_KEY honored) and
+# PLAY_STORE_SERVICE_ACCOUNT_JSON and
 # the track rides PLAY_TRACK (internal first, then external beta).
 #
 # iOS:    IOS_IPA_PATH points at the built .ipa (default: build/ios/*.ipa's

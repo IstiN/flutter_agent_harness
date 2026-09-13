@@ -9,8 +9,7 @@
 #   * track resolution — internal first run, then external beta / open
 #     testing (the daily leg dispatches PLAY_TRACK=beta);
 #   * service-account JSON key — PLAY_STORE_SERVICE_ACCOUNT_JSON is the
-#     canonical secret (#289), the pre-existing PLAY_STORE_JSON_KEY wiring
-#     in build-mobile.yml stays honored as a fallback;
+#     one canonical secret name (#289);
 #   * AAB path — ANDROID_AAB_PATH override or flutter's conventional
 #     build/app/outputs/bundle/release/app-release.aab;
 #   * validate-only (dry-run) mapping — every supply upload skip flag on,
@@ -36,11 +35,9 @@ module PlayUploadPreflight
   # Service-account JSON for the Play Developer API.
   def play_json_key!(env)
     key = env["PLAY_STORE_SERVICE_ACCOUNT_JSON"].to_s.strip
-    key = env["PLAY_STORE_JSON_KEY"].to_s.strip if key.empty?
     if key.empty?
       raise "PLAY_STORE_SERVICE_ACCOUNT_JSON is not set — the Play upload " \
-            "needs the Play Developer API service-account JSON key (the " \
-            "legacy PLAY_STORE_JSON_KEY name is also honored)"
+            "needs the Play Developer API service-account JSON key"
     end
     key
   end

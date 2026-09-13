@@ -223,7 +223,6 @@ jobs:
       # skips with a notice (existing neutral-skip leg semantics); it goes
       # live the moment the owner sets them (issue #289).
       PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
-      PLAY_STORE_JSON_KEY: ${{ secrets.PLAY_STORE_JSON_KEY }}
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -243,7 +242,7 @@ jobs:
           [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] && missing="$missing ANDROID_KEYSTORE_PASSWORD"
           [ -z "${ANDROID_KEY_ALIAS:-}" ] && missing="$missing ANDROID_KEY_ALIAS"
           [ -z "${ANDROID_KEY_PASSWORD:-}" ] && missing="$missing ANDROID_KEY_PASSWORD"
-          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ] && [ -z "${PLAY_STORE_JSON_KEY:-}" ]; then
+          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ]; then
             missing="$missing PLAY_STORE_SERVICE_ACCOUNT_JSON"
           fi
           if [ -n "$missing" ]; then

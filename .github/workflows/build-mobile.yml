@@ -134,10 +134,9 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
-          PLAY_STORE_JSON_KEY: ${{ secrets.PLAY_STORE_JSON_KEY }}
         run: |
-          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ] && [ -z "${PLAY_STORE_JSON_KEY:-}" ]; then
-            echo "::error::PLAY_STORE_SERVICE_ACCOUNT_JSON secret is not set (legacy PLAY_STORE_JSON_KEY also absent) — the Play Developer API service-account JSON key is required"
+          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ]; then
+            echo "::error::PLAY_STORE_SERVICE_ACCOUNT_JSON secret is not set — the Play Developer API service-account JSON key is required"
             exit 1
           fi
           if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then echo "::error::ANDROID_KEYSTORE_BASE64 secret is not set"; exit 1; fi
@@ -229,11 +228,10 @@ jobs:
         working-directory: flutter_app
         env:
           PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
-          PLAY_STORE_JSON_KEY: ${{ secrets.PLAY_STORE_JSON_KEY }}
           PLAY_TRACK: ${{ inputs.android_track }}
         run: |
           set -euo pipefail
-          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ] && [ -z "${PLAY_STORE_JSON_KEY:-}" ]; then
+          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ]; then
             echo "::notice::Play service account not configured — skipping the Play upload (the AAB stays on the GitHub release / artifacts)."
             exit 0
           fi
