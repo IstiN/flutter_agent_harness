@@ -53,7 +53,11 @@ Future<PasteboardRead> readPasteboardImage({
   Map<String, String> environment = const {},
 }) async {
   final run = runner ?? _runBinaryProcess;
-  final fake = environment['FA_FAKE_PASTEBOARD'];
+  // The explicit map wins (unit tests); the real process env is the seam
+  // the PTY golden tests and headless debugging actually set.
+  final fake =
+      environment['FA_FAKE_PASTEBOARD'] ??
+      Platform.environment['FA_FAKE_PASTEBOARD'];
   if (fake != null && fake.isNotEmpty) {
     try {
       return PasteboardImage(File(fake).readAsBytesSync());

@@ -149,8 +149,8 @@ final class CliVisualHarness {
   /// JetBrainsMono cell size), so the CLI redraws at exactly the size the
   /// screenshots show. Call right after [spawn] — BEFORE [waitForBoot] — so
   /// the CLI's first frame already lands at the final size.
-  Future<void> pumpTerminalView() async {
-    _tester.view.physicalSize = const Size(1040, 600);
+  Future<void> pumpTerminalView({Size size = const Size(1040, 600)}) async {
+    _tester.view.physicalSize = size;
     _tester.view.devicePixelRatio = 1.0;
     addTearDown(_tester.view.reset);
     await _tester.pumpWidget(
