@@ -40,6 +40,94 @@ void main() {
     expect(output, isNot(contains('\x1b[?2026h')));
     expect(output, isNot(contains('\x1b[?2026l')));
   });
+
+  // ── CellRenderer synchronized output — issue #274 (AC2) ───────────────────
+
+  test('CellRenderer wraps painted frames in BSU…ESU when enabled', () {
+    final buf = StringBuffer();
+    final sink = _StringSink(buf);
+    final renderer = CellRenderer(
+      output: sink,
+      logSink: null,
+      defaultAltScreen: false,
+      defaultHideCursor: false,
+    );
+    renderer.setSyncUpdates(true);
+    renderer.render(newView('hello'));
+    final output = buf.toString();
+    expect(output, endsWith('\x1b[?2026l'));
+    // One-time mode setup may precede the frame; the paint itself sits
+    // inside the atomic region.
+    expect(
+      output.indexOf('\x1b[?2026h'),
+      lessThan(output.indexOf('\x1b[1;1H\x1b[K')),
+    );
+    expect(
+      output.lastIndexOf('\x1b[?2026l'),
+      greaterThan(output.lastIndexOf('hello')),
+    );
+    // Exactly one pair per frame.
+    expect('?2026h'.allMatches(output).length, 1);
+    expect('?2026l'.allMatches(output).length, 1);
+  });
+
+  test('CellRenderer scroll frames are wrapped atomically too', () {
+    final buf = StringBuffer();
+    final sink = _StringSink(buf);
+    final renderer = CellRenderer(
+      output: sink,
+      logSink: null,
+      defaultAltScreen: false,
+      defaultHideCursor: false,
+    );
+    renderer.setSyncUpdates(true);
+    final prev = [for (var i = 0; i < 10; i++) 'row-$i'].join('\n');
+    final next = [for (var i = 1; i <= 10; i++) 'row-$i'].join('\n');
+    renderer.render(newView(prev));
+    buf.clear();
+    renderer.render(newView(next));
+    final output = buf.toString();
+    expect(output, startsWith('\x1b[?2026h\x1b[1S'));
+    expect(output, endsWith('\x1b[?2026l'));
+  });
+
+  test('CellRenderer idle frames emit zero bytes even with sync enabled', () {
+    final buf = StringBuffer();
+    final sink = _StringSink(buf);
+    final renderer = CellRenderer(
+      output: sink,
+      logSink: null,
+      defaultAltScreen: false,
+      defaultHideCursor: false,
+    );
+    renderer.setSyncUpdates(true);
+    renderer.render(newView('hello'));
+    buf.clear();
+    renderer.render(newView('hello'));
+    expect(buf.toString(), '');
+  });
+
+  test('CellRenderer sync OFF is byte-identical to the legacy writes', () {
+    // The same two frames as the ON case: with capability off the stream
+    // carries no 2026 bytes and the painted bytes are unchanged.
+    final offBuf = StringBuffer();
+    final off = CellRenderer(
+      output: _StringSink(offBuf),
+      logSink: null,
+      defaultAltScreen: false,
+      defaultHideCursor: false,
+    );
+    off.render(newView('hello'));
+    offBuf.clear();
+    off.render(newView('hellX'));
+    final legacy = offBuf.toString();
+    expect(legacy, '\x1b[1;5HX');
+    expect(legacy, isNot(contains('?2026')));
+  });
+}
+
+extension on String {
+  int allMatches(String s) => RegExp(escape(this)).allMatches(s).length;
 }
 
 class _StringSink implements IOSink {

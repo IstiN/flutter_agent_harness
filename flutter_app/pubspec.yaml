@@ -182,6 +182,9 @@ dependency_overrides:
   flutter_agent_memory: ^0.2.1
   fa_llm:
     path: ../packages/fa_llm
+  # Same as the root pubspec_overrides.yaml: the vendored patched fork is
+  # the renderer the real CLI runs; cli_visual tests compile its sources.
+  # (composer fa_tui needs LineEditor, which the hosted 2.x predates.)
   dart_tui:
     path: ../vendor/dart_tui
   wasm_run:

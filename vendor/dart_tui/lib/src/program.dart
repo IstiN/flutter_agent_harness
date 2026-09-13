@@ -50,6 +50,15 @@ ProgramOption withoutSignalHandler() => (p) => p._disableSignalHandler = true;
 ProgramOption withoutCatchPanics() => (p) => p._disableCatchPanics = true;
 ProgramOption withoutRenderer() => (p) => p._disableRenderer = true;
 ProgramOption withCellRenderer() => (p) => p._useCellRenderer = true;
+
+/// Forces DEC 2026 synchronized output (BSU/ESU around every painted frame)
+/// without waiting for the terminal's DECRQM answer. For emulators that
+/// support ?2026 but not the query, and for tests; unset, detection rules.
+ProgramOption withSyncUpdates() => (p) => p._forceSyncUpdates = true;
+
+/// Forbids synchronized output even when the terminal reports ?2026
+/// support — the deterministic fallback path (`FA_TUI_SYNC=0`).
+ProgramOption withoutSyncUpdates() => (p) => p._blockSyncUpdates = true;
 ProgramOption withFilter(Msg? Function(Model model, Msg msg) filter) =>
     (p) => p._filter = filter;
 
@@ -108,11 +117,15 @@ final class Program {
   int _fps = 60;
   int? _width;
   int? _height;
+  int? _lastCols;
+  int? _lastRows;
   bool _disableInput = false;
   bool _disableRenderer = false;
   bool _disableCatchPanics = false;
   bool _disableSignalHandler = false;
   bool _useCellRenderer = false;
+  bool _forceSyncUpdates = false;
+  bool _blockSyncUpdates = false;
   FrameTracer? _tracer;
 
   bool _altScreen = false;
@@ -487,7 +500,8 @@ final class Program {
 
       if (msg is ModeReportMsg &&
           msg.mode == 2026 &&
-          (msg.value == 1 || msg.value == 2)) {
+          (msg.value == 1 || msg.value == 2) &&
+          !_blockSyncUpdates) {
         _renderer?.setSyncUpdates(true);
       }
       if (msg is ModeReportMsg &&
@@ -495,6 +509,17 @@ final class Program {
           (msg.value == 1 || msg.value == 2 || msg.value == 3)) {
         _unicodeCoreSupported = true;
         _renderer?.setUnicodeCore(true);
+      }
+      if (msg is WindowSizeMsg &&
+          (msg.width != _lastCols || msg.height != _lastRows)) {
+        // Geometry changed: drop every cached frame assumption so the next
+        // paint is ONE full repaint and the diff resumes from the new size
+        // (issue #274 MAJOR2 — a shrink can no longer walk stale rows into
+        // the clamped bottom row). The message still reaches model.update
+        // below so models can re-layout.
+        _lastCols = msg.width;
+        _lastRows = msg.height;
+        _renderer?.invalidate();
       }
       if (msg is MouseMsg) {
         final onMouse = lastRenderedView?.onMouse;
@@ -551,6 +576,7 @@ final class Program {
                   defaultMouseMode: _defaultMouseMode,
                   defaultReportFocus: _defaultReportFocus,
                 );
+      if (_forceSyncUpdates) _renderer?.setSyncUpdates(true);
       if (!_disableRenderer) {
         _setRawMode(true);
       }
