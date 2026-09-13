@@ -42,6 +42,9 @@ final _transientNetworkPatterns = [
   RegExp(r'host is (down|unreachable)', caseSensitive: false),
   RegExp(r'software caused connection abort', caseSensitive: false),
   RegExp(r'handshake ?exception', caseSensitive: false),
+  // Truncation class (issue #312): a stream that closes without a
+  // finish_reason and without content is a cut transport.
+  RegExp(r'stream ended without finish_reason'),
 ];
 
 /// Whether [message] is a transient socket-level failure worth replaying.
@@ -228,8 +231,14 @@ Future<_AttemptOutcome> _runAttempt(
         out.push(event);
         return const _Forwarded();
       case ErrorEvent():
-        if (event.reason == StopReason.error &&
-            isTransientNetworkError(event.error)) {
+        // Issue #312: a wire finish_reason carries the structured verdict —
+        // terminal (content_filter family) never retries, transient and
+        // unknown vendor words do; without one the text nets decide.
+        final retryClass = finishReasonRetryClass(event.error);
+        final transient = retryClass != null
+            ? retryClass != FinishReasonClass.terminal
+            : isTransientNetworkError(event.error);
+        if (event.reason == StopReason.error && transient) {
           // Not forwarded: the buffer is discarded and the call retries.
           return _TransientFailure(event.error);
         }

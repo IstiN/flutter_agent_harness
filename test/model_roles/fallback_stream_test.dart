@@ -15,6 +15,7 @@ AssistantMessage _msg(
   String text = '',
   StopReason stop = StopReason.stop,
   String? error,
+  String? raw,
 }) {
   return AssistantMessage(
     content: text.isEmpty ? const [] : [TextContent(text: text)],
@@ -24,6 +25,7 @@ AssistantMessage _msg(
     usage: Usage.zero,
     stopReason: stop,
     errorMessage: error,
+    rawStopReason: raw,
     timestamp: DateTime.utc(2026),
   );
 }
@@ -687,6 +689,93 @@ void main() {
           expect(notices, isEmpty);
         },
       );
+    });
+
+    group('finish_reason classification (issue #312)', () {
+      List<AssistantMessageEvent> finishTurn(
+        Model model, {
+        required String raw,
+      }) {
+        final partial = _msg(model);
+        return [
+          StartEvent(partial: partial),
+          ErrorEvent(
+            reason: StopReason.error,
+            error: _msg(
+              model,
+              stop: StopReason.error,
+              error: 'Provider finish_reason: $raw',
+              raw: raw,
+            ),
+          ),
+        ];
+      }
+
+      test(
+        'an unknown vendor finish_reason retries the entry in place',
+        () async {
+          final a = _model('openai', 'gpt-a');
+          final probe = _Probe({
+            'v-a': [
+              finishTurn(a, raw: 'unexpected_state'),
+              _okTurn(a, 'second try'),
+            ],
+          });
+          final w = wrapper([
+            entry(probe, a, ['v-a']),
+          ]);
+
+          final events = await run(w);
+
+          expect(events, [
+            'start:${a.id}',
+            'textStart',
+            'delta:second try',
+            'done:${a.id}',
+          ]);
+          expect(probe.calls, ['v-a', 'v-a']);
+          expect(notices.single.kind, FallbackNoticeKind.transportRetry);
+        },
+      );
+
+      test('a TERMINAL finish_reason is forwarded without any retry', () async {
+        final a = _model('openai', 'gpt-a');
+        final probe = _Probe({
+          'v-a': [finishTurn(a, raw: 'content_filter')],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ]);
+
+        final events = await run(w);
+
+        expect(probe.calls, ['v-a'], reason: 'retrying a filter is unsafe');
+        expect(events, [
+          'start:${a.id}',
+          'error(error):${a.id}:Provider finish_reason: content_filter',
+        ]);
+        expect(notices, isEmpty);
+      });
+
+      test('a provider failing every call fails over to the next entry '
+          '(E2)', () async {
+        final a = _model('openai', 'gpt-a');
+        final b = _model('anthropic', 'claude-b');
+        final probe = _Probe({
+          'v-a': [finishTurn(a, raw: 'unexpected_state')],
+          'v-b': [_okTurn(b, 'hello from b')],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+          entry(probe, b, ['v-b']),
+        ], policy: const ModelRolesRetryPolicy(retriesPerEntry: 0));
+
+        final events = await run(w);
+
+        expect(events.last, 'done:${b.id}');
+        expect(probe.calls, ['v-a', 'v-b']);
+        expect(notices.single.kind, FallbackNoticeKind.modelFallback);
+      });
     });
   });
 

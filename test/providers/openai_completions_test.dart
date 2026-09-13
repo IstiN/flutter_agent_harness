@@ -1078,6 +1078,213 @@ void main() {
       },
     );
 
+    group('finish_reason classification (issue #312)', () {
+      late Future<bool> Function(Duration, CancelToken?) savedSleeper;
+      late void Function(String)? savedUnknownHook;
+
+      setUp(() {
+        savedSleeper = transientRetrySleeper;
+        savedUnknownHook = onUnknownFinishReason;
+        transientRetrySleeper = (delay, token) async => true;
+        onUnknownFinishReason = null;
+      });
+      tearDown(() {
+        transientRetrySleeper = savedSleeper;
+        onUnknownFinishReason = savedUnknownHook;
+      });
+
+      /// Streams the adapter through the #290 retry wrapper — the wrap the
+      /// provider catalog applies to every real call.
+      AssistantMessageEventStream wrappedCall(http.Client client) {
+        return transientRetryStreamFunction(
+          (model, context, {cancelToken}) => streamOpenAICompletions(
+            model,
+            context,
+            const OpenAICompletionsOptions(apiKey: 'test-key'),
+            client,
+          ),
+        )(testModel, simpleContext());
+      }
+
+      const unexpectedStateSse =
+          'data: {"id":"chatcmpl-1","choices":[{"delta":{},'
+          '"finish_reason":"unexpected_state"}]}\n\n'
+          'data: [DONE]\n\n';
+
+      test('AC1: unexpected_state retries in place, turn completes', () async {
+        // Verbatim incident shape (pr_review session, k3-256k): the Kimi
+        // gateway ends the stream with its vendor transient word.
+        var calls = 0;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          calls++;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(calls == 1 ? unexpectedStateSse : okSse)),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+
+        final message = await wrappedCall(client).result;
+
+        expect(calls, 2, reason: 'a transient finish_reason replays');
+        expect(message.stopReason, StopReason.stop);
+        expect(message.content.whereType<TextContent>().single.text, 'ok');
+      });
+
+      test(
+        'AC2: network_error finish_reason gets the same treatment',
+        () async {
+          const networkErrorSse =
+              'data: {"id":"chatcmpl-1","choices":[{"delta":{},'
+              '"finish_reason":"network_error"}]}\n\n'
+              'data: [DONE]\n\n';
+          var calls = 0;
+          final client = http_testing.MockClient.streaming((
+            request,
+            body,
+          ) async {
+            calls++;
+            return http.StreamedResponse(
+              Stream.value(utf8.encode(calls == 1 ? networkErrorSse : okSse)),
+              200,
+              headers: {'content-type': 'text/event-stream'},
+            );
+          });
+
+          final message = await wrappedCall(client).result;
+
+          expect(calls, 2);
+          expect(message.stopReason, StopReason.stop);
+        },
+      );
+
+      test('AC2: a stream cut without finish_reason (nothing committed) '
+          'is transport and replays', () async {
+        const cutSse =
+            'data: {"id":"chatcmpl-1","choices":[{"delta":{}}]}\n\n'
+            'data: [DONE]\n\n';
+        var calls = 0;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          calls++;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(calls == 1 ? cutSse : okSse)),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+
+        final message = await wrappedCall(client).result;
+
+        expect(calls, 2, reason: 'a cut stream is transport, not a stop');
+        expect(message.stopReason, StopReason.stop);
+        expect(message.content.whereType<TextContent>().single.text, 'ok');
+      });
+
+      test('AC3: content_filter stays terminal — zero retries, partial '
+          'text preserved', () async {
+        const contentFilterSse =
+            'data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"par'
+            'tial"}}]}\n\n'
+            'data: {"id":"chatcmpl-1","choices":[{"delta":{},'
+            '"finish_reason":"content_filter"}]}\n\n'
+            'data: [DONE]\n\n';
+        var calls = 0;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          calls++;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(contentFilterSse)),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+
+        final events = await wrappedCall(client).toList();
+        final error = events.last as ErrorEvent;
+
+        expect(calls, 1, reason: 'retrying a filter is a safety bug');
+        expect(error.reason, StopReason.error);
+        expect(
+          error.error.content.whereType<TextContent>().single.text,
+          'partial',
+        );
+      });
+
+      test('AC4: an unknown vendor reason defaults transient and is '
+          'loud-logged', () async {
+        const unknownSse =
+            'data: {"id":"chatcmpl-1","choices":[{"delta":{},'
+            '"finish_reason":"upstream_restarted"}]}\n\n'
+            'data: [DONE]\n\n';
+        var calls = 0;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          calls++;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(calls == 1 ? unknownSse : okSse)),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+        final logged = <String>[];
+        onUnknownFinishReason = logged.add;
+
+        final message = await wrappedCall(client).result;
+
+        expect(calls, 2, reason: 'unknown words degrade to transient');
+        expect(message.stopReason, StopReason.stop);
+        expect(logged, ['upstream_restarted']);
+      });
+
+      test('AC5: exhaustion surfaces the verbatim reason after the full '
+          'budget', () async {
+        var calls = 0;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          calls++;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(unexpectedStateSse)),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+
+        final message = await wrappedCall(client).result;
+
+        expect(calls, 3, reason: 'the default attempt budget');
+        expect(message.stopReason, StopReason.error);
+        expect(message.errorMessage, contains('unexpected_state'));
+      });
+
+      test(
+        'E1: unexpected_state after partial text is never replayed',
+        () async {
+          const postContentSse =
+              'data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"par'
+              'tial"}}]}\n\n'
+              'data: {"id":"chatcmpl-1","choices":[{"delta":{},'
+              '"finish_reason":"unexpected_state"}]}\n\n'
+              'data: [DONE]\n\n';
+          var calls = 0;
+          final client = http_testing.MockClient.streaming((
+            request,
+            body,
+          ) async {
+            calls++;
+            return http.StreamedResponse(
+              Stream.value(utf8.encode(postContentSse)),
+              200,
+              headers: {'content-type': 'text/event-stream'},
+            );
+          });
+
+          final events = await wrappedCall(client).toList();
+          final error = events.last as ErrorEvent;
+
+          expect(calls, 1, reason: 'a replay would duplicate the transcript');
+          expect(error.reason, StopReason.error);
+          expect(error.error.rawStopReason, 'unexpected_state');
+        },
+      );
+    });
+
     test(
       'CancelToken abort mid-stream ends with aborted stop reason',
       () async {

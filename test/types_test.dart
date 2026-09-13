@@ -202,4 +202,66 @@ void main() {
       expect(end.partial, same(partial));
     });
   });
+
+  group('classifyFinishReason (issue #312)', () {
+    test('vendor-tagged table sorts transient, terminal, unknown', () {
+      expect(
+        classifyFinishReason('network_error'),
+        FinishReasonClass.transient,
+      );
+      expect(
+        classifyFinishReason('unexpected_state'),
+        FinishReasonClass.transient,
+      );
+      expect(
+        classifyFinishReason('content_filter'),
+        FinishReasonClass.terminal,
+      );
+      expect(
+        classifyFinishReason('content_policy_violation'),
+        FinishReasonClass.terminal,
+      );
+      expect(classifyFinishReason('refusal'), FinishReasonClass.terminal);
+      // Unknown vendor words default transient (loud-logged elsewhere) —
+      // the terminal-by-default was the #312 bug.
+      expect(
+        classifyFinishReason('upstream_restarted'),
+        FinishReasonClass.unknown,
+      );
+      expect(
+        classifyFinishReason('Unexpected_State'),
+        FinishReasonClass.transient,
+      );
+    });
+
+    test('finishReasonRetryClass reads the wire verdict off the message', () {
+      AssistantMessage withRaw(
+        String? raw, {
+        StopReason stop = StopReason.error,
+      }) => AssistantMessage(
+        content: const [],
+        api: 'test-api',
+        provider: 'test-provider',
+        model: 'test-model',
+        usage: Usage.zero,
+        stopReason: stop,
+        rawStopReason: raw,
+        timestamp: DateTime.utc(2026),
+      );
+      expect(
+        finishReasonRetryClass(withRaw('unexpected_state')),
+        FinishReasonClass.transient,
+      );
+      expect(
+        finishReasonRetryClass(withRaw('content_filter')),
+        FinishReasonClass.terminal,
+      );
+      expect(finishReasonRetryClass(withRaw(null)), isNull);
+      expect(
+        finishReasonRetryClass(withRaw('stop', stop: StopReason.stop)),
+        isNull,
+        reason: 'only error stops carry a retry verdict',
+      );
+    });
+  });
 }
