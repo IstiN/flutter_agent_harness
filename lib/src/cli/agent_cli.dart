@@ -465,6 +465,7 @@ class AgentCli {
       // lands in fa.log with the session id.
       onRunIdleTimeout: (error) =>
           _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
+      contextWindowCap: config.contextWindowCap,
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
@@ -2440,6 +2441,17 @@ class AgentCli {
   /// resume budget (see [_overWindowAutoResumed]) plus pre-flight
   /// compaction of an already-over-window transcript.
   Future<void> _beginUserPrompt({required bool isAutoContinue}) async {
+    // Wall-clock catch-up (issue #259): records that came due while the
+    // host slept (or while no tick ran) are delivered HERE, at turn start —
+    // awaited before the prompt so this turn's first steering poll already
+    // sees the fired reminder, instead of waiting for the next timer tick.
+    try {
+      if (await _scheduledMessages.deliverDue() > 0) {
+        unawaited(_pushScheduledStatus());
+      }
+    } on Object {
+      // Best-effort: a broken sweep must never block a turn.
+    }
     if (isAutoContinue) return;
     _overWindowAutoResumed = false;
     // Pre-flight context guard: when the LIVE context already exceeds the
@@ -2724,7 +2736,7 @@ class AgentCli {
   CompactionSettings get _effectiveCompactionSettings {
     final override = config.compactionSettings;
     if (override != null) return override;
-    return CompactionSettings.forWindow(_agent.state.model.contextWindow);
+    return CompactionSettings.forWindow(_effectiveContextWindow);
   }
 
   /// Writes a diagnostic line to the log file (`~/.fah/logs/fa.log`).

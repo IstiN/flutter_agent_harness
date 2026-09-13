@@ -174,7 +174,11 @@ void main() {
 
       expect(calls, 3, reason: 'the full budget burned');
       expect(message.stopReason, StopReason.error);
-      expect(message.errorMessage, 'Connection reset by peer');
+      expect(
+        message.errorMessage,
+        startsWith('Provider call failed after 3 attempt(s)'),
+      );
+      expect(message.errorMessage, contains('Connection reset by peer'));
     });
 
     test('a failure AFTER content is never replayed (observable-output '
@@ -283,5 +287,225 @@ void main() {
       expect(calls, 3);
       expect(stream, isNotNull);
     });
+  });
+  group('issue #290 — gateway 5xx coverage (the retry-free hole)', () {
+    const incidentError =
+        '500: Internal network failure, error id: '
+        '20260913154946260720382f38417e, please try again later.';
+    AssistantMessage errorMsg(String text) => AssistantMessage(
+      content: const [],
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      usage: Usage.zero,
+      stopReason: StopReason.error,
+      errorMessage: text,
+      timestamp: DateTime.utc(2026),
+    );
+
+    AssistantMessageEventStream failWith(String text) {
+      final stream = AssistantMessageEventStream();
+      scheduleMicrotask(() {
+        stream.push(
+          ErrorEvent(reason: StopReason.error, error: errorMsg(text)),
+        );
+        stream.end();
+      });
+      return stream;
+    }
+
+    test('classifies the verbatim incident 500 and the 5xx family', () {
+      expect(
+        isTransientNetworkError(errorMsg(incidentError)),
+        isTrue,
+        reason: 'the incident wording must ride the wrapper',
+      );
+      expect(isTransientNetworkError(errorMsg('502: Bad Gateway')), isTrue);
+      expect(
+        isTransientNetworkError(errorMsg('503 Service Unavailable')),
+        isTrue,
+      );
+      expect(
+        isTransientNetworkError(errorMsg('504: Gateway time-out')),
+        isTrue,
+      );
+      expect(
+        isTransientNetworkError(errorMsg('500: internal server error')),
+        isTrue,
+      );
+    });
+
+    test(
+      'still rejects rate limits, overflow, auth, watchdog wording (AC6)',
+      () {
+        expect(
+          isTransientNetworkError(
+            errorMsg('429: rate limit exceeded, please try again later'),
+          ),
+          isFalse,
+          reason: '429 owns its rotation policy — never in-place retried here',
+        );
+        expect(
+          isTransientNetworkError(
+            errorMsg('Resource has been exhausted (quota)'),
+          ),
+          isFalse,
+        );
+        expect(
+          isTransientNetworkError(errorMsg('context length exceeded')),
+          isFalse,
+        );
+        expect(isTransientNetworkError(errorMsg('401 unauthorized')), isFalse);
+        expect(
+          isTransientNetworkError(
+            errorMsg(
+              'no events from the endpoint for 300s (stream idle timeout)',
+            ),
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'verbatim incident 500 is retried and the turn completes (AC1)',
+      () async {
+        var calls = 0;
+        final delays = <Duration>[];
+        transientRetrySleeper = (delay, token) async {
+          delays.add(delay);
+          return true;
+        };
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          if (calls == 1) return failWith(incidentError);
+          return FakeStreamFunction([
+            textTurn('recovered'),
+          ]).call(model, context, cancelToken: cancelToken);
+        });
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        expect(
+          calls,
+          2,
+          reason: 'the gateway 500 must be replayed, not surfaced',
+        );
+        expect(message.stopReason, StopReason.stop);
+        expect(
+          message.content.whereType<TextContent>().single.text,
+          'recovered',
+        );
+        expect(delays, [const Duration(seconds: 5)]);
+      },
+    );
+
+    test(
+      'exhausted budget tells the retry story, not a raw dump (AC2)',
+      () async {
+        final wrapped = transientRetryStreamFunction(
+          (model, context, {cancelToken}) => failWith(incidentError),
+          maxAttempts: 2,
+          delay: const Duration(milliseconds: 10),
+        );
+
+        final message = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).result;
+
+        expect(message.stopReason, StopReason.error);
+        // Snapshot: attempts + elapsed + per-attempt reasons; the raw provider
+        // line is only evidence inside the story, never the headline.
+        expect(
+          message.errorMessage,
+          startsWith(
+            'Provider call failed after 2 attempt(s) over <1s — the endpoint '
+            'kept failing. Attempts: ${incidentError.substring(0, incidentError.length - 1)}; '
+            '${incidentError.substring(0, incidentError.length - 1)}. Check '
+            'the provider status or try again later.',
+          ),
+        );
+      },
+    );
+
+    test(
+      'post-commit 500 is a clean mid-answer error, never replayed (AC4)',
+      () async {
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            final partial = AssistantMessage(
+              content: const [TextContent(text: 'partial')],
+              api: 'test-api',
+              provider: 'test-provider',
+              model: 'test-model',
+              usage: Usage.zero,
+              stopReason: StopReason.stop,
+              timestamp: DateTime.utc(2026),
+            );
+            stream
+              ..push(
+                TextDeltaEvent(
+                  delta: 'partial',
+                  contentIndex: 0,
+                  partial: partial,
+                ),
+              )
+              ..push(
+                ErrorEvent(
+                  reason: StopReason.error,
+                  error: AssistantMessage(
+                    content: const [],
+                    api: 'test-api',
+                    provider: 'test-provider',
+                    model: 'test-model',
+                    usage: Usage.zero,
+                    stopReason: StopReason.error,
+                    errorMessage: incidentError,
+                    timestamp: DateTime.utc(2026),
+                  ),
+                ),
+              );
+            stream.end();
+          });
+          return stream;
+        });
+
+        final events = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).toList();
+
+        expect(
+          calls,
+          1,
+          reason: 'output committed — a replay would duplicate it',
+        );
+        expect(events.whereType<TextDeltaEvent>(), hasLength(1));
+        final terminal = events.whereType<ErrorEvent>().single;
+        expect(
+          terminal.error.errorMessage,
+          startsWith('Provider failed mid-answer'),
+        );
+        expect(
+          terminal.error.errorMessage,
+          contains('Internal network failure'),
+        );
+      },
+    );
   });
 }

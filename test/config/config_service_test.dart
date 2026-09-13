@@ -654,6 +654,34 @@ void main() {
       );
     });
 
+    test('agent rejects unknown keys, non-ints and sub-reserve caps '
+        '(issue #273)', () async {
+      await env.writeFile(_globalConfig, 'agent:\n  bogus: 1\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('unknown "agent" key: bogus'),
+      );
+      await env.writeFile(_globalConfig, 'agent:\n  contextWindowCap: big\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('must be a positive integer'),
+      );
+      await env.writeFile(_globalConfig, 'agent:\n  contextWindowCap: 16383\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('at least 16384'),
+      );
+    });
+
+    test('a valid agent section passes clean (issue #273)', () async {
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\nagent:\n  contextWindowCap: 256000\n',
+      );
+      final report = await checkOrThrow(service);
+      expect(report.warnings, isEmpty);
+    });
+
     test('images must be a map (issue #195 F1)', () async {
       await env.writeFile(_globalConfig, 'images: [a, b]\n');
       expect(
@@ -700,6 +728,14 @@ void main() {
       final bad = loadYaml('skills:\n  access: sometimes\n') as YamlMap;
       expect(() => CliConfig.fromYaml(bad), throwsConfigException);
       final good = loadYaml('skills:\n  access: ask\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(good), returnsNormally);
+    });
+
+    test('agent validation agrees with CliConfig.fromYaml (issue #273)', () {
+      final bad = loadYaml('agent:\n  contextWindowCap: 16383\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(bad), throwsConfigException);
+      final good =
+          loadYaml('agent:\n  contextWindowCap: 256000\n') as YamlMap;
       expect(() => CliConfig.fromYaml(good), returnsNormally);
     });
   });

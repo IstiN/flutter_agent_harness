@@ -859,4 +859,92 @@ void main() {
       );
     });
   });
+  group('bulk backfill (issue #262)', () {
+    /// Deterministic chained script: [turns] turns of user + assistant
+    /// (thinking + 2 calls + text) + 2 tool results = 4 records per turn.
+    List<SessionRecord> bulkRecords(int turns) {
+      final records = <SessionRecord>[
+        _userRecord('rec-u0', text: 'boot'),
+      ];
+      var prev = records.first;
+      for (var t = 1; t <= turns; t++) {
+        final user = _userRecord(
+          'rec-$t-u',
+          parentId: prev.id,
+          text: 'question $t',
+        );
+        final assistant = _assistantRecord(
+          'rec-$t-a',
+          parentId: user.id,
+          content: [
+            ThinkingContent(thinking: 'thought $t'),
+            ToolCall(id: 'rec-$t-c1', name: 'read', arguments: {}),
+            ToolCall(id: 'rec-$t-c2', name: 'bash', arguments: {}),
+            TextContent(text: 'answer $t'),
+          ],
+        );
+        MessageRecord result(int n, String parentId) => MessageRecord(
+          id: 'rec-$t-r$n',
+          parentId: parentId,
+          timestamp: _at(t * 10 + n),
+          message: ToolResultMessage(
+            toolCallId: 'rec-$t-c$n',
+            toolName: 'read',
+            content: [TextContent(text: 'out $n')],
+            isError: false,
+            timestamp: _at(t * 10 + n),
+          ),
+        );
+        final r1 = result(1, assistant.id);
+        final r2 = result(2, r1.id);
+        records.addAll([user, assistant, r1, r2]);
+        prev = r2;
+      }
+      return records;
+    }
+
+    test('appendAll emits exactly ONE snapshot over a 30k-record backfill', () {
+      final builder = TrajectorySnapshotBuilder();
+      final snapshot = builder.appendAll(bulkRecords(7500)); // 30 001.
+      expect(builder.snapshotsBuilt, 1);
+      expect(snapshot.records, hasLength(30001));
+    });
+
+    test('bulk projection equals the final per-append snapshot', () {
+      final records = bulkRecords(50);
+      final bulkSnapshot = TrajectorySnapshotBuilder().appendAll(records);
+      final liveBuilder = TrajectorySnapshotBuilder();
+      TrajectorySnapshot liveSnapshot = liveBuilder.append(records.first);
+      for (final record in records.skip(1)) {
+        liveSnapshot = liveBuilder.append(record);
+      }
+      expect(bulkSnapshot.records, hasLength(liveSnapshot.records.length));
+      expect(bulkSnapshot.revision, liveSnapshot.revision);
+      expect(
+        [for (final r in bulkSnapshot.records) r.recordId],
+        [for (final r in liveSnapshot.records) r.recordId],
+      );
+      expect(bulkSnapshot.requests.length, liveSnapshot.requests.length);
+    });
+    test('30k-record bulk load stays within the open budget', () {
+      final records = bulkRecords(7500);
+      final builder = TrajectorySnapshotBuilder();
+      final sw = Stopwatch()..start();
+      builder.appendAll(records);
+      expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
+      expect(builder.snapshotsBuilt, 1);
+    });
+
+    test('scaling 30k to 60k records is near-linear, not quadratic', () {
+      TrajectorySnapshotBuilder().appendAll(bulkRecords(100)); // JIT warmup.
+      final sw30 = Stopwatch()..start();
+      TrajectorySnapshotBuilder().appendAll(bulkRecords(7500));
+      sw30.stop();
+      final sw60 = Stopwatch()..start();
+      TrajectorySnapshotBuilder().appendAll(bulkRecords(15000));
+      sw60.stop();
+      final ratio = sw60.elapsedMicroseconds / sw30.elapsedMicroseconds;
+      expect(ratio, lessThan(3.0));
+    });
+  });
 }

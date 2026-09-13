@@ -2,6 +2,19 @@
 
 ## 0.1.358
 
+- fix(259): sleep-resilient scheduled wake-ups for `schedule_message`.
+  All due-time math in `ScheduledMessageQueue` now rides an injectable
+  wall clock (`clock:`), long waits are split into ≤60s timer legs that
+  recompute the remaining delay from the wall clock on every fire (no
+  duration-drift accumulation across OS sleep), and both hosts run a
+  wall-clock catch-up sweep at every turn start (CLI `_beginUserPrompt`,
+  app `sendText`) on top of the existing idle inbox-tick sweeps — the
+  first post-sleep turn delivers every overdue record immediately.
+  Catch-up is exactly-once per record (no replay of missed cycles);
+  recurring self-re-arming cycles resume from "now" after a clock jump.
+  Docs (AGENTS.md messaging section) describe an optional external
+  cron/launchd pinger for delivery during lid sleep.
+
 
 - fix(hub): boot online from the persisted DAP credential — with no
   `DAP_MASTER_SECRET`/`DAP_CLIENT_SECRET` in the environment, the CLI now
@@ -3467,6 +3480,17 @@
 - test: fix the flutter_app 3.47.4 macOS fallout that #248 did not cover — #233 (3 commits) (#251)
 - fix(147): emit fully-qualified task ids into the harbor matrix (#263)
 - fix(147): default CPU shards to Modal — the runner mac has no docker (#258)
+
+## 0.1.369
+
+- feat(app): pin-only widget publish PRs — retire per-widget submodules app-side (#232) (#268)
+- fix(147): CA roots in task images, honest summary verdicts, gpu-tagged job names (#272)
+- fix(147): CA roots in task images, honest summary verdicts, gpu-tagged job names (#272)
+- fix(app): device-code connect — no unconsented auto-open, transient poll retries, lifecycle-aware polling (#229) (#269)
+- feat(messaging): wall-clock catch-up for scheduled wake-ups (#259) (#265)
+- ci: shard fa_ui tests ×3 + cap the 220s virtualisation soak (#283) (#285)
+- ci(daily-publish): pin Flutter 3.47.x in the macOS/iOS legs — drop reliance on runner-local SDKs (#260, #261) (#281)
+- fix(cli): TUI scheduled countdown ticks on the minute boundary while idle (#213) (#264)
 
 ## Unreleased
 

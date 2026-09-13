@@ -110,6 +110,7 @@ def main() -> int:
         {
             "i": i,
             "env": args.cpu_env,
+            "kind": "cpu",
             "tasks": " ".join(args.task_prefix + t for t in chunk),
         }
         for i, chunk in enumerate(_chunk(cpu, args.shards))
@@ -120,6 +121,7 @@ def main() -> int:
             {
                 "i": len(include),
                 "env": "modal",
+                "kind": "gpu",
                 "tasks": " ".join(args.task_prefix + t for t in gpu),
             }
         )

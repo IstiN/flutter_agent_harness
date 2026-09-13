@@ -118,7 +118,8 @@ class GithubConnectSheet extends StatefulWidget {
   State<GithubConnectSheet> createState() => _GithubConnectSheetState();
 }
 
-class _GithubConnectSheetState extends State<GithubConnectSheet> {
+class _GithubConnectSheetState extends State<GithubConnectSheet>
+    with WidgetsBindingObserver {
   final _tokenController = TextEditingController();
 
   /// The resolved device-flow client id; set in [didChangeDependencies]
@@ -153,6 +154,54 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
   bool _cancelled = false;
 
   CopilotDeviceGrant? _grant;
+
+  /// The latest device-flow status line (waiting / retrying — issue
+  /// #229): transient poll failures render here as status text, never as
+  /// the flow's error verdict.
+  String? _deviceStatus;
+
+  /// Issue #229: the device-flow poll suspends while the app is
+  /// backgrounded (iOS suspends networking, so requests would only fail)
+  /// and resumes with the SAME grant on foreground.
+  bool _appPaused = false;
+
+  /// Waiters parked inside [_devicePollDelay] while the app is paused;
+  /// completed on resume (a single poll loop — background/foreground
+  /// flapping can never spawn overlapping loops).
+  final List<Completer<void>> _resumeWaiters = [];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final paused = state != AppLifecycleState.resumed;
+    if (paused == _appPaused) return;
+    _appPaused = paused;
+    if (!paused) {
+      for (final waiter in _resumeWaiters) {
+        if (!waiter.isCompleted) waiter.complete();
+      }
+      _resumeWaiters.clear();
+    }
+  }
+
+  /// The device-flow poll delay: waits [delay], then holds while the app
+  /// is backgrounded so no request burns (and fails) while suspended.
+  /// If the background outlasted the grant, the next poll reports
+  /// `expired` cleanly.
+  Future<void> _devicePollDelay(Duration delay) async {
+    await Future<void>.delayed(delay);
+    while (_appPaused && !_cancelled) {
+      final waiter = Completer<void>();
+      _resumeWaiters.add(waiter);
+      await waiter.future;
+      _resumeWaiters.remove(waiter);
+    }
+  }
 
   /// The web-flow (Browser tab) client id; '' = no owned OAuth App, the
   /// tab stays hidden. Resolved alongside the device id.
@@ -223,6 +272,13 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
   @override
   void dispose() {
     _cancelled = true;
+    WidgetsBinding.instance.removeObserver(this);
+    // Unblock a poll delay parked on the resume wait so the loop can see
+    // _cancelled and unwind.
+    for (final waiter in _resumeWaiters) {
+      if (!waiter.isCompleted) waiter.complete();
+    }
+    _resumeWaiters.clear();
     _tokenController.dispose();
     _webCodeController.dispose();
     super.dispose();
@@ -321,6 +377,7 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
       _busy = true;
       _error = null;
       _grant = null;
+      _deviceStatus = null;
     });
     try {
       final grant = await requestCopilotDeviceGrant(
@@ -330,16 +387,18 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
       );
       if (_cancelled) return;
       setState(() => _grant = grant);
-      unawaited(
-        url_launcher.launchUrl(
-          Uri.parse(grant.verificationUri),
-          mode: url_launcher.LaunchMode.externalApplication,
-        ),
-      );
+      // Issue #229: NO automatic browser launch here — copy-first UX:
+      // the code is prominent, the copy button and the manual open
+      // button (below) stay the explicit actions. An unconsented launch
+      // also backgrounds the app, which used to kill the poll.
       final token = await pollCopilotDeviceGrant(
         grant: grant,
         clientId: _deviceClientId!,
-        delay: Future<void>.delayed,
+        delay: _devicePollDelay,
+        onStatus: (status) {
+          if (_cancelled || !mounted) return;
+          setState(() => _deviceStatus = status);
+        },
         client: widget.httpClient,
       );
       if (_cancelled) return;
@@ -353,11 +412,13 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
           _tab = _ConnectTab.token;
           _busy = false;
           _error = error.message;
+          _deviceStatus = null;
         });
       } else {
         setState(() {
           _busy = false;
           _error = error.message;
+          _deviceStatus = null;
         });
       }
     } on Object catch (error) {
@@ -365,6 +426,7 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
       setState(() {
         _busy = false;
         _error = error.toString();
+        _deviceStatus = null;
       });
     }
   }
@@ -584,6 +646,19 @@ class _GithubConnectSheetState extends State<GithubConnectSheet> {
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
         ),
+        if (_deviceStatus != null) ...[
+          const SizedBox(height: 8),
+          // The poll's status line (waiting / connection lost —
+          // retrying…): transient failures render here as status text,
+          // never as the flow's error (issue #229).
+          Text(
+            _deviceStatus!,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ],
     );
   }

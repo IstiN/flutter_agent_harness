@@ -24,12 +24,16 @@ final class ScheduledMessageQueue {
     required String Function() root,
     String Function()? selfMailbox,
     String Function()? ownerPrefix,
+    DateTime Function()? clock,
     this.onScheduled,
     this.onFired,
+    this.onError,
+    this.failureBackoff = maxTimerLeg,
   }) : _env = env,
        _repo = repo,
        _selfMailbox = selfMailbox,
        _ownerPrefix = ownerPrefix,
+       _clock = clock,
        _root = root;
 
   final ExecutionEnv _env;
@@ -49,11 +53,26 @@ final class ScheduledMessageQueue {
   /// scheduled it, and the record is left for its owner.
   final String Function()? _ownerPrefix;
 
-  /// Host-visible notice when a record is scheduled ('in 25m: <text>').
+  /// Injectable wall clock (issue #259): scheduling and due comparisons
+  /// must ride one wall-clock source so a fake clock can simulate system
+  /// sleep in tests, and so every due check recomputes from the CURRENT
+  /// wall time instead of trusting duration-based timer state. Defaults
+  /// to [DateTime.now]; pure Dart, no dart:io.
+  final DateTime Function()? _clock;
+
+  DateTime _now() => _clock?.call() ?? DateTime.now();
+
+  /// Host-visible notice when a record is scheduled ('in 25m: `<text>`').
   final void Function(String text)? onScheduled;
 
-  /// Host-visible notice when a record fires ('fired: <text>').
+  /// Host-visible notice when a record fires ('fired: `<text>`').
   final void Function(String text)? onFired;
+
+  /// Host-visible notice when a delivery fails (issue #270).
+  final void Function(String text)? onError;
+
+  /// Wait before retrying a pass that just failed (issue #270).
+  final Duration failureBackoff;
 
   String _self() => _selfMailbox?.call() ?? 'self';
 
@@ -130,7 +149,7 @@ final class ScheduledMessageQueue {
     final id = newMessageId();
     final record = {
       'id': id,
-      'dueMs': DateTime.now().millisecondsSinceEpoch + delay.inMilliseconds,
+      'dueMs': _now().millisecondsSinceEpoch + delay.inMilliseconds,
       'to': to ?? _self(),
       'from': from ?? _self(),
       'text': text,
@@ -156,9 +175,10 @@ final class ScheduledMessageQueue {
     await _migrateLegacySelfMailbox();
     try {
       await _deliverDue();
-    } on Object {
+    } on Object catch (e) {
       // Individual delivery failures must not kill the fire-and-forget
       // starter; the next start()/timer tick retries.
+      onError?.call('startup sweep failed: $e');
     }
     _arm();
   }
@@ -245,7 +265,7 @@ final class ScheduledMessageQueue {
           text: json['text'] as String? ?? '',
           sentAt:
               json['sentAt'] as String? ??
-              DateTime.now().toUtc().toIso8601String(),
+              _now().toUtc().toIso8601String(),
           hops: json['hops'] as int? ?? 0,
         ),
       );
@@ -283,6 +303,12 @@ final class ScheduledMessageQueue {
   /// still running must not send the same record twice (the file inbox has
   /// no id dedup). The skipped tick is re-armed right after.
   bool _delivering = false;
+
+  /// Set by a delivery pass that saw at least one failed send (issue
+  /// #270): the re-arm that follows floors the leg at [failureBackoff]
+  /// instead of 0 — a persistently failing record would otherwise re-arm
+  /// a zero-delay timer in a tight loop. Reset at each pass start.
+  bool _passHadFailure = false;
 
   Future<int> _deliverDue() async {
     if (_delivering) return 0;
@@ -335,7 +361,8 @@ final class ScheduledMessageQueue {
   Future<int> _deliverDueInner() async {
     final dir = await _pendingDir();
     final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
-    var delivered = 0;
+    final dueRecords =
+        <({String path, Map<String, dynamic> record, String to})>[];
     for (final entry in entries) {
       if (entry.kind == FileKind.directory || !entry.path.endsWith('.json')) {
         continue;
@@ -345,26 +372,48 @@ final class ScheduledMessageQueue {
       final record = await _readRecord(path);
       if (record == null) continue;
       final dueMs = record['dueMs'] as int?;
-      if (dueMs == null || dueMs > DateTime.now().millisecondsSinceEpoch) {
+      if (dueMs == null || dueMs > _now().millisecondsSinceEpoch) {
         continue; // not a schedule record, or not due yet
       }
-      final from =
-          record['from'] as String? ?? record['to'] as String? ?? _self();
       final to = _deliveryTarget(record);
       if (to == null) continue;
-      await _repo().send(
-        AgentMessage(
-          id: record['id'] as String? ?? newMessageId(),
-          fromId: from,
-          toId: to,
-          text: '[scheduled] ${record['text'] ?? ''}',
-          sentAt: DateTime.now().toUtc().toIso8601String(),
-          hops: 0,
-        ),
-      );
-      await _env.remove(path, force: true);
-      delivered++;
-      onFired?.call('fired: ${record['text'] ?? ''}');
+      dueRecords.add((path: path, record: record, to: to));
+    }
+    // Deliver in due-time order, not directory order (issue #270): the
+    // oldest reminder fires first no matter which file listDir saw first.
+    dueRecords.sort(
+      (a, b) => (a.record['dueMs'] as int).compareTo(b.record['dueMs'] as int),
+    );
+    var delivered = 0;
+    _passHadFailure = false;
+    for (final (:path, :record, :to) in dueRecords) {
+      final from =
+          record['from'] as String? ?? record['to'] as String? ?? _self();
+      try {
+        await _repo().send(
+          AgentMessage(
+            id: record['id'] as String? ?? newMessageId(),
+            fromId: from,
+            toId: to,
+            text: '[scheduled] ${record['text'] ?? ''}',
+            sentAt: _now().toUtc().toIso8601String(),
+            hops: 0,
+          ),
+        );
+        await _env.remove(path, force: true);
+        delivered++;
+        onFired?.call('fired: ${record['text'] ?? ''}');
+      } on Object catch (e) {
+        // Failure isolation (issue #270): one throwing send must not kill
+        // the sweep, its sweep-mates, or the timer heartbeat — log it and
+        // keep the record on disk (remove only ever runs after a
+        // successful send); the next sweep/tick retries it.
+        _passHadFailure = true;
+        onError?.call(
+          'delivery failed (${record['id'] ?? '?'}): $e — '
+          'record kept for the next sweep',
+        );
+      }
     }
     return delivered;
   }
@@ -379,14 +428,35 @@ final class ScheduledMessageQueue {
   /// Scans the pending records for the earliest due time (null: none).
   Future<int?> _nearestDueMs() async => (await pendingSummary()).nextDueMs;
 
+  /// The longest single timer leg (issue #259). A one-shot timer armed for
+  /// the full wait freezes with OS sleep (monotonic clocks pause while the
+  /// lid is closed) and fires late by the slept duration. Capping each leg
+  /// turns long waits into a lightweight idle heartbeat: every leg's fire
+  /// recomputes the remaining delay from the WALL clock ([_now]) — never
+  /// accumulating duration-based drift — so the first post-sleep fire
+  /// immediately sees and delivers every overdue record.
+  static const Duration maxTimerLeg = Duration(seconds: 60);
+
   Future<void> _armAsync() async {
     if (_disposed) return;
     final nearest = await _nearestDueMs();
     // The scan awaited above; the host may have torn the queue down meanwhile.
     if (_disposed || nearest == null) return;
-    final wait = nearest - DateTime.now().millisecondsSinceEpoch;
-    _timer = Timer(Duration(milliseconds: wait.clamp(0, 1 << 40)), () async {
-      await _deliverDue();
+    final wait = nearest - _now().millisecondsSinceEpoch;
+    var leg = wait.clamp(0, 1 << 40);
+    if (leg > maxTimerLeg.inMilliseconds) leg = maxTimerLeg.inMilliseconds;
+    final floor = _passHadFailure ? failureBackoff.inMilliseconds : 0;
+    if (leg < floor) leg = floor;
+    _timer = Timer(Duration(milliseconds: leg), () async {
+      try {
+        await _deliverDue();
+      } on Object catch (e) {
+        // A throw escaping this callback would skip the _arm() below —
+        // the whole heartbeat chain silently dies until the next
+        // turn-start sweep (issue #270). Contain it and re-arm.
+        _passHadFailure = true;
+        onError?.call('delivery pass failed: $e');
+      }
       _arm();
     });
   }

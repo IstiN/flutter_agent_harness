@@ -685,11 +685,17 @@ void main() {
   });
 
   group('long-session virtualisation (E5)', () {
-    testWidgets('10k records stay virtualised while scrolling', (
+    testWidgets('a 2400-record long session stays virtualised while scrolling', (
       tester,
     ) async {
+      // Issue #283: was 3500 turns (10.5k records, ~220s locally / ~8.5 min
+      // in CI — 85% of the whole fa_ui suite, unshardable below file
+      // granularity). 800 turns = 2400 records still dwarfs the <400-row
+      // window asserted below, so the virtualisation guarantee (bounded
+      // window, no exceptions, correct content at the extremes) is fully
+      // preserved while the scroll simulation costs ~4x less.
       final controller = TrajectoryController(
-        initial: buildLargeFixtureSnapshot(turns: 3500),
+        initial: buildLargeFixtureSnapshot(turns: 800),
       );
       await tester.pumpWidget(_host(controller));
       await tester.pumpAndSettle();
@@ -700,16 +706,19 @@ void main() {
           ).length;
       final table = find.byType(TrajectoryTable);
 
-      // At the tail: a bounded window, not 10500 rows.
+      // At the tail: a bounded window, not 2400 rows.
       expect(builtRowTexts(), lessThan(400));
       expect(tester.takeException(), isNull);
 
-      // Scroll through the middle and back to the very top.
-      await tester.drag(table, const Offset(0, 100000));
+      // Scroll to the middle and back to the very top. The 45k px drag
+      // lands mid-list for a 2400-record session: neither the last turn's
+      // nor the first turn's prompt may be on screen there.
+      await tester.drag(table, const Offset(0, 45000));
       await tester.pumpAndSettle();
       expect(builtRowTexts(), lessThan(400));
       expect(tester.takeException(), isNull);
-      expect(_texts(tester).join('\n'), isNot(contains('Turn 3500 prompt')));
+      expect(_texts(tester).join('\n'), isNot(contains('Turn 800 prompt')));
+      expect(_texts(tester).join('\n'), isNot(contains('Turn 1 prompt')));
 
       await tester.drag(table, const Offset(0, 1000000));
       await tester.pumpAndSettle();

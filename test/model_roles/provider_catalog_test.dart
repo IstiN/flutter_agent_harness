@@ -9,9 +9,130 @@ import 'package:test/test.dart';
 /// stay visible across the pickers, settings screens, and `enabledProviders`
 /// consumers. A refactor that drops the default `visible: true` fails here
 /// instead of surfacing as a "the picker is missing chatgpt" mystery.
+///
+/// The ceiling groups pin issue #273's per-family output caps: the catalog
+/// specs' blanket `maxTokens: 16384` clamps modern Claude models, so
+/// resolution is config override > Claude ceiling table > provider default.
+/// Issue #302 scopes the table to its Anthropic-API family — a claude id
+/// over any other dialect keeps the provider default.
+
+/// The table step for an id on the table's own family (the only family
+/// [resolveModelMaxOutputTokens] consults it for).
+int? anthropicCeiling(String id) =>
+    resolveModelMaxOutputTokens(id, api: anthropicMessagesApi);
+
 void main() {
   test('chatgpt spec is visible after Phase 1 un-hide', () {
     expect(providerCatalog['chatgpt']!.visible, isTrue);
     expect(enabledProviders().any((s) => s.name == 'chatgpt'), isTrue);
+  });
+
+  group('resolveModelMaxOutputTokens (UT-ceilings, AC2)', () {
+    test('exact catalogued versions pin their documented cap', () {
+      expect(anthropicCeiling('claude-opus-4-5'), 64000);
+      expect(anthropicCeiling('claude-sonnet-4-6'), 128000);
+      expect(anthropicCeiling('claude-haiku-4-5'), 64000);
+      expect(anthropicCeiling('claude-sonnet-3-5'), 8192);
+      // Version read from before the family token.
+      expect(anthropicCeiling('claude-3-opus'), 4096);
+    });
+
+    test('uncatalogued versions fall to the nearest-lower minor', () {
+      // 4.9 is past 4.8 — rides the largest catalogued ≤ it.
+      expect(anthropicCeiling('claude-opus-4-9'), 128000);
+      // 4.7 misses; sonnet falls back to 4.6's cap.
+      expect(anthropicCeiling('claude-sonnet-4-7'), 128000);
+      // Nothing catalogued at or below 2.9.
+      expect(anthropicCeiling('claude-opus-2-9'), 128000);
+    });
+
+    test('unknown Claude model takes the conservative fallback', () {
+      expect(anthropicCeiling('claude-lambda-9'), 128000);
+    });
+
+    test('non-Claude ids miss the table (null = provider default)', () {
+      expect(anthropicCeiling('gpt-4o'), isNull);
+      expect(anthropicCeiling('glm-5.3-flash'), isNull);
+      expect(anthropicCeiling('kimi-k2'), isNull);
+    });
+
+    test('claude ids outside the anthropic family miss the table (#302)', () {
+      expect(
+        resolveModelMaxOutputTokens(
+          'claude-opus-4-5',
+          api: 'openai-completions',
+        ),
+        isNull,
+      );
+      expect(
+        resolveModelMaxOutputTokens(
+          'claude-sonnet-4-6',
+          api: 'google-generative-ai',
+        ),
+        isNull,
+      );
+    });
+
+    test('id shapes: dates, dots, scopes, underscores, pre-family', () {
+      expect(anthropicCeiling('claude-opus-4-5-20251101'), 64000);
+      expect(anthropicCeiling('claude-opus-4.5'), 64000);
+      expect(anthropicCeiling('anthropic/claude-opus-4.5'), 64000);
+      // Date suffix must not parse as the version; 3.5 read pre-family.
+      expect(anthropicCeiling('claude-3-5-sonnet-20241022'), 8192);
+      expect(anthropicCeiling('claude-sonnet-4-5'), 64000);
+      expect(anthropicCeiling('claude_opus_4_5'), 64000);
+    });
+  });
+
+  group('catalog/cli builders thread the ceiling table', () {
+    test('buildCatalogModel: table beats provider default', () {
+      expect(
+        buildCatalogModel('anthropic', 'claude-opus-4-5').maxTokens,
+        64000,
+      );
+    });
+
+    test('buildCatalogModel: non-Claude id keeps the provider default', () {
+      expect(buildCatalogModel('openai', 'gpt-4o').maxTokens, 16384);
+    });
+
+    test('buildCatalogModel: explicit override beats the table', () {
+      expect(
+        buildCatalogModel(
+          'anthropic',
+          'claude-opus-4-5',
+          maxTokens: 1000,
+        ).maxTokens,
+        1000,
+      );
+    });
+
+    test('buildCliDefaultModel resolves through the table', () {
+      expect(
+        buildCliDefaultModel('anthropic', modelId: 'claude-opus-4-5')
+            .maxTokens,
+        64000,
+      );
+    });
+
+    test('buildCatalogModel: claude id off the table family keeps the '
+        'provider default (#302)', () {
+      expect(
+        buildCatalogModel('openrouter', 'anthropic/claude-opus-4.5')
+            .maxTokens,
+        16384,
+      );
+    });
+
+    test('buildCliDefaultModel: claude id off the table family keeps the '
+        'provider default (#302)', () {
+      expect(
+        buildCliDefaultModel(
+          'openai-completions',
+          modelId: 'anthropic/claude-opus-4-5',
+        ).maxTokens,
+        16384,
+      );
+    });
   });
 }
