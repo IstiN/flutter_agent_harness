@@ -6,4 +6,5 @@ export 'src/bubbles.dart';
 export 'src/bubbles/style.dart';
 export 'src/forms.dart';
 export 'src/gum.dart';
+export 'src/editor.dart';
 export 'src/log.dart';
