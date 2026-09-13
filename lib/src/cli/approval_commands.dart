@@ -495,7 +495,7 @@ extension ApprovalCommands on AgentCli {
     var totalTokens = total.totalTokens;
     final streaming = _agent.state.streamingMessage;
     if (streaming != null) totalTokens += estimateTokens(streaming);
-    final window = model.contextWindow;
+    final window = _effectiveContextWindow;
     final pct = window > 0 ? (contextTokens / window * 100).round() : 0;
     // kimi's toolbar badge: active background agents, when any. Variant A
     // (agents visualization): named live badges — up to 3 active children

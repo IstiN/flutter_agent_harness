@@ -8,6 +8,19 @@ part of 'agent_cli.dart';
 /// allocate.
 /// The memory LLM slot resolution — an extension so agent_cli.dart stays
 /// under the repo's 2800-line size gate.
+/// The effective context window of the live model under the owner cap
+/// (`agent.contextWindowCap`, issue #273): the compaction thresholds, the
+/// ctx meter/footer, and the loop's over-window guard all key off this
+/// basis — one clamp point ([effectiveContextWindow]), not one per
+/// consumer. Lives in this part file so agent_cli.dart stays under the
+/// 2800-line size gate.
+extension EffectiveContextWindow on AgentCli {
+  int get _effectiveContextWindow => effectiveContextWindow(
+    _agent.state.model.contextWindow,
+    config.contextWindowCap,
+  );
+}
+
 extension MemoryLlmSlotResolution on AgentCli {
   /// Resolves the LLM slot for long-term-memory work PER CALL: the `memory`
   /// role, else `smol`, else the main model. The roles resolver is mutable
@@ -191,7 +204,7 @@ extension AgentCliCompactionRun on AgentCli {
     final tokens = _liveRequestTokens();
     if (!shouldCompact(
       tokens,
-      _agent.state.model.contextWindow,
+      _effectiveContextWindow,
       _effectiveCompactionSettings,
     )) {
       return false;
@@ -244,7 +257,7 @@ extension AgentCliCompactionRun on AgentCli {
     final ok = await AutoCompactorFactory(
       session: _session!,
       state: _agent.state,
-      window: _agent.state.model.contextWindow,
+      window: _effectiveContextWindow,
       settings: _effectiveCompactionSettings,
       sources: AutoCompactorSources(
         smolStream: smol?.stream,
