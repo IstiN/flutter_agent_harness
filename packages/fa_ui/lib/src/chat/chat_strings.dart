@@ -28,9 +28,11 @@ abstract class FaChatStrings {
 
   String get appTitle;
   String get chatAbortTooltip;
+  String get chatMoreTooltip;
   String get chatFilesTooltip;
   String get chatCopySessionTooltip;
   String get chatSettingsTooltip;
+  String get chatModelPicker;
   String get chatTrajectoryTooltip;
   String get chatCopiedToClipboard;
   String get chatCopyMessageTooltip;
@@ -106,6 +108,8 @@ class FaChatStringsEn extends FaChatStrings {
   @override
   String get chatAbortTooltip => 'Abort';
   @override
+  String get chatMoreTooltip => 'More actions';
+  @override
   String get chatFilesTooltip => 'Files';
   @override
   String get chatCopySessionTooltip => 'Copy session';
@@ -113,6 +117,8 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatTrajectoryTooltip => 'Trajectory';
   @override
   String get chatSettingsTooltip => 'Connection settings';
+  @override
+  String get chatModelPicker => 'Model';
   @override
   String get chatCopiedToClipboard => 'Session copied to clipboard';
   @override
@@ -261,6 +267,8 @@ class FaChatStringsRu extends FaChatStrings {
   @override
   String get chatAbortTooltip => 'Прервать';
   @override
+  String get chatMoreTooltip => 'Ещё действия';
+  @override
   String get chatFilesTooltip => 'Файлы';
   @override
   String get chatCopySessionTooltip => 'Копировать сессию';
@@ -268,6 +276,8 @@ class FaChatStringsRu extends FaChatStrings {
   String get chatTrajectoryTooltip => 'Траектория';
   @override
   String get chatSettingsTooltip => 'Настройки подключения';
+  @override
+  String get chatModelPicker => 'Модель';
   @override
   String get chatCopiedToClipboard => 'Сессия скопирована в буфер обмена';
   @override
