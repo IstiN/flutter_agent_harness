@@ -92,7 +92,10 @@ void main() {
       expect(envelope['version'], ChromeStorageEnv.snapshotVersion);
       // The session migrated out of the envelope into its own record.
       expect(envelopeFilePaths(stored), isNot(contains('/session.jsonl')));
-      expect(envelopeFilePaths(stored), containsAll(['/notes/a.txt', '/b.txt']));
+      expect(
+        envelopeFilePaths(stored),
+        containsAll(['/notes/a.txt', '/b.txt']),
+      );
       expect(
         stored['${ChromeStorageEnv.sessionKeyPrefix}/session.jsonl'],
         b64('{"v":1}\n{"role":"user"}\n'),
@@ -135,10 +138,7 @@ void main() {
       });
 
       final env = await ChromeStorageEnv.restore(storage: storage);
-      expect(
-        (await env.readTextFile('/session-abc.jsonl')).valueOrNull,
-        'OLD',
-      );
+      expect((await env.readTextFile('/session-abc.jsonl')).valueOrNull, 'OLD');
       final stored = await storage.get();
       expect(stored[ChromeStorageEnv.backupKey], '{not json at all');
     });
@@ -176,8 +176,7 @@ void main() {
       env.dispose();
     });
 
-    test('non-session files keep the debounce (documented tradeoff)',
-        () async {
+    test('non-session files keep the debounce (documented tradeoff)', () async {
       final env = await ChromeStorageEnv.restore(storage: storage);
       await env.writeFile('/scratch.txt', 'temp');
       await settle();
@@ -226,7 +225,9 @@ void main() {
       await settle();
       await sub.cancel();
 
-      expect(changedKeys, {'${ChromeStorageEnv.sessionKeyPrefix}/session-aaa.jsonl'});
+      expect(changedKeys, {
+        '${ChromeStorageEnv.sessionKeyPrefix}/session-aaa.jsonl',
+      });
       env.dispose();
     });
 
@@ -247,7 +248,9 @@ void main() {
       final stored = await storage.get();
       expect(
         stored,
-        isNot(contains('${ChromeStorageEnv.sessionKeyPrefix}/session-aaa.jsonl')),
+        isNot(
+          contains('${ChromeStorageEnv.sessionKeyPrefix}/session-aaa.jsonl'),
+        ),
       );
       expect(
         stored['${ChromeStorageEnv.sessionKeyPrefix}/session-bbb.jsonl'],
@@ -258,8 +261,7 @@ void main() {
     });
   });
 
-  group('quota isolation (vector 4 — one oversized session fails alone)',
-      () {
+  group('quota isolation (vector 4 — one oversized session fails alone)', () {
     test('an over-quota session does not block unrelated saves and leaves '
         'previously-saved sessions byte-identical', () async {
       chrome = FakeChrome(quotaBytes: 4000);
@@ -268,9 +270,9 @@ void main() {
       final env = await ChromeStorageEnv.restore(storage: storage);
       await env.writeFile('/session-aaa.jsonl', 'A' * 400);
       await env.flush();
-      final savedA =
-          (await storage.get(['${ChromeStorageEnv.sessionKeyPrefix}/session-aaa.jsonl']))[
-              '${ChromeStorageEnv.sessionKeyPrefix}/session-aaa.jsonl'];
+      final savedA = (await storage.get([
+        '${ChromeStorageEnv.sessionKeyPrefix}/session-aaa.jsonl',
+      ]))['${ChromeStorageEnv.sessionKeyPrefix}/session-aaa.jsonl'];
       expect(savedA, isNotNull);
 
       // The oversized session can never fit: its record write fails, the
@@ -295,7 +297,9 @@ void main() {
       // Session-local damage: only the oversized record is missing.
       expect(
         stored,
-        isNot(contains('${ChromeStorageEnv.sessionKeyPrefix}/session-big.jsonl')),
+        isNot(
+          contains('${ChromeStorageEnv.sessionKeyPrefix}/session-big.jsonl'),
+        ),
       );
 
       // After a restart: everything that fit survived.
@@ -304,7 +308,10 @@ void main() {
         (await reincarnated.readTextFile('/session-aaa.jsonl')).valueOrNull,
         'A' * 400,
       );
-      expect((await reincarnated.readTextFile('/note.txt')).valueOrNull, 'tiny');
+      expect(
+        (await reincarnated.readTextFile('/note.txt')).valueOrNull,
+        'tiny',
+      );
       expect(
         (await reincarnated.exists('/session-big.jsonl')).valueOrNull,
         isFalse,
@@ -313,9 +320,102 @@ void main() {
     });
   });
 
+  group('migration ordering (issue #238 — failed pass must not wipe the '
+      'v1 envelope nor resurrect deletes)', () {
+    test('a failed session-record save never overwrites the v1 envelope — '
+        'the only durable copy of the sessions', () async {
+      final history = 'H' * 600;
+      final v1 = v1Envelope(
+        dirs: ['/notes'],
+        files: {'/notes/a.txt': 'alpha', '/session.jsonl': history},
+      );
+      final recordKey = '${ChromeStorageEnv.sessionKeyPrefix}/session.jsonl';
+      // Quota sized so the v1 envelope alone fits but the envelope PLUS the
+      // session record does not: the migration cannot complete in this pass
+      // (the exact big-session quota scenario #236 targets), while the
+      // session-stripped v2 envelope would still fit.
+      final v1Store = {ChromeStorageEnv.storageKey: v1};
+      final withRecordSize = utf8
+          .encode(jsonEncode({...v1Store, recordKey: b64(history)}))
+          .length;
+      chrome = FakeChrome(quotaBytes: withRecordSize - 1);
+      storage = chrome.storage;
+      await storage.set(v1Store);
+
+      final env = await ChromeStorageEnv.restore(storage: storage);
+      expect((await env.readTextFile('/session.jsonl')).valueOrNull, history);
+
+      // First save after the migration: the session record cannot fit, so
+      // the pass fails — and must NOT replace the v1 envelope (still
+      // carrying the session bytes) with the session-stripped v2 shape.
+      await env.writeFile('/notes/b.txt', 'beta');
+      await env.flush();
+
+      final stored = await storage.get();
+      expect(
+        stored[ChromeStorageEnv.storageKey],
+        v1,
+        reason:
+            'the pre-migration envelope is the only durable copy of the '
+            'sessions — a failed pass must leave it untouched',
+      );
+      expect(stored[ChromeStorageEnv.backupKey], isNull);
+
+      // SW kill + reboot right here: the session must still exist.
+      final reincarnated = await ChromeStorageEnv.restore(storage: storage);
+      expect(
+        (await reincarnated.readTextFile('/session.jsonl')).valueOrNull,
+        history,
+      );
+      env.dispose();
+      reincarnated.dispose();
+    });
+
+    test('deleting a session evicts its record even when the save pass '
+        'fails — no resurrection after a failed pass', () async {
+      chrome = FakeChrome(quotaBytes: 4000);
+      storage = chrome.storage;
+      final env = await ChromeStorageEnv.restore(storage: storage);
+      await env.writeFile('/session-aaa.jsonl', 'A' * 400);
+      await env.flush();
+
+      // An over-quota session poisons the pass AND the user deletes aaa.
+      await env.writeFile('/session-big.jsonl', 'B' * 100000);
+      await env.remove('/session-aaa.jsonl');
+      // Let the eager pass the big write armed finish (it fails into the
+      // retry path) so the flush below deterministically starts a FRESH
+      // pass — the one that runs the eviction under test.
+      await settle();
+      await env.flush(); // pass fails into the retry loop
+
+      final stored = await storage.get();
+      expect(
+        stored,
+        isNot(
+          contains('${ChromeStorageEnv.sessionKeyPrefix}/session-aaa.jsonl'),
+        ),
+        reason:
+            'a completed eviction step must not be skipped because a '
+            'later step failed — the deleted session must not resurrect',
+      );
+      expect(env.hasPendingChanges, isTrue);
+
+      // Reboot: aaa stays deleted, the oversized record never landed.
+      final reincarnated = await ChromeStorageEnv.restore(storage: storage);
+      expect(
+        (await reincarnated.exists('/session-aaa.jsonl')).valueOrNull,
+        isFalse,
+      );
+      expect(
+        stored['${ChromeStorageEnv.sessionKeyPrefix}/session-big.jsonl'],
+        isNull,
+      );
+      env.dispose();
+      reincarnated.dispose();
+    });
+  });
   group('round-trip', () {
-    test('the full tree (dirs, files, sessions) survives a restart',
-        () async {
+    test('the full tree (dirs, files, sessions) survives a restart', () async {
       final env = await ChromeStorageEnv.restore(storage: storage);
       await env.createDir('/deep/nested');
       await env.writeFile('/deep/nested/f.txt', 'leaf');
@@ -339,13 +439,15 @@ void main() {
       env.dispose();
     });
 
-    test('storage unavailable (null) runs memory-only without crashing',
-        () async {
-      final env = await ChromeStorageEnv.restore();
-      await env.writeFile('/session.jsonl', 'x');
-      await env.flush();
-      expect((await env.readTextFile('/session.jsonl')).valueOrNull, 'x');
-      env.dispose();
-    });
+    test(
+      'storage unavailable (null) runs memory-only without crashing',
+      () async {
+        final env = await ChromeStorageEnv.restore();
+        await env.writeFile('/session.jsonl', 'x');
+        await env.flush();
+        expect((await env.readTextFile('/session.jsonl')).valueOrNull, 'x');
+        env.dispose();
+      },
+    );
   });
 }
