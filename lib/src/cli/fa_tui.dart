@@ -257,8 +257,7 @@ final class FaTuiModel extends Model {
     required this.isExited,
     this.prompt,
     this.outputLines = const [],
-    this.inputText = '',
-    this.cursor = 0,
+    LineEditor? editor,
     this.scrollOffset = 0,
     this.followTail = true,
     this.menuOpen = false,
@@ -290,7 +289,8 @@ final class FaTuiModel extends Model {
     this.scheduledTickPending = false,
     this.frameNonce = 0,
     DateTime Function()? now,
-  }) : nowFn = now ?? DateTime.now;
+  }) : nowFn = now ?? DateTime.now,
+       editor = editor ?? const LineEditor.empty();
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;
@@ -305,8 +305,15 @@ final class FaTuiModel extends Model {
   Completer<TuiPromptAnswer?>? _promptCompleter;
 
   final List<String> outputLines;
-  final String inputText;
-  final int cursor;
+
+  /// The readline-grade line editor (issue #275 scope 3): single source of
+  /// truth for the composer text + caret, carrying the per-session
+  /// kill-ring and grouped undo (E4: the ring survives submissions —
+  /// the model lives for the whole session).
+  final LineEditor editor;
+
+  String get inputText => editor.text;
+  int get cursor => editor.cursor;
 
   /// Persistent viewport scroll offset (0 = top). Snapped to the bottom on
   /// new output while [followTail] holds; kept (clamped) otherwise.
@@ -595,6 +602,7 @@ final class FaTuiModel extends Model {
     List<String>? outputLines,
     String? inputText,
     int? cursor,
+    LineEditor? editor,
     int? scrollOffset,
     bool? followTail,
     bool? menuOpen,
@@ -630,8 +638,15 @@ final class FaTuiModel extends Model {
       isExited: isExited,
       prompt: clearPrompt ? null : (prompt ?? this.prompt),
       outputLines: outputLines ?? this.outputLines,
-      inputText: inputText ?? this.inputText,
-      cursor: cursor ?? this.cursor,
+      editor: editor ??
+          (inputText == null && cursor == null
+              ? this.editor
+              : this.editor.withBuffer(
+                  LineBuffer(
+                    inputText ?? this.inputText,
+                    cursor ?? this.cursor,
+                  ),
+                )),
       scrollOffset: scrollOffset ?? this.scrollOffset,
       followTail: followTail ?? this.followTail,
       menuOpen: menuOpen ?? this.menuOpen,
@@ -1064,15 +1079,8 @@ final class FaTuiModel extends Model {
       }
       return (copyWith(prompt: next), null);
     }
-    final before = inputText.substring(0, cursor);
-    final after = inputText.substring(cursor);
-    return (
-      copyWith(
-        inputText: before + content + after,
-        cursor: cursor + content.length,
-      ),
-      null,
-    );
+    // One insert call = one undo group: a paste undoes as a whole.
+    return (copyWith(editor: editor.insert(content)), null);
   }
 
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
@@ -1156,13 +1164,8 @@ final class FaTuiModel extends Model {
     switch (msg.key) {
       case 'backspace':
         if (cursor > 0 && inputText.isNotEmpty) {
-          final nextText =
-              inputText.substring(0, cursor - 1) + inputText.substring(cursor);
-          final nextCursor = cursor - 1;
           return (
-            _updateMenuForInput(
-              copyWith(inputText: nextText, cursor: nextCursor),
-            ),
+            _updateMenuForInput(copyWith(editor: editor.backspace())),
             null,
           );
         }
@@ -1170,15 +1173,8 @@ final class FaTuiModel extends Model {
       default:
         final text = msg.keyEvent.text;
         if (text.isNotEmpty && text.length == 1) {
-          final nextText =
-              inputText.substring(0, cursor) +
-              text +
-              inputText.substring(cursor);
-          final nextCursor = cursor + 1;
           return (
-            _updateMenuForInput(
-              copyWith(inputText: nextText, cursor: nextCursor),
-            ),
+            _updateMenuForInput(copyWith(editor: editor.insert(text))),
             null,
           );
         }
@@ -1469,6 +1465,7 @@ final class FaTuiModel extends Model {
     final result =
         _handleBackspaceKey(msg) ??
         _handleKillKey(msg) ??
+        _handleReadlineKey(msg) ??
         _handleDeleteKey(msg) ??
         _handleCharInsertKey(msg);
     // Any real edit exits history browsing (the recalled entry becomes the
@@ -1486,13 +1483,8 @@ final class FaTuiModel extends Model {
     switch (msg.key) {
       case 'backspace':
         if (cursor == 0 || inputText.isEmpty) return (this, null);
-        final nextText =
-            inputText.substring(0, cursor - 1) + inputText.substring(cursor);
-        final nextCursor = cursor - 1;
         return (
-          _updateMenuForInput(
-            copyWith(inputText: nextText, cursor: nextCursor),
-          ),
+          _updateMenuForInput(copyWith(editor: editor.backspace())),
           null,
         );
       default:
@@ -1500,8 +1492,9 @@ final class FaTuiModel extends Model {
     }
   }
 
-  /// Normal-mode kill keys (ctrl+u kills back to the line start, ctrl+w the
-  /// word before the cursor); null when the key belongs to another cluster.
+  /// Normal-mode kill keys on the editor's kill-ring (issue #275): ctrl+u
+  /// kills back to the line start, ctrl+w the word before the cursor.
+  /// Null when the key belongs to another cluster.
   (Model, Cmd?)? _handleKillKey(KeyMsg msg) {
     switch (msg.key) {
       case 'ctrl+u':
@@ -1509,16 +1502,44 @@ final class FaTuiModel extends Model {
         // unix-line-discard — also what most terminals send for Cmd+Backspace).
         if (cursor == 0) return (this, null);
         return (
-          _updateMenuForInput(
-            copyWith(inputText: inputText.substring(cursor), cursor: 0),
-          ),
+          _updateMenuForInput(copyWith(editor: editor.killToLineStart())),
           null,
         );
       case 'ctrl+w':
-        return _killWordBeforeCursor();
+        if (cursor == 0) return (this, null);
+        return (
+          _updateMenuForInput(copyWith(editor: editor.killWordBefore())),
+          null,
+        );
       default:
         return null;
     }
+  }
+
+  /// Readline single-key editing beyond kills (issue #275): ctrl+k kill to
+  /// line end, ctrl+y yank (consecutive ctrl+y walks the ring older),
+  /// ctrl+t transpose, ctrl+z grouped undo. Null when unclaimed.
+  (Model, Cmd?)? _handleReadlineKey(KeyMsg msg) {
+    final LineEditor edited;
+    switch (msg.key) {
+      case 'ctrl+k':
+        if (cursor >= inputText.length) return (this, null);
+        edited = editor.killToLineEnd();
+      case 'ctrl+y':
+        if (!editor.canYank) return (this, null);
+        edited = editor.lastActionWasYank
+            ? editor.yankOlder()
+            : editor.yank();
+      case 'ctrl+t':
+        edited = editor.transpose();
+        if (identical(edited, editor)) return (this, null);
+      case 'ctrl+z':
+        if (!editor.canUndo) return (this, null);
+        edited = editor.undo();
+      default:
+        return null;
+    }
+    return (_updateMenuForInput(copyWith(editor: edited)), null);
   }
 
   /// Normal-mode forward delete; null when the key belongs to another
@@ -1527,9 +1548,10 @@ final class FaTuiModel extends Model {
     switch (msg.key) {
       case 'delete':
         if (cursor >= inputText.length) return (this, null);
-        final nextText =
-            inputText.substring(0, cursor) + inputText.substring(cursor + 1);
-        return (_updateMenuForInput(copyWith(inputText: nextText)), null);
+        return (
+          _updateMenuForInput(copyWith(editor: editor.deleteForward())),
+          null,
+        );
       default:
         return null;
     }
@@ -1556,38 +1578,14 @@ final class FaTuiModel extends Model {
     if (_isCommandKeystroke(msg.key)) return (this, null);
     final text = msg.keyEvent.text;
     if (text.isNotEmpty && text.length == 1) {
-      final nextText =
-          inputText.substring(0, cursor) + text + inputText.substring(cursor);
-      final nextCursor = cursor + 1;
       return (
-        _updateMenuForInput(copyWith(inputText: nextText, cursor: nextCursor)),
+        _updateMenuForInput(copyWith(editor: editor.insert(text))),
         null,
       );
     }
     return (this, null);
   }
 
-  /// Ctrl+W: kill the word before the cursor (readline's unix-word-rubout):
-  /// trailing whitespace first, then the word itself.
-  (Model, Cmd?) _killWordBeforeCursor() {
-    if (cursor == 0) return (this, null);
-    var end = cursor;
-    while (end > 0 && inputText[end - 1] == ' ') {
-      end--;
-    }
-    while (end > 0 && inputText[end - 1] != ' ') {
-      end--;
-    }
-    return (
-      _updateMenuForInput(
-        copyWith(
-          inputText: inputText.substring(0, end) + inputText.substring(cursor),
-          cursor: end,
-        ),
-      ),
-      null,
-    );
-  }
 
   /// Picker mode: arrows navigate, enter/tab select, esc closes. Every
   /// picker has a type-to-filter input — the models picker rebuilds through
@@ -1800,9 +1798,7 @@ final class FaTuiModel extends Model {
   static bool _isWordBreak(String ch) => ch == ' ' || ch == '\n' || ch == '\t';
 
   (FaTuiModel, Cmd?) _insertNewlineAtCursor() {
-    final nextText =
-        '${inputText.substring(0, cursor)}\n${inputText.substring(cursor)}';
-    return (copyWith(inputText: nextText, cursor: cursor + 1), null);
+    return (copyWith(editor: editor.insert('\n')), null);
   }
 
   /// The user-message echo: a dim full-width rule above backgrounded input

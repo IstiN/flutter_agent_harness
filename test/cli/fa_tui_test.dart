@@ -1493,7 +1493,7 @@ void main() {
       model = typed(model, 'hi');
       model = send(model, ctrl('x'));
       model = send(model, ctrl('g'));
-      model = send(model, ctrl('z'));
+      // ctrl+z is no longer in this test: it is undo since #275.
       expect(model.inputText, 'hi');
       expect(model.cursor, 2);
     });

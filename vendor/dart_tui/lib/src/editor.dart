@@ -74,6 +74,20 @@ class LineEditor {
   LineEditor([String text = '', int cursor = 0])
       : this._(LineBuffer(text, cursor));
 
+  /// An empty editor — const, usable as a default parameter value.
+  const LineEditor.empty() : this._(const LineBuffer('', 0));
+
+  /// Replaces the buffer while preserving the kill-ring and undo history.
+  /// Programmatic whole-line sets (history recall, menu-accept prefills)
+  /// and cursor-only motion ride this; neither is an undoable edit.
+  LineEditor withBuffer(LineBuffer next) => LineEditor._(
+    next,
+    killRing: killRing,
+    killIndex: killIndex,
+    undoStack: undoStack,
+    lastActionWasYank: lastActionWasYank,
+  );
+
   String get text => buffer.text;
   int get cursor => buffer.cursor;
   bool get canUndo => undoStack.isNotEmpty;
@@ -177,7 +191,7 @@ class LineEditor {
     );
   }
 
-  LineEditor get _buffer => buffer;
+  LineBuffer get _buffer => buffer;
 
   /// ctrl-y followed by more yanks pop older ring entries (readline
   /// meta-y without the meta key: repeat yank walks the ring).
