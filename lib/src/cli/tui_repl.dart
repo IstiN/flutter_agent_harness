@@ -2,12 +2,24 @@ import 'dart:async';
 
 import 'key_event.dart';
 
+/// A message queued while a run streams (issue #275 AC2). Rendered as a dim
+/// row above the composer; [steer] rows are badged distinctly.
+final class QueuedMessage {
+  final String text;
+  final bool steer;
+  const QueuedMessage(this.text, {this.steer = false});
+
+  @override
+  String toString() => steer ? 'steer: $text' : text;
+}
+
 /// A selectable item in the TUI inline menu.
 final class MenuItem {
   const MenuItem({
     required this.key,
     required this.label,
     this.description = '',
+    this.group = '',
   });
 
   /// The text inserted when the item is accepted (e.g. `/model`).
@@ -15,6 +27,10 @@ final class MenuItem {
 
   /// The visible label.
   final String label;
+
+  /// Menu section this item belongs to ('commands' | 'skills' | 'paths');
+  /// '' renders without a section header (issue #275 fuzzy overlay).
+  final String group;
 
   /// Optional one-line description shown to the right.
   final String description;

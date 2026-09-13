@@ -6,9 +6,10 @@ import 'dart:io'
 
 import 'package:dart_tui/dart_tui.dart';
 
+import 'composer_overlay.dart';
 import 'ansi_markdown.dart';
 import 'tui_prompt.dart';
-import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
+import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
 import 'system_notice_render.dart';
 import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
@@ -51,6 +52,7 @@ final class FaTuiCallbacks {
     this.onPickerSelected,
     this.onPickerCancelled,
     this.onSteer,
+    this.pathCandidates,
   });
 
   /// Called when the user submits a non-empty input line.
@@ -96,6 +98,12 @@ final class FaTuiCallbacks {
   /// kimi-cli semantics): each message is injected as a separate user
   /// message mid-turn.
   final Future<void> Function(List<String> messages)? onSteer;
+
+  /// Workspace file paths for the composer's fuzzy path completion
+  /// (`@token` and shell words on a `!` line, issue #275 AC1). Called per
+  /// keystroke — the host must cache the listing (the issue's "candidates
+  /// cached" clause). Null disables path completion.
+  final List<String> Function(String fragment)? pathCandidates;
 }
 
 /// Message carrying host output into the TUI.
@@ -193,6 +201,13 @@ final class DrainQueueMsg extends Msg {
   final Completer<List<String>> completer;
 }
 
+/// Message clearing the queued messages without running them (`/queue
+/// clear`, issue #275): the visible strip is the user's contract that
+/// these texts are pending — a silent clear would be a lost message.
+final class ClearQueueMsg extends Msg {
+  const ClearQueueMsg();
+}
+
 /// Message opening the interactive prompt zone (ask/secret/approval).
 final class OpenPromptMsg extends Msg {
   OpenPromptMsg(this.spec, this.completer);
@@ -257,13 +272,13 @@ final class FaTuiModel extends Model {
     required this.isExited,
     this.prompt,
     this.outputLines = const [],
-    this.inputText = '',
-    this.cursor = 0,
+    LineEditor? editor,
     this.scrollOffset = 0,
     this.followTail = true,
     this.menuOpen = false,
     this.menuModelMode = false,
     this.menuSelected = 0,
+    this.menuTokenStart = -1,
     this.modelFilter = '',
     this.menuItems = const [],
     this.menuAllItems = const [],
@@ -290,7 +305,8 @@ final class FaTuiModel extends Model {
     this.scheduledTickPending = false,
     this.frameNonce = 0,
     DateTime Function()? now,
-  }) : nowFn = now ?? DateTime.now;
+  }) : nowFn = now ?? DateTime.now,
+       editor = editor ?? const LineEditor.empty();
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;
@@ -305,8 +321,15 @@ final class FaTuiModel extends Model {
   Completer<TuiPromptAnswer?>? _promptCompleter;
 
   final List<String> outputLines;
-  final String inputText;
-  final int cursor;
+
+  /// The readline-grade line editor (issue #275 scope 3): single source of
+  /// truth for the composer text + caret, carrying the per-session
+  /// kill-ring and grouped undo (E4: the ring survives submissions —
+  /// the model lives for the whole session).
+  final LineEditor editor;
+
+  String get inputText => editor.text;
+  int get cursor => editor.cursor;
 
   /// Persistent viewport scroll offset (0 = top). Snapped to the bottom on
   /// new output while [followTail] holds; kept (clamped) otherwise.
@@ -322,6 +345,12 @@ final class FaTuiModel extends Model {
   final bool menuOpen;
   final bool menuModelMode;
   final int menuSelected;
+
+  /// Where the completed token starts inside [inputText] (issue #275):
+  /// 0 for a slash command line, the offset after '@' or the shell-word
+  /// start for path completion. -1 = no token (whole-input replace on
+  /// accept, the legacy slash/picker behavior).
+  final int menuTokenStart;
   final String modelFilter;
   final List<MenuItem> menuItems;
 
@@ -396,10 +425,13 @@ final class FaTuiModel extends Model {
   /// scrolled out of view.
   final int stickyEchoLineCount;
 
-  /// Messages typed while a run streams (kimi-cli's queue): Enter enqueues,
-  /// ↑ pops the last one back into the input, Ctrl+S steers them into the
-  /// running agent, and the host drains them as separate turns afterwards.
-  final List<String> queue;
+  /// Messages typed while a run streams (kimi-cli's queue): Enter enqueues
+  /// a follow-up, ↑ pops the last one back into the input, ctrl+x deletes
+  /// it, ctrl+s steers everything into the running agent, and the host
+  /// drains them as separate turns afterwards. [QueuedMessage.steer] rows
+  /// interrupt at the next step boundary (the soft-yield steering path)
+  /// and render badged; plain rows wait for the run to settle.
+  final List<QueuedMessage> queue;
 
   /// Submitted non-empty lines, oldest first (shell-style input history).
   /// Slash and bang commands are not recorded — ↑ recalls MESSAGES.
@@ -515,9 +547,23 @@ final class FaTuiModel extends Model {
     if (!menuOpen || menuItems.isEmpty) return 0;
     final (start, end) = _menuWindow();
     var lines = 1 + (end - start); // title + items
+    lines += _groupHeadersIn(start, end); // section headers
     if (start > 0) lines++; // '↑ more'
     if (end < menuItems.length) lines++; // '↓ more'
     return lines;
+  }
+
+  /// Group-header rows the visible window renders (one per group change,
+  /// issue #275) — the height math and the renderer must agree.
+  int _groupHeadersIn(int start, int end) {
+    var count = 0;
+    var last = '';
+    for (var i = start; i < end; i++) {
+      final group = menuItems[i].group;
+      if (group.isNotEmpty && group != last) count++;
+      last = group;
+    }
+    return count;
   }
 
   /// Applies a user scroll: moves the offset (clamped) and re-evaluates the
@@ -540,7 +586,8 @@ final class FaTuiModel extends Model {
     final busyH = busy ? 1 : 0;
     final scheduledH = scheduledCount > 0 ? 1 : 0;
     final stickyH = _stickyActive ? stickyLines.length : 0;
-    final queueH = queue.isEmpty ? 0 : queue.length + 1; // + hint line
+    // + count badge and hint rows around the message rows (issue #275).
+    final queueH = queue.isEmpty ? 0 : queue.length + 2;
     final promptH = prompt != null ? tuiPromptRowCount(prompt!, width) + 2 : 0;
     final used =
         progressH +
@@ -595,11 +642,13 @@ final class FaTuiModel extends Model {
     List<String>? outputLines,
     String? inputText,
     int? cursor,
+    LineEditor? editor,
     int? scrollOffset,
     bool? followTail,
     bool? menuOpen,
     bool? menuModelMode,
     int? menuSelected,
+    int? menuTokenStart,
     String? modelFilter,
     List<MenuItem>? menuItems,
     List<MenuItem>? menuAllItems,
@@ -617,7 +666,7 @@ final class FaTuiModel extends Model {
     List<String>? stickyLines,
     int? stickyIndex,
     int? stickyEchoLineCount,
-    List<String>? queue,
+    List<QueuedMessage>? queue,
     List<String>? inputHistory,
     int? historyIndex,
     int? scheduledCount,
@@ -630,13 +679,22 @@ final class FaTuiModel extends Model {
       isExited: isExited,
       prompt: clearPrompt ? null : (prompt ?? this.prompt),
       outputLines: outputLines ?? this.outputLines,
-      inputText: inputText ?? this.inputText,
-      cursor: cursor ?? this.cursor,
+      editor:
+          editor ??
+          (inputText == null && cursor == null
+              ? this.editor
+              : this.editor.withBuffer(
+                  LineBuffer(
+                    inputText ?? this.inputText,
+                    cursor ?? this.cursor,
+                  ),
+                )),
       scrollOffset: scrollOffset ?? this.scrollOffset,
       followTail: followTail ?? this.followTail,
       menuOpen: menuOpen ?? this.menuOpen,
       menuModelMode: menuModelMode ?? this.menuModelMode,
       menuSelected: menuSelected ?? this.menuSelected,
+      menuTokenStart: menuTokenStart ?? this.menuTokenStart,
       modelFilter: modelFilter ?? this.modelFilter,
       menuItems: menuItems ?? this.menuItems,
       menuAllItems: menuAllItems ?? this.menuAllItems,
@@ -730,6 +788,7 @@ final class FaTuiModel extends Model {
     if (msg is BusyMsg) return _handleBusyMsg(msg);
     if (msg is SpinnerTickMsg) return _handleSpinnerTick();
     if (msg is DrainQueueMsg) return _handleDrainQueue(msg);
+    if (msg is ClearQueueMsg) return _handleClearQueue();
     if (msg is OpenPromptMsg) {
       _promptCompleter = msg.completer;
       return (copyWith(prompt: TuiPromptState(msg.spec)), null);
@@ -884,13 +943,14 @@ final class FaTuiModel extends Model {
 
   (Model, Cmd?) _handleDrainQueue(DrainQueueMsg msg) {
     // The host drains queued messages as separate turns after the run
-    // settles; echo them into the history as they are handed out.
+    // settles; echo them into the history as they are handed out. Flush
+    // order is queue order (AC2).
     final queued = queue;
-    msg.completer.complete(queued);
+    msg.completer.complete([for (final m in queued) m.text]);
     if (queued.isEmpty) return (this, null);
     var lines = outputLines;
     for (final message in queued) {
-      lines = _echoAppend(lines, message);
+      lines = _echoAppend(lines, message.text);
     }
     final cleared = copyWith(queue: const [], outputLines: lines);
     final next = cleared.copyWith(
@@ -900,13 +960,23 @@ final class FaTuiModel extends Model {
     return (next, null);
   }
 
+  (Model, Cmd?) _handleClearQueue() {
+    if (queue.isEmpty) return (this, null);
+    return (copyWith(queue: const []), null);
+  }
+
   (Model, Cmd?) _updateAfterExitCheck(Msg msg) {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
     if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
     if (msg is _SetInputTextMsg) {
       return (
-        copyWith(inputText: msg.text, cursor: msg.text.length, menuOpen: false),
+        copyWith(
+          inputText: msg.text,
+          cursor: msg.text.length,
+          menuOpen: false,
+          menuTokenStart: -1,
+        ),
         null,
       );
     }
@@ -1064,15 +1134,8 @@ final class FaTuiModel extends Model {
       }
       return (copyWith(prompt: next), null);
     }
-    final before = inputText.substring(0, cursor);
-    final after = inputText.substring(cursor);
-    return (
-      copyWith(
-        inputText: before + content + after,
-        cursor: cursor + content.length,
-      ),
-      null,
-    );
+    // One insert call = one undo group: a paste undoes as a whole.
+    return (copyWith(editor: editor.insert(content)), null);
   }
 
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
@@ -1096,8 +1159,17 @@ final class FaTuiModel extends Model {
     if (menuOpen && menuModelMode) return _handlePickerKey(msg);
 
     // Slash/menu mode: arrows navigate, enter/tab accept, esc closes, and
-    // typing keeps editing the input so `/models` can be typed in full.
-    if (menuOpen) return _handleSlashMenuKey(msg);
+    // typing keeps editing so `/models` can be typed in full. Path
+    // overlays (@token / !word) are passive — Tab accepts, Enter keeps
+    // submitting (issue #275 review).
+    if (menuOpen) {
+      if (menuTokenStart > 0) {
+        final pathKey = _handlePathMenuKey(msg);
+        if (pathKey != null) return pathKey;
+      } else {
+        return _handleSlashMenuKey(msg);
+      }
+    }
 
     // Normal input editing.
     return _handleControlKey(msg) ??
@@ -1114,12 +1186,28 @@ final class FaTuiModel extends Model {
         _handleSlashMenuEditKey(msg);
   }
 
+  /// Path-completion overlay keys: Tab accepts, arrows navigate, esc
+  /// closes; everything else falls through (Enter SUBMITS, editing edits).
+  (Model, Cmd?)? _handlePathMenuKey(KeyMsg msg) {
+    switch (msg.key) {
+      case 'tab':
+        return _acceptSlashMenuItem();
+      case 'esc':
+        return (copyWith(menuOpen: false, menuTokenStart: -1), null);
+      case 'up':
+      case 'down':
+        return _handleSlashMenuNavKey(msg);
+      default:
+        return null;
+    }
+  }
+
   /// Slash-menu navigation keys (esc/up/down); null when the key belongs to
   /// the accept or edit clusters.
   (Model, Cmd?)? _handleSlashMenuNavKey(KeyMsg msg) {
     switch (msg.key) {
       case 'esc':
-        return (copyWith(menuOpen: false), null);
+        return (copyWith(menuOpen: false, menuTokenStart: -1), null);
       case 'up':
         return (
           copyWith(menuSelected: menuSelected > 0 ? menuSelected - 1 : 0),
@@ -1156,13 +1244,8 @@ final class FaTuiModel extends Model {
     switch (msg.key) {
       case 'backspace':
         if (cursor > 0 && inputText.isNotEmpty) {
-          final nextText =
-              inputText.substring(0, cursor - 1) + inputText.substring(cursor);
-          final nextCursor = cursor - 1;
           return (
-            _updateMenuForInput(
-              copyWith(inputText: nextText, cursor: nextCursor),
-            ),
+            _updateMenuForInput(copyWith(editor: editor.backspace())),
             null,
           );
         }
@@ -1170,15 +1253,8 @@ final class FaTuiModel extends Model {
       default:
         final text = msg.keyEvent.text;
         if (text.isNotEmpty && text.length == 1) {
-          final nextText =
-              inputText.substring(0, cursor) +
-              text +
-              inputText.substring(cursor);
-          final nextCursor = cursor + 1;
           return (
-            _updateMenuForInput(
-              copyWith(inputText: nextText, cursor: nextCursor),
-            ),
+            _updateMenuForInput(copyWith(editor: editor.insert(text))),
             null,
           );
         }
@@ -1216,8 +1292,33 @@ final class FaTuiModel extends Model {
         },
       );
     }
+    // Token splice (issue #275): replace just the completed token — an
+    // `@`-fragment or a shell word after '!' — with the chosen path plus a
+    // trailing space that ends the token. Slash commands (tokenStart == 0,
+    // line-start) keep the legacy whole-input replace below.
+    if (menuTokenStart > 0) {
+      final head = inputText.substring(0, menuTokenStart);
+      final tail = inputText.substring(
+        cursor.clamp(menuTokenStart, inputText.length),
+      );
+      final inserted = '${item.key} ';
+      return (
+        copyWith(
+          inputText: head + inserted + tail,
+          cursor: menuTokenStart + inserted.length,
+          menuOpen: false,
+          menuTokenStart: -1,
+        ),
+        null,
+      );
+    }
     return (
-      copyWith(inputText: item.key, cursor: item.key.length, menuOpen: false),
+      copyWith(
+        inputText: item.key,
+        cursor: item.key.length,
+        menuOpen: false,
+        menuTokenStart: -1,
+      ),
       null,
     );
   }
@@ -1225,7 +1326,9 @@ final class FaTuiModel extends Model {
   /// Normal-mode control keys (submit/steer/newline/interrupt/abort); null
   /// when the key belongs to another cluster.
   (Model, Cmd?)? _handleControlKey(KeyMsg msg) {
-    return _handleSubmitKeys(msg) ?? _handleInterruptKeys(msg);
+    return _handleSubmitKeys(msg) ??
+        _handleQueueKeys(msg) ??
+        _handleInterruptKeys(msg);
   }
 
   /// Normal-mode submit keys (enter/ctrl+s) and the newline-insertion
@@ -1236,9 +1339,15 @@ final class FaTuiModel extends Model {
         return _handleEnterKey();
       case 'ctrl+s':
         if (busy) {
-          // Busy Ctrl+S steers the pending input plus every queued message
-          // into the running agent (kimi-cli semantics).
-          return _steerAll();
+          // Marks the pending input as a steering row (AC2 badge has a
+          // production producer), then steers the whole queue — the
+          // steered payload is unchanged.
+          final pending = inputText.trim();
+          var model = this;
+          if (pending.isNotEmpty) {
+            model = model._enqueue(pending, steer: true).$1;
+          }
+          return model._steerAll(includePending: false);
         }
         // Ctrl+S always submits, regardless of terminal Shift+Enter support.
         final text = inputText.trim();
@@ -1276,6 +1385,15 @@ final class FaTuiModel extends Model {
       default:
         return null;
     }
+  }
+
+  /// Queue-row keys while a run streams: ctrl+x deletes the last queued
+  /// row (issue #275 AC2). Idle ctrl+x is NOT handled here — it stays an
+  /// unhandled combo that must never insert its letter.
+  (Model, Cmd?)? _handleQueueKeys(KeyMsg msg) {
+    if (msg.key != 'ctrl+x') return null;
+    if (!busy || queue.isEmpty) return (this, null);
+    return (copyWith(queue: queue.sublist(0, queue.length - 1)), null);
   }
 
   /// Normal-mode Enter: submit, queue while busy, or Shift+Enter newline.
@@ -1339,8 +1457,8 @@ final class FaTuiModel extends Model {
             return (
               copyWith(
                 queue: queue.sublist(0, queue.length - 1),
-                inputText: popped,
-                cursor: popped.length,
+                inputText: popped.text,
+                cursor: popped.text.length,
               ),
               null,
             );
@@ -1414,9 +1532,15 @@ final class FaTuiModel extends Model {
   /// Normal-mode cursor motion keys; null when the key belongs to another
   /// cluster.
   (Model, Cmd?)? _handleCursorNavKey(KeyMsg msg) {
-    return _handleLeftRightKey(msg) ??
+    final result =
+        _handleLeftRightKey(msg) ??
         _handleWordNavKey(msg) ??
         _handleHomeEndKey(msg);
+    if (result == null) return null;
+    // The completion token is cursor-anchored: motion re-evaluates the
+    // overlay (issue #275) — moving off a token closes it, moving onto
+    // one opens it.
+    return (_updateMenuForInput(result.$1 as FaTuiModel), result.$2);
   }
 
   /// Normal-mode left/right arrow keys; null when the key belongs to
@@ -1469,6 +1593,7 @@ final class FaTuiModel extends Model {
     final result =
         _handleBackspaceKey(msg) ??
         _handleKillKey(msg) ??
+        _handleReadlineKey(msg) ??
         _handleDeleteKey(msg) ??
         _handleCharInsertKey(msg);
     // Any real edit exits history browsing (the recalled entry becomes the
@@ -1486,13 +1611,8 @@ final class FaTuiModel extends Model {
     switch (msg.key) {
       case 'backspace':
         if (cursor == 0 || inputText.isEmpty) return (this, null);
-        final nextText =
-            inputText.substring(0, cursor - 1) + inputText.substring(cursor);
-        final nextCursor = cursor - 1;
         return (
-          _updateMenuForInput(
-            copyWith(inputText: nextText, cursor: nextCursor),
-          ),
+          _updateMenuForInput(copyWith(editor: editor.backspace())),
           null,
         );
       default:
@@ -1500,8 +1620,9 @@ final class FaTuiModel extends Model {
     }
   }
 
-  /// Normal-mode kill keys (ctrl+u kills back to the line start, ctrl+w the
-  /// word before the cursor); null when the key belongs to another cluster.
+  /// Normal-mode kill keys on the editor's kill-ring (issue #275): ctrl+u
+  /// kills back to the line start, ctrl+w the word before the cursor.
+  /// Null when the key belongs to another cluster.
   (Model, Cmd?)? _handleKillKey(KeyMsg msg) {
     switch (msg.key) {
       case 'ctrl+u':
@@ -1509,16 +1630,42 @@ final class FaTuiModel extends Model {
         // unix-line-discard — also what most terminals send for Cmd+Backspace).
         if (cursor == 0) return (this, null);
         return (
-          _updateMenuForInput(
-            copyWith(inputText: inputText.substring(cursor), cursor: 0),
-          ),
+          _updateMenuForInput(copyWith(editor: editor.killToLineStart())),
           null,
         );
       case 'ctrl+w':
-        return _killWordBeforeCursor();
+        if (cursor == 0) return (this, null);
+        return (
+          _updateMenuForInput(copyWith(editor: editor.killWordBefore())),
+          null,
+        );
       default:
         return null;
     }
+  }
+
+  /// Readline single-key editing beyond kills (issue #275): ctrl+k kill to
+  /// line end, ctrl+y yank (consecutive ctrl+y walks the ring older),
+  /// ctrl+t transpose, ctrl+z grouped undo. Null when unclaimed.
+  (Model, Cmd?)? _handleReadlineKey(KeyMsg msg) {
+    final LineEditor edited;
+    switch (msg.key) {
+      case 'ctrl+k':
+        if (cursor >= inputText.length) return (this, null);
+        edited = editor.killToLineEnd();
+      case 'ctrl+y':
+        if (!editor.canYank) return (this, null);
+        edited = editor.lastActionWasYank ? editor.yankOlder() : editor.yank();
+      case 'ctrl+t':
+        edited = editor.transpose();
+        if (identical(edited, editor)) return (this, null);
+      case 'ctrl+z':
+        if (!editor.canUndo) return (this, null);
+        edited = editor.undo();
+      default:
+        return null;
+    }
+    return (_updateMenuForInput(copyWith(editor: edited)), null);
   }
 
   /// Normal-mode forward delete; null when the key belongs to another
@@ -1527,9 +1674,10 @@ final class FaTuiModel extends Model {
     switch (msg.key) {
       case 'delete':
         if (cursor >= inputText.length) return (this, null);
-        final nextText =
-            inputText.substring(0, cursor) + inputText.substring(cursor + 1);
-        return (_updateMenuForInput(copyWith(inputText: nextText)), null);
+        return (
+          _updateMenuForInput(copyWith(editor: editor.deleteForward())),
+          null,
+        );
       default:
         return null;
     }
@@ -1556,37 +1704,9 @@ final class FaTuiModel extends Model {
     if (_isCommandKeystroke(msg.key)) return (this, null);
     final text = msg.keyEvent.text;
     if (text.isNotEmpty && text.length == 1) {
-      final nextText =
-          inputText.substring(0, cursor) + text + inputText.substring(cursor);
-      final nextCursor = cursor + 1;
-      return (
-        _updateMenuForInput(copyWith(inputText: nextText, cursor: nextCursor)),
-        null,
-      );
+      return (_updateMenuForInput(copyWith(editor: editor.insert(text))), null);
     }
     return (this, null);
-  }
-
-  /// Ctrl+W: kill the word before the cursor (readline's unix-word-rubout):
-  /// trailing whitespace first, then the word itself.
-  (Model, Cmd?) _killWordBeforeCursor() {
-    if (cursor == 0) return (this, null);
-    var end = cursor;
-    while (end > 0 && inputText[end - 1] == ' ') {
-      end--;
-    }
-    while (end > 0 && inputText[end - 1] != ' ') {
-      end--;
-    }
-    return (
-      _updateMenuForInput(
-        copyWith(
-          inputText: inputText.substring(0, end) + inputText.substring(cursor),
-          cursor: end,
-        ),
-      ),
-      null,
-    );
   }
 
   /// Picker mode: arrows navigate, enter/tab select, esc closes. Every
@@ -1800,9 +1920,7 @@ final class FaTuiModel extends Model {
   static bool _isWordBreak(String ch) => ch == ' ' || ch == '\n' || ch == '\t';
 
   (FaTuiModel, Cmd?) _insertNewlineAtCursor() {
-    final nextText =
-        '${inputText.substring(0, cursor)}\n${inputText.substring(cursor)}';
-    return (copyWith(inputText: nextText, cursor: cursor + 1), null);
+    return (copyWith(editor: editor.insert('\n')), null);
   }
 
   /// The user-message echo: a dim full-width rule above backgrounded input
@@ -1835,7 +1953,7 @@ final class FaTuiModel extends Model {
     // message echo — an empty backgrounded block would read as a glitch.
     if (inputText.isEmpty) {
       return (
-        copyWith(inputText: '', cursor: 0),
+        copyWith(inputText: '', cursor: 0, menuOpen: false, menuTokenStart: -1),
         () async {
           await callbacks.onSubmit(text);
           return null;
@@ -1861,6 +1979,8 @@ final class FaTuiModel extends Model {
       historyIndex: -1,
       historyDraft: null,
       outputLines: echoed,
+      menuOpen: false,
+      menuTokenStart: -1,
       stickyLines: [rule, '$bg$shown$reset$more'],
       stickyIndex: outputLines.length,
       stickyEchoLineCount: 2 + inputText.split('\n').length,
@@ -1896,17 +2016,33 @@ final class FaTuiModel extends Model {
   /// Busy-mode Enter: queues the message (kimi-cli semantics — it is run as
   /// a separate turn after the current one settles). Slash/bang commands go
   /// through the normal submit path since they execute instantly.
-  (FaTuiModel, Cmd?) _enqueue(String text) {
-    return (copyWith(inputText: '', cursor: 0, queue: [...queue, text]), null);
+  /// [steer] marks the row as a steering interrupt (ctrl+s later flushes
+  /// the whole queue through the steering path); it renders badged.
+  (FaTuiModel, Cmd?) _enqueue(String text, {bool steer = false}) {
+    return (
+      copyWith(
+        inputText: '',
+        cursor: 0,
+        menuOpen: false,
+        menuTokenStart: -1,
+        queue: [
+          ...queue,
+          QueuedMessage(text, steer: steer),
+        ],
+      ),
+      null,
+    );
   }
 
-  /// Busy-mode Ctrl+S: steers the pending input plus every queued message
-  /// into the running agent (each becomes a separate user message), echoing
-  /// them into the history first.
-  (FaTuiModel, Cmd?) _steerAll() {
+  /// Busy-mode Ctrl+S: steers the queue into the running agent (each
+  /// message becomes a separate user turn), echoing them into the history
+  /// first. Steering rows go before follow-ups.
+  (FaTuiModel, Cmd?) _steerAll({bool includePending = true}) {
     final messages = [
-      if (inputText.trim().isNotEmpty) inputText.trim(),
-      ...queue,
+      if (includePending && inputText.trim().isNotEmpty) inputText.trim(),
+      // Steering rows interrupt first; follow-ups keep queue order.
+      ...[for (final m in queue.where((m) => m.steer)) m.text],
+      ...[for (final m in queue.where((m) => !m.steer)) m.text],
     ];
     if (messages.isEmpty) return (this, null);
     var lines = outputLines;
@@ -1975,49 +2111,8 @@ final class FaTuiModel extends Model {
     return i;
   }
 
-  FaTuiModel _updateMenuForInput(FaTuiModel model) {
-    final text = model.inputText;
-
-    // `/models <filter>` opens the picker with a pre-filled filter.
-    final filterMatch = _modelsFilterPrefix.firstMatch(text);
-    if (filterMatch != null) {
-      final filter = filterMatch.group(1)!;
-      return model.copyWith(
-        menuOpen: true,
-        menuModelMode: true,
-        modelFilter: filter,
-        menuItems: callbacks.buildModelMenu(filter),
-        menuSelected: 0,
-        pickerId: 'models',
-        pickerTitle: '',
-      );
-    }
-
-    if (text == '/models') {
-      return model.copyWith(
-        menuOpen: true,
-        menuModelMode: true,
-        modelFilter: '',
-        menuItems: callbacks.buildModelMenu(''),
-        menuSelected: 0,
-        pickerId: 'models',
-        pickerTitle: '',
-      );
-    }
-    if (text.startsWith('/')) {
-      final items = callbacks.buildSlashMenu(text);
-      if (items.isEmpty) {
-        return model.copyWith(menuOpen: false);
-      }
-      return model.copyWith(
-        menuOpen: true,
-        menuModelMode: false,
-        menuItems: items,
-        menuSelected: 0,
-      );
-    }
-    return model.copyWith(menuOpen: false);
-  }
+  FaTuiModel _updateMenuForInput(FaTuiModel model) =>
+      updateMenuForInput(model, callbacks);
 
   @override
   View view() {
@@ -2145,12 +2240,14 @@ final class FaTuiModel extends Model {
             _dim('─' * (rightWidth < 0 ? 0 : rightWidth)),
       );
     } else {
+      // The row is always reserved (progressH): skipping the blank row
+      // while following shifted every later row on scroll.
       b.writeln();
     }
   }
 
-  /// The menu header row: pickers echo their type-to-filter query
-  /// (`[title: query]`), the slash menu is plain '[Commands]'.
+  /// The menu title row: '[Commands]' for the slash menu, otherwise the
+  /// picker title with the active filter.
   String _menuTitle() {
     if (!menuModelMode) return '[Commands]';
     final title = pickerId == 'models' ? 'Select model' : pickerTitle;
@@ -2178,7 +2275,13 @@ final class FaTuiModel extends Model {
   void _writeMenuItems(StringBuffer b) {
     final (start, end) = _menuWindow();
     if (start > 0) b.writeln(_dim('  ↑ more'));
+    var lastGroup = '';
     for (var i = start; i < end; i++) {
+      final group = menuItems[i].group;
+      if (group.isNotEmpty && group != lastGroup) {
+        b.writeln(_dim('  ── $group ──'));
+        lastGroup = group;
+      }
       b.writeln(_menuItemRow(menuItems[i], i == menuSelected));
     }
     if (end < menuItems.length) b.writeln(_dim('  ↓ more'));
@@ -2212,14 +2315,18 @@ final class FaTuiModel extends Model {
     if (scheduledCount > 0) b.writeln(_scheduledRowLine());
     if (busy) b.writeln(_busyRowLine());
     if (queue.isNotEmpty) {
+      // The count badge is the "your typing is not lost" contract (AC2).
+      b.writeln(_dim('⏵ queued (${queue.length})'));
       for (final queued in queue) {
-        final flat = queued.replaceAll('\n', ' ');
-        final line = flat.length > termWidth - 2
-            ? '${flat.substring(0, termWidth - 3)}…'
-            : flat;
-        b.writeln(_dim('❯ $line'));
+        final flat = queued.text.replaceAll('\n', ' ');
+        final badge = queued.steer ? '⤳ [steer] ' : '❯ ';
+        final line = '$badge$flat';
+        final clipped = line.length > termWidth - 2
+            ? '${line.substring(0, termWidth - 3)}…'
+            : line;
+        b.writeln(_dim(clipped));
       }
-      b.writeln(_dim('↑ to edit · ctrl-s to send immediately'));
+      b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
     }
     b.writeln(_dim('─' * termWidth));
   }
@@ -2343,10 +2450,6 @@ final class FaTuiModel extends Model {
   /// markdown walk (ansi_markdown.dart `_fenceRe`): parity over the
   /// retained history must agree with what the renderer will compute.
   static final RegExp _fenceLineStart = RegExp(r'^\s*```');
-
-  /// `/models <filter>` prefix — allocated once: `_updateMenuForInput` runs
-  /// on EVERY keystroke and used to recompile this per keypress.
-  static final RegExp _modelsFilterPrefix = RegExp(r'^/models\s+(.*)$');
 
   static List<String> _appendOutput(
     List<String> lines,
@@ -2615,6 +2718,12 @@ final class FaTuiController {
     final completer = Completer<List<String>>();
     _send(DrainQueueMsg(completer));
     return completer.future;
+  }
+
+  /// Clears the queued messages without running them (`/queue clear`,
+  /// issue #275). The strip disappearing is the user's confirmation.
+  void clearQueue() {
+    _send(const ClearQueueMsg());
   }
 
   Future<void> run() async {

@@ -88,6 +88,7 @@ const _nonSettingsCommands = <String, String>{
   '/a2a': 'read-only server status',
   '/ext': 'extension store/bootstrap state, not config.yaml',
   '/key': 'OS secure store only — key values never live in config.yaml',
+  '/queue': 'in-memory queued follow-ups (view/clear), nothing persisted',
 };
 
 /// The commands the skill's parity marker documents.
