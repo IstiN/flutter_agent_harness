@@ -966,6 +966,9 @@ void main() {
       agent.state.tools = registry.tools;
       agent.state.messages = List.of(view);
       await agent.prompt('what was the error?');
+      // ponytail: CI interleaving can resolve prompt one microtask before
+      // the tool-loop's second stream call lands; pump the queue first.
+      await pumpEventQueue();
 
       // Turn 1 saw the marker; turn 2's context carried the expansion
       // and the scripted answer landed.
