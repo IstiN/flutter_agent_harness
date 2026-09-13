@@ -553,7 +553,10 @@ final class FaTuiModel extends Model {
         inputFrameH +
         statusH +
         _inputLineCount;
-    return (height - used).clamp(3, 9999);
+    // Clamp to the physical height (floor 0): a ≥3 floor on a tiny terminal
+    // would promise rows the screen does not have and break the pure-scroll
+    // → CSI S 1:1 mapping (issue #274 review minor).
+    return (height - used).clamp(0, height);
   }
 
   int get _viewportHeight => _viewportHeightFor(termWidth, termHeight);

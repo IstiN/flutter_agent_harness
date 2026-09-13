@@ -470,14 +470,17 @@ bool _envTruthy(String name) {
   return value == '1' || value == 'true' || value == 'yes' || value == 'on';
 }
 
-/// Tri-state env-var check: truthy → true, falsy → false, unset → null.
+/// Tri-state env-var check: `1/true/yes/on` → true, `0/false/no/off` →
+/// false, unset or unrecognized (e.g. `auto`) → null. Strict sets — any
+/// other garbage must not silently force the flag on.
 bool? _envTristate(String name) {
   final raw = Platform.environment[name]?.trim().toLowerCase();
   if (raw == null || raw.isEmpty) return null;
-  if (raw == '0' || raw == 'false' || raw == 'no' || raw == 'off') {
-    return false;
-  }
-  return true;
+  const on = {'1', 'true', 'yes', 'on'};
+  const off = {'0', 'false', 'no', 'off'};
+  if (on.contains(raw)) return true;
+  if (off.contains(raw)) return false;
+  return null;
 }
 
 /// [CliIO] bound to the real terminal: stdin lines, stdout writes, and a
