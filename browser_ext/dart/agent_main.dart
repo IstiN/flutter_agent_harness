@@ -28,6 +28,7 @@ import 'src/chrome_api_js.dart';
 import 'src/run_script_tool.dart';
 import 'src/fahx_import.dart' show FahxException, importFahxProviders;
 import 'src/dap/dap_integration.dart';
+import 'src/dap/bound_session_routing.dart' show normalizeBoundSessionMode;
 import 'src/fetch_client.dart';
 import 'package:flutter_agent_harness/src/web_search/web_search.dart';
 import 'src/providers.dart';
@@ -847,7 +848,6 @@ DapConfig? _dapFrom(Object? raw) {
   print('[dap] config: url=$url name=${name.isEmpty ? '—' : name}');
   final bound = raw['boundSession'];
   final boundMap = bound is Map ? bound : const {};
-  final mode = '${boundMap['mode'] ?? 'current'}'.trim();
   final boundId = '${boundMap['sessionId'] ?? ''}'.trim();
   return DapConfig(
     url: url,
@@ -855,10 +855,10 @@ DapConfig? _dapFrom(Object? raw) {
     secret: secret,
     loadKeyFile: () => _storageGetString('faDapKey'),
     saveKeyFile: (text) => _storageSetString('faDapKey', text),
-    boundSessionMode: switch (mode) {
-      'dedicated' || 'named' => mode,
-      _ => 'current',
-    },
+    // Absent/garbled mode → 'dedicated' (issue #321): inbound mail mints
+    // the 'DAP Inbox' session — same default as the panel picker and sw
+    // hub.bind. 'current' is an explicit opt-in only.
+    boundSessionMode: normalizeBoundSessionMode('${boundMap['mode'] ?? ''}'),
     boundSessionId: boundId.isEmpty ? null : boundId,
     persistBoundSessionId: _persistBoundSessionId,
   );
