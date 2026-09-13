@@ -177,6 +177,14 @@ final class ScheduledStatusMsg extends Msg {
   final int? nextDueMs;
 }
 
+/// One-shot minute-boundary tick keeping the scheduled-follow-ups
+/// indicator's "next in Nm" countdown live while the TUI is idle (issue
+/// #213): the row recomputes from the clock at render time, so the tick
+/// only triggers a repaint and re-arms.
+final class ScheduledTickMsg extends Msg {
+  const ScheduledTickMsg();
+}
+
 /// Message draining the queued messages (kimi-cli semantics: after a run
 /// settles the host takes them one-by-one as separate turns). The model
 /// echoes them into the history before clearing.
@@ -279,8 +287,10 @@ final class FaTuiModel extends Model {
     this.historyDraft,
     this.scheduledCount = 0,
     this.scheduledNextDueMs = -1,
+    this.scheduledTickPending = false,
     this.frameNonce = 0,
-  });
+    DateTime Function()? now,
+  }) : nowFn = now ?? DateTime.now;
 
   final FaTuiCallbacks callbacks;
   final bool Function() isExited;
@@ -356,6 +366,14 @@ final class FaTuiModel extends Model {
   /// Earliest pending due time (epoch ms; -1 unknown) — rendered as the
   /// "next in 25m" suffix.
   final int scheduledNextDueMs;
+
+  /// Whether a [ScheduledTickMsg] timer is outstanding (issue #213) — the
+  /// guard that keeps the countdown chain at one pending timer max.
+  final bool scheduledTickPending;
+
+  /// Clock seam (issue #213 tests): the scheduled-row ETA and the tick
+  /// delay read this instead of [DateTime.now] directly.
+  final DateTime Function() nowFn;
 
   /// Whether the TUI captures the mouse (wheel scrolling) instead of
   /// leaving it to the terminal's native text selection. Default on: the
@@ -604,6 +622,7 @@ final class FaTuiModel extends Model {
     int? historyIndex,
     int? scheduledCount,
     int? scheduledNextDueMs,
+    bool? scheduledTickPending,
     Object? historyDraft = _unset,
   }) {
     final copy = FaTuiModel(
@@ -640,6 +659,8 @@ final class FaTuiModel extends Model {
       historyIndex: historyIndex ?? this.historyIndex,
       scheduledCount: scheduledCount ?? this.scheduledCount,
       scheduledNextDueMs: scheduledNextDueMs ?? this.scheduledNextDueMs,
+      scheduledTickPending: scheduledTickPending ?? this.scheduledTickPending,
+      now: nowFn,
       historyDraft: historyDraft == _unset
           ? this.historyDraft
           : historyDraft as String?,
@@ -665,12 +686,30 @@ final class FaTuiModel extends Model {
     };
   }
 
+  /// Arms the one-shot minute-boundary repaint for the scheduled-follow-ups
+  /// countdown (issue #213, fix option A): the ETA renders in whole minutes
+  /// (`ScheduledMessageQueue.formatDelay`), so waking at the next wall-clock
+  /// minute boundary is exact — no sub-minute waste, no timers while nothing
+  /// is scheduled, and the "due now" flip appears within a minute.
+  Cmd _scheduleScheduledTick() {
+    final nowMs = nowFn().millisecondsSinceEpoch;
+    final delayMs = 60000 - (nowMs % 60000);
+    return () async {
+      await Future<void>.delayed(Duration(milliseconds: delayMs));
+      return const ScheduledTickMsg();
+    };
+  }
+
   @override
   (Model, Cmd?) update(Msg msg) {
     // Activity heartbeat for the busy row: any real message while busy
     // (stream deltas, tool rows, key input) proves the stretch is alive;
     // only spinner ticks and busy bookkeeping are excluded.
-    final FaTuiModel self = (busy && msg is! SpinnerTickMsg && msg is! BusyMsg)
+    final FaTuiModel self =
+        (busy &&
+            msg is! SpinnerTickMsg &&
+            msg is! BusyMsg &&
+            msg is! ScheduledTickMsg)
         ? copyWith(busyLastEventMs: DateTime.now().millisecondsSinceEpoch)
         : this;
     return self._updateWithHeartbeat(msg);
@@ -678,6 +717,7 @@ final class FaTuiModel extends Model {
 
   (Model, Cmd?) _updateWithHeartbeat(Msg msg) {
     if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
+    if (msg is ScheduledTickMsg) return _handleScheduledTick();
     // Output is handled before the exit check so trailing writes (e.g. the
     // 'bye' line from /exit) still render before the program quits; the host
     // sends _QuitRequestedMsg once it has marked exit.
@@ -698,16 +738,39 @@ final class FaTuiModel extends Model {
     return _updateAfterExitCheck(msg);
   }
 
-  /// The scheduled follow-ups indicator is a pure host push: store the
-  /// count/ETA and re-render. No chain, no watchdog — the next schedule or
-  /// fire event updates it again.
+  /// The scheduled follow-ups indicator is a host push for the count/ETA;
+  /// while a countdown is showing the model also arms a one-shot
+  /// minute-boundary tick (issue #213) so the idle "next in Nm" keeps
+  /// ticking — [scheduledTickPending] caps the chain at one timer.
   (Model, Cmd?) _handleScheduledStatus(ScheduledStatusMsg msg) {
+    final next = copyWith(
+      scheduledCount: msg.count,
+      scheduledNextDueMs: msg.nextDueMs ?? -1,
+    );
+    if (next.scheduledCount > 0 &&
+        next.scheduledNextDueMs >= 0 &&
+        !scheduledTickPending) {
+      return (
+        next.copyWith(scheduledTickPending: true),
+        _scheduleScheduledTick(),
+      );
+    }
+    return (next, null);
+  }
+
+  /// The minute-boundary countdown tick fired (issue #213): the row
+  /// recomputes from [nowFn] at render time, so the repaint alone refreshes
+  /// the ETA; re-arm while there is still a countdown to show. A count of 0
+  /// (fired/cancelled — E1) or an unknown ETA (nextDueMs = -1 — E3) ends
+  /// the chain.
+  (Model, Cmd?) _handleScheduledTick() {
+    final next = copyWith(scheduledTickPending: false);
+    if (next.scheduledCount <= 0 || next.scheduledNextDueMs < 0) {
+      return (next, null);
+    }
     return (
-      copyWith(
-        scheduledCount: msg.count,
-        scheduledNextDueMs: msg.nextDueMs ?? -1,
-      ),
-      null,
+      next.copyWith(scheduledTickPending: true),
+      _scheduleScheduledTick(),
     );
   }
 
@@ -2164,7 +2227,7 @@ final class FaTuiModel extends Model {
   /// The scheduled follow-ups indicator line (one dim row): count + the
   /// nearest ETA, styled after the busy row so it reads as one family.
   String _scheduledRowLine() {
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = nowFn().millisecondsSinceEpoch;
     final eta = scheduledNextDueMs < 0
         ? ''
         : scheduledNextDueMs <= now
