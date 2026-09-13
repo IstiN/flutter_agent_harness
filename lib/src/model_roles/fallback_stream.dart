@@ -255,7 +255,7 @@ final class _Retryable extends _AttemptOutcome {
 /// Mutable state of one [_drive] call, extracted so the event-loop phases
 /// can live in small methods instead of closures over shared locals.
 final class _DriveState {
-  _DriveState(this.entryIndex) : tried = {entryIndex};
+  _DriveState(this.entryIndex, this.startedAt) : tried = {entryIndex};
 
   /// The chain entry currently being attempted.
   int entryIndex;
@@ -274,6 +274,43 @@ final class _DriveState {
 
   /// The credential for the next attempt (null = re-select).
   ApiKeyCredential? credential;
+
+  /// When the call started (the exhaustion story reports the elapsed time).
+  final DateTime startedAt;
+
+  /// One bounded line per failed attempt (the exhaustion story's
+  /// per-attempt outcomes, issue #290 AC2).
+  final List<String> attemptLog = [];
+}
+
+/// Rewrites a post-commit retryable-class failure into the mid-answer
+/// terminal error (AC4). Other failures keep their own story (auth,
+/// overflow — those policies own them).
+ErrorEvent _midAnswerEvent(ErrorEvent event) {
+  final error = event.error;
+  final retryable =
+      event.reason == StopReason.error &&
+      (isRateLimitOrQuota(error, retryAfter: event.retryAfter) ||
+          isTransientTransportError(error));
+  if (!retryable) return event;
+  return ErrorEvent(
+    reason: event.reason,
+    retryAfter: event.retryAfter,
+    error: AssistantMessage(
+      content: error.content,
+      api: error.api,
+      provider: error.provider,
+      model: error.model,
+      usage: error.usage,
+      stopReason: error.stopReason,
+      errorMessage:
+          'Provider failed mid-answer: the stream died after output was '
+          'already delivered (not retried — a replay would duplicate the '
+          'transcript). Provider error: '
+          '${FallbackStreamFunction._shortReasonText(error)}',
+      timestamp: error.timestamp,
+    ),
+  );
 }
 
 /// Buffers one attempt's events until the first observable output commits
@@ -312,12 +349,19 @@ final class _AttemptBuffer {
     }
   }
 
-  /// Post-commit events stream live; a terminal event ends the attempt.
+  /// Post-commit events stream live; a terminal event ends the attempt. A
+  /// retryable-class failure here stands (issue #290 AC4 — observable
+  /// output already left; a replay would duplicate the transcript), but it
+  /// surfaces as a clean mid-answer error, never a naked provider dump.
   _AttemptOutcome? _forwardCommitted(
     AssistantMessageEventStream out,
     AssistantMessageEvent event,
   ) {
-    out.push(event);
+    if (event is ErrorEvent) {
+      out.push(_midAnswerEvent(event));
+    } else {
+      out.push(event);
+    }
     if (event is DoneEvent || event is ErrorEvent) {
       return const _Forwarded();
     }
@@ -453,7 +497,7 @@ final class FallbackStreamFunction {
     Context context,
     CancelToken? cancelToken,
   ) async {
-    final state = _DriveState(_firstAvailableIndex());
+    final state = _DriveState(_firstAvailableIndex(), _now());
     _activeIndex = state.entryIndex;
 
     while (true) {
@@ -528,7 +572,7 @@ final class FallbackStreamFunction {
       failures: state.failures,
     );
     if (next == null) {
-      _forwardLastFailure(out, _entries[state.entryIndex], state.lastFailure);
+      _forwardLastFailure(out, state);
       return false;
     }
     state.entryIndex = next;
@@ -635,6 +679,7 @@ final class FallbackStreamFunction {
     CancelToken? cancelToken,
   ) async {
     state.lastFailure = outcome;
+    state.attemptLog.add('${entry.label}: ${_shortReasonText(outcome.error)}');
     if (!outcome.isTransport) {
       entry.keyRing.reportRateLimited(
         attemptCredential.name,
@@ -748,19 +793,51 @@ final class FallbackStreamFunction {
     return const _Forwarded();
   }
 
-  void _forwardLastFailure(
-    AssistantMessageEventStream out,
-    ChainEntry entry,
-    _Retryable? lastFailure,
-  ) {
-    final error =
-        lastFailure?.error ??
-        _terminalMessage(
-          entry.model,
-          StopReason.error,
-          'All API keys for ${entry.label} are rate limited',
-        );
-    out.push(ErrorEvent(reason: StopReason.error, error: error));
+  /// Chain exhausted (issue #290 AC2/E1): the terminal error carries the
+  /// retry story — attempts, elapsed, per-attempt outcomes, the
+  /// whole-chain-failed wording, a next-step hint — with the raw provider
+  /// lines only as evidence inside, never as the headline.
+  void _forwardLastFailure(AssistantMessageEventStream out, _DriveState state) {
+    final entry = _entries[state.entryIndex];
+    final failure = state.lastFailure;
+    if (failure == null) {
+      out.push(
+        ErrorEvent(
+          reason: StopReason.error,
+          error: _terminalMessage(
+            entry.model,
+            StopReason.error,
+            'Provider chain exhausted: every chain model is rate limited and '
+            'cooling down. The primary model is retried automatically '
+            'once its cooldown lapses — check the provider status or try '
+            'again later.',
+          ),
+        ),
+      );
+      return;
+    }
+    final elapsed = _now().difference(state.startedAt);
+    final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
+    final log = state.attemptLog
+        .map(
+          (line) =>
+              line.endsWith('.') ? line.substring(0, line.length - 1) : line,
+        )
+        .join('; ');
+    final story =
+        'Provider chain exhausted: ${state.tried.length} of '
+        '${_entries.length} chain model(s) failed after '
+        '${state.attemptLog.length} attempt(s) over $elapsedText. '
+        'Attempts: $log. '
+        'All available models failed with provider-side errors — likely an '
+        'outage or quota exhaustion, not a key problem. '
+        'Check the provider status or try again later.';
+    out.push(
+      ErrorEvent(
+        reason: StopReason.error,
+        error: _terminalMessage(entry.model, StopReason.error, story),
+      ),
+    );
   }
 
   void _pushAborted(AssistantMessageEventStream out, Model model) {
