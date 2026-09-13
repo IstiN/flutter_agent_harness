@@ -26,6 +26,12 @@ abstract interface class TeaRenderer {
   /// Imperatively hide or show the cursor.
   void setCursorVisibility(bool visible);
 
+  /// Drops every cached frame assumption (diff cache, scroll history,
+  /// tallest-grid watermark). Call when the physical geometry changes
+  /// (resize): the next [render] repaints the whole screen once and the
+  /// differential path resumes from there.
+  void invalidate();
+
   /// Emit ANSI scroll sequences: positive [n] scrolls up, negative scrolls down.
   void scroll(int n, {bool up = true});
 }
@@ -53,6 +59,8 @@ final class NilRenderer implements TeaRenderer {
   void setCursorVisibility(bool visible) {}
   @override
   void scroll(int n, {bool up = true}) {}
+  @override
+  void invalidate() {}
 }
 
 final class _CursorRendererState {
@@ -314,6 +322,14 @@ final class AnsiRenderer implements TeaRenderer {
     _hasRenderedFrame = false;
     _cursorState.invalidate();
   }
+
+  @override
+  void invalidate() {
+    _lastLines = const <String>[];
+    _lastContent = '';
+    _hasRenderedFrame = false;
+    _cursorState.invalidate();
+  }
 }
 
 // ─── Cell-level diff renderer ──────────────────────────────────────────────
@@ -373,12 +389,25 @@ final class CellRenderer implements TeaRenderer {
   final IOSink? _logSink;
   final TerminalModeState _modes;
   bool _unicodeCoreEnabled = false;
+  bool _syncUpdates = false;
+  bool _syncOpen = false;
 
   List<List<_Cell>>? _lastGrid;
   String? _lastContent;
   String _lastTitle = '';
+  // Tallest grid ever rendered; the scroll path additionally requires the
+  // grid to match it (see _detectScrollShift).
+  int _maxRows = 0;
   final _cursorState = _CursorRendererState();
   final _terminalViewState = TerminalViewState();
+
+  @override
+  void invalidate() {
+    _lastGrid = null;
+    _lastContent = null;
+    _maxRows = 0;
+    _cursorState.invalidate();
+  }
 
   @override
   void render(View view) {
@@ -401,14 +430,32 @@ final class CellRenderer implements TeaRenderer {
       return; // identical frame — skip rebuild + diff walk
     }
     final nextGrid = _buildGrid(view.content);
+    final prev = _lastGrid;
     var wroteCells = false;
-    if (_lastGrid == null) {
+    if (prev == null) {
+      // First frame: clear every row we are about to own, then paint.
+      if (nextGrid.isNotEmpty) _syncBegin();
       for (var row = 0; row < nextGrid.length; row++) {
         _output.write('\x1b[${row + 1};1H\x1b[K');
       }
       wroteCells = nextGrid.isNotEmpty;
+      wroteCells = _diffAndEmit(nextGrid) || wroteCells;
+      _syncEnd();
+    } else {
+      final shift = _detectScrollShift(prev, nextGrid);
+      if (shift != null) {
+        // Scroll fast path: one scroll op + the fresh rows (+ any overlap
+        // rows the live chrome rewrote across the shift) — never a repaint.
+        _syncBegin();
+        _emitScrollFrame(k: shift.k, repaint: shift.repaint, next: nextGrid);
+        _syncEnd();
+        wroteCells = true;
+      } else {
+        wroteCells = _diffAndEmit(nextGrid);
+        _syncEnd();
+      }
     }
-    wroteCells = _diffAndEmit(nextGrid) || wroteCells;
+    if (nextGrid.length > _maxRows) _maxRows = nextGrid.length;
     _lastGrid = nextGrid;
     _lastContent = view.content;
     _cursorState.apply(_output, view.cursor, forceHome: wroteCells);
@@ -463,7 +510,9 @@ final class CellRenderer implements TeaRenderer {
   void close() => release();
 
   @override
-  void setSyncUpdates(bool enabled) {} // cell renderer handles its own sync
+  void setSyncUpdates(bool enabled) {
+    _syncUpdates = enabled;
+  }
 
   @override
   void setUnicodeCore(bool enabled) {
@@ -556,8 +605,15 @@ final class CellRenderer implements TeaRenderer {
       for (var col = 0; col < cols; col++) {
         final nextCell =
             col < nextRow.length ? nextRow[col] : const _Cell(' ', '');
+        // Beyond the previously WRITTEN row length the physical terminal
+        // holds ERASED cells (CSI K / CSI 2J leave zero-width empty cells in
+        // real terminals like xterm, not space cells), so equality with a
+        // blank fallback can never be trusted there — a space the view
+        // writes must be emitted explicitly or words visually collapse
+        // ("Chat model" -> "Chatmodel"). A sentinel that never compares
+        // equal forces the paint.
         final prevCell =
-            col < prevRow.length ? prevRow[col] : const _Cell(' ', '');
+            col < prevRow.length ? prevRow[col] : const _Cell('\x00', '\x00');
 
         if (nextCell == prevCell) continue;
 
@@ -567,6 +623,7 @@ final class CellRenderer implements TeaRenderer {
         // never be written independently.
         if (nextCell.isContinuation) continue;
         wrote = true;
+        _syncBegin();
 
         // Move cursor if needed
         if (lastRow != row || lastCol != col) {
@@ -606,6 +663,159 @@ final class CellRenderer implements TeaRenderer {
       _output.write('\x1b]8;;\x1b\\');
     }
     return wrote;
+  }
+
+  // ── Synchronized output (DEC 2026) ────────────────────────────────────────
+
+  /// Opens BSU before the first painted byte of a frame (lazy: idle frames
+  /// stay byte-silent, AC — zero-byte static screens).
+  void _syncBegin() {
+    if (_syncUpdates && !_syncOpen) {
+      _output.write('\x1b[?2026h');
+      _syncOpen = true;
+    }
+  }
+
+  /// Closes ESU after the frame's last byte; the cursor apply stays outside
+  /// the atomic region (matches [AnsiRenderer]'s ordering).
+  void _syncEnd() {
+    if (_syncOpen) {
+      _output.write('\x1b[?2026l');
+      _syncOpen = false;
+    }
+  }
+
+  // ── Scroll-region fast path ───────────────────────────────────────────────
+
+  /// Pure-scroll detection: +k when [next] is [prev] shifted up by k rows
+  /// (content advanced toward the top), -k when shifted down (viewport moved
+  /// toward older history).
+  ///
+  /// Tolerant variant: a small number of overlap rows may differ (the live
+  /// chrome — busy spinner, scroll indicator — rewrites itself every frame
+  /// even when the content is a pure shift). Those rows are REPAINTED after
+  /// the scroll op (see [_emitScrollFrame]), so the emitted stream stays
+  /// byte-correct; the tolerance only decides whether the fast path pays
+  /// off. The pure-shift case (no mismatches) is still preferred and keeps
+  /// the headline budget: 1 op + k fresh rows.
+  ///
+  /// Returns null when no shift is worth taking → cell diff.
+  ///
+  /// Additionally requires the grid to be as tall as the tallest grid ever
+  /// rendered: a scroll op shifts the PHYSICAL screen, and rows below a
+  /// shorter grid would receive shifted stale content this renderer never
+  /// repaints. Views that render fewer rows than the terminal simply keep
+  /// the cell-diff path (fa_tui pads its view to full height).
+  // ponytail: k capped at 40 (a wheel/page scroll never exceeds a
+  // viewport); per-k early exit once the mismatch budget is blown. Row
+  // hashing only if this ever shows up in a profile.
+  ({int k, List<int> repaint})? _detectScrollShift(
+      List<List<_Cell>> prev, List<List<_Cell>> next) {
+    final rows = prev.length;
+    if (rows < 2 || rows != next.length || rows != _maxRows) return null;
+    const maxK = 40;
+    var best = (matched: -1, k: 0, up: false);
+    for (var k = 1; k <= (rows - 1 < maxK ? rows - 1 : maxK); k++) {
+      // Up: overlap rows i in [0, rows-k) map from prev[i+k].
+      {
+        final overlap = rows - k;
+        final budget = overlap > 16 ? overlap ~/ 8 : 2;
+        var matched = 0;
+        for (var i = 0; i < overlap; i++) {
+          if (_rowsEqual(next[i], prev[i + k])) matched++;
+        }
+        // Majority guard: a degenerate k (tiny overlap, all noise) must
+        // not win — then op + full repaint costs more than the plain diff.
+        if (overlap - matched <= budget &&
+            matched * 2 > overlap &&
+            matched > best.matched) {
+          best = (matched: matched, k: k, up: true);
+        }
+      }
+      // Down: overlap rows i in [k, rows) map from prev[i-k].
+      {
+        final overlap = rows - k;
+        final budget = overlap > 16 ? overlap ~/ 8 : 2;
+        var matched = 0;
+        for (var i = k; i < rows; i++) {
+          if (_rowsEqual(next[i], prev[i - k])) matched++;
+        }
+        if (overlap - matched <= budget &&
+            matched * 2 > overlap &&
+            matched > best.matched) {
+          best = (matched: matched, k: k, up: false);
+        }
+      }
+    }
+    if (best.k == 0) return null;
+    final k = best.k;
+    final mismatches = <int>[];
+    if (best.up) {
+      for (var i = 0; i < rows - k; i++) {
+        if (!_rowsEqual(next[i], prev[i + k])) mismatches.add(i);
+      }
+    } else {
+      for (var i = k; i < rows; i++) {
+        if (!_rowsEqual(next[i], prev[i - k])) mismatches.add(i);
+      }
+    }
+    return (k: best.up ? k : -k, repaint: mismatches);
+  }
+
+  bool _rowsEqual(List<_Cell> a, List<_Cell> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// One scroll op for [k] (positive = up `CSI S`, negative = down `CSI T`)
+  /// plus a repaint of only the rows the scroll leaves blank — a page scroll
+  /// becomes 1 op + k rows instead of a whole-screen repaint. The [shift]'s
+  /// mismatched overlap rows (live chrome that changed across the shift) are
+  /// repainted too, so the physical screen converges to [next] exactly.
+  void _emitScrollFrame(
+      {required int k,
+      required List<int> repaint,
+      required List<List<_Cell>> next}) {
+    _output.write(k > 0 ? '\x1b[${k}S' : '\x1b[${-k}T');
+    final from = k > 0 ? next.length - k : 0;
+    final to = k > 0 ? next.length : -k;
+    for (var row = from; row < to; row++) {
+      _paintRow(row, next[row]);
+    }
+    for (final row in repaint) {
+      _paintRow(row, next[row]);
+    }
+  }
+
+  /// Paints one full row from column 1, tracking SGR/hyperlink state so
+  /// consecutive cells share one attribute stream. The row tail is erased
+  /// (CSI K): a scroll op shifts the PHYSICAL screen, so the rows it leaves
+  /// at the bottom hold stale content beyond this row's content length, and
+  /// the grid treats beyond-content cells as blank — the erase is what makes
+  /// that assumption true (missing it leaks stale characters between words).
+  void _paintRow(int row, List<_Cell> cells) {
+    var attrs = '';
+    var hyperlink = '';
+    _output.write('\x1b[${row + 1};1H');
+    for (final cell in cells) {
+      if (cell.isContinuation) continue;
+      if (cell.hyperlink != hyperlink) {
+        if (hyperlink.isNotEmpty) _output.write('\x1b]8;;\x1b\\');
+        if (cell.hyperlink.isNotEmpty) _output.write(cell.hyperlink);
+        hyperlink = cell.hyperlink;
+      }
+      if (cell.attrs != attrs) {
+        _output.write(cell.attrs.isEmpty ? '\x1b[0m' : cell.attrs);
+        attrs = cell.attrs;
+      }
+      _output.write(cell.char);
+    }
+    if (attrs.isNotEmpty) _output.write('\x1b[0m');
+    if (hyperlink.isNotEmpty) _output.write('\x1b]8;;\x1b\\');
+    _output.write('\x1b[K');
   }
 }
 
