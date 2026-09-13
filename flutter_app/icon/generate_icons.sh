@@ -22,16 +22,13 @@ render() { # render <svg> <size> <out>
 # Keep the master PNG next to the SVGs for reference.
 render icon.svg 1024 icon_1024.png
 
-# --- Android -----------------------------------------------------------------
-AND="$ROOT/android/app/src/main/res"
-for spec in "mdpi 48" "hdpi 72" "xhdpi 96" "xxhdpi 144" "xxxhdpi 192"; do
-  set -- $spec
-  render icon.svg "$2" "$AND/mipmap-$1/ic_launcher.png"
-done
-for spec in "mdpi 108" "hdpi 162" "xhdpi 216" "xxhdpi 324" "xxxhdpi 432"; do
-  set -- $spec
-  render icon_foreground.svg "$2" "$AND/mipmap-$1/ic_launcher_foreground.png"
-done
+# --- Android (issue #289) ---------------------------------------------------
+# Legacy + adaptive launcher layers derive from the iOS release master via
+# the Dart image tool (identical composition on both platforms; the
+# foreground is safe-zone padded and composites over the brand navy
+# @color/ic_launcher_background). No rsvg/ImageMagick needed for Android.
+# The hand-maintained adaptive XMLs live in res/mipmap-anydpi-v26/.
+(cd "$ROOT" && dart run tool/generate_android_adaptive_icons.dart)
 
 # --- iOS (opaque, no alpha) --------------------------------------------------
 IOS="$ROOT/ios/Runner/Assets.xcassets/AppIcon.appiconset"
