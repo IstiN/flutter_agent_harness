@@ -3,13 +3,17 @@
 // the user's LIVE cookie jar (CodeMie's cookie auth without any SSO
 // dance), SW-relayed HTTP (MV3 service workers + `<all_urls>` host
 // permissions bypass CORS, so provider endpoints that never send CORS
-// headers are reachable), and tab creation (open the provider's login
-// page for an interactive sign-in).
+// headers are reachable), tab creation (open the provider's login page
+// for an interactive sign-in), and chat-attachment staging into the
+// embedded agent's sandbox (issue #313 — the sandbox is SW-local; the
+// "relay" hop is one message).
 //
 // The backend is injectable so the VM suite pins the dispatch (params
 // validation, response shapes, bounded waits) while the SW wires it to
 // chrome.* + fetch.
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 /// One cookie of the user's live jar (scoped read — see [handleExtOp]).
 final class ExtCookie {
@@ -35,6 +39,20 @@ abstract interface class ExtOpsBackend {
   });
 
   Future<void> tabsCreate(String url);
+
+  /// Stages one chat attachment into the agent env's uploads/ with the
+  /// app's EXACT semantics (the shared core `stageUpload` helper —
+  /// sanitize, dedupe, directory); returns the env-relative path the
+  /// outgoing message references.
+  Future<String> stageUpload(String name, Uint8List bytes);
+
+  /// Best-effort delete of a staged upload path (a pending chip removed
+  /// before send). Only uploads/ paths qualify; failures are ignored.
+  Future<void> discardUpload(String path);
+
+  /// The [paths] NOT present in the agent env right now — a chip staged
+  /// before an SW restart can point at a file that no longer exists.
+  Future<List<String>> missingUploads(List<String> paths);
 }
 
 final class ExtHttpResponse {
@@ -43,6 +61,17 @@ final class ExtHttpResponse {
   final int status;
   final String body;
 }
+
+/// Hard cap for one staged upload: 20 MB (issue #313). The SW's memory FS
+/// holds everything in RAM and mirrors it into chrome.storage, so the
+/// staging surface refuses oversized payloads BEFORE writing — the app's
+/// IndexedDB quota story does not apply here. Text pastes and normal
+/// attachments fit with an order of magnitude to spare.
+const int kMaxStageUploadBytes = 20 * 1024 * 1024;
+
+String _tooLarge(int bytes) =>
+    'upload too large: $bytes bytes exceeds the '
+    '${kMaxStageUploadBytes ~/ (1024 * 1024)} MB staging cap';
 
 /// Ops bound per request. Unknown ops are a structured error, never a
 /// crash; every fetch URL must be http(s) — the panel is trusted (an
@@ -93,6 +122,39 @@ Future<Map<String, dynamic>> handleExtOp(
           .tabsCreate(url)
           .then((_) => {'opened': true})
           .timeout(const Duration(seconds: 15));
+    case 'agent.stageUpload':
+      final name = params['name'] as String?;
+      final encoded = params['bytes'] as String?;
+      if (name == null || name.isEmpty) {
+        throw 'agent.stageUpload needs a "name"';
+      }
+      if (encoded == null) {
+        throw 'agent.stageUpload needs base64 "bytes"';
+      }
+      // Size guard BEFORE the decode allocates (base64 inflates by 4/3).
+      if (encoded.length * 3 ~/ 4 > kMaxStageUploadBytes) {
+        throw _tooLarge(encoded.length * 3 ~/ 4);
+      }
+      final Uint8List bytes;
+      try {
+        bytes = base64Decode(encoded);
+      } on FormatException {
+        throw 'agent.stageUpload needs base64 "bytes"';
+      }
+      if (bytes.length > kMaxStageUploadBytes) {
+        throw _tooLarge(bytes.length);
+      }
+      return {'path': await backend.stageUpload(name, bytes)};
+    case 'agent.discardUpload':
+      final path = params['path'] as String?;
+      if (path == null || path.isEmpty) {
+        throw 'agent.discardUpload needs a "path"';
+      }
+      await backend.discardUpload(path);
+      return const {'discarded': true};
+    case 'agent.missingUploads':
+      final paths = (params['paths'] as List?)?.cast<String>() ?? const [];
+      return {'missing': await backend.missingUploads(paths)};
     default:
       throw 'unknown ext op: $op';
   }

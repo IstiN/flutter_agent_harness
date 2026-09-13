@@ -166,7 +166,7 @@ final class UiHostAdapter implements UiHostConnector {
     Map<String, dynamic> params,
   ) async {
     final host = backend();
-    if (host == null) throw 'host not booted';
+    if (host == null) throw 'agent not built (missing sw/agent.js)';
     return host.extRequest(op, params);
   }
 }

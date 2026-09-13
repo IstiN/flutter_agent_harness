@@ -17,6 +17,8 @@ export '../src/ui_protocol.dart'
         AttachedMsg,
         CancelMsg,
         ErrorMsg,
+        ExtRequestMsg,
+        ExtResultMsg,
         HelloAckMsg,
         HelloMsg,
         MessageDoneMsg,
