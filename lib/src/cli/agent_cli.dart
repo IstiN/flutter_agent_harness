@@ -2739,16 +2739,6 @@ class AgentCli {
     return CompactionSettings.forWindow(_effectiveContextWindow);
   }
 
-  /// The effective context window of the live model under the owner cap
-  /// (`agent.contextWindowCap`, issue #273): the compaction thresholds,
-  /// the ctx meter/footer, and the loop's over-window guard all key off
-  /// this basis — one clamp point ([effectiveContextWindow]), not one per
-  /// consumer.
-  int get _effectiveContextWindow => effectiveContextWindow(
-    _agent.state.model.contextWindow,
-    config.contextWindowCap,
-  );
-
   /// Writes a diagnostic line to the log file (`~/.fah/logs/fa.log`).
   /// TUI/stderr stay clean — the AutoCompactor hook streams progress to
   /// the user, the log captures everything for post-mortem.
