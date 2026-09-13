@@ -2,6 +2,17 @@ import 'dart:async';
 
 import 'key_event.dart';
 
+/// A message queued while a run streams (issue #275 AC2). Rendered as a dim
+/// row above the composer; [steer] rows are badged distinctly.
+final class QueuedMessage {
+  final String text;
+  final bool steer;
+  const QueuedMessage(this.text, {this.steer = false});
+
+  @override
+  String toString() => steer ? 'steer: $text' : text;
+}
+
 /// A selectable item in the TUI inline menu.
 final class MenuItem {
   const MenuItem({
