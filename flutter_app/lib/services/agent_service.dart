@@ -2194,6 +2194,13 @@ class AgentService extends ChangeNotifier
       notifyListeners();
       return;
     }
+    // Wall-clock catch-up (issue #259): records that came due while the
+    // host slept are swept at turn start, not at the next timer tick, so
+    // the fresh turn's steering poll already sees the fired reminder.
+    // Lightweight test services (pre-constructed agent) have no fabric.
+    if (_subagentManager != null) {
+      unawaited(_scheduledMessages.deliverDue().onError((_, _) => 0));
+    }
     _runWithTimeout(() => _agent.prompt(trimmed));
   }
 

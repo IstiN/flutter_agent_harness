@@ -2440,6 +2440,17 @@ class AgentCli {
   /// resume budget (see [_overWindowAutoResumed]) plus pre-flight
   /// compaction of an already-over-window transcript.
   Future<void> _beginUserPrompt({required bool isAutoContinue}) async {
+    // Wall-clock catch-up (issue #259): records that came due while the
+    // host slept (or while no tick ran) are delivered HERE, at turn start —
+    // awaited before the prompt so this turn's first steering poll already
+    // sees the fired reminder, instead of waiting for the next timer tick.
+    try {
+      if (await _scheduledMessages.deliverDue() > 0) {
+        unawaited(_pushScheduledStatus());
+      }
+    } on Object {
+      // Best-effort: a broken sweep must never block a turn.
+    }
     if (isAutoContinue) return;
     _overWindowAutoResumed = false;
     // Pre-flight context guard: when the LIVE context already exceeds the
