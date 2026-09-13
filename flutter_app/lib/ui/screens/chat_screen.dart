@@ -21,6 +21,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/codemie_sso_flow.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/services/image_preview_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
@@ -306,6 +307,13 @@ class _ChatScreenState extends State<ChatScreen> {
     return fa_ui.FaChatScreen(
       service: service,
       title: context.l10n.appTitle,
+      // Issue #207: "High-quality image previews" — the scope notifies on
+      // toggle, so the open transcript re-decodes live. Null = full
+      // resolution; the default keeps the downscaled 600px previews.
+      imagePreviewCacheWidth:
+          ImagePreviewScope.maybeOf(context)?.highQuality ?? false
+          ? null
+          : fa_ui.kDefaultImagePreviewCacheWidth,
       settingsBuilder: (_) => SettingsScreen(
         service: service,
         env: service.env,

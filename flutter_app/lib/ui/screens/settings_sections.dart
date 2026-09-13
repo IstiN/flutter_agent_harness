@@ -65,6 +65,34 @@ class ThemeModeSection extends StatelessWidget {
   }
 }
 
+/// The settings "High-quality image previews" switch (issue #207): flips
+/// the shared [ImagePreviewStore] (nearest [ImagePreviewScope]) — every
+/// open transcript re-decodes its image previews immediately. Off (the
+/// default) keeps the downscaled 600px previews. Hides without a store.
+class ImagePreviewsSection extends StatelessWidget {
+  const ImagePreviewsSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final store = ImagePreviewScope.maybeOf(context);
+    if (store == null) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        return SwitchListTile(
+          value: store.highQuality,
+          onChanged: store.setHighQuality,
+          title: Text(context.l10n.settingsImagePreviewsLabel),
+          subtitle: Text(context.l10n.settingsImagePreviewsHelper),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+        );
+      },
+    );
+  }
+}
+
 /// The settings "Theme packs" section (issue #169): the stock look plus
 /// every installed pack as a radio group, `.zip` import through the
 /// platform [UploadPicker], and per-pack removal. Removing the ACTIVE

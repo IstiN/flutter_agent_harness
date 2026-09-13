@@ -453,6 +453,8 @@
   "settingsThemeDark": "Тёмная",
   "settingsThemeLabel": "Тема",
   "settingsChatTextLabel": "Размер текста в чате",
+  "settingsImagePreviewsLabel": "Превью изображений в высоком качестве",
+  "settingsImagePreviewsHelper": "Декодировать превью изображений в чате в полном разрешении. Выкл. — быстрое уменьшение до 600px.",
   "settingsThemeLight": "Светлая",
   "settingsThemeSystem": "Как в системе",
   "settingsStartChat": "Начать чат",
