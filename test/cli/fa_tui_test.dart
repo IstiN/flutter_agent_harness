@@ -2133,4 +2133,95 @@ void main() {
       expect(model.view().content, contains('due now'));
     });
   });
+
+  group('scheduled countdown tick (issue #213)', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+
+    // A model whose clock the test drives by hand: advancing [currentMs]
+    // is the fake-clock tick the real wall clock would provide.
+    FaTuiModel fakeClockModel(DateTime Function() now) =>
+        FaTuiModel(callbacks: callbacks(), isExited: () => false, now: now);
+
+    test(
+      'UT-tick: the idle countdown flips 14m -> 13m at the minute boundary',
+      () {
+        var currentMs = 10000 * 600; // minute-aligned fake epoch
+        DateTime fakeNow() => DateTime.fromMillisecondsSinceEpoch(currentMs);
+        var model = fakeClockModel(fakeNow);
+        final due = currentMs + 14 * 60 * 1000 + 30000; // 14.5m out -> 14m
+        final armed = model.update(ScheduledStatusMsg(1, due));
+        model = armed.$1 as FaTuiModel;
+        expect(model.busy, isFalse);
+        expect(model.view().content, contains('⏰ 1 scheduled · next in 14m'));
+        expect(
+          armed.$2,
+          isNotNull,
+          reason: 'a minute-boundary tick must be armed while scheduled',
+        );
+        // No inbound messages; the minute boundary passes and the tick
+        // fires — the re-render must recompute the ETA from the clock.
+        currentMs += 60000;
+        final ticked = model.update(const ScheduledTickMsg());
+        model = ticked.$1 as FaTuiModel;
+        expect(model.view().content, contains('next in 13m'));
+        expect(
+          ticked.$2,
+          isNotNull,
+          reason: 'the tick re-arms while still scheduled',
+        );
+      },
+    );
+
+    test('UT-no-timer: idle-and-unscheduled arms no tick and a stray tick '
+        'never re-arms', () {
+      var currentMs = 10000 * 600;
+      DateTime fakeNow() => DateTime.fromMillisecondsSinceEpoch(currentMs);
+      var model = fakeClockModel(fakeNow);
+      final cleared = model.update(const ScheduledStatusMsg(0, null));
+      expect(cleared.$2, isNull, reason: 'count 0 arms no countdown tick');
+      model = cleared.$1 as FaTuiModel;
+      final stray = model.update(const ScheduledTickMsg());
+      expect(
+        stray.$2,
+        isNull,
+        reason: 'a tick with nothing scheduled no-ops and disarms',
+      );
+    });
+
+    test('UT-due: crossing the due time while idle flips the row to '
+        '"due now" on the next tick', () {
+      var currentMs = 10000 * 600;
+      DateTime fakeNow() => DateTime.fromMillisecondsSinceEpoch(currentMs);
+      var model = fakeClockModel(fakeNow);
+      model = send(model, ScheduledStatusMsg(1, currentMs + 30000));
+      expect(model.view().content, contains('next in 30s'));
+      currentMs += 60000; // crossed the due time
+      model = send(model, const ScheduledTickMsg());
+      expect(model.view().content, contains('due now'));
+    });
+
+    test('UT-busy-parity: repeated status pushes never stack a second tick, '
+        'and a fired tick disarms once the count drops to 0', () {
+      var currentMs = 10000 * 600;
+      DateTime fakeNow() => DateTime.fromMillisecondsSinceEpoch(currentMs);
+      var model = fakeClockModel(fakeNow);
+      final first = model.update(ScheduledStatusMsg(1, currentMs + 90000));
+      expect(first.$2, isNotNull);
+      model = first.$1 as FaTuiModel;
+      // A nearer record appears (E2): the pending boundary tick already
+      // covers it — boundaries are wall-clock aligned, so no re-arm.
+      final second = model.update(ScheduledStatusMsg(2, currentMs + 45000));
+      expect(
+        second.$2,
+        isNull,
+        reason: 'one pending countdown timer max',
+      );
+      model = second.$1 as FaTuiModel;
+      // E1: the record fires/cancels; the outstanding tick fires once and
+      // the chain stops.
+      model = send(model, const ScheduledStatusMsg(0, null));
+      final deadTick = model.update(const ScheduledTickMsg());
+      expect(deadTick.$2, isNull);
+    });
+  });
 }
