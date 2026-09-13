@@ -12,6 +12,7 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter_agent_harness/src/messaging/agent_message.dart';
 import 'package:flutter_agent_harness/src/messaging/messaging_repository.dart';
 
 import '../agent/agent_loop.dart';
@@ -220,41 +221,79 @@ Future<String?> _directoryLine(
   String? homeDir,
 }) async {
   final pending = await fabric.peek(entry.id);
-  // A mailbox with unread mail is never hidden, whatever its age.
-  // Registration-backed presence (issue #27 phase 2) counts busy as live
-  // too — an agent mid tool-call has no fresh heartbeat but accepts mail.
-  // Null presence (file-fabric entries) keeps the mtime heuristic.
-  final live =
-      pending.isNotEmpty ||
-      entry.id == self ||
-      switch (entry.presence) {
-        AgentPresence.busy || AgentPresence.live => true,
-        AgentPresence.offline => false,
-        null => MailboxEntry.isLive(entry.lastActivity),
-      };
-  if (!live && !includeStale) return null;
-  // Compact ids by default: 36-char uuids burn tokens on every listing.
-  // `all: true` shows full ids for copy-paste addressing.
+  if (!_mailboxIsLive(entry, self, pending) && !includeStale) return null;
+  final line = StringBuffer(_directoryHead(entry, pending, includeStale));
+  line.write(_directoryTags(entry, self, homeDir));
+  line.write(_capabilityLines(entry.capabilities));
+  return line.toString();
+}
+
+/// Whether the default view shows this mailbox at all. A mailbox with
+/// unread mail is never hidden, whatever its age, nor is this agent's
+/// own address. Registration-backed presence (issue #27 phase 2)
+/// counts busy as live too — an agent mid tool-call has no fresh
+/// heartbeat but accepts mail. Null presence (file-fabric entries)
+/// keeps the mtime heuristic.
+bool _mailboxIsLive(
+  MailboxEntry entry,
+  String self,
+  List<AgentMessage> pending,
+) =>
+    pending.isNotEmpty ||
+    entry.id == self ||
+    switch (entry.presence) {
+      AgentPresence.busy || AgentPresence.live => true,
+      AgentPresence.offline => false,
+      null => MailboxEntry.isLive(entry.lastActivity),
+    };
+
+/// The head of a directory line: indented name (session display NAME
+/// in parentheses when known), mailbox id, pending count, presence.
+/// Compact ids by default — 36-char uuids burn tokens on every
+/// listing; `all: true` shows full ids for copy-paste addressing.
+String _directoryHead(
+  MailboxEntry entry,
+  List<AgentMessage> pending,
+  bool includeStale,
+) {
   final idForm = includeStale ? entry.id : _shortId(entry.id);
   final line = StringBuffer(
     '  ${entry.name != null ? '${entry.name} ($idForm)' : idForm}',
   );
   line.write(' — ${pending.length} pending');
   line.write(_presenceSuffix(entry));
-  if (entry.cwd case final cwd?) line.write('  [${_shortCwd(cwd, homeDir)}]');
-  if (entry.id == self) line.write('  ← you');
-  for (final capability in entry.capabilities) {
-    line
+  return line.toString();
+}
+
+/// The trailing tags of a directory line: source, working directory
+/// (home shortened to ~), and the self marker. Hub-sourced marker
+/// (issue #304 AC3) tells DAP peers apart from file-inbox mailboxes;
+/// file/legacy entries (null source) render exactly the legacy bytes
+/// (REG).
+String _directoryTags(MailboxEntry entry, String self, String? homeDir) {
+  final tags = StringBuffer();
+  if (entry.source == mailboxSourceHub) tags.write('  [hub]');
+  if (entry.cwd case final cwd?) tags.write('  [${_shortCwd(cwd, homeDir)}]');
+  if (entry.id == self) tags.write('  ← you');
+  return tags.toString();
+}
+
+/// Declared capabilities as sub-lines: name, optional description,
+/// optional payload hint.
+String _capabilityLines(List<AgentCapability> capabilities) {
+  final lines = StringBuffer();
+  for (final capability in capabilities) {
+    lines
       ..writeln()
       ..write('    · ${capability.name}');
     if (capability.description != null) {
-      line.write(' — ${capability.description}');
+      lines.write(' — ${capability.description}');
     }
     if (capability.payload != null) {
-      line.write('  [hint: ${capability.payload}]');
+      lines.write('  [hint: ${capability.payload}]');
     }
   }
-  return line.toString();
+  return lines.toString();
 }
 
 /// Truncates a mailbox id to `xxxxxxxx…` (keeping any `/main` suffix) —

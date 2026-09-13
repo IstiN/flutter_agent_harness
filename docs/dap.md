@@ -310,12 +310,73 @@ loses undelivered offline mail and nonce memory. `/healthz` answers
 (`lib/src/hub/local_hub.dart`, reachable via `lib/io.dart`), the same
 class the test suite runs as `FakeHub`.
 
-Inside the CLI the one-step bring-up is **`/dap start`**: it generates
-a session master secret when none is set (export `DAP_MASTER_SECRET` to
-make one permanent), spawns `fa hub serve` detached when nothing
-answers on the zero-config port — the hub outlives the CLI — and
-connects, persisting the URL so the next boot is online by itself. It
-also leads the guided `/dap` menu.
+Inside the CLI the one-step bring-up is **`fa dap start`** (and the
+`/dap` menu's leading row): it probes the port first (`/healthz` + a
+`/ws` presence handshake — a foreign server on the port is a clear
+error naming the port, never an enrollment), spawns `fa hub serve`
+detached when nothing answers — the hub outlives the CLI — writes a
+pid/state file to `~/.dap/hub.pid`, and enrolls:
+
+* **Master key.** Asked for ONCE, hidden — never echoed to the
+  terminal, never written to a log, and never persisted as a CLIENT
+  credential (`~/.dap/config.json` only ever holds the hub-issued
+  per-client secret). It IS persisted hub-side when it becomes the hub
+  password: an entered key is stored in `~/.dap/hub.json` (mode 0600)
+  — the same hub-side password store `fa hub serve` writes (§8.3) — so
+  a restart re-enrolls with no prompt. Empty keeps the hub OPEN — the
+  zero-config default the browser extension dials. A non-interactive
+  start with no stored password starts an open hub and prompts nothing
+  (AC: zero further user action). A stored `~/.dap/hub.json` password
+  restarts and re-enrolls with NO prompt.
+* **Enrollment.** The `DAP_MASTER_SECRET` flow: dial with the master
+  key, `{"t":"enroll"}`, and the hub-issued per-client secret replaces
+  it in `~/.dap/config.json` (`{url, clientSecret}`, 0600) — only the
+  ISSUED secret is persisted, never a master key. A wrong master key
+  re-prompts up to 3×, then exits with a manual-recovery hint; a
+  rejected secret is never persisted. From then on every later boot is
+  online by itself and hub peers (the extension first) are first-class
+  `agent_directory` citizens with a `[hub]` marker.
+* **Attach.** A second `fa dap start` against a live hub attaches with
+  zero prompts (state file + probe; no double-spawn).
+
+**`fa dap stop`** is the graceful counterpart: it names the connected
+peers (e.g. `1 peer(s) connected: Browser`), SIGTERMs the pid from
+`~/.dap/hub.pid` — which works from ANY CLI instance, exactly once,
+no zombie pid — and the messaging fabric transparently falls back to
+its file inboxes (queued hub mail is forwarded when the hub returns).
+The paths are per-platform where dart:io forces it: the hub watches
+SIGTERM on POSIX only (`ProcessSignal.sigterm.watch` is unavailable on
+Windows — Ctrl-C still exits gracefully there), and on a Windows stop
+the pid is hard-terminated (the signal parameter is ignored) with the
+hub PORT draining as the "gone" signal — `kill -0` pid probing does
+not exist there, so a pid-only check would false-fail a stop that
+already worked. **`fa dap status`** reports running/stopped, url, pid
+and peers. The `/dap` menu mirrors all of it: the leading row is
+state-dependent — "Start DAP locally (one step)" when stopped, "Stop
+DAP" when running.
+
+**Targeting a hub.** All three verbs default to the zero-config
+`ws://127.0.0.1:8787/ws`; `--port N`, `--url U`, or the
+`DAP_LOCAL_HUB_URL` environment variable retarget them. `--url` and
+`DAP_LOCAL_HUB_URL` are deliberately NOT loopback-restricted: any
+`ws://`/`wss://` URL works — an SSH-tunneled hub (§10.2), a LAN hub,
+or a TLS-fronted proxy (§8.2) — and the probe, enrollment and
+pid-state bookkeeping all follow that URL (`stop` matches the recorded
+pid state against the URL's port before signaling anything). Note the
+pid state file names ONE hub — the last one started — so stopping a
+differently-URLed hub says "no pid state — stop the hub process
+manually" rather than guessing.
+
+The hub layer of the messaging fabric has a kill switch: `fabric.hub:
+false` in `~/.fah/config.yaml` disables the hub primary even with the
+hub plugin enabled and `DAP_MASTER_SECRET` set — the fabric is the bare
+file layer and `agent_directory` reproduces the legacy listing
+byte-for-byte (same pattern as `images.registry: false`).
+
+`/dap start` in a live session keeps the older interactive shape: it
+generates a session master secret when none is set (export
+`DAP_MASTER_SECRET` to make one permanent), spawns the hub the same
+way, and connects in-session.
 
 #### Hub password
 
