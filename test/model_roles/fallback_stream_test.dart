@@ -129,13 +129,14 @@ void main() {
       List<ChainEntry> entries, {
       ModelRolesRetryPolicy policy = const ModelRolesRetryPolicy(),
       Future<bool> Function(Duration, CancelToken?)? sleeper,
+      double jitter = 1.0,
     }) {
       return FallbackStreamFunction(
         entries: entries,
         policy: policy,
         onNotice: notices.add,
         now: () => now,
-        jitterFraction: () => 1.0,
+        jitterFraction: () => jitter,
         sleeper:
             sleeper ??
             (delay, token) async {
@@ -298,7 +299,14 @@ void main() {
 
         expect(probe.calls, ['v-a']); // no second attempt
         expect(events, contains('delta:partial'));
-        expect(events.last, startsWith('error(error):${a.id}:429'));
+        expect(
+          events.last,
+          startsWith('error(error):${a.id}:Provider failed mid-answer'),
+        );
+        expect(
+          events.last,
+          contains('Provider error: 429: rate limit exceeded'),
+        );
         expect(notices, isEmpty);
       },
     );
@@ -382,7 +390,12 @@ void main() {
       final events = await run(w);
 
       expect(probe.calls, ['v-a', 'v-a', 'v-b', 'v-b']);
-      expect(events.single, 'error(error):${b.id}:429: b down too');
+      expect(
+        events.single,
+        startsWith('error(error):${b.id}:Provider chain exhausted'),
+      );
+      expect(events.single, contains('2 of 2 chain model(s) failed'));
+      expect(events.single, contains('anthropic/claude-b: 429: b down too'));
       expect(notices.map((n) => n.kind), [
         FallbackNoticeKind.retry,
         FallbackNoticeKind.modelFallback,
@@ -528,7 +541,13 @@ void main() {
       final events = await run(w);
 
       expect(probe.calls, hasLength(3)); // 1 + retriesPerEntry(2)
-      expect(events.single, 'error(error):${a.id}:429: rate limit exceeded');
+      expect(
+        events.single,
+        startsWith('error(error):${a.id}:Provider chain exhausted'),
+      );
+      expect(events.single, contains('1 of 1 chain model(s) failed'));
+      expect(events.single, contains('after 3 attempt(s)'));
+      expect(events.single, contains('openai/gpt-a: 429: rate limit exceeded'));
       expect(notices.map((n) => n.kind), [
         FallbackNoticeKind.retry,
         FallbackNoticeKind.retry,
@@ -637,7 +656,7 @@ void main() {
           expect(probe.calls, hasLength(3)); // 1 + retriesPerEntry(2)
           expect(
             events.single,
-            'error(error):${a.id}:Failed host lookup: api.example.test',
+            startsWith('error(error):${a.id}:Provider chain exhausted'),
           );
         },
       );
@@ -681,10 +700,238 @@ void main() {
             'start:${a.id}',
             'textStart',
             'delta:half',
-            'error(error):${a.id}:Connection closed while receiving data',
+            'error(error):${a.id}:Provider failed mid-answer: the stream '
+                'died after output was already delivered (not retried — a '
+                'replay would duplicate the transcript). Provider error: '
+                'Connection closed while receiving data',
           ]);
           expect(probe.calls, ['v-a']);
           expect(notices, isEmpty);
+        },
+      );
+    });
+    group('issue #290 — verbatim 500 coverage + exhaustion story', () {
+      List<AssistantMessageEvent> gateway500Turn(
+        Model model, {
+        String error =
+            '500: Internal network failure, error id: '
+            '20260913154946260720382f38417e, please try again later.',
+      }) {
+        final partial = _msg(model);
+        return [
+          StartEvent(partial: partial),
+          ErrorEvent(
+            reason: StopReason.error,
+            error: _msg(model, stop: StopReason.error, error: error),
+          ),
+        ];
+      }
+
+      test(
+        'verbatim gateway 500 is retried in place (main-loop stream, AC1)',
+        () async {
+          final a = _model('kimi', 'kimi-k2');
+          final probe = _Probe({
+            'v-a': [gateway500Turn(a), _okTurn(a, 'recovered')],
+          });
+          final w = wrapper([
+            entry(probe, a, ['v-a']),
+          ]);
+
+          final events = await run(w);
+
+          expect(events, [
+            'start:${a.id}',
+            'textStart',
+            'delta:recovered',
+            'done:${a.id}',
+          ]);
+          expect(probe.calls, ['v-a', 'v-a']);
+          expect(sleeps, [const Duration(milliseconds: 500)]);
+          expect(notices.single.kind, FallbackNoticeKind.transportRetry);
+        },
+      );
+
+      test(
+        'exhausted chain tells the retry story, not a raw dump (AC2/E1)',
+        () async {
+          final a = _model('kimi', 'kimi-k2');
+          final b = _model('openai', 'gpt-b');
+          const incident =
+              '500: Internal network failure, error id: X, please try again later.';
+          final probe = _Probe({
+            'v-a': [
+              gateway500Turn(a, error: incident),
+              gateway500Turn(a, error: incident),
+            ],
+            'v-b': [
+              gateway500Turn(b, error: incident),
+              gateway500Turn(b, error: incident),
+            ],
+          });
+          final w = wrapper(
+            [
+              entry(probe, a, ['v-a']),
+              entry(probe, b, ['v-b']),
+            ],
+            policy: const ModelRolesRetryPolicy(
+              retriesPerEntry: 1,
+              baseDelay: Duration(milliseconds: 10),
+            ),
+          );
+
+          final events = await run(w);
+
+          final terminal = events.single;
+          expect(
+            terminal,
+            startsWith('error(error):${b.id}:Provider chain exhausted'),
+          );
+          // E1: the story says the WHOLE chain failed (an outage), never
+          // "key rotated, try again".
+          expect(terminal, contains('2 of 2 chain model(s) failed'));
+          expect(terminal, contains('after 4 attempt(s)'));
+          expect(terminal, contains('over <1s'));
+          expect(
+            terminal,
+            contains('kimi/kimi-k2: 500: Internal network failure'),
+          );
+          expect(
+            terminal,
+            contains('openai/gpt-b: 500: Internal network failure'),
+          );
+          expect(terminal, contains('not a key problem'));
+        },
+      );
+
+      test('cooldown-wall exhaustion (no attempts this call) still tells a '
+          'story', () async {
+        final a = _model('kimi', 'kimi-k2');
+        final b = _model('openai', 'gpt-b');
+        const backoff = Duration(minutes: 10);
+        final probe = _Probe({
+          'v-a': [_rateLimitTurn(a, retryAfter: backoff)],
+          'v-a2': [_rateLimitTurn(a, retryAfter: backoff)],
+          'v-b': [_rateLimitTurn(b, retryAfter: backoff)],
+          'v-b2': [_rateLimitTurn(b, retryAfter: backoff)],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a', 'v-a2']),
+          entry(probe, b, ['v-b', 'v-b2']),
+        ], policy: const ModelRolesRetryPolicy(retriesPerEntry: 1));
+
+        // Call 1 benches every key (10m retryAfter) and cools both
+        // entries down; call 2 starts with the whole chain benched.
+        await run(w);
+        final events = await run(w);
+
+        expect(events.single, startsWith('error(error):${a.id}:Provider'));
+        expect(
+          events.single,
+          contains('every chain model is rate limited and cooling down'),
+        );
+        expect(
+          events.single,
+          contains('retried automatically once its cooldown lapses'),
+        );
+      });
+
+      test(
+        'post-commit gateway 500 stands as a mid-answer error (AC4)',
+        () async {
+          final a = _model('kimi', 'kimi-k2');
+          final partial = _msg(a);
+          const incident =
+              '500: Internal network failure, error id: X, please try again later.';
+          final probe = _Probe({
+            'v-a': [
+              [
+                StartEvent(partial: partial),
+                TextStartEvent(contentIndex: 0, partial: partial),
+                TextDeltaEvent(
+                  contentIndex: 0,
+                  delta: 'half',
+                  partial: _msg(a, text: 'half'),
+                ),
+                ErrorEvent(
+                  reason: StopReason.error,
+                  error: _msg(a, stop: StopReason.error, error: incident),
+                ),
+              ],
+              _okTurn(a, 'must not be used'),
+            ],
+          });
+          final w = wrapper([
+            entry(probe, a, ['v-a']),
+          ]);
+
+          final events = await run(w);
+
+          expect(events, [
+            'start:${a.id}',
+            'textStart',
+            'delta:half',
+            'error(error):${a.id}:Provider failed mid-answer: the stream died '
+                'after output was already delivered (not retried — a replay '
+                'would duplicate the transcript). Provider error: $incident',
+          ]);
+          expect(probe.calls, [
+            'v-a',
+          ], reason: 'no retry after observable output');
+        },
+      );
+
+      test(
+        'transport backoff follows the retry: knobs, jitter pins (AC5/E3)',
+        () async {
+          final a = _model('openai', 'gpt-a');
+          final probe = _Probe({
+            'v-a': [
+              gateway500Turn(a),
+              gateway500Turn(a),
+              gateway500Turn(a),
+              _okTurn(a, 'fourth try'),
+            ],
+          });
+          final w = wrapper(
+            [
+              entry(probe, a, ['v-a']),
+            ],
+            policy: const ModelRolesRetryPolicy(
+              retriesPerEntry: 3,
+              baseDelay: Duration(milliseconds: 100),
+              maxBackoff: Duration(milliseconds: 250),
+            ),
+          );
+
+          final events = await run(w);
+
+          expect(events.last, 'done:${a.id}');
+          // Knob-driven ladder: 100→200→capped at maxBackoff 250.
+          expect(sleeps, [
+            const Duration(milliseconds: 100),
+            const Duration(milliseconds: 200),
+            const Duration(milliseconds: 250),
+          ]);
+
+          // E3: jitter (fraction 0.5 → ×0.875) de-phases retries — no herd.
+          final probe2 = _Probe({
+            'v-a': [gateway500Turn(a), _okTurn(a, 'second try')],
+          });
+          final w2 = wrapper(
+            [
+              entry(probe2, a, ['v-a']),
+            ],
+            policy: const ModelRolesRetryPolicy(
+              baseDelay: Duration(milliseconds: 100),
+            ),
+            jitter: 0.5,
+          );
+
+          final events2 = await run(w2);
+
+          expect(events2.last, 'done:${a.id}');
+          expect(sleeps.last, const Duration(milliseconds: 88));
         },
       );
     });
