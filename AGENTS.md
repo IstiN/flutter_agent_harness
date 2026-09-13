@@ -958,6 +958,19 @@ factual: paths, commands, invariants — no essays.
 - `flutter_app/lib/sandbox/sandbox_registry.dart` — central registry of
   sandbox shell commands per platform; the Fa system prompt's `{{commands}}`
   renders from it. Never list commands in prompt text or UI by hand.
+- `flutter_app/lib/sandbox/python_http_bridge.dart` — the mobile WASM
+  python HTTP bridge (issue #337): the WASI CPython build has no sockets and
+  no `ssl` module, so `fa_http.py` + `sitecustomize.py` (materialized into
+  site-packages by `WasiSandboxShell._ensurePythonBridge`) patch
+  `http.client`/`urllib`/`urllib3` to print each request to stdout as a
+  `\x01FAHTTP1` control line and poll `/dev/.fahttp/<id>` for the raw
+  response. `FaHttpBridge` (wired into `WasiSandboxShell._runStage` for
+  python stages) strips those lines from captured stdout, performs the
+  request with the shell's real-TLS HTTP client and writes the response
+  back; the authority in the control line carries the scheme
+  (`https://host:port`). Curl `-d` follows real-curl semantics (`@file`,
+  `@-`, multiple flags join with `&`, 1 MiB cap, `-d` implies POST) and the
+  mobile prompt advertises the TLS path via `sandbox_registry.dart`.
 - `flutter_app/lib/services/project_mount_env.dart` — macOS project-folder
   mount (`/project` → user-picked host dir; security-scoped bookmarks in
   `project_mount.json`; stale bookmark = "pick again" warning). Sessions on

@@ -20,6 +20,7 @@ import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/sandbox/shell_job.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:fa/sandbox/shell_script.dart';
+import 'package:fa/sandbox/python_http_bridge.dart';
 import 'package:fa/sandbox/wasm_shell_git.dart';
 import 'package:fa/sandbox/wasm_shell_ssh.dart';
 
@@ -118,6 +119,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
 
   bool _pythonStdlibReady = false;
 
+  /// Whether the host HTTP bridge modules were materialized into
+  /// site-packages (issue #337 AC1).
+  bool _pythonBridgeReady = false;
+
   /// Extracts the bundled CPython standard library into the sandbox at
   /// `/usr/local/lib` (CPython's default WASI prefix) on first use.
   Future<void> _ensurePythonStdlib() async {
@@ -128,23 +133,39 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
       return;
     }
     final marker = io.File('$host/usr/local/lib/python3.14/json/__init__.py');
-    if (marker.existsSync()) {
-      _pythonStdlibReady = true;
-      return;
+    if (!marker.existsSync()) {
+      final data = await rootBundle.load('assets/wasm/python_stdlib.zip');
+      final zip = ZipDecoder().decodeBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+      );
+      for (final file in zip.files) {
+        if (!file.isFile) continue;
+        // Archive entries are `lib/python3.14/...`; the WASI build expects the
+        // stdlib at /usr/local/lib/python3.14.
+        final out = io.File('$host/usr/local/${file.name}');
+        await out.parent.create(recursive: true);
+        await out.writeAsBytes(file.content as List<int>);
+      }
     }
-    final data = await rootBundle.load('assets/wasm/python_stdlib.zip');
-    final zip = ZipDecoder().decodeBytes(
-      data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-    );
-    for (final file in zip.files) {
-      if (!file.isFile) continue;
-      // Archive entries are `lib/python3.14/...`; the WASI build expects the
-      // stdlib at /usr/local/lib/python3.14.
-      final out = io.File('$host/usr/local/${file.name}');
-      await out.parent.create(recursive: true);
-      await out.writeAsBytes(file.content as List<int>);
-    }
+    await _ensurePythonBridge(host);
     _pythonStdlibReady = true;
+  }
+
+  /// Materializes the python HTTP bridge modules (issue #337 AC1) into
+  /// site-packages: CPython's `site` imports `sitecustomize` at startup and
+  /// it patches `http.client`/`urllib3` to route requests through the host
+  /// network via [FaHttpBridge] (the WASI build has no sockets and no ssl).
+  Future<void> _ensurePythonBridge(String host) async {
+    if (_pythonBridgeReady) return;
+    final sitePackages = '$host/usr/local/lib/python3.14/site-packages';
+    await io.Directory(sitePackages).create(recursive: true);
+    await io.File(
+      '$sitePackages/fa_http.py',
+    ).writeAsString(kFaHttpPy, flush: true);
+    await io.File(
+      '$sitePackages/sitecustomize.py',
+    ).writeAsString(kFaSitecustomizePy, flush: true);
+    _pythonBridgeReady = true;
   }
 
   /// Current working directory of the shell, mutated by the `cd` builtin.
@@ -275,7 +296,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
     required String? inputSource,
   }) async {
     return switch (stage.command) {
-      'curl' => _curlBuiltin(stage, options),
+      'curl' => _curlBuiltin(stage, options, inputSource),
       'wget' => _wgetBuiltin(stage, options),
       'git' => _gitBuiltin(stage, options),
       'jq' => _jqBuiltin(stage, inputSource),
@@ -569,6 +590,18 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
       final data = result.valueOrNull!;
       _lastStageExitCode = data.exitCode;
 
+      // WASI guests surface SIGPIPE as stderr noise (issue #337 AC5); it
+      // carries no information the caller can act on, so translate it out.
+      final stderrText = utf8.decode(data.stderr, allowMalformed: true);
+      final stageStderr = stderrText.contains('Broken pipe')
+          ? utf8.encode(
+              stderrText
+                  .split('\n')
+                  .where((line) => !line.contains('Broken pipe'))
+                  .join('\n'),
+            )
+          : data.stderr;
+
       if (stdoutFile != null) {
         final file = _hostFile(
           _resolveSandboxPath(stdoutFile, options?.cwd ?? _currentDir),
@@ -596,12 +629,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
         );
         await file.parent.create(recursive: true);
         if (appendStderr) {
-          await file.writeAsBytes(data.stderr, mode: io.FileMode.append);
+          await file.writeAsBytes(stageStderr, mode: io.FileMode.append);
         } else {
-          await file.writeAsBytes(data.stderr);
+          await file.writeAsBytes(stageStderr);
         }
       } else {
-        final text = utf8.decode(data.stderr, allowMalformed: true);
+        final text = utf8.decode(stageStderr, allowMalformed: true);
         if (isLast && text.isNotEmpty) {
           _lastStderr = (_lastStderr ?? '') + text;
         }
@@ -814,15 +847,20 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
 
   String _maybeRewritePath(String command, String arg, String cwd) {
     if (arg.isEmpty || arg == '-') return arg;
+    // Absolute paths are already sandbox-rooted; explicit relative paths are
+    // always resolved.
     if (arg.startsWith('/')) return arg;
-    if (arg.startsWith('./') || arg.startsWith('../') || arg.contains('/')) {
+    if (arg.startsWith('./') || arg.startsWith('../')) {
       return _resolveSandboxPath(arg, cwd);
     }
     if (_pathPositionalCommands.contains(command)) {
       return _resolveSandboxPath(arg, cwd);
     }
-    // Heuristic for commands with mixed argument kinds (e.g. rg): rewrite a
-    // bare word only when it names an existing file or directory.
+    // Heuristic for commands with mixed argument kinds (e.g. rg, python -c):
+    // rewrite a word only when it names an existing file or directory.
+    // Anything else (URLs, inline code, patterns) must stay verbatim -
+    // rewriting `https://...` inside `python3 -c` used to corrupt it into
+    // `https:/...` and break every network call (issue #337).
     final resolved = _resolveSandboxPath(arg, cwd);
     if (io.FileSystemEntity.typeSync(_hostPath(resolved)) !=
         io.FileSystemEntityType.notFound) {
@@ -924,10 +962,22 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
       }
     }
 
+    // Python stages route HTTP through the host bridge (issue #337 AC1):
+    // `fa_http` control lines are stripped from the captured stdout and the
+    // requests are served against the real network by [FaHttpBridge].
+    final bridge =
+        module == python &&
+            captureStdout &&
+            (sandboxHostPath?.isNotEmpty ?? false)
+        ? FaHttpBridge(sandboxRoot: sandboxHostPath!, httpClient: _httpClient)
+        : null;
     final stdoutSub = captureStdout
         ? instance.stdout.listen((chunk) {
             debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
-            collect(stdoutBuffer, chunk, options?.onStdout);
+            final clean = bridge?.filter(chunk) ?? chunk;
+            if (clean.isNotEmpty) {
+              collect(stdoutBuffer, Uint8List.fromList(clean), options?.onStdout);
+            }
           }, onDone: () => debugPrint('[wasm_shell] stdout done'))
         : null;
     final stderrSub = captureStderr
@@ -962,6 +1012,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
       await stdoutSub?.cancel();
       await stderrSub?.cancel();
       instance.dispose();
+    }
+
+    final bridgeTail = bridge?.flush();
+    if (bridgeTail != null && bridgeTail.isNotEmpty) {
+      stdoutBuffer.addAll(bridgeTail);
     }
 
     debugPrint('[wasm_shell] run finished timedOut=$timedOut error=$runError');
@@ -1340,10 +1395,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
   Future<Result<StageResult, ExecutionError>> _curlBuiltin(
     Stage stage,
     ShellExecOptions? options,
+    String? inputSource,
   ) async {
     final result = await _sandboxBuiltins(
       options?.cwd ?? _currentDir,
-    ).curl(stage.args, timeout: options?.timeout);
+    ).curl(
+      stage.args,
+      stdin: await _stdinFromSource(stage, inputSource),
+      timeout: options?.timeout,
+    );
     return _builtinOk(result);
   }
 
@@ -1528,7 +1588,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell {
   /// Reads the piped/redirected input for jq/yq when no file argument is
   /// given; [inputSource] is an absolute sandbox path (pipe temp file).
   Future<String?> _stdinFromSource(Stage stage, String? inputSource) async {
-    if (stage.args.length > 1 || inputSource == null) return null;
+    // Builtins decide themselves whether a positional argument is an input
+    // file (`jq FILTER file`) or something else (`curl -d @-`); the piped
+    // stage input is always available to them.
+    if (inputSource == null) return null;
     final file = _hostFile(_resolveSandboxPath(inputSource, _currentDir));
     if (!await file.exists()) return null;
     return file.readAsString();
