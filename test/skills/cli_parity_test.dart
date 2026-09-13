@@ -92,6 +92,8 @@ const _nonSettingsCommands = <String, String>{
   '/key': 'OS secure store only — key values never live in config.yaml',
   '/queue': 'in-memory queued follow-ups (view/clear), nothing persisted',
   '/power': 'read-only sleep-prevention level/held state',
+  '/mouse': 'session TUI mouse-capture toggle, nothing persisted (the '
+      'capture default is the FA_TUI_MOUSE env/config, not config.yaml)',
 };
 
 /// The commands the skill's parity marker documents.

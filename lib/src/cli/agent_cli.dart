@@ -157,6 +157,7 @@ import 'prompt_templates.dart';
 import 'ask_menu.dart';
 import 'slash_menu.dart';
 import 'task_list.dart';
+import 'model_picker_table.dart';
 import 'text_format.dart';
 import 'terminal_setup.dart';
 import 'tui_helpers.dart';
@@ -681,10 +682,12 @@ class AgentCli {
   }
 
   /// Test seam driving the TUI model-menu builder in line mode: the same
-  /// `_buildModelMenu` the TUI's model picker renders.
+  /// `_buildModelMenu` the TUI's model picker renders. [width] is the
+  /// terminal width the table lays its columns out for (80 = the headless
+  /// default).
   @visibleForTesting
-  List<MenuItem> buildModelMenuForTest(String filter) =>
-      _buildModelMenu(filter);
+  List<MenuItem> buildModelMenuForTest(String filter, {int width = 80}) =>
+      _buildModelMenu(filter, width);
 
   /// The deduped `(provider, modelId)` pair list the picker is built
   /// from. Exposed for tests so cross-provider invariants (catalog
