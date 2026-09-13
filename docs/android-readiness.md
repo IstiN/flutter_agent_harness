@@ -5,6 +5,35 @@ JS, or manifest code — this is the work list for when Android ships.
 
 Companion doc: `docs/js-system-apis.md` (channel checklist §3, gap table §4).
 
+## 0. Release identity (issue #289)
+
+- **applicationId/namespace = `dev.fa1.app`** — matches the iOS bundle id
+  (owner ruling 2026-09-13). The Play applicationId is IMMUTABLE after the
+  first Play Console upload, so the flip landed before any upload exists.
+  Consequence: devices with sideloads of the pre-#289 id (see git history)
+  see a NEW app (no upgrade path) — acceptable pre-store; the old install
+  must be removed manually.
+- **App links (assetlinks.json)**: the manifest has no `android:autoVerify`
+  https intent filters today (the `fah://` OAuth callback is a custom
+  scheme, unaffected by the id), so no `.well-known/assetlinks.json` is
+  needed yet. When https app-links land, fa1.dev/.well-known/assetlinks.json
+  must list `dev.fa1.app` plus the SHA-256 fingerprints of BOTH the upload
+  key and the debug cert (verify: `adb shell pm verify-app-links <pkg>`).
+- **Release signing**: `app/build.gradle.kts` signs the release type from
+  `ANDROID_KEYSTORE_BASE64`/`ANDROID_KEYSTORE_PASSWORD`/`ANDROID_KEY_ALIAS`/
+  `ANDROID_KEY_PASSWORD` (CI secrets) or a gitignored
+  `android/key.properties`; with neither it falls back to DEBUG keys with a
+  loud warning (local/emulator builds only — never uploadable to Play), and
+  `ANDROID_STRICT_RELEASE_SIGNING` turns that fallback into a hard failure
+  (CI sets it). The upload keystore itself is generated once by the owner
+  (`keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA
+  -keysize 2048 -validity 10000 -alias upload`) and never committed.
+- **Google services**: a placeholder `android/app/google-services.json`
+  (package `dev.fa1.app`) is committed because the google-services Gradle
+  plugin hard-fails without the file; CI overwrites it from the
+  `GOOGLE_SERVICES_JSON_BASE64` secret. The Firebase console's Android app
+  registration must use `dev.fa1.app`.
+
 ## 1. The interface + conditional-import contract (already Android-shaped)
 
 Every system domain follows the calendar/contacts pattern, three files per
@@ -69,7 +98,7 @@ verbatim. What changes:
   - 4a (existing): Swift handler in `ios/Runner/AppDelegate.swift` +
     `macos/Runner/MainFlutterWindow.swift`, entitlements, `NS*UsageDescription`.
   - 4b (new): Kotlin handler in
-    `flutter_app/android/app/src/main/kotlin/dev/fa1/android/MainActivity.kt`
+    `flutter_app/android/app/src/main/kotlin/dev/fa1/app/MainActivity.kt`
     (currently a 5-line `FlutterActivity` stub) — one
     `register<Domain>Channel(flutterEngine.dartExecutor.binaryMessenger)`
     per domain, mirroring `registerCalendarChannel`
@@ -95,12 +124,12 @@ verbatim. What changes:
 
 ## 4. Kotlin channel template sketch
 
-Target: `android/app/src/main/kotlin/dev/fa1/android/MainActivity.kt`.
+Target: `android/app/src/main/kotlin/dev/fa1/app/MainActivity.kt`.
 Mirrors the Swift `registerCalendarChannel` shape 1:1 so both platforms
 answer the identical method set and payload keys (`startMs`, `endMs`, …).
 
 ```kotlin
-package dev.fa1.android
+package dev.fa1.app
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine

@@ -60,3 +60,4 @@ macos/Runner/firebase_app_id_file.json
 
 # Golden test failure artifacts (diff dumps).
 test/golden/failures/
+!android/app/google-services.json
