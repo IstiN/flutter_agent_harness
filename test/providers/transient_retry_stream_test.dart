@@ -459,6 +459,162 @@ void main() {
       expect(events.whereType<TextDeltaEvent>(), hasLength(1));
       expect(events.whereType<ErrorEvent>(), hasLength(1));
     });
+
+    test(
+      'a stream closing without any terminal event flushes the buffer',
+      () async {
+        var calls = 0;
+        final wrapped = transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            stream.push(
+              StartEvent(
+                partial: AssistantMessage(
+                  content: const [],
+                  api: 'test-api',
+                  provider: 'test-provider',
+                  model: 'test-model',
+                  usage: Usage.zero,
+                  stopReason: StopReason.stop,
+                  timestamp: DateTime.utc(2026),
+                ),
+              ),
+            );
+            stream.end();
+          });
+          return stream;
+        });
+
+        final events = await wrapped(
+          testModel,
+          const Context(messages: []),
+        ).toList();
+
+        expect(calls, 1);
+        expect(
+          events.whereType<StartEvent>(),
+          hasLength(1),
+          reason: 'the held partial is flushed, not dropped',
+        );
+      },
+    );
+
+    test('a natural stop with nothing committed flushes and ends', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          stream.push(
+            StartEvent(
+              partial: AssistantMessage(
+                content: const [],
+                api: 'test-api',
+                provider: 'test-provider',
+                model: 'test-model',
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.utc(2026),
+              ),
+            ),
+          );
+          stream.push(
+            DoneEvent(
+              reason: StopReason.stop,
+              message: AssistantMessage(
+                content: const [],
+                api: 'test-api',
+                provider: 'test-provider',
+                model: 'test-model',
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.utc(2026),
+              ),
+            ),
+          );
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(calls, 1, reason: 'a natural stop is never replayed');
+      expect(events.whereType<StartEvent>(), hasLength(1));
+      expect(events.whereType<DoneEvent>(), hasLength(1));
+    });
+
+    test('a post-commit non-error terminal stands verbatim', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          stream.push(
+            TextDeltaEvent(
+              contentIndex: 0,
+              delta: 'half',
+              partial: AssistantMessage(
+                content: const [TextContent(text: 'half')],
+                api: 'test-api',
+                provider: 'test-provider',
+                model: 'test-model',
+                usage: Usage.zero,
+                stopReason: StopReason.stop,
+                timestamp: DateTime.utc(2026),
+              ),
+            ),
+          );
+          stream.push(
+            ErrorEvent(
+              reason: StopReason.aborted,
+              error: AssistantMessage(
+                content: const [],
+                api: 'test-api',
+                provider: 'test-provider',
+                model: 'test-model',
+                usage: Usage.zero,
+                stopReason: StopReason.aborted,
+                errorMessage: 'Request was aborted',
+                timestamp: DateTime.utc(2026),
+              ),
+            ),
+          );
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(calls, 1, reason: 'an aborted turn is never replayed');
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(terminal.reason, StopReason.aborted);
+      expect(
+        terminal.error.errorMessage,
+        'Request was aborted',
+        reason: 'non-error terminals skip the mid-answer wrap',
+      );
+    });
   });
   group('issue #290 — gateway 5xx coverage (the retry-free hole)', () {
     const incidentError =
