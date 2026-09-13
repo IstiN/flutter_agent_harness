@@ -879,6 +879,7 @@ final class FaTuiModel extends Model {
 
   (Model, Cmd?) _updateAfterExitCheck(Msg msg) {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
+    if (msg is _ThemeChangedMsg) return _handleThemeChanged();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
     if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
     if (msg is HubStateMsg) return _handleHubStateMsg(msg);
@@ -941,6 +942,16 @@ final class FaTuiModel extends Model {
     // clobber its items.
     if (_modelPickerOpen) return _refreshedModelMenu();
     return (this, null);
+  }
+
+  /// Theme switched (issue #279): drop rendered-color caches and repaint.
+  /// The wrap cache holds text geometry only (colors apply at emit time),
+  /// so invalidation is a cache reset plus a redraw on the next frame
+  /// boundary — never a torn frame (E1).
+  (Model, Cmd?) _handleThemeChanged() {
+    final copy = copyWith(menuSelected: menuSelected);
+    copy._wrapCache = _WrapCache();
+    return (copy, null);
   }
 
   /// Whether the open menu is the model picker (not the slash menu).
@@ -2587,6 +2598,10 @@ final class FaTuiController {
 
   void sendModelsRefresh() {
     _send(_ModelsRefreshMsg());
+  }
+
+  void sendThemeChanged() {
+    _send(_ThemeChangedMsg());
   }
 
   void openModelMenu() {

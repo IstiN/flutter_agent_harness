@@ -78,6 +78,7 @@ const configTopLevelKeys = <String>{
   'skills',
   'fabric',
   'power',
+  'tui',
 };
 
 /// Top-level keys that carry a plain string value.
@@ -943,6 +944,9 @@ String applicationNote(String section) => switch (section) {
   'mcp' => 'applies live after /mcp reload',
   'cube' => 'applies live via /cube reload, otherwise at next boot',
   'compaction' => 'applies at the next compaction (session override: flag)',
+  // Issue #279: the session theme switches live on write (`/theme` runs
+  // the same persist + switch flow); a hand-edit applies at next boot.
+  'tui' => 'applies live via /theme, otherwise at next boot',
   _ => 'applies at next boot',
 };
 
@@ -1070,7 +1074,29 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // Deep validation (strict prompt names) lives behind cli_config.dart's
   // strict parser; here the section must be a string-valued map.
   'prompts': (value, _) => _validateStringMap(value, 'prompts'),
+  // Issue #279: `tui.theme` must be a non-empty string (the theme itself
+  // resolves at boot, where the user-theme set is known; unknown names
+  // warn and keep the default).
+  'tui': (value, label) => _validateTuiSection(value, label),
 };
+
+void _validateTuiSection(Object? node, String label) {
+  if (node is! YamlMap) {
+    throw ConfigException('$label: tui section must be a map');
+  }
+  final unknown = [
+    for (final key in node.keys) if (!{'theme'}.contains('$key')) '$key',
+  ];
+  if (unknown.isNotEmpty) {
+    throw ConfigException(
+      '$label: unknown tui key(s): ${unknown.join(', ')} (known: theme)',
+    );
+  }
+  final theme = node['theme'];
+  if (theme == null || '$theme'.trim().isEmpty) {
+    throw ConfigException('$label: tui.theme must be a non-empty theme name');
+  }
+}
 
 void _validateCustomProviders(Object? node) {
   if (node is! YamlList) {

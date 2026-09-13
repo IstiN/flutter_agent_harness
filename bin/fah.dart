@@ -1945,6 +1945,7 @@ Future<void> _runApp(List<String> args) async {
       modelsConfig: saved.models ?? ModelsConfig(),
       onModelsConfigChanged: () async => persistConfig(),
       homeDir: home,
+      tuiTheme: saved.tuiTheme,
       // TTSR stream rules: user config (~/.fah/config.yaml `ttsr:`) merged
       // with project rules (.fah/rules.yaml), project first.
       ttsr: _resolveTtsr(saved, cwd),

@@ -18,6 +18,9 @@ final class Theme {
     required this.error,
     required this.border,
     required this.focusBorder,
+    this.accent2 = const Style(),
+    this.accent2Soft = const Style(),
+    this.userMessageBg = const Style(),
   });
 
   final String name;
@@ -43,6 +46,16 @@ final class Theme {
 
   /// Focused container border (accent color).
   final Style focusBorder;
+
+  /// Second accent (bold) — tool-call markers, sub-headers. Hosts whose
+  /// palette has no second accent leave it unset (renders plain).
+  final Style accent2;
+
+  /// The second accent without bold, for wide/dense spans.
+  final Style accent2Soft;
+
+  /// Background of echoed user message lines.
+  final Style userMessageBg;
 
   // ── Built-in themes ──────────────────────────────────────────────────────
 
@@ -76,6 +89,14 @@ final class Theme {
       foregroundRgb: RgbColor(203, 166, 247), // #CBA6F7 Mauve
       border: Border.rounded,
     ),
+    accent2: Style(
+      foregroundRgb: RgbColor(137, 180, 250), // #89B4FA Blue
+      isBold: true,
+    ),
+    accent2Soft: Style(foregroundRgb: RgbColor(137, 180, 250)), // #89B4FA
+    userMessageBg: Style(
+      backgroundRgb: RgbColor(24, 24, 37), // #181825 Mantle
+    ),
   );
 
   /// Nord — cool arctic blues.
@@ -107,6 +128,14 @@ final class Theme {
       foregroundRgb: RgbColor(136, 192, 208), // #88C0D0 Nord8
       border: Border.box,
     ),
+    accent2: Style(
+      foregroundRgb: RgbColor(129, 161, 193), // #81A1C1 Nord9
+      isBold: true,
+    ),
+    accent2Soft: Style(foregroundRgb: RgbColor(129, 161, 193)), // #81A1C1
+    userMessageBg: Style(
+      backgroundRgb: RgbColor(59, 66, 82), // #3B4252 Nord1
+    ),
   );
 
   /// Dracula — vivid purples and vibrant accents.
@@ -137,6 +166,14 @@ final class Theme {
     focusBorder: Style(
       foregroundRgb: RgbColor(189, 147, 249), // #BD93F9 Purple
       border: Border.rounded,
+    ),
+    accent2: Style(
+      foregroundRgb: RgbColor(139, 233, 253), // #8BE9FD Cyan
+      isBold: true,
+    ),
+    accent2Soft: Style(foregroundRgb: RgbColor(139, 233, 253)), // #8BE9FD
+    userMessageBg: Style(
+      backgroundRgb: RgbColor(33, 34, 44), // #21222C
     ),
   );
 

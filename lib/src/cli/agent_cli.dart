@@ -163,6 +163,7 @@ import 'tui_helpers.dart';
 import 'tui_prompt.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
+import 'tui_theme.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
@@ -192,6 +193,7 @@ part 'agent_cli_hep_io.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
+part 'agent_cli_theme.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -217,6 +219,7 @@ class AgentCli {
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
     _providerKind = config.providerKind;
     _apiKey = config.apiKey;
+    _applyBootTheme();
     final pluginTools = <AgentTool>[];
     for (final plugin in config.plugins) {
       final context = PluginContext(
@@ -1612,8 +1615,8 @@ class AgentCli {
     'sessions': _tuiPickSession,
     'mode': _switchMode,
     'approval': (key) async => _handleApprovalMode(key),
+    'theme': (key) => _applyThemeChoice(key, persist: true),
     'provider': _tuiPickProvider,
-    'addProvider': _tuiPickAddProvider,
     'settings': _tuiPickSetting,
     'agents': pickAgentFromTree,
     'agentAction': pickAgentAction,
