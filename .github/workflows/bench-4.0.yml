@@ -140,9 +140,15 @@ jobs:
 
       # The self-hosted runner is a macOS box: setup-python cannot write the
       # hosted tool cache there (mkdir /Users/runner denied). Build a venv on
-      # the runner's own python3 instead.
+      # the runner's own python3 instead. Guard the version: harbor is fine
+      # on 3.13, typer-based CLIs break on 3.14.
       - name: Install harbor (venv)
         run: |
+          pyver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+          case "$pyver" in 3.1[0-3]) ;; *)
+            echo "::error::runner python3 is $pyver; harbor needs 3.10-3.13 (typer breaks on 3.14)"
+            exit 1 ;;
+          esac
           python3 -m venv .bench-venv
           .bench-venv/bin/pip install 'harbor[modal]==0.23.0'
 
