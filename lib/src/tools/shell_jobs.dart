@@ -85,10 +85,12 @@ bool isOldFormatJobLogName(String name) {
 
 /// The session's background shell jobs. See the library doc.
 final class ShellJobRegistry {
-  /// Creates a registry over [env]; [onSettled] fires when a job exits and
-  /// nobody consumed its result inline.
+  /// Creates a registry over [env]; [onStart] fires when a job starts
+  /// (the hub's start block), [onSettled] when a job exits and nobody
+  /// consumed its result inline.
   ShellJobRegistry({
     required this.env,
+    this.onStart,
     this.onSettled,
     this.onStaleJobLog,
     DateTime? bootTime,
@@ -99,6 +101,9 @@ final class ShellJobRegistry {
 
   /// Fires when a job exits and nobody consumed its result inline.
   final void Function(ShellJobEntry job)? onSettled;
+
+  /// Fires when a job successfully starts (issue #277 task blocks).
+  final void Function(ShellJobEntry job)? onStart;
 
   /// Fires at most ONCE per session when a background-job log with the
   /// old, pre-unique-id name (`sh-<n>.log`) is modified after this registry
@@ -164,6 +169,7 @@ final class ShellJobRegistry {
     }
     final entry = ShellJobEntry._(started.valueOrNull!);
     _jobs.add(entry);
+    onStart?.call(entry);
     unawaited(
       entry.settled.then((_) async {
         // An inline consumer (foreground bash that awaited this same settle)

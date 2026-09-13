@@ -45,6 +45,10 @@ import '../a2a/a2a_mail_gateway.dart';
 import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import 'agent_tree.dart';
+import 'agent_hub_panel.dart';
+import 'agent_hub_projection.dart';
+import 'agent_hub_tui.dart';
+import 'agent_hub_view.dart';
 import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
 import '../task/subagent.dart';
@@ -178,6 +182,7 @@ part 'trajectory_commands.dart';
 part 'agent_cli_cube.dart';
 part 'agent_cli_provider_presets.dart';
 part 'agent_cli_inbox.dart';
+part 'agent_hub_cli.dart';
 part 'agent_cli_steering.dart';
 part 'agent_cli_tools.dart';
 part 'agent_cli_io.dart';
@@ -277,6 +282,7 @@ class AgentCli {
     _shellJobs = ShellJobRegistry(
       env: decoratedEnv,
       onSettled: _onShellJobSettled,
+      onStart: _onShellJobStarted,
       onStaleJobLog: _onStaleJobLog,
     );
     final coreTools = <AgentTool>[
@@ -880,6 +886,18 @@ class AgentCli {
   var _rolesDriven = false;
   final _usage = UsageAccumulator();
 
+  // Issue #277 agents-hub driver state (see agent_hub_cli.dart). The
+  // projection accumulates per-agent running spans; the panel log keeps
+  // the deferred (btw) panel history; the subscriptions are lazy so a
+  // session that never opens the hub still gets task-block rendering.
+  final AgentHubProjection _hubProjection = AgentHubProjection();
+  final DeferredPanelLog _hubPanels = DeferredPanelLog();
+  final DateTime _hubMainStartedAt = DateTime.now();
+  String? _hubTranscriptId;
+  Timer? _hubFollowTimer;
+  StreamSubscription<dynamic>? _hubSubagentEventsSub;
+  StreamSubscription<dynamic>? _hubTaskStartsSub;
+
   /// Hard bounds for the compaction-time memory extraction (see
   /// `_runAutoCompact`): cancel the extraction stream after 90s, and
   /// force-skip after 120s even if the cancel didn't land.
@@ -1156,6 +1174,7 @@ class AgentCli {
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
     );
+    _hubEnsureEventSubs();
     final inboxTimer = _startInboxWatcher(presence);
     try {
       if (_useTui) {
@@ -1224,6 +1243,7 @@ class AgentCli {
     ({SessionPresenceStore store, String sessionId})? presence,
   ) async {
     _cancelPendingAnswers();
+    _hubTeardown();
     final exitSpec = _cubeEnv.activeSpec;
     if (exitSpec != null) {
       try {
@@ -1469,6 +1489,7 @@ class AgentCli {
         onPickerCancelled: _tuiPickerCancelled,
         onSteer: _steerTuiMessages,
         pathCandidates: pathCandidatesFor,
+        onHubAction: (action, key) => _onHubAction(action, key),
       ),
       isExited: () => _exited,
       programHooks: config.tuiProgramHooks,
@@ -1494,39 +1515,6 @@ class AgentCli {
         trimmed.startsWith('../');
     if (!pathLike) return false;
     return resolveInteractiveFileReference(trimmed) != trimmed;
-  }
-
-  /// Steers [trimmed] into the running agent with the file-reference
-  /// resolution applied (a pasted path becomes an explicit
-  /// `[attached file: …]` marker — a bare path steered as plain text made
-  /// the model miss the attachment entirely).
-  void _steerResolved(String trimmed) {
-    final resolved = resolveInteractiveFileReference(trimmed);
-    if (resolved != trimmed) {
-      io.writeln(_style.dim('[file] attached to steered message'));
-    }
-    _agent.steer(UserMessage.text(resolved));
-  }
-
-  /// Runs or loudly drops the steering messages still queued after a run
-  /// settled (they missed every drain point: raced past the last poll, or
-  /// the run was interrupted). Running keeps "typed but never answered"
-  /// from happening; dropping prints exactly what was discarded — a silent
-  /// drop is indistinguishable from a lost message.
-  void _settleLeftoverSteering() {
-    final outcome = _leftoverSteeringOutcome();
-    if (outcome == null) return;
-    if (outcome.run) {
-      io.writeln(
-        _style.dim(
-          'steering arrived after the last checkpoint — running '
-          '${outcome.texts.length} message(s) now',
-        ),
-      );
-      _startRun(outcome.texts.join('\n'));
-      return;
-    }
-    _printDroppedSteering(outcome.texts);
   }
 
   /// Replays the transcript when the TUI opens on a restored session.
@@ -2600,6 +2588,7 @@ class AgentCli {
   /// as task-job completions): a transcript note, then a system-notice
   /// steered into the running turn or run as a fresh turn while idle.
   void _onShellJobSettled(ShellJobEntry job) {
+    _onShellJobSettledBlock(job);
     io.writeln(
       _style.dim('[bash] ${job.id} exited(${job.exitCode}) — ${job.logPath}'),
     );
@@ -2643,6 +2632,7 @@ class AgentCli {
     // A TTSR abort/inject/retry chain may still be in flight when the
     // aborted run settles; persist only once the whole chain completed.
     await _ttsr?.settled;
+    _hubCompletePanels();
     await _persistMessages();
     await _maybeAutoCompact();
   }

@@ -722,6 +722,7 @@ extension ApprovalCommands on AgentCli {
   /// parent conversation — steered mid-run, or as a fresh re-wake run while
   /// idle (omp's idle flush via `agent.prompt`).
   void _onTaskJobCompleted(TaskJob job) {
+    _onTaskJobSettledBlock(job);
     final result = job.result;
     final seconds = result == null
         ? ''
