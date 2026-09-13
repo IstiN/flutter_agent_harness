@@ -11,3 +11,7 @@ tags:
     # IO tests use dart:io primitives (local sockets, processes) and are
     # excluded from the default pre-commit gate. Run them with:
     # dart test --tags io
+  perf:
+    # Perf gates (issue #262): generate large fixtures and assert open
+    # budgets. Selected by --tags integration in CI; run standalone with
+    # dart test --tags perf
