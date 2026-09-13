@@ -85,10 +85,16 @@ final class AgentCapability {
   int get hashCode => Object.hash(name, description, payload);
 }
 
+/// The transport that sourced a directory entry (issue #304 AC3): hub
+/// roster entries render a `[hub]` marker in `agent_directory` so the
+/// model can tell DAP peers from file-inbox mailboxes; file/legacy
+/// entries carry null and render exactly as before.
+const String mailboxSourceHub = 'hub';
+
 /// One entry in the messaging-fabric directory.
 class MailboxEntry {
   /// Creates a directory entry with optional session name, cwd, slug,
-  /// presence, activity and capability metadata.
+  /// presence, activity, capability and source metadata.
   const MailboxEntry({
     required this.id,
     this.name,
@@ -97,6 +103,7 @@ class MailboxEntry {
     this.lastActivity,
     this.presence,
     this.capabilities = const [],
+    this.source,
   });
 
   /// The mailbox id (e.g. `a1`, `sess1/main`).
@@ -132,6 +139,10 @@ class MailboxEntry {
   /// analog). Empty for sources that do not carry them (the hub roster,
   /// legacy mailboxes).
   final List<AgentCapability> capabilities;
+
+  /// The transport that sourced this entry ([mailboxSourceHub] for hub
+  /// roster peers), or null for file-fabric/legacy entries.
+  final String? source;
 
   /// How recent [lastActivity] must be for a mailbox to count as live in
   /// directory views. Generous enough that a briefly paused watcher never

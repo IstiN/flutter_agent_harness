@@ -25,6 +25,18 @@ library;
 import 'package:fa_hub_client/fa_hub_client.dart' as hub;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+/// The hub-fabric gate (issue #304 E6, mirrors `images.registry: false`):
+/// the CLI wires the hub as the fabric's primary transport only when the
+/// `hub` plugin is enabled, DAP is unlocked (`DAP_MASTER_SECRET`) and the
+/// `fabric.hub` kill switch is not off. With the switch off the fabric is
+/// the bare file layer and `agent_directory` reproduces the legacy
+/// listing byte-for-byte (REG).
+bool hubFabricWired({
+  required bool hubPluginEnabled,
+  required bool dapUnlocked,
+  required bool fabricHubAllowed,
+}) => hubPluginEnabled && dapUnlocked && fabricHubAllowed;
+
 /// Hub-backed [MessagingRepository] over a [hub.HubPlugin].
 final class HubFabricRepository
     implements MessagingRepository, RoutingMessagingRepository {
@@ -149,6 +161,9 @@ final class HubFabricRepository
           // Registration-backed presence: the hub knows who is connected —
           // no mtime heuristic.
           presence: agent.online ? AgentPresence.live : AgentPresence.offline,
+          // Hub-sourced marker (issue #304 AC3): the directory renders the
+          // `[hub]` tag so DAP peers read apart from file mailboxes.
+          source: mailboxSourceHub,
         ),
     ];
   }
