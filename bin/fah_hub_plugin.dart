@@ -733,8 +733,10 @@ final class HubPluginHost implements FahPlugin {
       description:
           'Send an end-to-end encrypted direct message to a hub peer. '
           '`to` is the 16-hex agent id or a display name (run dap_peers '
-          'first); this is how hub mail is answered — hub mail must not be '
-          'replied to with agent_message.',
+          'first). Prefer agent_message for peers listed in '
+          'agent_directory (issue #304: hub peers are first-class inbox '
+          'agents) — use dap_dm only when the fabric is off or the peer '
+          'is absent from the directory.',
       parameters: const {
         'type': 'object',
         'properties': {

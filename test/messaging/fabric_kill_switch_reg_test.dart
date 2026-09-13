@@ -8,10 +8,7 @@
 library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/messaging/agent_fabric.dart';
-import 'package:flutter_agent_harness/src/task/subagent_manager.dart';
-import 'package:flutter_agent_harness/src/task/subagent_tools.dart';
 import 'package:test/test.dart';
 
 /// A hub-primary stand-in that would pollute the listing if the kill

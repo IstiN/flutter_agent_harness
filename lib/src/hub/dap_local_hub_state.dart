@@ -1,5 +1,6 @@
-/// The `fa dap` local-hub pid/state file (issue #304): `<home>/.dap/
-/// hub.pid` records the owning hub process so a second CLI instance sees
+/// The `fa dap` local-hub pid/state file (issue #304): the
+/// `<home>/.dap/hub.pid` file records the owning hub process so a second
+/// CLI instance sees
 /// "running" and attaches instead of double-starting, and `fa dap stop`
 /// works from EITHER instance exactly once (E4 — no zombie pid).
 ///
