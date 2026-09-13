@@ -288,6 +288,43 @@ jobs:
         shell: bash
         run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
+      # bf81411e made Runner/GoogleService-Info.plist a hard build input
+      # (Runner resources + Crashlytics dSYM-phase inputPaths); the real
+      # file is gitignored and written from a release secret these legs
+      # don't have — seed the same placeholder as the ci.yml PR legs.
+      - name: Write placeholder GoogleService-Info.plist (Apple targets)
+        if: matrix.target == 'ios' || matrix.target == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_ID="dev.fa1.${{ matrix.target }}"
+          GOOGLE_APP_ID="1:000000000000:${{ matrix.target }}:0000000000000000000000"
+          cat > "flutter_app/${{ matrix.target }}/Runner/GoogleService-Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>GOOGLE_APP_ID</key>
+          	<string>$GOOGLE_APP_ID</string>
+          	<key>API_KEY</key>
+          	<string>AIzaSyA-PLACEHOLDER-KEY-FOR-DEBUG-BUILDS-000000</string>
+          	<key>PROJECT_ID</key>
+          	<string>fa1-placeholder</string>
+          	<key>PROJECT_NUMBER</key>
+          	<string>000000000000</string>
+          	<key>BUNDLE_ID</key>
+          	<string>$BUNDLE_ID</string>
+          	<key>GCM_SENDER_ID</key>
+          	<string>000000000000</string>
+          	<key>IS_ANALYTICS_ENABLED</key>
+          	<false/>
+          	<key>IS_CRASHLYTICS_ENABLED</key>
+          	<false/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint "flutter_app/${{ matrix.target }}/Runner/GoogleService-Info.plist"
+
       # The prebuilt WasmRun XCFramework is excluded from git; Apple builds
       # fail in the Podfile FFI-symbol check without it. Pinned upstream
       # release, same fallback as the ci.yml build legs.

@@ -819,6 +819,42 @@ jobs:
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
+      # bf81411e added GoogleService-Info.plist to the Runner target
+      # resources (a hard build input). The real plist is gitignored; the
+      # release path writes it from GOOGLE_SERVICE_INFO_PLIST_BASE64
+      # (build-mobile.yml), but PR legs have no such secret — seed a
+      # placeholder, same trick as the android leg's placeholder
+      # google-services.json. Xcode only copies the file; Firebase reads
+      # it at app runtime, never at build time.
+      - name: Write placeholder GoogleService-Info.plist (iOS)
+        run: |
+          set -euo pipefail
+          cat > flutter_app/ios/Runner/GoogleService-Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>GOOGLE_APP_ID</key>
+          	<string>1:000000000000:ios:0000000000000000000000</string>
+          	<key>API_KEY</key>
+          	<string>AIzaSyA-PLACEHOLDER-KEY-FOR-DEBUG-BUILDS-000000</string>
+          	<key>PROJECT_ID</key>
+          	<string>fa1-placeholder</string>
+          	<key>PROJECT_NUMBER</key>
+          	<string>000000000000</string>
+          	<key>BUNDLE_ID</key>
+          	<string>dev.fa1.app</string>
+          	<key>GCM_SENDER_ID</key>
+          	<string>000000000000</string>
+          	<key>IS_ANALYTICS_ENABLED</key>
+          	<false/>
+          	<key>IS_CRASHLYTICS_ENABLED</key>
+          	<false/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint flutter_app/ios/Runner/GoogleService-Info.plist
+
       # E2: pods cache keyed on Podfile.lock AND a weekly-rolled epoch, so
       # CocoaPods spec drift is re-verified at least weekly even when the
       # lockfile is unchanged. restore-keys falls back to last week's
@@ -896,6 +932,39 @@ jobs:
           EOF
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      # Same reason as the iOS leg: bf81411e made Runner/GoogleService-Info.plist
+      # a build input; gitignored + release-secret-only, so PR legs seed a
+      # placeholder. Also satisfies the 'Crashlytics: upload dSYMs' phase's
+      # inputPaths (the phase itself skips in debug — no dSYM).
+      - name: Write placeholder GoogleService-Info.plist (macOS)
+        run: |
+          set -euo pipefail
+          cat > flutter_app/macos/Runner/GoogleService-Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>GOOGLE_APP_ID</key>
+          	<string>1:000000000000:macos:0000000000000000000000</string>
+          	<key>API_KEY</key>
+          	<string>AIzaSyA-PLACEHOLDER-KEY-FOR-DEBUG-BUILDS-000000</string>
+          	<key>PROJECT_ID</key>
+          	<string>fa1-placeholder</string>
+          	<key>PROJECT_NUMBER</key>
+          	<string>000000000000</string>
+          	<key>BUNDLE_ID</key>
+          	<string>dev.fa1.app</string>
+          	<key>GCM_SENDER_ID</key>
+          	<string>000000000000</string>
+          	<key>IS_ANALYTICS_ENABLED</key>
+          	<false/>
+          	<key>IS_CRASHLYTICS_ENABLED</key>
+          	<false/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint flutter_app/macos/Runner/GoogleService-Info.plist
 
       - name: Compute weekly pods-cache epoch
         id: week
