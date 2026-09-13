@@ -426,6 +426,12 @@ jobs:
           flutter pub get
           flutter test --exclude-tags integration $(find test -name '*_test.dart' ! -path '*/golden/*')
 
+      # Issue #239 AC3: the App Store submission pre-flight matrix is plain
+      # ruby over flutter_app/fastlane/appstore_preflight.rb — no gems,
+      # runs in under a second on the runner's stock ruby.
+      - name: App Store pre-flight matrix (ruby)
+        run: ruby flutter_app/fastlane/test/appstore_preflight_test.rb
+
   # Aggregate required check: branch protection requires ONE stable context.
   # Skipped legs (path-filtered out) count as pass — a docs PR must go green
   # on static alone.
