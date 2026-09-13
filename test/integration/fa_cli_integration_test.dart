@@ -16,8 +16,12 @@ void main() {
   group('Fa CLI integration', () {
     test('boot shows banner and status line', () async {
       final tempHome = _tempHome();
+      // 120 cols: the status line renders `cwd · ctx …` — an 80-col PTY
+      // right-truncates `ctx` away when the checkout lives under a deep
+      // path (e.g. .worktrees/<name>), which is ambient, not a defect.
       final harness = await FaCliHarness.spawn(
         extraEnv: {'HOME': tempHome.path},
+        columns: 120,
       );
       addTearDown(() async {
         await harness.close();
@@ -503,15 +507,16 @@ void main() {
           timeout: const Duration(seconds: 30),
         );
         // Deny is the default highlight: move up to "Approve once" and
-        // back down to deny, then confirm with Enter.
+        // back down to deny, then confirm with Enter. The selector marker
+        // is ASCII '>' — the old ▸ glyph shifted padded rows (issue #109).
         harness.sendArrowUp();
         await harness.waitForText(
-          '2. \u25b8 Always approve',
+          '2. > Always approve',
           timeout: const Duration(seconds: 10),
         );
         harness.sendArrowDown();
         await harness.waitForText(
-          '3. \u25b8 Deny',
+          '3. > Deny',
           timeout: const Duration(seconds: 10),
         );
         harness.sendEnter();
