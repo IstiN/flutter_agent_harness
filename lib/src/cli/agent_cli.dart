@@ -205,15 +205,8 @@ class AgentCli {
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
        _useTui = useTui && io.supportsRawMode {
-    // Sleep prevention (issue #325): level + runner come from the host;
-    // a null runner (tests, web) means no assertions at all.
-    _powerAssertions = config.powerRunner == null
-        ? null
-        : PowerAssertionController(
-            runner: config.powerRunner!,
-            level: config.powerSleepPrevention,
-            onWarn: (message) => this.io.writeln(message),
-          );
+    // Sleep prevention (issue #325): null runner (tests, web) → none.
+    _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
     _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
@@ -687,7 +680,6 @@ class AgentCli {
   List<MenuItem> buildModelMenuForTest(String filter) =>
       _buildModelMenu(filter);
 
-
   /// The deduped `(provider, modelId)` pair list the picker is built
   /// from. Exposed for tests so cross-provider invariants (catalog
   /// fallback chains, dedup with the saved entry's modelId) can be
@@ -956,9 +948,7 @@ class AgentCli {
   Completer<String?>? _pendingPromptAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
 
-  /// The session's sleep-prevention assertion (issue #325): acquired on
-  /// [run], released on teardown. Null when no runner was injected
-  /// (test runtime, web) — power assertions are host-best-effort.
+  /// Session sleep-prevention (#325): held on [run], freed on teardown.
   PowerAssertionController? _powerAssertions;
   final Map<String, String> _pluginSlashDescriptions = {};
   final List<ExternalInbox> _pluginInboxes = [];
@@ -1133,8 +1123,7 @@ class AgentCli {
     // revalidates on the first menu open (stale entries) — no boot HTTP.
     await _loadPersistedModelCache();
     _session = await _initializeSession();
-    // Sleep prevention (issue #325): hold the machine awake for the
-    // whole session; a failure inside warns and continues.
+    // Sleep prevention (#325): hold the machine awake; failures warn.
     await acquirePowerAssertions();
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
@@ -2145,8 +2134,7 @@ class AgentCli {
     }
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
-    // Sleep prevention (issue #325) — the headless path is exactly the
-    // long-running monitor/automation case the assertion protects.
+    // Sleep prevention (#325) — headless is the long-running case it guards.
     await acquirePowerAssertions();
     // Warm the endpoint metadata (model list, dial features, reported
     // limits) BEFORE the first turn; failures are silent.

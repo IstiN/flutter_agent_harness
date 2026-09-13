@@ -106,8 +106,7 @@ extension SlashCommandDispatch on AgentCli {
   /// no runner was injected. Exposed so wiring tests can assert the
   /// acquire/release lifecycle without spawning a real helper.
   @visibleForTesting
-  PowerAssertionController? get powerAssertionsForTesting =>
-      _powerAssertions;
+  PowerAssertionController? get powerAssertionsForTesting => _powerAssertions;
 
   /// Acquires the sleep-prevention assertion for the session (issue #325,
   /// ported from oh-my-pi's `#acquirePowerAssertion`): idempotent, and a
@@ -408,3 +407,17 @@ extension SlashCommandDispatch on AgentCli {
     await _switchMode(rest);
   }
 }
+
+/// Builds the session's sleep-prevention controller (issue #325) from the
+/// host-injected runner + configured level; a null runner (tests, web)
+/// means no assertions — power is host-best-effort.
+PowerAssertionController? sessionPowerAssertions(
+  AgentCliConfig config,
+  void Function(String message) onWarn,
+) => config.powerRunner == null
+    ? null
+    : PowerAssertionController(
+        runner: config.powerRunner!,
+        level: config.powerSleepPrevention,
+        onWarn: onWarn,
+      );
