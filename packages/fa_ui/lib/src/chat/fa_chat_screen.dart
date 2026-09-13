@@ -53,6 +53,11 @@ const double kFaChatFilesPanelWidth = 300;
 typedef FaChatComposerBuilder =
     Widget Function(BuildContext context, FaChatService service);
 
+/// The default [FaChatScreen.imagePreviewCacheWidth]: attached-image
+/// previews decode downscaled to 600px wide (a display/memory
+/// optimization; the stored/sent bytes stay full fidelity).
+const kDefaultImagePreviewCacheWidth = 600;
+
 /// A chat UI over a single [FaChatService], built on top of
 /// `flutter_chat_ui`.
 ///
@@ -78,10 +83,19 @@ class FaChatScreen extends StatefulWidget {
     this.onPermissionAction,
     this.audioControllerFactory,
     this.videoControllerFactory,
+    this.imagePreviewCacheWidth = kDefaultImagePreviewCacheWidth,
   });
 
   /// The session this screen renders and sends to.
   final FaChatService service;
+
+  /// Decode constraint for attached-image preview thumbnails (both the
+  /// memory and the file path). Defaults to
+  /// [kDefaultImagePreviewCacheWidth] — a display/memory optimization; the
+  /// stored and sent bytes are always full fidelity. Pass `null` to decode
+  /// previews at full resolution (issue #207: "High-quality image
+  /// previews").
+  final int? imagePreviewCacheWidth;
 
   /// Capability flags; everything optional degrades cleanly when off.
   final FaChatFeatures features;
@@ -764,14 +778,16 @@ class _FaChatScreenState extends State<FaChatScreen>
     MessageGroupStatus? groupStatus,
   }) {
     final source = message.source;
+    // Decode at thumbnail scale by default — full-res app screenshots
+    // would otherwise jank every chat rebuild. The host can lift the
+    // constraint (null) for full-quality previews (issue #207).
+    final cacheWidth = widget.imagePreviewCacheWidth;
     Widget image = source.startsWith('data:')
         ? Image.memory(
             base64Decode(source.split(',').last),
-            // Decode at thumbnail scale — full-res app screenshots would
-            // otherwise jank every chat rebuild.
-            cacheWidth: 600,
+            cacheWidth: cacheWidth,
           )
-        : Image.file(File(source), cacheWidth: 600);
+        : Image.file(File(source), cacheWidth: cacheWidth);
     image = ClipRRect(borderRadius: BorderRadius.circular(10), child: image);
     return _keyed(
       message.id,
