@@ -1085,6 +1085,31 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsBaseUrlRequired => 'Требуется базовый URL';
 
   @override
+  String get settingsCliOnlyTitle => 'Настройки только в CLI';
+
+  @override
+  String get settingsCliOnlyLead =>
+      'Эти настройки доступны в CLI и его файле конфигурации — приложение не может их предоставить:';
+
+  @override
+  String get settingsCliOnlyMcpServers => 'Серверы MCP';
+
+  @override
+  String get settingsCliOnlyTtsrRules => 'Правила потока (TTSR)';
+
+  @override
+  String get settingsCliOnlyCubeSandbox => 'Песочница Cube';
+
+  @override
+  String get settingsCliOnlyPromptOverrides => 'Переопределение промптов';
+
+  @override
+  String get settingsCliOnlyAgentMode => 'Режим агента';
+
+  @override
+  String get settingsCliOnlyMemoryStores => 'Хранилища памяти';
+
+  @override
   String get settingsCancelButton => 'Отмена';
 
   @override

@@ -268,8 +268,12 @@ extension AgentCliCompactionRun on AgentCli {
       hooks: _AutoCompactorCliHooks(this),
       prompts: CompactionPrompts.fromOverrides(config.promptOverrides),
       // Issue #287: structured is the default fallback; an explicit
-      // config/flag choice (config.compactionEngine) still wins.
-      engine: config.compactionEngine ?? CompactionEngine.structured,
+      // config choice (config.compactionEngine) or a live override from
+      // the settings flow (config.liveCompactionEngine, #288) still wins.
+      engine:
+          config.liveCompactionEngine ??
+          config.compactionEngine ??
+          CompactionEngine.structured,
       memoryExtractionHook: (text) async {
         final tui = _tuiController;
         tui?.setBusyPhase('Extracting memory…');
@@ -280,7 +284,10 @@ extension AgentCliCompactionRun on AgentCli {
         // and restore the compaction phase label either way. A timeout
         // skips extraction for this pass only — never the compaction.
         final source = CancelTokenSource();
-        final deadline = Timer(AgentCli._memoryExtractionDeadline, source.cancel);
+        final deadline = Timer(
+          AgentCli._memoryExtractionDeadline,
+          source.cancel,
+        );
         try {
           final hook = compactionMemoryHook(
             memory: _memory,

@@ -1238,8 +1238,7 @@ Future<void> _runApp(List<String> args) async {
         write: io.write,
         writeln: io.writeln,
         env: listEnv,
-        sessionRoot:
-            parsed.sessionRoot ?? _defaultSessionRoot(),
+        sessionRoot: parsed.sessionRoot ?? _defaultSessionRoot(),
         cwd: listEnv.cwd,
         json: sessionList.json,
         flat: sessionList.flat,
@@ -2088,6 +2087,23 @@ Future<void> _runApp(List<String> args) async {
         // rebuild, in which case the loaded section is kept as-is
         // (project/runtime scopes stay live and are never persisted).
         tools: cli.globalTools ?? saved.tools,
+        // The remaining static sections are carried through the save so
+        // the whole-file rewrite cannot drop them (issue #288 audit); a
+        // forgetful caller is additionally backstopped by saveCliConfig's
+        // disk-block preservation. The compaction engine is deliberately
+        // NOT carried: the settings-hub Compaction flow's session scope
+        // promises "no file change", and its project/global scopes write
+        // the yaml through the targeted upsert themselves — persisting
+        // the live override here would leak a session (or project) pick
+        // into ~/.fah/config.yaml on the next boot or change hook. The
+        // on-disk `compaction:` block survives via the preservation
+        // backstop instead.
+        memory: saved.memory,
+        redact: saved.redact,
+        a2a: saved.a2a,
+        providerTimeouts: saved.providerTimeouts,
+        images: saved.images,
+        fabric: saved.fabric,
       ),
     );
   };

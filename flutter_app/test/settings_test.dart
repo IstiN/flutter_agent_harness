@@ -1208,6 +1208,22 @@ void main() {
     });
   });
 
+  group('CLI-only settings listing (issue #288 AC4)', () {
+    testWidgets(
+      'stays visible on a fresh install with no agent service',
+      (tester) async {
+        // The registry-driven listing is static — it must not ride the
+        // `service != null` gate (ResetApps/Approval/etc.): a fresh
+        // install before any service exists still shows WHY those
+        // settings are CLI-only instead of silently omitting them.
+        await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
+        await tester.pumpAndSettle();
+
+        expect(find.text('CLI-only settings'), findsOneWidget);
+      },
+    );
+  });
+
   group('On-device (Gemma, transformers.js) provider', () {
     // The provider is web-only; host widget tests exercise the web case
     // through the form's isWeb seam (kIsWeb is a compile-time constant).

@@ -109,7 +109,6 @@ final class AgentCliConfig {
   /// REPL keeps discarding incomplete streams.
   final bool persistAbortedPartials;
 
-
   /// Override for the compaction thresholds (ratio-based trigger, reserve
   /// and recent-token budgets). When `null`, `defaultCompactionSettings`
   /// is used (ratio 0.7, reserve 50000, keep 80000). Hosts plumb their
@@ -127,6 +126,16 @@ final class AgentCliConfig {
   /// of the effective window (compaction thresholds, ctx meter/footer).
   /// `null` = uncapped.
   final int? contextWindowCap;
+
+  /// Live compaction-engine override set by the settings-hub Compaction
+  /// flow (session scope, or after a yaml write). Wins over the
+  /// boot-resolved [compactionEngine] for the rest of the session.
+  /// NEVER persisted by the host config save: the session scope promises
+  /// "no file change", and the project/global scopes write their yaml
+  /// through the targeted upsert themselves — the whole-file save keeps
+  /// the on-disk `compaction:` block untouched instead. Mutable by
+  /// design — the same live-override pattern as [modelRolesResolver].
+  CompactionEngine? liveCompactionEngine;
 
   /// Optional fa_cube sandbox spec applied for the whole session (from the
   /// `--cube`/`--cube-config` flags or the `cube:` config section). The

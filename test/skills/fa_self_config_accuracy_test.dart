@@ -136,6 +136,11 @@ const _nestedKeySources = <String, String>{
   'a2a.servers.*': 'lib/src/a2a/a2a_config.dart',
   'a2a.servers.*.url': 'lib/src/a2a/a2a_config.dart',
   'a2a.servers.*.token': 'lib/src/a2a/a2a_config.dart',
+  // `fabric:` is read-only host discovery announcements; only the
+  // capability keys below are user-visible in the yaml.
+  'fabric.capabilities': 'lib/src/messaging/fabric_config.dart',
+  'fabric.capabilities.[].name': 'lib/src/messaging/fabric_config.dart',
+  'fabric.capabilities.[].description': 'lib/src/messaging/fabric_config.dart',
 };
 
 /// Resolves a walked key path against the pins (`*` = exactly one segment).

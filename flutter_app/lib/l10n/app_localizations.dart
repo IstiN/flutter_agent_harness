@@ -1946,6 +1946,54 @@ abstract class AppLocalizations {
   /// **'Base URL is required'**
   String get settingsBaseUrlRequired;
 
+  /// No description provided for @settingsCliOnlyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'CLI-only settings'**
+  String get settingsCliOnlyTitle;
+
+  /// No description provided for @settingsCliOnlyLead.
+  ///
+  /// In en, this message translates to:
+  /// **'These settings live in the CLI and its config file — this app cannot host them:'**
+  String get settingsCliOnlyLead;
+
+  /// No description provided for @settingsCliOnlyMcpServers.
+  ///
+  /// In en, this message translates to:
+  /// **'MCP servers'**
+  String get settingsCliOnlyMcpServers;
+
+  /// No description provided for @settingsCliOnlyTtsrRules.
+  ///
+  /// In en, this message translates to:
+  /// **'Stream rules (TTSR)'**
+  String get settingsCliOnlyTtsrRules;
+
+  /// No description provided for @settingsCliOnlyCubeSandbox.
+  ///
+  /// In en, this message translates to:
+  /// **'Cube sandbox'**
+  String get settingsCliOnlyCubeSandbox;
+
+  /// No description provided for @settingsCliOnlyPromptOverrides.
+  ///
+  /// In en, this message translates to:
+  /// **'Prompt overrides'**
+  String get settingsCliOnlyPromptOverrides;
+
+  /// No description provided for @settingsCliOnlyAgentMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent mode'**
+  String get settingsCliOnlyAgentMode;
+
+  /// No description provided for @settingsCliOnlyMemoryStores.
+  ///
+  /// In en, this message translates to:
+  /// **'Memory stores'**
+  String get settingsCliOnlyMemoryStores;
+
   /// No description provided for @settingsCancelButton.
   ///
   /// In en, this message translates to:
