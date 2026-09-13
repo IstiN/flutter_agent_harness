@@ -1824,6 +1824,7 @@ Future<void> _runApp(List<String> args) async {
 
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
+    environment: Platform.environment,
     useTui:
         headlessPrompt == null &&
         stdout.supportsAnsiEscapes &&

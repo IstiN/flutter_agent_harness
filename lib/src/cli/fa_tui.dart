@@ -10,6 +10,7 @@ import 'composer_overlay.dart';
 import 'ansi_markdown.dart';
 import 'agent_hub_tui.dart';
 import 'tui_prompt.dart';
+import 'tui_theme.dart';
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
 import 'system_notice_render.dart';
 import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
@@ -33,13 +34,14 @@ List<ProgramOption> _programHookOptions(TuiProgramHooks? hooks) {
   ];
 }
 
-/// The site palette (site/styles.css): a teal accent (#5eead4) and an indigo
-/// accent-2 (#818cf8) on a dark background. Width math in the view always
-/// uses the raw strings — escapes are added only at write time.
-String _accent(String s) => '\x1b[1m\x1b[38;2;94;234;212m$s\x1b[0m';
-String _accent2(String s) => '\x1b[1m\x1b[38;2;129;140;248m$s\x1b[0m';
-String _accent2Plain(String s) => '\x1b[38;2;129;140;248m$s\x1b[0m';
-String _dim(String s) => '\x1b[2m$s\x1b[0m';
+/// The session TUI theme (issue #279) supplies every palette escape;
+/// width math in the view always uses the raw strings — escapes are
+/// added only at write time. Byte-identical to the historical site
+/// palette (teal #5eead4, indigo #818cf8) under the default theme.
+String _accent(String s) => tuiAccent(s);
+String _accent2(String s) => tuiAccent2(s);
+String _accent2Plain(String s) => tuiAccent2Soft(s);
+String _dim(String s) => tuiDim(s);
 
 /// Host callbacks supplied by [AgentCli] to the dart_tui REPL.
 final class FaTuiCallbacks {
@@ -1877,7 +1879,7 @@ final class FaTuiModel extends Model {
   /// `>_Fa` prefix), leaving one visible empty line after the user message.
   List<String> _echoAppend(List<String> lines, String text) {
     final rule = _dim('─' * termWidth);
-    const bg = '\x1b[48;2;30;34;42m';
+    final bg = tuiUserMessageBgSgr();
     const reset = '\x1b[0m';
     final styledInput = text
         .split('\n')
@@ -1893,7 +1895,7 @@ final class FaTuiModel extends Model {
   /// the host callback.
   (FaTuiModel, Cmd?) _submit(String text) {
     final rule = _dim('─' * termWidth);
-    const bg = '\x1b[48;2;30;34;42m';
+    final bg = tuiUserMessageBgSgr();
     const reset = '\x1b[0m';
     // Empty submits (guided-flow "keep the default" answers) skip the
     // message echo — an empty backgrounded block would read as a glitch.

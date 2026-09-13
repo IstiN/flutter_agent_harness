@@ -361,6 +361,10 @@ final class FaThemeController {
 
   String accent2Soft(String text) => _render(_current.accent2Soft, text);
 
+  /// First accent without bold (banner title, markdown markers).
+  String accentSoft(String text) =>
+      _render(Style(foregroundRgb: _current.accent.foregroundRgb), text);
+
   String dim(String text) => _render(_current.muted, text);
 
   String warning(String text) => _render(_current.warning, text);
@@ -370,6 +374,16 @@ final class FaThemeController {
   /// Backgrounds the echoed user-message lines.
   String userMessageBg(String text) =>
       _render(_current.userMessageBg, text);
+
+  /// The raw SGR prefix [style] renders with under the active profile
+  /// ('' when styling is off). Derived from a probe render so the prefix
+  /// always matches the vendor's own emission order byte for byte.
+  String sgrPrefix(Style style) {
+    if (profile == null) return '';
+    const probe = '\uE000';
+    final rendered = _p(style).render(probe);
+    return rendered.substring(0, rendered.indexOf(probe));
+  }
 }
 
 // ── Emitters ──────────────────────────────────────────────────────────────
@@ -394,9 +408,35 @@ String tuiWarning(String s) => FaThemeController.instance.warning(s);
 /// Error foreground (denials, failures).
 String tuiError(String s) => FaThemeController.instance.error(s);
 
-/// User-message echo background.
-String tuiUserMessageBg(String s) =>
-    FaThemeController.instance.userMessageBg(s);
+/// First accent without bold (banner title, markdown markers).
+String tuiAccentSoft(String s) => FaThemeController.instance.accentSoft(s);
+
+/// The raw SGR prefix (e.g. `\x1b[1m\x1b[38;2;…m`) [style] renders with
+/// under the active profile — '' when styling is off. For emitters that
+/// paint per-line fragments and close the escape themselves (markdown
+/// token styles, the user-message echo background).
+String tuiSgr(Style style) => FaThemeController.instance.sgrPrefix(style);
+
+/// Raw SGR prefix of the first accent WITHOUT bold — the markdown marker
+/// color (bullets, checkboxes, code spans, list numbers).
+String tuiAccentSoftSgr() => tuiSgr(
+  Style(
+    foregroundRgb: FaThemeController.instance.current.accent.foregroundRgb,
+  ),
+);
+
+/// Raw SGR prefix of the second accent WITHOUT bold (sub-headers pair it
+/// with an explicit bold, dense spans use it alone).
+String tuiAccent2SoftSgr() =>
+    tuiSgr(FaThemeController.instance.current.accent2Soft);
+
+/// Raw SGR prefix of the current theme's muted role.
+String tuiDimSgr() => tuiSgr(FaThemeController.instance.current.muted);
+
+/// Raw SGR prefix of the current theme's user-message background.
+String tuiUserMessageBgSgr() =>
+    tuiSgr(FaThemeController.instance.current.userMessageBg);
+
 
 
 // ── Swatch/table rendering ────────────────────────────────────────────────
@@ -438,8 +478,14 @@ List<String> themeTableLines({String? current}) {
 /// WCAG-ish sanity floor for E2: base fg must stay readable against the
 /// message background in the same palette (contrast ratio ≥ 2.5).
 double themeContrast(Theme theme) {
-  final fg = theme.base.foregroundRgb ?? RgbColor(204, 204, 204);
   final bg = theme.userMessageBg.backgroundRgb ?? const RgbColor(0, 0, 0);
+  // Base text inherits the terminal's own foreground (oh-my-pi light.json
+  // ships "text": "" too), so the reference fg contrasts with whatever
+  // the terminal bg is: dark-on-light palettes, light-on-dark ones.
+  final fg = theme.base.foregroundRgb ??
+      (_relativeLuminance(bg) > 0.5
+          ? const RgbColor(0x1a, 0x1a, 0x1a)
+          : const RgbColor(204, 204, 204));
   return _contrastRatio(fg, bg);
 }
 

@@ -86,6 +86,9 @@ enum SharedSetting {
   /// Long-term memory store locations (`memory.projectPath` /
   /// `memory.userPath`).
   memoryStores,
+
+  /// TUI color palette (tui.theme + ~/.fah/themes/*.json, issue #279).
+  tuiTheme,
 }
 
 /// Settings that are currently CLI-only.
@@ -121,6 +124,10 @@ const cliOnlySettings = <SharedSetting>{
   // the section read-only (memory_config_loader); editing host paths from
   // inside the sandbox would point the CLI at paths the app cannot see.
   SharedSetting.memoryStores,
+
+  // The TUI palette colors a terminal: the app renders through Flutter's
+  // own theming stack (separate system by design — issue #279 non-goal).
+  SharedSetting.tuiTheme,
 };
 
 /// Settings that are currently app-only.
@@ -172,6 +179,9 @@ const cliOnlyJustifications = <SharedSetting, String>{
   SharedSetting.memoryStores:
       'Memory store locations are host filesystem paths; the app sandbox '
       'resolves them read-only and cannot re-point the CLI at new paths.',
+  SharedSetting.tuiTheme:
+      'The TUI palette colors a terminal emulator; the app themes through '
+      'its own Flutter theming stack (separate system by design).',
 };
 
 /// Top-level yaml keys that are intentionally NOT interactive settings on
@@ -405,6 +415,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'Memory roots are host filesystem paths; the app resolves them '
         'read-only.',
   ),
+  SharedSetting.tuiTheme: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The palette colors a terminal emulator; the app themes through '
+        'its own Flutter theming stack.',
+  ),
 };
 
 /// Metadata for each [SharedSetting]: what to search for in each platform's
@@ -520,6 +539,12 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — host paths, CLI-only (see above).
     yamlKeys: ['memory'],
     description: 'Long-term memory store locations.',
+  ),
+  SharedSetting.tuiTheme: _SettingMeta(
+    cliRef: 'tuiTheme',
+    appRef: null, // exempted — terminal theming, CLI-only (see above).
+    yamlKeys: ['tui'],
+    description: 'TUI palette (tui.theme + user themes, issue #279).',
   ),
 };
 

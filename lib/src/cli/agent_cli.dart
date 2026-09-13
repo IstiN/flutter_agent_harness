@@ -209,6 +209,7 @@ class AgentCli {
     bool useColor = false,
     bool useTui = false,
     this._version = '0.0.0',
+    this.environment = const {},
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
        _useTui = useTui && io.supportsRawMode {
@@ -219,6 +220,13 @@ class AgentCli {
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
     _providerKind = config.providerKind;
     _apiKey = config.apiKey;
+    // The theme emitters' color profile: styled iff this session styles
+    // at all (TUI or colored line mode); NO_COLOR / TERM=dumb degrade to
+    // plain output (issue #279 AC7).
+    FaThemeController.instance.profile = detectThemeProfile(
+      ansiSupported: useTui || useColor,
+      environment: environment,
+    );
     _applyBootTheme();
     final pluginTools = <AgentTool>[];
     for (final plugin in config.plugins) {
@@ -646,6 +654,10 @@ class AgentCli {
 
   /// The input prompt written when the agent is idle.
   final String prompt;
+
+  /// The host environment (bin/fah passes `Platform.environment`), read
+  /// for NO_COLOR / TERM / COLORTERM theme-profile detection (issue #279).
+  final Map<String, String> environment;
 
   /// Built-in agent modes. Rebuilt when the effective cwd changes so the
   /// system prompt's project context follows the active session.
