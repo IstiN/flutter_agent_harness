@@ -671,6 +671,110 @@ void main() {
         expect(store.landedSaves, 1);
         env.dispose();
       });
+
+      test('a session append persists EAGERLY — a crash inside the debounce '
+          'window cannot eat the transcript tail', () async {
+        final store = InMemoryFsSnapshotStore();
+        // A debounce the test never lets fire: only the eager save may.
+        final env = await _restoreEnv(
+          store,
+          persistDelay: const Duration(hours: 1),
+        );
+        (await env.appendFile(
+          '/sessions/--w--/s1.jsonl',
+          '{"tail":true}\n',
+        )).getOrThrow();
+
+        // No flush, no unload, no debounce tick: the eager save must
+        // already have landed the record.
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(
+          store.records[sessionKeyOf('/sessions/--w--/s1.jsonl')],
+          b64('{"tail":true}\n'),
+        );
+        env.dispose();
+      });
+
+      group('migration ordering (issue #240 port — a failed pass must not '
+          'wipe or resurrect)', () {
+        test('a failed session-record save never overwrites the v1 envelope '
+            '— it stays the only durable copy of the sessions', () async {
+          const sessionBody = '{"v":1}\n';
+          final v1 = jsonEncode(
+            envelope(
+              version: 1,
+              dirs: ['/sessions'],
+              files: [
+                {'path': '/sessions/--w--/s1.jsonl', 'data': b64(sessionBody)},
+              ],
+            ),
+          );
+          final store = _FailStore()
+            ..seed({PersistentWebExecutionEnv.storageKey: v1});
+          // The next session-record write fails (quota).
+          store.failRecordSaves = 1;
+          final env = await _restoreEnv(store);
+
+          // Any mutation triggers the first migration pass; its record
+          // write fails.
+          (await env.writeFile('/notes/x.txt', 'x')).getOrThrow();
+          await env.flush();
+
+          // The v1 envelope — the only durable copy of the session — is
+          // byte-for-byte untouched.
+          expect(
+            jsonDecode(store.records[PersistentWebExecutionEnv.storageKey]!),
+            jsonDecode(v1),
+          );
+          // The failure stays visible for the retry.
+          expect(env.hasPendingChanges, isTrue);
+
+          // The retry completes the migration safely.
+          store.failRecordSaves = 0;
+          (await env.appendFile('/notes/x.txt', '!')).getOrThrow();
+          await env.flush();
+          expect(envelopeOf(store.records, env)['version'], 2);
+          expect(
+            store.records[sessionKeyOf('/sessions/--w--/s1.jsonl')],
+            b64(sessionBody),
+          );
+        });
+
+        test('deleting a session evicts its record even when the save pass '
+            'later fails', () async {
+          const sessionBody = '{"gone"}\n';
+          final store = _FailStore()
+            ..seed({
+              PersistentWebExecutionEnv.storageKey: jsonEncode(
+                envelope(
+                  files: [
+                    {'path': '/notes/a.txt', 'data': b64('a')},
+                  ],
+                ),
+              ),
+              sessionKeyOf('/sessions/--w--/s1.jsonl'): b64(sessionBody),
+            });
+          final env = await _restoreEnv(store);
+          expect(
+            (await env.readTextFile('/sessions/--w--/s1.jsonl')).getOrThrow(),
+            sessionBody,
+          );
+
+          // The user deletes the session; the same pass's envelope write
+          // fails (quota).
+          (await env.remove('/sessions/--w--/s1.jsonl')).getOrThrow();
+          (await env.writeFile('/notes/b.txt', 'b')).getOrThrow();
+          store.failEnvelopeSaves = 1;
+          await env.flush();
+
+          // The stale record is evicted DESPITE the failed pass —
+          // eviction runs first, nothing later can skip it.
+          expect(
+            store.records.containsKey(sessionKeyOf('/sessions/--w--/s1.jsonl')),
+            isFalse,
+          );
+        });
+      });
     });
   });
 }
@@ -881,6 +985,49 @@ final class _GatedStore implements FsSnapshotStore {
     }
     _records.addAll(records);
     landedSaves++;
+  }
+
+  @override
+  Future<void> remove(Iterable<String> keys) async {
+    for (final key in keys) {
+      _records.remove(key);
+    }
+  }
+}
+
+/// A storage with injectable one-shot failures: the next N saves touching
+/// a session record or the envelope fail (the closest VM model of
+/// IndexedDB quota + partial commits, for the migration-ordering pins).
+final class _FailStore implements FsSnapshotStore {
+  /// Session-record saves left to fail.
+  int failRecordSaves = 0;
+
+  /// Envelope saves left to fail.
+  int failEnvelopeSaves = 0;
+
+  Map<String, String> get records => Map.unmodifiable(_records);
+  final Map<String, String> _records = {};
+
+  void seed(Map<String, String> records) => _records.addAll(records);
+
+  @override
+  Future<Map<String, String>> load() async => Map.of(_records);
+
+  @override
+  Future<void> save(Map<String, String> records) async {
+    if (failRecordSaves > 0 &&
+        records.keys.any(
+          (k) => k.startsWith(PersistentWebExecutionEnv.sessionKeyPrefix),
+        )) {
+      failRecordSaves--;
+      throw StateError('quota: session record write failed');
+    }
+    if (failEnvelopeSaves > 0 &&
+        records.containsKey(PersistentWebExecutionEnv.storageKey)) {
+      failEnvelopeSaves--;
+      throw StateError('quota: envelope write failed');
+    }
+    _records.addAll(records);
   }
 
   @override
