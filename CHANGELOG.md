@@ -2,6 +2,19 @@
 
 ## 0.1.358
 
+- fix(259): sleep-resilient scheduled wake-ups for `schedule_message`.
+  All due-time math in `ScheduledMessageQueue` now rides an injectable
+  wall clock (`clock:`), long waits are split into ≤60s timer legs that
+  recompute the remaining delay from the wall clock on every fire (no
+  duration-drift accumulation across OS sleep), and both hosts run a
+  wall-clock catch-up sweep at every turn start (CLI `_beginUserPrompt`,
+  app `sendText`) on top of the existing idle inbox-tick sweeps — the
+  first post-sleep turn delivers every overdue record immediately.
+  Catch-up is exactly-once per record (no replay of missed cycles);
+  recurring self-re-arming cycles resume from "now" after a clock jump.
+  Docs (AGENTS.md messaging section) describe an optional external
+  cron/launchd pinger for delivery during lid sleep.
+
 
 - fix(hub): boot online from the persisted DAP credential — with no
   `DAP_MASTER_SECRET`/`DAP_CLIENT_SECRET` in the environment, the CLI now
