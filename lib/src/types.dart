@@ -31,6 +31,73 @@ enum StopReason {
   aborted,
 }
 
+/// finish_reason retryability classification (issue #312).
+///
+/// Vendor finish_reasons are tri-state at the wire: TRANSIENT failures
+/// heal on replay, TERMINAL ones (policy/refusal family) never retry —
+/// retrying a filter is a safety bug — and UNKNOWN vendor words default
+/// to transient so a new term degrades to a retry instead of killing the
+/// turn (that terminal-by-default was the #312 bug). Unknown words are
+/// loud-logged via [onUnknownFinishReason] so the table grows from
+/// production logs.
+enum FinishReasonClass { transient, terminal, unknown }
+
+/// TRANSIENT finish_reasons, vendor-tagged:
+/// - `network_error` — generic wire-level word (several vendors);
+/// - `unexpected_state` — Kimi/Moonshot k3 gateway: internal transient
+///   failure, same family as its one-off "500: Internal network failure".
+const _transientFinishReasons = {'network_error', 'unexpected_state'};
+
+/// TERMINAL finish_reasons: the standard `content_filter` plus the
+/// policy/refusal-shaped family — a refusal will not heal on replay.
+const _terminalFinishReasons = {
+  'content_filter',
+  'content_policy_violation',
+  'policy_violation',
+  'moderation_blocked',
+  'prohibited_content',
+  'refusal',
+};
+
+/// Classifies a raw wire finish_reason ([AssistantMessage.rawStopReason]).
+/// Anything outside both sets is [FinishReasonClass.unknown].
+FinishReasonClass classifyFinishReason(String reason) {
+  final key = reason.trim().toLowerCase();
+  if (_transientFinishReasons.contains(key)) {
+    return FinishReasonClass.transient;
+  }
+  if (_terminalFinishReasons.contains(key)) {
+    return FinishReasonClass.terminal;
+  }
+  return FinishReasonClass.unknown;
+}
+
+/// The loud log for UNKNOWN finish_reasons (the #312 cataloguing hook):
+/// fires once per occurrence at mapping time with the raw reason so new
+/// vendor words can join the classification table. Null keeps it silent.
+void Function(String reason)? onUnknownFinishReason;
+
+/// The structured retry verdict the wire finish_reason carries, or null
+/// when the failure has no finish_reason (HTTP-level errors, socket cuts,
+/// truncation) and the message-text nets decide instead. TERMINAL vetoes
+/// every retry.
+FinishReasonClass? finishReasonRetryClass(AssistantMessage message) {
+  if (message.stopReason != StopReason.error) return null;
+  // Scoped to the openai-completions finish_reason family: its error
+  // wording is the marker that the wire word came through the vocabulary
+  // this table catalogues. Other adapters set rawStopReason too (Google
+  // SAFETY/RECITATION, Anthropic sensitive) - refused content keeps the
+  // terminal behavior it had before this table existed; replaying it is
+  // a safety bug.
+  final text = message.errorMessage;
+  if (text == null || !text.startsWith('Provider finish_reason: ')) {
+    return null;
+  }
+  final raw = message.rawStopReason;
+  if (raw == null || raw.isEmpty) return null;
+  return classifyFinishReason(raw);
+}
+
 /// Monetary cost of a request, in USD.
 ///
 /// Ported from pi's `Usage.cost`.
