@@ -1406,10 +1406,11 @@ Future<void> _runApp(List<String> args) async {
     _fail(error.message);
   }
 
-  // Compaction engine (issue #148): `--compaction-engine` flag > the
-  // project `.fah/config.yaml` `compaction:` section > the saved user
-  // `compaction:` section > classic. Strict parse errors are hard startup
-  // errors (a typo must never silently downgrade the engine).
+  // Compaction engine (issue #148, default flip #287): `--compaction-engine`
+  // flag > the project `.fah/config.yaml` `compaction:` section > the saved
+  // user `compaction:` section > structured (2.0 default; classic is the
+  // legacy rollback). Strict parse errors are hard startup errors (a typo
+  // must never silently downgrade the engine).
   final compactionEngine = resolveCompactionEngine(
     session: effective.compactionEngine,
     project: loadProjectCompactionEngine(cwd),

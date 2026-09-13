@@ -1907,5 +1907,55 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get settingsCompactionLabel => 'Compaction';
+
+  @override
+  String get settingsCompactionHelper =>
+      'How the context is compacted when it nears the model\'s window. Applies at the next compaction.';
+
+  @override
+  String get settingsCompactionStructured => 'Structured (recommended)';
+
+  @override
+  String get settingsCompactionStructuredHint =>
+      'Hides consumed records in place, expandable on demand — requires a configured model for the judge pass.';
+
+  @override
+  String get settingsCompactionClassic => 'Classic (legacy 1.0)';
+
+  @override
+  String get settingsCompactionClassicHint =>
+      'Lossy prefix summary — zero extra model calls.';
+
+  @override
+  String get settingsCompactionSourceProject =>
+      'effective from the project .fah/config.yaml';
+
+  @override
+  String get settingsCompactionSourceUser =>
+      'effective from the user ~/.fah/config.yaml';
+
+  @override
+  String get settingsCompactionSourceFallback =>
+      'structured default — no compaction setting in any config';
+
+  @override
+  String get settingsCompactionWebNote =>
+      'Not configurable on the web — there is no config file here, so the structured engine applies.';
+
+  @override
+  String settingsCompactionSaved(String file) {
+    return 'Saved to $file — applies at the next compaction.';
+  }
+
+  @override
+  String settingsCompactionSaveFailed(String error) {
+    return 'Could not save the compaction engine: $error';
+  }
+
+  @override
+  String get settingsCompactionDocs => 'Compaction docs';
+
+  @override
   String get themePackImportFailed => 'Theme pack rejected';
 }

@@ -267,11 +267,13 @@ extension CompactionWindowSizing on AgentService {
       hooks: const _AutoCompactorFlutterHooks(),
       prompts: const CompactionPrompts(),
       // The engine rides the same config chain as the CLI (issue #148
-      // D8): project .fah/config.yaml < ~/.fah/config.yaml, default
-      // classic. Resolved per compaction so edits apply without a
-      // restart.
+      // D8, default flip #287): project .fah/config.yaml < ~/.fah/
+      // config.yaml, default structured. Resolved per compaction so
+      // edits apply without a restart (the Settings picker relies on
+      // this — a flip takes effect at the NEXT compaction).
       engine:
-          loadAppCompactionEngine(env.sessionCwd) ?? CompactionEngine.classic,
+          loadAppCompactionEngine(env.sessionCwd) ??
+          CompactionEngine.structured,
     ).run();
 
     // The AutoCompactor replaces `state.messages` on success; mirror

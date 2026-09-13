@@ -118,7 +118,8 @@ final class AgentCliConfig {
 
   /// The effective compaction engine (issue #148), resolved by the host
   /// (global < project < `--compaction-engine` runtime flag). `null` keeps
-  /// the classic engine — the default during structured incubation.
+  /// the structured engine — the default everywhere since issue #287
+  /// (classic remains the explicit rollback choice).
   final CompactionEngine? compactionEngine;
 
   /// Owner-side effective context cap (`agent.contextWindowCap`, issue
