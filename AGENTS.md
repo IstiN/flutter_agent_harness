@@ -379,7 +379,29 @@ factual: paths, commands, invariants — no essays.
   reconnect, merged drains deduped by id. `AgentCliConfig.hubFabric`
   hosts inject it; the plugin host skips its separate inbox when the
   fabric owns delivery (one hub-mail consumer). Subagent drains never
-  touch the hub.
+  touch the hub. Issue #304 adds the one-step CLI surface over it:
+  `fa dap start|stop|status` (bin/fah_dap_command.dart —
+  `DapHubController`, every IO a seam) probes the port (`/healthz` + a
+  `/ws` presence handshake; foreign server = clear error naming the
+  port, no enrollment), spawns `fa hub serve` detached, prompts the
+  master key ONCE (hidden; empty = open hub, the zero-config extension
+  default; non-interactive starts prompt nothing), enrolls per the
+  DAP_MASTER_SECRET flow and persists only the hub-issued clientSecret
+  (0600 `~/.dap/config.json`; wrong key re-prompts 3x then a manual
+  hint — a rejected secret is never persisted). The hub pid/state file
+  `~/.dap/hub.pid` (parse in lib/src/hub/dap_local_hub_state.dart) lets
+  a second CLI attach (no double-spawn) and `fa dap stop` work from ANY
+  instance exactly once — stop names connected peers (e.g. "Browser")
+  and SIGTERMs the owning pid; the fabric falls back to file inboxes.
+  The `/dap` menu's leading row is state-dependent (AC7): "Start DAP
+  locally (one step)" stopped, "Stop DAP" running
+  (lib/src/cli/dap_menu_options.dart `dapMenuOptions(hubRunning:)`).
+  `agent_directory` renders hub roster entries (MailboxEntry.source ==
+  'hub') with a `[hub]` marker; the `fabric.hub: false` kill switch
+  (FabricConfig.hub, gate `hubFabricWired` in bin/hub_fabric_
+  repository.dart, mirrors images.registry) leaves the fabric the bare
+  file layer — byte-identical legacy listing (REG test
+  test/messaging/fabric_kill_switch_reg_test.dart).
   Issue #27 phase 3 adds the A2A boundary gateway: `agent_message` accepts
   `name@machine` for OTHER machines — `A2aMailGateway` (lib/src/a2a/
   a2a_mail_gateway.dart) resolves the machine against the `a2a:` config

@@ -84,6 +84,7 @@ class FaChatScreen extends StatefulWidget {
     this.onPermissionAction,
     this.audioControllerFactory,
     this.videoControllerFactory,
+    this.dynamicWidgetTileBuilder,
     this.imagePreviewCacheWidth = kDefaultImagePreviewCacheWidth,
     this.projectIcon,
     this.projectIconColor,
@@ -157,6 +158,11 @@ class FaChatScreen extends StatefulWidget {
   /// Playback engine factory for inline video players; null uses the real
   /// `video_player`-backed controller. Tests/goldens inject fakes.
   final SandboxVideoControllerFactory? videoControllerFactory;
+
+  /// Renders `widget`-role transcript messages as the host's live
+  /// dynamic-message tiles (issue #336); null renders the stock system
+  /// tile for them.
+  final FaDynamicWidgetTileBuilder? dynamicWidgetTileBuilder;
 
   /// The project identity in the adaptive header (issue #225): the folder
   /// glyph + label ("Personal" or the folder basename) the host renders
@@ -900,9 +906,11 @@ class _FaChatScreenState extends State<FaChatScreen>
         onAuthRecovery: widget.onAuthRecovery,
         audioControllerFactory: widget.audioControllerFactory,
         videoControllerFactory: widget.videoControllerFactory,
+        dynamicWidgetTileBuilder: widget.dynamicWidgetTileBuilder,
       ),
     );
   }
+
   Widget _buildChatBody(BuildContext context) {
     final composerBuilder = widget.composerBuilder;
     final strings = FaChatStrings.of(context);

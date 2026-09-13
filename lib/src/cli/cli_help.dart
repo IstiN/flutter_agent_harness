@@ -110,6 +110,25 @@ OPTIONS
 QUICK COMMANDS
   update                       Download the latest release binary and swap
                                it in (pub-global installs re-activate)
+  dap                          fa dap start [--port N]: the one-step local
+                               DAP hub — probes the port (foreign server =
+                               clear error), spawns `fa hub serve`
+                               detached, asks for the master key ONLY when
+                               a protected hub is being created or joined
+                               (hidden input; enroll retries 3x then
+                               points at manual recovery), and persists
+                               the hub-issued client secret (0600) so the
+                               next fa boot is online by itself — hub
+                               peers appear in agent_directory. An already
+                               running hub attaches with no prompts.
+                               fa dap stop: graceful stop naming connected
+                               peers (e.g. Browser); works from any CLI
+                               instance, exactly once (pid state in
+                               ~/.dap/hub.pid). fa dap status: running/
+                               stopped, url, pid, peers. The hub layer in
+                               the messaging fabric has a kill switch:
+                               fabric.hub: false in ~/.fah/config.yaml
+                               restores the legacy file-only behavior.
   uninstall                    Remove the binary and its PATH entry after a
                                y/N confirmation; ~/.fah (sessions, config)
                                is kept unless a second confirmation says yes
@@ -528,8 +547,9 @@ SKILLS AND CONTEXT FILES
                      floor). Disabled tools are hidden from the model and
                      tombstoned at execution; /tools reload re-reads the
                      config files
-  /dap [host ...]    DAP hub status, or connect to a hub (agent-to-agent
-                     messaging; protocol + server guide: docs/dap.md)
+  /dap [start|stop|  DAP hub menu — Start DAP locally (one step) / Stop DAP
+  host ...]         by hub state, connection status, or connect to a hub
+                     (agent-to-agent messaging; guide: docs/dap.md)
   /code              switch to coding mode
   /architect         switch to architect mode
   /review            switch to review mode
