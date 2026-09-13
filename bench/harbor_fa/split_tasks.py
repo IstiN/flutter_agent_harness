@@ -3,15 +3,17 @@
 
 Usage:
     split_tasks.py <dataset-dir> [--filter <glob>[,<glob>...]] [--shards N]
+                   [--cpu-env ENV]
 
 Scans every <dataset-dir>/*/task.toml for a `gpus > 0` declaration.
-CPU tasks (gpus == 0 or absent) are chunked into `--shards` docker shards;
-GPU tasks go into one modal shard — the GPU split rides the same matrix as
-a shard with env=modal (issue #147: CPU tasks on the self-hosted runner,
-GPU tasks via Modal).
+CPU tasks (gpus == 0 or absent) are chunked into `--shards` shards on the
+env given by --cpu-env (default `modal`: the issue's own command uses
+`-e modal` and the self-hosted runner mac has no docker; pass docker once
+the runner gains it). GPU tasks always go on modal — the GPU split rides
+the same matrix as a shard with env=modal.
 
 With --shards, writes the workflow matrix to $GITHUB_OUTPUT (or stdout):
-    matrix={"include": [{"i": 0, "env": "docker", "tasks": "a b c"}, ...,
+    matrix={"include": [{"i": 0, "env": "modal", "tasks": "a b c"}, ...,
                         {"i": N,   "env": "modal",  "tasks": "gpu1 gpu2"}]}
     count=... cpu_count=... gpu_count=...
 
@@ -83,6 +85,7 @@ def main() -> int:
     parser.add_argument("dataset_dir", type=Path)
     parser.add_argument("--filter", default="")
     parser.add_argument("--shards", type=int, default=0)
+    parser.add_argument("--cpu-env", default="modal")
     args = parser.parse_args()
 
     globs = [g.strip() for g in args.filter.split(",") if g.strip()]
@@ -99,7 +102,7 @@ def main() -> int:
         return 0
 
     include = [
-        {"i": i, "env": "docker", "tasks": " ".join(chunk)}
+        {"i": i, "env": args.cpu_env, "tasks": " ".join(chunk)}
         for i, chunk in enumerate(_chunk(cpu, args.shards))
         if chunk
     ]
@@ -114,8 +117,8 @@ def main() -> int:
         ]
     )
     print(
-        f"{len(cpu)} CPU task(s) across {len(include) - (1 if gpu else 0)} docker"
-        f" shard(s), {len(gpu)} GPU task(s) on modal"
+        f"{len(cpu)} CPU task(s) across {len(include) - (1 if gpu else 0)}"
+        f" {args.cpu_env} shard(s), {len(gpu)} GPU task(s) on modal"
     )
     return 0
 
