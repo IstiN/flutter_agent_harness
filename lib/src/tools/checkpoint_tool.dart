@@ -49,6 +49,28 @@ const rewindToolName = 'rewind';
 /// session tree (omp's `rewind-report` custom message).
 const rewindReportCustomType = 'rewind-report';
 
+/// The `custom_message` type marking an auto-closed stale checkpoint (the
+/// audit trail for issue #286: why protection ended, with reason, goal,
+/// and anchors in `details`).
+const checkpointAutoClosedCustomType = 'checkpoint_auto_closed';
+
+/// Why an active checkpoint was auto-closed instead of blocking a new one
+/// (issue #286: a checkpoint never outlives its detour scope).
+enum CheckpointAutoCloseReason {
+  /// A user turn arrived inside the detour scope — a detour never spans
+  /// user turns, so the checkpoint outlived its scope.
+  userTurn('a user turn arrived after the checkpoint'),
+
+  /// The in-memory span the checkpoint anchors is gone: the host rebuilt
+  /// the transcript (session reload, compaction) below the anchor.
+  anchorGone('the anchored transcript span is gone (reload or compaction)');
+
+  const CheckpointAutoCloseReason(this.label);
+
+  /// Human-readable reason used in notes and audit records.
+  final String label;
+}
+
 /// The captured checkpoint mark (omp's `CheckpointState`).
 final class CheckpointState {
   /// Creates a [CheckpointState].
@@ -193,6 +215,107 @@ final class CheckpointRewindController {
     _pendingGoal = null;
     _pendingReport = null;
     _contextSwapPending = false;
+  }
+
+  /// Whether [checkpoint] outlived its detour scope: the transcript no
+  /// longer matches the span it anchored. Evaluated lazily at the next
+  /// checkpoint attempt — until then the checkpoint stays rewindable (a
+  /// detour may legitimately span runs), so the normal round-trip and the
+  /// cross-run rewind are unchanged.
+  ///
+  /// Stale when a user message landed inside the detour scope (a detour
+  /// never spans user turns: the model answered, steering interrupted, or a
+  /// later prompt arrived) or when the transcript was rebuilt below the
+  /// anchor (session reload / compaction replaced the anchored span).
+  /// Only REAL user turns end the scope: synthetic user-role injections
+  /// (widget events, system notices, rule interrupts, ext follow-ups,
+  /// agent mail, projected branch summaries) are machine traffic, not the
+  /// user steering the conversation (review of PR #292).
+  CheckpointAutoCloseReason? _stalenessReason(CheckpointState checkpoint) {
+    final messages = _agent.state.messages;
+    if (checkpoint.messageCount > messages.length) {
+      return CheckpointAutoCloseReason.anchorGone;
+    }
+    for (var i = checkpoint.messageCount; i < messages.length; i++) {
+      final message = messages[i];
+      if (message is UserMessage && _isRealUserTurn(message)) {
+        return CheckpointAutoCloseReason.userTurn;
+      }
+    }
+    return null;
+  }
+
+  /// User-role texts that are machine injections, never the user's turn:
+  /// widget interactions (`[widget <title>] …`, the dynamic_message
+  /// contract), extension follow-ups (`[ext:<name>] …`), harness
+  /// `<system-notice>` envelopes (background-job completions and friends),
+  /// TTSR `<system-interrupt …>` rule injections, agent mail
+  /// (`from <id>: …`), and compaction's projected branch summaries.
+  static final RegExp _syntheticUserTextPattern = RegExp(
+    r'^\[(widget|ext:)|^<system-notice>|^<system-interrupt'
+    r'|^from \S+: |^The following is a summary of a branch',
+  );
+
+  /// Whether [message] is a real user turn (the user's own words) rather
+  /// than a synthetic user-role injection.
+  static bool _isRealUserTurn(UserMessage message) {
+    final content = message.content;
+    final text = content is String
+        ? content
+        : (content as List<Object?>)
+              .whereType<TextContent>()
+              .map((block) => block.text)
+              .join(' ');
+    return !_syntheticUserTextPattern.hasMatch(text.trim());
+  }
+
+  /// Auto-closes the active checkpoint: clears it and writes the
+  /// `checkpoint_auto_closed` audit record through the sink so every host
+  /// sharing the session sees the close. Idempotent — closing again is a
+  /// no-op returning `null`. Returns the human-readable note.
+  Future<String?> _autoClose(CheckpointAutoCloseReason reason) async {
+    final checkpoint = _active;
+    if (checkpoint == null) return null;
+    _active = null;
+    final note =
+        'Previous checkpoint auto-closed (${reason.label}; '
+        'goal: ${checkpoint.goal ?? 'none'}; anchored at message '
+        '${checkpoint.messageCount}). The detour history stays in the '
+        'session tree.';
+    final session = _sink.session();
+    if (session != null) {
+      // Flush the host-pending detour BEFORE appending the audit record
+      // (the sink model: the controller persists everything it anchors or
+      // drops) — otherwise the record lands above messages the host
+      // persists later, and the tree tells the close out of order
+      // (review of PR #292).
+      final messages = _agent.state.messages;
+      for (var i = _sink.persistedMessageCount(); i < messages.length; i++) {
+        await _sink.persistMessage(messages[i]);
+      }
+      await session.appendCustomMessageEntry(
+        customType: checkpointAutoClosedCustomType,
+        content: note,
+        display: false,
+        details: {
+          'reason': reason.name,
+          'goal': ?checkpoint.goal,
+          'messageCount': checkpoint.messageCount,
+          'entryId': checkpoint.entryId,
+          'startedAt': checkpoint.startedAt.toIso8601String(),
+          'closedAt': DateTime.now().toIso8601String(),
+        },
+      );
+    }
+    return note;
+  }
+
+  /// Compact age of a checkpoint for refusal messages (snapshot-friendly:
+  /// stable within the sub-minute span tests run in).
+  static String _formatAge(Duration age) {
+    if (age.inMinutes < 1) return '<1m';
+    if (age.inHours < 1) return '${age.inMinutes}m';
+    return '${age.inHours}h ${age.inMinutes % 60}m';
   }
 
   /// Detaches from the agent: unsubscribes the event listener and restores
@@ -372,11 +495,44 @@ final class CheckpointRewindController {
         },
       },
       execute: (arguments, cancelToken, onUpdate) async {
+        String? autoClosedNote;
         if (_active != null) {
-          throw const _RewindGuardError(
-            'Checkpoint already active. Call rewind with your investigation '
-            'findings before creating another checkpoint.',
-          );
+          final staleReason = _stalenessReason(_active!);
+          if (staleReason == null) {
+            // Still inside its detour scope: refuse, naming the checkpoint
+            // so the model can close it with a rewind (issue #286: the
+            // refusal must be actionable, never a dead end).
+            final checkpoint = _active!;
+            throw _RewindGuardError(
+              'Checkpoint already active '
+              '(goal: ${checkpoint.goal ?? 'none'}; '
+              'age: ${_formatAge(DateTime.now().difference(checkpoint.startedAt))}; '
+              'anchored at message ${checkpoint.messageCount} of '
+              '${_agent.state.messages.length}). '
+              'Call rewind with your investigation findings to close it '
+              'before creating another checkpoint.',
+            );
+          }
+          if (_pendingReport != null) {
+            // A rewind for the active checkpoint is already queued in THIS
+            // same batch (review of PR #292: steering landed mid-detour
+            // and the model answered with one [rewind, checkpoint] tool
+            // phase). The checkpoint is already closing — the rewind
+            // applies at turn end — so it is not stale: auto-closing it
+            // here would destroy that rewind (the anchor the pending
+            // report needs vanishes, and the report would attach to the
+            // checkpoint this call creates). Refuse cleanly instead, like
+            // the in-scope case; the model checkpoints after the rewind
+            // applies.
+            throw _RewindGuardError(
+              'Rewind already requested for the active checkpoint '
+              '(goal: ${_active!.goal ?? 'none'}); it applies when this '
+              'turn ends. Create the checkpoint after the rewind applies.',
+            );
+          }
+          // The checkpoint outlived its scope (issue #286): auto-close it
+          // with a visible note and an audit record instead of blocking.
+          autoClosedNote = await _autoClose(staleReason);
         }
         _checkpointPending = true;
         final goal = (arguments['goal'] as String?)?.trim();
@@ -386,6 +542,7 @@ final class CheckpointRewindController {
         final count = _agent.state.messages.length + 1;
         return ToolExecutionResult.text(
           [
+            ?autoClosedNote,
             'Checkpoint created (message count: $count).',
             if (_pendingGoal != null) 'Goal: $_pendingGoal',
             'Run your investigation, then call rewind with a concise report.',

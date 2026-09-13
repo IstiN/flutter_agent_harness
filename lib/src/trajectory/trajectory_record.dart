@@ -40,6 +40,7 @@ enum TrajectorySystemChange {
   toolsChange,
   thinkingLevelChange,
   checkpoint,
+  checkpointAutoClosed,
   contextInject,
   sessionEnd,
   turnEnd,
