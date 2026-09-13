@@ -58,6 +58,17 @@ def main():
         lines.append(
             f"**{n_resolved}/{len(rows)} resolved — accuracy {accuracy:.0%}{note}**"
         )
+
+        # Failure families (issue #142): the re-run delta is reported per
+        # cluster, not just as one accuracy number. `unset` covers both
+        # resolved trials (tb's default mode) and unresolved ones whose
+        # tests ran and failed — the model side.
+        modes = {}
+        for _, _, mark, mode, _, _ in rows:
+            modes[(mode or "unset", mark)] = modes.get((mode or "unset", mark), 0) + 1
+        lines.append("Failure families (mode x resolved):")
+        for (mode, mark), n in sorted(modes.items()):
+            lines.append(f"- {mode or 'unset'} / {mark}: {n}")
         lines.append("")
         lines.append("| task | trial | resolved | failure mode | tokens in/out |")
         lines.append("|---|---|---|---|---|")
