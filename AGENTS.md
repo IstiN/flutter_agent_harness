@@ -1384,7 +1384,10 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   required check, plus `step-timings` (per-step duration telemetry) and a
   `watchdog` (>2x-baseline timeouts; a timed-out PR leg gets ONE
   empty-commit retrigger — never `gh run rerun`, which reallocates into
-  the same degraded runner pool). `nightly.yml` runs the full monolith +
+  the same degraded runner pool). `perf-gate` (issue #303) folds the #262
+  DoD `dart test --tags perf` trajectory gate into the aggregate for
+  trajectory-touching PRs; the full `--tags integration` leg stays
+  tag-gated to releases. `nightly.yml` runs the full monolith +
   PTY/CLI integration + terminal-visual suites; `coverage-gardener.yml`
   bumps the only-up CLI coverage baseline weekly.
 
