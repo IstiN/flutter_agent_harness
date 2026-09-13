@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:http/http.dart' as http;
+import 'package:yaml/yaml.dart' show YamlMap, loadYaml;
 import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
 
@@ -34,6 +35,7 @@ void main() {
     Future<DapHubSnapshot?> Function()? dapHubState,
     Future<void> Function({String? url, String? name})? onDapHubConfigChanged,
     ModelRolesResolver? modelRolesResolver,
+    MemoryConfig? memoryConfig,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -49,6 +51,7 @@ void main() {
         modelsFetcher: modelsFetcher,
         modelsHttpClient: modelsHttpClient,
         modelRolesResolver: modelRolesResolver,
+        memoryConfig: memoryConfig,
         dapHubState: dapHubState,
         onDapHubConfigChanged: onDapHubConfigChanged,
         providerKind: 'openai-completions',
@@ -977,6 +980,137 @@ void main() {
       );
       io.sendLine('/exit');
       await run;
+      expect(fake.calls, 0);
+    });
+  });
+
+  group('compaction engine flow (issue #288)', () {
+    test('session scope switches the live engine without touching files',
+        () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      final flow = cli.startCompactionEngineFlow();
+      await waitForIt(
+        () => io.out.toString().contains('compaction engine'),
+      );
+      io.sendLine('2'); // structured
+      await waitForIt(
+        () => io.out.toString().contains('compaction engine — scope'),
+      );
+      io.sendLine('1'); // session
+      await waitForIt(
+        () => io.out.toString().contains(
+          'compaction engine → structured (this session',
+        ),
+      );
+      await flow;
+      io.sendLine('/settings');
+      await waitForIt(
+        () => io.out.toString().contains('compaction: structured'),
+      );
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.config.liveCompactionEngine, CompactionEngine.structured);
+      // No config file was created for a session-scoped switch.
+      final untouched = await env.readTextFile('/work/.fah/config.yaml');
+      expect(untouched.valueOrNull, isNull);
+      expect(fake.calls, 0);
+    });
+
+    test('project scope writes the validated yaml section and goes live',
+        () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+
+      final flow = cli.startCompactionEngineFlow();
+      await waitForIt(() => io.out.toString().contains('compaction engine'));
+      io.sendLine('2'); // structured
+      await waitForIt(
+        () => io.out.toString().contains('compaction engine — scope'),
+      );
+      io.sendLine('2'); // project
+      await waitForIt(
+        () => io.out.toString().contains(
+          'compaction.engine = structured → /work/.fah/config.yaml',
+        ),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      expect(cli.config.liveCompactionEngine, CompactionEngine.structured);
+      final written =
+          (await env.readTextFile('/work/.fah/config.yaml')).valueOrNull;
+      expect(written, isNotNull);
+      // The written file parses through the REAL boot parser.
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.compactionEngine, CompactionEngine.structured);
+      expect(fake.calls, 0);
+    });
+  });
+
+  group('memory stores flow (issue #288)', () {
+    test('sets the project memory path in the project config', () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        memoryConfig: const MemoryConfig(projectPath: './memory'),
+      );
+      final run = cli.run();
+
+      final flow = cli.startMemoryStoresFlow();
+      await waitForIt(() => io.out.toString().contains('memory stores'));
+      await waitForIt(
+        () => io.out.toString().contains('1) Project memory — /work/memory'),
+      );
+      io.sendLine('1'); // projectPath
+      await waitForIt(
+        () => io.out.toString().contains(
+          "project memory path (empty keeps '/work/memory')",
+        ),
+      );
+      io.sendLine('./longterm');
+      await waitForIt(
+        () => io.out.toString().contains(
+          'memory.projectPath = ./longterm → /work/.fah/config.yaml',
+        ),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      final written =
+          (await env.readTextFile('/work/.fah/config.yaml')).valueOrNull;
+      expect(written, isNotNull);
+      final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+      expect(parsed.memory?.projectPath, './longterm');
+      expect(fake.calls, 0);
+    });
+
+    test('user path without a home directory refuses before prompting',
+        () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call); // homeDir is null in the test config
+      final run = cli.run();
+
+      final flow = cli.startMemoryStoresFlow();
+      await waitForIt(() => io.out.toString().contains('memory stores'));
+      io.sendLine('2'); // userPath
+      await waitForIt(
+        () => io.out.toString().contains(
+          'memory: no user config on this host — not saved',
+        ),
+      );
+      await flow;
+      io.sendLine('/exit');
+      await run;
+
+      // The prompt never ran — nothing was collected and discarded.
+      expect(io.out.toString(), isNot(contains('user memory path')));
       expect(fake.calls, 0);
     });
   });

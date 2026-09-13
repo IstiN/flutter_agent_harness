@@ -35,6 +35,7 @@ import '../compaction/compaction_engine.dart';
 import '../cube/config/cube_settings.dart';
 import '../env/execution_env.dart';
 import '../exceptions.dart';
+import '../messaging/fabric_config.dart';
 import '../mcp/mcp_config.dart';
 import '../memory_config.dart';
 import '../model_roles/model_roles.dart';
@@ -74,6 +75,7 @@ const configTopLevelKeys = <String>{
   'agent',
   'images',
   'skills',
+  'fabric',
 };
 
 /// Top-level keys that carry a plain string value.

@@ -248,6 +248,26 @@ void main() {
       await env.writeFile(_globalConfig, _validGlobal);
       expect(() => service.get('providr'), throwsConfigException);
     });
+
+    test('the fabric section resolves and validates (issue #288)', () async {
+      // `fabric:` is parsed by the runtime (CliConfig.fromYaml) but was
+      // missing from the declared key set — `get` threw "unknown key".
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\n'
+            'fabric:\n'
+            '  capabilities:\n'
+            '    - name: yoclip.render\n'
+            '      description: Render the open project\n',
+      );
+      final result = await service.get('fabric');
+      expect(result.found, isTrue);
+      expect(result.display, contains('yoclip.render'));
+      // check() parses the section with the real FabricConfig parser.
+      final report = await service.check();
+      expect(report.ok, isTrue);
+      expect(report.warnings, isEmpty);
+    });
   });
 
   group('set', () {

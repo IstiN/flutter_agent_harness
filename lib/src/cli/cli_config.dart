@@ -848,9 +848,12 @@ Future<void> saveCliConfig(String homeDir, CliConfig config) async {
   if (!dir.existsSync()) dir.createSync(recursive: true);
   final file = File('${dir.path}/config.yaml');
   await _serializedConfigWrite(file.path, () async {
-    final merged = _mergeWithOnDisk(file, config);
+    final diskText = file.existsSync() ? file.readAsStringSync() : '';
+    final merged = _mergeWithOnDisk(file, config, diskText);
     final tmp = File('${file.path}.tmp.$pid.${_configTmpCounter++}');
-    await tmp.writeAsString(merged.toYaml());
+    await tmp.writeAsString(
+      _preserveDiskSections(diskText, merged.toYaml()),
+    );
     try {
       await tmp.rename(file.path);
     } on FileSystemException {
@@ -866,13 +869,74 @@ Future<void> saveCliConfig(String homeDir, CliConfig config) async {
   });
 }
 
+/// Top-level sections whose on-disk block survives a save when the
+/// emitter omitted them (issue #288: the settings-parity audit found the
+/// whole-file rewrite silently dropping sections a forgetful caller did
+/// not carry). `a2a:` and `memory:` have NO typed renderer at all — their
+/// raw block is the only faithful form (`a2a:` keeps `${NAME}` env-token
+/// references literal; a typed round-trip would materialize the resolved
+/// secret into the file). The rest render when the caller carries them —
+/// caller wins wherever it rendered. Excluded on purpose: `models:`,
+/// `tools:` (an EMPTY render is their removal semantics) and `skills:`
+/// (its default is a real value, not "no opinion").
+const _diskPreservedSections = {
+  'memory',
+  'cube',
+  'roles',
+  'ttsr',
+  'prompts',
+  'redact',
+  'compaction',
+  'a2a',
+  'providerTimeouts',
+  'images',
+  'fabric',
+  'mcp',
+};
+
+/// Re-attaches the [_diskPreservedSections] blocks of [diskText] to
+/// [emitted] when the emitter did not render them itself (the caller
+/// wins wherever it rendered the section).
+String _preserveDiskSections(String diskText, String emitted) {
+  var result = emitted;
+  if (diskText.trim().isEmpty) return result;
+  for (final key in _diskPreservedSections) {
+    if (result.contains('$key:')) continue;
+    final block = _topLevelYamlBlockOf(diskText, key);
+    if (block != null) result = '$result$block';
+  }
+  return result;
+}
+
+/// The `key:` top-level block of [text] (key line + indented body) as a
+/// trailing-newline-terminated string, or null when absent.
+String? _topLevelYamlBlockOf(String text, String key) {
+  final lines = text.split('\n');
+  var start = -1;
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('$key:')) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return null;
+  var end = start + 1;
+  while (end < lines.length &&
+      (lines[end].isEmpty ||
+          lines[end].startsWith(' ') ||
+          lines[end].startsWith('\t'))) {
+    end++;
+  }
+  return '${lines.sublist(start, end).join('\n').trimRight()}\n';
+}
+
 /// Re-reads [file] and merges its `customProviders:` section into
 /// [config]'s intended save (name-keyed union, see [saveCliConfig]).
 /// A missing or empty file merges nothing; an unparseable one throws
 /// [ConfigException] — never merge onto (and thereby persist) defaults.
-CliConfig _mergeWithOnDisk(File file, CliConfig config) {
+CliConfig _mergeWithOnDisk(File file, CliConfig config, String diskText) {
   if (!file.existsSync()) return config;
-  final content = file.readAsStringSync();
+  final content = diskText;
   if (content.trim().isEmpty) return config;
   final Object? doc;
   try {

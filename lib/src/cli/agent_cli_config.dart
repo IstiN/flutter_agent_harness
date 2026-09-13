@@ -128,6 +128,13 @@ final class AgentCliConfig {
   /// `null` = uncapped.
   final int? contextWindowCap;
 
+  /// Live compaction-engine override set by the settings-hub Compaction
+  /// flow (session scope, or after a yaml write). Wins over the
+  /// boot-resolved [compactionEngine] for the rest of the session; hosts
+  /// persist it through their config save hook. Mutable by design — the
+  /// same live-override pattern as [modelRolesResolver].
+  CompactionEngine? liveCompactionEngine;
+
   /// Optional fa_cube sandbox spec applied for the whole session (from the
   /// `--cube`/`--cube-config` flags or the `cube:` config section). The
   /// execution env wraps it in a [SandboxedExecutionEnv]: filesystem and

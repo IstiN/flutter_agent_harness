@@ -2088,6 +2088,19 @@ Future<void> _runApp(List<String> args) async {
         // rebuild, in which case the loaded section is kept as-is
         // (project/runtime scopes stay live and are never persisted).
         tools: cli.globalTools ?? saved.tools,
+        // The remaining static sections are carried through the save so
+        // the whole-file rewrite cannot drop them (issue #288 audit); a
+        // forgetful caller is additionally backstopped by saveCliConfig's
+        // disk-block preservation. The compaction engine takes the live
+        // override set by the settings-hub Compaction flow.
+        memory: saved.memory,
+        redact: saved.redact,
+        compactionEngine:
+            cli.config.liveCompactionEngine ?? saved.compactionEngine,
+        a2a: saved.a2a,
+        providerTimeouts: saved.providerTimeouts,
+        images: saved.images,
+        fabric: saved.fabric,
       ),
     );
   };

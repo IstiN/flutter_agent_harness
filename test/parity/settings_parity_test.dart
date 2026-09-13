@@ -34,8 +34,11 @@ void main() {
     });
 
     test('every SharedSetting is present in the CLI unless exempted', () {
+      // cliOnlySettings entries are EXEMPT FROM THE APP, not from the CLI —
+      // "CLI-only" must mean the CLI settings surface genuinely has them,
+      // so their cliRef is checked here too (issue #288).
       for (final setting in SharedSetting.values) {
-        if (cliOnlySettings.contains(setting)) continue;
+        if (appOnlySettings.contains(setting)) continue;
         final meta = sharedSettingMetadata[setting]!;
         expect(
           cliSource,

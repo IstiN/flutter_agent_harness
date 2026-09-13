@@ -407,6 +407,172 @@ extension SettingsFlow on AgentCli {
   /// in (project default). Loops until cancelled or `done`.
   Future<void> startToolsFlow() => _toolsSettingsFlow();
 
+  /// Settings → Compaction: pick the engine (classic | structured), pick
+  /// the scope to persist in (session = live only), and apply. The yaml
+  /// write is surgical (other sections survive byte-for-byte) and the
+  /// edited file is validated with the REAL parser before it is written —
+  /// the flow can never persist a file the next boot would reject.
+  Future<void> startCompactionEngineFlow() async {
+    const engines = [CompactionEngine.classic, CompactionEngine.structured];
+    final current = _effectiveCompactionEngine();
+    final picked = await _pickOption('compaction engine', [
+      for (final engine in engines)
+        (
+          engine.value,
+          engine == CompactionEngine.classic ? 'Classic' : 'Structured',
+          engine == CompactionEngine.classic
+              ? 'lossy prefix summary'
+              : 'judge-hide + checkpoint passes',
+        ),
+    ], initialKey: current.value);
+    if (picked == null) return;
+    final engine = CompactionEngine.tryParse(picked, label: 'settings')!;
+    final scope = await _pickOption('compaction engine — scope', [
+      ('session', 'Session', 'this session only (no file change)'),
+      ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
+      ('global', 'Global', _userConfigPath() ?? 'unavailable on this host'),
+    ]);
+    if (scope == null) return;
+    switch (scope) {
+      case 'session':
+        config.liveCompactionEngine = engine;
+        io.writeln(
+          'compaction engine → ${engine.value} (this session; applies at '
+          'the next compaction)',
+        );
+      case 'project':
+        if (await _upsertConfigYaml(
+          const ['compaction', 'engine'],
+          engine.value,
+          projectScope: true,
+          validate: (node) =>
+              CompactionEngine.fromSection(node, label: 'settings flow'),
+        )) {
+          config.liveCompactionEngine = engine;
+        }
+      case 'global':
+        final path = _userConfigPath();
+        if (path == null) {
+          io.writeln('compaction: no user config on this host — not saved');
+          return;
+        }
+        if (await _upsertConfigYaml(
+          const ['compaction', 'engine'],
+          engine.value,
+          projectScope: false,
+          validate: (node) =>
+              CompactionEngine.fromSection(node, label: 'settings flow'),
+        )) {
+          config.liveCompactionEngine = engine;
+        }
+    }
+  }
+
+  /// The engine the next compaction pass will use (live override wins).
+  CompactionEngine _effectiveCompactionEngine() =>
+      config.liveCompactionEngine ??
+      config.compactionEngine ??
+      CompactionEngine.classic;
+
+  /// The settings-hub row and `/settings` summary label for the engine.
+  String _compactionStatusLabel() => _effectiveCompactionEngine().value;
+
+  /// The user config path, or null on hosts without a home directory.
+  String? _userConfigPath() =>
+      config.homeDir == null ? null : '${config.homeDir}/.fah/config.yaml';
+
+  /// Settings → Memory: edit the long-term memory store locations
+  /// (`memory.projectPath` / `memory.userPath`). The project path belongs
+  /// in the project config, the user path in the user config (the same
+  /// files the boot loader reads); writes are surgical and validated with
+  /// the real [MemoryConfig] parser first. Applies live — the memory
+  /// controller re-reads the section before every memory operation.
+  Future<void> startMemoryStoresFlow() async {
+    final picked = await _pickOption('memory stores', [
+      (
+        'projectPath',
+        'Project memory',
+        _memoryPathLabel(project: true),
+      ),
+      ('userPath', 'User memory', _memoryPathLabel(project: false)),
+    ]);
+    if (picked == null) return;
+    final isProject = picked == 'projectPath';
+    if (!isProject && _userConfigPath() == null) {
+      io.writeln('memory: no user config on this host — not saved');
+      return;
+    }
+    final answer = await _askLine(
+      "${isProject ? 'project' : 'user'} memory path (empty keeps "
+      "'${_memoryPathLabel(project: isProject)}'): ",
+    );
+    if (answer == null) return;
+    final value = answer.trim();
+    if (value.isEmpty) return;
+    await _upsertConfigYaml(
+      ['memory', picked],
+      value,
+      projectScope: isProject,
+      validate: MemoryConfig.fromYaml,
+    );
+  }
+
+  /// The resolved (or default) store path shown in the pickers.
+  String _memoryPathLabel({required bool project}) {
+    final section = config.memoryConfig;
+    if (project) {
+      return section?.resolveProjectPath(_env.cwd) ?? '${_env.cwd}/.fah/memory';
+    }
+    final home = config.homeDir;
+    if (home == null) return '(no home directory on this host)';
+    return section?.resolveUserPath(home) ?? '$home/.fah/memory';
+  }
+
+  /// Upserts [segments] → scalar [value] in the project or user config
+  /// file, validating the edited section with [validate] (the real
+  /// parser) BEFORE the write. Returns true when written; failures print
+  /// and leave the file untouched.
+  Future<bool> _upsertConfigYaml(
+    List<String> segments,
+    String value, {
+    required bool projectScope,
+    required void Function(Object? node) validate,
+  }) async {
+    final path = projectScope
+        ? '${_env.cwd}/.fah/config.yaml'
+        : _userConfigPath()!;
+    final read = await _env.readTextFile(path);
+    final String source;
+    switch (read) {
+      case Ok(:final value):
+        source = value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        source = '';
+      case Err(:final error):
+        io.writeln('cannot read $path: $error — not saved');
+        return false;
+    }
+    final edited = upsertYamlPath(source, segments, [renderYamlScalar(value)]);
+    // Never persist a file the next boot would reject.
+    final doc = loadYaml(edited);
+    final section = doc is YamlMap ? doc[segments.first] : null;
+    try {
+      validate(section);
+    } on Object catch (error) {
+      io.writeln('not saved: $error');
+      return false;
+    }
+    if (await _env.writeFile(path, edited) is Err) {
+      io.writeln('could not write $path');
+      return false;
+    }
+    io.writeln(
+      '${segments.join('.')} = $value → $path '
+      '(${applicationNote(segments.first)})',
+    );
+    return true;
+  }
+
   /// Re-fetches the DAP/1 hub snapshot through the host's seam — file
   /// reads plus the hub plugin's local status snapshot, never a network
   /// dial. A missing seam leaves the null (nothing fetched); a failing one
@@ -574,6 +740,16 @@ extension SettingsFlow on AgentCli {
         description: 'set or inspect stored keys',
       ),
       MenuItem(key: 'tools', label: 'Tools', description: _toolsStatusLabel()),
+      MenuItem(
+        key: 'compaction',
+        label: 'Compaction',
+        description: 'engine: ${_compactionStatusLabel()}',
+      ),
+      MenuItem(
+        key: 'memory',
+        label: 'Memory',
+        description: _memoryPathLabel(project: true),
+      ),
       const MenuItem(
         key: 'mcp',
         label: 'MCP servers',
@@ -602,6 +778,8 @@ extension SettingsFlow on AgentCli {
     'cube': startCubeSandboxFlow,
     'dap': startDapHubFlow,
     'tools': _toolsSettingsFlow,
+    'compaction': startCompactionEngineFlow,
+    'memory': startMemoryStoresFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
@@ -614,11 +792,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('cube: ${_cubeStatusLabel()}');
     io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln('tools: ${_toolsStatusLabel()}');
-    // Issue #287: the display fallback mirrors the resolved default —
-    // structured (2.0). An explicit config choice still shows as itself.
-    io.writeln(
-      'compaction: ${config.compactionEngine?.value ?? 'structured'}',
-    );
+    io.writeln('compaction: ${_compactionStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
       '/tools (agent models: the /settings hub)',

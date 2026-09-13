@@ -735,6 +735,109 @@ prompts:
     });
   });
 
+  group('save preserves every parsed section (issue #288 drift)', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-config-save-');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    test('a caller that carries no static sections keeps them on disk',
+        () async {
+      // The shape of bin/fah.dart's persistConfig before the fix: the
+      // caller re-saves the LOADED config minus the sections it forgot to
+      // carry — the file must not lose them.
+      final seed = '''
+provider: openai-completions
+model: openai/gpt-4o-mini
+baseUrl: https://openrouter.ai/api/v1
+mode: code
+approvalMode: yolo
+memory:
+  projectPath: ./memory
+  userPath: ~/longterm
+compaction:
+  engine: structured
+a2a:
+  servers:
+    translator:
+      url: https://agents.example.com/translator
+      token: literal-token
+providerTimeouts:
+  connectTimeoutMs: 8000
+''';
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(seed);
+      final loaded = loadCliConfig(tmp.path);
+
+      // The forgetful caller: carries only what persistConfig used to.
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(
+          providerKind: loaded.providerKind,
+          modelId: loaded.modelId,
+          baseUrl: loaded.baseUrl,
+          mode: loaded.mode,
+          approvalMode: loaded.approvalMode,
+        ),
+      );
+
+      final saved = loadCliConfig(tmp.path);
+      expect(saved.memory?.projectPath, './memory');
+      expect(saved.memory?.userPath, '~/longterm');
+      expect(saved.compactionEngine, CompactionEngine.structured);
+      expect(
+        saved.a2a?.servers['translator']?.url,
+        'https://agents.example.com/translator',
+      );
+      expect(
+        saved.providerTimeouts?.connect?.inMilliseconds,
+        8000,
+      );
+    });
+
+    test('a rendered section still wins over the disk block', () async {
+      final seed = '''
+compaction:
+  engine: classic
+''';
+      File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(seed);
+
+      await saveCliConfig(
+        tmp.path,
+        CliConfig(compactionEngine: CompactionEngine.structured),
+      );
+
+      expect(loadCliConfig(tmp.path).compactionEngine,
+          CompactionEngine.structured);
+    });
+
+    test('the disk a2a block survives verbatim (byte-for-byte)', () async {
+      // The block is copied as raw text, never re-rendered from the typed
+      // config — `${NAME}` env-token references stay literal (a typed
+      // round-trip would materialize the resolved secret into the file).
+      final seed = '''
+a2a:
+  servers:
+    translator:
+      url: https://agents.example.com/translator
+      token: literal-token
+''';
+      final file = File('${tmp.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync(seed);
+      await saveCliConfig(tmp.path, CliConfig());
+      expect(file.readAsStringSync(), contains(seed.trimRight()));
+    });
+  });
+
   group('startup cube precedence', () {
     const project = CubeSettings(configPath: '.fah/cubes/dev.yaml');
     const user = CubeSettings(configPath: '.fah/cubes/user.yaml');
@@ -806,4 +909,5 @@ prompts:
       );
     });
   });
+
 }
