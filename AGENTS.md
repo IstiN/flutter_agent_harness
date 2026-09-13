@@ -1516,3 +1516,23 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
   `IOS_DEPLOY_METADATA`/`IOS_DEPLOY_SCREENSHOTS`/`MACOS_DEPLOY_*`; ASC API key
   env secrets) or the `store-metadata.yml` workflow (`ios_content`/
   `macos_content` inputs: none/metadata_only/screenshots_only/all).
+- Google Play listing pipeline (issue #289, no binary): the Play Console
+  image rules are repo tests. Listing screenshots are the same story frames
+  as COMMITTED GOLDENS straight into the supply tree
+  (`fastlane/metadata/android/{en-US,ru-RU}/images/`): phone 1080×1920
+  (exact 9:16, en+ru), 10-inch 1440×2560 (exact 9:16 — 1600×2560 is 10:16
+  and Play rejects it; en only, ru falls back to phone shots), regenerated
+  with `flutter test test/golden/store_screenshots_test.dart
+  --update-goldens` then `git checkout -- test/goldens/store` (the run also
+  refreshes the App Store goldens on a non-canonical host — restore them);
+  the feature graphic (1024×500) is a widget golden in
+  `test/golden/play_store_assets_test.dart`; the icon is the iOS master
+  resized by `tool/generate_android_adaptive_icons.dart` (512×512, mirrored
+  byte-identical to ru-RU). Sizes/aspects/file caps are enforced by
+  `flutter_app/test/play_store_listing_guard_test.dart`. Listing texts
+  (title ≤30, short_description ≤80, full_description) live in
+  `fastlane/metadata/android/{en-US,ru-RU}/`. Upload: `fastlane android
+  play_store` in `flutter_app` (env gates `PLAY_DEPLOY_METADATA`/
+  `PLAY_DEPLOY_IMAGES`, `PLAY_VALIDATE_ONLY=1` dry-run; Play service-account
+  secret `PLAY_STORE_SERVICE_ACCOUNT_JSON`) or the `store-metadata.yml`
+  android leg (`android_content`: none/metadata_only/images_only/all).

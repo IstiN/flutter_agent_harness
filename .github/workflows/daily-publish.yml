@@ -5,9 +5,15 @@
 # goes green again. No publish logic is duplicated here: legs dispatch the
 # existing workflows via `gh workflow run` and watch them.
 #
-#   testflight  build-mobile.yml   ios_content=all, android_content=none
-#                                 (Android stays excluded — standing owner
-#                                 decision)
+#   testflight  build-mobile.yml   ios_content=all (the iOS half of the
+#                                 mobile build)
+#   play        build-mobile.yml   android_content=app_only,
+#                                 android_track=beta (Android external
+#                                 beta / open testing — issue #289 lifts
+#                                 the standing "Android excluded" owner
+#                                 decision for the release track; the leg
+#                                 green-skips while the Play secrets are
+#                                 absent)
 #   pubdev      in-job OIDC publish, only when pubspec > pub.dev; otherwise
 #               a green up-to-date check. The tag-time OIDC publish job
 #               (ci.yml) stays the primary path; this leg is the catch-up +
@@ -46,6 +52,7 @@ on:
         options:
           - all
           - testflight
+          - play
           - pubdev
           - cli
           - website
@@ -61,6 +68,7 @@ on:
         options:
           - none
           - testflight
+          - play
           - pubdev
           - cli
           - website
@@ -188,6 +196,88 @@ jobs:
           fi
           echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
           echo "watching build-mobile.yml run $run_id (ios_content=all, android_content=none)"
+          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
+            tail -n 30 watch.log || true
+          fi
+          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
+          echo "build-mobile.yml conclusion: $conclusion"
+          [ "$conclusion" = "success" ] || exit 1
+
+  play:
+    name: 'Leg: Play (Android external beta)'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      actions: write
+    if: >-
+      (needs.plan.outputs.changed == 'true' || inputs.force == true) &&
+      (inputs.legs == '' || inputs.legs == 'all' || inputs.legs == 'play')
+    outputs:
+      run_url: ${{ steps.dispatch.outputs.run_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Secrets presence is checked in the first step — while the Play
+      # upload keystore/service account are not configured, the leg green-
+      # skips with a notice (existing neutral-skip leg semantics); it goes
+      # live the moment the owner sets them (issue #289).
+      PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - name: Inject failure (test)
+        if: inputs.inject_failure == 'play'
+        run: |
+          echo "::error::injected failure (inject_failure=play) — exercising the self-filing issue path, nothing dispatched"
+          exit 1
+
+      - name: Skip without Play secrets (green-neutral)
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -z "${ANDROID_KEYSTORE_BASE64:-}" ] && missing="$missing ANDROID_KEYSTORE_BASE64"
+          [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] && missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          [ -z "${ANDROID_KEY_ALIAS:-}" ] && missing="$missing ANDROID_KEY_ALIAS"
+          [ -z "${ANDROID_KEY_PASSWORD:-}" ] && missing="$missing ANDROID_KEY_PASSWORD"
+          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ]; then
+            missing="$missing PLAY_STORE_SERVICE_ACCOUNT_JSON"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::notice::Play secrets not configured (missing:${missing}) — the Android leg skips green-neutrally until the upload keystore + Play service account secrets exist (issue #289 owner checklist)."
+            exit 0
+          fi
+          echo "All Play secrets present — dispatching the Android build+upload."
+
+      - name: Dispatch build-mobile.yml and watch
+        id: dispatch
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          # app_only: build + Play upload, no store metadata/screenshots
+          # (Android store CONTENT is a follow-up — reuse iOS texts later).
+          # beta = the external/open testing track, mirroring the iOS leg's
+          # external TestFlight group (#239 pattern).
+          epoch=$(date +%s)
+          gh workflow run build-mobile.yml --repo "$repo" --ref main \
+            -f android_content=app_only -f android_track=beta -f ios_content=none
+          run_id=""
+          for _ in $(seq 1 60); do
+            id=$(gh run list --repo "$repo" --workflow build-mobile.yml \
+              --event workflow_dispatch --limit 10 \
+              --json databaseId,createdAt \
+              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
+            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
+            sleep 10
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::dispatched build-mobile.yml run never appeared after 10 minutes"
+            exit 1
+          fi
+          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
+          echo "watching build-mobile.yml run $run_id (android_content=app_only, android_track=beta)"
           if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
             tail -n 30 watch.log || true
           fi
@@ -504,7 +594,7 @@ jobs:
   # ── Report + self-healing issues ─────────────────────────────────────────
   report:
     name: Summary + self-filed issues
-    needs: [plan, testflight, pubdev, cli, website, addin]
+    needs: [plan, testflight, play, pubdev, cli, website, addin]
     if: always() # runs even when plan failed, so plan failures enter the self-healing loop too
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -524,6 +614,8 @@ jobs:
           DAILY_PUBLISH_ASSIGNEE: vabhzw17eg2qu4m9-bit
           LEG_TESTFLIGHT: ${{ needs.testflight.result }}
           LEG_TESTFLIGHT_URL: ${{ needs.testflight.outputs.run_url }}
+          LEG_PLAY: ${{ needs.play.result }}
+          LEG_PLAY_URL: ${{ needs.play.outputs.run_url }}
           LEG_PUBDEV: ${{ needs.pubdev.result }}
           LEG_PUBDEV_STATUS: ${{ needs.pubdev.outputs.status }}
           LEG_PUBDEV_PUBSPEC: ${{ needs.pubdev.outputs.pubspec_version }}

@@ -29,6 +29,7 @@ void main() {
   final buildMacos = read('.github/workflows/build-macos.yml');
   final daily = read('.github/workflows/daily-publish.yml');
   final releaseAppstore = read('.github/workflows/release-appstore.yml');
+  final storeMetadata = read('.github/workflows/store-metadata.yml');
 
   group('AC1 — submit_only lanes distribute externally', () {
     test('both lanes render distribute_external: true', () {
@@ -138,9 +139,50 @@ void main() {
     });
   });
 
+  group('Track 2 — store-metadata.yml android leg (#289)', () {
+    test('fastlane android play_store lane uploads the listing via supply', () {
+      expect(fastfile, contains('lane :play_store do'));
+      expect(fastfile, contains('supply_listing_options'));
+    });
+
+    test('android_content dispatch input offers the supply splits, none default', () {
+      expect(storeMetadata, contains('android_content:'));
+      expect(storeMetadata, contains("default: 'none'"));
+      for (final option in ['metadata_only', 'images_only']) {
+        expect(storeMetadata, contains(option), reason: 'supply content split missing');
+      }
+    });
+
+    test('android job gates on android_content and wires the Play secret', () {
+      expect(storeMetadata, contains("if: github.event.inputs.android_content != 'none'"));
+      expect(storeMetadata, contains(r'PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}'));
+      expect(storeMetadata, contains('PLAY_TRACK: internal'));
+    });
+
+    test('dispatch maps android_content to PLAY_DEPLOY_* flags', () {
+      expect(storeMetadata, contains('export PLAY_DEPLOY_METADATA="true" PLAY_DEPLOY_IMAGES="false"'));
+      expect(storeMetadata, contains('export PLAY_DEPLOY_METADATA="false" PLAY_DEPLOY_IMAGES="true"'));
+    });
+
+    test('committed listing assets exist for both locales', () {
+      for (final locale in ['en-US', 'ru-RU']) {
+        for (final entry in [
+          'title.txt',
+          'short_description.txt',
+          'full_description.txt',
+          'images/icon.png',
+          'images/featureGraphic.png',
+        ]) {
+          final path = 'flutter_app/fastlane/metadata/android/$locale/$entry';
+          expect(File(path).existsSync(), isTrue, reason: 'supply expects a committed $path');
+        }
+      }
+    });
+  });
+
   group('workflow YAML parses', () {
     test('all touched workflows are valid YAML', () {
-      for (final source in [buildMobile, buildMacos, daily, releaseAppstore]) {
+      for (final source in [buildMobile, buildMacos, daily, releaseAppstore, storeMetadata]) {
         loadYaml(source);
       }
     });

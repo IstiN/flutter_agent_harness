@@ -1,4 +1,4 @@
-package dev.fa1.android
+package dev.fa1.app
 
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity

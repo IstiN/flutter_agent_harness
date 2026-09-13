@@ -1,6 +1,6 @@
 name: Store Metadata & Screenshots
 
-# Uploads App Store metadata and screenshots for the Fa app (no binary):
+# Uploads store metadata and screenshots for the Fa app (no binary):
 # the fastlane `app_store` lanes assemble the committed store goldens
 # (flutter_app/test/goldens/store/) and the metadata
 # (flutter_app/fastlane/metadata/ + store_artefacts/metadata/ changelogs)
@@ -29,6 +29,16 @@ on:
           - all              # metadata + screenshots
           - metadata_only    # texts/descriptions only
           - screenshots_only # screenshots only
+      android_content:
+        description: 'Android (Google Play): what to deploy'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none            # skip Android entirely
+          - all             # texts + icon/featureGraphic/screenshots
+          - metadata_only   # listing texts only
+          - images_only     # icon, feature graphic and screenshots only
 
 permissions:
   contents: read
@@ -110,3 +120,39 @@ jobs:
               export MACOS_DEPLOY_METADATA="true" MACOS_DEPLOY_SCREENSHOTS="true" ;;
           esac
           bundle exec fastlane mac app_store
+
+  android:
+    name: Google Play store listing (texts + images)
+    runs-on: ubuntu-latest
+    if: github.event.inputs.android_content != 'none' && github.event.inputs.android_content != ''
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install fastlane
+        working-directory: flutter_app
+        run: bundle install
+
+      - name: Deploy Google Play store listing
+        working-directory: flutter_app
+        env:
+          PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+          # Listing edits are app-level; the track only anchors supply's
+          # track resolution — internal exists from the first upload.
+          PLAY_TRACK: internal
+        run: |
+          set -euo pipefail
+          case "${{ github.event.inputs.android_content }}" in
+            metadata_only)
+              export PLAY_DEPLOY_METADATA="true" PLAY_DEPLOY_IMAGES="false" ;;
+            images_only)
+              export PLAY_DEPLOY_METADATA="false" PLAY_DEPLOY_IMAGES="true" ;;
+            *)
+              export PLAY_DEPLOY_METADATA="true" PLAY_DEPLOY_IMAGES="true" ;;
+          esac
+          bundle exec fastlane android play_store
