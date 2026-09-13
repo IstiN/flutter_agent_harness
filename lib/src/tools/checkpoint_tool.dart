@@ -49,6 +49,28 @@ const rewindToolName = 'rewind';
 /// session tree (omp's `rewind-report` custom message).
 const rewindReportCustomType = 'rewind-report';
 
+/// The `custom_message` type marking an auto-closed stale checkpoint (the
+/// audit trail for issue #286: why protection ended, with reason, goal,
+/// and anchors in `details`).
+const checkpointAutoClosedCustomType = 'checkpoint_auto_closed';
+
+/// Why an active checkpoint was auto-closed instead of blocking a new one
+/// (issue #286: a checkpoint never outlives its detour scope).
+enum CheckpointAutoCloseReason {
+  /// A user turn arrived inside the detour scope — a detour never spans
+  /// user turns, so the checkpoint outlived its scope.
+  userTurn('a user turn arrived after the checkpoint'),
+
+  /// The in-memory span the checkpoint anchors is gone: the host rebuilt
+  /// the transcript (session reload, compaction) below the anchor.
+  anchorGone('the anchored transcript span is gone (reload or compaction)');
+
+  const CheckpointAutoCloseReason(this.label);
+
+  /// Human-readable reason used in notes and audit records.
+  final String label;
+}
+
 /// The captured checkpoint mark (omp's `CheckpointState`).
 final class CheckpointState {
   /// Creates a [CheckpointState].

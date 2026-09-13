@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/session/session_record.dart';
+import 'package:flutter_agent_harness/src/tools/checkpoint_tool.dart';
 import 'package:flutter_agent_harness/src/trajectory/trajectory_record.dart';
 import 'package:flutter_agent_harness/src/trajectory/trajectory_snapshot.dart';
 import 'package:flutter_agent_harness/src/trajectory/trajectory_snapshot_builder.dart';
@@ -335,6 +336,28 @@ void main() {
       final record = snapshot.records.single as TrajectorySystemRecord;
       expect(record.change, TrajectorySystemChange.checkpoint);
       expect(record.text, 'explore auth');
+    });
+
+    test('checkpoint auto-close audit record maps to a system record '
+        '(issue #286)', () {
+      final snapshot = TrajectorySnapshotBuilder().append(
+        CustomMessageRecord(
+          id: 'ac1',
+          parentId: null,
+          timestamp: _at(0),
+          customType: checkpointAutoClosedCustomType,
+          content: 'Previous checkpoint auto-closed (a user turn arrived '
+              'after the checkpoint; goal: first detour; anchored at message '
+              '3).',
+          display: false,
+          details: const {'reason': 'userTurn'},
+        ),
+      );
+      final record = snapshot.records.single as TrajectorySystemRecord;
+      expect(record.change, TrajectorySystemChange.checkpointAutoClosed);
+      expect(record.text, contains('auto-closed'));
+      expect(record.text, contains('first detour'));
+      expect(record.time, _at(0));
     });
 
     test('displayed context custom message maps to a context record', () {

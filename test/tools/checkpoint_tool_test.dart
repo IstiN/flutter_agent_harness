@@ -474,4 +474,182 @@ void main() {
       );
     });
   });
+
+  // Issue #286: a checkpoint whose detour long ended must never block new
+  // checkpoints. A checkpoint is scoped to its detour; when the scope ends
+  // without a rewind the stale checkpoint is auto-closed (with a visible
+  // note and a session audit record) instead of refusing forever.
+  group('stale checkpoint lifecycle (issue #286)', () {
+    Future<String> resultText(Agent agent, String toolCallId) async {
+      final result = agent.state.messages
+          .whereType<ToolResultMessage>()
+          .firstWhere((m) => m.toolCallId == toolCallId);
+      return result.content.whereType<TextContent>().first.text;
+    }
+
+    Future<List<CustomMessageRecord>> autoClosedRecords(Session session) =>
+        activeBranch(session).then(
+          (branch) => branch
+              .whereType<CustomMessageRecord>()
+              .where((r) => r.customType == checkpointAutoClosedCustomType)
+              .toList(),
+        );
+
+    test('an unrewound checkpoint does not block the next checkpoint after '
+        'the turn ended (the live case)', () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([checkpointCall('c1', 'first detour')]),
+        // The turn ends WITHOUT rewind: the model answered and moved on.
+        _textTurn('answered without rewinding'),
+        _toolTurn([checkpointCall('c2', 'second detour')]),
+        _textTurn('done'),
+      ]);
+      final h = await harness(fake);
+      await h.agent.prompt('run one');
+      await h.agent.prompt('run two');
+
+      // The new checkpoint succeeds; the stale one no longer blocks it.
+      final text = await resultText(h.agent, 'c2');
+      expect(text, isNot(contains('Checkpoint already active')));
+      expect(h.controller.activeCheckpoint, isNotNull);
+      expect(h.controller.activeCheckpoint!.goal, 'second detour');
+
+      // The stale checkpoint is reported closed-with-reason, in band.
+      expect(text, contains('auto-closed'));
+      expect(text, contains('first detour'));
+
+      // ...and in the session audit record with the reason.
+      final records = await autoClosedRecords(h.host.session!);
+      expect(records, hasLength(1));
+      expect(records.single.details, isA<Map<String, Object?>>());
+      expect(
+        (records.single.details! as Map<String, Object?>)['reason'],
+        'userTurn',
+      );
+      expect(records.single.content, contains('first detour'));
+    });
+
+    test('a checkpoint whose anchored span is gone after a transcript '
+        'rebuild (session reload) auto-closes instead of blocking',
+        () async {
+      final fake = _FakeStreamFunction([
+        _textTurn('warming up'),
+        _toolTurn([checkpointCall('c1', 'long detour')]),
+        _textTurn('run one done'),
+        _toolTurn([checkpointCall('c2', 'fresh start')]),
+        _textTurn('done'),
+      ]);
+      final h = await harness(fake);
+      await h.agent.prompt('run one');
+      await h.host.flush(h.agent);
+      // The checkpoint anchored at message count 4. Simulate the host
+      // rebuilding the transcript after a save+reload: the rebuilt context
+      // no longer spans the anchor.
+      h.agent.state.messages = [UserMessage.text('rebuilt transcript')];
+      await h.agent.prompt('run two');
+
+      final text = await resultText(h.agent, 'c2');
+      expect(text, isNot(contains('Checkpoint already active')));
+      expect(h.controller.activeCheckpoint!.goal, 'fresh start');
+      expect(text, contains('auto-closed'));
+      expect(text, contains('long detour'));
+
+      final records = await autoClosedRecords(h.host.session!);
+      expect(records, hasLength(1));
+      expect(
+        (records.single.details! as Map<String, Object?>)['reason'],
+        'anchorGone',
+      );
+    });
+
+    test('compaction over the anchor region auto-closes the checkpoint',
+        () async {
+      final fake = _FakeStreamFunction([
+        _textTurn('warming up'),
+        _toolTurn([checkpointCall('c1', 'probe the ledger')]),
+        _textTurn('run one done'),
+        _toolTurn([checkpointCall('c2', 'after compaction')]),
+        _textTurn('done'),
+      ]);
+      final h = await harness(fake);
+      await h.agent.prompt('run one');
+      await h.host.flush(h.agent);
+      // Compaction replaced the anchor region with a summary rebuild (the
+      // structured engine's _refreshState): the anchor no longer resolves.
+      h.agent.state.messages = [UserMessage.text('summary of earlier work')];
+      await h.agent.prompt('run two');
+
+      final text = await resultText(h.agent, 'c2');
+      expect(text, isNot(contains('Checkpoint already active')));
+      expect(h.controller.activeCheckpoint!.goal, 'after compaction');
+
+      final records = await autoClosedRecords(h.host.session!);
+      expect(records, hasLength(1));
+      expect(
+        (records.single.details! as Map<String, Object?>)['reason'],
+        'anchorGone',
+      );
+      expect(records.single.content, contains('probe the ledger'));
+    });
+
+    test('repeated stale checkpoints each close with their own audit record; '
+        'rewind after the last close errors cleanly (idempotent close)',
+        () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([checkpointCall('c1', 'first detour')]),
+        _textTurn('run one done'),
+        _toolTurn([checkpointCall('c2', 'second detour')]),
+        _textTurn('run two done'),
+        _textTurn('run three done'),
+      ]);
+      final h = await harness(fake);
+      await h.agent.prompt('run one');
+      await h.agent.prompt('run two');
+      await h.agent.prompt('run three');
+
+      // Each stale checkpoint closed exactly once, with its own goal kept.
+      final records = await autoClosedRecords(h.host.session!);
+      expect(records, hasLength(1));
+      expect(records.single.content, contains('first detour'));
+      expect(records.single.content, isNot(contains('second detour')));
+
+      // The second checkpoint is still active (never auto-closed twice, no
+      // cross-checkpoint interference); a rewind against it behaves as
+      // before — and after it completes, no second close ever fires.
+      expect(h.controller.activeCheckpoint!.goal, 'second detour');
+      final rewind = h.controller.tools.firstWhere(
+        (t) => t.name == rewindToolName,
+      );
+      final result = await rewind.execute({'report': 'late findings'}, null,
+          null);
+      expect(
+        result.content.whereType<TextContent>().single.text,
+        contains('Rewind requested'),
+      );
+      final afterRewind = await autoClosedRecords(h.host.session!);
+      expect(afterRewind, hasLength(1));
+    });
+
+    test('the refusal names the active checkpoint and how to clear it',
+        () async {
+      final fake = _FakeStreamFunction([
+        _toolTurn([checkpointCall('c1', 'audit the cache')]),
+        _toolTurn([checkpointCall('c2')]),
+        _textTurn('done'),
+      ]);
+      final h = await harness(fake);
+      await h.agent.prompt('start');
+
+      final result = h.agent.state.messages.whereType<ToolResultMessage>().last;
+      expect(result.isError, isTrue);
+      final text = result.content.whereType<TextContent>().first.text;
+      expect(text, contains('Checkpoint already active'));
+      expect(text, contains('goal: audit the cache'));
+      expect(text, contains('age:'));
+      expect(text, contains('anchored at message'));
+      expect(text, contains('rewind'));
+      // The scoped checkpoint survives the refusal untouched.
+      expect(h.controller.activeCheckpoint!.goal, 'audit the cache');
+    });
+  });
 }
