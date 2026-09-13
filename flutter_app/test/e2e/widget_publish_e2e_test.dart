@@ -6,8 +6,8 @@
 ///
 /// Runs the production publish pipeline (WidgetPublishService over the
 /// real GithubApiClient) end to end: it creates a scratch widget repo
-/// under the token account, forks IstiN/fa_widgets, pins the gitlink and
-/// opens (or reuses) the catalog PR. Re-runs are idempotent (the AC6
+/// under the token account, forks IstiN/fa_widgets, writes the overlay source pin (#232)
+/// and opens (or reuses) the catalog PR. Re-runs are idempotent (the AC6
 /// reuse path) — the same PR is found again instead of duplicating.
 ///
 /// Token-scoped like every real E2E: it self-skips unless launched with
@@ -118,7 +118,7 @@ void main() {
         declaredPermissions: const AppPermissions(),
       );
 
-      // The full pipeline: repo → sources → fork → gitlink+overlay → PR.
+      // The full pipeline: repo → sources → fork → overlay pin → PR.
       final result = await service.publish(app: app);
       expect(result.prNumber, greaterThan(0));
       expect(result.prUrl, contains('github.com/IstiN/fa_widgets/pull/'));
