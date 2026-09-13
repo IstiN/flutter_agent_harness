@@ -149,6 +149,8 @@ WidgetPublishService _service(
 void _scriptForkAndPr(
   _ScriptedGithub gh, {
   required String widgetSha,
+  String id = 'pomodoro',
+  String version = '1.0.0',
   bool forkExists = false,
   bool branchExists = false,
   Object? openPulls,
@@ -176,7 +178,7 @@ void _scriptForkAndPr(
   );
   gh.on(
     'PATCH',
-    '/repos/octocat/fa_widgets/git/refs/heads/publish/pomodoro-1.0.0',
+    '/repos/octocat/fa_widgets/git/refs/heads/publish/$id-$version',
     {},
   );
   gh.on('GET', '/repos/IstiN/fa_widgets/pulls', openPulls ?? const []);
@@ -470,31 +472,35 @@ void main() {
         expect(commitBody['message'], 'Publish pomodoro 1.0.0');
         expect(commitBody['parents'], ['boot1']);
 
-        // Fork tree: gitlink pinned to the pushed commit + overlay + gitmodules.
+        // AC1 (#232): the publish PR tree contains ONLY the overlay file —
+        // no .gitmodules entry, no vendor/external/* gitlink.
         final prTree = gh.bodyOf(
           gh.where('POST', '/repos/octocat/fa_widgets/git/trees').single,
         );
         expect(prTree['base_tree'], 'forkbase');
         final entries = prTree['tree'] as List<dynamic>;
-        final gitlink =
-            entries.singleWhere(
-                  (e) => (e as Map)['path'] == 'vendor/external/pomodoro',
-                )
-                as Map<String, dynamic>;
-        expect(gitlink['mode'], '160000');
-        expect(gitlink['sha'], 'commit1');
+        final entryPaths = entries.map((e) => (e as Map)['path']).toList();
+        expect(entryPaths, ['widgets/pomodoro/overlay.json']);
+        expect(
+          entries.any((e) => (e as Map)['mode'] == '160000'),
+          isFalse,
+          reason: 'no gitlink entries in the publish PR',
+        );
 
-        // Overlay: source pin + manifest extras.
-        final prBlobs = gh
+        // Overlay: source pin + manifest extras — the ONLY fork blob.
+        final prBlobRequests = gh
             .where('POST', '/repos/octocat/fa_widgets/git/blobs')
+            .toList();
+        expect(prBlobRequests, hasLength(1));
+        final prBlobs = prBlobRequests
             .map(
               (r) =>
                   utf8.decode(base64Decode(gh.bodyOf(r)['content'] as String)),
             )
             .toList();
+        expect(prBlobs.single.contains('[submodule'), isFalse);
         final overlay =
-            jsonDecode(prBlobs.singleWhere((c) => c.contains('"source"')))
-                as Map<String, dynamic>;
+            jsonDecode(prBlobs.single) as Map<String, dynamic>;
         expect(overlay['icon'], 'icon.svg');
         expect(overlay['author'], 'octocat');
         expect(overlay['tags'], ['productivity']);
@@ -503,9 +509,6 @@ void main() {
           'repo': 'octocat/fa-widget-pomodoro',
           'commit': 'commit1',
         });
-        final gitmodules = prBlobs.singleWhere((c) => c.contains('[submodule'));
-        expect(gitmodules, contains('vendor/js_widget_runtime'));
-        expect(gitmodules, contains('vendor/external/pomodoro'));
 
         // One PR, head = <login>:publish/<id>-<version>.
         final prBody = gh.bodyOf(
@@ -666,11 +669,68 @@ void main() {
               .single,
         );
         expect(commitBody['parents'], ['head1']);
+        // AC3 (#232): a republish touches ONLY the overlay — one fork tree
+        // entry, no shared-file churn.
+        final forkTree = gh.bodyOf(
+          gh.where('POST', '/repos/octocat/fa_widgets/git/trees').single,
+        );
+        expect(
+          (forkTree['tree'] as List<dynamic>).map((e) => (e as Map)['path']),
+          ['widgets/pomodoro/overlay.json'],
+        );
       },
     );
 
-    test('private existing repo is rejected', () async {
-      final env = MemoryExecutionEnv();
+    test(
+      'AC2 (#232): two devices publish disjoint single-file PRs',
+      () async {
+        // Two independent devices (separate env + ledger), each past the
+        // repo step, publish different widgets against one catalog fork.
+        final gh = _ScriptedGithub();
+        for (final (id, prNumber) in [('pomodoro', 11), ('timer', 12)]) {
+          final env = MemoryExecutionEnv();
+          final app = await _seedWidget(env, id: id);
+          final ledger = await WidgetPublicationStore.load(env);
+          await ledger.record(
+            WidgetPublication(
+              widgetId: id,
+              version: '1.0.0',
+              repoFullName: 'octocat/fa-widget-$id',
+              repoCommit: 'sha-$id',
+              step: WidgetPublication.stepRepoPushed,
+              submittedAt: DateTime.utc(2026, 1, 31),
+            ),
+          );
+          _scriptForkAndPr(
+            gh,
+            widgetSha: 'sha-$id',
+            id: id,
+            forkExists: true,
+            prNumber: prNumber,
+          );
+          final service = _service(env, await _connectedAccount(), ledger, gh);
+          final result = await service.publish(app: app);
+          expect(result.publication.prNumber, prNumber);
+        }
+        // Each PR tree touches exactly ONE file — its own overlay — so
+        // parallel PRs can never conflict (no shared .gitmodules left).
+        final trees = gh
+            .where('POST', '/repos/octocat/fa_widgets/git/trees')
+            .map(
+              (r) => (gh.bodyOf(r)['tree'] as List<dynamic>)
+                  .map((e) => (e as Map)['path'] as String)
+                  .toSet(),
+            )
+            .toList();
+        expect(trees, [
+          {'widgets/pomodoro/overlay.json'},
+          {'widgets/timer/overlay.json'},
+        ]);
+        expect(trees[0].intersection(trees[1]), isEmpty);
+      },
+    );
+
+    test('private existing repo is rejected', () async {      final env = MemoryExecutionEnv();
       final app = await _seedWidget(env);
       final gh = _ScriptedGithub()
         ..on(
@@ -770,16 +830,34 @@ void main() {
           gh.requests.where((r) => r.url.path.contains('fa-widget-pomodoro')),
           isEmpty,
         );
-        // The gitlink still pins the commit recorded before the kill.
+        // The overlay source pin still points at the commit recorded
+        // before the kill.
         final prTree = gh.bodyOf(
           gh.where('POST', '/repos/octocat/fa_widgets/git/trees').single,
         );
-        final gitlink =
-            (prTree['tree'] as List<dynamic>).singleWhere(
-                  (e) => (e as Map)['path'] == 'vendor/external/pomodoro',
-                )
-                as Map<String, dynamic>;
-        expect(gitlink['sha'], 'deadbeef');
+        final entryPaths = (prTree['tree'] as List<dynamic>)
+            .map((e) => (e as Map)['path'])
+            .toList();
+        expect(entryPaths, ['widgets/pomodoro/overlay.json']);
+        final overlay = jsonDecode(
+          utf8.decode(
+            base64Decode(
+              gh.bodyOf(
+                    gh
+                        .where(
+                          'POST',
+                          '/repos/octocat/fa_widgets/git/blobs',
+                        )
+                        .single,
+                  )['content']
+                  as String,
+            ),
+          ),
+        ) as Map<String, dynamic>;
+        expect(overlay['source'], {
+          'repo': 'octocat/fa-widget-pomodoro',
+          'commit': 'deadbeef',
+        });
       },
     );
 
