@@ -48,7 +48,6 @@ final class DeferredPanel {
     this.state = DeferredPanelState.running,
     this.source,
     this.replyAddress,
-    this.openAgentId,
   });
 
   /// Unique panel id (`btw-<n>`).
@@ -72,10 +71,6 @@ final class DeferredPanel {
   /// The mailbox a `reply` action addresses (absolute for cross-instance
   /// mail, the child id for in-session children); null = no reply action.
   final String? replyAddress;
-
-  /// The local agent id an `open` action shows the transcript of; null =
-  /// no open action.
-  final String? openAgentId;
 
   /// The one-line preview used by `/mail` listings.
   String get preview {
@@ -115,7 +110,6 @@ final class DeferredPanelLog {
     required String body,
     String? source,
     String? replyAddress,
-    String? openAgentId,
   }) {
     final panel = DeferredPanel(
       id: 'btw-${_nextId++}',
@@ -125,7 +119,6 @@ final class DeferredPanelLog {
       createdAt: _now(),
       source: source,
       replyAddress: replyAddress,
-      openAgentId: openAgentId,
     );
     _panels.add(panel);
     while (_panels.length > capacity) {
@@ -185,16 +178,12 @@ List<String> deferredPanelLines(DeferredPanel panel, {int width = 80}) {
   return lines;
 }
 
-/// The action hint trailing a panel (`r reply · o open`), empty when the
+/// The action hint trailing a panel (`reply: /reply …`), empty when the
 /// panel has no actions.
 String _actionHint(DeferredPanel panel) {
-  final actions = <String>[
-    if (panel.replyAddress != null && panel.replyAddress!.isNotEmpty)
-      'reply: /reply ${panel.replyAddress}',
-    if (panel.openAgentId != null && panel.openAgentId!.isNotEmpty)
-      'open: /mail',
-  ];
-  return actions.join(' · ');
+  final address = panel.replyAddress;
+  if (address == null || address.isEmpty) return '';
+  return 'reply: /reply $address';
 }
 
 /// One line of the transition notice printed when a panel settles.
@@ -277,7 +266,15 @@ Iterable<String> _wrapBody(String body, int width) sync* {
     yield '';
     return;
   }
-  for (final line in body.split('\n')) {
+  final split = body.split('\n');
+  final overflow = split.length - _maxPanelBodyLines;
+  for (final line
+      in overflow > 0 ? split.sublist(0, _maxPanelBodyLines) : split) {
     yield _clip(line, width);
   }
+  if (overflow > 0) yield '… $overflow more';
 }
+
+/// Panel bodies render as a bounded preview: at most [_maxPanelBodyLines]
+/// lines, a `… N more` tail when truncated.
+const int _maxPanelBodyLines = 12;

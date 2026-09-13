@@ -3,6 +3,8 @@ import 'dart:convert' show utf8;
 import 'dart:io' show Platform, ProcessException, ProcessResult;
 
 import 'package:dart_tui/dart_tui.dart';
+
+import 'package:flutter_agent_harness/src/cli/agent_hub_tui.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/fuzzy_matcher.dart';
@@ -2532,6 +2534,155 @@ void main() {
         'skills',
       );
       expect(groupOf(const MenuItem(key: '/exit', label: '/exit')), 'commands');
+    });
+  });
+
+  group('agents hub overlay (issue #277)', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+    KeyPressMsg ctrl(String ch) => KeyPressMsg(
+      TeaKey(code: KeyCode.rune, text: ch, modifiers: {KeyMod.ctrl}),
+    );
+
+    FaTuiCallbacks hubCallbacks({
+      Future<void> Function(String action, String? key)? onAction,
+      void Function()? onInterrupt,
+    }) {
+      return FaTuiCallbacks(
+        onSubmit: (_) async {},
+        onInterrupt: onInterrupt,
+        onModelSelected: (_) async {},
+        buildSlashMenu: (_) => const [],
+        buildModelMenu: (_) => const [],
+        statusLine: () => '/work · 0tok · turn 0 · test-model',
+        prompt: 'fa> ',
+        onHubAction: onAction,
+      );
+    }
+
+    FaHubState tree() => FaHubState.tree(
+      footer: '',
+      rows: const [
+        HubLine('main', key: 'main'),
+        HubLine('  a1', key: 'a1'),
+      ],
+    );
+
+    test('hub keys drive the tree selection', () {
+      var model = FaTuiModel(
+        callbacks: hubCallbacks(),
+        isExited: () => false,
+        hub: tree(),
+      );
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      expect(model.hub!.selectedKey, 'a1');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.up)));
+      expect(model.hub!.selectedKey, 'main');
+    });
+
+    test(
+      'enter keeps the overlay open and calls back with the selection',
+      () async {
+        final actions = <String, String?>{};
+        var model = FaTuiModel(
+          callbacks: hubCallbacks(
+            onAction: (action, key) async => actions[action] = key,
+          ),
+          isExited: () => false,
+          hub: tree(),
+        );
+        final (next, cmd) = model.update(
+          KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+        );
+        model = next as FaTuiModel;
+        expect(model.hub, isNotNull);
+        await cmd?.call();
+        expect(actions['enter'], 'main');
+      },
+    );
+
+    test('esc closes the overlay and reports close', () async {
+      final actions = <String>[];
+      var model = FaTuiModel(
+        callbacks: hubCallbacks(
+          onAction: (action, _) async => actions.add(action),
+        ),
+        isExited: () => false,
+        hub: tree(),
+      );
+      final (next, cmd) = model.update(
+        KeyPressMsg(const TeaKey(code: KeyCode.escape)),
+      );
+      model = next as FaTuiModel;
+      expect(model.hub, isNull);
+      await cmd?.call();
+      expect(actions, ['close']);
+    });
+
+    test('transcript esc goes back with the overlay still open', () async {
+      final actions = <String>[];
+      var model = FaTuiModel(
+        callbacks: hubCallbacks(
+          onAction: (action, _) async => actions.add(action),
+        ),
+        isExited: () => false,
+        hub: FaHubState.transcript(
+          agentId: 'a1',
+          lines: const ['x'],
+          running: false,
+        ),
+      );
+      final (next, cmd) = model.update(
+        KeyPressMsg(const TeaKey(code: KeyCode.escape)),
+      );
+      model = next as FaTuiModel;
+      expect(model.hub, isNotNull);
+      await cmd?.call();
+      expect(actions, ['back']);
+    });
+
+    test('ctrl+c aborts and quits even with the overlay open', () {
+      var interrupted = false;
+      var model = FaTuiModel(
+        callbacks: hubCallbacks(onInterrupt: () => interrupted = true),
+        isExited: () => false,
+        hub: tree(),
+      );
+      final (next, cmd) = model.update(ctrl('c'));
+      expect(interrupted, isTrue);
+      expect(identical(next, model), isTrue, reason: 'state untouched');
+      expect(cmd, isNotNull, reason: 'the quit command');
+    });
+
+    test('a host re-push carries the selection', () {
+      var model = FaTuiModel(
+        callbacks: hubCallbacks(),
+        isExited: () => false,
+        hub: tree(),
+      );
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.down)));
+      model = send(
+        model,
+        HubStateMsg(
+          FaHubState.tree(
+            footer: '',
+            rows: const [
+              HubLine('main', key: 'main'),
+              HubLine('  a1', key: 'a1'),
+              HubLine('  b2', key: 'b2'),
+            ],
+          ),
+        ),
+      );
+      expect(model.hub!.selectedKey, 'a1');
+    });
+
+    test('view renders the hub frame while open', () {
+      final model = FaTuiModel(
+        callbacks: hubCallbacks(),
+        isExited: () => false,
+        hub: tree(),
+      );
+      expect(model.view().content, contains('agents hub'));
     });
   });
 }

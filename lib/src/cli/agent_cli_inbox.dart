@@ -145,6 +145,7 @@ extension AgentCliMessagingFlow on AgentCli {
           kind: DeferredPanelKind.scheduled,
           from: 'scheduler',
           body: text,
+          source: '/schedule',
         );
         unawaited(_pushScheduledStatus());
       },

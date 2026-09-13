@@ -112,9 +112,9 @@ final class FaHubState {
   final Set<String> collapsedKeys = {};
 
   /// Carries the interactive bits over a host re-push: the tree selection
-  /// key re-resolves into the fresh rows (first row when it vanished);
-  /// transcript scroll anchors clamp to the new length. A mode change (or
-  /// a first open) starts fresh.
+  /// key re-resolves into the fresh rows (first row when it vanished) and
+  /// the collapsed set survives; transcript scroll anchors clamp to the
+  /// new length. A mode change (or a first open) starts fresh.
   FaHubState carryingFrom(FaHubState? prev) {
     if (prev == null || prev.mode != mode) return this;
     if (mode == FaHubMode.tree) {
@@ -125,11 +125,17 @@ final class FaHubState {
           : keys.isEmpty
           ? null
           : keys.first;
-      return copyWith(selectedKey: kept);
+      final next = copyWith(selectedKey: kept)
+        ..collapsedKeys.addAll(prev.collapsedKeys);
+      return next;
     }
+    // The new state's scroll fields are factory defaults; the user's
+    // follow/detach anchor rides over the re-push — taking the fresh
+    // follow=true here snapped detached scrolling back to the live edge
+    // on every 500ms tick.
     return copyWith(
-      follow: follow,
-      topOffset: topOffset.clamp(0, lines.length),
+      follow: prev.follow,
+      topOffset: prev.topOffset.clamp(0, lines.length),
     );
   }
 
@@ -302,43 +308,65 @@ String renderHubFrame(
 
   row(hubInverse(' ${_fitPlain(state.title, width - 2)}'));
   if (state.mode == FaHubMode.tree) {
-    final rows = state.visibleRows;
-    if (rows.isEmpty) {
-      row(hubDim('  (no agents)'));
-    } else {
-      final index = state._selectedIndex(rows) ?? 0;
-      final window = _hubWindow(rows.length, index, bodyHeight);
-      if (window.start > 0) row(hubDim('  … ${window.start} above'));
-      for (var i = window.start; i < window.end; i++) {
-        final text = ' ${rows[i].text}';
-        row(i == index ? hubInverse(_fitPlain(text, width)) : text);
-      }
-      final below = rows.length - window.end;
-      if (below > 0) row(hubDim('  … $below below'));
-    }
-    if (state.footer.isNotEmpty) row(hubDim(state.footer));
+    _hubTreeBody(state, bodyHeight, width, row);
   } else {
-    final total = state.lines.length;
-    final top = state.follow
-        ? (total - bodyHeight).clamp(0, total)
-        : state.topOffset.clamp(0, total);
-    final end = (top + bodyHeight).clamp(0, total);
-    if (total == 0) {
-      row(hubDim('  (empty transcript)'));
-    } else {
-      if (!state.follow && top > 0) row(hubDim('  … $top above'));
-      for (var i = top; i < end; i++) {
-        row(' ${state.lines[i].text}');
-      }
-      final below = total - end;
-      if (below > 0) row(hubDim('  … $below below'));
-    }
-    if (state.transcriptRunning && state.follow) {
-      row(hubDim('  ● following live — esc to go back'));
-    }
+    _hubTranscriptBody(state, bodyHeight, width, row);
   }
   row(hubDim(state.hint));
   return b.toString();
+}
+
+/// The tree body: collapsed-aware visible rows in a selected-tracking
+/// window, with the host-owned footer line underneath.
+void _hubTreeBody(
+  FaHubState state,
+  int bodyHeight,
+  int width,
+  void Function(String) row,
+) {
+  final rows = state.visibleRows;
+  if (rows.isEmpty) {
+    row(hubDim('  (no agents)'));
+  } else {
+    final index = state._selectedIndex(rows) ?? 0;
+    final window = _hubWindow(rows.length, index, bodyHeight);
+    if (window.start > 0) row(hubDim('  … ${window.start} above'));
+    for (var i = window.start; i < window.end; i++) {
+      final text = ' ${rows[i].text}';
+      row(i == index ? hubInverse(_fitPlain(text, width)) : text);
+    }
+    final below = rows.length - window.end;
+    if (below > 0) row(hubDim('  … $below below'));
+  }
+  if (state.footer.isNotEmpty) row(hubDim(state.footer));
+}
+
+/// The transcript body: a window over [FaHubState.lines] pinned to the
+/// live edge while following, or scrolled to [FaHubState.topOffset].
+void _hubTranscriptBody(
+  FaHubState state,
+  int bodyHeight,
+  int width,
+  void Function(String) row,
+) {
+  final total = state.lines.length;
+  final top = state.follow
+      ? (total - bodyHeight).clamp(0, total)
+      : state.topOffset.clamp(0, total);
+  final end = (top + bodyHeight).clamp(0, total);
+  if (total == 0) {
+    row(hubDim('  (empty transcript)'));
+  } else {
+    if (!state.follow && top > 0) row(hubDim('  … $top above'));
+    for (var i = top; i < end; i++) {
+      row(' ${state.lines[i].text}');
+    }
+    final below = total - end;
+    if (below > 0) row(hubDim('  … $below below'));
+  }
+  if (state.transcriptRunning && state.follow) {
+    row(hubDim('  ● following live — esc to go back'));
+  }
 }
 
 /// The visible window of [count] items for a [viewport] keeping [selected]

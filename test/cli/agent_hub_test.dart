@@ -198,6 +198,174 @@ void main() {
       ).carryingFrom(prev);
       expect(next.selectedKey, 'a1');
     });
+
+    test(
+      'carryingFrom keeps a detached transcript scroll across a re-push',
+      () {
+        var prev = FaHubState.transcript(
+          agentId: 'main',
+          lines: [for (var i = 0; i < 50; i++) '$i'],
+          running: true,
+        );
+        prev = prev.scrollTranscript(-5, viewport: 20); // detach, top 30
+        final next = FaHubState.transcript(
+          agentId: 'main',
+          lines: [for (var i = 0; i < 60; i++) '$i'],
+          running: true,
+        ).carryingFrom(prev);
+        expect(
+          next.follow,
+          isFalse,
+          reason: 'detached browsing must survive the 500ms live re-push',
+        );
+        expect(next.topOffset, 30);
+      },
+    );
+
+    test('carryingFrom keeps following a running transcript', () {
+      final prev = FaHubState.transcript(
+        agentId: 'main',
+        lines: const ['a'],
+        running: true,
+      );
+      final next = FaHubState.transcript(
+        agentId: 'main',
+        lines: const ['a', 'b'],
+        running: true,
+      ).carryingFrom(prev);
+      expect(next.follow, isTrue);
+    });
+
+    test('carryingFrom keeps the collapsed set across a tree re-push', () {
+      final prev = tree().moveSelection(1).toggleCollapseSelected(); // a1
+      final next = FaHubState.tree(
+        footer: '',
+        rows: [
+          const HubLine('main', key: 'main'),
+          const HubLine('  a1', key: 'a1'),
+          const HubLine('    deep', key: 'deep'),
+          const HubLine('  b2', key: 'b2'),
+        ],
+      ).carryingFrom(prev);
+      expect(next.collapsedKeys, contains('a1'));
+      expect(
+        [for (final line in next.visibleRows) line.key],
+        ['main', 'a1', 'b2'],
+        reason: 'a collapsed branch must not re-expand on a fleet event',
+      );
+    });
+
+    test('carryingFrom starts fresh on a mode change or first open', () {
+      final transcript = FaHubState.transcript(
+        agentId: 'main',
+        lines: const [],
+        running: false,
+      );
+      // A fresh tree opens with the first row selected.
+      expect(tree().carryingFrom(null).selectedKey, 'main');
+      expect(tree().carryingFrom(transcript).selectedKey, 'main');
+    });
+  });
+
+  group('renderHubFrame', () {
+    FaHubState treeState({int children = 3}) => FaHubState.tree(
+      footer: '2 agents · 0 running',
+      rows: [
+        const HubLine('main', key: 'main'),
+        for (var i = 0; i < children; i++) HubLine('  c$i', key: 'c$i'),
+      ],
+    );
+
+    test('tree frame renders title, rows, footer and hint within width', () {
+      final frame = renderHubFrame(treeState(), width: 64, height: 12);
+      final lines = frame.split('\n')..removeLast();
+      expect(lines.first, contains('agents hub'));
+      expect(frame, contains('main'));
+      expect(frame, contains('2 agents · 0 running'));
+      expect(frame, contains(FaHubState.defaultTreeHint));
+      for (final line in lines) {
+        expect(tuiTextWidth(line), lessThanOrEqualTo(64));
+      }
+    });
+
+    test('the selected row paints inverse video', () {
+      final frame = renderHubFrame(treeState(), width: 40, height: 12);
+      expect(frame, contains('\x1b[7m main'));
+    });
+
+    test('an empty fleet renders the stub row', () {
+      final frame = renderHubFrame(
+        FaHubState.tree(footer: '', rows: const []),
+        width: 40,
+        height: 12,
+      );
+      expect(frame, contains('(no agents)'));
+    });
+
+    test('a tall fleet windows around the selection with markers', () {
+      final frame = renderHubFrame(
+        treeState(children: 20).moveSelection(10),
+        width: 40,
+        height: 10,
+      );
+      expect(frame, contains('above'));
+      expect(frame, contains('below'));
+    });
+
+    test('a following transcript pins to the live edge with the marker', () {
+      final frame = renderHubFrame(
+        FaHubState.transcript(
+          agentId: 'main',
+          lines: [for (var i = 0; i < 50; i++) 'line $i'],
+          running: true,
+        ),
+        width: 40,
+        height: 12,
+      );
+      expect(frame, contains('transcript — main (live)'));
+      expect(frame, contains('line 49'));
+      expect(frame, contains('following live'));
+      expect(frame, isNot(contains('below')));
+    });
+
+    test('a detached transcript shows its window with both markers', () {
+      var state = FaHubState.transcript(
+        agentId: 'main',
+        lines: [for (var i = 0; i < 50; i++) 'line $i'],
+        running: true,
+      );
+      state = state.scrollTranscript(-5, viewport: 9); // detach at 41
+      state = state.scrollTranscript(-20, viewport: 9); // top 21
+      final frame = renderHubFrame(state, width: 40, height: 12);
+      expect(frame, contains('… 21 above'));
+      expect(frame, contains('… 20 below'));
+      expect(frame, isNot(contains('following live')));
+    });
+
+    test('an empty transcript renders the stub row', () {
+      final frame = renderHubFrame(
+        FaHubState.transcript(agentId: 'main', lines: const [], running: false),
+        width: 40,
+        height: 12,
+      );
+      expect(frame, contains('(empty transcript)'));
+    });
+
+    test('oversized lines clip to the frame width', () {
+      final frame = renderHubFrame(
+        FaHubState.transcript(
+          agentId: 'main',
+          lines: ['x' * 200],
+          running: false,
+        ),
+        width: 30,
+        height: 10,
+      );
+      for (final line in frame.split('\n')) {
+        if (line.isEmpty) continue;
+        expect(tuiTextWidth(line), lessThanOrEqualTo(30));
+      }
+    });
   });
 
   group('deferred panels', () {
@@ -255,6 +423,24 @@ void main() {
         ),
         isNull,
       );
+    });
+
+    test('a multi-line body renders as a bounded preview', () {
+      final panel = DeferredPanel(
+        id: 'btw-3',
+        kind: DeferredPanelKind.mail,
+        from: 'a1',
+        body: [for (var i = 1; i <= 30; i++) 'row $i'].join('\n'),
+        createdAt: DateTime(2026, 1, 1),
+        replyAddress: 'a1',
+      );
+      final lines = deferredPanelLines(panel, width: 40);
+      // header + 12 body rows + truncation tail + action footer
+      expect(lines, hasLength(15));
+      expect(lines[1], contains('row 1'));
+      expect(lines[12], contains('row 12'));
+      expect(lines[13], contains('… 18 more'));
+      expect(lines.join('\n'), isNot(contains('row 13')));
     });
   });
 

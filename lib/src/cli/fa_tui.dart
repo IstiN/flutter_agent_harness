@@ -235,6 +235,7 @@ final class FaTuiModel extends Model {
 
   /// The open agents-hub overlay state (issue #277); null when closed.
   final FaHubState? hub;
+
   /// Persistent viewport scroll offset (0 = top). Snapped to the bottom on
   /// new output while [followTail] holds; kept (clamped) otherwise.
   final int scrollOffset;
@@ -643,6 +644,7 @@ final class FaTuiModel extends Model {
     copy._promptCompleter = _promptCompleter;
     return copy;
   }
+
   @override
   Cmd? init() => null;
 
@@ -910,15 +912,17 @@ final class FaTuiModel extends Model {
   /// interactive bits over so a re-push never resets the user's selection
   /// or scroll anchor.
   (Model, Cmd?) _handleHubStateMsg(HubStateMsg msg) {
-    return (
-      copyWith(hub: msg.state.carryingFrom(hub)),
-      null,
-    );
+    return (copyWith(hub: msg.state.carryingFrom(hub)), null);
   }
 
   /// The open hub overlay owns every key; wheel scrolling moves its tree
   /// selection instead of the chat history.
   (Model, Cmd?) _handleHubKey(KeyMsg msg) {
+    // ctrl+c outranks the modal: abort + quit, exactly as on the main path.
+    if (msg.key == 'ctrl+c') {
+      callbacks.onInterrupt?.call();
+      return (this, () => quit());
+    }
     final current = hub!;
     final (next, action) = current.handleKey(
       msg.key,
@@ -932,7 +936,8 @@ final class FaTuiModel extends Model {
       case FaHubAction.close:
         final cleared = action == FaHubAction.close;
         return (
-          copyWith(hub: cleared ? null : next),
+          // clearHub: a plain hub: null keeps the old state (no close).
+          copyWith(hub: next, clearHub: cleared),
           () async {
             await callbacks.onHubAction?.call(action.name, current.selectedKey);
             return null;

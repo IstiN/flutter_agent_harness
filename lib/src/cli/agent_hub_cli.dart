@@ -19,26 +19,29 @@ extension AgentCliHubDriver on AgentCli {
   /// then every retained subagent handle.
   void _hubUpsertFleet() {
     final now = DateTime.now();
-    final usage = _usage.total;
-    _hubProjection.upsert(
-      HubAgent(
-        id: 'main',
-        name: 'main',
-        agentType: 'orchestrator',
-        status: isBusy ? HubStatus.running : HubStatus.waiting,
-        startedAt: _hubMainStartedAt,
-        lastActivity: now,
-        isMain: true,
-        tokens: usage.totalTokens,
-        requests: _usage.turns,
-        costUsd: usage.cost.total > 0 ? usage.cost.total : null,
-      ),
-    );
+    _hubProjection.upsert(_hubMainAgent(now));
     for (final handle in _subagentManager.handles) {
       _hubProjection.upsert(_hubSubagentAgent(handle, now: now));
     }
     // Stale-agent eviction: a terminal agent idle >1h leaves the tree.
     _hubProjection.evictStale();
+  }
+
+  /// The always-present main agent row from the live usage counters.
+  HubAgent _hubMainAgent(DateTime now) {
+    final usage = _usage.total;
+    return HubAgent(
+      id: 'main',
+      name: 'main',
+      agentType: 'orchestrator',
+      status: isBusy ? HubStatus.running : HubStatus.waiting,
+      startedAt: _hubMainStartedAt,
+      lastActivity: now,
+      isMain: true,
+      tokens: usage.totalTokens,
+      requests: _usage.turns,
+      costUsd: usage.cost.total > 0 ? usage.cost.total : null,
+    );
   }
 
   /// One [HubAgent] from a live [SubagentHandle] (metrics where reported).
@@ -92,21 +95,28 @@ extension AgentCliHubDriver on AgentCli {
     _pushHubTree();
   }
 
-  /// Overlay key actions routed back from the TUI (`FaTuiCallbacks
-  /// .onHubAction`): drill into a transcript, come back, or close.
   Future<void> _onHubAction(String action, String? key) async {
     switch (action) {
       case 'enter':
-        if (key == null || key.isEmpty) return;
-        await _pushHubTranscript(key);
+        await _hubEnterTranscript(key);
       case 'back':
-        _armHubFollow(null, running: false);
-        _hubTranscriptId = null;
+        _hubCloseTranscript();
         _pushHubTree();
       case 'close':
-        _armHubFollow(null, running: false);
-        _hubTranscriptId = null;
+        _hubCloseTranscript();
     }
+  }
+
+  /// `enter` on a tree row: drill into that agent's transcript.
+  Future<void> _hubEnterTranscript(String? key) async {
+    if (key == null || key.isEmpty) return;
+    await _pushHubTranscript(key);
+  }
+
+  /// Leaves transcript mode: the live-follow timer stops first.
+  void _hubCloseTranscript() {
+    _armHubFollow(null, running: false);
+    _hubTranscriptId = null;
   }
 
   /// Pushes [id]'s transcript (main = the session ledger, a child = its
@@ -114,30 +124,7 @@ extension AgentCliHubDriver on AgentCli {
   /// the subject is running.
   Future<void> _pushHubTranscript(String id) async {
     final width = _tuiController?.termWidth ?? 80;
-    List<String> lines;
-    var running = false;
-    if (id == 'main') {
-      final records = await _session?.getEntries() ?? const [];
-      running = isBusy;
-      lines = records.isEmpty
-          ? ['(no transcript yet)']
-          : trajectoryLines(trajectorySnapshotOf(records), width: width);
-    } else {
-      final handle = _subagentManager[id];
-      final sessionId = handle?.sessionId;
-      if (handle == null || sessionId == null || sessionId.isEmpty) {
-        lines = ['(no transcript for "$id")'];
-      } else {
-        final session = await _openChildSession(sessionId);
-        final records = await session?.getEntries() ?? const [];
-        running =
-            handle.status == SubagentStatus.running ||
-            handle.status == SubagentStatus.queued;
-        lines = records.isEmpty
-            ? ['(no records yet — the child appends as it runs)']
-            : trajectoryLines(trajectorySnapshotOf(records), width: width);
-      }
-    }
+    final (lines, running) = await _hubTranscriptLines(id, width);
     final controller = _tuiController;
     if (controller == null) return;
     _hubTranscriptId = id;
@@ -147,21 +134,78 @@ extension AgentCliHubDriver on AgentCli {
     _armHubFollow(id, running: running);
   }
 
+  /// The overlay content for [id]: rendered transcript lines plus the
+  /// subject's live flag (main = the session ledger, a child = its JSONL).
+  Future<(List<String>, bool)> _hubTranscriptLines(String id, int width) {
+    if (id == 'main') {
+      return _hubMainTranscriptLines(width);
+    }
+    return _hubChildTranscriptLines(id, width);
+  }
+
+  Future<(List<String>, bool)> _hubMainTranscriptLines(int width) async {
+    final records = await _session?.getEntries() ?? const [];
+    return (
+      _renderedTranscript(records, width, empty: '(no transcript yet)'),
+      isBusy,
+    );
+  }
+
+  Future<(List<String>, bool)> _hubChildTranscriptLines(
+    String id,
+    int width,
+  ) async {
+    final handle = _subagentManager[id];
+    final session = await _openChildSession(handle?.sessionId ?? '');
+    final records = await session?.getEntries() ?? const [];
+    return (
+      _renderedTranscript(
+        records,
+        width,
+        empty: '(no records yet — the child appends as it runs)',
+      ),
+      _hubChildRunning(handle),
+    );
+  }
+
+  List<String> _renderedTranscript(
+    List<SessionRecord> records,
+    int width, {
+    required String empty,
+  }) {
+    return records.isEmpty
+        ? [empty]
+        : trajectoryLines(trajectorySnapshotOf(records), width: width);
+  }
+
+  /// A child counts as live until its terminal status lands.
+  bool _hubChildRunning(SubagentHandle? handle) => switch (handle?.status) {
+    SubagentStatus.running || SubagentStatus.queued => true,
+    _ => false,
+  };
+
   /// The live-follow ticker: re-reads the open transcript every
   /// [_hubFollowInterval] while its subject runs; a null [id] cancels it.
   void _armHubFollow(String? id, {required bool running}) {
     _hubFollowTimer?.cancel();
     _hubFollowTimer = null;
     if (id == null || !running) return;
-    _hubFollowTimer = Timer.periodic(_hubFollowInterval, (_) {
-      final current = _hubTranscriptId;
-      if (current == null) {
-        _hubFollowTimer?.cancel();
-        _hubFollowTimer = null;
-        return;
-      }
-      unawaited(_pushHubTranscript(current));
-    });
+    _hubFollowTimer = Timer.periodic(
+      _hubFollowInterval,
+      (_) => _hubFollowTick(),
+    );
+  }
+
+  /// One live-follow tick: re-push the open transcript, or disarm when the
+  /// subject closed meanwhile.
+  void _hubFollowTick() {
+    final current = _hubTranscriptId;
+    if (current == null) {
+      _hubFollowTimer?.cancel();
+      _hubFollowTimer = null;
+      return;
+    }
+    unawaited(_pushHubTranscript(current));
   }
 
   /// Lazily wires the hub's event subscriptions (once per session). The
