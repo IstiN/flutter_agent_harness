@@ -76,6 +76,49 @@ On a failing (or timed-out) leg the `report` job files an issue:
 Each run also writes a single job-summary table (leg → version → status →
 links) and exits red itself when any leg failed.
 
+## Release hygiene (issue #282)
+
+No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
+
+- **Draft lifecycle invariant** — every workflow step that creates a
+  release draft (`gh release create <tag> <assets…>` uploads assets
+  through a *draft* first and only publishes afterwards) is paired with a
+  `Draft lifecycle guard` step in the same job:
+  `if: always() && job.status != 'success'` + `scripts/release_draft_guard.sh`
+  — a failed **or cancelled** run deletes its orphaned draft instead of
+  leaving it to rot. Pinned by `test/release_hygiene_test.dart` (a job
+  with an asset-carrying create and no guard fails CI).
+- **Daily sweeper** — the `sweep-drafts` job in `daily-publish.yml` runs
+  `scripts/sweep_stale_drafts.sh` on **every** daily invocation (leg
+  results and change-gating never gate hygiene): drafts older than 24h
+  are deleted when a bot created them (id-based API delete, tag and git
+  history untouched — draft assets are unpublished by definition, E2),
+  human drafts are listed but kept (E1), fresh (<24h) drafts are left for
+  their in-flight run. Anything stale files **one** deduplicated
+  `release-hygiene` issue (comment on the open one, auto-close on a clean
+  sweep — same convention as the leg issues) naming each swept draft and
+  its creating run, so a recurring stuck draft points at its broken step.
+- **Naming** — titles are the bare `vX.Y.Z` tag everywhere (matches the
+  tag, matches pub.dev). No `Fa ` prefixes, no untitled creates; both are
+  lint-failed by `test/release_hygiene_test.dart`. Pre-existing published
+  titles (e.g. `Fa v0.1.362`) are deliberately not rewritten — backfill
+  is opt-in per release.
+- **Latest** — every publish path passes `--latest` explicitly (and
+  re-asserts it via `gh release edit --latest` when attaching to a
+  release another path created first). Guards and the sweeper only ever
+  delete — a failed run can never capture the badge.
+- **Notes** — `scripts/release_notes.sh` renders the CHANGELOG.md section
+  for the version, falling back to conventional commits since the
+  previous tag grouped Features/Fixes/Maintenance (capped at 50 +
+  "…and N more"), with a clean "No changes" body for re-tags. The literal
+  `Release vX.Y.Z` filler bodies are gone.
+
+One-time cleanup (this card): the 3-week-old draft `v0.1.190` that sat
+above `Latest` was already gone by the time this landed (`gh release
+delete v0.1.190` → *release not found*, `gh api releases` → zero drafts);
+the delete was executed and verified on 2026-09-14. The guards + sweeper
+are what keep it that way.
+
 ## Pausing
 
 ```sh

@@ -776,14 +776,26 @@ jobs:
           tar -czf "$asset" -C build/out bundle
           ls -lh "$asset"
 
-          # Ensure the release exists (race-safe with release-macos).
+          # Ensure the release exists (race-safe with release-macos). Title
+          # is the bare tag vX.Y.Z (issue #282: one naming scheme, no
+          # "Fa " prefixes), latest is explicit.
           if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --title "$RELEASE_TAG" \
               --generate-notes \
+              --latest \
               --repo "${GITHUB_REPOSITORY}" || true
           fi
           gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # Draft lifecycle invariant (issue #282): this job creates releases,
+      # so a failed/cancelled run must not leave one behind as a draft.
+      - name: Draft lifecycle guard (delete orphaned draft on failure)
+        if: always() && job.status != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: bash scripts/release_draft_guard.sh "$RELEASE_TAG"
 
   build-extension:
     name: Build Chrome extension
@@ -824,14 +836,25 @@ jobs:
           cp build/fa-extension.zip "$asset"
           ls -lh "$asset"
 
-          # Ensure the release exists (race-safe with release-macos).
+          # Ensure the release exists (race-safe with release-macos). Title
+          # is the bare tag vX.Y.Z (issue #282), latest is explicit.
           if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --title "$RELEASE_TAG" \
               --generate-notes \
+              --latest \
               --repo "${GITHUB_REPOSITORY}" || true
           fi
           gh release upload "$RELEASE_TAG" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # Draft lifecycle invariant (issue #282): this job creates releases,
+      # so a failed/cancelled run must not leave one behind as a draft.
+      - name: Draft lifecycle guard (delete orphaned draft on failure)
+        if: always() && job.status != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: bash scripts/release_draft_guard.sh "$RELEASE_TAG"
 
   release-macos:
     name: Create macOS GitHub Release
@@ -843,6 +866,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Full history: release_notes.sh falls back to "commits since the
+          # previous tag" when the CHANGELOG has no section for this version.
+          fetch-depth: 0
 
       - name: Download DMG artifacts
         uses: actions/download-artifact@v4
@@ -921,16 +948,37 @@ jobs:
             for asset in "${ASSETS[@]}"; do
               gh release upload "$RELEASE_TAG" "$asset" --clobber --repo ${{ github.repository }}
             done
+            # Latest policy (issue #282): the newest published release
+            # carries the badge explicitly — even when this job lost the
+            # create race to a lazily-created release without --latest.
+            gh release edit "$RELEASE_TAG" --latest --repo ${{ github.repository }}
             echo "✅ Uploaded macOS assets to existing release $RELEASE_TAG"
           else
-            printf 'Fa %s run #%s\n\n## Installation\n- **macOS**: Download the DMG for your architecture (`arm64` for Apple Silicon, `x86_64` for Intel) and drag Fa.app to Applications. In-app updates use the ZIP + latest-mac.yml feed.\n- **Linux**: Download tar.gz, extract and run the `bundle/fa` binary.\n- **Windows**: Download zip, extract and run `fa.exe`.\n' \
-              "$RELEASE_TAG" "${{ github.run_number }}" > release-notes.md
+            # Notes come from the CHANGELOG section for this version, with a
+            # conventional-commit fallback (issue #282: no more filler
+            # bodies); the install hints stay as a footer.
+            bash scripts/release_notes.sh "$RELEASE_TAG" > release-notes.md || true
+            printf '\n## Installation\n- **macOS**: Download the DMG for your architecture (`arm64` for Apple Silicon, `x86_64` for Intel) and drag Fa.app to Applications. In-app updates use the ZIP + latest-mac.yml feed.\n- **Linux**: Download tar.gz, extract and run the `bundle/fa` binary.\n- **Windows**: Download zip, extract and run `fa.exe`.\n' >> release-notes.md
 
+            # Bare vX.Y.Z title (issue #282): matches the tag, matches
+            # pub.dev. Assets ride the create command — gh uploads them
+            # through a DRAFT first, so the guard step below owns the
+            # failure path.
             gh release create "$RELEASE_TAG" \
               --repo ${{ github.repository }} \
-              --title "Fa $RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
               --notes-file release-notes.md \
               --latest \
               "${ASSETS[@]}"
             echo "✅ Created release $RELEASE_TAG with macOS assets"
           fi
+
+      # Draft lifecycle invariant (issue #282): the create above uploads
+      # assets through a draft — a failed/cancelled run must delete it,
+      # never orphan it (the v0.1.190 rot).
+      - name: Draft lifecycle guard (delete orphaned draft on failure)
+        if: always() && job.status != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+        run: bash scripts/release_draft_guard.sh "$RELEASE_TAG"
