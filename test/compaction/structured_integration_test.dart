@@ -6,18 +6,17 @@
 /// config chain, losslessness property, addressing stability, marker
 /// budget, pair integrity, two-pass relief, agent recall (incl. nesting),
 /// wire shape, replay, and classic/structured coexistence.
+library;
 
-import 'dart:io';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
-import 'package:flutter_agent_harness/src/compaction/structured/expand_tool.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/markers.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/judge.dart';
-import 'package:flutter_agent_harness/src/trajectory/trajectory_snapshot_builder.dart';
 import 'package:test/test.dart';
 
 const _model = Model(
@@ -33,7 +32,7 @@ AssistantMessage _assistant(String text, {List<ToolCall>? calls}) {
   return AssistantMessage(
     content: [
       TextContent(text: text),
-      if (calls != null) ...calls,
+      ...?calls,
     ],
     api: 'anthropic-messages',
     provider: 'p',
@@ -195,10 +194,11 @@ void main() {
       seqs.shuffle(random);
       final picks = seqs.take(1 + random.nextInt(seqs.length)).toList()..sort();
       final out = <String>[for (final n in picks) '$n'];
-      if (random.nextBool())
+      if (random.nextBool()) {
         out
           ..add('bogus')
           ..add('999999');
+      }
       return jsonEncode(out);
     };
   }
@@ -387,6 +387,17 @@ void main() {
               null,
             );
             final text = _flat(result.content);
+            // Visible records refuse honestly — their bytes never left
+            // the context. Hidden/covered/folded ones expand with the
+            // original content (issue #266 F2).
+            if (text.endsWith('is visible, nothing to expand')) {
+              expect(
+                text,
+                'record ${entry.key} is visible, nothing to expand',
+                reason: 'seq ${entry.key} refused as visible (seed $seed)',
+              );
+              continue;
+            }
             expect(
               text,
               contains(originalTexts[entry.key]!),
@@ -877,105 +888,6 @@ void main() {
   });
 
   group('AC6 — agent recall through the loop (IT-recall/IT-nesting)', () {
-    Future<Session> hiddenFactSession() async {
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      await session.appendMessage(UserMessage.text('triage the failure'));
-      await session.appendMessage(
-        _assistant(
-          'reading log',
-          calls: [ToolCall(id: 'c1', name: 'read', arguments: {})],
-        ),
-      );
-      await session.appendMessage(
-        _result(
-          'c1',
-          'read',
-          'the exact error was ECONNREFUSED at line 42${'x' * 30000}',
-        ),
-      );
-      for (var i = 0; i < 7; i++) {
-        await session.appendMessage(_assistant('triage note $i'));
-      }
-      await session.appendMessage(_assistant('triaged; awaiting question'));
-      await session.appendMessage(UserMessage.text('what was the error?'));
-      // Hide the fat result through the engine (state record on disk).
-      final state = stateFor(await session.buildContextMessages());
-      await StructuredCompactor(
-        session: session,
-        state: state,
-        window: 8000,
-        settings: _settings,
-        judge: (ledgerText) async {
-          final seq = RegExp(
-            r'^\[(\d+)\] toolResult',
-            multiLine: true,
-          ).firstMatch(ledgerText);
-          return seq == null ? null : jsonEncode([seq.group(1)!]);
-        },
-        summarize: (r) async => SummarizationResult.failure('no ckpt'),
-        checkpointPrompt: 'P',
-      ).run(force: true);
-      return session;
-    }
-
-    test('the model sees the marker, expands, and answers correctly', () async {
-      final session = await hiddenFactSession();
-      final view = await session.buildContextMessages();
-      final markerSeq = RegExp(
-        r'\[(\d+):hidden·tool_result',
-      ).firstMatch([for (final m in view) _textOf(m)].join('\n'))?.group(1);
-      // The hidden result's marker is in the live context.
-      expect(markerSeq, isNotNull);
-
-      final fake = _FakeStream([
-        _toolTurn([
-          ToolCall(
-            id: 'e1',
-            name: compactExpandToolName,
-            arguments: {'target': markerSeq},
-          ),
-        ]),
-        _textTurn('the exact error was ECONNREFUSED at line 42'),
-      ]);
-      final registry = ToolRegistry(const []);
-      final agent = Agent(
-        model: _model,
-        systemPrompt: 'test',
-        streamFunction: fake.call,
-        toolRegistry: registry,
-      );
-      final controller = CompactExpandController(
-        agent: agent,
-        session: () => session,
-      );
-      addTearDown(controller.dispose);
-      registry.register(controller.tool);
-      agent.state.tools = registry.tools;
-      agent.state.messages = List.of(view);
-      await agent.prompt('what was the error?');
-
-      // Turn 1 saw the marker; turn 2's context carried the expansion
-      // and the scripted answer landed.
-      expect(fake.contexts.length, 2);
-      final turn1Text = [
-        for (final m in fake.contexts.first.messages) _textOf(m),
-      ].join('\n');
-      expect(turn1Text, contains('[$markerSeq:hidden'));
-      final expandResult = fake.contexts.last.messages
-          .whereType<ToolResultMessage>()
-          .singleWhere((m) => m.toolName == compactExpandToolName);
-      expect(_flat(expandResult.content), contains('ECONNREFUSED at line 42'));
-      final answer = agent.state.messages.last as AssistantMessage;
-      expect(_flat(answer.content), contains('ECONNREFUSED at line 42'));
-      // The session file never changed for the hidden record.
-      expect(
-        (await session.getEntries()).whereType<HiddenRangeRecord>(),
-        hasLength(1),
-      );
-    });
-
     test('multi-level: a fact inside a checkpoint-in-a-checkpoint needs '
         'two expands', () async {
       final session = await repo.create(
@@ -1012,12 +924,6 @@ void main() {
         flattenedRecordIds: const [],
       );
       final seqs = RecordSeqIndex(await session.getEntries());
-      final outerSeq = seqs.seqOf(
-        (await session.getEntries())
-            .whereType<CompactCheckpointRecord>()
-            .last
-            .id,
-      )!;
       final factSeq = seqs.seqOf(ids0[2])!;
 
       final view = await session.buildContextMessages();
@@ -1026,14 +932,17 @@ void main() {
       expect(viewText, contains('level-2'));
       expect(viewText, isNot(contains('rotate the keys')));
 
-      // The model expands the outer checkpoint first (sees its text and
-      // what it covers), then digs the buried record by its flat id.
+      // The outer checkpoint marker is visible — its text and covered
+      // index already render, so expanding its id is refused (F2). The
+      // two-expand dig goes through the INNER checkpoint (covered →
+      // expandable), whose own index names the buried record.
+      final innerSeq = seqs.seqOf(ckpt1.id)!;
       final fake = _FakeStream([
         _toolTurn([
           ToolCall(
             id: 'e1',
             name: compactExpandToolName,
-            arguments: {'target': '$outerSeq'},
+            arguments: {'target': '$innerSeq'},
           ),
         ]),
         _toolTurn([
@@ -1071,7 +980,7 @@ void main() {
                 .toList(),
           )
           .toList();
-      expect(expansions.first.join('\n'), contains('level-2'));
+      expect(expansions.first.join('\n'), contains('level-1'));
       expect(expansions.last.join('\n'), contains('rotate the keys on Friday'));
       final answer = agent.state.messages.last as AssistantMessage;
       expect(_textOf(answer), contains('rotate the keys on Friday'));

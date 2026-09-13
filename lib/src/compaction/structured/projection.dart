@@ -260,7 +260,7 @@ List<Message> _customAt(
       content: hiddenMarker(
         seq: seqs.seqOf(record.id) ?? 0,
         kind: markerKinds.notice,
-        tokens: _recordTokens(record),
+        tokens: recordTokens(record),
       ),
       timestamp: record.timestamp,
     ),
@@ -299,12 +299,14 @@ List<Message> _legacyAt(
 }) {
   final seq = seqs.seqOf(record.id);
   if (state.hiddenRecordIds.contains(record.id) && seq != null) {
-    final kind = record is CompactionRecord
-        ? markerKinds.legacyCheckpoint
-        : markerKinds.branchSummary;
     return [
       UserMessage.text(
-        hiddenMarker(seq: seq, kind: kind, tokens: _recordTokens(record)),
+        hiddenMarker(
+          seq: seq,
+          kind: markerKindFor(record),
+          tokens: recordTokens(record),
+          preview: markerPreview(recordPreviewSource(record)),
+        ),
         timestamp: record.timestamp,
       ),
     ];
@@ -327,7 +329,7 @@ Message _checkpointMessage(
   var coveredTokens = 0;
   for (final id in record.coversRecordIds) {
     final covered = byId[id];
-    if (covered != null) coveredTokens += _recordTokens(covered);
+    if (covered != null) coveredTokens += recordTokens(covered);
   }
   final header = checkpointMarkerHeader(
     startSeq: startSeq,
@@ -336,8 +338,11 @@ Message _checkpointMessage(
     textTokens: estimateTokens(UserMessage.text(record.text)),
     coversRanges: idsToRanges(covers),
   );
+  final index = hiddenIndexSection([
+    for (final id in record.coversRecordIds) ?byId[id],
+  ], seqs);
   return UserMessage.text(
-    '$header\n${record.text}',
+    '$header\n${record.text}$index',
     timestamp: record.timestamp,
   );
 }
@@ -349,6 +354,7 @@ Message _hiddenMessage(
   int seq, {
   required bool orphaned,
 }) {
+  final preview = markerPreview(recordPreviewSource(record));
   switch (message) {
     case ToolResultMessage() when !orphaned:
       // Keep the pair on the wire: same call id, same tool name, marker
@@ -362,6 +368,7 @@ Message _hiddenMessage(
               seq: seq,
               kind: markerKinds.toolResult,
               tokens: estimateTokens(message),
+              preview: preview,
             ),
           ),
         ],
@@ -376,6 +383,7 @@ Message _hiddenMessage(
           seq: seq,
           kind: markerKinds.toolResult,
           tokens: estimateTokens(message),
+          preview: preview,
         ),
         timestamp: message.timestamp,
       );
@@ -385,6 +393,7 @@ Message _hiddenMessage(
           seq: seq,
           kind: markerKinds.assistant,
           tokens: estimateTokens(message),
+          preview: preview,
         ),
         timestamp: message.timestamp,
       );
@@ -394,13 +403,84 @@ Message _hiddenMessage(
           seq: seq,
           kind: markerKinds.user,
           tokens: estimateTokens(message),
+          preview: preview,
         ),
         timestamp: message.timestamp,
       );
   }
 }
 
-int _recordTokens(SessionRecord record) {
+/// The kind label a record shows in markers and the hidden-segment index.
+String markerKindFor(SessionRecord record) => switch (record) {
+  MessageRecord(:final message) => switch (message) {
+    UserMessage() => markerKinds.user,
+    AssistantMessage() => markerKinds.assistant,
+    ToolResultMessage() => markerKinds.toolResult,
+    _ => message.role,
+  },
+  CustomMessageRecord() => markerKinds.notice,
+  CompactCheckpointRecord() => markerKinds.checkpoint,
+  CompactionRecord() => markerKinds.legacyCheckpoint,
+  BranchSummaryRecord() => markerKinds.branchSummary,
+  _ => 'system',
+};
+
+/// The flat text a record's preview draws from — the record's own
+/// content, wrapper stripped. Image blocks collapse to their kind-named
+/// placeholder (E3), so a preview never carries base64.
+String recordPreviewSource(SessionRecord record) => switch (record) {
+  MessageRecord(:final message) => switch (message) {
+    UserMessage(:final content) => _previewUserText(content),
+    ToolResultMessage(:final content) => _previewBlocks(content),
+    AssistantMessage(:final content) => _previewBlocks(content),
+    _ => message.role,
+  },
+  CustomMessageRecord(:final content) => _previewUserText(content),
+  CompactCheckpointRecord(:final text) => text,
+  CompactionRecord(:final summary) => summary,
+  BranchSummaryRecord(:final summary) => summary,
+  _ => '',
+};
+
+String _previewUserText(Object content) =>
+    content is String ? content : _previewBlocks(content as List<ContentBlock>);
+
+String _previewBlocks(List<ContentBlock> blocks) => [
+  for (final block in blocks)
+    switch (block) {
+      TextContent(:final text) => text,
+      ImageContent(:final mimeType) => imagePreview(mimeType),
+      _ => '[${block.runtimeType}]',
+    },
+].join('\n');
+
+/// The hidden-segments index heading the agent consults (issue #266 F1a).
+const hiddenIndexHeading = 'hidden segments (compact_expand reopens any id):';
+
+/// One marker line per [records] — id, kind, size, preview — appended
+/// under a summary so history folded away stays consultable and
+/// expandable. Empty string when nothing survives resolution.
+String hiddenIndexSection(
+  Iterable<SessionRecord> records,
+  RecordSeqIndex seqs,
+) {
+  final lines = <String>[];
+  for (final record in records) {
+    final seq = seqs.seqOf(record.id);
+    if (seq == null) continue;
+    lines.add(
+      hiddenMarker(
+        seq: seq,
+        kind: markerKindFor(record),
+        tokens: recordTokens(record),
+        preview: markerPreview(recordPreviewSource(record)),
+      ),
+    );
+  }
+  return lines.isEmpty ? '' : '\n\n$hiddenIndexHeading\n${lines.join('\n')}';
+}
+
+int recordTokens(SessionRecord record) {
   switch (record) {
     case MessageRecord(:final message):
       return estimateTokens(message);
