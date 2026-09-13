@@ -108,3 +108,14 @@ final class OpenPromptMsg extends Msg {
   final TuiPromptSpec spec;
   final Completer<TuiPromptAnswer?> completer;
 }
+
+/// Message opening or refreshing the agents-hub overlay (issue #277).
+final class HubStateMsg extends Msg {
+  HubStateMsg(this.state);
+  final FaHubState state;
+}
+
+/// Message hiding the agents-hub overlay (issue #277).
+final class _CloseHubMsg extends Msg {
+  const _CloseHubMsg();
+}

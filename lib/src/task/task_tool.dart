@@ -101,6 +101,7 @@ final class TaskJob {
 final class TaskJobManager {
   final _jobs = <String, TaskJob>{};
   final _completions = StreamController<TaskJob>.broadcast();
+  final _starts = StreamController<TaskJob>.broadcast();
 
   /// Every job of the session, in registration order.
   List<TaskJob> get jobs => List.unmodifiable(_jobs.values);
@@ -111,12 +112,19 @@ final class TaskJobManager {
   /// Broadcast stream of jobs as they settle (omp's async-result event).
   Stream<TaskJob> get completions => _completions.stream;
 
+  /// Broadcast stream of jobs as they REGISTER (issue #277 start blocks:
+  /// the visible "spawned" moment, not the queued→running flip).
+  Stream<TaskJob> get starts => _starts.stream;
+
   /// Resolves when every registered job has settled.
   Future<void> get settled =>
       Future.wait([for (final job in _jobs.values) job.settled]);
 
   /// Closes the completions stream (session teardown).
-  Future<void> close() => _completions.close();
+  Future<void> close() {
+    unawaited(_starts.close());
+    return _completions.close();
+  }
 
   TaskJob _register({
     required String id,
@@ -126,6 +134,7 @@ final class TaskJobManager {
   }) {
     final job = TaskJob._(id: id, index: index, agent: agent, task: task);
     _jobs[id] = job;
+    _starts.add(job);
     return job;
   }
 
