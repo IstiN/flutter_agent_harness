@@ -9,7 +9,12 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   // A representative full header: project identity, title, chip and a
   // priority-ordered action list (the chat bar's real shape).
-  Widget header({required double width, List<PopupMenuEntry<String>>? menu}) =>
+  Widget header({
+    required double width,
+    List<PopupMenuEntry<String>>? menu,
+    void Function()? onChipTap,
+    String? chipMenuLabel,
+  }) =>
       MaterialApp(
         home: Scaffold(
           body: SizedBox(
@@ -45,6 +50,8 @@ void main() {
                   ),
                 ],
                 menuItems: menu ?? const <PopupMenuEntry<String>>[],
+                onChipTap: onChipTap,
+                chipMenuLabel: chipMenuLabel,
               ),
             ),
           ),
@@ -94,6 +101,54 @@ void main() {
     expect(find.text('Files'), findsOneWidget);
     expect(find.text('Trajectory'), findsOneWidget);
     expect(find.text('Copy session'), findsOneWidget);
+  });
+
+  testWidgets('the demoted model chip lands in the ⋮ menu and opens the '
+      'picker (issue #225 AC3)', (tester) async {
+    var pickerOpened = 0;
+    await tester.pumpWidget(
+      header(
+        width: 200,
+        onChipTap: () => pickerOpened++,
+        chipMenuLabel: 'z-ai/glm-5.3-flash',
+      ),
+    );
+
+    // The chip itself cannot fit; its ⋮-menu row can.
+    expect(find.byKey(const ValueKey('testChip')), findsNothing);
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    expect(find.text('z-ai/glm-5.3-flash'), findsOneWidget);
+    await tester.tap(find.text('z-ai/glm-5.3-flash'));
+    await tester.pumpAndSettle();
+    expect(pickerOpened, 1);
+  });
+
+  testWidgets('a widget action keeps its key on the bar '
+      '(issue #225 review)', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 800,
+            child: Material(
+              child: FaAdaptiveHeader(
+                title: 'Fa',
+                actions: [
+                  FaHeaderAction.widget(
+                    key: const ValueKey('testWidgetAction'),
+                    widget: const Icon(Icons.apps),
+                    label: 'Apps',
+                    onPressed: () {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byKey(const ValueKey('testWidgetAction')), findsOneWidget);
   });
 
   testWidgets('the pinned action never demotes (issue #225 E2)',

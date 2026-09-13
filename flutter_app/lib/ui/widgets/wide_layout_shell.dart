@@ -475,6 +475,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
           maxWidth: 132,
           onTap: () => _openModelPicker(active),
         ),
+        onModelChipTap: () => _openModelPicker(active),
+        chipMenuLabel: active.service.modelId,
       ),
     );
   }

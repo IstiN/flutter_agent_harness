@@ -80,6 +80,9 @@ class FaAdaptiveHeader extends StatelessWidget {
     this.onProjectTap,
     this.chip,
     this.chipMaxWidth = 132,
+    this.onChipTap,
+    this.chipMenuLabel,
+    this.chipMenuIcon = Icons.memory,
     this.actions = const <FaHeaderAction>[],
     this.menuItems = const <PopupMenuEntry<String>>[],
     this.onMenuSelected,
@@ -123,6 +126,18 @@ class FaAdaptiveHeader extends StatelessWidget {
   /// host-built and ellipsis-capped by the same value in practice; an
   /// over-reserve only demotes an icon a few px early, never overflows.
   final double chipMaxWidth;
+
+  /// Invoked when the demoted model chip is picked from the ⋮ menu (the
+  /// same picker the inline chip opens on tap — issue #225 AC3: model
+  /// switching stays reachable at widths that cannot fit the chip).
+  final VoidCallback? onChipTap;
+
+  /// The ⋮-menu row label for the demoted model chip (the model id).
+  /// Null falls back to the chip-tap route with a generic label.
+  final String? chipMenuLabel;
+
+  /// The ⋮-menu row icon for the demoted model chip.
+  final IconData? chipMenuIcon;
 
   /// Priority-ordered actions; the tail demotes into the ⋮ menu first.
   final List<FaHeaderAction> actions;
@@ -238,6 +253,26 @@ class FaAdaptiveHeader extends StatelessWidget {
                 tooltip: overflowTooltip ?? strings.chatMoreTooltip,
                 color: menuColor,
                 itemBuilder: (context) => [
+                  // The demoted model chip (issue #225 AC3): when the row
+                  // cannot fit the chip it lands here, so model switching
+                  // stays reachable at any width.
+                  if (chip != null && !chipInline && onChipTap != null)
+                    PopupMenuItem<String>(
+                      value: 'chip',
+                      child: Row(
+                        children: [
+                          Icon(chipMenuIcon, size: 20),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              chipMenuLabel ?? strings.chatModelPicker,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   for (var i = 0; i < overflow.length; i++)
                     PopupMenuItem<String>(
                       value: 'action:$i',
@@ -254,8 +289,11 @@ class FaAdaptiveHeader extends StatelessWidget {
                   ...menuItems,
                 ],
                 onSelected: (value) {
-                  if (value.startsWith('action:')) {
-                    overflow[int.parse(value.substring(7))].onPressed?.call();
+                  if (value == 'chip') {
+                    onChipTap?.call();
+                  } else if (value.startsWith('action:')) {
+                    overflow[int.parse(value.substring(7))].onPressed
+                        ?.call();
                   } else {
                     onMenuSelected?.call(value);
                   }
@@ -302,9 +340,12 @@ class FaAdaptiveHeader extends StatelessWidget {
   }
 
   /// The inline bar button of [action]: the host-styled widget when the
-  /// action carries one, otherwise a plain icon button.
+  /// action carries one, otherwise a plain icon button. The action's key
+  /// stays attached whichever form renders (widget actions included).
   Widget _barButton(FaHeaderAction action) {
-    if (action.widget != null) return action.widget!;
+    if (action.widget != null) {
+      return KeyedSubtree(key: action.key, child: action.widget!);
+    }
     return IconButton(
       key: action.key,
       icon: Icon(action.icon, size: iconSize),

@@ -68,6 +68,8 @@ class ChatScreen extends StatefulWidget {
     this.projectLabel,
     this.onProjectTap,
     this.modelChip,
+    this.onModelChipTap,
+    this.chipMenuLabel,
   });
 
   /// The multi-session manager owning the active [AgentService].
@@ -144,6 +146,13 @@ class ChatScreen extends StatefulWidget {
 
   /// The inline quick-model chip in the merged header (host-built).
   final Widget? modelChip;
+
+  /// Invoked when the demoted model chip is picked from the header ⋮
+  /// menu (issue #225 AC3 — model switching at narrow widths).
+  final VoidCallback? onModelChipTap;
+
+  /// The ⋮-menu row label for the demoted model chip (the model id).
+  final String? chipMenuLabel;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -362,6 +371,8 @@ class _ChatScreenState extends State<ChatScreen> {
       projectLabel: widget.projectLabel,
       onProjectTap: widget.onProjectTap,
       modelChip: widget.modelChip,
+      onModelChipTap: widget.onModelChipTap,
+      chipMenuLabel: widget.chipMenuLabel,
       settingsBuilder: (_) => SettingsScreen(
         service: service,
         env: service.env,

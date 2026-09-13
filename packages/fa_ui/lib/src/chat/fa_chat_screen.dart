@@ -90,6 +90,8 @@ class FaChatScreen extends StatefulWidget {
     this.projectLabel,
     this.onProjectTap,
     this.modelChip,
+    this.onModelChipTap,
+    this.chipMenuLabel,
   });
 
   /// The session this screen renders and sends to.
@@ -174,6 +176,13 @@ class FaChatScreen extends StatefulWidget {
   /// citizen that demotes into the ⋮ menu only under extreme width
   /// (issue #225).
   final Widget? modelChip;
+
+  /// Invoked when the demoted model chip is picked from the ⋮ menu
+  /// (issue #225 AC3 — model switching at widths that drop the chip).
+  final VoidCallback? onModelChipTap;
+
+  /// The ⋮-menu row label for the demoted model chip (the model id).
+  final String? chipMenuLabel;
 
   @override
   State<FaChatScreen> createState() => _FaChatScreenState();
@@ -1161,6 +1170,8 @@ class _FaChatScreenState extends State<FaChatScreen>
                 projectLabel: widget.projectLabel,
                 onProjectTap: widget.onProjectTap,
                 chip: widget.modelChip,
+                onChipTap: widget.onModelChipTap,
+                chipMenuLabel: widget.chipMenuLabel,
                 actions: headerActions,
               ),
               // Narrow: the Chat | Trajectory switcher sits in the app

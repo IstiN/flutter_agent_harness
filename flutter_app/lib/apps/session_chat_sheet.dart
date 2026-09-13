@@ -740,35 +740,66 @@ class SessionChatSheetState extends State<SessionChatSheet>
     final service = widget.manager.active?.service;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ChatScreen(
-          manager: widget.manager,
-          registry: widget.registry,
-          lastConnectionStore: widget.lastConnectionStore,
-          uploadPicker: widget.uploadPicker,
-          asr: widget.asr,
-          asrTranscriber: widget.asrTranscriber,
-          audioControllerFactory: widget.audioControllerFactory,
-          videoControllerFactory: widget.videoControllerFactory,
-          // The merged adaptive header (issue #225): the full chat renders
-          // the same project identity + quick-model chip inline.
-          projectIcon: Icons.folder_outlined,
-          projectIconColor: _sessionHasFolder(service)
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.onSurfaceVariant,
-          projectLabel: _projectLabel(service),
-          modelChip: QuickModelChip(
-            key: const ValueKey('fullChatModelChip'),
-            modelId: service?.modelId ?? '',
-            tooltip: context.l10n.chatModelSwitchTooltip,
-            maxWidth: 132,
-            onTap: () => unawaited(_openModelPicker(service!)),
-            onLongPress: () => unawaited(_openModelSettings(service!)),
-          ),
-          // The full chat's Apps button (issue #224) pops back here AND
-          // collapses the panel, so the tap really lands on the apps grid.
-          onAppsToggle: () => unawaited(_closePanel()),
-        ),
+        // Rebuild on every service tick (issue #225 review): the header
+        // chip and project pill must reflect model switches and folder
+        // changes, not the values captured at route push — the wide
+        // shell listens the same way.
+        builder: (_) => service == null
+            ? _buildFullChat(service)
+            : ListenableBuilder(
+                listenable: service,
+                builder: (context, _) => _buildFullChat(service),
+              ),
       ),
+    );
+  }
+
+  /// The pushed full-chat route body (issue #225): the shared surface
+  /// with the project identity + quick-model chip inline.
+  Widget _buildFullChat(AgentService? service) {
+    // Capture the non-null service up front: closures do not benefit
+    // from the null-check promotion below.
+    final AgentService? active = service;
+    final VoidCallback? openPicker;
+    final VoidCallback? openSettings;
+    if (active == null) {
+      openPicker = null;
+      openSettings = null;
+    } else {
+      openPicker = () => unawaited(_openModelPicker(active));
+      openSettings = () => unawaited(_openModelSettings(active));
+    }
+    return ChatScreen(
+      manager: widget.manager,
+      registry: widget.registry,
+      lastConnectionStore: widget.lastConnectionStore,
+      uploadPicker: widget.uploadPicker,
+      asr: widget.asr,
+      asrTranscriber: widget.asrTranscriber,
+      audioControllerFactory: widget.audioControllerFactory,
+      videoControllerFactory: widget.videoControllerFactory,
+      // The merged adaptive header (issue #225): the full chat renders
+      // the same project identity + quick-model chip inline.
+      projectIcon: Icons.folder_outlined,
+      projectIconColor: _sessionHasFolder(service)
+          ? Theme.of(context).colorScheme.primary
+          : Theme.of(context).colorScheme.onSurfaceVariant,
+      projectLabel: _projectLabel(service),
+      modelChip: QuickModelChip(
+        key: const ValueKey('fullChatModelChip'),
+        modelId: service?.modelId ?? '',
+        tooltip: context.l10n.chatModelSwitchTooltip,
+        maxWidth: 132,
+        // The chip's tap is non-null by contract; without an active
+        // service the full chat is unreachable and the tap is a no-op.
+        onTap: openPicker ?? () {},
+        onLongPress: openSettings,
+      ),
+      onModelChipTap: openPicker,
+      chipMenuLabel: service?.modelId,
+      // The full chat's Apps button (issue #224) pops back here AND
+      // collapses the panel, so the tap really lands on the apps grid.
+      onAppsToggle: () => unawaited(_closePanel()),
     );
   }
 
@@ -1447,6 +1478,8 @@ class SessionChatSheetState extends State<SessionChatSheet>
           onTap: () => unawaited(_openModelPicker(service)),
           onLongPress: () => unawaited(_openModelSettings(service)),
         ),
+        onChipTap: () => unawaited(_openModelPicker(service)),
+        chipMenuLabel: service.modelId,
         actions: [
           // The trajectory entry (issue #168) and the apps-collapse toggle
           // (issue #224) — demotable into the ⋮ menu like every action.
