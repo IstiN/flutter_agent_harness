@@ -1,0 +1,239 @@
+name: Bench 4.0
+
+# Runs the fa coding agent against Terminal-Bench 4.0 on the Harbor
+# framework (issue #147): CPU tasks in docker on the self-hosted runner,
+# GPU tasks via Modal, results uploaded to Harbor Hub — the current
+# leaderboard source (tbench.ai). The legacy terminal-bench-core 0.1.1
+# path lives in bench.yml.
+#
+# Same bundle/env contract as the legacy bench: `dart build cli` Linux
+# bundle + FA_PROVIDER_TYPE=zai env-provider-preconfig (glm-5.3-flash),
+# secrets env-only and never echoed (keys pass base64-encoded into the
+# task container; CI masks both raw and base64 forms).
+#
+# Secrets (owner-provisioned; the workflow never hardcodes them):
+#   FA_BENCH_ZAI_KEY       — z.ai key for glm-5.3-flash (shared with bench.yml)
+#   MODAL_TOKEN_ID/SECRET  — Modal token for the GPU shard (verified live)
+#   HARBOR_API_KEY         — Harbor Hub upload key; upload step skips (with a
+#                            warning) when absent, run artifacts keep results.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: 'Comma fnmatch globs narrowing the dataset (e.g. hello-world for smoke; empty = full 66-task dataset)'
+        required: false
+        default: ''
+      dataset:
+        description: 'Harbor dataset spec'
+        required: false
+        default: 'terminal-bench/terminal-bench@4.0.0'
+      model:
+        description: 'Model id recorded with the run (provider preconfig is authoritative for fa)'
+        required: false
+        default: 'glm-5.3-flash'
+      attempts:
+        description: 'harbor --n-attempts per trial (-k)'
+        required: false
+        default: '5'
+      n-concurrent:
+        description: 'harbor --n-concurrent trials (1 = z.ai rate-limit safe)'
+        required: false
+        default: '1'
+      shards:
+        description: 'CPU docker shard count (~4 tasks/shard keeps each job under the 6h window)'
+        required: false
+        default: '16'
+      cpu-runner:
+        description: 'Runner label for the docker shards (self-hosted label pending owner confirmation)'
+        required: false
+        default: 'self-hosted'
+
+permissions:
+  contents: read
+
+# A full-dataset run holds the runner for hours; queue a second dispatch
+# instead of stacking them.
+concurrency:
+  group: bench-4.0
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: Build bundle & shard dataset
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.shards.outputs.matrix }}
+      count: ${{ steps.shards.outputs.count }}
+      cpu_count: ${{ steps.shards.outputs.cpu_count }}
+      gpu_count: ${{ steps.shards.outputs.gpu_count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      # Same bundle as bench/terminal_bench/run.sh: tar the bundle/ dir so
+      # the adapter extracts bin/fah at the top level of /opt/fa.
+      - name: Build fa CLI bundle (Linux)
+        run: |
+          bundle_dir="$(mktemp -d)/fa-bundle"
+          dart build cli --target=bin/fah.dart --output="$bundle_dir"
+          tar -czf fa-bundle.tar.gz -C "$bundle_dir/bundle" .
+
+      - name: Upload fa bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: fa-bundle
+          path: fa-bundle.tar.gz
+
+      # terminal-bench-era note: harbor is fine on 3.13; typer-based CLIs
+      # break on 3.14.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # Pinned: the adapter targets the 0.23.0 BaseInstalledAgent contract.
+      - run: pip install 'harbor[modal]==0.23.0'
+
+      # Download the dataset once for classification; harbor re-fetches
+      # into its own cache during the run.
+      - name: Shard dataset into CPU (docker) / GPU (modal)
+        id: shards
+        env:
+          DATASET: ${{ inputs.dataset }}
+          TASKS: ${{ inputs.tasks }}
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          harbor datasets download "$DATASET" --output-dir "$RUNNER_TEMP/ds" --overwrite
+          # Dataset name at version: dir name is the dataset slug.
+          ds_dir="$RUNNER_TEMP/ds/$(basename "${DATASET%%@*}")"
+          [ -d "$ds_dir" ] || ds_dir="$RUNNER_TEMP/ds"
+          # split_tasks.py writes the matrix/counts into GITHUB_OUTPUT itself.
+          python bench/harbor_fa/split_tasks.py "$ds_dir" \
+            --filter "$TASKS" --shards "$SHARDS"
+
+  bench:
+    name: fa on tbench 4.0, shard ${{ matrix.i }} (${{ matrix.env }}, ${{ inputs.model }})
+    needs: setup
+    runs-on: ${{ inputs.cpu-runner }}
+    # ~4 tasks/shard x --n-attempts x task runtime (tbench 4.0 agent caps
+    # reach 8h but typical runs are far shorter) with headroom; the
+    # self-hosted runner has no 6h hosted-runner cap to trip over.
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download fa bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: fa-bundle
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # Pinned: the adapter targets the 0.23.0 BaseInstalledAgent contract.
+      - run: pip install 'harbor[modal]==0.23.0'
+
+      - name: Run harbor (fa agent, ${{ matrix.env }} env)
+        env:
+          FA_BUNDLE_TARBALL: ${{ github.workspace }}/fa-bundle.tar.gz
+          PYTHONPATH: ${{ github.workspace }}/bench/harbor_fa
+          FA_PROVIDER_TYPE: zai
+          FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+          FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
+          MODEL: ${{ inputs.model }}
+          ATTEMPTS: ${{ inputs.attempts }}
+          NCONC: ${{ inputs.n-concurrent }}
+          ENV_TYPE: ${{ matrix.env }}
+          DATASET: ${{ inputs.dataset }}
+          # shard task names: dataset dir names, no whitespace — safe to word-split.
+          SHARD_TASKS: ${{ matrix.tasks }}
+        run: |
+          set -euo pipefail
+          [ -n "$FA_KEY_API_Z_AI_Z_AI" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
+          if [ "$ENV_TYPE" = modal ]; then
+            [ -n "$MODAL_TOKEN_ID" ] && [ -n "$MODAL_TOKEN_SECRET" ] || { echo '::error::Modal secrets are not set'; exit 1; }
+          fi
+          # fa_agent.py ships the key into the container base64-encoded; GitHub
+          # auto-masks only the raw value, so mask the base64 form too.
+          echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
+          args=()
+          for t in $SHARD_TASKS; do args+=(-i "$t"); done
+          # Pinned --job-name: one jobs/<name>/ dir per shard, so the summary
+          # job's downloads cannot collide on harbor's timestamped default.
+          harbor run -d "$DATASET" -a fa_agent:FaAgent \
+            -e "$ENV_TYPE" -m "$MODEL" -k "$ATTEMPTS" -n "$NCONC" \
+            --job-name "fa-4.0-${ENV_TYPE}-${{ matrix.i }}" -o jobs \
+            "${args[@]}"
+
+      - name: Upload harbor job (shard ${{ matrix.i }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harbor-job-shard-${{ matrix.i }}
+          path: jobs/
+
+      - name: Upload to Harbor Hub
+        if: always() && env.HARBOR_API_KEY != ''
+        env:
+          HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
+        run: |
+          shopt -s nullglob
+          for job_dir in jobs/fa-4.0-*; do
+            harbor upload "$job_dir" --public
+          done
+
+  summary:
+    name: Aggregate resolution rate
+    needs: [setup, bench]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download shard results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: harbor-job-shard-*
+          merge-multiple: true
+          path: jobs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # harbor exits 0 even with unresolved trials; the verdict here covers
+      # run completeness — every expected trial attempted — after the merged
+      # artifact below is uploaded.
+      - name: Upload merged harbor jobs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harbor-jobs-merged
+          path: jobs/
+
+      - name: Resolution summary & verdict
+        if: always()
+        env:
+          EXPECTED_TASKS: ${{ needs.setup.outputs.count }}
+          ATTEMPTS: ${{ inputs.attempts }}
+        run: |
+          set -euo pipefail
+          expected_trials=$((EXPECTED_TASKS * ATTEMPTS))
+          python bench/harbor_fa/summary.py --expected-trials "$expected_trials" jobs
