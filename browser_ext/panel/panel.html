@@ -116,6 +116,24 @@
     </section>
 
     <section>
+      <h2>Inbound mail routing</h2>
+      <div class="dim">Where hub DMs land: a dedicated agent session (default), the current session, or a picked one.</div>
+      <!-- One id per mode: panel.js resolves DOM only through $()
+           (getElementById) — the vm-test harness stubs that, while
+           querySelectorAll probes at import time break it (issue #321). -->
+      <label><input type="radio" name="dapBindMode" id="dapMode_dedicated" value="dedicated" checked> Dedicated "DAP Inbox" session</label>
+      <label><input type="radio" name="dapBindMode" id="dapMode_current" value="current"> Current session</label>
+      <label><input type="radio" name="dapBindMode" id="dapMode_named" value="named"> Named session</label>
+      <div id="dapBindNamedRow" hidden>
+        <label>Session
+          <select id="dapBindSession"></select>
+        </label>
+      </div>
+      <button id="saveDapBind">Save routing</button>
+      <div id="dapBindStatus" class="dim"></div>
+    </section>
+
+    <section>
       <h2>Advanced — power tools</h2>
       <div class="dim">
         Each toggle asks Chrome for the tool's optional permission. Enabled

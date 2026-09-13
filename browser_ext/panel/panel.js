@@ -361,6 +361,133 @@ $('saveHub').addEventListener('click', async () => {
   $('hubSecret').value = '';
 });
 
+// --- DAP inbound-mail routing (faDap.boundSession) -----------------------
+// The panel NEVER reads faDap from chrome.storage: the read goes through
+// call({type:'hub.bind.get'}) — the SW answers with routing fields ONLY
+// ({mode, sessionId?, title?}), so the hub secret never crosses into the
+// UI ('UI holds no keys'). Saves go via call({type:'hub.bind'}) — the SW
+// merges the binding into faDap (preserving url/name/secret/
+// savedConnections) and reboots the agent with the new routing.
+//
+// Default when nothing is stored: 'dedicated' — the first inbound mail
+// mints the 'DAP Inbox' session; the SW persists its id back into
+// faDap.boundSession.sessionId so it survives SW restarts.
+//
+// Mode switches never lose already-received mail: routing is forward-only
+// (boundSessionAction decides the pre-turn move for FUTURE mail; archived
+// sessions stay put, and a dangling bound id degrades to the live session).
+//
+// All DOM access sits behind $() (getElementById) inside initDapBind() —
+// no top-level querySelector probes: the vm-test harness serves
+// getElementById with create-on-access stubs, and an import-time DOM query
+// breaks every panel test (issue #321 review).
+//
+// TODO(unread-badge contract, v2 Flutter panel owns the session drawer):
+// SW adds `dapUnread: <count>` to the status payload per bound session
+// (hub mails routed there since it was last opened); the v2 panel renders
+// it as a badge on the session list entry and clears on open. NOT
+// implemented in this v1 panel — no session drawer here.
+
+const DAP_MODES = ['dedicated', 'current', 'named'];
+
+function dapMode() {
+  for (const m of DAP_MODES) {
+    if ($(`dapMode_${m}`).checked) return m;
+  }
+  return 'dedicated'; // nothing checked (fresh panel) — the default
+}
+
+function setDapMode(mode) {
+  const valid = DAP_MODES.includes(mode) ? mode : 'dedicated';
+  for (const m of DAP_MODES) $(`dapMode_${m}`).checked = m === valid;
+  $('dapBindNamedRow').hidden = valid !== 'named';
+}
+
+// One status-line phrase per binding. Dedicated renders the bound title
+// ('DAP Inbox' when the session was self-minted) so the title the first
+// bind writes is visible where the mail actually lands.
+function describeDapBind(bound) {
+  const mode = DAP_MODES.includes(bound?.mode) ? bound.mode : 'dedicated';
+  if (mode === 'named') {
+    return bound?.sessionId ? `named → ${bound.sessionId}` : 'named';
+  }
+  if (mode === 'dedicated') {
+    const label = bound?.title || 'DAP Inbox';
+    return bound?.sessionId
+      ? `dedicated → ${label} (${bound.sessionId})`
+      : `dedicated → ${label}`;
+  }
+  return 'current';
+}
+
+async function loadDapBind() {
+  let bound = null;
+  try {
+    const res = await call({ type: 'hub.bind.get' });
+    if (res?.ok) bound = res.binding ?? null;
+    if (bound?.sessionId) $('dapBindSession').dataset.boundId = bound.sessionId;
+    await refreshDapBindSessions(bound?.sessionId ?? '');
+  } catch {
+    // hub.bind.get / hub.sessions unavailable (SW down, partial DOM in the
+    // vm harness) — degrade to the dedicated default. Panel boot must never
+    // depend on this round-trip (issue #321 review).
+  }
+  setDapMode(bound?.mode ?? 'dedicated');
+  $('dapBindStatus').textContent = bound
+    ? `routing: ${describeDapBind(bound)}`
+    : 'routing: dedicated (default)';
+}
+
+async function refreshDapBindSessions(selectedId) {
+  const sel = $('dapBindSession');
+  sel.innerHTML = '';
+  const res = await call({ type: 'hub.sessions' });
+  const sessions = res?.ok ? (res.sessions ?? []) : [];
+  for (const s of sessions) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = `${s.id} (${s.messages ?? 0} msgs${s.running ? ', running' : ''})`;
+    sel.appendChild(opt);
+  }
+  if (selectedId) sel.value = selectedId;
+}
+
+async function saveDapBind() {
+  const mode = dapMode();
+  const msg = { type: 'hub.bind', mode };
+  if (mode === 'named') {
+    const sessionId = $('dapBindSession').value;
+    if (!sessionId) { $('dapBindStatus').textContent = 'pick a session for named mode'; return; }
+    msg.sessionId = sessionId;
+    msg.title = $('dapBindSession').selectedOptions?.[0]?.textContent ?? '';
+  } else if (mode === 'dedicated') {
+    const kept = $('dapBindSession').dataset.boundId ?? '';
+    if (kept) msg.sessionId = kept; // rebind preserves the existing dedicated session
+    else msg.title = 'DAP Inbox';   // first inbound mail mints it under this title
+  }
+  const res = await call(msg);
+  if (res?.ok) {
+    log(`dap bind saved: ${mode}${msg.sessionId ? ' → ' + msg.sessionId : ''}`);
+    // The SW's persisted view wins (it preserves the minted title on a
+    // dedicated rebind); the local payload is the fallback.
+    $('dapBindStatus').textContent = `routing: ${describeDapBind(res.binding ?? msg)}`;
+  } else {
+    $('dapBindStatus').textContent = `save failed: ${res?.error ?? 'no response'}`;
+  }
+}
+
+function initDapBind() {
+  for (const m of DAP_MODES) {
+    $(`dapMode_${m}`).addEventListener('change', () => {
+      $('dapBindNamedRow').hidden = dapMode() !== 'named';
+    });
+  }
+  $('saveDapBind').addEventListener('click', saveDapBind);
+  loadDapBind();
+}
+initDapBind();
+
+
 // -- Advanced: Settings-gated power tools (issue #34 AC4d) --------------------
 // Each toggle is the user gesture Chrome requires: enabling requests the
 // tool's optional permission, disabling revokes it, then the enabled-map
