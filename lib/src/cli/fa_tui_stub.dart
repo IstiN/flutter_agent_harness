@@ -64,6 +64,7 @@ final class FaTuiController {
     // with the dart_tui controller in fa_tui.dart.
     TuiProgramHooks? programHooks,
     bool mouseCapture = true,
+    bool? syncOutput,
   });
 
   final FaTuiCallbacks callbacks;
