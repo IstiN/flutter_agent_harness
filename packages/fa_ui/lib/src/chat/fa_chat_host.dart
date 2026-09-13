@@ -54,6 +54,32 @@ abstract interface class FaChatVoiceInput {
 /// Launches a js mini-app referenced by a tool result (fa-only feature).
 typedef FaChatAppLauncher = void Function(BuildContext context, String appId);
 
+/// A host-contributed adaptive-header action (issues #224/#225): the
+/// host-styled [widget] is the inline bar button, while [label] and
+/// [onPressed] feed the header's overflow (⋮) menu when the action demotes
+/// on tight widths. [key] lands on the bar widget for tests.
+class FaChatHeaderAction {
+  const FaChatHeaderAction({
+    this.key,
+    required this.widget,
+    required this.label,
+    required this.onPressed,
+  });
+
+  /// The key for the inline bar widget (lookup in widget tests).
+  final Key? key;
+
+  /// The inline bar button, styled by the host (rendered as-is).
+  final Widget widget;
+
+  /// The overflow-menu label (and accessible description of the action).
+  final String label;
+
+  /// Invoked when the action is triggered from the overflow menu (the
+  /// inline [widget] keeps its own handler).
+  final VoidCallback onPressed;
+}
+
 /// Process-wide host hooks for the chat widgets, mirroring [FaUiHost]:
 /// set once at startup, everything optional with documented fallbacks.
 abstract final class FaChatHost {
@@ -108,15 +134,17 @@ abstract final class FaChatHost {
   /// ✦ button opening the host's list sheet); null/unset or a null return
   /// hides the button. Consulted when the app bar builds, so the host
   /// widget decides its own visibility (e.g. hidden while the session has
-  /// no dynamic messages).
-  static Widget? Function(BuildContext context, FaChatService service)?
-  dynamicMessagesButtonBuilder;
+  /// no dynamic messages). The returned action's [FaChatHeaderAction.widget]
+  /// is the inline bar button; its label/handler feed the adaptive overflow
+  /// menu when the action demotes on tight widths (issue #225).
+  static FaChatHeaderAction? Function(BuildContext context, FaChatService
+  service)? dynamicMessagesButtonBuilder;
 
   /// Builds the apps-collapse toggle for the top bar (issue #224: the Apps
   /// icon that fully expands/collapses the apps surface). Same contract as
   /// [dynamicMessagesButtonBuilder]: null/unset or a null return hides the
   /// button, and the host widget decides its own visibility — hosts that
   /// don't wire the slot render the bar exactly as before.
-  static Widget? Function(BuildContext context, FaChatService service)?
-  appsToggleButtonBuilder;
+  static FaChatHeaderAction? Function(BuildContext context, FaChatService
+  service)? appsToggleButtonBuilder;
 }

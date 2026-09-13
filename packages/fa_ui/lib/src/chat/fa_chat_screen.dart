@@ -34,6 +34,7 @@ import 'ask_ui.dart';
 import 'chat_composer.dart';
 import 'chat_message_tile.dart';
 import 'chat_strings.dart';
+import 'fa_adaptive_header.dart';
 import 'fa_chat_features.dart';
 import 'fa_chat_host.dart';
 import 'fa_chat_service.dart';
@@ -78,6 +79,11 @@ class FaChatScreen extends StatefulWidget {
     this.onPermissionAction,
     this.audioControllerFactory,
     this.videoControllerFactory,
+    this.projectIcon,
+    this.projectIconColor,
+    this.projectLabel,
+    this.onProjectTap,
+    this.modelChip,
   });
 
   /// The session this screen renders and sends to.
@@ -136,6 +142,25 @@ class FaChatScreen extends StatefulWidget {
   /// `video_player`-backed controller. Tests/goldens inject fakes.
   final SandboxVideoControllerFactory? videoControllerFactory;
 
+  /// The project identity in the adaptive header (issue #225): the folder
+  /// glyph + label ("Personal" or the folder basename) the host renders
+  /// instead of a separate project bar row. Null renders no project slot.
+  final IconData? projectIcon;
+
+  /// The project icon color (indigo when the session has a folder).
+  final Color? projectIconColor;
+
+  /// The project identity label ("Personal" or the folder basename).
+  final String? projectLabel;
+
+  /// Invoked on the project pill's tap (the wide shell's session info).
+  final VoidCallback? onProjectTap;
+
+  /// The inline quick-model chip (host-built): a first-class header
+  /// citizen that demotes into the ⋮ menu only under extreme width
+  /// (issue #225).
+  final Widget? modelChip;
+
   @override
   State<FaChatScreen> createState() => _FaChatScreenState();
 }
@@ -165,6 +190,11 @@ Future<String> chatImageMessageSource(
 class _FaChatScreenState extends State<FaChatScreen>
     with TickerProviderStateMixin {
   late final InMemoryChatController _chatController;
+
+  /// The screen's scaffold, so bar actions can open the files end drawer
+  /// without needing a context below the [Scaffold] (the adaptive header
+  /// builds its action closures at the screen level).
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   /// Own scroll controller for the message list (injected via
   /// [Builders.chatAnimatedListBuilder]) so the follow-tail logic can track
@@ -328,9 +358,8 @@ class _FaChatScreenState extends State<FaChatScreen>
       widget.fileBrowserBuilder ?? FaChatHost.fileBrowserBuilder;
 
   /// Opens the file browser: toggles the right side panel on wide layouts,
-  /// opens the end drawer on narrow ones. [context] must be below the
-  /// [Scaffold].
-  void _openFiles(BuildContext context) {
+  /// opens the end drawer on narrow ones.
+  void _openFiles() {
     if (MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint) {
       setState(() => _filesPanelOpen = !_filesPanelOpen);
       if (_filesPanelOpen) {
@@ -338,7 +367,7 @@ class _FaChatScreenState extends State<FaChatScreen>
       }
     } else {
       FaChatHost.track('files_opened', {'source': 'chat'});
-      Scaffold.of(context).openEndDrawer();
+      _scaffoldKey.currentState?.openEndDrawer();
     }
   }
 
@@ -1054,51 +1083,70 @@ class _FaChatScreenState extends State<FaChatScreen>
       context,
       widget.service,
     );
+    // The adaptive header's action list (issue #225): the list IS the
+    // priority order and demotion removes from the tail, so the pinned
+    // streaming stop comes first (never demoted — E2), then the primary
+    // actions (files, trajectory), then the secondary ones (copy, the
+    // host's ✦ and Apps widgets) that yield first on tight widths.
+    final headerActions = <FaHeaderAction>[
+      if (_isStreaming)
+        FaHeaderAction(
+          icon: Icons.stop,
+          label: strings.chatAbortTooltip,
+          onPressed: widget.service.abort,
+          pinned: true,
+        ),
+      if (fileBrowserBuilder != null)
+        FaHeaderAction(
+          icon: Icons.folder_outlined,
+          label: strings.chatFilesTooltip,
+          onPressed: _openFiles,
+        ),
+      // Wide: the app-bar entry pushes the full-screen master-detail
+      // route (AC1). Narrow uses the switcher below the app bar instead.
+      if (widget.features.trajectory && isWide)
+        FaHeaderAction(
+          icon: Icons.timeline,
+          label: strings.chatTrajectoryTooltip,
+          onPressed: _openTrajectoryRoute,
+        ),
+      if (widget.features.copyTranscript)
+        FaHeaderAction(
+          icon: Icons.copy_outlined,
+          label: strings.chatCopySessionTooltip,
+          onPressed: _copySession,
+        ),
+      // The host's dynamic-messages affordance (issue #102: the ✦ button)
+      // and apps-collapse toggle (issue #224: the Apps icon), rendered
+      // exactly as the host styles them, demotable into the ⋮ menu.
+      if (dynamicMessagesButton != null)
+        FaHeaderAction.widget(
+          widget: dynamicMessagesButton.widget,
+          label: dynamicMessagesButton.label,
+          onPressed: dynamicMessagesButton.onPressed,
+        ),
+      if (appsToggleButton != null)
+        FaHeaderAction.widget(
+          widget: appsToggleButton.widget,
+          label: appsToggleButton.label,
+          onPressed: appsToggleButton.onPressed,
+        ),
+    ];
     return Scaffold(
+      key: _scaffoldKey,
       appBar: widget.showAppBar
           ? AppBar(
-              title: Text(widget.title),
-              actions: [
-                // The host's apps-collapse toggle (issue #224: the Apps
-                // icon). Consulted when the bar builds; null = no button.
-                ?appsToggleButton,
-                // The host's dynamic-messages affordance (issue #102: the
-                // ✦ button). Consulted when the bar builds, so the host
-                // widget decides its own visibility; null = no button.
-                ?dynamicMessagesButton,
-                if (_isStreaming)
-                  IconButton(
-                    icon: const Icon(Icons.stop),
-                    tooltip: strings.chatAbortTooltip,
-                    onPressed: widget.service.abort,
-                  ),
-                if (fileBrowserBuilder != null)
-                  Builder(
-                    builder: (context) => IconButton(
-                      icon: const Icon(Icons.folder_outlined),
-                      tooltip: strings.chatFilesTooltip,
-                      onPressed: () => _openFiles(context),
-                    ),
-                  ),
-                if (widget.features.copyTranscript)
-                  IconButton(
-                    icon: const Icon(Icons.copy_outlined),
-                    tooltip: strings.chatCopySessionTooltip,
-                    onPressed: _copySession,
-                  ),
-                // Wide: the app-bar entry pushes the full-screen
-                // master-detail route (AC1). Narrow uses the switcher
-                // below the app bar instead.
-                if (widget.features.trajectory && isWide)
-                  IconButton(
-                    icon: const Icon(Icons.timeline),
-                    tooltip: strings.chatTrajectoryTooltip,
-                    onPressed: _openTrajectoryRoute,
-                  ),
-                // Settings icon removed — settings are accessible from the
-                // sidebar nav and the apps panel (prototype has no settings
-                // in the chat tab).
-              ],
+              // The ONE adaptive header (issue #225): project identity ·
+              // title · model chip · actions · ⋮ overflow in one row.
+              title: FaAdaptiveHeader(
+                title: widget.title,
+                projectIcon: widget.projectIcon,
+                projectIconColor: widget.projectIconColor,
+                projectLabel: widget.projectLabel,
+                onProjectTap: widget.onProjectTap,
+                chip: widget.modelChip,
+                actions: headerActions,
+              ),
               // Narrow: the Chat | Trajectory switcher sits in the app
               // bar's bottom slot and swaps the screen body.
               bottom: widget.features.trajectory && !isWide

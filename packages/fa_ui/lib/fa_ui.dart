@@ -17,6 +17,7 @@ export 'src/chat/chat_strings.dart';
 export 'src/chat/fa_glyphs.dart';
 export 'src/chat/fa_chat_features.dart';
 export 'src/chat/fa_chat_host.dart';
+export 'src/chat/fa_adaptive_header.dart';
 export 'src/chat/fa_chat_screen.dart';
 export 'src/chat/fa_chat_service.dart';
 export 'src/chat/markdown_style.dart';

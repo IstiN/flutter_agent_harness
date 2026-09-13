@@ -22,9 +22,16 @@ void main() {
   testWidgets('the host appsToggleButtonBuilder renders the Apps button '
       '(issue #224)', (tester) async {
     var taps = 0;
-    FaChatHost.appsToggleButtonBuilder = (context, service) => IconButton(
-          key: const ValueKey('testAppsToggle'),
-          icon: const Icon(Icons.apps),
+    FaChatHost.appsToggleButtonBuilder = (context, service) =>
+        FaChatHeaderAction(
+          // The host-styled inline button (issue #224 contract, now riding
+          // the adaptive header's demotable action list — issue #225).
+          widget: IconButton(
+            key: const ValueKey('testAppsToggle'),
+            icon: const Icon(Icons.apps),
+            onPressed: () => taps++,
+          ),
+          label: 'Apps',
           onPressed: () => taps++,
         );
     addTearDown(() => FaChatHost.appsToggleButtonBuilder = null);
