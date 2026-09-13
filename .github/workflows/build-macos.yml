@@ -613,6 +613,12 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_KEY_CONTENT: ${{ secrets.APP_STORE_CONNECT_KEY_CONTENT }}
           MACOS_PKG_PATH: ${{ github.workspace }}/${{ steps.testflight_pkg.outputs.pkg_name }}
+          # External TestFlight distribution (issue #239): lanes fail
+          # loudly when these are unset — set them once as repo variables.
+          TESTFLIGHT_EXTERNAL_GROUP: ${{ vars.TESTFLIGHT_EXTERNAL_GROUP }}
+          BETA_APP_FEEDBACK_EMAIL: ${{ vars.BETA_APP_FEEDBACK_EMAIL }}
+          BETA_REVIEW_CONTACT_EMAIL: ${{ vars.BETA_REVIEW_CONTACT_EMAIL }}
+          BETA_REVIEW_CONTACT_PHONE: ${{ vars.BETA_REVIEW_CONTACT_PHONE }}
         run: |
           set -euo pipefail
           if [ -z "${APP_STORE_CONNECT_KEY_CONTENT:-}" ]; then

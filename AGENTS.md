@@ -1392,6 +1392,23 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
   `_wire_compile_wasm` — Podfiles force-load + `-exported_symbol` +
   `STRIP_STYLE=non-global`, else white screen on TestFlight). Pods cached
   keyed by `Podfile.lock`.
+- TestFlight external distribution (issue #239): the `submit_only` lanes
+  (driven by build-mobile.yml / build-macos.yml) distribute every build
+  straight to the EXTERNAL group — REQUIRED repo variables
+  `TESTFLIGHT_EXTERNAL_GROUP`, `BETA_REVIEW_CONTACT_EMAIL`,
+  `BETA_REVIEW_CONTACT_PHONE`, `BETA_APP_FEEDBACK_EMAIL` (lanes fail loudly
+  at start without them). Pilot must WAIT for processing (skipping the wait
+  silently skips distribution); `verify_external_distribution!` asserts
+  group membership bounded — beta-review-pending is a neutral notice, a
+  build never reaching the group fails the leg (self-filed issue).
+- Manual App Store review: `release-appstore.yml` (workflow_dispatch:
+  `version` + `platforms` ios/macos/both + `confirm` repeating the version)
+  runs the `submit_for_review` lanes — pure pre-flight in
+  `flutter_app/fastlane/appstore_preflight.rb` (plain-ruby tested) fails
+  BEFORE any mutation; already-submitted versions are a green no-op;
+  release-after-approval stays a manual ASC click
+  (`APP_STORE_AUTOMATIC_RELEASE` repo variable flips it, E5). Grep-guards:
+  `test/store_automation_guard_test.dart`.
 - App Store content pipeline (no binary): store screenshots are COMMITTED
   goldens from `flutter_app/test/golden/store_screenshots_test.dart` (frame +
   inline en/ru copy in `store_marketing_frame.dart`) at
