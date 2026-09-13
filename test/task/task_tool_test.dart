@@ -174,12 +174,13 @@ _Harness _harness({
   List<TaskAgentDefinition> agentTypes = const [],
   ModelRolesResolver? rolesResolver,
   _ScriptedStream? stream,
+  Model model = _model,
 }) {
   final s = stream ?? _ScriptedStream(rules);
   final config = TaskToolConfig(
     childTools: childTools ?? _pool(),
     streamFunction: () => s.call,
-    model: () => _model,
+    model: () => model,
     rolesResolver: rolesResolver,
     agentTypes: agentTypes,
     maxConcurrent: maxConcurrent,
@@ -1232,6 +1233,56 @@ void main() {
         expect(parentStream.models.single.id, _model.id);
       },
     );
+
+    test('an explore child inherits the parent cap when its role only '
+        'inherits default (#302)', () async {
+      final parentStream = _ScriptedStream();
+      // Only the default chain is configured: smol would ride it, but the
+      // child must keep the parent's LIVE model — its runtime-resolved
+      // output cap — not the chain entry's rebuilt one (maxTokens 128).
+      final defaultOnlyResolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            defaultModelRole: [
+              ModelRef(
+                provider: 'anthropic',
+                modelId: 'test-main',
+                contextWindow: 1000,
+                maxTokens: 128,
+              ),
+            ],
+          },
+        ),
+        secrets: const {'ANTHROPIC_API_KEY': 'test-key'},
+        streamFactory: (kind, apiKey) => parentStream.call,
+      );
+      const parentModel = Model(
+        id: 'parent-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 100000,
+        maxTokens: 64000,
+      );
+      final h = _harness(
+        stream: parentStream,
+        rolesResolver: defaultOnlyResolver,
+        model: parentModel,
+      );
+      await h.tool.execute(
+        {
+          'context': 'ctx',
+          'tasks': [
+            {'agent': 'explore', 'task': 'scout it'},
+          ],
+        },
+        null,
+        null,
+      );
+      expect(parentStream.calls, 1);
+      expect(parentStream.models.single.id, 'parent-model');
+      expect(parentStream.models.single.maxTokens, 64000);
+    });
   });
 
   group('call validation', () {

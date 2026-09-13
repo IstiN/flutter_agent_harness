@@ -295,6 +295,41 @@ modelOverrides:
     });
   });
 
+  group('ModelRolesConfig.pinsRole', () {
+    final config = ModelRolesConfig.fromYaml(
+      _yaml('''
+roles:
+  default:
+    - openai/gpt-4o
+  smol:
+    - openai/gpt-4o-mini
+modelOverrides:
+  - path: /work
+    roles:
+      plan:
+        - anthropic/claude-opus-4-5
+'''),
+    );
+
+    test('a top-level chain pins its role', () {
+      expect(config.pinsRole('smol'), isTrue);
+      expect(config.pinsRole('smol', cwd: '/elsewhere'), isTrue);
+    });
+
+    test('a path override pins its role only inside the pattern', () {
+      expect(config.pinsRole('plan', cwd: '/work'), isTrue);
+      expect(config.pinsRole('plan', cwd: '/elsewhere'), isFalse);
+      expect(config.pinsRole('plan'), isFalse);
+    });
+
+    test('an unpinned role riding inherit-default is not pinned', () {
+      // slow is unconfigured: chainFor('slow') inherits default, but the
+      // role itself is not explicitly configured anywhere (#302).
+      expect(config.pinsRole('slow'), isFalse);
+      expect(config.pinsRole('slow', cwd: '/work'), isFalse);
+    });
+  });
+
   group('pathPatternMatches', () {
     test('matches the path itself and subdirectories', () {
       expect(pathPatternMatches('/work', '/work'), isTrue);
