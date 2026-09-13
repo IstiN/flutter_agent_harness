@@ -88,14 +88,12 @@ class DapHubController {
   }) : environment = environment ?? Platform.environment,
        url = url ?? resolveDapLocalHubUrl(environment ?? Platform.environment),
        _spawnHub = spawnHub ?? _defaultSpawn,
-       _terminateHub = terminateHub ??
+       _terminateHub =
+           terminateHub ??
            ((pid) => defaultDapTerminate(
-                 pid,
-                 url ??
-                     resolveDapLocalHubUrl(
-                       environment ?? Platform.environment,
-                     ),
-               )) {
+             pid,
+             url ?? resolveDapLocalHubUrl(environment ?? Platform.environment),
+           )) {
     _out = out;
   }
 
@@ -137,12 +135,10 @@ class DapHubController {
   File get _stateFile =>
       defaultHubStateFile(home: home, environment: environment);
 
-  String get _configPath =>
-      client.defaultDapConfigFile(home, environment);
+  String get _configPath => client.defaultDapConfigFile(home, environment);
 
-  File get _pidFile => File(
-    environment[envHubPidFile] ?? dapHubPidFileFor(_homeRoot),
-  );
+  File get _pidFile =>
+      File(environment[envHubPidFile] ?? dapHubPidFileFor(_homeRoot));
 
   Uri get _uri => Uri.parse(url);
 
@@ -207,8 +203,7 @@ class DapHubController {
     final entered = (await prompt(
       'DAP master key for the local hub '
       '(hidden; empty = open hub, anyone on this machine can join): ',
-    ))
-        ?.trim();
+    ))?.trim();
     if (entered == null || entered.isEmpty) {
       await _rememberOpenChoice(stateFile, state.clients);
       return null;
@@ -250,58 +245,88 @@ class DapHubController {
   /// interactive host prompt for the master key (up to 3×, E3). Success
   /// persists the hub-issued clientSecret (never a master key), 0600.
   Future<bool> _ensureCredential({String? knownMaster}) async {
-    final config = client.readDapConfig(_configPath);
-    final attempts = <(String?, bool)>[
-      if (config['clientSecret'] is String &&
-          (config['clientSecret'] as String).isNotEmpty)
-        (config['clientSecret'] as String, false),
-      if (knownMaster != null) (knownMaster, true),
-      if (_readHubState().masterSecret case final master?)
-        if (master != knownMaster) (master, true),
-      (null, true), // open hub: bare dial + ceremonial enroll
-    ];
-    for (final (secret, enroll) in attempts) {
-      final outcome = await _tryDial(secret, enroll: enroll);
-      if (outcome.ok) {
-        await _finishCredential();
-        return true;
-      }
-      if (outcome.unauthorized &&
-          identical(secret, config['clientSecret'])) {
-        // A stale cached secret the hub rejects must not win precedence
-        // forever — drop it (the hub-issued flow below re-arms it).
-        await client.persistDapConfig(
-          clearClientSecret: true,
-          file: _configPath,
-        );
-      }
-    }
-    // Interactive last resort: the user knows the hub's master key.
-    for (var attempt = 1; attempt <= 3; attempt++) {
-      final prompt = secretPrompt;
-      if (prompt == null) break;
-      final entered = (await prompt(
-        'DAP master key for $url (hidden): ',
-      ))
-          ?.trim();
-      if (entered == null || entered.isEmpty) break;
-      final outcome = await _tryDial(entered, enroll: true);
-      if (outcome.ok) {
-        await _finishCredential();
-        return true;
-      }
-      if (outcome.unauthorized && attempt < 3) {
-        say('enrollment rejected (wrong master key) — try again');
-        continue;
-      }
-      break;
-    }
+    final cached = client.readDapConfig(_configPath)['clientSecret'];
+    final cachedEnrolled = await _tryCredentialAttempts(
+      _credentialAttempts(cachedSecret: cached, knownMaster: knownMaster),
+      cached,
+    );
+    if (cachedEnrolled || await _promptMasterCredential()) return true;
     say(
       'could not enroll with this hub — manual recovery: set the hub '
       'password in ~/.dap/hub.json (masterSecret), or export '
       'DAP_MASTER_SECRET, then re-run fa dap start',
     );
     return false;
+  }
+
+  /// The dial attempts in precedence order: the cached clientSecret,
+  /// the master this start resolved, the persisted state's master,
+  /// then a bare open-hub enroll.
+  List<(String?, bool)> _credentialAttempts({
+    required Object? cachedSecret,
+    String? knownMaster,
+  }) => [
+    if (cachedSecret is String && cachedSecret.isNotEmpty)
+      (cachedSecret, false),
+    if (knownMaster != null) (knownMaster, true),
+    if (_readHubState().masterSecret case final master?)
+      if (master != knownMaster) (master, true),
+    (null, true), // open hub: bare dial + ceremonial enroll
+  ];
+
+  /// Runs the attempts in order until one dials; drops a stale cached
+  /// clientSecret the hub 401-rejects ([cachedSecret], by identity) so
+  /// it cannot win precedence forever.
+  Future<bool> _tryCredentialAttempts(
+    List<(String?, bool)> attempts,
+    Object? cachedSecret,
+  ) async {
+    for (final (secret, enroll) in attempts) {
+      final outcome = await _tryDial(secret, enroll: enroll);
+      if (outcome.ok) {
+        await _finishCredential();
+        return true;
+      }
+      if (outcome.unauthorized && identical(secret, cachedSecret)) {
+        await client.persistDapConfig(
+          clearClientSecret: true,
+          file: _configPath,
+        );
+      }
+    }
+    return false;
+  }
+
+  /// The interactive last resort: the user knows the hub's master key
+  /// (up to 3 tries, E3); true when a prompted dial enrolls.
+  Future<bool> _promptMasterCredential() async {
+    final prompt = secretPrompt;
+    if (prompt == null) return false;
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      final outcome = await _promptedMasterDial(prompt);
+      if (outcome == null) break;
+      if (outcome.ok) {
+        await _finishCredential();
+        return true;
+      }
+      if (outcome.unauthorized && attempt < 3) {
+        say('enrollment rejected (wrong master key) — try again');
+      } else {
+        break;
+      }
+    }
+    return false;
+  }
+
+  /// One prompted master-key dial; null on an empty answer (give up).
+  Future<({bool ok, bool unauthorized})?> _promptedMasterDial(
+    DapSecretPrompt prompt,
+  ) async {
+    final entered = (await prompt(
+      'DAP master key for $url (hidden): ',
+    ))?.trim();
+    if (entered == null || entered.isEmpty) return null;
+    return _tryDial(entered, enroll: true);
   }
 
   /// Post-success bookkeeping: pin the url next to the credential and
@@ -353,9 +378,7 @@ class DapHubController {
         final deadline = DateTime.now().add(const Duration(seconds: 3));
         while (DateTime.now().isBefore(deadline)) {
           final stored = client.readDapConfig(_configPath)['clientSecret'];
-          if (stored is String &&
-              stored.isNotEmpty &&
-              stored != secret) {
+          if (stored is String && stored.isNotEmpty && stored != secret) {
             _enrolledThisSession = true;
             break;
           }
@@ -466,10 +489,7 @@ class DapHubController {
   /// available.
   Future<DapHubProbeResult> probeHub() async {
     if (!await healthzOk()) {
-      return (
-        kind: DapHubProbeKind.down,
-        peers: const <String>[],
-      );
+      return (kind: DapHubProbeKind.down, peers: const <String>[]);
     }
     var sawUnauthorized = false;
     for (final credential in _probeCredentials()) {
@@ -482,18 +502,13 @@ class DapHubController {
       } on _WsUnauthorized {
         sawUnauthorized = true;
       } on _WsNotAHub {
-        return (
-          kind: DapHubProbeKind.foreign,
-          peers: const <String>[],
-        );
+        return (kind: DapHubProbeKind.foreign, peers: const <String>[]);
       }
     }
     // Every credential was rejected but the WS endpoint answers with the
     // DAP 401 shape: a protected hub we cannot list (still attachable).
     return (
-      kind: sawUnauthorized
-          ? DapHubProbeKind.running
-          : DapHubProbeKind.foreign,
+      kind: sawUnauthorized ? DapHubProbeKind.running : DapHubProbeKind.foreign,
       peers: const <String>[],
     );
   }
@@ -517,13 +532,18 @@ class DapHubController {
   /// unknown). Throws [_WsNotAHub] when the upgrade itself fails
   /// (foreign server) and [_WsUnauthorized] on a 401 upgrade.
   Future<List<String>?> _presenceProbe(String? credential) async {
-    final WebSocket ws;
+    final ws = await _connectProbeSocket(credential);
+    return _probeRoster(ws);
+  }
+
+  /// Connects the probe's `/ws` socket (3s budget): [_WsUnauthorized]
+  /// on a 401 upgrade, [_WsNotAHub] on any other failure.
+  Future<WebSocket> _connectProbeSocket(String? credential) async {
     try {
-      ws = await WebSocket.connect(
+      return await WebSocket.connect(
         url,
         headers: {
-          if (credential != null)
-            'Authorization': 'Bearer $credential',
+          if (credential != null) 'Authorization': 'Bearer $credential',
         },
       ).timeout(const Duration(seconds: 3));
     } on WebSocketException catch (error) {
@@ -534,37 +554,21 @@ class DapHubController {
     } on Object {
       throw _WsNotAHub();
     }
+  }
+
+  /// Asks `presence_query` and awaits the roster answer (3s budget);
+  /// null when no answer arrives — running, roster unknown.
+  Future<List<String>?> _probeRoster(WebSocket ws) async {
+    final answer = Completer<List<String>>();
+    // The probe's frame id: the answer must echo it as `replyTo`
+    // (protocol §presence). Matching on it keeps an unsolicited
+    // presence PUSH (a broadcast racing the query answer) from
+    // completing the probe with a partial roster.
+    final probeId = 'fa-dap-probe-${_nonce()}';
+    late final StreamSubscription sub;
+    sub = ws.listen((dynamic data) => _onProbeFrame(answer, probeId, data));
+    ws.add(jsonEncode({'op': 'presence_query', 'id': probeId}));
     try {
-      final answer = Completer<List<String>>();
-      // The probe's frame id: the answer must echo it as `replyTo`
-      // (protocol §presence). Matching on it keeps an unsolicited
-      // presence PUSH (a broadcast racing the query answer) from
-      // completing the probe with a partial roster.
-      final probeId = 'fa-dap-probe-${_nonce()}';
-      late final StreamSubscription sub;
-      sub = ws.listen((dynamic data) {
-        try {
-          final frame = jsonDecode(data as String);
-          if (frame is Map &&
-              frame['op'] == 'presence' &&
-              frame['replyTo'] == probeId &&
-              !answer.isCompleted) {
-            final agents = frame['agents'];
-            answer.complete([
-              if (agents is List)
-                for (final agent in agents)
-                  if (agent is Map &&
-                      agent['online'] == true &&
-                      agent['name'] is String)
-                    agent['name'] as String,
-            ]);
-          }
-        } on Object {
-          // Not a presence frame — the timeout below downgrades to
-          // "running, roster unknown" rather than guessing.
-        }
-      });
-      ws.add(jsonEncode({'op': 'presence_query', 'id': probeId}));
       final peers = await answer.future.timeout(const Duration(seconds: 3));
       await sub.cancel();
       return peers;
@@ -579,6 +583,38 @@ class DapHubController {
     }
   }
 
+  /// Feeds one inbound frame into [answer] when it is THE presence
+  /// answer (matched by `replyTo`, protocol §presence); anything else
+  /// is ignored.
+  void _onProbeFrame(
+    Completer<List<String>> answer,
+    String probeId,
+    dynamic data,
+  ) {
+    try {
+      final frame = jsonDecode(data as String);
+      if (_isPresenceAnswer(frame, probeId) && !answer.isCompleted) {
+        answer.complete(_onlineAgents(frame['agents']));
+      }
+    } on Object {
+      // Not a presence frame — the timeout below downgrades to
+      // "running, roster unknown" rather than guessing.
+    }
+  }
+
+  /// Whether [frame] is the presence answer this probe asked for.
+  static bool _isPresenceAnswer(dynamic frame, String probeId) =>
+      frame is Map && frame['op'] == 'presence' && frame['replyTo'] == probeId;
+
+  /// The online agent names in a presence answer ([agents] non-list or
+  /// foreign shapes yield an empty roster, never a crash).
+  static List<String> _onlineAgents(dynamic agents) => [
+    if (agents is List)
+      for (final agent in agents)
+        if (agent is Map && agent['online'] == true && agent['name'] is String)
+          agent['name'] as String,
+  ];
+
   static String _nonce() {
     final random = Random();
     return DateTime.now().microsecondsSinceEpoch.toRadixString(36) +
@@ -588,8 +624,7 @@ class DapHubController {
   /// `GET /healthz` → 200.
   Future<bool> healthzOk() async {
     try {
-      final http = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 1);
+      final http = HttpClient()..connectionTimeout = const Duration(seconds: 1);
       final response = await (await http.get(
         _uri.host,
         _uri.port,
@@ -773,7 +808,81 @@ class _WsUnauthorized implements Exception {}
 
 class _WsNotAHub implements Exception {}
 
-/// `fa dap <start|stop|status> [--port N] [--url URL]` — the CLI entry.
+/// One `fa dap <verb>` handler: runs the verb against [controller].
+typedef DapSubcommand = Future<int> Function(DapHubController controller);
+
+/// The `fa dap` verb table — start/stop/status. A map (not a switch)
+/// keeps the dispatcher branch-free and each verb a one-line entry.
+final Map<String, DapSubcommand> dapSubcommands = {
+  'start': (controller) => controller.start(),
+  'stop': (controller) => controller.stop(),
+  'status': (controller) => controller.status(),
+};
+
+/// One parsed `fa dap` invocation: the resolved hub [url] plus whether
+/// a flag set it explicitly (an explicit `--port`/`--url` beats
+/// `DAP_LOCAL_HUB_URL`).
+typedef DapInvocation = ({String url, bool explicit});
+
+/// `--port N` → `ws://127.0.0.1:N/ws`; null on a missing/invalid N.
+String? dapPortUrl(String? rawPort) {
+  final port = rawPort == null ? null : int.tryParse(rawPort);
+  if (port == null || port <= 0) return null;
+  return 'ws://127.0.0.1:$port/ws';
+}
+
+/// One flag → the hub url it selects; null when [flag] is unknown or
+/// its value is missing/invalid.
+String? _dapFlagUrl(String flag, String? value) => switch (flag) {
+  '--port' => dapPortUrl(value),
+  '--url' => value,
+  _ => null,
+};
+
+/// Parses the flags after the verb word; null on any bad flag.
+DapInvocation? parseDapInvocation(List<String> flags) {
+  var url = defaultDapLocalHubUrl;
+  var explicit = false;
+  for (var i = 0; i < flags.length; i++) {
+    final flag = flags[i];
+    final value = i + 1 < flags.length ? flags[i + 1] : null;
+    final applied = _dapFlagUrl(flag, value);
+    if (applied == null) return null;
+    url = applied;
+    explicit = true;
+    if (value != null) i++;
+  }
+  return (url: url, explicit: explicit);
+}
+
+/// Builds the controller a dispatched verb runs with: the seams flow
+/// through unchanged, and the CLI surface prints to stdout (tests
+/// inject their own sink).
+DapHubController buildDapController(
+  DapInvocation invocation, {
+  String? home,
+  Map<String, String>? environment,
+  DapSpawnSeam? spawnHub,
+  DapTerminateSeam? terminateHub,
+  DapSecretPrompt? secretPrompt,
+  void Function(String line)? out,
+}) {
+  final effectiveEnv = environment ?? Platform.environment;
+  return DapHubController(
+    home: home,
+    environment: effectiveEnv,
+    url: invocation.explicit
+        ? invocation.url
+        : resolveDapLocalHubUrl(effectiveEnv),
+    spawnHub: spawnHub,
+    terminateHub: terminateHub,
+    secretPrompt: secretPrompt ?? _stdinSecretPrompt,
+    out: out ?? stdout.writeln,
+  );
+}
+
+/// `fa dap <start|stop|status> [--port N] [--url URL]` — the CLI
+/// entry: parse once, look the verb up in [dapSubcommands], run it.
 Future<int> runDapCommand(
   List<String> args, {
   String? home,
@@ -783,53 +892,27 @@ Future<int> runDapCommand(
   DapSecretPrompt? secretPrompt,
   void Function(String line)? out,
 }) async {
-  const usage =
-      'usage: fa dap start [--port N] | fa dap stop | fa dap status';
+  const usage = 'usage: fa dap start [--port N] | fa dap stop | fa dap status';
   if (args.isEmpty) {
     stdout.writeln(usage);
     return 1;
   }
-  var url = defaultDapLocalHubUrl;
-  var portSeen = false;
-  for (var i = 1; i < args.length; i++) {
-    if (args[i] == '--port' && i + 1 < args.length) {
-      final port = int.tryParse(args[++i]);
-      if (port == null || port <= 0) {
-        stderr.writeln('fa dap: bad --port "${args[i]}"');
-        return 1;
-      }
-      url = 'ws://127.0.0.1:$port/ws';
-      portSeen = true;
-    } else if (args[i] == '--url' && i + 1 < args.length) {
-      url = args[++i];
-      portSeen = true;
-    } else {
-      stderr.writeln(usage);
-      return 1;
-    }
+  final sub = dapSubcommands[args.first];
+  final invocation = sub == null ? null : parseDapInvocation(args.sublist(1));
+  if (invocation == null) {
+    stderr.writeln(usage);
+    return 1;
   }
-  final effectiveEnv = environment ?? Platform.environment;
-  final controller = DapHubController(
+  final controller = buildDapController(
+    invocation,
     home: home,
-    environment: effectiveEnv,
-    url: portSeen ? url : resolveDapLocalHubUrl(effectiveEnv),
+    environment: environment,
     spawnHub: spawnHub,
     terminateHub: terminateHub,
-    secretPrompt: secretPrompt ?? _stdinSecretPrompt,
-    // The CLI surface prints to stdout (tests inject their own sink).
-    out: out ?? stdout.writeln,
+    secretPrompt: secretPrompt,
+    out: out,
   );
-  switch (args.first) {
-    case 'start':
-      return controller.start();
-    case 'stop':
-      return controller.stop();
-    case 'status':
-      return controller.status();
-    default:
-      stderr.writeln(usage);
-      return 1;
-  }
+  return sub!(controller);
 }
 
 /// Hidden-input master-key prompt on a real terminal (the same
