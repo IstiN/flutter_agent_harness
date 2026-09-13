@@ -491,6 +491,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write # delete draft releases
+      actions: read # name each swept draft's creating run (gh run list 403s without it, review of #294)
       issues: write # deduplicated self-closing sweep issue
     env:
       GH_TOKEN: ${{ github.token }}

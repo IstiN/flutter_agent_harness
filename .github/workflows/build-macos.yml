@@ -943,39 +943,25 @@ jobs:
           done
           ASSETS=($DMGS $ZIPS $MANIFEST "${STABLE_COPIES[@]}")
 
-          if gh release view "$RELEASE_TAG" --repo ${{ github.repository }} &>/dev/null; then
-            echo "Release $RELEASE_TAG already exists — uploading macOS assets..."
-            for asset in "${ASSETS[@]}"; do
-              gh release upload "$RELEASE_TAG" "$asset" --clobber --repo ${{ github.repository }}
-            done
-            # Latest policy (issue #282): the newest published release
-            # carries the badge explicitly — even when this job lost the
-            # create race to a lazily-created release without --latest.
-            gh release edit "$RELEASE_TAG" --latest --repo ${{ github.repository }}
-            echo "✅ Uploaded macOS assets to existing release $RELEASE_TAG"
-          else
-            # Notes come from the CHANGELOG section for this version, with a
-            # conventional-commit fallback (issue #282: no more filler
-            # bodies); the install hints stay as a footer.
-            bash scripts/release_notes.sh "$RELEASE_TAG" > release-notes.md || true
-            printf '\n## Installation\n- **macOS**: Download the DMG for your architecture (`arm64` for Apple Silicon, `x86_64` for Intel) and drag Fa.app to Applications. In-app updates use the ZIP + latest-mac.yml feed.\n- **Linux**: Download tar.gz, extract and run the `bundle/fa` binary.\n- **Windows**: Download zip, extract and run `fa.exe`.\n' >> release-notes.md
+          # Notes come from the CHANGELOG section for this version, with a
+          # conventional-commit fallback (issue #282: no more filler
+          # bodies); the install hints stay as a footer.
+          bash scripts/release_notes.sh "$RELEASE_TAG" > release-notes.md || true
+          printf '\n## Installation\n- **macOS**: Download the DMG for your architecture (`arm64` for Apple Silicon, `x86_64` for Intel) and drag Fa.app to Applications. In-app updates use the ZIP + latest-mac.yml feed.\n- **Linux**: Download tar.gz, extract and run the `bundle/fa` binary.\n- **Windows**: Download zip, extract and run the `fa.exe`.\n' >> release-notes.md
 
-            # Bare vX.Y.Z title (issue #282): matches the tag, matches
-            # pub.dev. Assets ride the create command — gh uploads them
-            # through a DRAFT first, so the guard step below owns the
-            # failure path.
-            gh release create "$RELEASE_TAG" \
-              --repo ${{ github.repository }} \
-              --title "$RELEASE_TAG" \
-              --notes-file release-notes.md \
-              --latest \
-              "${ASSETS[@]}"
-            echo "✅ Created release $RELEASE_TAG with macOS assets"
-          fi
+          # Attach-or-create (issue #282 E3 + review of #294): idempotent
+          # against the view->create race - a lost race uploads into the
+          # winner's release instead of failing - and the create stamps an
+          # ownership marker into the draft body, so the guard step below
+          # only ever deletes THIS job's draft, never the mobile leg's
+          # mid-upload draft on the same derived tag.
+          bash scripts/release_attach_or_create.sh "$RELEASE_TAG" "${ASSETS[@]}"
 
       # Draft lifecycle invariant (issue #282): the create above uploads
       # assets through a draft — a failed/cancelled run must delete it,
-      # never orphan it (the v0.1.190 rot).
+      # never orphan it (the v0.1.190 rot). Ownership-scoped (review of
+      # #294): the guard deletes only a draft whose body carries THIS
+      # run+job's marker — a sibling leg's draft is never touched.
       - name: Draft lifecycle guard (delete orphaned draft on failure)
         if: always() && job.status != 'success'
         env:
