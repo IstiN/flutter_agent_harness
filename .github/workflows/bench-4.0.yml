@@ -138,12 +138,13 @@ jobs:
         with:
           name: fa-bundle
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
-      # Pinned: the adapter targets the 0.23.0 BaseInstalledAgent contract.
-      - run: pip install 'harbor[modal]==0.23.0'
+      # The self-hosted runner is a macOS box: setup-python cannot write the
+      # hosted tool cache there (mkdir /Users/runner denied). Build a venv on
+      # the runner's own python3 instead.
+      - name: Install harbor (venv)
+        run: |
+          python3 -m venv .bench-venv
+          .bench-venv/bin/pip install 'harbor[modal]==0.23.0'
 
       - name: Run harbor (fa agent, ${{ matrix.env }} env)
         env:
@@ -175,7 +176,7 @@ jobs:
           for t in $SHARD_TASKS; do args+=(-i "$t"); done
           # Pinned --job-name: one jobs/<name>/ dir per shard, so the summary
           # job's downloads cannot collide on harbor's timestamped default.
-          harbor run -d "$DATASET" -a fa_agent:FaAgent \
+          .bench-venv/bin/harbor run -d "$DATASET" -a fa_agent:FaAgent \
             -e "$ENV_TYPE" -m "$MODEL" -k "$ATTEMPTS" -n "$NCONC" \
             --job-name "fa-4.0-${ENV_TYPE}-${{ matrix.i }}" -o jobs \
             "${args[@]}"
@@ -194,7 +195,7 @@ jobs:
         run: |
           shopt -s nullglob
           for job_dir in jobs/fa-4.0-*; do
-            harbor upload "$job_dir" --public
+            .bench-venv/bin/harbor upload "$job_dir" --public
           done
 
   summary:
