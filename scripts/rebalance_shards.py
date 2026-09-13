@@ -15,6 +15,12 @@ Options:
     --shards N           Number of shards (default: 3).
     --root DIR           Test root (default: test).
     --output PATH        Manifest path (default: scripts/test_shards.json).
+    --unit-style STYLE   "dirs" (default): top-level dirs + loose root files
+                         are units; "files": every *_test.dart is its own
+                         unit (flat packages like packages/fa_ui, issue #283).
+    --exclude STR        Drop test files whose /-normalized path contains STR
+                         (repeatable; e.g. --exclude golden keeps host-locked
+                         golden suites out of the shards, issue #283 E4).
 
 Skew check: warns when the longest shard exceeds 1.2x the shortest.
 
@@ -37,18 +43,39 @@ import xml.etree.ElementTree as ET
 SKEW_LIMIT = 1.2
 
 
-def list_units(root: str) -> dict:
-    """Return {unit: [test files]} for top-level dirs + loose root files."""
+def _excluded(norm_path: str, exclude: list) -> bool:
+    return "/integration/" in norm_path or any(x in norm_path for x in exclude)
+
+
+def list_units(root: str, exclude: list = (), unit_style: str = "dirs") -> dict:
+    """Return {unit: [test files]} for the configured unit style.
+
+    dirs  — top-level dirs + loose root files (unit name "test").
+    files — every *_test.dart under root is its own unit (flat layouts).
+    """
+    if unit_style == "files":
+        units = {}
+        for path in sorted(glob.glob(os.path.join(root, "**", "*_test.dart"), recursive=True)):
+            norm = path.replace(os.sep, "/")
+            if _excluded(norm, exclude):
+                continue
+            units[norm] = [norm]
+        return units
     units = {}
     for entry in sorted(os.listdir(root)):
         path = os.path.join(root, entry)
         if os.path.isdir(path):
             if entry == "integration":
                 continue  # integration suite runs in its own CI job
-            files = glob.glob(os.path.join(path, "**", "*_test.dart"), recursive=True)
+            files = [f.replace(os.sep, "/")
+                     for f in glob.glob(os.path.join(path, "**", "*_test.dart"), recursive=True)]
+            files = sorted(f for f in files if not _excluded(f, exclude))
             if files:
-                units[path.replace(os.sep, "/")] = sorted(files)
-    root_files = sorted(glob.glob(os.path.join(root, "*_test.dart")))
+                units[path.replace(os.sep, "/")] = files
+    root_files = sorted(
+        f.replace(os.sep, "/")
+        for f in glob.glob(os.path.join(root, "*_test.dart"))
+        if not _excluded(f.replace(os.sep, "/"), exclude))
     if root_files:
         units[root] = root_files  # loose root files, expanded by shard_files.py
     return units
@@ -130,12 +157,15 @@ def main() -> int:
     ap.add_argument("--shards", type=int, default=3)
     ap.add_argument("--root", default="test")
     ap.add_argument("--output", default="scripts/test_shards.json")
+    ap.add_argument("--unit-style", choices=("dirs", "files"), default="dirs")
+    ap.add_argument("--exclude", action="append", default=[],
+                    help="Drop test files whose path contains STR (repeatable)")
     args = ap.parse_args()
 
     if args.shards < 1:
         print("ERROR: --shards must be >= 1", file=sys.stderr)
         return 1
-    units = list_units(args.root)
+    units = list_units(args.root, args.exclude, args.unit_style)
     if not units:
         print(f"ERROR: no test units found under {args.root}/", file=sys.stderr)
         return 1
