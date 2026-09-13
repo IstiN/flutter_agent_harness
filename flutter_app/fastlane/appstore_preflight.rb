@@ -19,15 +19,15 @@ module AppstorePreflight
   ].freeze
 
   # Fat-finger guard: the workflow's `confirm` input must repeat `version`
-  # exactly (AC3). Raises with a named message — nothing was mutated.
-  def self.validate_confirm!(version:, confirm:)
-    return if confirm == version
-
-    raise "CONFIRM MISMATCH: confirm (#{confirm.inspect}) does not equal version (#{version.inspect}) — aborting before any mutation"
+  # exactly (AC3). Returns the fail decision with a named reason — the lane
+  # surfaces it via UI.user_error!, no stack trace, nothing mutated.
+  def self.confirm_mismatch?(version:, confirm:)
+    confirm != version
   end
 
   # facts:
   #   version           String, e.g. "1.2.3"
+  #   confirm           Workflow `confirm` input — must repeat `version` exactly
   #   app_store_version nil, or { "state" => AppStoreState string }
   #   builds            Array of { "number" => build number string,
   #                               "state"  => "PROCESSING"|"VALID"|"FAILED"|"INVALID" }
@@ -35,7 +35,10 @@ module AppstorePreflight
   #   { "action" => "fail",   "reason" => why, "build_number" => nil } — fail BEFORE any mutation
   #   { "action" => "noop",   "reason" => why, "build_number" => nil } — green no-op notice
   #   { "action" => "submit", "reason" => why, "build_number" => n }   — latest processed build
-  def self.decide(version:, app_store_version:, builds:)
+  def self.decide(version:, confirm:, app_store_version:, builds:)
+    if confirm_mismatch?(version: version, confirm: confirm)
+      return fail_decision("CONFIRM MISMATCH: confirm (#{confirm.inspect}) does not equal version (#{version.inspect}) — aborting before any mutation")
+    end
     if app_store_version.nil?
       return fail_decision("App Store version #{version} does not exist yet — run store-metadata.yml (metadata_only) first so the version exists. Nothing was mutated.")
     end

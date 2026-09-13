@@ -68,7 +68,10 @@ jobs:
     name: Build macOS ${{ matrix.arch }}
     needs: version
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 60
+    # Issue #239: TestFlight submit now waits for Apple processing (bounded,
+    # default 90 min) + a 15-min distribution verify AFTER the build/notarize
+    # work — the job ceiling must cover the worst case, not just the build.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -608,6 +611,27 @@ jobs:
             --sign "$MACOS_INSTALLER_CERT_ID"
           echo "pkg_name=$PKG_NAME" >> $GITHUB_OUTPUT
 
+      - name: Notarize DMG
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          MACOS_NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
+          MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
+          MACOS_NOTARIZE_APP_PASSWORD: ${{ secrets.MACOS_NOTARIZE_APP_PASSWORD }}
+          DMG_NAME: ${{ steps.package.outputs.dmg_name }}
+        run: |
+          if [ -z "$MACOS_NOTARIZE_APPLE_ID" ]; then
+            echo "⚠️  Notarization secrets not set — skipping notarization"
+            exit 0
+          fi
+          echo "Submitting for notarization..."
+          xcrun notarytool submit "$DMG_NAME" \
+            --apple-id "$MACOS_NOTARIZE_APPLE_ID" \
+            --team-id "$MACOS_NOTARIZE_TEAM_ID" \
+            --password "$MACOS_NOTARIZE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG_NAME"
+          echo "✅ Notarization complete"
+
       - name: Submit PKG to TestFlight
         if: steps.testflight_pkg.outputs.pkg_name != ''
         working-directory: flutter_app
@@ -638,27 +662,6 @@ jobs:
           name: fa-macos-testflight-pkg
           path: ${{ steps.testflight_pkg.outputs.pkg_name }}
           retention-days: 14
-
-      - name: Notarize DMG
-        if: steps.signing.outputs.signed == 'true'
-        env:
-          MACOS_NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
-          MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
-          MACOS_NOTARIZE_APP_PASSWORD: ${{ secrets.MACOS_NOTARIZE_APP_PASSWORD }}
-          DMG_NAME: ${{ steps.package.outputs.dmg_name }}
-        run: |
-          if [ -z "$MACOS_NOTARIZE_APPLE_ID" ]; then
-            echo "⚠️  Notarization secrets not set — skipping notarization"
-            exit 0
-          fi
-          echo "Submitting for notarization..."
-          xcrun notarytool submit "$DMG_NAME" \
-            --apple-id "$MACOS_NOTARIZE_APPLE_ID" \
-            --team-id "$MACOS_NOTARIZE_TEAM_ID" \
-            --password "$MACOS_NOTARIZE_APP_PASSWORD" \
-            --wait
-          xcrun stapler staple "$DMG_NAME"
-          echo "✅ Notarization complete"
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4

@@ -18,25 +18,24 @@ if $PROGRAM_NAME == __FILE__
     puts "  ok: #{message}"
   end
 
-  # AC3 — confirm mismatch aborts (fat-finger guard)
-  begin
-    AppstorePreflight.validate_confirm!(version: "1.2.3", confirm: "1.2.4")
-    raise "FAIL: confirm mismatch must raise"
-  rescue RuntimeError => e
-    raise "FAIL: wrong message: #{e.message}" unless e.message.include?("CONFIRM MISMATCH") && e.message.include?("1.2.4")
-  end
-  ok("confirm mismatch aborts with a named error, nothing mutated")
-  AppstorePreflight.validate_confirm!(version: "1.2.3", confirm: "1.2.3")
-  ok("matching confirm passes")
+  # AC3 — confirm mismatch → fail decision with a named reason (the lane
+  # surfaces it via UI.user_error!); nothing mutated either way.
+  d = AppstorePreflight.decide(version: "1.2.3", confirm: "1.2.4", app_store_version: nil, builds: [])
+  raise "FAIL: confirm mismatch must fail first, got #{d.inspect}" unless d["action"] == "fail" && d["reason"].include?("CONFIRM MISMATCH") && d["reason"].include?("1.2.4")
+  ok("confirm mismatch → named fail decision, nothing mutated")
+  d = AppstorePreflight.decide(version: "1.2.3", confirm: "1.2.3", app_store_version: nil, builds: [])
+  raise "FAIL: matching confirm must fall through to version check, got #{d.inspect}" unless d["action"] == "fail" && d["reason"].include?("store-metadata.yml")
+  ok("matching confirm passes through")
 
   # AC3 — version missing from ASC → fail before mutation
-  d = AppstorePreflight.decide(version: "9.9.9", app_store_version: nil, builds: [])
+  d = AppstorePreflight.decide(version: "9.9.9", confirm: "9.9.9", app_store_version: nil, builds: [])
   raise "FAIL: version missing must fail, got #{d.inspect}" unless d["action"] == "fail" && d["reason"].include?("9.9.9") && d["reason"].include?("store-metadata.yml")
   ok("version missing → fail before mutation, points at store-metadata.yml")
 
   # AC3 — build still processing → fail with an ETA hint
   d = AppstorePreflight.decide(
     version: "1.2.3",
+    confirm: "1.2.3",
     app_store_version: { "state" => "PREPARE_FOR_SUBMISSION" },
     builds: [{ "number" => "7", "state" => "PROCESSING" }]
   )
@@ -47,6 +46,7 @@ if $PROGRAM_NAME == __FILE__
   %w[WAITING_FOR_REVIEW IN_REVIEW PENDING_DEVELOPER_RELEASE READY_FOR_SALE ACCEPTED].each do |state|
     d = AppstorePreflight.decide(
       version: "1.2.3",
+      confirm: "1.2.3",
       app_store_version: { "state" => state },
       builds: [{ "number" => "7", "state" => "VALID" }]
     )
@@ -57,6 +57,7 @@ if $PROGRAM_NAME == __FILE__
   # Happy path — the latest PROCESSED build wins; processing builds are ignored
   d = AppstorePreflight.decide(
     version: "1.2.3",
+    confirm: "1.2.3",
     app_store_version: { "state" => "PREPARE_FOR_SUBMISSION" },
     builds: [
       { "number" => "5", "state" => "VALID" },
@@ -68,13 +69,14 @@ if $PROGRAM_NAME == __FILE__
   ok("submit targets the latest PROCESSED build (7), skipping still-processing 9")
 
   # No builds at all → fail before mutation
-  d = AppstorePreflight.decide(version: "1.2.3", app_store_version: { "state" => "PREPARE_FOR_SUBMISSION" }, builds: [])
+  d = AppstorePreflight.decide(version: "1.2.3", confirm: "1.2.3", app_store_version: { "state" => "PREPARE_FOR_SUBMISSION" }, builds: [])
   raise "FAIL: no builds must fail, got #{d.inspect}" unless d["action"] == "fail" && d["reason"].include?("No TestFlight build")
   ok("no builds for the version → fail before mutation")
 
   # Rejected versions stay resubmittable (NOT in SUBMITTED_STATES)
   d = AppstorePreflight.decide(
     version: "1.2.3",
+    confirm: "1.2.3",
     app_store_version: { "state" => "REJECTED" },
     builds: [{ "number" => "7", "state" => "VALID" }]
   )
