@@ -483,6 +483,10 @@ final class AgentHost implements UiHostBackend {
     final attributed = from == 'user' ? text : '[from $from] $text';
     if (_running) {
       _agent.steer(UserMessage.text(attributed));
+      // The loop delivers the steered message at the next step boundary;
+      // surfaces use this event for the pending indicator. Steering never
+      // cancels the run - this event IS the neutral surface (issue #314).
+      _sink({'type': 'steer_queued', 'text': attributed});
       return;
     }
     unawaited(_runTurn(attributed));
@@ -957,7 +961,8 @@ final class AgentHost implements UiHostBackend {
         toolName: 'browser_api',
         tier: tier,
         arguments: {'path': path},
-        reason: '$path asks because it is '
+        reason:
+            '$path asks because it is '
             '${tier == ApprovalTier.exec ? 'an exec-tier namespace (code execution or user-facing surface)' : 'a state-mutating write call'} '
             '— no silent chrome.* write in interactive modes',
       ),
