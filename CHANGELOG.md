@@ -3461,6 +3461,13 @@
 - feat(147): Harbor adapter for fa + Terminal-Bench 4.0 run (self-hosted + Modal + Hub upload) (#254)
 - fix(app): web IndexedDB session persistence — per-record keys, migration, quota isolation (#237) (#249)
 
+## 0.1.368
+
+- feat(app): setting to disable chat image preview downscale (#207) (#267)
+- test: fix the flutter_app 3.47.4 macOS fallout that #248 did not cover — #233 (3 commits) (#251)
+- fix(147): emit fully-qualified task ids into the harbor matrix (#263)
+- fix(147): default CPU shards to Modal — the runner mac has no docker (#258)
+
 ## Unreleased
 
 ## Unreleased
