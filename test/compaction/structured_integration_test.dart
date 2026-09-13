@@ -237,8 +237,10 @@ void main() {
       );
     });
 
-    test('resolution: session > project > global > classic default', () {
-      expect(resolveCompactionEngine(), CompactionEngine.classic);
+    test('resolution: session > project > global > structured default', () {
+      // Issue #287: structured (2.0) is the DEFAULT at every resolution
+      // point; classic stays selectable as the rollback.
+      expect(resolveCompactionEngine(), CompactionEngine.structured);
       expect(
         resolveCompactionEngine(global: CompactionEngine.structured),
         CompactionEngine.structured,
@@ -289,6 +291,28 @@ void main() {
     test(
       'each engine runs with the other selected (coexistence smoke)',
       () async {
+        {
+          // Issue #287 REG-engines: the factory default (engine omitted)
+          // is the STRUCTURED engine now — classic is opt-in rollback.
+          final session = await syntheticSession(Random(7));
+          final state = stateFor(await session.buildContextMessages());
+          expect(
+            AutoCompactorFactory(
+              session: session,
+              state: state,
+              window: 8000,
+              settings: _settings,
+              sources: AutoCompactorSources(
+                smolStream: null,
+                smolModel: null,
+                mainStream: (m, c, {cancelToken}) => throw UnimplementedError(),
+                mainModel: _model,
+              ),
+              hooks: _NoopHooks(),
+            ).engine,
+            CompactionEngine.structured,
+          );
+        }
         for (final engine in CompactionEngine.values) {
           final session = await syntheticSession(Random(7));
           final state = stateFor(await session.buildContextMessages());
@@ -315,6 +339,199 @@ void main() {
           // Either relieved, or left intact — never corrupted.
           expect(state.messages, isNotEmpty);
           expect(ok, anyOf(true, false));
+        }
+      },
+    );
+  });
+
+  group('AC4 — upgrade migration (UT-migration, issue #287)', () {
+    test('config without a compaction section → structured; nothing mutated', () {
+      final dir = Directory.systemTemp.createTempSync('fa_comp287_');
+      try {
+        final userConfig = File('${dir.path}/.fah/config.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync(
+            '# my config\nprovider: openai\nmodel: gpt-x\n',
+          );
+        final projectConfig = File('${dir.path}/proj/.fah/config.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('tools:\n  shell: false\n');
+        final before = userConfig.readAsStringSync();
+        final projectBefore = projectConfig.readAsStringSync();
+
+        // No compaction section anywhere → the structured default wins.
+        expect(loadProjectCompactionEngine('${dir.path}/proj'), isNull);
+        expect(loadCliConfig(dir.path).compactionEngine, isNull);
+        expect(
+          resolveCompactionEngine(
+            project: loadProjectCompactionEngine('${dir.path}/proj'),
+            global: loadCliConfig(dir.path).compactionEngine,
+          ),
+          CompactionEngine.structured,
+          reason: 'users without a compaction section get 2.0 on upgrade',
+        );
+
+        // Reading never mutates either file (fixture-asserted).
+        expect(userConfig.readAsStringSync(), before);
+        expect(projectConfig.readAsStringSync(), projectBefore);
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+
+    test('explicit classic keeps classic — the choice is never rewritten', () {
+      final dir = Directory.systemTemp.createTempSync('fa_comp287b_');
+      try {
+        Directory('${dir.path}/.fah').createSync(recursive: true);
+        File('${dir.path}/.fah/config.yaml').writeAsStringSync(
+          'compaction:\n  engine: classic\n',
+        );
+        final global = loadCliConfig(dir.path).compactionEngine;
+        expect(global, CompactionEngine.classic);
+        expect(
+          resolveCompactionEngine(global: global),
+          CompactionEngine.classic,
+          reason: 'an explicit compaction.engine is honored, never flipped',
+        );
+      } finally {
+        dir.deleteSync(recursive: true);
+      }
+    });
+  });
+
+  group('AC3 — mid-session engine flip (IT-flip, issue #287)', () {
+    test(
+      'flip structured → classic → structured resolves per compaction',
+      () async {
+        final dir = Directory.systemTemp.createTempSync('fa_comp287flip_');
+        try {
+          // The "project yaml" the hosts read per compaction (the app and
+          // the CLI both re-resolve on every compaction run).
+          final projectYaml = File('${dir.path}/.fah/config.yaml')
+            ..createSync(recursive: true)
+            ..writeAsStringSync('compaction:\n  engine: structured\n');
+          CompactionEngine resolved() => resolveCompactionEngine(
+            project: loadProjectCompactionEngine(dir.path),
+          );
+          expect(resolved(), CompactionEngine.structured);
+
+          // Pass 1 — structured compacts the session (judge pass runs).
+          // 8 fat pairs ≈ 8k tokens > the 6000 trigger.
+          var session = await syntheticSession(Random(11), pairs: 8);
+          var state = stateFor(await session.buildContextMessages());
+          var structuredStream = _FakeStream([
+            _textTurn('[1, 2]'), // judge: hide the first pair
+            _textTurn('checkpoint text'), // checkpoint summarizer
+          ]);
+          await AutoCompactorFactory(
+            session: session,
+            state: state,
+            window: 8000,
+            settings: _settings,
+            sources: AutoCompactorSources(
+              smolStream: null,
+              smolModel: null,
+              mainStream: structuredStream.call,
+              mainModel: _model,
+            ),
+            hooks: _NoopHooks(),
+            engine: resolved(),
+          ).run();
+          // The judge call went out with the structured judge system
+          // prompt — the run went through the structured pipeline.
+          expect(
+            structuredStream.contexts.any(
+              (c) => (c.systemPrompt ?? '').contains('context-hygiene judge'),
+            ),
+            isTrue,
+            reason: 'structured judge pass ran',
+          );
+
+          // Flip the yaml to classic mid-session: the NEXT resolution
+          // picks classic, and the classic compaction runs the classic
+          // prompt set. The conversation grew past the window again
+          // first (a flip mid-session compacts the NEXT overflow).
+          projectYaml.writeAsStringSync('compaction:\n  engine: classic\n');
+          expect(resolved(), CompactionEngine.classic);
+          for (var i = 0; i < 8; i++) {
+            await session.appendMessage(
+              _assistant(
+                'more $i',
+                calls: [ToolCall(id: 'd$i', name: 'read', arguments: {})],
+              ),
+            );
+            await session.appendMessage(
+              _result('d$i', 'read', 'payload $i ${'y' * 4000}'),
+            );
+          }
+          state = stateFor(await session.buildContextMessages());
+
+          var classicStream = _FakeStream([
+            _textTurn('classic summary of the prefix'),
+          ]);
+          await AutoCompactorFactory(
+            session: session,
+            state: state,
+            window: 8000,
+            settings: _settings,
+            sources: AutoCompactorSources(
+              smolStream: null,
+              smolModel: null,
+              mainStream: classicStream.call,
+              mainModel: _model,
+            ),
+            hooks: _NoopHooks(),
+            engine: resolved(),
+          ).run();
+          // Classic pipeline asserted by prompt set: the classic summary
+          // prompt was sent and no structured judge pass ran.
+          final classicPromptSent = classicStream.contexts.any(
+            (c) => c.messages.any(
+              (m) => _textOf(m).contains('conversation to hand off'),
+            ),
+          );
+          final judgePassSent = classicStream.contexts.any(
+            (c) => (c.systemPrompt ?? '').contains('context-hygiene judge'),
+          );
+          expect(classicPromptSent, isTrue, reason: 'classic summary prompt');
+          expect(judgePassSent, isFalse, reason: 'no judge pass under classic');
+          // No history corruption across the flip (context integrity).
+          expect(validateToolPairing(state.messages), isEmpty);
+          expect(state.messages, isNotEmpty);
+
+          // Flip back → judge/checkpoint passes run again.
+          projectYaml.writeAsStringSync('compaction:\n  engine: structured\n');
+          expect(resolved(), CompactionEngine.structured);
+          session = await syntheticSession(Random(12), pairs: 8);
+          state = stateFor(await session.buildContextMessages());
+          final backStream = _FakeStream([
+            _textTurn('[1, 2]'),
+            _textTurn('checkpoint text'),
+          ]);
+          await AutoCompactorFactory(
+            session: session,
+            state: state,
+            window: 8000,
+            settings: _settings,
+            sources: AutoCompactorSources(
+              smolStream: null,
+              smolModel: null,
+              mainStream: backStream.call,
+              mainModel: _model,
+            ),
+            hooks: _NoopHooks(),
+            engine: resolved(),
+          ).run();
+          expect(
+            backStream.contexts.any(
+              (c) => (c.systemPrompt ?? '').contains('context-hygiene judge'),
+            ),
+            isTrue,
+            reason: 'judge pass runs again under structured',
+          );
+          expect(validateToolPairing(state.messages), isEmpty);
+        } finally {
+          dir.deleteSync(recursive: true);
         }
       },
     );

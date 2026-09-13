@@ -689,5 +689,53 @@
   "themePackWallpaperChip": "обои",
   "themePackImported": "Тема \"{name}\" установлена",
   "@themePackImported": { "placeholders": { "name": { "type": "String" } } },
+  "settingsCompactionLabel": "Компакция",
+  "@settingsCompactionLabel": {
+    "description": "Title of the Settings compaction-engine section (issue #287)"
+  },
+  "settingsCompactionHelper": "Как сжимается контекст при приближении к окну модели. Применяется при следующей компакции.",
+  "@settingsCompactionHelper": {
+    "description": "One-line explainer under the compaction section title (issue #287)"
+  },
+  "settingsCompactionStructured": "Структурированная (рекомендуется)",
+  "@settingsCompactionStructured": {
+    "description": "Picker item: the structured 2.0 engine (issue #287)"
+  },
+  "settingsCompactionStructuredHint": "Скрывает использованные записи на месте с раскрываемыми контрольными точками — для judge-прохода нужна настроенная модель.",
+  "@settingsCompactionStructuredHint": {
+    "description": "Tradeoff copy for the structured engine (issue #287, E1: no health-check claim)"
+  },
+  "settingsCompactionClassic": "Классическая (устаревшая 1.0)",
+  "@settingsCompactionClassic": {
+    "description": "Picker item: the classic 1.0 engine, the supported rollback (issue #287)"
+  },
+  "settingsCompactionClassicHint": "Сжатие с потерями в виде резюме префикса — без дополнительных вызовов модели.",
+  "@settingsCompactionClassicHint": {
+    "description": "Tradeoff copy for the classic engine (issue #287)"
+  },
+  "settingsCompactionSourceProject": "действует из проекта .fah/config.yaml",
+  "@settingsCompactionSourceProject": {
+    "description": "Source-layer caption when the project config wins (issue #287 AC2)"
+  },
+  "settingsCompactionSourceUser": "действует из пользовательского ~/.fah/config.yaml",
+  "@settingsCompactionSourceUser": {
+    "description": "Source-layer caption when the user config wins (issue #287 AC2)"
+  },
+  "settingsCompactionSourceFallback": "структурированная по умолчанию — compaction в конфигах не задан",
+  "@settingsCompactionSourceFallback": {
+    "description": "Source-layer caption when no config states a choice (issue #287 AC2)"
+  },
+  "settingsCompactionWebNote": "На вебе настройка недоступна — здесь нет файла конфигурации, применяется структурированный движок.",
+  "@settingsCompactionWebNote": {
+    "description": "Note shown instead of the picker on the web stub (issue #287 AC5)"
+  },
+  "settingsCompactionSaved": "Сохранено в {file} — применится при следующей компакции.",
+  "@settingsCompactionSaved": { "placeholders": { "file": { "type": "String" } } },
+  "settingsCompactionSaveFailed": "Не удалось сохранить движок компакции: {error}",
+  "@settingsCompactionSaveFailed": { "placeholders": { "error": { "type": "String" } } },
+  "settingsCompactionDocs": "Документация по компакции",
+  "@settingsCompactionDocs": {
+    "description": "Link to the compaction documentation from the settings section (issue #287)"
+  },
   "themePackImportFailed": "Тема отклонена"
 }

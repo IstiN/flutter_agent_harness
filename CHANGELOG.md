@@ -15,6 +15,30 @@
   Docs (AGENTS.md messaging section) describe an optional external
   cron/launchd pinger for delivery during lid sleep.
 
+- feat(287): compaction 2.0 is the DEFAULT — every resolution point now
+  falls back to the structured engine (judge-hide → checkpoint + expand,
+  #148) instead of the classic lossy prefix summary: the core resolver
+  (`resolveCompactionEngine`), the `AutoCompactorFactory` default, the
+  CLI compaction host (`config.compactionEngine ?? structured`), the
+  `/settings` summary line, and the app's per-compaction resolution.
+  Classic 1.0 stays fully supported as the in-settings rollback — an
+  explicit `compaction.engine: classic` (user or project yaml) or
+  `--compaction-engine classic` is always honored, never rewritten.
+  Migration: users without a `compaction:` section get structured on
+  upgrade; nothing is rewritten on read. The app's Settings gained a
+  Compaction section (issue #287): an engine picker — Structured
+  (recommended) / Classic (legacy 1.0) — with honest one-line tradeoffs
+  (structured: hidden-in-place + expandable, requires a configured
+  model for the judge pass; classic: lossy summary, zero extra calls),
+  the effective engine plus its source layer (project `.fah/config.yaml`
+  > user `~/.fah/config.yaml` > structured default), a docs link, and
+  writes that go through the core config service (surgical line edits
+  validated before persisting — unrelated comments survive
+  byte-for-byte). The choice applies at the next compaction (the
+  per-compaction re-resolution, no restart needed). On the web there is
+  no config yaml: the picker renders disabled with a note and the
+  structured default applies. The CLI `/settings` summary mirrors the
+  default in its `compaction:` line.
 
 - fix(hub): boot online from the persisted DAP credential — with no
   `DAP_MASTER_SECRET`/`DAP_CLIENT_SECRET` in the environment, the CLI now

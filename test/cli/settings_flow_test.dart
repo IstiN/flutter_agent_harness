@@ -76,6 +76,9 @@ void main() {
     expect(output, contains('model: test-model'));
     expect(output, contains('approval: yolo'));
     expect(output, contains('mode: code'));
+    // Issue #287: the summary names the engine — 'structured' when no
+    // config states a choice (the 2.0 default flip).
+    expect(output, contains('compaction: structured'));
     expect(
       output,
       contains('change via /provider, /model, /approval, /mode, /key, /mcp'),

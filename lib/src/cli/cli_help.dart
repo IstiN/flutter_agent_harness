@@ -362,10 +362,11 @@ SESSIONS AND COMPACTION
   replaced by the summary; /compact does it on demand. Compaction prompts
   are overridable (see PROMPTS).
 
-  Compaction engine (issue #148): compaction.engine = classic (default,
-  lossy prefix summary) or structured (hide → checkpoint + expand; markers
-  like [3:hidden·tool_result·4.2k] replace hidden content and compact_expand
-  restores it by id). Scope: --compaction-engine flag > project
+  Compaction engine (issue #148, default flip #287): compaction.engine =
+  structured (default — hide → checkpoint + expand; markers like
+  [3:hidden·tool_result·4.2k] replace hidden content and compact_expand
+  restores it by id) or classic (legacy 1.0 — lossy prefix summary, the
+  supported rollback). Scope: --compaction-engine flag > project
   .fah/config.yaml compaction: > ~/.fah/config.yaml compaction:.
 
   The checkpoint and rewind tools let the agent mark the session before an

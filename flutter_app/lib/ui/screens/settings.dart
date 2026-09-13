@@ -37,6 +37,7 @@ import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/openrouter_oauth_links_stub.dart'
     if (dart.library.html) 'package:fa/services/openrouter_oauth_links_web.dart';
 import 'package:fa/services/media_models_store.dart';
+import 'package:fa/services/compaction_engine_loader.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
@@ -55,6 +56,8 @@ import 'package:fa/ui/screens/dap_settings_page.dart';
 import 'package:fa/ui/screens/media_slot_picker_page.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
 import 'package:fa/ui/screens/onboarding_screen.dart';
+import 'package:fa/services/project_mount_env.dart' show SessionCwd;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/webllm/webllm_cache_section.dart';
@@ -2120,6 +2123,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 16),
+                // Compaction engine picker (issue #287): structured (2.0)
+                // is the default; classic stays the in-settings rollback.
+                // Resolves/writes the same config layers the per-compaction
+                // loader in AgentService reads, so a flip applies at the
+                // next compaction without a restart.
+                CompactionSection(
+                  projectDir: service.env.sessionCwd,
+                  docsUrl: Uri.parse(
+                    'https://github.com/IstiN/flutter_agent_harness/tree/'
+                    'main/docs',
+                  ),
+                ),
               ],
               WebLlmCacheSection(engine: widget.webLlmEngine),
               // The transformers.js section is web-only (its provider is);

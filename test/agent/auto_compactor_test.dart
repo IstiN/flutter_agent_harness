@@ -657,4 +657,62 @@ void main() {
     expect(compactor.attemptBudget, const Duration(seconds: 7));
     expect(compactor.totalBudget, const Duration(minutes: 9));
   });
+
+  test('the structured factory run closes the hooks bracket (onDone) '
+      'like the classic run', () async {
+    // Five ~400-token turns over the 1000-token window (trigger 900):
+    // nothing is hideable (protect-last-8 covers the whole ledger), so
+    // the structured engine goes straight to the checkpoint pass — the
+    // fake stream's text becomes the checkpoint summary, the protected
+    // tail stays, and the run succeeds without the classic fallback.
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    for (var i = 0; i < 5; i++) {
+      await session.appendMessage(UserMessage.text('a' * 1600));
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    final hooks = _RecordingHooks();
+    AssistantMessageEventStream checkpoint(
+      Model m,
+      Context c, {
+      CancelToken? cancelToken,
+    }) {
+      // The fixtures double as both the empty and the final partials.
+      AssistantMessage msg() => assistantWithUsage('CKPT', 10);
+      final stream = AssistantMessageEventStream();
+      for (final event in [
+        StartEvent(partial: msg()),
+        TextStartEvent(contentIndex: 0, partial: msg()),
+        TextDeltaEvent(contentIndex: 0, delta: 'CKPT', partial: msg()),
+        DoneEvent(reason: StopReason.stop, message: msg()),
+      ]) {
+        stream.push(event);
+      }
+      stream.end();
+      return stream;
+    }
+
+    final ok = await AutoCompactorFactory(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      sources: AutoCompactorSources(
+        smolStream: null,
+        smolModel: null,
+        mainStream: checkpoint,
+        mainModel: _model,
+      ),
+      hooks: hooks,
+    ).run();
+
+    expect(ok, isTrue);
+    expect(hooks.passes, isNotEmpty);
+    // Issue #287: hosts (CLI HEP compaction_end frame, Flutter sheet)
+    // key off onDone — a structured run must close the bracket exactly
+    // like the classic AutoCompactor.run() does.
+    expect(hooks.donePasses, hooks.passes.length);
+  });
 }
