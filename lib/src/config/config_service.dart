@@ -71,6 +71,7 @@ const configTopLevelKeys = <String>{
   'mcp',
   'a2a',
   'providerTimeouts',
+  'agent',
   'images',
   'skills',
 };
@@ -1057,6 +1058,7 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'images': (value, _) => _validateImagesSection(value),
   'a2a': (value, _) => A2aConfig.fromYaml(value, (name) => '\${$name}'),
   'providerTimeouts': (value, _) => _validateProviderTimeouts(value),
+  'agent': (value, _) => _validateAgentSection(value),
   'skills': (value, _) => _validateSkillsSection(value),
   // Deep validation (strict prompt names) lives behind cli_config.dart's
   // strict parser; here the section must be a string-valued map.
@@ -1086,6 +1088,34 @@ void _validateProviderTimeouts(Object? node) {
     if (value is! int || value <= 0) {
       throw ConfigException(
         '"providerTimeouts.$key" must be a positive integer (milliseconds)',
+      );
+    }
+  }
+}
+
+/// Mirrors the strict private parser in `cli_config.dart` (pinned by
+/// test): the `agent:` section takes exactly `contextWindowCap`, a
+/// positive integer at or above the compaction reserve (issue #273).
+void _validateAgentSection(Object? node) {
+  if (node is! YamlMap) {
+    throw ConfigException('must be a map, got: $node');
+  }
+  for (final entry in node.entries) {
+    final key = '${entry.key}';
+    if (key != 'contextWindowCap') {
+      throw ConfigException('unknown "agent" key: $key');
+    }
+    final value = entry.value;
+    if (value is! int || value <= 0) {
+      throw ConfigException(
+        '"agent.contextWindowCap" must be a positive integer (tokens)',
+      );
+    }
+    if (value < 16384) {
+      throw ConfigException(
+        '"agent.contextWindowCap" must be at least 16384 — below the '
+        'compaction reserve the compaction trigger threshold would go '
+        'negative',
       );
     }
   }

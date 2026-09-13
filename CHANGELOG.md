@@ -3481,6 +3481,17 @@
 - fix(147): emit fully-qualified task ids into the harbor matrix (#263)
 - fix(147): default CPU shards to Modal — the runner mac has no docker (#258)
 
+## 0.1.369
+
+- feat(app): pin-only widget publish PRs — retire per-widget submodules app-side (#232) (#268)
+- fix(147): CA roots in task images, honest summary verdicts, gpu-tagged job names (#272)
+- fix(147): CA roots in task images, honest summary verdicts, gpu-tagged job names (#272)
+- fix(app): device-code connect — no unconsented auto-open, transient poll retries, lifecycle-aware polling (#229) (#269)
+- feat(messaging): wall-clock catch-up for scheduled wake-ups (#259) (#265)
+- ci: shard fa_ui tests ×3 + cap the 220s virtualisation soak (#283) (#285)
+- ci(daily-publish): pin Flutter 3.47.x in the macOS/iOS legs — drop reliance on runner-local SDKs (#260, #261) (#281)
+- fix(cli): TUI scheduled countdown ticks on the minute boundary while idle (#213) (#264)
+
 ## Unreleased
 
 ## Unreleased

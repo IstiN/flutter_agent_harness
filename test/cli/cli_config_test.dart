@@ -592,6 +592,81 @@ prompts:
         });
       });
     });
+
+    group('agent section (issue #273)', () {
+      test('absent section leaves the cap null', () {
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.contextWindowCap, isNull);
+      });
+
+      test('parses a valid contextWindowCap', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  contextWindowCap: 256000\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.contextWindowCap, 256000);
+      });
+
+      test('rejects an unknown agent key', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  contextWindowCap: 256000\n'
+            '  temperature: 0\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('unknown "agent" key'),
+            ),
+          ),
+        );
+      });
+
+      test('rejects a non-integer cap', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  contextWindowCap: big\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('must be a positive integer'),
+            ),
+          ),
+        );
+      });
+
+      test('rejects a cap below the compaction reserve (AC5)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  contextWindowCap: 16383\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('at least 16384'),
+            ),
+          ),
+        );
+      });
+
+      test('toYaml persists the cap for the round-trip', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  contextWindowCap: 256000\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(
+          loaded.withCustomProviders(loaded.customProviders).toYaml(),
+          contains('agent:\n  contextWindowCap: 256000'),
+        );
+      });
+    });
   });
 
   group('provider watchdog overrides', () {
