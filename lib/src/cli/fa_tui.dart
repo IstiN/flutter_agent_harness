@@ -24,6 +24,7 @@ part 'fa_tui_messages.dart';
 part 'fa_tui_hub.dart';
 part 'fa_tui_mouse.dart';
 part 'fa_tui_rows.dart';
+part 'fa_tui_paste.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -186,13 +187,6 @@ int _lineCount(String s) {
 /// stale-colored rows survive.
 final class ThemeSwappedMsg extends Msg {
   const ThemeSwappedMsg();
-}
-
-/// The async Ctrl+V pasteboard read landed; carries image bytes or the
-/// named failure reason.
-final class PasteboardResultMsg extends Msg {
-  PasteboardResultMsg(this.read);
-  final PasteboardRead read;
 }
 
 /// Sentinel for nullable copyWith fields (distinguishes "keep" from "set
@@ -1162,35 +1156,6 @@ final class FaTuiModel extends Model {
     return (next, null);
   }
 
-  /// Ctrl+V outcome: image bytes become a composer chip; failures print
-  /// their NAMED reason (unavailable pasteboard, size cap, not an image).
-  (Model, Cmd?) _handlePasteboardResult(PasteboardResultMsg msg) {
-    final read = msg.read;
-    if (read is! PasteboardImage) {
-      final reason = read is PasteboardUnavailable
-          ? read.reason
-          : 'clipboard read failed';
-      return (
-        copyWith(outputLines: _appendOutput(outputLines, _dim(reason), true)),
-        null,
-      );
-    }
-    final error = pasteImageError(read.bytes);
-    if (error != null) {
-      return (
-        copyWith(outputLines: _appendOutput(outputLines, _dim(error), true)),
-        null,
-      );
-    }
-    final mime = sniffImageMime(read.bytes)!;
-    final attachment = TuiImageAttachment(
-      name: 'clipboard-${attachments.length + 1}.${imageMimeExtension(mime)}',
-      mimeType: mime,
-      bytes: read.bytes,
-    );
-    return (copyWith(attachments: [...attachments, attachment]), null);
-  }
-
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
     Model current = this;
     Cmd? lastCmd;
@@ -1387,33 +1352,6 @@ final class FaTuiModel extends Model {
         _handleSubmitKeys(msg) ??
         _handleQueueKeys(msg) ??
         _handleInterruptKeys(msg);
-  }
-
-  /// Ctrl+V (issue #276): read the platform pasteboard off the UI loop and
-  /// attach the image as a composer chip. Without a wired reader (or in
-  /// prompt mode) this is a no-op — the prompt zone owns plain pastes.
-  (Model, Cmd?)? _handlePasteImageKey(KeyMsg msg) {
-    if (msg.key != 'ctrl+v') return null;
-    final reader = callbacks.readClipboardImage;
-    if (reader == null) {
-      return (
-        copyWith(
-          outputLines: _appendOutput(
-            outputLines,
-            _dim(clipboardUnavailableHint),
-            true,
-          ),
-        ),
-        null,
-      );
-    }
-    return (
-      this,
-      () async {
-        final read = await reader();
-        return PasteboardResultMsg(read);
-      },
-    );
   }
 
   /// Normal-mode submit keys (enter/ctrl+s) and the newline-insertion
