@@ -1424,4 +1424,105 @@ void main() {
       expect(capturedBody!['max_tokens'], 42);
     });
   });
+
+    group('thinking ladder wiring', () {
+      /// Captures the request body [streamAnthropic] sends for [model].
+      Future<Map<String, dynamic>> captureBody(
+        Model model,
+        AnthropicOptions options,
+      ) async {
+        Map<String, dynamic>? capturedBody;
+        final client = http_testing.MockClient.streaming((request, body) async {
+          capturedBody =
+              jsonDecode(await body.bytesToString()) as Map<String, dynamic>;
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(sseBody([messageStart(), messageStop]))),
+            200,
+          );
+        });
+        final stream = streamAnthropic(model, simpleContext(), options, client);
+        await stream.result;
+        return capturedBody!;
+      }
+
+      test('reasoning model + thinkingEnabled rides the minimal rung', () async {
+        final body = await captureBody(
+          reasoningModel,
+          const AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true),
+        );
+        expect(body['thinking'], {
+          'type': 'enabled',
+          'budget_tokens': 1024,
+          'display': 'summarized',
+        });
+        expect(body['max_tokens'], 64000);
+      });
+
+      test('thinkingLevel high sends the 16384 rung', () async {
+        final body = await captureBody(
+          reasoningModel,
+          const AnthropicOptions(
+            apiKey: 'test-key',
+            thinkingEnabled: true,
+            thinkingLevel: 'high',
+          ),
+        );
+        expect(body['max_tokens'], 64000);
+        expect(body['thinking']['budget_tokens'], 16384);
+      });
+
+      test('small cap clamps the budget to leave answer room', () async {
+        final body = await captureBody(
+          Model(
+            id: 'claude-sonnet-4-5',
+            api: 'anthropic-messages',
+            provider: 'anthropic',
+            baseUrl: 'https://api.anthropic.com',
+            reasoning: true,
+            input: const ['text', 'image'],
+            contextWindow: 200000,
+            maxTokens: 8192,
+          ),
+          const AnthropicOptions(
+            apiKey: 'test-key',
+            maxTokens: 4096,
+            thinkingEnabled: true,
+            thinkingLevel: 'high',
+          ),
+        );
+        expect(body['max_tokens'], 8192);
+        expect(body['thinking']['budget_tokens'], 7168);
+      });
+
+      test('explicit thinkingBudgetTokens wins over the ladder', () async {
+        final body = await captureBody(
+          reasoningModel,
+          const AnthropicOptions(
+            apiKey: 'test-key',
+            thinkingEnabled: true,
+            thinkingBudgetTokens: 2048,
+          ),
+        );
+        expect(body['max_tokens'], 64000);
+        expect(body['thinking']['budget_tokens'], 2048);
+      });
+
+      test('non-reasoning model never sends thinking', () async {
+        final body = await captureBody(
+          testModel,
+          const AnthropicOptions(apiKey: 'test-key', thinkingEnabled: true),
+        );
+        expect(body.containsKey('thinking'), isFalse);
+        expect(body['max_tokens'], 8192);
+      });
+
+      test('bare options keep the catalog path byte-identical', () async {
+        final body = await captureBody(
+          reasoningModel,
+          const AnthropicOptions(apiKey: 'test-key'),
+        );
+        expect(body['max_tokens'], 64000);
+        expect(body.containsKey('thinking'), isFalse);
+      });
+    });
 }

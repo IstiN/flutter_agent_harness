@@ -197,6 +197,7 @@ class Agent {
     this.maxEmptyRetries = 1,
     this.runIdleTimeout = defaultRunIdleTimeout,
     this.onRunIdleTimeout,
+    this.contextWindowCap,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -254,6 +255,12 @@ class Agent {
 
   /// Adjusts context/model between turns. See [PrepareNextTurnHook].
   PrepareNextTurnHook? prepareNextTurn;
+
+  /// Owner-side effective context cap (`agent.contextWindowCap`, issue
+  /// #273), threaded into every [AgentLoopConfig] the agent builds so the
+  /// loop's over-window guard trips at the capped window. `null` = the raw
+  /// model window.
+  final int? contextWindowCap;
 
   /// External messages merged into the steering poll at every turn boundary
   /// (before the first turn and after each one) — e.g. the agent's inbox in
@@ -462,6 +469,7 @@ class Agent {
     var skip = skipInitialSteeringPoll;
     return AgentLoopConfig(
       model: _state.model,
+      contextWindowCap: contextWindowCap,
       toolExecution: toolExecution,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,

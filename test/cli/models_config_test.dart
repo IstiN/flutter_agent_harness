@@ -527,7 +527,10 @@ models:
       await run;
       final model = cli.agent.state.model;
       expect(model.contextWindow, 200000);
-      expect(model.maxTokens, 16384);
+      // claude-sonnet-4-5 resolves through the kimi-code OUTPUT ceiling
+      // table (issue #273): 4.5-gen sonnet -> 64000, not the old flat
+      // 16384 provider default.
+      expect(model.maxTokens, 64000);
       expect(model.input, ['text', 'image']);
     });
   });
