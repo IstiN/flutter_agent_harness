@@ -167,4 +167,25 @@ void main() {
       expect(a.hashCode, b.hashCode);
     });
   });
+
+  group('undo restores singleton non-word runs exactly', () {
+    test('undoing a kill after typing restores the full pre-kill line', () {
+      var ed = const LineEditor.empty();
+      for (final ch in 'kept'.split('')) {
+        ed = ed.insert(ch);
+      }
+      final killed = ed.killWordBefore();
+      expect(killed.text, '');
+      expect(killed.undo().text, 'kept');
+    });
+
+    test('undoing a yank after typing removes the yanked span only', () {
+      var ed = const LineEditor.empty().insert('ok');
+      ed = ed.backspace(); // ring: 'k'
+      final yanked = ed.yank();
+      expect(yanked.text, 'ok');
+      // Yank itself records no undo step: undo removes the kill instead.
+      expect(yanked.undo().text, 'ok');
+    });
+  });
 }

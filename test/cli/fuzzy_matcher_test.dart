@@ -104,4 +104,37 @@ void main() {
       expect(rankFuzzy(many, 'cmd', limit: 7).length, 7);
     });
   });
+
+  group('FuzzyMatch value semantics', () {
+    test('equality and hashCode compare indices elementwise', () {
+      final a = FuzzyMatch(3, [0, 2], 'ab');
+      final same = FuzzyMatch(3, [0, 2], 'ab');
+      final diffIndices = FuzzyMatch(3, [1, 2], 'ab');
+      expect(a, equals(same));
+      expect(a.hashCode, same.hashCode);
+      expect(a == diffIndices, isFalse);
+      // _listEquals length branch: shorter index list is unequal.
+      expect(a == FuzzyMatch(3, [0], 'ab'), isFalse);
+    });
+
+    test('compareTo breaks score ties by length then lexicographic', () {
+      final hi = FuzzyMatch(9, [0], 'x');
+      final lo = FuzzyMatch(1, [0], 'x');
+      expect(hi.compareTo(lo), isNegative);
+      expect(lo.compareTo(hi), isPositive);
+      // Same score: shorter text first.
+      final short = FuzzyMatch(5, [0], 'ab');
+      final long = FuzzyMatch(5, [0], 'abcd');
+      expect(short.compareTo(long), isNegative);
+      // Same score and length: lexicographic.
+      expect(
+        FuzzyMatch(5, [0], 'b').compareTo(FuzzyMatch(5, [0], 'a')),
+        isPositive,
+      );
+    });
+
+    test('toString carries score and text', () {
+      expect(FuzzyMatch(2, [1], 'hi').toString(), 'FuzzyMatch(2, hi)');
+    });
+  });
 }

@@ -6,6 +6,8 @@ import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/fuzzy_matcher.dart';
+import 'package:flutter_agent_harness/src/cli/composer_overlay.dart'
+    show groupOf;
 import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
@@ -2423,6 +2425,98 @@ void main() {
       model = send(model, const ScheduledStatusMsg(0, null));
       final deadTick = model.update(const ScheduledTickMsg());
       expect(deadTick.$2, isNull);
+    });
+  });
+
+  group('readline editing keys (issue #275)', () {
+    FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
+    FaTuiModel typed(FaTuiModel m, String text) {
+      for (final ch in text.split('')) {
+        m = send(m, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
+      }
+      return m;
+    }
+
+    KeyPressMsg ctrl(String ch) => KeyPressMsg(
+      TeaKey(code: KeyCode.rune, text: ch, modifiers: {KeyMod.ctrl}),
+    );
+
+    test('ctrl+k kills to line end; at the cursor end it is a no-op', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'hello world');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.left)));
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.left)));
+      model = send(model, ctrl('k'));
+      expect(model.inputText, 'hello wor');
+      // Cursor already at the end: unclaimed guard path.
+      model = send(model, ctrl('k'));
+      expect(model.inputText, 'hello wor');
+    });
+
+    test('ctrl+y yanks the last kill; consecutive yanks walk the ring', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'alpha beta');
+      model = send(model, ctrl('w')); // kills 'beta'
+      expect(model.inputText, 'alpha ');
+      model = send(model, ctrl('y'));
+      expect(model.inputText, 'alpha beta');
+      // A second ctrl+y rotates to the OLDER kill entry; with a single
+      // entry the ring wraps onto the same text.
+      model = send(model, ctrl('y'));
+      expect(model.inputText, contains('beta'));
+      // No kill ever made: the guard keeps the input untouched.
+      var fresh = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      fresh = typed(fresh, 'plain');
+      fresh = send(fresh, ctrl('y'));
+      expect(fresh.inputText, 'plain');
+    });
+
+    test('ctrl+t transposes at the cursor; empty input is a no-op', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'ab');
+      model = send(model, ctrl('t'));
+      expect(model.inputText, 'ba');
+      var empty = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      empty = send(empty, ctrl('t'));
+      expect(empty.inputText, '');
+    });
+
+    test('ctrl+z undoes the last edit group', () {
+      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      model = typed(model, 'kept');
+      model = send(
+        model,
+        ctrl('w'),
+      ); // no word before cursor 0? 'kept' is a word
+      model = send(model, ctrl('z'));
+      expect(model.inputText, contains('kept'));
+      // Nothing to undo on a fresh composer.
+      var fresh = FaTuiModel(callbacks: callbacks(), isExited: () => false);
+      fresh = send(fresh, ctrl('z'));
+      expect(fresh.inputText, '');
+    });
+
+    test('a ! line completes the trailing shell word from workspace paths', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(pathCandidates: (_) => ['build/notes.md']),
+        isExited: () => false,
+      );
+      model = typed(model, '!cat not');
+      expect(model.menuOpen, isTrue);
+      // The token starts after '!cat ' (position 5).
+      expect(model.menuTokenStart, 5);
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.tab)));
+      expect(model.inputText, '!cat build/notes.md ');
+    });
+  });
+
+  group('composer overlay helpers', () {
+    test('groupOf classifies skill keys apart from commands', () {
+      expect(
+        groupOf(const MenuItem(key: '/skill:goal ', label: '/goal')),
+        'skills',
+      );
+      expect(groupOf(const MenuItem(key: '/exit', label: '/exit')), 'commands');
     });
   });
 }

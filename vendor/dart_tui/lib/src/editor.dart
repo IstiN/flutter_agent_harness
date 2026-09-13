@@ -254,14 +254,23 @@ class LineEditor {
     final last = undoStack.last;
     var steps = undoStack.sublist(0, undoStack.length - 1);
     // Coalesce: pop all steps sharing the last step's group so one undo
-    // walks back to before the whole word/run.
+    // walks back to before the whole word/run. A singleton tail (a kill
+    // after typing, say) pops nothing more.
     final group = last.group;
+    var popped = 0;
     while (steps.isNotEmpty && steps.last.group == group) {
       steps = steps.sublist(0, steps.length - 1);
+      popped++;
     }
-    // An emptied stack restores the buffer the first popped step recorded
-    // (the state before the oldest coalesced change), not a blank line.
-    final restored = steps.isEmpty ? last.buffer : steps.last.buffer;
+    // The restored buffer is the state recorded just before the whole
+    // coalesced run (the anchor step below the popped tail). A singleton
+    // NON-word tail (kill/yank/transpose after typing) pops nothing and
+    // is its own run: undoing it restores that step's own buffer - the
+    // pre-change line. A lone word-start anchor still restores the step
+    // below it (the run it anchors was already undone).
+    final restored = steps.isEmpty || (popped == 0 && last.group is! _WordGroup)
+        ? last.buffer
+        : steps.last.buffer;
     return LineEditor._(
       restored,
       killRing: killRing,

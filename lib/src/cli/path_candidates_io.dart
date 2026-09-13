@@ -6,37 +6,41 @@ import 'dart:io';
 /// staleness ever bites.
 List<String> workspaceFileCandidates({int maxEntries = 5000}) {
   const skip = {'.git', '.dart_tool', '.worktrees', 'node_modules', 'build'};
-  final root = Directory.current;
-  final rootPath = root.path;
+  final rootPath = Directory.current.path;
   final out = <String>[];
-  final queue = <Directory>[root];
+  final queue = <Directory>[Directory.current];
   while (queue.isNotEmpty && out.length < maxEntries) {
-    final dir = queue.removeAt(0);
-    List<FileSystemEntity> entries;
-    try {
-      entries = dir.listSync(followLinks: false);
-    } on FileSystemException {
-      continue;
-    }
-    for (final entity in entries) {
-      final segments = entity.uri.pathSegments.where((s) => s.isNotEmpty);
-      if (segments.isEmpty) continue;
-      final name = segments.last;
+    for (final entity in safeListSync(queue.removeAt(0))) {
+      if (out.length >= maxEntries) break;
+      final name = entityName(entity);
       if (skip.contains(name)) continue;
       if (entity is Directory) {
         queue.add(entity);
       } else if (entity is File) {
-        out.add(
-          entity.path.startsWith('$rootPath/')
-              ? entity.path.substring(rootPath.length + 1)
-              : entity.path,
-        );
-        if (out.length >= maxEntries) break;
+        out.add(relativeToRoot(entity.path, rootPath));
       }
     }
   }
   return out;
 }
+
+/// Lists [dir]; an unreadable directory yields nothing instead of
+/// aborting the whole walk.
+List<FileSystemEntity> safeListSync(Directory dir) {
+  try {
+    return dir.listSync(followLinks: false);
+  } on FileSystemException {
+    return const [];
+  }
+}
+
+/// The last path segment of [entity] ('' segments dropped).
+String entityName(FileSystemEntity entity) =>
+    entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
+
+/// [path] relative to [rootPath]; passthrough when not underneath it.
+String relativeToRoot(String path, String rootPath) =>
+    path.startsWith('$rootPath/') ? path.substring(rootPath.length + 1) : path;
 
 /// Fragment-aware candidate source with a 30s TTL cache: the composer calls
 /// this per keystroke, and re-walking a big tree every frame is the frame
@@ -52,4 +56,10 @@ List<String> pathCandidatesFor(String fragment) {
     _cacheAtMs = now;
   }
   return _cache!;
+}
+
+/// Test hook: drops the TTL cache so a test can force a re-walk.
+void resetPathCandidatesCache() {
+  _cache = null;
+  _cacheAtMs = -1;
 }
