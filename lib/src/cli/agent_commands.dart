@@ -69,7 +69,7 @@ extension AgentCliAgentExt on AgentCli {
       await _observeSubagent(arg);
       return;
     }
-    await _agentsTreePanel();
+    await openAgentsHubOverlay();
   }
 
   /// The live agents tree: TUI picker of main + children, or a text dump in

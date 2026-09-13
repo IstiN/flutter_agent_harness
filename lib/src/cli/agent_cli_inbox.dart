@@ -27,6 +27,9 @@ extension AgentCliMessagingFlow on AgentCli {
     // app) burns the 10-run agent-chat cap and the CLI goes permanently
     // silent on further app mail until restart.
     if (queued.any((message) => message.isUserInput)) _inboxWakeStreak = 0;
+    // The btw panels: each drained fabric message lands as a bordered
+    // panel block at delivery time (issue #277).
+    _hubPanelsForInbox(queued);
     final messages = [
       for (final message in queued)
         _steeringLine(
@@ -138,6 +141,12 @@ extension AgentCliMessagingFlow on AgentCli {
       },
       onFired: (text) {
         io.writeln(_style.dim('[sched] $text'));
+        _hubAddPanel(
+          kind: DeferredPanelKind.scheduled,
+          from: 'scheduler',
+          body: text,
+          source: '/schedule',
+        );
         unawaited(_pushScheduledStatus());
       },
       // Failure isolation (issue #270): a failed delivery is a visible
