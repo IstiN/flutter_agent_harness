@@ -3452,6 +3452,15 @@
 - fix(215): split agent_service.dart and settings.dart under the 2800-line gate (#244)
 - fix(234): latch the web boot signal; e2e waits on it, not the transient splash class (#242)
 
+## 0.1.366
+
+- feat(200): session search field pinned atop the session lists (#246)
+- fix(238): close migration-ordering data-loss window, stop deleted-session resurrection (#240)
+- feat(199): session loading off the UI isolate - background parse, parallel listing, quick names, generation guards (#243)
+- feat(239): store automation — daily EXTERNAL TestFlight + manual release-appstore.yml (App Store review) (#252)
+- feat(147): Harbor adapter for fa + Terminal-Bench 4.0 run (self-hosted + Modal + Hub upload) (#254)
+- fix(app): web IndexedDB session persistence — per-record keys, migration, quota isolation (#237) (#249)
+
 ## Unreleased
 
 ## Unreleased
