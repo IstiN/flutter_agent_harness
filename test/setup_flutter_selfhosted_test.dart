@@ -402,13 +402,23 @@ void main() {
 
     test('action contract: bounded download, no cache POST, no slot swap', () {
       final action = File(actionYml).readAsStringSync();
+      // Slice out the actual curl invocation — asserting on the whole
+      // file would be satisfiable by the failure-message text alone.
+      final curlStart = action.indexOf('if ! curl');
+      final curlEnd = action.indexOf('; then', curlStart);
       expect(
-        action,
+        curlStart,
+        isNonNegative,
+        reason: 'the SDK download must go through a single curl step',
+      );
+      final curl = action.substring(curlStart, curlEnd);
+      expect(
+        curl,
         contains('--max-time 600'),
         reason: 'the ~1GB SDK download must be bounded (#357 should-have)',
       );
       expect(
-        action,
+        curl,
         contains('--retry-max-time 900'),
         reason: 'the retry cycle as a whole must be bounded too',
       );
