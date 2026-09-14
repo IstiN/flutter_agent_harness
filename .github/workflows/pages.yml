@@ -33,6 +33,10 @@ jobs:
   build:
     name: Build landing + web demo
     runs-on: ubuntu-latest
+    # Ceiling for the daily website watcher's budget arithmetic (#351):
+    # flutter web build + extension dart2js + add-in build + a Playwright
+    # chromium boot smoke; historically ~15m, 45m is the slow-day bound.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -139,6 +143,8 @@ jobs:
     name: Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-latest
+    # Ceiling for the daily website watcher's budget arithmetic (#351).
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
