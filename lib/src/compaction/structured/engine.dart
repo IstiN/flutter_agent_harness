@@ -183,6 +183,8 @@ final class StructuredCompactor {
         protectLastN: protectLastN,
       );
       if (ids.isEmpty) break;
+      // ignore: avoid_print
+      print('HIDEDBG pass=$i before=$before trigger=$trigger hideable=${_hideableEntries(view.ledger).length} picks=${picks.length} ids=${ids.length} ledger=${view.ledger.entries.length}');
 
       await session.appendHiddenRange(recordIds: ids.toList()..sort());
       final after = await _refreshState();
@@ -256,6 +258,7 @@ final class StructuredCompactor {
       viewState,
       visible,
       seqs,
+      path,
     );
   }
 
@@ -292,31 +295,50 @@ final class StructuredCompactor {
     return _requestTokens();
   }
 
-  /// Picks the next checkpoint range: the oldest visible records up to
-  /// the keep-recent boundary, snapped outward to pair groups.
+  /// Picks the next checkpoint range: the oldest PROJECTED records up to
+  /// the keep-recent boundary, snapped inward to pair groups.
+  ///
+  /// Issue #387: the walk projects HIDDEN records at their marker size —
+  /// a checkpoint covering a marker run consolidates the per-record
+  /// marker lines into one text summary, so marker overhead cannot grow
+  /// without bound. Without this, hide passes accumulate one-line
+  /// markers that no later pass ever folds (they are invisible to the
+  /// ledger), and the wire payload creeps back toward the window.
   Future<_CkptRange?> _pickCheckpointRange() async {
     final view = await _buildView();
     if (view == null) return null;
-    final entries = view.ledger.entries;
-    if (entries.isEmpty) return null;
+    final projected = <_ProjectedEntry>[];
+    for (final record in view.path) {
+      if (!view.state.isCovered(record.id) && _projects(record)) {
+        final seq = view.seqs.seqOf(record.id) ?? 0;
+        final hidden = view.state.hiddenRecordIds.contains(record.id);
+        projected.add(
+          _ProjectedEntry(
+            record.id,
+            hidden ? hiddenMarkerTokens(record, seq) : recordTokens(record),
+          ),
+        );
+      }
+    }
+    if (projected.isEmpty) return null;
 
-    // The protected tail: newest records totalling the keep-recent budget
-    // never enter a range.
+    // The protected tail: newest projected bytes totalling the keep-recent
+    // budget never enter a range (issue #388 keep-recent floor).
     var tailBudget = settings.keepRecentTokens;
-    var cut = entries.length;
-    for (var i = entries.length - 1; i >= 0; i--) {
-      tailBudget -= entries[i].tokens;
+    var cut = projected.length;
+    for (var i = projected.length - 1; i >= 0; i--) {
+      tailBudget -= projected[i].tokens;
       if (tailBudget <= 0) {
         cut = i;
         break;
       }
     }
     // Snap inward at group boundaries: a range never splits a pair.
-    while (cut > 1 && _sharesGroup(entries, cut, view.ledger)) {
+    while (cut > 1 && _sharesGroup(projected, cut, view.ledger)) {
       cut--;
     }
     if (cut <= 0) return null;
-    final members = entries.take(cut).toList();
+    final members = projected.take(cut).toList();
     if (members.isEmpty) return null;
 
     final coveredIds = <String>{};
@@ -334,7 +356,11 @@ final class StructuredCompactor {
     );
   }
 
-  bool _sharesGroup(List<LedgerEntry> entries, int cut, ContextLedger ledger) {
+  bool _sharesGroup(
+    List<_ProjectedEntry> entries,
+    int cut,
+    ContextLedger ledger,
+  ) {
     if (cut >= entries.length) return false;
     return ledger
         .groupOf(entries[cut - 1].recordId)
@@ -390,6 +416,17 @@ final class StructuredCompactor {
       if (seq != null) coversSeqs.add(seq);
     }
     final coversRanges = idsToRanges(coversSeqs);
+    // Issue #387 marker consolidation: a range with no visible message
+    // records folds a pure marker run — nothing is left to summarize, so
+    // a deterministic note replaces the LLM call. Every id stays
+    // expandable (the covers list still names them); the summarizer is
+    // never invoked on marker-only ranges.
+    if (rangeRecords.isEmpty) {
+      return 'Earlier records already hidden behind expand markers '
+          '(${idsToRanges(coversSeqs)}) were consolidated here to bound '
+          'marker overhead. Use compact_expand on any id to reopen a '
+          'record.';
+    }
     final openAsks = userRequestCandidateLines(
       messages,
       recordIds: [for (final record in rangeRecords) record.id],
@@ -454,12 +491,26 @@ List<SessionRecord> classicTransform(List<SessionRecord> path) {
 }
 
 final class _LedgerView {
-  const _LedgerView(this.ledger, this.state, this.visible, this.seqs);
+  const _LedgerView(this.ledger, this.state, this.visible, this.seqs, this.path);
 
   final ContextLedger ledger;
   final StructuredViewState state;
   final List<SessionRecord> visible;
   final RecordSeqIndex seqs;
+
+  /// The whole (post-classic-transform) branch: visible AND hidden
+  /// records. The checkpoint walk projects this to weigh hidden records
+  /// at their marker size (issue #387 consolidation).
+  final List<SessionRecord> path;
+}
+
+/// One record in the projected checkpoint walk: its id and its wire
+/// cost (payload tokens for visible records, marker tokens for hidden).
+final class _ProjectedEntry {
+  const _ProjectedEntry(this.recordId, this.tokens);
+
+  final String recordId;
+  final int tokens;
 }
 
 final class _CkptRange {

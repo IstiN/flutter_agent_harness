@@ -198,7 +198,7 @@ List<Message> _projectRecord(
       // hide targets the checkpoint itself: no marker, no swallow.
       if (state.hiddenRecordIds.contains(record.id)) return const [];
       return emitted.add(record.id)
-          ? [_checkpointMessage(record, byId: byId, seqs: seqs)]
+          ? [_checkpointMessage(record, byId: byId, seqs: seqs, state: state)]
           : const [];
     case MessageRecord():
       return [
@@ -240,7 +240,7 @@ List<Message>? _coverAt(
   final cover = state.coveredRecordIds[record.id];
   if (cover == null || state.hiddenRecordIds.contains(cover.id)) return null;
   return emitted.add(cover.id) && !state.isCovered(cover.id)
-      ? [_checkpointMessage(cover, byId: byId, seqs: seqs)]
+      ? [_checkpointMessage(cover, byId: byId, seqs: seqs, state: state)]
       : const [];
 }
 
@@ -316,6 +316,7 @@ List<Message> _legacyAt(
 
 Message _checkpointMessage(
   CompactCheckpointRecord record, {
+  required StructuredViewState state,
   required Map<String, SessionRecord> byId,
   required RecordSeqIndex seqs,
 }) {
@@ -339,7 +340,12 @@ Message _checkpointMessage(
     coversRanges: idsToRanges(covers),
   );
   final index = hiddenIndexSection([
-    for (final id in record.coversRecordIds) ?byId[id],
+    // Consolidated markers (issue #387) are not re-listed: a checkpoint
+    // over a marker run would otherwise reproduce every marker line
+    // inside itself and never shrink. The header's covers ranges keep
+    // every id expandable.
+    for (final id in record.coversRecordIds)
+      if (!state.hiddenRecordIds.contains(id)) ?byId[id],
   ], seqs);
   return UserMessage.text(
     '$header\n${record.text}$index',
@@ -501,3 +507,19 @@ int recordTokens(SessionRecord record) {
       return 0;
   }
 }
+
+
+/// The projected wire cost of one hidden record (issue #387): its
+/// one-line marker message — the marker is what rides the wire after a
+/// hide pass, so checkpoint selection weighs hidden records at the
+/// marker size, not the original payload size.
+int hiddenMarkerTokens(SessionRecord record, int seq) => estimateTokens(
+  UserMessage.text(
+    hiddenMarker(
+      seq: seq,
+      kind: markerKindFor(record),
+      tokens: recordTokens(record),
+      preview: markerPreview(recordPreviewSource(record)),
+    ),
+  ),
+);

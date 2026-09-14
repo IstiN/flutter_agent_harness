@@ -512,6 +512,9 @@ class AgentCli {
       onRunIdleTimeout: (error) =>
           _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
       contextWindowCap: config.contextWindowCap,
+      // Issue #387: the loop's over-window guard hands the transcript to
+      // this relief before refusing — one synchronous compaction pass.
+      overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
