@@ -44,8 +44,8 @@ void main() {
   });
 
   group('AC1 UT-zombie', () {
-    test('a child with no provider request flags ⚠ STALLED at the first '
-        'tick and ⚠⚠ at twice the stall threshold', () async {
+    test('a child with no provider request flags [WARN] STALLED at the first '
+        'tick and [WARN][WARN] at twice the stall threshold', () async {
       await spawnRunning('fix355');
       final heartbeat = buildHeartbeat();
 
@@ -53,18 +53,22 @@ void main() {
       final first = heartbeat.tick();
       expect(notices, hasLength(1), reason: 'exactly one digest at +12 min');
       expect(first, isNotNull);
-      expect(first!, contains('⚠ STALLED'));
+      expect(first!, contains('[WARN] STALLED'));
       expect(first, contains('0 requests'));
       expect(first, contains('no-progress-since-spawn'));
       expect(first, contains('task_status → task_cancel → respawn'));
-      expect(first, isNot(contains('⚠⚠')), reason: 'not escalated yet');
+      expect(
+        first,
+        isNot(contains('[WARN][WARN]')),
+        reason: 'not escalated yet',
+      );
       expect(first, contains('age 12m'));
 
       now = t0.add(const Duration(minutes: 24));
       final second = heartbeat.tick();
       expect(notices, hasLength(2));
       expect(second, isNotNull);
-      expect(second!, contains('⚠⚠'));
+      expect(second!, contains('[WARN][WARN]'));
       expect(second, contains('age 24m'));
     });
 
@@ -98,7 +102,7 @@ void main() {
         final digest = heartbeat.tick();
         expect(digest, isNotNull);
         expect(digest!, contains('healthy'));
-        expect(digest, isNot(contains('⚠')));
+        expect(digest, isNot(contains('[WARN]')));
         expect(digest, contains('${2 * i} requests'));
         expect(digest, contains('${500 * i} tokens'));
       }
@@ -140,7 +144,7 @@ void main() {
       final digest = heartbeat.tick();
       expect(digest, isNotNull);
       expect(digest!, contains('zombie'));
-      expect(digest, isNot(contains('⚠')));
+      expect(digest, isNot(contains('[WARN]')));
     });
   });
 
