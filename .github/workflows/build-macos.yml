@@ -1,5 +1,11 @@
 name: Build macOS Release (Fa)
 
+# Issue #343: the daily-publish CLI leg and a human can dispatch this
+# workflow in the same window; the run-name embeds the input so the
+# watcher's displayTitle match (the only distinguisher in the run-list
+# API) never adopts someone else's run.
+run-name: "build-macos (create_release=${{ inputs.create_release }})"
+
 on:
   workflow_dispatch:
     inputs:
@@ -26,6 +32,9 @@ jobs:
   version:
     name: Derive version
     runs-on: ubuntu-latest
+    # Explicit ceiling so the daily cli watcher's budget arithmetic (#351)
+    # has a real per-job bound instead of GitHub's 360m default.
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -734,6 +743,11 @@ jobs:
     name: Build macOS CLI ${{ matrix.arch }}
     needs: version
     runs-on: ${{ matrix.runner }}
+    # Ceiling for the daily cli watcher's budget arithmetic (#351): dart
+    # CLI bundle + release upload; the two arches run in PARALLEL on
+    # GitHub-hosted runners (they do not serialize like the self-hosted
+    # build-macos matrix does).
+    timeout-minutes: 45
     if: inputs.create_release == 'true'
     strategy:
       fail-fast: false
@@ -801,6 +815,8 @@ jobs:
     name: Build Chrome extension
     needs: version
     runs-on: ubuntu-latest
+    # Ceiling for the daily cli watcher's budget arithmetic (#351).
+    timeout-minutes: 30
     if: inputs.create_release == 'true'
     permissions:
       contents: write
@@ -860,6 +876,8 @@ jobs:
     name: Create macOS GitHub Release
     needs: [version, build-macos]
     runs-on: ubuntu-latest
+    # Ceiling for the daily cli watcher's budget arithmetic (#351).
+    timeout-minutes: 15
     if: inputs.create_release == 'true'
     permissions:
       contents: write
