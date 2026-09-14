@@ -25,6 +25,10 @@ final class SetInputHistoryMsg extends Msg {
 /// Message asking the model picker to refresh its items.
 final class _ModelsRefreshMsg extends Msg {}
 
+/// Message announcing a session theme switch (issue #279): invalidates
+/// rendered-color caches; the next frame repaints in the new palette.
+final class _ThemeChangedMsg extends Msg {}
+
 /// Message asking the model picker to open.
 final class _OpenModelMenuMsg extends Msg {}
 

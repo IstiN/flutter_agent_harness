@@ -177,6 +177,7 @@ final class CliConfig {
     this.contextWindowCap,
     this.powerSleepPrevention,
     this.powerHold,
+    this.tuiTheme,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -202,6 +203,12 @@ final class CliConfig {
       modelRoles: map['roles'] == null && map['modelOverrides'] == null
           ? null
           : ModelRolesConfig.fromYaml(map),
+      // The theme section: `tui.theme` names a built-in or user TUI theme;
+      // unknown names surface at boot (the default applies instead).
+      tuiTheme: switch (map['tui']) {
+        final YamlMap tui => tui['theme'] as String?,
+        _ => null,
+      },
       // The ttsr section is parsed strictly too (bad rules must surface).
       ttsr: map['ttsr'] == null
           ? null
@@ -437,6 +444,11 @@ final class CliConfig {
   /// session opt-in.
   final PowerAssertionHold? powerHold;
 
+  /// Persisted TUI theme name (`tui.theme`): a built-in key or a user
+  /// theme file stem from `~/.fah/themes/<name>.json`. `null` = default
+  /// theme; an unknown name warns at boot and keeps the default.
+  final String? tuiTheme;
+
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
   /// merge-before-write union (issue #221) — keep this field list in sync
@@ -469,6 +481,7 @@ final class CliConfig {
       contextWindowCap: contextWindowCap,
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
+      tuiTheme: tuiTheme,
     );
   }
 
@@ -481,7 +494,8 @@ final class CliConfig {
       ..write('approvalMode: $approvalMode\n')
       ..write(_allowedToolsYaml())
       ..write(_promptOverridesYaml())
-      ..write(_optionalSectionsYaml());
+      ..write(_optionalSectionsYaml())
+      ..write(_tuiSectionYaml());
     return buffer.toString();
   }
 
@@ -494,7 +508,10 @@ final class CliConfig {
     return buffer.toString();
   }
 
-  /// Model/provider-related optional sections.
+  /// The `tui:` section, only when a theme is persisted.
+  String _tuiSectionYaml() =>
+      tuiTheme == null ? '' : 'tui:\n  theme: $tuiTheme\n';
+
   String _modelSectionsYaml() {
     final buffer = StringBuffer();
     final roles = modelRoles;

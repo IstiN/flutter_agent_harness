@@ -131,6 +131,7 @@ const _nestedKeySources = <String, String>{
   'tools.*.*': 'lib/src/tools/availability.dart',
   'prompts.*': 'lib/src/cli/cli_config.dart',
   'compaction.engine': 'lib/src/cli/cli_config.dart',
+  'tui.theme': 'lib/src/cli/cli_config.dart',
   'ttsr.enabled': 'lib/src/ttsr/ttsr_config.dart',
   'ttsr.contextMode': 'lib/src/ttsr/ttsr_config.dart',
   'ttsr.repeatMode': 'lib/src/ttsr/ttsr_config.dart',
@@ -184,6 +185,18 @@ void main() {
 
   setUpAll(() {
     skill = _read('.fah/skills/fa-self-config/SKILL.md');
+  });
+
+  test('the skill description advertises theme management (issue #279)', () {
+    final frontmatter = skill.split('---')[1];
+    expect(
+      frontmatter,
+      contains('theme'),
+      reason: 'a bare "switch the theme" request must match the skill '
+          'description — theme keywords belong in the always-visible '
+          'frontmatter (issue #279 owner clarification)',
+    );
+    expect(frontmatter, contains('appearance'));
   });
 
   test('every documented top-level key is read by the config parsers', () {
