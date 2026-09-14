@@ -27,22 +27,33 @@ void main() {
       expect(buffer.toString(), isEmpty);
     });
 
-    test('startup focus and mouse defaults outrank an empty view', () {
+    test('mouse mode is fully view-driven (issue #278)', () {
       state = TerminalModeState(
         defaultAltScreen: false,
         defaultHideCursor: false,
-        defaultMouseMode: MouseMode.cellMotion,
         defaultReportFocus: true,
       );
+      final sink = _StringSink(buffer);
 
-      state.apply(_StringSink(buffer), newView('value'));
-
+      // A view enabling cell motion emits the enable sequence (plus the
+      // boot focus default).
+      state.apply(sink, newView('value')..mouseMode = MouseMode.cellMotion);
       expect(buffer.toString(), contains('\x1b[?1004h'));
+      expect(buffer.toString(), contains('\x1b[?1002h\x1b[?1006h'));
+
+      // A later frame dropping the mode to none must DISARM the terminal
+      // (no boot-default floor keeps it latched).
+      buffer.clear();
+      state.apply(sink, newView('value'));
       expect(
         buffer.toString(),
         contains('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l'),
       );
-      expect(buffer.toString(), contains('\x1b[?1002h\x1b[?1006h'));
+
+      // Staying off stays silent (idempotent).
+      buffer.clear();
+      state.apply(sink, newView('value'));
+      expect(buffer.toString(), isEmpty);
     });
 
     test('reports alternate-screen changes for cache invalidation', () {

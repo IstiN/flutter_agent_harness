@@ -9,6 +9,9 @@ import 'package:dart_tui/dart_tui.dart';
 import 'composer_overlay.dart';
 import 'ansi_markdown.dart';
 import 'agent_hub_tui.dart';
+import 'model_picker_table.dart' show modelPickerFooterHint;
+import 'package:characters/characters.dart';
+import 'tui_hit_regions.dart';
 import 'tui_prompt.dart';
 import 'tui_theme.dart';
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
@@ -18,6 +21,8 @@ import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
 
 part 'fa_tui_messages.dart';
 part 'fa_tui_hub.dart';
+part 'fa_tui_mouse.dart';
+part 'fa_tui_rows.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -71,8 +76,9 @@ final class FaTuiCallbacks {
   /// Builds slash-command menu items for the given prefix.
   final List<MenuItem> Function(String prefix) buildSlashMenu;
 
-  /// Builds model-picker menu items for the given filter.
-  final List<MenuItem> Function(String filter) buildModelMenu;
+  /// Builds model-picker menu items (the resolved table) for the filter at
+  /// the given terminal width — the width drives the column elision.
+  final List<MenuItem> Function(String filter, int width) buildModelMenu;
 
   /// One-line status shown above the input line.
   final String Function() statusLine;
@@ -376,6 +382,15 @@ final class FaTuiModel extends Model {
   List<String>? _stickyFmtSource;
   int? _stickyFmtWidth;
 
+  /// Hit-regions of the LAST RENDERED frame + press/drag router (issue
+  /// #278): input plumbing, NOT model state; view() rebuilds the registry
+  /// (E2), copyWith carries all three (press survives copies, hint once).
+  TuiHitRegionRegistry _hitRegions = TuiHitRegionRegistry();
+  TuiMouseRouter _mouseRouter = TuiMouseRouter();
+
+  /// Whether the E4 degrade hint already printed this session.
+  bool _mouseHintShown = false;
+
   List<String> _formattedStickyRows(int width) {
     final src = stickyLines;
     final cached = _stickyFmtRows;
@@ -450,7 +465,8 @@ final class FaTuiModel extends Model {
     return (start, end);
   }
 
-  /// Exact number of lines the open menu occupies in the view.
+  /// Exact number of lines the open menu occupies in the view (including
+  /// the models-table footer hint row when a models-family picker is open).
   int get _menuReservedLines {
     if (!menuOpen || menuItems.isEmpty) return 0;
     final (start, end) = _menuWindow();
@@ -458,6 +474,7 @@ final class FaTuiModel extends Model {
     lines += _groupHeadersIn(start, end); // section headers
     if (start > 0) lines++; // '↑ more'
     if (end < menuItems.length) lines++; // '↓ more'
+    if (_modelPickerFamilyOpen) lines++; // footer hint
     return lines;
   }
 
@@ -645,6 +662,9 @@ final class FaTuiModel extends Model {
     copy._stickyFmtSource = _stickyFmtSource;
     copy._stickyFmtWidth = _stickyFmtWidth;
     copy._promptCompleter = _promptCompleter;
+    copy._hitRegions = _hitRegions;
+    copy._mouseRouter = _mouseRouter;
+    copy._mouseHintShown = _mouseHintShown;
     return copy;
   }
 
@@ -912,17 +932,18 @@ final class FaTuiModel extends Model {
     return _handleTerminalMsg(msg);
   }
 
-  /// Terminal events: window resizes, mouse wheel scrolling, pastes, and
-  /// keys.
+  /// Terminal events: resizes, mouse wheel scrolling, pastes, keys.
   (Model, Cmd?) _handleTerminalMsg(Msg msg) {
     if (msg is WindowSizeMsg) return _handleWindowSize(msg);
+    if (msg is MouseClickMsg) return _handleMouseClick(msg);
+    if (msg is MouseMotionMsg) return _handleMouseMotion(msg);
+    if (msg is MouseReleaseMsg) return _handleMouseRelease(msg);
     if (msg is MouseWheelMsg) return _handleMouseWheel(msg);
     if (msg is PasteMsg) return _handlePaste(msg);
     return _handleKeyMsg(msg);
   }
 
-  /// Key events: multi-character runes split into individual key events
-  /// first, then every key goes through the mode-aware key clusters.
+  /// Key events: runes split, then every key through the mode-aware clusters.
   (Model, Cmd?) _handleKeyMsg(Msg msg) {
     // dart_tui's input decoder groups up to 4 ASCII bytes into a single rune,
     // and the cursor would advance by 1 instead of the inserted text length.
@@ -970,7 +991,7 @@ final class FaTuiModel extends Model {
   /// Rebuilds the open model picker's items, keeping the selection in
   /// bounds.
   (Model, Cmd?) _refreshedModelMenu() {
-    final items = callbacks.buildModelMenu(modelFilter);
+    final items = callbacks.buildModelMenu(modelFilter, termWidth);
     final selected = items.isEmpty
         ? 0
         : menuSelected.clamp(0, items.length - 1);
@@ -978,7 +999,7 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleOpenModelMenu() {
-    final items = callbacks.buildModelMenu('');
+    final items = callbacks.buildModelMenu('', termWidth);
     return (
       copyWith(
         menuOpen: true,
@@ -1031,6 +1052,9 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleMouseWheel(MouseWheelMsg msg) {
+    // Capture off: the hint says wheel is disabled — honor it even for
+    // bytes a not-yet-disarmed terminal still sends (issue #278, AC4).
+    if (!mouseCapture) return (this, null);
     // Hub overlay: the wheel moves the fleet-tree selection.
     if (hub != null) {
       final delta = switch (msg.mouse.button) {
@@ -1228,7 +1252,7 @@ final class FaTuiModel extends Model {
       return (
         copyWith(
           menuModelMode: true,
-          menuItems: callbacks.buildModelMenu(''),
+          menuItems: callbacks.buildModelMenu('', termWidth),
           menuSelected: 0,
           modelFilter: '',
           pickerId: 'models',
@@ -1241,7 +1265,7 @@ final class FaTuiModel extends Model {
     // /approval) submit immediately instead of filling the input.
     if (callbacks.opensPicker?.call(item.key) ?? false) {
       return (
-        copyWith(menuOpen: false, inputText: '', cursor: 0),
+        copyWith(menuOpen: false, inputText: '', cursor: 0, pickerId: ''),
         () async {
           await callbacks.onSubmit(item.key);
           return null;
@@ -1384,9 +1408,8 @@ final class FaTuiModel extends Model {
 
   /// Normal-mode arrow scroll keys (↑/↓); null when the key belongs to
   /// another cluster. With an empty input ↑ first pops the message queue,
-  /// then browses the submitted-message history (shell-style); ↓ walks it
-  /// back. Viewport scrolling lives on PgUp/PgDn (and the mouse wheel when
-  /// capture is on).
+  /// then browses the submitted-message history; ↓ walks it back.
+  /// Viewport scrolling lives on PgUp/PgDn (and the wheel when captured).
   (Model, Cmd?)? _handleArrowScrollKey(KeyMsg msg) {
     switch (msg.key) {
       case 'up':
@@ -1693,9 +1716,16 @@ final class FaTuiModel extends Model {
           callbacks.onPickerCancelled?.call(pickerId);
         }
         return (
-          copyWith(menuOpen: false, modelFilter: '', menuAllItems: const []),
+          copyWith(
+            menuOpen: false,
+            menuModelMode: false,
+            modelFilter: '',
+            menuAllItems: const [],
+            pickerId: '',
+            pickerTitle: '',
+          ),
           null,
-        );
+      );
       default:
         return null;
     }
@@ -1767,7 +1797,7 @@ final class FaTuiModel extends Model {
   FaTuiModel _filteredPicker(String filter) {
     final isModelsPicker = pickerId == 'models';
     final items = isModelsPicker
-        ? callbacks.buildModelMenu(filter)
+        ? callbacks.buildModelMenu(filter, termWidth)
         : _filterItems(menuAllItems, filter);
     return copyWith(modelFilter: filter, menuItems: items, menuSelected: 0);
   }
@@ -1789,33 +1819,45 @@ final class FaTuiModel extends Model {
   /// [FaTuiCallbacks.onPickerSelected] for generic pickers). Null when the
   /// key belongs to another cluster.
   (Model, Cmd?)? _handlePickerAcceptKey(KeyMsg msg) {
-    final isModelsPicker = pickerId == 'models';
     switch (msg.key) {
       case 'enter':
       case 'tab':
         if (menuItems.isEmpty) return (this, null);
-        final item = menuItems[menuSelected];
-        if (item.key.isEmpty) return (this, null);
-        return (
-          copyWith(
-            menuOpen: false,
-            modelFilter: '',
-            menuAllItems: const [],
-            inputText: '',
-            cursor: 0,
-          ),
-          () async {
-            if (isModelsPicker) {
-              await callbacks.onModelSelected(item.key);
-            } else {
-              await callbacks.onPickerSelected?.call(pickerId, item.key);
-            }
-            return null;
-          },
-        );
+        return _acceptPickerAt(menuSelected);
       default:
         return null;
     }
+  }
+
+  /// Accepts the picker row at [index] — the shared accept flow for the
+  /// keyboard (enter/tab on [menuSelected]) and the mouse (a menuRow hit
+  /// region, issue #278). Closes the picker and resolves the selection
+  /// through the host ([FaTuiCallbacks.onPickerSelected] for pickers).
+  (Model, Cmd?) _acceptPickerAt(int index) {
+    final pickerId = this.pickerId;
+    final isModelsPicker = pickerId == 'models';
+    final item = menuItems[index];
+    if (item.key.isEmpty) return (this, null);
+    return (
+      copyWith(
+        menuOpen: false,
+        menuModelMode: false,
+        modelFilter: '',
+        menuAllItems: const [],
+        pickerId: '',
+        pickerTitle: '',
+        inputText: '',
+        cursor: 0,
+      ),
+      () async {
+        if (isModelsPicker) {
+          await callbacks.onModelSelected(item.key);
+        } else {
+          await callbacks.onPickerSelected?.call(pickerId, item.key);
+        }
+        return null;
+      },
+    );
   }
 
   /// Picker type-to-filter: each printable character extends the filter and
@@ -1903,6 +1945,11 @@ final class FaTuiModel extends Model {
   /// message), clears the input, snaps the viewport to the bottom, and runs
   /// the host callback.
   (FaTuiModel, Cmd?) _submit(String text) {
+    // The TUI-side /mouse toggle executes locally (never reaches the host,
+    // never echoes into history) — including while a run streams, since
+    // slash commands bypass the busy queue.
+    final mouseCommand = _handleMouseCommand(text);
+    if (mouseCommand != null) return mouseCommand;
     final rule = _dim('─' * termWidth);
     final bg = tuiUserMessageBgSgr();
     const reset = '\x1b[0m';
@@ -2087,7 +2134,11 @@ final class FaTuiModel extends Model {
     }
     final b = StringBuffer();
     final height = _viewportHeight;
-    _writeStickyEcho(b);
+    // Every frame rebuilds the hit-region registry from the current
+    // layout — a resize re-derives every rect before the next click can
+    // land (issue #278, E2).
+    _hitRegions.clear();
+    final stickyRows = _writeStickyEcho(b);
 
     // Output history, padded to a fixed height. Markdown is formatted and
     // ANSI-safely wrapped to physical rows (SGR-only output, escapes never
@@ -2096,13 +2147,23 @@ final class FaTuiModel extends Model {
     // triggered by scrolling reuses the rows computed on the last change.
     final wrapped = _wrappedLines();
     final offset = _clampScroll(scrollOffset, wrapped);
-    _writeHistoryRows(b, height, wrapped, offset);
+    final historyRows = _writeHistoryRows(b, height, wrapped, offset);
     _writeScrollIndicator(b, wrapped, offset);
+    _hitRegions.add(
+      TuiHitRegion(
+        x: 0,
+        y: stickyRows,
+        w: termWidth,
+        h: historyRows + 1,
+        kind: TuiRegionKind.scrollback,
+      ),
+    );
 
     // Menu above input.
-    _writeMenu(b);
+    var row = stickyRows + historyRows + 1;
+    row += _writeMenu(b, row);
 
-    _writeBusyAndQueue(b);
+    row += _writeBusyAndQueue(b, row);
 
     // Prompt mode: the prompt zone replaces the entire input zone below it,
     // including the status line. The physical cursor stays HIDDEN the whole
@@ -2124,7 +2185,7 @@ final class FaTuiModel extends Model {
       );
     }
 
-    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b);
+    final (cursorInputLine, cursorScreenCol) = _writeInputLines(b, row);
     b.writeln(_dim('─' * termWidth));
     // The status line stays plain; the busy indicator lives above the input.
     b.write(_statusRow());
@@ -2166,17 +2227,18 @@ final class FaTuiModel extends Model {
   /// The sticky user echo pinned to the top while a run streams and the
   /// echo itself has scrolled out of view (Copilot-style). Rows come from
   /// the content-keyed cache — formatting per frame made typing during a
-  /// stream O(echo lines) per keystroke.
-  void _writeStickyEcho(StringBuffer b) {
-    if (_stickyActive) {
-      for (final line in _formattedStickyRows(termWidth)) {
-        b.writeln(line);
-      }
+  int _writeStickyEcho(StringBuffer b) {
+    if (!_stickyActive) return 0;
+    final rows = _formattedStickyRows(termWidth);
+    for (final line in rows) {
+      b.writeln(line);
     }
+    return rows.length;
   }
 
   /// The [height]-row window of the wrapped output history at [offset].
-  void _writeHistoryRows(
+  /// Always paints exactly [height] rows.
+  int _writeHistoryRows(
     StringBuffer b,
     int height,
     List<String> wrapped,
@@ -2186,13 +2248,13 @@ final class FaTuiModel extends Model {
       final row = offset + i;
       b.writeln(row < wrapped.length ? wrapped[row] : '');
     }
+    return height;
   }
 
   /// Scroll progress indicator — only while the user scrolled away from
   /// the live edge (a "you are here" hint); while following, the row stays
   /// blank so the layout never shifts. (A transient viewport shrink, e.g.
-  /// the busy row, must not light it up spuriously.)
-  void _writeScrollIndicator(StringBuffer b, List<String> wrapped, int offset) {
+  int _writeScrollIndicator(StringBuffer b, List<String> wrapped, int offset) {
     final bottom = _scrollBottom(wrapped);
     if (!followTail && offset < bottom) {
       final scrollPercent = bottom == 0
@@ -2212,6 +2274,7 @@ final class FaTuiModel extends Model {
       // while following shifted every later row on scroll.
       b.writeln();
     }
+    return 1;
   }
 
   /// The menu title row: '[Commands]' for the slash menu, otherwise the
@@ -2225,92 +2288,20 @@ final class FaTuiModel extends Model {
   /// The slash/model/picker menu block above the input zone. A picker whose
   /// filter matched nothing keeps its title row plus a dim '(no matches)'
   /// hint — vanishing entirely would hide the query being edited.
-  void _writeMenu(StringBuffer b) {
-    if (!menuOpen) return;
+  int _writeMenu(StringBuffer b, int baseRow) {
+    if (!menuOpen) return 0;
     if (menuItems.isEmpty) {
       if (menuModelMode) {
         b.writeln(_accent2(_menuTitle()));
         b.writeln(_dim('  (no matches)'));
+        return 2;
       }
-      return;
+      return 0;
     }
     b.writeln(_accent2(_menuTitle()));
-    _writeMenuItems(b);
+    return 1 + _writeMenuItems(b, baseRow + 1);
   }
 
-  /// The visible window of menu items, with the scroll-more hint rows when
-  /// the list overflows above or below.
-  void _writeMenuItems(StringBuffer b) {
-    final (start, end) = _menuWindow();
-    if (start > 0) b.writeln(_dim('  ↑ more'));
-    var lastGroup = '';
-    for (var i = start; i < end; i++) {
-      final group = menuItems[i].group;
-      if (group.isNotEmpty && group != lastGroup) {
-        b.writeln(_dim('  ── $group ──'));
-        lastGroup = group;
-      }
-      b.writeln(_menuItemRow(menuItems[i], i == menuSelected));
-    }
-    if (end < menuItems.length) b.writeln(_dim('  ↓ more'));
-  }
-
-  /// One menu row (label + dim description, truncated to the width).
-  String _menuItemRow(MenuItem item, bool selected) {
-    final desc = item.description.isNotEmpty ? ' ${item.description}' : '';
-    // Menu rows must never exceed the width: a soft-wrapped chrome line
-    // desyncs the renderer's row math and smears frames on every key.
-    final full = '${item.label}$desc';
-    final prefix = selected ? '${_accent('▸')} ' : '  ';
-    if (tuiTextWidth(full) <= termWidth - 2) {
-      if (selected) {
-        return '$prefix${_accent(item.label)}${_dim(desc)}';
-      }
-      return '$prefix${item.label}${_dim(desc)}';
-    }
-    final text = _fitWidth(full, termWidth - 2);
-    return selected ? '$prefix${_accent(text)}' : '$prefix$text';
-  }
-
-  /// The busy indicator sits directly above the input zone (like pi's
-  /// "Working…" row), so it is visible next to the cursor while a run
-  /// streams. Queued messages (kimi-cli) render under it, one dim line per
-  /// message plus the edit/steer hint, all above the framed input zone.
-  void _writeBusyAndQueue(StringBuffer b) {
-    // Scheduled follow-ups sit ON TOP of the working row (issue #115) and
-    // stay visible while idle — a pending reminder is exactly what the user
-    // needs to see when nothing else is happening.
-    if (scheduledCount > 0) b.writeln(_scheduledRowLine());
-    if (busy) b.writeln(_busyRowLine());
-    if (queue.isNotEmpty) {
-      // The count badge is the "your typing is not lost" contract (AC2).
-      b.writeln(_dim('⏵ queued (${queue.length})'));
-      for (final queued in queue) {
-        final flat = queued.text.replaceAll('\n', ' ');
-        final badge = queued.steer ? '⤳ [steer] ' : '❯ ';
-        final line = '$badge$flat';
-        final clipped = line.length > termWidth - 2
-            ? '${line.substring(0, termWidth - 3)}…'
-            : line;
-        b.writeln(_dim(clipped));
-      }
-      b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
-    }
-    b.writeln(_dim('─' * termWidth));
-  }
-
-  /// The scheduled follow-ups indicator line (one dim row): count + the
-  /// nearest ETA, styled after the busy row so it reads as one family.
-  String _scheduledRowLine() {
-    final now = nowFn().millisecondsSinceEpoch;
-    final eta = scheduledNextDueMs < 0
-        ? ''
-        : scheduledNextDueMs <= now
-        ? ' · due now'
-        : ' · next in '
-              '${ScheduledMessageQueue.formatDelay(Duration(milliseconds: scheduledNextDueMs - now))}';
-    return _dim('⏰ $scheduledCount scheduled$eta');
-  }
 
   /// The busy indicator line (one row): spinner + label + honesty
   /// suffixes. Extracted from [_writeBusyAndQueue] to keep both methods'
@@ -2318,8 +2309,6 @@ final class FaTuiModel extends Model {
   String _busyRowLine() {
     if (menuOpen && menuModelMode) {
       // An interactive host picker is open: the run is blocked on the
-      // user's choice, not "working" — a spinner + growing elapsed counter
-      // next to a menu reads like a hang.
       return _dim('waiting for your selection…');
     }
     final frame = _spinnerFrames[spinnerFrame % _spinnerFrames.length];
@@ -2353,8 +2342,18 @@ final class FaTuiModel extends Model {
 
   /// The framed input lines with horizontal cursor-window scrolling; returns
   /// the cursor's input line index and screen column for the cursor home.
-  (int, int) _writeInputLines(StringBuffer b) {
+  /// Registers the composer hit-region (issue #278): click = caret move.
+  (int, int) _writeInputLines(StringBuffer b, int baseRow) {
     final (rows, cursorRow, cursorCol) = _wrappedInput();
+    _hitRegions.add(
+      TuiHitRegion(
+        x: 0,
+        y: baseRow,
+        w: termWidth,
+        h: rows.length,
+        kind: TuiRegionKind.composer,
+      ),
+    );
     for (var i = 0; i < rows.length; i++) {
       if (i > 0) b.writeln();
       b.write(rows[i]);
@@ -2541,7 +2540,9 @@ final class FaTuiController {
     options: [
       withAltScreen(),
       withHideCursor(false),
-      if (mouseCapture) withMouseCellMotion(),
+      // Mouse modes are VIEW-driven per frame (the view emits
+      // cellMotion/none from mouseCapture) — never boot-static, so
+      // /mouse off can actually disarm the terminal (issue #278, AC4).
       // Differential cell renderer (#274): cell-level diff + pure-scroll
       // ops + BSU/ESU framing — the line renderer repaints every shifted
       // row on scroll and has no atomic frames.
@@ -2575,7 +2576,8 @@ final class FaTuiController {
   FaTuiModel get model => _model;
 
   /// The live terminal width (the hub driver's block/overlay rendering
-  /// width). Mirrored by the web stub as a constant 80.
+  /// width; the picker table elision, #278). Mirrored by the web stub as
+  /// a constant 80.
   int get termWidth => _model.termWidth;
 
   void _send(Msg msg) {
