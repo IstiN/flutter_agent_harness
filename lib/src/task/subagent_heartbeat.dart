@@ -180,8 +180,8 @@ final class SubagentHeartbeat {
     final facts =
         'age ${_minutes(now.difference(_parse(handle.createdAt)))} · '
         '$requests requests · $tokens tokens · '
-        'last activity ${_minutes(now.difference(_parse(handle.lastActivity)))} '
-        'ago';
+        'last activity '
+        '${_minutes(now.difference(_parse(handle.lastActivity)))} ago';
     if (stall <= 0) return '$label — $facts · healthy';
     final created = _parse(handle.createdAt);
     final lastActivity = _parse(handle.lastActivity);
