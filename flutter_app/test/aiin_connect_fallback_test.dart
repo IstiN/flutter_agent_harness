@@ -5,12 +5,35 @@ import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-
 void main() {
-  testWidgets('the AIIN model picker filters the fetched model list',
-      (tester) async {
+  // Android counts as a KeychainStore surface now (issue #329) and tests
+  // default to the android target — with no native channel behind it the
+  // unhandled platform message never completes and hangs the FakeAsync
+  // zone. Answer like the pre-#329 gate did: no secure store.
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('fah/keychain'), (
+          call,
+        ) async {
+          return switch (call.method) {
+            'isAvailable' => false,
+            'readAll' => <String, String>{},
+            'set' || 'delete' => false,
+            _ => null,
+          };
+        });
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('fah/keychain'), null);
+  });
+
+  testWidgets('the AIIN model picker filters the fetched model list', (
+    tester,
+  ) async {
     final registry = ProviderRegistry.inMemory();
     BuildContext? flowContext;
     Future<bool>? done;
@@ -117,9 +140,7 @@ void main() {
     await tester.pump();
     expect(
       tester
-          .widget<FilledButton>(
-            find.widgetWithText(FilledButton, 'Connect'),
-          )
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Connect'))
           .onPressed,
       isNull,
     );
@@ -129,9 +150,7 @@ void main() {
     await tester.pump();
     expect(
       tester
-          .widget<FilledButton>(
-            find.widgetWithText(FilledButton, 'Connect'),
-          )
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Connect'))
           .onPressed,
       isNotNull,
     );

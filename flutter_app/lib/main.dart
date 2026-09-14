@@ -554,8 +554,9 @@ AgentConfig? restorableBootConfig({
     // only for KNOWN catalog endpoints (issue #327 review MINOR): a
     // custom or unknown base URL must not consume another provider's
     // key. Catalog endpoints keep the kind-first resolution contract.
-    final isCatalogEndpoint = providerCatalog.values
-        .any((s) => s.defaultBaseUrl == baseUrl);
+    final isCatalogEndpoint = providerCatalog.values.any(
+      (s) => s.defaultBaseUrl == baseUrl,
+    );
     for (final spec in providerCatalog.values) {
       if (spec.kind != kind) continue;
       if (!isCatalogEndpoint) break;
@@ -566,6 +567,11 @@ AgentConfig? restorableBootConfig({
       break;
     }
   }
+  // Issue #329: an entry that PERSISTED a key but resolves none on this
+  // surface (secure store lost/broken) never boots keyless — a doomed
+  // auto-connect would only 401 on the first turn. The setup screen shows
+  // instead; selecting the entry in the picker names the problem.
+  if (key.isEmpty && custom != null && custom.requiresKey) return null;
   if (key.isEmpty && custom == null) return null;
   final config = AgentConfig(
     providerKind: kind,
