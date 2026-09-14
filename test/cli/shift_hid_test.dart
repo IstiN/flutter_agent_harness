@@ -5,6 +5,8 @@
 /// answers) is exercised for real — spawn, bounded timeout, kill.
 library;
 
+import 'dart:io' show Platform;
+
 import 'package:flutter_agent_harness/src/cli/shift_hid.dart';
 import 'package:test/test.dart';
 
@@ -125,5 +127,25 @@ void main() {
     // wedged HID system (SSH macOS) hangs past the timeout.
     final ok = await probeHidShiftPolling(timeout: const Duration(seconds: 2));
     expect(ok, isTrue);
-  });
+  },
+      skip: _canRunRealCoreGraphicsProbe()
+          ? null
+          : 'no GUI login session: the real CoreGraphics read blocks '
+              'forever (issue #355) and the wedged probe isolate — parked '
+              'in a sync FFI call — cannot be killed, pinning the test '
+              'VM\'s shutdown');
+}
+
+/// Whether the real `_hidProbeEntry` may run here: non-macOS hosts fail
+/// the dylib open instantly, and a macOS GUI login session answers fast.
+/// A macOS host WITHOUT a GUI attach (SSH, `su`, launchd without a
+/// WindowServer) is exactly issue #355's freeze ground — never run the
+/// real entry there from a test process, because an isolate blocked in
+/// the sync CG call survives `Isolate.kill` and the VM waits for it to
+/// "check in" forever at shutdown.
+bool _canRunRealCoreGraphicsProbe() {
+  if (!Platform.isMacOS) return true;
+  // SECURITYSESSIONID is exported by loginwindow into Aqua session
+  // processes; SSH/su/launchd contexts have no value.
+  return Platform.environment.containsKey('SECURITYSESSIONID');
 }
