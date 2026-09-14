@@ -20,6 +20,7 @@ import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import 'subagent.dart';
 import 'subagent_manager.dart';
+import 'task_executor.dart';
 import 'task_tool.dart' show TaskJobManager, TaskJobStatus;
 
 /// Callback to read the last N messages from a child's session.
@@ -45,12 +46,17 @@ typedef CurrentSubagentIdProvider = String? Function();
 /// Returns the subagent monitoring tools backed by [manager].
 /// Register alongside the `task` tool when a manager is available.
 /// [jobs] enables `task_cancel` over the session's background job registry.
+/// [executor] lets `task_cancel` reach children that run inline on the
+/// session executor (blocking batches, resumes) — no TaskJob exists for
+/// those, so without it the cancel fallback cannot tell a LIVE inline child
+/// from an orphaned registry row (issue #332).
 List<AgentTool> subagentMonitoringTools({
   required SubagentManager? manager,
   ChildMessageReader? readMessages,
   ChildResumeRunner? resumeChild,
   CurrentSubagentIdProvider? currentSubagentId,
   TaskJobManager? jobs,
+  TaskExecutor? executor,
 }) {
   if (manager == null) return const [];
   return [
@@ -58,7 +64,7 @@ List<AgentTool> subagentMonitoringTools({
     _taskObserveTool(manager, readMessages),
     _taskSendTool(manager, resumeChild),
     _taskResumeTool(manager, resumeChild),
-    if (jobs != null) _taskCancelTool(jobs, manager),
+    if (jobs != null) _taskCancelTool(jobs, manager, executor),
     _replyTool(manager, currentSubagentId),
     _agentMessageTool(manager, currentSubagentId),
     _agentDirectoryTool(manager),
@@ -67,11 +73,15 @@ List<AgentTool> subagentMonitoringTools({
 
 /// `task_cancel` — abort a running background subagent job.
 ///
-/// Issue #332: a registry row whose runner is gone (the host restarted
-/// before the child's first request, so the job registry has no live job)
-/// is tombstoned as [SubagentStatus.aborted] instead of erroring — cancel
-/// must always be able to clear a 'running' row.
-AgentTool _taskCancelTool(TaskJobManager jobs, SubagentManager? manager) {
+/// Issue #332: ids with no live [TaskJob] fall through to
+/// [cancelSubagentWithoutJob] — a LIVE inline child (blocking batch /
+/// resume) is aborted through the executor, an orphaned registry row is
+/// tombstoned [SubagentStatus.aborted], everything else reports honestly.
+AgentTool _taskCancelTool(
+  TaskJobManager jobs,
+  SubagentManager? manager,
+  TaskExecutor? executor,
+) {
   return AgentTool(
     name: 'task_cancel',
     description:
@@ -93,44 +103,72 @@ AgentTool _taskCancelTool(TaskJobManager jobs, SubagentManager? manager) {
       final id = args['id'] as String;
       final job = jobs.job(id);
       if (job == null) {
-        return _cancelOrphanedRegistryRow(id, manager);
+        return ToolExecutionResult.text(
+          await cancelSubagentWithoutJob(
+            id: id,
+            manager: manager,
+            executor: executor,
+          ),
+        );
       }
       if (job.status != TaskJobStatus.queued &&
           job.status != TaskJobStatus.running) {
         return ToolExecutionResult.text('job $id already ${job.status.name}');
       }
       job.cancel();
+      // A yield-CONVERTED job (a blocking batch moved to background when
+      // the user steered mid-run) still has its LIVE runner inline on the
+      // executor — the job's token never reached that child, so cancel
+      // the in-flight source too (a no-op for plain background jobs,
+      // whose token is already linked to the child).
+      executor?.cancelInFlight(id);
       return ToolExecutionResult.text('cancelled job $id');
     },
   );
 }
 
-/// Tombstones the retained-subagent registry row for [id] when no live job
-/// exists (issue #332): the row's runner died with a previous host process,
-/// so nothing else can ever settle it — cancel settles it here.
-Future<ToolExecutionResult> _cancelOrphanedRegistryRow(
-  String id,
-  SubagentManager? manager,
-) async {
+/// Cancels the subagent named [id] when its id names no live background
+/// [TaskJob] (issue #332) — the ONE helper both cancel surfaces (the
+/// `task_cancel` tool and `/tasks cancel`) route through, so their wording
+/// can never diverge. Three honest outcomes:
+///
+/// - a child running inline on [executor] (a blocking-batch spawn or an
+///   in-flight resume — these have NO TaskJob by design) is aborted through
+///   its in-flight cancel source; its registry row settles through the
+///   normal run path. Tombstoning here would lie 'aborted' over a LIVE
+///   child and lock steering/task_send out until self-heal.
+/// - a registry row whose runner died with a previous host process (no
+///   live runner ANYWHERE) is tombstoned [SubagentStatus.aborted] — cancel
+///   must always be able to clear a 'running' row.
+/// - anything else reports honestly (terminal state / unknown id).
+Future<String> cancelSubagentWithoutJob({
+  required String id,
+  required SubagentManager? manager,
+  TaskExecutor? executor,
+  String source = 'task_cancel',
+}) async {
+  if (executor != null && executor.isInFlight(id)) {
+    executor.cancelInFlight(id);
+    return 'cancel requested for subagent $id — it is running inline '
+        '(blocking batch or resume) with no background job; its registry '
+        'row settles when the child stops';
+  }
   final handle = manager?[id];
   if (handle == null) {
-    return ToolExecutionResult.text('no background job with id "$id"');
+    return 'no background job with id "$id"';
   }
   if (handle.isTerminal) {
-    return ToolExecutionResult.text(
-      'subagent $id already ${handle.status.name}',
-    );
+    return 'subagent $id already ${handle.status.name}';
   }
   await manager!.update(
     id,
     status: SubagentStatus.aborted,
-    error: 'cancelled by task_cancel: no live runner '
+    error:
+        'cancelled by $source: no live runner '
         '(the host session restarted before this child settled)',
   );
-  return ToolExecutionResult.text(
-    'tombstoned subagent $id as aborted — no live runner existed '
-    '(interrupted before start), registry row cleared',
-  );
+  return 'tombstoned subagent $id as aborted — no live runner existed '
+      '(interrupted before start), registry row cleared';
 }
 
 /// `agent_directory` — the messaging fabric's phone book: the mailboxes
@@ -925,9 +963,7 @@ Future<ToolExecutionResult> _sendByChildStatus(
         'only steers running/idle/completed children)',
       );
     case SubagentStatus.aborted:
-      return ToolExecutionResult.text(
-        'cannot send to aborted subagent "$id"',
-      );
+      return ToolExecutionResult.text('cannot send to aborted subagent "$id"');
     case SubagentStatus.queued:
     case SubagentStatus.running:
       return _enqueueFollowUp(manager, id, message);

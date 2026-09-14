@@ -467,6 +467,10 @@ class AgentCli {
       // in its own session via the session-shared executor.
       readMessages: jsonlChildMessageReader(_env),
       resumeChild: _taskConfig.executor.resumeChild,
+      // Issue #332: task_cancel must reach inline children (blocking
+      // batches, resumes) through the executor's in-flight cancel set —
+      // without it the tombstone fallback would fire over LIVE children.
+      executor: _taskConfig.executor,
     );
     _toolRegistry = ToolRegistry([
       ...coreTools,
@@ -1161,7 +1165,12 @@ class AgentCli {
     // Phase 3a: rehydrate the subagent registry from the resumed session's
     // `subagent_registry` records — agents of this session are visible again
     // (across restarts AND across instances sharing the session repo).
-    unawaited(_subagentManager.rehydrate());
+    // AWAITED (issue #332): zombie queued/running rows are settled to
+    // terminal BEFORE the first prompt can spawn children — a fire-and-
+    // forget load let a same-id first spawn race it (the snapshot copy
+    // would clobber the live row). [SubagentManager.rehydrate] also skips
+    // ids already registered by this process, so the race stays closed.
+    await _subagentManager.rehydrate();
     // Phase 2: session-start maintenance trigger — fire-and-forget when the
     // last run is >24h old; never blocks the first turn.
     unawaited(
@@ -1854,6 +1863,14 @@ class AgentCli {
         sessionId: _session!.cachedId ?? (await _session!.getMetadata()).id,
       );
     }
+    // Issue #332: rehydrate/settle the subagent registry exactly like the
+    // interactive [run] boot. A headless run (a wake run, a restart) used
+    // to start from an EMPTY registry, so zombie 'running' rows from the
+    // previous process were never settled here AND the headless run's
+    // first spawn persisted a snapshot that REPLACED the old rows. Awaited
+    // before the prompt: any spawn the run triggers must see the loaded
+    // registry instead of racing it.
+    await _subagentManager.rehydrate();
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
     // Sleep prevention (#325/#326) — headless wraps exactly ONE run, so

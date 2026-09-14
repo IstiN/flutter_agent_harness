@@ -154,6 +154,14 @@ final class SubagentManager {
   /// claim) pass through untouched, and the settled snapshot is persisted
   /// so a later restart reads terminal rows instead of resurrecting the
   /// zombie.
+  ///
+  /// Hosts AWAIT this at boot (interactive [AgentCli.run], headless
+  /// [AgentCli.runHeadless], session switch): the registry must be loaded
+  /// and its zombie rows settled before the first prompt can spawn children
+  /// — otherwise a same-id spawn races the load and its persist replaces
+  /// the not-yet-loaded rows. A mid-run row (requests > 0) is REAL since
+  /// the executor bills usage at every turn boundary; an interrupted resume
+  /// also carries its prior generation's usage.
   Future<void> rehydrate() async {
     if (_rehydrated) return;
     _rehydrated = true;
@@ -161,13 +169,18 @@ final class SubagentManager {
     var settled = false;
     for (final entry in raw) {
       final handle = SubagentHandle.fromJson(entry);
+      // Boot-race guard (issue #332): a row registered by THIS process
+      // (a spawn that beat the registry load) is newer than the snapshot
+      // — the live in-process row wins and the snapshot copy is dropped,
+      // so a late-finishing load can never settle or clobber a live child.
+      if (_handles.containsKey(handle.id)) continue;
       _handles[handle.id] = handle;
       if (handle.status == SubagentStatus.queued ||
           handle.status == SubagentStatus.running) {
         handle.status = SubagentStatus.failed;
         handle.error = handle.requests == 0
             ? 'interrupted before start: the host session ended before this '
-                  'child made its first request'
+                  'child completed its first request'
             : 'interrupted: the host session ended while this child was '
                   'running';
         handle.lastActivity = DateTime.now().toUtc().toIso8601String();
@@ -352,12 +365,10 @@ final class SubagentManager {
       return 'subagent "$id" is aborted and takes no messages';
     }
     if (handle != null && handle.agentType.startsWith('a2a:')) {
-      return (
-        'subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
-        'it has no local inbox to deliver into; follow up with a new '
-        'task item (agent ${handle.agentType}) carrying your message in '
-        'its task text'
-      );
+      return ('subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
+          'it has no local inbox to deliver into; follow up with a new '
+          'task item (agent ${handle.agentType}) carrying your message in '
+          'its task text');
     }
     return null;
   }

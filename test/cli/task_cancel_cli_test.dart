@@ -208,7 +208,7 @@ void main() {
         );
         io.sendLine('/tasks cancel nope');
         await _waitFor(
-          () => io.out.toString().contains('unknown job: nope'),
+          () => io.out.toString().contains('no background job with id "nope"'),
           reason: 'no job, no shell job, no registry row',
         );
         io.sendLine('/exit');
@@ -237,7 +237,9 @@ void main() {
 
         io.sendLine('/tasks cancel Task-18');
         await _waitFor(
-          () => io.out.toString().contains('tombstoned Task-18 as aborted'),
+          () => io.out.toString().contains(
+            'tombstoned subagent Task-18 as aborted',
+          ),
           reason: 'the tombstone fallback fires',
         );
 
@@ -247,11 +249,12 @@ void main() {
         expect(handle.status, SubagentStatus.aborted);
         expect(handle.error, contains('no live runner'));
 
-        // A repeat cancel of the settled row falls through to the honest
-        // 'unknown job' (nothing left to clear).
+        // A repeat cancel of the settled row reports its terminal state
+        // through the SAME helper the task_cancel tool uses (aligned
+        // wording — issue #332 review).
         io.sendLine('/tasks cancel Task-18');
         await _waitFor(
-          () => io.out.toString().contains('unknown job: Task-18'),
+          () => io.out.toString().contains('subagent Task-18 already aborted'),
           reason: 'terminal row reports unknown, not tombstone again',
         );
         io.sendLine('/exit');
@@ -276,7 +279,7 @@ void main() {
 
         io.sendLine('/tasks cancel Task-19');
         await _waitFor(
-          () => io.out.toString().contains('unknown job: Task-19'),
+          () => io.out.toString().contains('subagent Task-19 already failed'),
           reason: 'terminal rows keep their settled state',
         );
         expect(manager['Task-19']!.status, SubagentStatus.failed);
@@ -379,6 +382,150 @@ void main() {
         );
         io.sendLine('/exit');
         await run;
+      },
+    );
+
+    test(
+      'a LIVE blocking-batch child is aborted through the executor — no '
+      'tombstone over the running child (issue #332)',
+      timeout: const Timeout(Duration(seconds: 120)),
+      () async {
+        const childTask = 'child-task: hang until cancelled';
+        final routing = _RoutingStreamFunction(childTask: childTask);
+
+        /// The child (its assignment wraps [childTask]) hangs until its
+        /// cancel token fires, then reports aborted; every parent run
+        /// (settle notices, follow-ups) delegates to the routing fake.
+        AssistantMessageEventStream route(
+          Model model,
+          Context context, {
+          CancelToken? cancelToken,
+        }) {
+          var isChild = false;
+          for (final message in context.messages.reversed) {
+            if (message is UserMessage) {
+              var text = '';
+              final content = message.content;
+              if (content is String) {
+                text = content;
+              } else if (content is List<ContentBlock>) {
+                text = [
+                  for (final block in content)
+                    if (block is TextContent) block.text,
+                ].join('\n');
+              }
+              isChild = text.contains(childTask);
+              break;
+            }
+          }
+          if (!isChild) {
+            return routing.call(model, context, cancelToken: cancelToken);
+          }
+          final stream = AssistantMessageEventStream();
+          stream.push(StartEvent(partial: testAssistant()));
+          cancelToken?.onCancel.then((_) {
+            stream
+              ..push(
+                ErrorEvent(
+                  reason: StopReason.aborted,
+                  error: testAssistant(
+                    stopReason: StopReason.aborted,
+                    errorMessage: 'Operation aborted',
+                  ),
+                ),
+              )
+              ..end();
+          });
+          return stream;
+        }
+
+        final (cli, run) = await bootedCli(route);
+
+        // A blocking-batch spawn: runs inline on the session executor, NO
+        // TaskJob exists — the shape the tombstone fallback used to lie
+        // over.
+        final spawnFuture = cli.taskConfig.executor.runSpawn(
+          item: TaskItem(name: 'Scout', task: childTask),
+          index: 0,
+          context: 'ctx',
+          preallocatedId: 'Scout',
+        );
+        await _waitFor(
+          () => cli.subagentManager['Scout'] != null,
+          reason: 'the inline child registers its row',
+        );
+        expect(cli.taskConfig.executor.isInFlight('Scout'), isTrue);
+
+        io.sendLine('/tasks cancel Scout');
+        await _waitFor(
+          () => io.out.toString().contains(
+            'cancel requested for subagent '
+            'Scout',
+          ),
+          reason: 'the live inline child is aborted, not tombstoned',
+        );
+
+        final result = await spawnFuture;
+        expect(result.status, TaskSpawnStatus.aborted);
+        final handle = cli.subagentManager['Scout']!;
+        expect(handle.status, SubagentStatus.aborted);
+        expect(handle.error, contains('aborted'));
+        expect(handle.error, isNot(contains('no live runner')));
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+  });
+
+  group('headless boot rehydrates the registry (issue #332)', () {
+    test(
+      'runHeadless settles zombie rows from the previous process and does '
+      'not wipe the persisted registry',
+      timeout: const Timeout(Duration(seconds: 120)),
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final headlessIo = FakeCliIO();
+        AgentCli cliFor() => AgentCli(
+          config: AgentCliConfig(
+            model: testModel,
+            apiKey: 'test-key',
+            env: env,
+            sessionRoot: '/sessions',
+            sessionName: 'hs:332',
+            approvalMode: ApprovalMode.yolo,
+          ),
+          io: headlessIo,
+          streamFunction: _RoutingStreamFunction().call,
+        );
+
+        // Boot #1: creates the session; after the run its manager can
+        // persist registry rows into that session.
+        final seeder = cliFor();
+        await seeder.runHeadless('seed');
+        await seeder.subagentManager.register(
+          id: 'Zombie-1',
+          name: 'Zombie-1',
+          agentType: 'task',
+          task: 'never settled',
+        );
+        await seeder.subagentManager.update(
+          'Zombie-1',
+          status: SubagentStatus.running,
+        );
+
+        // Boot #2 (the headless restart/wake shape): must rehydrate and
+        // settle the zombie row — previously the headless path never
+        // loaded the registry at all.
+        final cli = cliFor();
+        final code = await cli.runHeadless('hello again');
+        expect(code, 0);
+
+        final handle = cli.subagentManager['Zombie-1'];
+        expect(handle, isNotNull, reason: 'the registry was rehydrated');
+        expect(handle!.isTerminal, isTrue);
+        expect(handle.status, SubagentStatus.failed);
+        expect(handle.error, contains('interrupted'));
+        headlessIo.close();
       },
     );
   });
