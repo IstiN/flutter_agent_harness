@@ -10,6 +10,7 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:fa_llm/fa_llm.dart';
 import 'package:fa_ui/fa_ui.dart' show CopilotConnectCallbacks;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -99,6 +100,28 @@ Future<(Future<bool>, _RecordingService)> _launch(WidgetTester tester) async {
 }
 
 void main() {
+  // Android counts as a KeychainStore surface now (issue #329) and tests
+  // default to the android target — with no native channel behind it the
+  // unhandled platform message never completes and hangs the FakeAsync
+  // zone. Answer like the pre-#329 gate did: no secure store.
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('fah/keychain'), (
+          call,
+        ) async {
+          return switch (call.method) {
+            'isAvailable' => false,
+            'readAll' => <String, String>{},
+            'set' || 'delete' => false,
+            _ => null,
+          };
+        });
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('fah/keychain'), null);
+  });
+
   test('copilotEntryKeyName sanitizes entry names like the CLI', () {
     expect(
       CustomProviderRegistry.copilotEntryKeyName('copilot-octocat'),

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
@@ -430,6 +432,112 @@ void main() {
 
       expect(backend[entryKey], 'gho_token');
       expect(keys.has(entryKey), isTrue);
+    });
+  });
+
+  group('ProviderRegistry on Android (issue #329)', () {
+    // AC1 (IT-persist): with an Android-targeting configuration the key
+    // must SURVIVE a store restart — rememberKey persists through the
+    // `fah/keychain` secure backend (the Android embedding answers it with
+    // Keystore-backed storage) and a fresh load hydrates it. RED on main:
+    // the backend was iOS/macOS-only, so the key stayed session-only and
+    // the next boot went keyless (z.ai 401/1001).
+    const channel = MethodChannel('fah/keychain');
+    final backend = <String, String>{};
+
+    setUp(() {
+      backend.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            switch (call.method) {
+              case 'isAvailable':
+                return true;
+              case 'readAll':
+                return Map<String, String>.of(backend);
+              case 'set':
+                backend[call.arguments['name'] as String] =
+                    call.arguments['value'] as String;
+                return true;
+              case 'delete':
+                backend.remove(call.arguments['name'] as String);
+                return true;
+            }
+            return null;
+          });
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    });
+
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('rememberKey persists across a restart (the key resolves)', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      final zai = await registry.add(
+        name: 'z.ai',
+        baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        modelId: 'glm-4.7',
+      );
+      registry.rememberKey(zai.id, 'sk-zai');
+      // Fire-and-forget persistence: let the channel call land.
+      await Future<void>.delayed(Duration.zero);
+      expect(backend['FA_KEY_API_Z_AI'], 'sk-zai');
+
+      // The very next boot: a fresh registry resolves the key.
+      final reloaded = await ProviderRegistry.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      expect(reloaded.keyFor(zai.id), 'sk-zai');
+    });
+
+    test('the requiresKey marker rides providers.json', () async {
+      final env = MemoryExecutionEnv();
+      final registry = await ProviderRegistry.load(
+        env,
+        keychain: const KeychainStore(),
+      );
+      final zai = await registry.add(
+        name: 'z.ai',
+        baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        modelId: 'glm-4.7',
+      );
+      registry.rememberKey(zai.id, 'sk-zai');
+      await Future<void>.delayed(Duration.zero);
+      final persisted =
+          jsonDecode(
+                (await env.readTextFile(
+                  '${env.cwd}/providers.json',
+                )).valueOrNull!,
+              )
+              as Map<String, dynamic>;
+      expect(
+        (persisted['providers'] as List).single['requiresKey'],
+        isTrue,
+        reason: 'the guard needs the marker across restarts',
+      );
+
+      // Forgetting the key clears the marker (an intentionally de-keyed
+      // entry goes back to keyless-legal).
+      registry.rememberKey(zai.id, '');
+      await Future<void>.delayed(Duration.zero);
+      final repersisted =
+          jsonDecode(
+                (await env.readTextFile(
+                  '${env.cwd}/providers.json',
+                )).valueOrNull!,
+              )
+              as Map<String, dynamic>;
+      expect(
+        (repersisted['providers'] as List).single.containsKey('requiresKey'),
+        isFalse,
+      );
     });
   });
 }
