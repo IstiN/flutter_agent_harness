@@ -790,11 +790,14 @@ platform :android do
     aab = PlayUploadPreflight.aab_path!(ENV, repo_root: repo_root)
     validate_only = PlayUploadPreflight.validate_only?(ENV)
 
-    UI.message("Play upload: track=#{track} aab=#{aab} validate_only=#{validate_only}")
+    package_name = PlayUploadPreflight.package_name!(repo_root)
+    UI.message("Play upload: track=#{track} aab=#{aab} validate_only=#{validate_only} " \
+               "package=#{package_name}")
     upload_to_play_store(
       PlayUploadPreflight
         .supply_options(track: track, aab: aab, validate_only: validate_only)
-        .merge(json_key_data: json_key)
+        .merge(json_key_data: json_key,
+               package_name: package_name)
     )
     if validate_only
       UI.success("✅ Play validate-only pass: authenticated, track '#{track}' + #{File.basename(aab)} resolved — nothing published")
@@ -815,6 +818,7 @@ platform :android do
     # version code and belong to the binary upload).
     do_metadata = ENV.fetch("PLAY_DEPLOY_METADATA", "true") == "true"
     do_images = ENV.fetch("PLAY_DEPLOY_IMAGES", "true") == "true"
+    repo_root = File.expand_path("..", __dir__)
     track = PlayUploadPreflight.track!(ENV)
     validate_only = PlayUploadPreflight.validate_only?(ENV)
     UI.message("Play store listing deploy: metadata=#{do_metadata}, images=#{do_images}, track=#{track}, validate_only=#{validate_only}")
@@ -825,7 +829,8 @@ platform :android do
           track: track, metadata: do_metadata, images: do_images,
           validate_only: validate_only
         )
-        .merge(json_key_data: PlayUploadPreflight.play_json_key!(ENV))
+        .merge(json_key_data: PlayUploadPreflight.play_json_key!(ENV),
+               package_name: PlayUploadPreflight.package_name!(repo_root))
     )
     if validate_only
       UI.success("✅ Play listing validate-only pass: authenticated, track '#{track}' resolved — nothing uploaded")

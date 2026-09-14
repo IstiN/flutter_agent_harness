@@ -92,6 +92,20 @@ if $PROGRAM_NAME == __FILE__
     PlayUploadPreflight.validate_only?({ "PLAY_VALIDATE_ONLY" => "true" })
   ok("PLAY_VALIDATE_ONLY=1/true flips validate-only")
 
+  # ── package name resolution (issue #374) ───────────────────────────────
+  # upload_to_play_store needs package_name explicitly (no supply/metadata
+  # dir exists in the CI job context to carry it); the gradle applicationId
+  # is the single source of truth.
+  pkg = PlayUploadPreflight.package_name!(repo_root)
+  raise "FAIL: package_name must come from build.gradle.kts applicationId" unless
+    pkg == "dev.fa1.app"
+  ok("package_name parsed from android/app/build.gradle.kts (dev.fa1.app)")
+
+  assert_raises_named("applicationId") do
+    PlayUploadPreflight.package_name!(File.join(repo_root, "lib"))
+  end
+  ok("missing applicationId fails loudly")
+
   # ── supply options mapping ──────────────────────────────────────────────
   opts = PlayUploadPreflight.supply_options(track: "beta", aab: "/tmp/a.aab", validate_only: false)
   raise "FAIL: track not mapped" unless opts[:track] == "beta"
