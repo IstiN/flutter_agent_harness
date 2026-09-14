@@ -79,6 +79,7 @@ final class FaTuiController {
 
   void sendModelsRefresh() {}
 
+  void sendThemeChanged() {}
   void openModelMenu() {}
 
   void openPicker(

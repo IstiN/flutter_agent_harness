@@ -164,6 +164,7 @@ const builtinSlashCommands = <String, String>{
   '/providers': 'alias for /provider',
   // /provider-edit removed — edit/delete is now inline in /provider picker.
   '/mode': '[name] — show or switch the active mode',
+  '/theme': '[name|reset] — switch TUI theme (bare opens picker)',
   '/session': '[name] — show current or switch/create a named session',
   '/session-new': '<name> — create a new named session',
   '/sessions': 'list all sessions across workspaces',

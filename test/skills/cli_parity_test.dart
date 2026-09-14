@@ -64,6 +64,7 @@ const _settingsCommands = <String, String>{
   '/architect': 'mode switch — persists the mode key',
   '/review': 'mode switch — persists the mode key',
   '/settings': 'hub over every section above',
+  '/theme': 'the tui: section (tui.theme)',
 };
 
 /// Commands that do NOT change persisted config. A new command missing from

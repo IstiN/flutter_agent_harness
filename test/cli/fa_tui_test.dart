@@ -11,6 +11,7 @@ import 'package:flutter_agent_harness/src/cli/fuzzy_matcher.dart';
 import 'package:flutter_agent_harness/src/cli/composer_overlay.dart'
     show groupOf;
 import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
 import 'package:test/test.dart';
@@ -782,6 +783,54 @@ void main() {
     model = model.update(BusyMsg(false)).$1 as FaTuiModel;
     expect(model.stickyLines, isEmpty);
     expect(model.stickyIndex, -1);
+  });
+
+  test('a mid-session theme switch repaints the pinned echo (E1)', () async {
+    final controller = FaThemeController.instance;
+    controller
+      ..reset()
+      ..profile = ColorProfile.trueColor;
+    addTearDown(controller.reset);
+    final submitted = <String>[];
+    var model = FaTuiModel(
+      callbacks: callbacks(submitted: submitted),
+      isExited: () => false,
+      termHeight: 12,
+    );
+    for (final ch in 'hello'.split('')) {
+      model =
+          model.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
+              as FaTuiModel;
+    }
+    final submitted_ = model.update(
+      KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+    );
+    model = submitted_.$1 as FaTuiModel;
+    await submitted_.$2?.call();
+    model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+    // Scroll the echo out of view: only then does the pinned sticky
+    // echo render (and its format cache get populated).
+    for (var i = 0; i < 40; i++) {
+      model =
+          model.update(OutputMsg('filler $i', newline: true)).$1 as FaTuiModel;
+    }
+    // While the default theme is live, the pinned echo carries the
+    // default user-message background.
+    expect(model.view().content, contains('\x1b[48;2;30;34;42m'));
+
+    // /theme pi mid-run: the sticky rows re-render in pi's palette — the
+    // format cache is keyed on width+content, so the theme change must
+    // drop it explicitly.
+    controller.switchTo('pi');
+    model = model.update(FaTuiModel.themeChangedMsgForTest()).$1
+        as FaTuiModel;
+    final view = model.view().content;
+    expect(view, contains('\x1b[48;2;52;53;65m'), reason: 'pi bg live');
+    expect(
+      view,
+      isNot(contains('\x1b[48;2;30;34;42m')),
+      reason: 'the default-theme bg must not survive the switch',
+    );
   });
 
   test('chrome rows never exceed the terminal width', () {

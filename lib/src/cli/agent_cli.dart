@@ -164,6 +164,7 @@ import 'tui_helpers.dart';
 import 'tui_prompt.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
+import 'tui_theme.dart';
 
 export '../model_roles/provider_catalog.dart' show providerStreamFunction;
 
@@ -193,6 +194,7 @@ part 'agent_cli_hep_io.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
+part 'agent_cli_theme.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -208,6 +210,7 @@ class AgentCli {
     bool useColor = false,
     bool useTui = false,
     this._version = '0.0.0',
+    this.environment = const {},
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
        _useTui = useTui && io.supportsRawMode {
@@ -218,6 +221,17 @@ class AgentCli {
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
     _providerKind = config.providerKind;
     _apiKey = config.apiKey;
+    // The theme emitters' color profile: styled iff this session styles
+    // at all (TUI or colored line mode); NO_COLOR / TERM=dumb degrade to
+    // plain output (issue #279 AC7).
+    FaThemeController.instance.profile = detectThemeProfile(
+      ansiSupported: useTui || useColor,
+      environment: environment,
+    );
+    // Boot theme: async — user themes load through the FileSystem seam
+    // before the persisted name resolves (issue #279 AC4); fire-and-forget
+    // keeps the constructor sync.
+    unawaited(_applyBootTheme());
     final pluginTools = <AgentTool>[];
     for (final plugin in config.plugins) {
       final context = PluginContext(
@@ -645,6 +659,10 @@ class AgentCli {
   /// The input prompt written when the agent is idle.
   final String prompt;
 
+  /// The host environment (bin/fah passes `Platform.environment`), read
+  /// for NO_COLOR / TERM / COLORTERM theme-profile detection (issue #279).
+  final Map<String, String> environment;
+
   /// Built-in agent modes. Rebuilt when the effective cwd changes so the
   /// system prompt's project context follows the active session.
   late Map<String, AgentMode> _modes;
@@ -741,6 +759,13 @@ class AgentCli {
   @visibleForTesting
   Future<void> tuiPickAddProviderForTest(String key) =>
       _tuiPickAddProvider(key);
+
+  /// Test seam: the picker-id → handler dispatch map's keys. A picker id
+  /// opened by `openPicker` without an entry here is a dead menu entry
+  /// (selection routes to `null?.call()` — the picker closes and nothing
+  /// happens), so the dispatch test asserts the id set exactly.
+  @visibleForTesting
+  Set<String> pickerHandlerKeysForTest() => _tuiPickerHandlers.keys.toSet();
 
   /// Test seam: opens the sessions picker (building its rows) without a
   /// TUI; the built items land in [sessionPickerItemsForTest].
@@ -1615,6 +1640,7 @@ class AgentCli {
     'sessions': _tuiPickSession,
     'mode': _switchMode,
     'approval': (key) async => _handleApprovalMode(key),
+    'theme': (key) => _applyThemeChoice(key, persist: true),
     'provider': _tuiPickProvider,
     'addProvider': _tuiPickAddProvider,
     'settings': _tuiPickSetting,

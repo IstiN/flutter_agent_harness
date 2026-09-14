@@ -9,9 +9,11 @@ library;
 import 'fuzzy_matcher.dart';
 import 'fa_tui.dart';
 import 'tui_repl.dart' show MenuItem;
+import 'tui_theme.dart' show tuiAccent2Soft;
 
-/// Same indigo accent as fa_tui's `_accent2Plain` (site palette accent-2).
-String _accent2Plain(String s) => '\x1b[38;2;129;140;248m$s\x1b[0m';
+/// Same indigo accent as fa_tui's `_accent2Plain` - session theme (issue
+/// #279): the completion overlay repaints with the palette.
+String _accent2Plain(String s) => tuiAccent2Soft(s);
 
 /// `/models <filter>` prefix — allocated once: the menu update runs on
 /// EVERY keystroke and must not recompile this per keypress.
