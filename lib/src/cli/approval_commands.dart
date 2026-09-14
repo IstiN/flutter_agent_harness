@@ -831,12 +831,21 @@ extension ApprovalCommands on AgentCli {
   /// in the detail zone, the job id kept as the dim suffix, the log path
   /// relativized (`.fah/bash_jobs/…` tail) — all inside the width budget.
   String _shellJobLine(ShellJobEntry entry) {
-    final running = entry.isRunning;
-    final exit = entry.exitCode;
-    final trailer = running ? entry.id : '${entry.id} exited(${exit ?? '?'})';
+    final trailer = entry.isRunning
+        ? entry.id
+        : '${entry.id} exited(${entry.exitCode ?? '?'})';
     final log = briefPath(entry.logPath, cwd: _env.cwd, home: config.homeDir);
-    return '  ${layoutToolRow(ToolRowSegments(glyph: running ? '●' : (exit == 0 ? '✓' : '✗'), label: 'bash', detail: entry.command, elapsed: '$trailer (log: $log)'), _rowWidth).style(glyph: running ? tuiAccent2Soft : (exit == 0 ? tuiAccentSoft : tuiError), label: tuiAccent2, dim: tuiDim)}';
+    return '  ${layoutToolRow(ToolRowSegments(glyph: _shellJobGlyph(entry), label: 'bash', detail: entry.command, elapsed: '$trailer (log: $log)'), _rowWidth).style(glyph: _shellJobGlyphPaint(entry), label: tuiAccent2, dim: tuiDim)}';
   }
+
+  /// Running `●`, clean `✓`, failed `✗`.
+  String _shellJobGlyph(ShellJobEntry entry) =>
+      entry.isRunning ? '●' : (entry.exitCode == 0 ? '✓' : '✗');
+
+  String Function(String) _shellJobGlyphPaint(ShellJobEntry entry) =>
+      entry.isRunning
+      ? tuiAccent2Soft
+      : (entry.exitCode == 0 ? tuiAccentSoft : tuiError);
 
   /// `/tasks cancel <id>`: aborts the job's child run / stops the process.
   void _cancelTaskJob(List<String> parts) {
