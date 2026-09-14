@@ -25,6 +25,8 @@ part 'fa_tui_hub.dart';
 part 'fa_tui_mouse.dart';
 part 'fa_tui_rows.dart';
 part 'fa_tui_paste.dart';
+part 'fa_tui_theme_swap.dart';
+part 'fa_tui_controller_io.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -180,13 +182,6 @@ int _lineCount(String s) {
     start = i + 1;
   }
   return n;
-}
-
-/// Hot theme swap (issue #276): repaints every frame with the new
-/// [TuiTheme.current] palette — wrap and sticky caches are dropped so no
-/// stale-colored rows survive.
-final class ThemeSwappedMsg extends Msg {
-  const ThemeSwappedMsg();
 }
 
 /// Sentinel for nullable copyWith fields (distinguishes "keep" from "set
@@ -1141,20 +1136,6 @@ final class FaTuiModel extends Model {
     }
     // One insert call = one undo group: a paste undoes as a whole.
     return (copyWith(editor: editor.insert(content)), null);
-  }
-
-  /// Hot theme swap: drop the wrap + sticky caches (they hold rows painted
-  /// with the OLD palette) and bump the frame nonce; the renderer's row
-  /// diff then repaints every content row with the new colors. Frame-atomic
-  /// in practice: palette reads happen between frames on the single update
-  /// loop, so no torn half-themed frame is emitted.
-  (Model, Cmd?) _handleThemeSwapped() {
-    final next = copyWith()
-      .._wrapCache = _WrapCache()
-      .._stickyFmtRows = const []
-      .._stickyFmtSource = null
-      .._stickyFmtWidth = null;
-    return (next, null);
   }
 
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
@@ -2644,99 +2625,6 @@ final class FaTuiController {
     } else {
       _pending.add(msg);
     }
-  }
-
-  /// Hot theme swap (issue #276): the `/theme` handler already flipped
-  /// [TuiTheme.current]; this repaints every row with the new palette and
-  /// drops the wrap/sticky caches so no old-colored rows survive.
-  void applyTheme() => _send(const ThemeSwappedMsg());
-
-  void sendOutput(String text, {bool newline = false}) {
-    // Merge semantics match sending the pieces separately: text just
-    // concatenates and the newline flag is a trailing '\n' (the model's
-    // _appendOutput splits on '\n' and its trailing empty part plays the
-    // role of the flag's extra empty line).
-    _outputBuffer.write(text);
-    if (newline) _outputBuffer.write('\n');
-    if (_running) {
-      _outputFlushTimer ??= Timer(_outputFlushInterval, _flushOutput);
-    } else {
-      _flushOutput();
-    }
-  }
-
-  void _flushOutput() {
-    _outputFlushTimer?.cancel();
-    _outputFlushTimer = null;
-    if (_outputBuffer.isEmpty) return;
-    final text = _outputBuffer.toString();
-    _outputBuffer.clear();
-    _send(OutputMsg(text));
-  }
-
-  void sendModelsRefresh() {
-    _send(_ModelsRefreshMsg());
-  }
-
-  void sendThemeChanged() {
-    _send(_ThemeChangedMsg());
-  }
-
-  void openModelMenu() {
-    _send(_OpenModelMenuMsg());
-  }
-
-  /// Opens a generic host picker (sessions, mode, approval, ...) with a
-  /// static item list; selection resolves via [FaTuiCallbacks.onPickerSelected].
-  void openPicker(
-    String pickerId,
-    String title,
-    List<MenuItem> items, {
-    String? initialKey,
-  }) {
-    var selected = 0;
-    if (initialKey != null) {
-      final index = items.indexWhere((item) => item.key == initialKey);
-      if (index >= 0) selected = index;
-    }
-    _send(OpenPickerMsg(pickerId, title, items, initialIndex: selected));
-  }
-
-  /// Opens or refreshes the agents-hub overlay with a whole new state
-  /// (issue #277). Pass hub = null-equivalent via `closeHub` to hide it.
-  void pushHub(FaHubState state) {
-    _send(HubStateMsg(state));
-  }
-
-  /// Hides the agents-hub overlay.
-  void closeHub() {
-    _send(const _CloseHubMsg());
-  }
-
-  void sendQuit() {
-    _send(_QuitRequestedMsg());
-  }
-
-  /// Replaces the composer text (the `/skills` menu prefills `/skill:<name> `
-  /// so the user can type arguments before pressing Enter).
-  void sendInputText(String text) {
-    _send(_SetInputTextMsg(text));
-  }
-
-  /// Replaces the submitted-message history (a resumed session restores
-  /// its recorded messages so ↑ recalls them instead of scrolling).
-  void setInputHistory(List<String> history) {
-    _send(SetInputHistoryMsg(history));
-  }
-
-  /// Opens the interactive prompt zone (ask/secret/approval) and resolves
-  /// when the user answers (or cancels). The caller awaits the returned
-  /// future, which completes from the model once the prompt key handler
-  /// produces an answer.
-  Future<TuiPromptAnswer?> openPrompt(TuiPromptSpec spec) {
-    final completer = Completer<TuiPromptAnswer?>();
-    _send(OpenPromptMsg(spec, completer));
-    return completer.future;
   }
 
   var _busyDepth = 0;
