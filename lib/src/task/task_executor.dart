@@ -139,9 +139,27 @@ final class TaskExecutor {
     final id = preallocatedId ?? store.allocateId(taskItemNameBase(item));
     final agentName = taskItemAgentName(item);
     final stopwatch = Stopwatch();
+    // Per-child cancel source (issue #332): blocking-batch children have no
+    // TaskJob by design, so explicit cancellation (`task_cancel` /
+    // `/tasks cancel`) reaches them through THIS source. The parent token
+    // fans out onto it, keeping whole-batch abort semantics identical.
+    final childCancel = CancelTokenSource();
+    _inFlightCancels[id] = childCancel;
+    if (cancelToken != null) {
+      unawaited(
+        cancelToken.onCancel.then(
+          (_) => childCancel.cancel(cancelToken.cancelReason),
+        ),
+      );
+    }
     try {
-      await semaphore.acquire(cancelToken);
+      await semaphore.acquire(childCancel.token);
+      // Cancelled while queued (or pre-cancelled): never START the child —
+      // Agent.abort() before the run's first await would be lost, hanging
+      // a stream that waits for its cancel token.
+      childCancel.token.throwIfCancelled();
     } on CancelledException catch (error) {
+      _inFlightCancels.remove(id);
       return _failure(
         index,
         id,
@@ -164,7 +182,7 @@ final class TaskExecutor {
         id,
         agentName,
         context,
-        cancelToken,
+        childCancel.token,
         stopwatch,
         onProgress,
       );
@@ -190,6 +208,7 @@ final class TaskExecutor {
       return _failure(index, id, agentName, item, stopwatch, '$error');
     } finally {
       _currentSubagentIds.remove(id);
+      _inFlightCancels.remove(id);
       stopwatch.stop();
       semaphore.release();
     }
@@ -208,6 +227,33 @@ final class TaskExecutor {
   /// duplicate-resume guard (the handle's running status is the other).
   final _resumesInFlight = <String>{};
 
+  /// Per-child cancel sources for every id in flight on THIS executor
+  /// (issue #332): blocking-batch spawns and resumes run inline — they have
+  /// NO TaskJob by design, so the session job registry cannot cancel (or
+  /// even see) them. Explicit cancellation (`task_cancel` / `/tasks
+  /// cancel`) consults [isInFlight]/[cancelInFlight] BEFORE letting a
+  /// caller tombstone a registry row: a row with a LIVE inline runner must
+  /// never be settled 'aborted' out from under the running child.
+  final _inFlightCancels = <String, CancelTokenSource>{};
+
+  /// Whether [id] has a live runner on this executor right now — a
+  /// blocking-batch spawn (queued on the semaphore or running) or an
+  /// in-flight resume.
+  bool isInFlight(String id) =>
+      _currentSubagentIds.contains(id) ||
+      _resumesInFlight.contains(id) ||
+      _inFlightCancels.containsKey(id);
+
+  /// Requests the in-flight child [id] to abort: its run settles through
+  /// the NORMAL path (aborted for a spawn, failed-resumable for a resume),
+  /// so the registry row always ends up telling the truth. Returns false
+  /// when no live runner for [id] exists on this executor.
+  bool cancelInFlight(String id) {
+    if (!isInFlight(id)) return false;
+    _inFlightCancels[id]?.cancel('cancelled by task_cancel');
+    return true;
+  }
+
   /// Resumes a failed/idle/completed child IN ITS OWN SESSION (issue
   /// #222): the prior transcript is reloaded from the child's JSONL file,
   /// the follow-up [message] is prompted on top, and new records append to
@@ -220,8 +266,91 @@ final class TaskExecutor {
   /// resume (e.g. the provider role is still quota-limited) returns the
   /// child to failed-resumable with the resolver's error recorded (E2).
   Future<void> resumeChild(String id, String message) async {
-    final manager = subagentManager;
-    final handle = manager?[id];
+    final managerOrNull = subagentManager;
+    final (manager, handle) =
+        _assertResumable(id, managerOrNull, managerOrNull?[id]);
+    final session = await _resumeSession(id, handle);
+    final prior = await session.buildContextMessages();
+    _childSessions[id] = session;
+    _childSessionWrites[id] = await _appendedMessageCount(session);
+    _resumesInFlight.add(id);
+    _currentSubagentIds.add(id);
+    // Issue #332: a resume runs inline (no TaskJob), so it gets a cancel
+    // source like a blocking spawn — `task_cancel` / `/tasks cancel` abort
+    // the live resume instead of tombstoning the row over it.
+    final resumeCancel = CancelTokenSource();
+    _inFlightCancels[id] = resumeCancel;
+    await manager.update(id, status: SubagentStatus.running, clearError: true);
+    await semaphore.acquire();
+    Agent? child;
+    void Function()? untrackUsage;
+    try {
+      final definition = _resolveDefinition(handle.agentType);
+      final wiring = _resolveChildWiring(definition);
+      child = Agent(
+        model: wiring.model,
+        // The ORIGINAL batch context rides along (persisted on the handle):
+        // the transcript does not carry the system prompt, so a resume that
+        // rebuilt the prompt without it would silently drop the batch's
+        // shared background.
+        systemPrompt: _buildSystemPrompt(definition, handle.context),
+        streamFunction: wiring.stream,
+        toolRegistry: _childToolRegistry(definition),
+        externalSteeringSource: () => _inboxSteeringMessages(id),
+      );
+      unawaited(resumeCancel.token.onCancel.then((_) => child!.abort()));
+      untrackUsage = _trackChildUsage(id, child, from: prior.length);
+      child.state.messages = prior;
+      await child.prompt(message);
+      resumeCancel.token.throwIfCancelled();
+      // The agent loop surfaces provider failures as an error-tagged final
+      // assistant message, not a throw — the same check `_run` relies on.
+      _finalAssistantText(child);
+      await _flushChildTranscript(id, child);
+      // Turn-boundary billing already added each finished turn (issue
+      // #332); the completion update bills only what is left and settles
+      // the row. The prior transcript stays out of the count — its usage
+      // is already on the handle.
+      _billChildUsage(id, child);
+      await manager.update(
+        id,
+        status: SubagentStatus.completed,
+        modelId: wiring.model.id,
+      );
+    } on CancelledException catch (error) {
+      if (child != null) unawaited(_flushChildTranscript(id, child));
+      // A cancelled resume settles failed-resumable (NOT aborted): the
+      // child keeps its progress and a later task_resume can continue it.
+      await _updateSubagentStatus(
+        id,
+        SubagentStatus.failed,
+        error: 'resume cancelled: ${error.reason ?? 'cancelled'}',
+      );
+      throw StateError('resume of "$id" cancelled');
+    } on Object catch (error) {
+      if (child != null) unawaited(_flushChildTranscript(id, child));
+      if (child != null) _billChildUsage(id, child);
+      await _updateSubagentStatus(id, SubagentStatus.failed, error: '$error');
+      throw StateError('$error');
+    } finally {
+      if (child != null) _billChildUsage(id, child);
+      untrackUsage?.call();
+      _usageCursors.remove(id);
+      semaphore.release();
+      _resumesInFlight.remove(id);
+      _currentSubagentIds.remove(id);
+      _inFlightCancels.remove(id);
+    }
+  }
+
+  /// Resume guards (E4 + a2a): everything resumable must be a local,
+  /// non-running, non-aborted child; violations throw named errors so the
+  /// CLI surface can explain the refusal.
+  (SubagentManager, SubagentHandle) _assertResumable(
+    String id,
+    SubagentManager? manager,
+    SubagentHandle? handle,
+  ) {
     if (manager == null || handle == null) {
       throw StateError('no subagent with id "$id"');
     }
@@ -242,55 +371,7 @@ final class TaskExecutor {
         '(agent ${handle.agentType}) carrying your message in its task text',
       );
     }
-    final session = await _resumeSession(id, handle);
-    final prior = await session.buildContextMessages();
-    _childSessions[id] = session;
-    _childSessionWrites[id] = await _appendedMessageCount(session);
-    _resumesInFlight.add(id);
-    _currentSubagentIds.add(id);
-    await manager.update(id, status: SubagentStatus.running, clearError: true);
-    await semaphore.acquire();
-    Agent? child;
-    try {
-      final definition = _resolveDefinition(handle.agentType);
-      final wiring = _resolveChildWiring(definition);
-      child = Agent(
-        model: wiring.model,
-        // The ORIGINAL batch context rides along (persisted on the handle):
-        // the transcript does not carry the system prompt, so a resume that
-        // rebuilt the prompt without it would silently drop the batch's
-        // shared background.
-        systemPrompt: _buildSystemPrompt(definition, handle.context),
-        streamFunction: wiring.stream,
-        toolRegistry: _childToolRegistry(definition),
-        externalSteeringSource: () => _inboxSteeringMessages(id),
-      );
-      child.state.messages = prior;
-      await child.prompt(message);
-      // The agent loop surfaces provider failures as an error-tagged final
-      // assistant message, not a throw — the same check `_run` relies on.
-      _finalAssistantText(child);
-      await _flushChildTranscript(id, child);
-      // Only the RESUME run's usage is added: the prior transcript is
-      // seeded into the child, so counting from zero would double-bill the
-      // original run (its usage is already on the handle).
-      final usage = _usageStats(child, from: prior.length);
-      await manager.update(
-        id,
-        status: SubagentStatus.completed,
-        tokens: usage.tokens,
-        requests: usage.requests,
-        modelId: wiring.model.id,
-      );
-    } on Object catch (error) {
-      if (child != null) unawaited(_flushChildTranscript(id, child));
-      await _updateSubagentStatus(id, SubagentStatus.failed, error: '$error');
-      throw StateError('$error');
-    } finally {
-      semaphore.release();
-      _resumesInFlight.remove(id);
-      _currentSubagentIds.remove(id);
-    }
+    return (manager, handle);
   }
 
   /// Reopens the child's JSONL session for a resume: the still-open
@@ -385,6 +466,11 @@ final class TaskExecutor {
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }
+    // Issue #332: usage is billed to the registry row at every TURN
+    // BOUNDARY, not only at completion — a host restart mid-run then
+    // persists a 'running' row that already carries the child's usage, so
+    // rehydrate can tell a never-started row from a mid-run one.
+    final untrackUsage = _trackChildUsage(id, child);
     // Crash-resilient transcript: the real JSONL session is created lazily
     // on the FIRST transcript flush — never at spawn time. Subagents that
     // finish with no transcript leave no session file behind.
@@ -416,13 +502,14 @@ final class TaskExecutor {
       // missing reply is surfaced via completedWithoutReply.
       final reply = subagentManager?[id]?.lastReply;
 
-      // Update the retained-subagent handle with final status + usage.
+      // Update the retained-subagent handle with the final status. Usage
+      // was billed incrementally at turn boundaries (plus the final delta
+      // here) — never in one completion lump.
       if (subagentManager != null) {
+        _billChildUsage(id, child);
         await subagentManager!.update(
           id,
           status: failed ? SubagentStatus.failed : SubagentStatus.completed,
-          tokens: usage.tokens,
-          requests: usage.requests,
           modelId: wiring.model.id,
           error: failed ? 'schema_violation: ${structured!.error}' : null,
         );
@@ -445,9 +532,15 @@ final class TaskExecutor {
         reply: reply,
       );
     } finally {
-      // Last-chance flush: whatever the child produced before an
-      // abort/failure lands in its session file. Fire-and-forget — the
-      // completion must reach the parent without waiting on file writes.
+      // Last-chance usage bill (idempotent — the cursor makes a second
+      // call a no-op) so aborted/failed children keep the usage they
+      // earned, then stop tracking. The last-chance transcript flush:
+      // whatever the child produced before an abort/failure lands in its
+      // session file. Fire-and-forget — the completion must reach the
+      // parent without waiting on file writes.
+      _billChildUsage(id, child);
+      untrackUsage?.call();
+      _usageCursors.remove(id);
       unawaited(_flushChildTranscript(id, child));
     }
   }
@@ -672,11 +765,12 @@ final class TaskExecutor {
     final role = definition.modelRole ?? subagentModelRole;
     // A pinned role always resolves (pinsRole ⇒ chainFor non-null); an
     // unpinned one resolves to null here, keeping the parent wiring.
-    final resolved = rolesResolver.config.pinsRole(
-      role,
-      cwd: rolesResolver.cwd,
-      homeDir: rolesResolver.homeDir,
-    )
+    final resolved =
+        rolesResolver.config.pinsRole(
+          role,
+          cwd: rolesResolver.cwd,
+          homeDir: rolesResolver.homeDir,
+        )
         ? rolesResolver.resolveRole(role)
         : null;
     if (resolved != null) {
@@ -730,6 +824,39 @@ final class TaskExecutor {
         );
     }
     return userPrompt.toString();
+  }
+
+  /// Next message index to bill per child id — the additive cursor that
+  /// keeps turn-boundary billing and the completion bill from
+  /// double-counting the same turn (issue #332).
+  final _usageCursors = <String, int>{};
+
+  /// Starts turn-boundary usage billing for [child] (issue #332): every
+  /// finished turn is added onto the registry row immediately, so a host
+  /// restart mid-run leaves a persisted 'running' row that already carries
+  /// the child's usage (previously usage was recorded only at completion,
+  /// making every interrupted row look never-started). [from] skips the
+  /// seeded prior transcript on a resume (its usage is already on the
+  /// handle). Returns the unsubscribe function, or null when no manager.
+  void Function()? _trackChildUsage(String id, Agent child, {int from = 0}) {
+    if (subagentManager == null) return null;
+    _usageCursors[id] = from;
+    return child.subscribe((event, _) {
+      if (event is TurnEndEvent) _billChildUsage(id, child);
+    });
+  }
+
+  /// Adds the child's usage BEYOND the per-id cursor onto its registry
+  /// row. Idempotent: a second call without new turns bills nothing.
+  void _billChildUsage(String id, Agent child) {
+    final manager = subagentManager;
+    if (manager == null) return;
+    final usage = _usageStats(child, from: _usageCursors[id] ?? 0);
+    if (usage.requests == 0) return;
+    _usageCursors[id] = child.state.messages.length;
+    unawaited(
+      manager.update(id, tokens: usage.tokens, requests: usage.requests),
+    );
   }
 
   /// Token/request totals across the child's assistant messages — from

@@ -93,8 +93,10 @@ extension on AgentCli {
     _session = await _loadSession(metadata);
     _syncMailboxPrefix();
     // Now that `_session` is assigned, the registry source can read the
-    // resumed session's `subagent_registry` records.
-    unawaited(_subagentManager.rehydrate());
+    // resumed session's `subagent_registry` records. Awaited (issue #332):
+    // zombie rows settle before the next prompt can spawn children, and no
+    // same-id spawn can race the load.
+    await _subagentManager.rehydrate();
     io.writeln("switched to session '$label' [${_pathBasename(metadata.cwd)}]");
     _replayRestoredHistory(_agent.state.messages, label);
   }
