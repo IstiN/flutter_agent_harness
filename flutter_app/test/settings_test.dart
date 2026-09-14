@@ -306,7 +306,7 @@ final class FakeGemmaEngine implements GemmaEngineApi {
 void main() {
   group('BYOK setup screen', () {
     testWidgets('shows the provider picker, key/model/url fields, and the '
-        'in-memory notice', (tester) async {
+        'key-storage notice', (tester) async {
       await tester.pumpWidget(const MyApp());
 
       expect(find.text('Connect to Fa'), findsOneWidget);
@@ -326,8 +326,14 @@ void main() {
       expect(find.text('API key'), findsOneWidget);
       expect(find.text('Model id'), findsOneWidget);
       expect(find.text('Base URL'), findsOneWidget);
-      expect(find.textContaining('never persisted'), findsOneWidget);
-      expect(find.textContaining('gone on reload'), findsOneWidget);
+      // Android is a KeychainStore surface now (issue #329) and tests run
+      // on the default android target: the hosted note states on-device
+      // secure storage instead of "in-memory only … gone on reload".
+      expect(
+        find.textContaining('secure key store (Keychain/Keystore)'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('gone on reload'), findsNothing);
       expect(find.text('Start chat'), findsOneWidget);
     });
 
@@ -1209,19 +1215,18 @@ void main() {
   });
 
   group('CLI-only settings listing (issue #288 AC4)', () {
-    testWidgets(
-      'stays visible on a fresh install with no agent service',
-      (tester) async {
-        // The registry-driven listing is static — it must not ride the
-        // `service != null` gate (ResetApps/Approval/etc.): a fresh
-        // install before any service exists still shows WHY those
-        // settings are CLI-only instead of silently omitting them.
-        await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
-        await tester.pumpAndSettle();
+    testWidgets('stays visible on a fresh install with no agent service', (
+      tester,
+    ) async {
+      // The registry-driven listing is static — it must not ride the
+      // `service != null` gate (ResetApps/Approval/etc.): a fresh
+      // install before any service exists still shows WHY those
+      // settings are CLI-only instead of silently omitting them.
+      await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
+      await tester.pumpAndSettle();
 
-        expect(find.text('CLI-only settings'), findsOneWidget);
-      },
-    );
+      expect(find.text('CLI-only settings'), findsOneWidget);
+    });
   });
 
   group('On-device (Gemma, transformers.js) provider', () {
