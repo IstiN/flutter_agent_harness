@@ -22,14 +22,15 @@ async function pasteText(page: Page, text: string): Promise<boolean> {
   return page.evaluate((payload) => {
     const dt = new DataTransfer();
     dt.setData('text/plain', payload);
+    // ClipboardEventInit.clipboardData is not honored by Chrome's
+    // constructor path (the handler would read an empty string) — attach
+    // the DataTransfer onto the event object explicitly.
     const ev = new ClipboardEvent('paste', {
-      clipboardData: dt,
       bubbles: true,
       cancelable: true,
     });
-    return document
-      .getElementById('prompt')!
-      .dispatchEvent(ev);
+    Object.defineProperty(ev, 'clipboardData', { value: dt });
+    return document.getElementById('prompt')!.dispatchEvent(ev);
   }, text);
 }
 
