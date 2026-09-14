@@ -310,11 +310,12 @@ Map<String, ApprovalPolicy> alwaysPromptOverrides() => {
 /// `unattended`, where an unanswered prompt resolves as deny) keeps the
 /// deliberate always-ask guard. Called at boot and on every reconfigure.
 void applyModePromptOverrides(ApprovalManager approvals, ApprovalMode mode) {
+  const origin = 'browser always-prompt guard';
   for (final name in alwaysPromptOverrides().keys) {
     if (mode == ApprovalMode.yolo) {
       approvals.clearOverride(name);
     } else {
-      approvals.setOverride(name, ApprovalPolicy.prompt);
+      approvals.setOverride(name, ApprovalPolicy.prompt, origin: origin);
     }
   }
 }
