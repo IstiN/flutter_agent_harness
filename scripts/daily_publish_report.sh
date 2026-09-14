@@ -80,8 +80,8 @@ find_open_issue() { # $1 = exact title; echoes the issue number or nothing
       done | head -1
 }
 
-file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url
-  local leg="$1" prefix="$2" url="$3"
+file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url, $4 = leg result
+  local leg="$1" prefix="$2" url="$3" result="${4:-failure}"
   local child_id title steps excerpt body
   child_id="${url##*/}"
   title="[daily-publish] $leg leg failed"
@@ -91,6 +91,14 @@ file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url
   body="$(mktemp)"
   {
     echo "**Leg:** \`$leg\`"
+    # #345/#347: a cancelled leg job means the WATCHER died (whole-run
+    # cancellation or leg timeout) — not a child-workflow failure verdict.
+    # The child may still be in flight, which is also why the steps/log
+    # excerpts below can come up empty mid-run. Say so up front instead of
+    # letting "unknown (job cancelled or timed out)" read like a leg defect.
+    if [ "$result" = "cancelled" ]; then
+      echo "**Leg job result:** cancelled — the leg's watcher was killed mid-watch (whole-run cancellation or leg timeout), NOT a child-workflow failure verdict. The child run may have been healthy or still in flight; correlate its timeline before treating this as a leg defect."
+    fi
     echo "**Daily run:** $daily_url"
     [ -n "$url" ] && echo "**Leg run:** $url"
     echo "**Failing job/step:** ${steps:-unknown (job cancelled or timed out)}"
@@ -154,7 +162,7 @@ process_leg() {
       ;;
     cancelled)
       icon="⚠️"; status="cancelled (timeout?)"; failed_legs+="$id "
-      file_or_comment "$id" "$prefix" "$url"
+      file_or_comment "$id" "$prefix" "$url" "cancelled"
       ;;
     *)
       icon="⏭️"; status="skipped"

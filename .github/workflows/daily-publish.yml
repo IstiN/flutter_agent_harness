@@ -191,13 +191,22 @@ jobs:
 
   play:
     name: 'Leg: Play (Android external beta)'
-    needs: plan
+    # Serialized after the testflight leg (#343, #346): both legs dispatch
+    # build-mobile.yml and its concurrency group cancels in-progress runs on
+    # the same ref — a concurrent play dispatch would kill the testflight
+    # child mid-build (and the created-at-only watch could adopt the wrong
+    # run). One build-mobile dispatch at a time.
+    needs: [plan, testflight]
     runs-on: ubuntu-latest
     timeout-minutes: 300
     permissions:
       contents: read
       actions: write
+    # !cancelled() keeps single-leg play dispatches runnable when the
+    # testflight leg skips; result != 'cancelled' holds play back while a
+    # cancelled testflight watcher leaves its build-mobile child in flight.
     if: >-
+      !cancelled() && needs.testflight.result != 'cancelled' &&
       (needs.plan.outputs.changed == 'true' || inputs.force == true) &&
       (inputs.legs == '' || inputs.legs == 'all' || inputs.legs == 'play')
     outputs:

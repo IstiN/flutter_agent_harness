@@ -25,6 +25,18 @@ on:
           - metadata_only    # texts/descriptions only (no build, no upload, no screenshots)
           - screenshots_only # screenshots only (no build, no upload, no texts)
           - app_only         # build + upload only (no metadata, no screenshots)
+      # #346: the daily Play leg passes android_track=beta; the input was
+      # consumed (PLAY_TRACK below) but never declared, so every dispatch
+      # died in seconds with HTTP 422 "Unexpected inputs provided".
+      android_track:
+        description: 'Android: Play upload track when android_content includes an upload (fastlane supply track)'
+        required: false
+        default: 'internal'
+        type: choice
+        options:
+          - internal # owner/closed testing — manual dispatch default (issue #289 track policy)
+          - beta     # external/open testing — the daily Play leg
+          - production
       ios_content:
         description: 'iOS: what to deploy'
         required: false
