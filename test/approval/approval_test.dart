@@ -204,6 +204,49 @@ void main() {
       expect(requests.single.toolName, 'bash');
     });
 
+    test('a per-tool prompt override names its origin in the reason (issue '
+        '#380 AC3: overrides are self-diagnosing)', () async {
+      final requests = <ApprovalRequest>[];
+      final manager = ApprovalManager(
+        mode: ApprovalMode.yolo,
+        overrides: const {'bash': ApprovalPolicy.prompt},
+        overrideOrigins: const {'bash': 'host always-prompt guard'},
+        prompt: (request) {
+          requests.add(request);
+          return ApprovalDecision.approveOnce;
+        },
+      );
+      final outcome = await manager.authorize(
+        toolName: 'bash',
+        tier: ApprovalTier.exec,
+        arguments: const {'command': 'ls'},
+      );
+      expect(outcome.allowed, isTrue);
+      expect(
+        requests.single.reason,
+        'Tool "bash" is set to always ask for approval '
+        '(from: host always-prompt guard)',
+      );
+      // No origin recorded — reason stays as before.
+      final bare = ApprovalManager(
+        mode: ApprovalMode.yolo,
+        overrides: const {'write': ApprovalPolicy.prompt},
+        prompt: (request) {
+          requests.add(request);
+          return ApprovalDecision.approveOnce;
+        },
+      );
+      await bare.authorize(
+        toolName: 'write',
+        tier: ApprovalTier.write,
+        arguments: const {},
+      );
+      expect(
+        requests.last.reason,
+        'Tool "write" is set to always ask for approval',
+      );
+    });
+
     test('mode resolution: always-ask prompts even read-tier tools', () async {
       var prompts = 0;
       final manager = ApprovalManager(
@@ -490,6 +533,55 @@ void main() {
         expect(_resultText(results.single), 'executed');
       },
     );
+
+    test('yolo honors the real builtin registry end to end (issue #380 AC1: '
+        'ordinary write/edit/ls run with zero prompt invocations)', () async {
+      final tools = builtinTools(
+        MemoryExecutionEnv(),
+      ).where((t) => ['ls', 'write', 'edit'].contains(t.name)).toList();
+      final approval = ApprovalManager(
+        mode: ApprovalMode.yolo,
+        prompt: (request) => fail(
+          'yolo must not prompt for ${request.toolName}: '
+          '${request.reason}',
+        ),
+      );
+      final agent = _agent(
+        turns: [
+          _toolTurn(const [
+            ToolCall(
+              id: 'tc-1',
+              name: 'write',
+              arguments: {'path': 'a.txt', 'content': 'hello'},
+            ),
+            ToolCall(
+              id: 'tc-2',
+              name: 'edit',
+              arguments: {
+                'path': 'a.txt',
+                'oldText': 'hello',
+                'newText': 'world',
+              },
+            ),
+            ToolCall(id: 'tc-3', name: 'ls', arguments: {'path': '.'}),
+          ]),
+          _textTurn('done'),
+        ],
+        tools: tools,
+        approval: approval,
+      );
+      await agent.prompt('go');
+      await agent.waitForIdle();
+
+      final results = _toolResults(agent);
+      expect(results, hasLength(3));
+      for (final result in results) {
+        expect(result.isError, isFalse, reason: _resultText(result));
+      }
+      expect(_resultText(results[0]), contains('Successfully wrote'));
+      expect(_resultText(results[1]), contains('Edited a.txt'));
+      expect(_resultText(results[2]), contains('a.txt'));
+    });
 
     test('prompt deny turns the call into an error result', () async {
       final recorder = _RecorderTool();
