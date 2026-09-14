@@ -39,11 +39,12 @@ function boot({ respond }) {
   };
   let onPortMessage = null;
   const sentFrames = [];
-  const chatChannel = { onMessage: { addListener() {} } };
+  const chatChannel = { onMessage: { addListener() {} }, onDisconnect: { addListener() {} } };
   const extChannel = {
     onMessage: {
       addListener(fn) { onPortMessage = fn; },
     },
+    onDisconnect: { addListener() {} },
     postMessage(frame) {
       sentFrames.push(frame);
       // Answer asynchronously, like the SW round-trip would.

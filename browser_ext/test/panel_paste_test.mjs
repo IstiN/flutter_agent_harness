@@ -58,16 +58,25 @@ function boot({ status = STATUS } = {}) {
       name,
       onMessage: listenerHost(),
       responder: null,
+      onDisconnect: listenerHost(),
       postMessage(m) {
         // The SW side answers ext_requests; route them to the test's
         // responder, which replies through the real onMessage listeners.
-        if (m?.kind === 'ext_request' && port.responder) port.responder(m);
+        if (m?.kind === 'ext_request') (port.responder ?? defaultResponder)?.(m);
       },
     };
     return port;
   };
+  let defaultResponder = null;
   const panelPort = mkPort('fa-panel');
-  const extPort = mkPort('fa-ui-v2');
+  // panel.js opens one fresh fa-ui-v2 port per ext op (a long-lived port can
+  // silently drop large messages after an agent boot); track them all.
+  const extPorts = [];
+  const mkExtPort = () => {
+    const port = mkPort('fa-ui-v2');
+    extPorts.push(port);
+    return port;
+  };
   const sent = [];
   const sandbox = {
     console,
@@ -80,7 +89,7 @@ function boot({ status = STATUS } = {}) {
     clearTimeout,
     chrome: {
       runtime: {
-        connect: ({ name }) => (name === 'fa-panel' ? panelPort : extPort),
+        connect: ({ name }) => (name === 'fa-panel' ? panelPort : mkExtPort()),
         sendMessage: (msg) => {
           sent.push(msg);
           if (msg.type === 'status') return Promise.resolve({ ok: true, status });
@@ -92,18 +101,20 @@ function boot({ status = STATUS } = {}) {
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox);
 
-  const deliver = (frame) => extPort.onMessage.listeners.forEach((fn) => fn(frame));
+  const deliver = (frame) => extPorts.forEach((p) => p.onMessage.listeners.forEach((fn) => fn(frame)));
   const settle = async () => {
     for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 1));
   };
   return {
     elements,
-    extPort,
+    extPorts,
     sent,
     deliver,
     settle,
     serve(res) {
-      extPort.responder = res;
+      // Applies to existing ports and every future per-op port.
+      defaultResponder = res;
+      extPorts.forEach((p) => { p.responder = res; });
     },
     async paste(text) {
       await settle();

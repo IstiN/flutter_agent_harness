@@ -239,26 +239,31 @@ $('saveProvider').addEventListener('click', async () => {
 // (open the CodeMie login page) and `cookies.get_all` (direct jar reads). A
 // CodeMie provider never needs an API key: the browser jar IS the credential.
 
-const extPort = chrome.runtime.connect({ name: 'fa-ui-v2' });
+// One fresh port per ext op: a port that lived through an embedded-agent
+// boot/reconfigure can silently drop subsequent large messages (observed on
+// Chromium 143: the connect survives, the ext_request never arrives at the
+// worker), and one wedged port then blocks every queued op behind it. A
+// per-call port isolates that failure - worst case a single op times out.
 let extSeq = 0;
-const extPending = new Map();
-extPort.onMessage.addListener((m) => {
-  if (m?.kind !== 'ext_result') return;
-  const p = extPending.get(m.id);
-  if (!p) return;
-  extPending.delete(m.id);
-  clearTimeout(p.timer);
-  if (m.ok) p.resolve(m.data ?? {});
-  else p.reject(new Error(m.error || 'ext op failed'));
-});
-function extCall(op, params = {}) {
+function extCall(op, params = {}, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
+    const port = chrome.runtime.connect({ name: 'fa-ui-v2' });
     const id = `x${++extSeq}`;
-    const timer = setTimeout(() => {
-      if (extPending.delete(id)) reject(new Error(`${op} timed out`));
-    }, 45000);
-    extPending.set(id, { resolve, reject, timer });
-    extPort.postMessage({ kind: 'ext_request', id, op, params });
+    let settled = false;
+    const finish = (settle) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { port.disconnect(); } catch {}
+      settle();
+    };
+    const timer = setTimeout(() => finish(() => reject(new Error(`${op} timed out`))), timeoutMs);
+    port.onMessage.addListener((m) => {
+      if (m?.kind !== 'ext_result' || m.id !== id) return;
+      finish(() => (m.ok ? resolve(m.data ?? {}) : reject(new Error(m.error || 'ext op failed'))));
+    });
+    port.onDisconnect.addListener(() => finish(() => reject(new Error('extension service worker went away'))));
+    port.postMessage({ kind: 'ext_request', id, op, params });
   });
 }
 

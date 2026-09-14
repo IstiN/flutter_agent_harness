@@ -23,6 +23,20 @@ const AGENT_ALARM = 'fa-agent-keepalive';
 const ports = new Set();
 const agent = globalThis.faAgent ?? null;
 
+// Panels render agent-derived state (e.g. the paste staging cap) from the
+// status snapshot, but the fa-panel port only pushes on bridge activity. A
+// boot (or boot failure) changes that state without any bridge traffic, so
+// push a fresh snapshot when the seam's boot settles - otherwise panels keep
+// the pre-boot "no agent" view until the next unrelated push.
+if (agent && typeof agent.boot === 'function') {
+  const seamBoot = agent.boot.bind(agent);
+  agent.boot = (config) => {
+    const result = seamBoot(config);
+    Promise.resolve(result).finally(() => pushPanels({ type: 'status', status: snapshot() }));
+    return result;
+  };
+}
+
 const store = {
   get: (keys) => chrome.storage.local.get(keys),
   set: (o) => chrome.storage.local.set(o),
