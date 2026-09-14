@@ -175,7 +175,8 @@ final class RelayAgentService extends AgentService {
     // include it — a known v1 gap after a page reload).
     _append(fa_ui.FaChatMessage(role: 'user', content: text));
     _trajectoryAppend(UserMessage.text(text, timestamp: DateTime.now()));
-    _pendingEcho = text;
+    _lastUserText = text;
+    _pendingEchoes.add(text);
     if (_running) {
       _transport.steer(text);
     } else {
@@ -312,10 +313,20 @@ final class RelayAgentService extends AgentService {
   bool _codemieReauthInFlight = false;
   String? _lastUserText;
 
-  /// The raw composer text awaiting its SW-side user message_done — the
-  /// echo reconciliation that keeps composer sends single-bubble while
-  /// host-initiated mail renders (issue #320).
-  String? _pendingEcho;
+  /// The raw composer texts awaiting their SW-side user message_done —
+  /// the echo reconciliation that keeps composer sends single-bubble
+  /// while host-initiated mail renders (issue #320). FIFO: several
+  /// steers inside one boundary window each match their own SW copy,
+  /// so no steered row double-renders.
+  final List<String> _pendingEchoes = <String>[];
+
+  /// Test seam: overrides the CodeMie sign-in poll (defaults to the
+  /// real [pollCodeMieSignIn] over the extension fetch).
+  @visibleForTesting
+  static Future<List<String>?> Function({
+    required Future<({int status, String body})> Function() probe,
+    required void Function() openLoginPage,
+  })? codemieSignInPollOverride;
 
   Future<void> _autoReauthCodemie() async {
     if (_codemieReauthInFlight) return;
@@ -338,7 +349,7 @@ final class RelayAgentService extends AgentService {
       // not yield an ABSOLUTE probe would resolve against the extension
       // origin and 404 the poll forever.
       if (!(Uri.tryParse(probeUrl)?.hasScheme ?? false)) return;
-      final models = await pollCodeMieSignIn(
+      final models = await (codemieSignInPollOverride ?? pollCodeMieSignIn)(
         probe: () async {
           final result = await extFetchString(probeUrl);
           // Not an extension host: the auth-expired card stays the
@@ -568,8 +579,9 @@ final class RelayAgentService extends AgentService {
           // attributed text verbatim (issue #320; it used to be dropped
           // and the mail stayed invisible until a reload).
           final content = _stripTurnContext(message['text'] as String? ?? '');
-          if (content == _pendingEcho) {
-            _pendingEcho = null;
+          // FIFO consume: each steered send matches its own SW copy
+          // (several steers may queue inside one boundary window).
+          if (_pendingEchoes.remove(content)) {
             break;
           }
           _append(fa_ui.FaChatMessage(role: 'user', content: content));
@@ -613,8 +625,10 @@ final class RelayAgentService extends AgentService {
     _messages.clear();
     _currentAssistant = null;
     _currentThinking = null;
-    _pendingEcho = null;
+    _pendingEchoes.clear();
     _pendingMailRow = null;
+    // New session, new ledger — replay rows rebuild it record by record.
+    _trajectoryFeed.reset();
     _trajectoryLastId = null;
     for (final entry in replay) {
       final event = entry['event'];
@@ -699,9 +713,12 @@ final class RelayAgentService extends AgentService {
                 '${event['sessionId']}',
           ),
         );
+        // Paint NOW — _append alone does not notify, and the notice must
+        // not wait for the routed turn's first delta.
+        if (!silent) notifyListeners();
       case 'error':
         _error = event['error'] as String? ?? 'unknown relay error';
-        _pendingEcho = null;
+        _pendingEchoes.clear();
       case 'debug':
         // SW-side diagnostics (provider response/terminal events): the
         // SW console is a separate DevTools window nobody opens, so the
