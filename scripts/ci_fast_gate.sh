@@ -301,10 +301,18 @@ stage_flutter() {
     echo "🔍 Running flutter analyze (flutter_app)..."
     (cd flutter_app && flutter analyze --no-fatal-infos --no-fatal-warnings)
   fi
-  echo "🧪 Running flutter_app tests (excluding integration)..."
+  echo "🧪 Running flutter_app tests (excluding integration + golden/cli_visual suites)..."
+  # Goldens stay out of the LOCAL gate exactly as they are out of ubuntu CI
+  # (same find, same excludes): goldens are host-locked — they redden across
+  # minor SDKs even on the same machine (issue #177 E5) — and are guarded by
+  # build-macos.yml + the nightly matrix instead. Before this exclusion the
+  # hook demanded them locally and every yaml/docs-only commit on a machine
+  # whose flutter baseline drifted from the golden baseline had to
+  # --no-verify (issue #334). cli_visual is excluded for the same reason as
+  # in ci.yml (flutter-tests job).
   local conc="${FA_FLUTTER_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
   echo "   concurrency: ${conc:-default}"
-  if ! (cd flutter_app && flutter test ${conc:+--concurrency=$conc} --exclude-tags integration); then
+  if ! (cd flutter_app && flutter test ${conc:+--concurrency=$conc} --exclude-tags integration $(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*')); then
     echo "❌ QUALITY GATE FAILED — FLUTTER APP TESTS" >&2
     exit 1
   fi
