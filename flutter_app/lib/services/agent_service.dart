@@ -140,7 +140,7 @@ class AgentService extends ChangeNotifier
     @visibleForTesting bool includeSharedSessionRoots = true,
     this.powerAssertion,
   }) : _resolveSecretName = null,
-      _providerRegistry = null,
+       _providerRegistry = null,
        // ignore: prefer_initializing_formals
        _watchExternalSessions = watchExternalSessions,
        // ignore: prefer_initializing_formals
@@ -442,9 +442,9 @@ class AgentService extends ChangeNotifier
        _includeSharedSessionRoots = includeSharedSessionRoots,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
-      _resolveSecretName = resolveSecretName,
-      // ignore: prefer_initializing_formals
-      _providerRegistry = providerRegistry,
+       _resolveSecretName = resolveSecretName,
+       // ignore: prefer_initializing_formals
+       _providerRegistry = providerRegistry,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
          // Outlook taskpane (issue #182): read_attachment streams
@@ -454,6 +454,12 @@ class AgentService extends ChangeNotifier
          overrides: officeApi == null
              ? const {}
              : officeToolApprovalOverrides(),
+         overrideOrigins: officeApi == null
+             ? const {}
+             : {
+                 for (final name in officeToolApprovalOverrides().keys)
+                   name: 'Outlook always-prompt guard',
+               },
        ),
        sessionsRoot = sessionsRoot,
        _repo = JsonlSessionRepo(
@@ -846,7 +852,6 @@ class AgentService extends ChangeNotifier
       ), // null = pass-through, no registry row to name.
     );
   }
-
 
   /// The system prompt plus a secret-name hint (names only, never values).
   ///

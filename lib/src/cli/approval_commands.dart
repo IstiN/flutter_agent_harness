@@ -852,6 +852,9 @@ extension ApprovalCommands on AgentCli {
     final job = _taskConfig.jobManager.job(id);
     if (job != null) {
       job.cancel();
+      // Same as the tool-side twin: a yield-converted job's live runner
+      // sits inline on the executor (its token never reached the child).
+      _taskConfig.executor.cancelInFlight(id);
       io.writeln('cancelled ${job.id}');
       return;
     }
@@ -860,7 +863,21 @@ extension ApprovalCommands on AgentCli {
       io.writeln(shellOutput);
       return;
     }
-    io.writeln('unknown job: $id');
+    // Issue #332: no live task job and no shell job. Route through the
+    // SAME helper the `task_cancel` tool uses, so wording can never
+    // diverge from the tool-side twin: a LIVE inline child (blocking
+    // batch / resume — no TaskJob by design) is aborted through the
+    // executor's in-flight cancel source, never tombstoned while it runs;
+    // an orphaned registry row is tombstoned aborted; anything else
+    // reports honestly.
+    unawaited(
+      cancelSubagentWithoutJob(
+        id: id,
+        manager: _taskConfig.subagentManager,
+        executor: _taskConfig.executor,
+        source: '/tasks cancel',
+      ).then(io.writeln),
+    );
   }
 
   /// Stops the shell job [id] and returns the message to print, or null if

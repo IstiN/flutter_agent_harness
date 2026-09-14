@@ -1392,9 +1392,14 @@ void main() {
       applyModePromptOverrides(approvals, ApprovalMode.yolo);
       expect(approvals.overrideFor('inject_js'), isNull);
 
-      // Back to a guarded mode: the guard is restored.
+      // Back to a guarded mode: the guard is restored, now naming where
+      // it comes from (issue #380 AC3).
       applyModePromptOverrides(approvals, ApprovalMode.alwaysAsk);
       expect(approvals.overrideFor('inject_js'), ApprovalPolicy.prompt);
+      expect(
+        approvals.overrideOriginFor('inject_js'),
+        'browser always-prompt guard',
+      );
 
       // unattended keeps the guard: no user is present to answer, and a
       // prompt resolving as deny beats silently running page JS.
