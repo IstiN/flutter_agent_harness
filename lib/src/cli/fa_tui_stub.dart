@@ -98,7 +98,7 @@ final class FaTuiController {
 
   /// No-op on web (the TUI never runs there). Mirrors the dart_tui
   /// controller so agent_cli call sites compile for BOTH targets.
-  void pushHub(FaHubState state) {}
+  void pushHub(FaHubState state, {bool refreshOnly = false}) {}
 
   /// No-op on web. See [pushHub].
   void closeHub() {}
