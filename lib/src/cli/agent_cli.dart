@@ -84,6 +84,7 @@ import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
 import 'tool_phase_labels.dart';
+import 'tool_rows.dart';
 import '../model_roles/vision_models.dart';
 import '../providers/chatgpt_codex_models.dart';
 import '../providers/chatgpt_oauth.dart';
@@ -1035,6 +1036,11 @@ class AgentCli {
   /// Paths the agent touched this session (tool call args) — path-gated
   /// skills (`paths:` frontmatter) enter the prompt once their globs match.
   final Set<String> _touchedPaths = {};
+
+  /// Start wall-clock + rendered detail per in-flight tool call (keyed by
+  /// toolCallId) — the end row repeats the detail and adds the elapsed zone
+  /// (issue #366). Unpaired ends render neither.
+  final Map<String, (DateTime, String)> _toolStarts = {};
 
   /// The MCP wiring (manager + re-registration) — see agent_cli_mcp.dart.
   late AgentCliMcpWiring _mcp;

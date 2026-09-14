@@ -76,7 +76,7 @@ void main() {
     final server = await MockLlmServer.start();
     addTearDown(server.stop);
     // Turn 1: the model calls `bash`; turn 2: the reply echoes the tool
-    // result. The `[bash]` trace line must reach the file even though
+    // result. The tool row trace line must reach the file even though
     // headless prints diagnostics to stderr (invisible in a stdout-only
     // parent capture — exactly the issue's scenario).
     server
@@ -88,7 +88,7 @@ void main() {
     expect(result.exitCode, 0, reason: '${result.stderr}');
 
     final log = File(logPath).readAsStringSync();
-    expect(log, contains('[bash]'));
+    expect(log, contains('• bash · log-file-proof'));
     expect(log, contains('log-file-proof'));
   });
 

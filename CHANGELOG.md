@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- feat(366): TUI tool rows read as first-class branded UI — the compact
+  oh-my-pi-style grammar `• label · detail [suffix]` replaces the raw
+  `[tool] args=JSON` plumbing (issue #366). Every builtin renders a human
+  detail: ask shows the first question text (no more JSON leaks with
+  broken quoting), bash collapses a leading `cd <dir> &&` compound to the
+  meaningful tail, read renders `path:N-M` with `~`-collapsed and
+  project-relative paths, write/edit show the path, bash_job pairs command
+  + job id; unknown/MCP tools degrade to their first string argument, and
+  argument-less calls render bare (`• bash`, no dangling `·`). End rows
+  echo the start detail plus a wall-clock suffix (`✓ bash · make -j8 3s`),
+  errors render `✗` with the result's first line kept full-bright.
+  `/tasks` shell-job rows adopt the same grammar — command in the detail
+  zone, job id + relativized `.fah/bash_jobs/…` log path as the dim
+  suffix, `✗` for non-zero exits. Truncation is budget-aware per segment:
+  the fitter wraps each zone to its own width (label + separator + detail
+  + suffix never exceed the live terminal width), appends `…` only when a
+  segment genuinely overflows, and never splits a grapheme — CJK/emoji
+  safe. Colors come from the theme roles (label `accent2`, running glyph
+  `accent2Soft`, success `accentSoft`, error `error`, details `dim`) —
+  nothing hardcodes SGR; palette swaps repaint on the next emit. The
+  tool trace reaches `toolCallId` (the event handler threads it through),
+  so unpaired ends render no elapsed and parallel calls attribute
+  durations correctly. Tests: pure grammar module (`tool_rows.dart`) +
+  golden transcript fixture + updated row pins; existing collapse/expand
+  and job-id copy behavior untouched (AC5).
 - perf(369): `--session <name>` cold start no longer reads session
   bodies — name resolution (`sessionNameQuick`, shared by the CLI
   matcher, `/sessions` listing, and `/trajectory`) costs two bounded

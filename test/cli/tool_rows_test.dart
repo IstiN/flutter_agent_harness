@@ -193,11 +193,7 @@ void main() {
         100,
       ).style(glyph: tuiAccent2Soft, label: tuiAccent2, dim: tuiDim);
 
-      expect(
-        rawDefault,
-        rawOhmypi,
-        reason: 'layout never bakes palette',
-      );
+      expect(rawDefault, rawOhmypi, reason: 'layout never bakes palette');
       expect(
         paintedDefault,
         isNot(paintedOhmypi),
@@ -231,6 +227,73 @@ void main() {
       );
       expect(briefPath('/home/u/notes.txt', home: '/home/u'), '~/notes.txt');
       expect(briefPath('/opt/other/x', cwd: '/work/repo'), '/opt/other/x');
+    });
+  });
+
+  group('golden transcript (AC4)', () {
+    // One VM render of a representative transcript — ask, bash running,
+    // bash done, read, write, error — SGR-stripped so the fixture pins the
+    // grammar and the budget, not the palette (AC3 covers the palette).
+    String render(ToolRowSegments s) {
+      final painted = layoutToolRow(s, 80).style(glyph: id, label: id, dim: id);
+      return painted.replaceAll(RegExp('\x1b\\[[0-9;]*m'), '');
+    }
+
+    test('the default-theme tool trace renders as the approved fixture', () {
+      final transcript = [
+        render(
+          const ToolRowSegments(
+            glyph: '•',
+            label: 'ask',
+            detail: 'Как именно оформить миграцию схемы?',
+          ),
+        ),
+        render(
+          const ToolRowSegments(
+            glyph: '•',
+            label: 'bash',
+            detail: 'make -j8',
+            elapsed: 'sh-24-x (log: .fah/bash_jobs/sh-24-x.log)',
+          ),
+        ),
+        render(
+          const ToolRowSegments(
+            glyph: '✓',
+            label: 'bash',
+            detail: 'make -j8',
+            elapsed: '3s',
+          ),
+        ),
+        render(
+          const ToolRowSegments(
+            glyph: '•',
+            label: 'read',
+            detail: 'lib/src/cli/tool_rows.dart:100-180',
+          ),
+        ),
+        render(
+          const ToolRowSegments(
+            glyph: '•',
+            label: 'write',
+            detail: 'notes.txt',
+          ),
+        ),
+        render(
+          const ToolRowSegments(
+            glyph: '✗',
+            label: 'bash',
+            detail: 'fatal: not a git repository',
+            elapsed: '0s',
+          ),
+        ),
+      ].join('\n');
+      expect(transcript, '''
+• ask · Как именно оформить миграцию схемы?
+• bash · make -j8 sh-24-x (log: .fah/bash_jobs/sh-24-x.log)
+✓ bash · make -j8 3s
+• read · lib/src/cli/tool_rows.dart:100-180
+• write · notes.txt
+✗ bash · fatal: not a git repository 0s''');
     });
   });
 }
