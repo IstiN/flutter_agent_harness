@@ -45,7 +45,7 @@ final class FaTuiCallbacks {
   final Future<void> Function(String line) onSubmit;
   final Future<void> Function(String modelId) onModelSelected;
   final List<MenuItem> Function(String prefix) buildSlashMenu;
-  final List<MenuItem> Function(String filter) buildModelMenu;
+  final List<MenuItem> Function(String filter, int width) buildModelMenu;
   final String Function() statusLine;
   final String prompt;
   final void Function()? onInterrupt;

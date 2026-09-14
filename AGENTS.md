@@ -500,10 +500,15 @@ factual: paths, commands, invariants — no essays.
   error exit 64). Args parsed in `lib/src/cli/cli_args.dart`
   (pure Dart). Headless: exit 0/1/130; `CliIO` contract — `write` = primary
   stream, `writeln` = diagnostics (stderr headless). The TUI captures the
-  mouse by default (wheel scrolling — the alternate screen has no native
-  scrollback); selection works via the terminal's bypass modifier (Shift),
-  and `FA_TUI_MOUSE=0` (`AgentCliConfig.tuiMouseCapture`) hands the mouse
-  back for always-on native select-to-copy.
+  mouse by default (wheel scrolling + click routing — the alternate screen
+  has no native scrollback): SGR 1002+1006 with a per-frame hit-region
+  registry (`tui_hit_regions.dart`, topmost-region click/drag/release
+  routing in `fa_tui_mouse.dart` — composer caret on mousedown, model
+  picker rows, queue-row drop); legacy X10 payloads (modes 9/1000) decode
+  too; `/mouse off` degrades to keyboard with a one-time hint. Selection
+  works via the terminal's bypass modifier (Shift), and `FA_TUI_MOUSE=0`
+  (`AgentCliConfig.tuiMouseCapture`) hands the mouse back for always-on
+  native select-to-copy.
 - `lib/src/cli/` — REPL machinery: `/provider [name] [baseUrl] [token] |
   custom` (guided wizard in `provider_flow.dart` + `provider_commands.dart`;
   `/models` fetched for openai-like endpoints), custom providers in the
@@ -561,6 +566,12 @@ factual: paths, commands, invariants — no essays.
   opens that provider's model list (generic `modelProvider` picker whose
   `provider|model` rows route back through `_tuiSelectModel`'s
   cross-provider switch). A single provider goes straight to its models.
+  Model rows render as a TABLE (`buildModelPickerTable` in
+  `model_picker_table.dart`): `● id  provider  ctx  cost` with the
+  context window compacted (1048576 → `1M`) and `$/Mtok` from the catalog
+  (`—` when pricing is unknown, never 0.00); rows sort recency → cheaper
+  total → unpriced last; narrow widths elide cost first, then provider,
+  keeping id + ctx. The rows are click targets (hit-region routing).
   The provider→model pick flows live in `lib/src/cli/settings_flow.dart` in the
   NAMED `SettingsFlow` extension (public `runProviderModelFlow`/
   `startChatModelFlow`/`startMediaSlotFlow`/`startAgentModelFlow`), so
