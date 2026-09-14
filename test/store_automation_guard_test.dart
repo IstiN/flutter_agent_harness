@@ -417,4 +417,23 @@ void main() {
       },
     );
   });
+
+  // #368: pubspec.yaml declares .env as a Flutter asset (flutter_dotenv)
+  // but the file is gitignored — every job that runs `flutter build` on a
+  // fresh checkout must seed the placeholder before pub get, or the asset
+  // bundler dies with "No file or variants found for asset: .env". The
+  // step is copy-pasted per job (no shared composite), so pin BOTH legs.
+  group('.env placeholder guard (#368)', () {
+    test('build-android and build-ios seed the .env asset', () {
+      final yaml = loadYaml(buildMobile) as Map;
+      for (final job in ['build-android', 'build-ios']) {
+        final steps = ((yaml['jobs'] as Map)[job] as Map)['steps'] as Iterable;
+        expect(
+          steps.map((s) => (s as Map)['name']),
+          contains('Create placeholder .env asset'),
+          reason: '$job must seed the gitignored .env asset (issue #368)',
+        );
+      }
+    });
+  });
 }
