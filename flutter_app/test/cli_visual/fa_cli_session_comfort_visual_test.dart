@@ -1,8 +1,9 @@
 @Tags(['integration'])
 @Timeout(Duration(minutes: 10))
 /// Session-comfort goldens (issue #276 AC4): the real `dart bin/fah.dart`
-/// in a PTY over a canned OpenAI-SSE endpoint — the `/compact` report block,
-/// the clipboard image paste (chip + sent message), and the theme swap pair.
+/// in a PTY over a canned OpenAI-SSE endpoint — the structured-compaction
+/// report block (post-run auto compaction under a capped window), the
+/// clipboard image paste (chip + sent message), and the theme swap pair.
 /// Same rendering pipeline as `fa_cli_visual_test.dart`: PNG through the real
 /// Flutter [TerminalView], plus a `.txt` twin of the exact screen text.
 ///
@@ -63,13 +64,25 @@ void main() {
     return harness;
   }
 
-  group('/compact report block', () {
-    testWidgets('two big turns → forced /compact → report golden', (
-      tester,
-    ) async {
+  group('compaction report block', () {
+    testWidgets('two big turns → post-run auto compaction → report golden',
+      (tester) async {
       final port = await _freePort(tester);
       final server = await _startServer(tester, port, _compactServerPy);
-      final tempHome = _tempHomeWithEndpoint('http://127.0.0.1:$port/v1');
+      // `agent.contextWindowCap: 64000` shrinks the window: reserve 16000 →
+      // the compaction threshold sits at 48000 tokens. Two turns of ~15.5k
+      // token replies land the transcript at ~50k, so the post-run guard
+      // fires the compactor right after turn two - no /compact keystroke
+      // needed (below the threshold a manual /compact is a no-op: the
+      // engine pass loops gate on the same threshold). The engine is pinned
+      // to `classic` so the report block carries the real summary text and
+      // record counts (the structured default reports empty counts in the
+      // block - the summary lives in the checkpoint record instead).
+      final tempHome = _tempHomeWithEndpoint(
+        'http://127.0.0.1:$port/v1',
+        extraConfig:
+            'agent:\n  contextWindowCap: 64000\ncompaction:\n  engine: classic',
+      );
       final harness = await boot(
         tester,
         extraEnv: {'HOME': tempHome.path},
@@ -78,9 +91,6 @@ void main() {
         size: const Size(1040, 900),
       );
       try {
-        // Two turns whose replies each top `keepRecentTokens` (20000 tokens
-        // at the catalog default window) — the backward token walk then cut
-        // at the last reply, giving /compact a real region to summarize.
         harness.sendText('long turn one');
         harness.sendEnter();
         await harness.liveWaitForText(
@@ -94,18 +104,16 @@ void main() {
           'TAIL-TWO',
           timeout: const Duration(seconds: 90),
         );
-        await harness.settle(settleMs: 400);
 
-        await harness.runSlashCommand('/compact');
-        // The TUI repaints with cursor-address sequences, so only body
-        // rows are reliably greppable in the raw buffer.
+        // The compaction report block: before → after tokens, records,
+        // fenced checkpoint summary. The TUI repaints with cursor-address
+        // sequences, so only body rows are reliably greppable in the raw
+        // buffer.
         await harness.liveWaitForText(
           'records:',
           timeout: const Duration(seconds: 90),
         );
         await harness.settle(settleMs: 400);
-
-        // The report block: before → after tokens, records, fenced summary.
         expect(harness.screenText, contains('tokens:'));
         expect(harness.screenText, contains('records:'));
         expect(harness.screenText, contains('summary:'));
@@ -181,7 +189,9 @@ void main() {
         );
         await harness.settle(settleMs: 500);
         expect(
-          File('${tempHome.path}/.fah/theme.yaml').readAsStringSync(),
+          File(
+            '${tempHome.path}/.fah/config.yaml',
+          ).readAsStringSync(),
           contains('catppuccin'),
         );
         await harness.screenshot(shotsDir, '120_theme_catppuccin');
@@ -193,7 +203,9 @@ void main() {
         );
         await harness.settle(settleMs: 500);
         expect(
-          File('${tempHome.path}/.fah/theme.yaml').readAsStringSync(),
+          File(
+            '${tempHome.path}/.fah/config.yaml',
+          ).readAsStringSync(),
           contains('dracula'),
         );
         await harness.screenshot(shotsDir, '130_theme_dracula');
@@ -221,8 +233,10 @@ String _findRepoRoot() {
 }
 
 /// Creates a temp HOME whose endpoint URL is given (e.g. a test HTTP server
-/// on loopback).
-Directory _tempHomeWithEndpoint(String baseUrl) {
+/// on loopback). [extraConfig] appends raw config.yaml keys — the
+/// compaction golden uses `agent.contextWindowCap` to shrink the window so
+/// two big turns actually cross the auto-compaction threshold.
+Directory _tempHomeWithEndpoint(String baseUrl, {String? extraConfig}) {
   final tempHome = Directory.systemTemp.createTempSync('fa_test_');
   File('${tempHome.path}/.fah/config.yaml')
     ..createSync(recursive: true)
@@ -233,6 +247,7 @@ baseUrl: $baseUrl
 mode: code
 approvalMode: yolo
 allowedTools: []
+${extraConfig ?? ''}
 ''');
   return tempHome;
 }
@@ -296,14 +311,15 @@ class H(http.server.BaseHTTPRequestHandler):
 http.server.HTTPServer(('127.0.0.1', PORT), H).serve_forever()
 ''';
 
+
 /// Canned SSE endpoint for the compaction golden. Turn replies are keyed on
 /// the LAST user message text (never a counter — the CLI fires hidden model
-/// requests too); the compaction summarizer is recognized by its system
-/// prompt (`summary_system.md`), the durable-facts extractor by
-/// `extract_durable.md` — which gets a JSON-empty reply. Requests log to
+/// requests too); the structured checkpoint call is recognized by its
+/// `<covers>` block, the memory extractor by its `mine a conversation span`
+/// prompt — which gets a JSON-empty reply. Requests log to
 /// /tmp/fa_compact_server.log while the golden is being dialed in.
 const _compactServerPy = r'''
-import http.server, json, sys
+import http.server, json, re, sys
 
 PORT = int(sys.argv[1])
 
@@ -332,6 +348,23 @@ def last_user_text(raw):
     return ''
 
 def reply_for(raw):
+    # The structured engine (the default since #287) asks for a checkpoint
+    # with a <covers> block naming the expand ids; echo them back in a
+    # `covers:` line - the marker the TUI's expand tool parses.
+    covers = re.search(r'expand ids: (.*?)\. List them', raw)
+    if covers:
+        return (
+            'covers: %s\n\n'
+            '## Goal\n'
+            '- golden screenshot of the compaction report block\n\n'
+            '### Done\n'
+            '- [x] two long turns checkpointed\n\n'
+            '### Next Steps\n'
+            '1. eyeball the report block' % covers.group(1)
+        )
+    # The classic engine's summarizer carries the summary_system prompt
+    # ("context checkpoint assistant") - answer with the fenced-summary
+    # body the report block shows.
     if 'context checkpoint assistant' in raw:
         return SUMMARY
     if 'mine a conversation span' in raw:
