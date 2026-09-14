@@ -336,10 +336,12 @@ final class AnsiRenderer implements TeaRenderer {
 
 /// A single terminal cell with its active rendering state.
 final class _Cell {
-  const _Cell(this.char, this.attrs, [this.hyperlink = ''])
+  const _Cell(this.char, this.attrs,
+      [this.hyperlink = '', this.layoutUnstable = false])
       : isContinuation = false;
 
-  const _Cell.continuation(this.attrs, [this.hyperlink = ''])
+  const _Cell.continuation(this.attrs,
+      [this.hyperlink = '', this.layoutUnstable = false])
       : char = '',
         isContinuation = true;
 
@@ -348,6 +350,12 @@ final class _Cell {
       attrs; // the CSI SGR sequence(s) active at this cell, e.g. '\x1b[1;32m'
   final String hyperlink; // active OSC 8 opening sequence
   final bool isContinuation;
+
+  /// The grapheme's 2-cell width is a heuristic other width tables reject
+  /// (see [isUnstableWideGrapheme]) — rows containing such cells must not
+  /// take the surgical diff path (#342). Derived from [char], so it never
+  /// participates in equality.
+  final bool layoutUnstable;
 
   @override
   bool operator ==(Object other) =>
@@ -570,9 +578,10 @@ final class CellRenderer implements TeaRenderer {
           for (final cluster in plainText.characters) {
             final attrs = state.sgrOpenSequence;
             final hyperlink = state.hyperlinkOpenSequence;
-            cells.add(_Cell(cluster, attrs, hyperlink));
+            final unstable = isUnstableWideGrapheme(cluster);
+            cells.add(_Cell(cluster, attrs, hyperlink, unstable));
             for (var column = 1; column < graphemeWidth(cluster); column++) {
-              cells.add(_Cell.continuation(attrs, hyperlink));
+              cells.add(_Cell.continuation(attrs, hyperlink, unstable));
             }
           }
           i = plainEnd;
@@ -601,6 +610,30 @@ final class CellRenderer implements TeaRenderer {
           (prev != null && row < prev.length) ? prev[row] : const <_Cell>[];
       final cols =
           nextRow.length > prevRow.length ? nextRow.length : prevRow.length;
+
+      // #342: a row holding a glyph whose 2-cell width is a heuristic
+      // other tables reject (▸, ✓, … emoji-range clusters: dart_tui says 2,
+      // wcwidth terminals say 1) must never take the surgical path —
+      // absolute cursor moves computed from OUR table land one column off
+      // on a disagreeing terminal, and skipped "unchanged" cells leave the
+      // previous frame's bytes on screen ('▸ tEdi- rovider h'). Repaint the
+      // whole row contiguously so the terminal lays it out by its own
+      // table; the bytes stay faithful for screen-scraping consumers.
+      if (_hasUnstableLayout(nextRow) || _hasUnstableLayout(prevRow)) {
+        if (!_rowsEqual(nextRow, prevRow)) {
+          wrote = true;
+          _syncBegin();
+          _paintRow(row, nextRow);
+          // _paintRow homes the cursor per row and closes SGR/hyperlinks;
+          // forget the tracked position so the next surgical write always
+          // re-addresses absolutely.
+          lastRow = -1;
+          lastCol = -1;
+          lastAttrs = '';
+          lastHyperlink = '';
+        }
+        continue;
+      }
 
       for (var col = 0; col < cols; col++) {
         final nextCell =
@@ -768,6 +801,15 @@ final class CellRenderer implements TeaRenderer {
       if (a[i] != b[i]) return false;
     }
     return true;
+  }
+
+  /// Whether any cell's grapheme has a heuristic (ambiguous/emoji) width —
+  /// such rows must be repainted whole instead of surgically diffed (#342).
+  bool _hasUnstableLayout(List<_Cell> row) {
+    for (final cell in row) {
+      if (cell.layoutUnstable) return true;
+    }
+    return false;
   }
 
   /// One scroll op for [k] (positive = up `CSI S`, negative = down `CSI T`)
