@@ -205,4 +205,61 @@ void main() {
       expect(buildMacos, contains('Notarize DMG'));
     });
   });
+
+  // #346: the daily play leg died in 4s with
+  //   HTTP 422: Unexpected inputs provided: ["android_track"]
+  // because build-mobile.yml consumed `inputs.android_track` without ever
+  // declaring it under on.workflow_dispatch.inputs. Cross-check every
+  // `-f key=value` a leg sends against the child workflow's declared
+  // inputs so the whole class of bug is pinned, not just this instance.
+  group('daily-publish dispatch contract (#346)', () {
+    test('every -f input a leg sends is declared by the child workflow', () {
+      final dailyYaml = loadYaml(daily) as Map;
+      final sent = <String, Set<String>>{};
+      for (final job in (dailyYaml['jobs'] as Map).values) {
+        final steps = (job as Map)['steps'];
+        if (steps is! Iterable) continue;
+        for (final step in steps) {
+          final run = (step as Map)['run'];
+          if (run is! String || !run.contains('gh workflow run')) continue;
+          String? child;
+          for (final line in run.split('\n')) {
+            final m = RegExp(r'gh workflow run ([\w.-]+\.yml)').firstMatch(line);
+            if (m != null) child = m.group(1);
+            if (child == null) continue;
+            for (final f in RegExp(r'-f (\w+)=').allMatches(line)) {
+              sent.putIfAbsent(child, () => <String>{}).add(f.group(1)!);
+            }
+          }
+        }
+      }
+      expect(sent, isNotEmpty, reason: 'dispatch scan found nothing — parser drifted');
+      sent.forEach((workflow, flags) {
+        final childYaml = loadYaml(read('.github/workflows/$workflow')) as Map;
+        final trigger = childYaml['on'] ?? childYaml[true]; // YAML 1.1 may key `on` as true
+        final dispatch = trigger is Map ? trigger['workflow_dispatch'] : null;
+        expect(dispatch, isA<Map>(),
+            reason: '$workflow must declare a workflow_dispatch trigger — the daily legs dispatch it');
+        final inputs = dispatch is Map ? dispatch['inputs'] : null;
+        expect(inputs, isA<Map>(), reason: '$workflow declares no workflow_dispatch inputs');
+        for (final flag in flags) {
+          expect((inputs as Map).containsKey(flag), isTrue,
+              reason: '$workflow does not declare input `$flag` — gh workflow run fails instantly '
+                  'with HTTP 422 "Unexpected inputs provided" and the leg dies in seconds (#346)');
+        }
+      });
+    });
+
+    test('play leg is serialized after testflight — one build-mobile dispatch at a time (#343, #346)', () {
+      final play = ((loadYaml(daily) as Map)['jobs'] as Map)['play'] as Map;
+      // needs may be a scalar (`needs: plan`) or a list.
+      final needs = play['needs'];
+      final needsList = needs is List ? needs : [needs];
+      expect(needsList.contains('testflight'), isTrue,
+          reason: 'both legs dispatch build-mobile.yml, whose concurrency group cancels in-progress '
+              'runs on the same ref — a concurrent play dispatch kills the testflight child mid-build');
+      expect(play['if'], contains('!cancelled()'),
+          reason: '!cancelled() keeps single-leg play dispatches runnable when the testflight leg skips');
+    });
+  });
 }
