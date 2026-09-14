@@ -31,9 +31,11 @@ import 'session_names_store.dart';
 /// (see [AgentService.relayBase]); every chat surface member is overridden.
 ///
 /// v1 limits (issue #34): the trajectory ledger stays empty (the panel
-/// should hide the tab via `FaChatFeatures`), and approval *mode* is a
-/// local preference — the SW gate keeps its own mode until `settings_put`
-/// carries it. Attachment staging is NO LONGER one of them (issue #313):
+/// should hide the tab via `FaChatFeatures`). Approval *mode* is owned by
+/// the SW gate: settings snapshots forward it into the local shell (issue
+/// #380) so the selector/dialog mirror the real gate, and panel toggles
+/// write through via `settings_put`. Attachment staging is NO LONGER one
+/// of them (issue #313):
 /// `stageAttachment` rides the id-matched `agent.stageUpload` ext_request
 /// op into the SW-local sandbox, with the app's exact semantics (shared
 /// core helper). Binary-heavy flows (real file pickers with huge files)
@@ -80,6 +82,7 @@ final class RelayAgentService extends AgentService {
   /// [reconfigure] - issue #327 (the relay path skipped the guard the
   /// local service runs; the SW reconfigured blindly).
   ProviderRegistry? providerRegistry;
+
   /// Id-matched `ext_request` round-trips in flight (staging ops, issue
   /// #313). The SW answers on the SAME channel with an `ext_result`.
   final _pendingExt = <String, Completer<Map<String, dynamic>>>{};
@@ -401,7 +404,8 @@ final class RelayAgentService extends AgentService {
   static Future<List<String>?> Function({
     required Future<({int status, String body})> Function() probe,
     required void Function() openLoginPage,
-  })? codemieSignInPollOverride;
+  })?
+  codemieSignInPollOverride;
 
   Future<void> _autoReauthCodemie() async {
     if (_codemieReauthInFlight) return;
@@ -801,7 +805,8 @@ final class RelayAgentService extends AgentService {
         _append(
           fa_ui.FaChatMessage(
             role: 'system',
-            content: 'mail from ${event['from']} routed to session '
+            content:
+                'mail from ${event['from']} routed to session '
                 '${event['sessionId']}',
           ),
         );
@@ -829,6 +834,15 @@ final class RelayAgentService extends AgentService {
     // Another surface's renames (or this one's echo) ride the snapshot —
     // sync the hosted names store (no-op when nothing changed).
     namesStore.syncFromSnapshot(swSessionNames);
+    // The SW gate OWNS the approval mode: forward it so the mode selector
+    // and the approval dialog's yolo checkbox render the real gate state
+    // instead of the shell default (issue #380 AC5). Apply silently — a
+    // settings_put back would just loop the broadcast.
+    final mode = approvalModeFromLabel(settings['faApproval'] as String?);
+    if (mode != null && mode != approval.mode) {
+      approval.mode = mode;
+      notifyListeners();
+    }
     final provider = settings['faProvider'];
     debugPrint(
       '[fah][relay] settings snapshot: hasProvider=${provider != null} '
@@ -1029,9 +1043,11 @@ final class RelayAgentService extends AgentService {
       }
       return;
     }
-    final senders = {for (final s in map?['senders'] as List? ?? const []) '$s'}
-        .join(', ');
-    final text = '$pending queued message${pending == 1 ? '' : 's'} from '
+    final senders = {
+      for (final s in map?['senders'] as List? ?? const []) '$s',
+    }.join(', ');
+    final text =
+        '$pending queued message${pending == 1 ? '' : 's'} from '
         '$senders — will land at the next step boundary';
     if (_pendingMailRow != null) {
       _pendingMailRow!.content = text;

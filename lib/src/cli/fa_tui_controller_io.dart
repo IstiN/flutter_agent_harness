@@ -13,7 +13,10 @@ extension FaTuiControllerIo on FaTuiController {
     _outputBuffer.write(text);
     if (newline) _outputBuffer.write('\n');
     if (_running) {
-      _outputFlushTimer ??= Timer(FaTuiController._outputFlushInterval, _flushOutput);
+      _outputFlushTimer ??= Timer(
+        FaTuiController._outputFlushInterval,
+        _flushOutput,
+      );
     } else {
       _flushOutput();
     }
@@ -58,8 +61,10 @@ extension FaTuiControllerIo on FaTuiController {
 
   /// Opens or refreshes the agents-hub overlay with a whole new state
   /// (issue #277). Pass hub = null-equivalent via `closeHub` to hide it.
-  void pushHub(FaHubState state) {
-    _send(HubStateMsg(state));
+  /// [refreshOnly] (issue #382): a background refresh — no-ops while the
+  /// overlay is closed instead of force-opening it over the chat.
+  void pushHub(FaHubState state, {bool refreshOnly = false}) {
+    _send(HubStateMsg(state, refreshOnly: refreshOnly));
   }
 
   /// Hides the agents-hub overlay.
