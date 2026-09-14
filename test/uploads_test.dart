@@ -78,4 +78,72 @@ void main() {
       throwsStateError,
     );
   });
+
+  test('createDir failure is a named StateError, never a silent no-op',
+      () async {
+    final env = _FailingUploadEnv(failCreateDir: true);
+    await expectLater(
+      stageUpload(env, name: 'report.pdf', bytes: Uint8List.fromList(const [1])),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          'Could not create uploads: mkdir refused',
+        ),
+      ),
+    );
+  });
+
+  test('writeBinaryFile failure is a named StateError, never a silent no-op',
+      () async {
+    final env = _FailingUploadEnv(failWrite: true);
+    await expectLater(
+      stageUpload(env, name: 'report.pdf', bytes: Uint8List.fromList(const [1])),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          'Could not store report.pdf: write refused',
+        ),
+      ),
+    );
+  });
+}
+
+/// MemoryExecutionEnv with injectable storage failures so the named
+/// StateError branches in [stageUpload] stay exercised: a refused mkdir and
+/// a refused write both throw before any partial state is left behind.
+class _FailingUploadEnv implements ExecutionEnv {
+  _FailingUploadEnv({this.failCreateDir = false, this.failWrite = false});
+
+  final MemoryExecutionEnv _delegate = MemoryExecutionEnv();
+  final bool failCreateDir;
+  final bool failWrite;
+
+  @override
+  Future<Result<void, FileError>> createDir(String path, {bool recursive = true}) {
+    if (failCreateDir) {
+      return Future.value(
+        Err(const FileError(FileErrorCode.permissionDenied, 'mkdir refused')),
+      );
+    }
+    return _delegate.createDir(path, recursive: recursive);
+  }
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(String path, Uint8List bytes) {
+    if (failWrite) {
+      return Future.value(
+        Err(const FileError(FileErrorCode.permissionDenied, 'write refused')),
+      );
+    }
+    return _delegate.writeBinaryFile(path, bytes);
+  }
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnsupportedError('unexpected member: ${invocation.memberName}');
 }
