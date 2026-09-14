@@ -200,6 +200,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
   /// Disk-listing poll: new CLI sessions appear without manager events.
   Timer? _persistedTimer;
   Set<String> _lastDrawerRowIds = const <String>{};
+
+  /// Last emitted selection signature (issue #327 AC6): the 3 s poll used
+  /// to print the line unconditionally — dozens of identical lines
+  /// while idle. Emits on CHANGE only.
+  String? _lastSelectionLog;
   Map<String, DateTime> _updatedAtById = const {};
 
   /// Disk-persisted sessions minus the live ones, listed in the drawer.
@@ -439,12 +444,15 @@ class SessionChatSheetState extends State<SessionChatSheet>
           'archived=${persisted.length})',
         );
       }
-      debugPrint(
-        '[fah][drawer] selection: selected=${_selectedSessionId ?? '-'} '
-        'hostedLive=${widget.manager.hostedLiveId.value ?? '-'} '
-        'active=${widget.manager.activeId ?? '-'} '
-        'slots=${_liveSessions.map((s) => s.id).join(',')}',
-      );
+      final selection =
+          '[fah][drawer] selection: selected=${_selectedSessionId ?? '-'} '
+          'hostedLive=${widget.manager.hostedLiveId.value ?? '-'} '
+          'active=${widget.manager.activeId ?? '-'} '
+          'slots=${_liveSessions.map((s) => s.id).join(',')}';
+      if (selection != _lastSelectionLog) {
+        _lastSelectionLog = selection;
+        debugPrint(selection);
+      }
       if (mounted) {
         setState(() {
           _persisted = persisted;
