@@ -77,6 +77,7 @@ module PlayUploadPreflight
   # the app upload (store content is a separate lane, mirroring iOS).
   def supply_options(track:, aab:, validate_only:, package_name:)
     {
+      aab: aab,
       package_name: package_name,
       track: track,
       skip_upload_aab: validate_only ? true : false,
@@ -94,6 +95,7 @@ module PlayUploadPreflight
   # version code and ride the binary upload instead).
   def supply_listing_options(track:, metadata:, images:, validate_only:, package_name:)
     {
+      track: track,
       package_name: package_name,
       skip_upload_aab: true,
       skip_upload_metadata: !(metadata && !validate_only),
