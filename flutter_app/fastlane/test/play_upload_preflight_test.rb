@@ -92,25 +92,48 @@ if $PROGRAM_NAME == __FILE__
     PlayUploadPreflight.validate_only?({ "PLAY_VALIDATE_ONLY" => "true" })
   ok("PLAY_VALIDATE_ONLY=1/true flips validate-only")
 
+  # ── package name resolution (#373) ──────────────────────────────────────
+  # supply hard-fails without package_name; the default must equal the
+  # IMMUTABLE applicationId in android/app/build.gradle.kts (#289).
+  raise "FAIL: package_name must default to dev.fa1.app" unless
+    PlayUploadPreflight.package_name({}) == "dev.fa1.app"
+  raise "FAIL: ANDROID_PACKAGE_NAME must override the default" unless
+    PlayUploadPreflight.package_name({ "ANDROID_PACKAGE_NAME" => "com.other.app" }) == "com.other.app"
+  gradle = File.read(File.expand_path("../../android/app/build.gradle.kts", __dir__))
+  gradle_id = gradle[/applicationId\s*=\s*"([^"]+)"/, 1]
+  raise "FAIL: could not read applicationId from build.gradle.kts" if gradle_id.nil?
+  raise "FAIL: preflight default #{PlayUploadPreflight.package_name({})} drifted from gradle applicationId #{gradle_id}" unless
+    PlayUploadPreflight.package_name({}) == gradle_id
+  ok("package_name: dev.fa1.app default == gradle applicationId, ANDROID_PACKAGE_NAME overrides")
+
   # ── supply options mapping ──────────────────────────────────────────────
-  opts = PlayUploadPreflight.supply_options(track: "beta", aab: "/tmp/a.aab", validate_only: false)
+  opts = PlayUploadPreflight.supply_options(
+    track: "beta", aab: "/tmp/a.aab", validate_only: false,
+    package_name: PlayUploadPreflight.package_name({}))
   raise "FAIL: track not mapped" unless opts[:track] == "beta"
   raise "FAIL: aab not mapped" unless opts[:aab] == "/tmp/a.aab"
+  # supply hard-fails with "No value found for 'package_name'" without it
+  # (issue #373) — the immutable applicationId must ride every call.
+  raise "FAIL: package_name not mapped" unless opts[:package_name] == "dev.fa1.app"
   raise "FAIL: metadata must never ride the daily app_only upload" unless
     opts[:skip_upload_metadata] == true && opts[:skip_upload_screenshots] == true &&
     opts[:skip_upload_images] == true && opts[:skip_upload_changelogs] == true
   raise "FAIL: real upload must upload the AAB" unless opts[:skip_upload_aab] == false
-  ok("supply options: beta track + aab, no metadata/screenshots")
+  ok("supply options: beta track + aab + package_name, no metadata/screenshots")
 
-  dry = PlayUploadPreflight.supply_options(track: "internal", aab: "/tmp/a.aab", validate_only: true)
+  dry = PlayUploadPreflight.supply_options(
+    track: "internal", aab: "/tmp/a.aab", validate_only: true,
+    package_name: PlayUploadPreflight.package_name({}))
   raise "FAIL: validate-only must skip the AAB upload" unless dry[:skip_upload_aab] == true
+  raise "FAIL: validate-only still needs the package name" unless dry[:package_name] == "dev.fa1.app"
   ok("validate-only: every upload skip flag on (auth + track validated only)")
 
   # ── supply options: store-listing lane (issue #289, play_store) ────────
   # The listing lane never ships a binary: AABs ride upload_only, this one
   # uploads metadata texts + images (icon/featureGraphic) + screenshots.
   listing = PlayUploadPreflight.supply_listing_options(
-    track: "internal", metadata: true, images: true, validate_only: false)
+    track: "internal", metadata: true, images: true, validate_only: false,
+    package_name: PlayUploadPreflight.package_name({}))
   raise "FAIL: listing lane must never upload an AAB" unless
     listing[:skip_upload_aab] == true && !listing.key?(:aab)
   raise "FAIL: listing defaults must upload metadata + images + screenshots" unless
@@ -119,6 +142,8 @@ if $PROGRAM_NAME == __FILE__
   raise "FAIL: listing lane must not invent release notes" unless
     listing[:skip_upload_changelogs] == true
   raise "FAIL: track not mapped on the listing options" unless listing[:track] == "internal"
+  raise "FAIL: listing lane must also carry the package name" unless
+    listing[:package_name] == "dev.fa1.app"
   ok("listing options: no binary, metadata + images + screenshots on")
 
   # Env gates split content types (the store-metadata.yml android leg).

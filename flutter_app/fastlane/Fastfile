@@ -787,13 +787,15 @@ platform :android do
     repo_root = File.expand_path("..", __dir__)
     json_key = PlayUploadPreflight.play_json_key!(ENV)
     track = PlayUploadPreflight.track!(ENV)
+    package_name = PlayUploadPreflight.package_name(ENV)
     aab = PlayUploadPreflight.aab_path!(ENV, repo_root: repo_root)
     validate_only = PlayUploadPreflight.validate_only?(ENV)
 
     UI.message("Play upload: track=#{track} aab=#{aab} validate_only=#{validate_only}")
     upload_to_play_store(
       PlayUploadPreflight
-        .supply_options(track: track, aab: aab, validate_only: validate_only)
+        .supply_options(track: track, aab: aab, validate_only: validate_only,
+                        package_name: package_name)
         .merge(json_key_data: json_key)
     )
     if validate_only
@@ -813,9 +815,8 @@ platform :android do
     # test/play_store_listing_guard_test.dart). Never a binary — AABs ride
     # upload_only — and never changelogs (Play release notes need a
     # version code and belong to the binary upload).
-    do_metadata = ENV.fetch("PLAY_DEPLOY_METADATA", "true") == "true"
-    do_images = ENV.fetch("PLAY_DEPLOY_IMAGES", "true") == "true"
     track = PlayUploadPreflight.track!(ENV)
+    package_name = PlayUploadPreflight.package_name(ENV)
     validate_only = PlayUploadPreflight.validate_only?(ENV)
     UI.message("Play store listing deploy: metadata=#{do_metadata}, images=#{do_images}, track=#{track}, validate_only=#{validate_only}")
 
@@ -823,7 +824,7 @@ platform :android do
       PlayUploadPreflight
         .supply_listing_options(
           track: track, metadata: do_metadata, images: do_images,
-          validate_only: validate_only
+          validate_only: validate_only, package_name: package_name
         )
         .merge(json_key_data: PlayUploadPreflight.play_json_key!(ENV))
     )

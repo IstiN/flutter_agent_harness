@@ -63,11 +63,21 @@ module PlayUploadPreflight
     %w[1 true yes].include?(env["PLAY_VALIDATE_ONLY"].to_s.strip.downcase)
   end
 
+  # Application package name for every supply call. The applicationId is
+  # IMMUTABLE after the first Play Console release (android/app/
+  # build.gradle.kts, issue #289) — dev.fa1.app; ANDROID_PACKAGE_NAME
+  # overrides for forks. supply hard-fails with "No value found for
+  # 'package_name'" without it (issue #373).
+  def package_name(env)
+    name = env["ANDROID_PACKAGE_NAME"].to_s.strip
+    name.empty? ? "dev.fa1.app" : name
+  end
+
   # Options hash for upload_to_play_store. Metadata/screenshots never ride
   # the app upload (store content is a separate lane, mirroring iOS).
-  def supply_options(track:, aab:, validate_only:)
+  def supply_options(track:, aab:, validate_only:, package_name:)
     {
-      aab: aab,
+      package_name: package_name,
       track: track,
       skip_upload_aab: validate_only ? true : false,
       skip_upload_metadata: true,
@@ -82,9 +92,9 @@ module PlayUploadPreflight
   # fastlane/metadata/android/<locale>/ — NEVER a binary (AABs ride the
   # upload_only lane) and never changelogs (Play release notes need a
   # version code and ride the binary upload instead).
-  def supply_listing_options(track:, metadata:, images:, validate_only:)
+  def supply_listing_options(track:, metadata:, images:, validate_only:, package_name:)
     {
-      track: track,
+      package_name: package_name,
       skip_upload_aab: true,
       skip_upload_metadata: !(metadata && !validate_only),
       skip_upload_images: !(images && !validate_only),
