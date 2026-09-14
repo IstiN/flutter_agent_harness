@@ -201,7 +201,16 @@ extension AgentServiceSessions on AgentService {
   /// last `model_change` record at the leaf — every provider/model switch
   /// in the CLI and the app appends one) is restored: the DEFAULT chat
   /// model only applies to NEW sessions, not to reopening an old one.
-  Future<void> loadSession(SessionMetadata metadata) async {
+  ///
+  /// With [allowFullOpenFallback] (the default) a windowed-open failure
+  /// degrades to the FULL open — the compatibility path. Over-budget
+  /// callers (issue #381) pass false: there the fallback would whole-file
+  /// read exactly the multi-hundred-MB session the load budget exists
+  /// for, so the failure must propagate to the caller's refuse-guard.
+  Future<void> loadSession(
+    SessionMetadata metadata, {
+    bool allowFullOpenFallback = true,
+  }) async {
     // Generation guard (issue #199 AC5/E3): every await below re-checks —
     // a newer load owns the state and a stale loader abandons silently.
     final gen = ++_loadGeneration;
@@ -233,6 +242,7 @@ extension AgentServiceSessions on AgentService {
     try {
       session = await _repo.open(metadata, windowed: true);
     } on Object {
+      if (!allowFullOpenFallback) rethrow;
       session = await _repo.open(metadata);
     }
     if (gen != _loadGeneration) return;

@@ -1842,8 +1842,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String sessionTooLargeTitle(String size) {
-    return 'Session too large to open in the app ($size). Open it with the CLI instead.';
+    return 'Session ($size MB) is over the instant-open budget and couldn\'t be opened safely.';
   }
+
+  @override
+  String sessionBootSkippedOversize(String name, String size) {
+    return 'Resumed a fresh session — “$name” ($size MB) is over the instant-open budget.';
+  }
+
+  @override
+  String get sessionBootSkippedOpen => 'Open windowed';
 
   @override
   String get dynamicMessagesButtonTooltip => 'Dynamic messages';
