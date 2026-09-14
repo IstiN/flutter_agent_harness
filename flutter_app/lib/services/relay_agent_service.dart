@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'agent_service.dart';
+import 'provider_registry.dart';
 import 'codemie_extension_signin.dart';
 import 'relay/ext_runtime.dart';
 import 'session_names_store.dart';
@@ -68,6 +69,12 @@ final class RelayAgentService extends AgentService {
   String _baseUrl = '';
   String _sessionId = '';
   final int _promptSeq = 0;
+
+  /// The panel-side provider registry (persisted providers.json, loaded
+  /// at boot): non-null enables the mixed-row connection guard in
+  /// [reconfigure] - issue #327 (the relay path skipped the guard the
+  /// local service runs; the SW reconfigured blindly).
+  ProviderRegistry? providerRegistry;
 
   ApprovalPrompt? _approvalHandler;
   AskCallback? _askHandler;
@@ -714,6 +721,15 @@ final class RelayAgentService extends AgentService {
   /// every SW tool is capability-present; the enabled flag is the SW's.
   @override
   Map<String, ResolvedToolAvailability> get toolAvailability => {
+    // Host-bound family (issue #327 AC5): the extension never hosts
+    // Office.js, so the outlook.* tools render as a gated row with the
+    // add-in-only reason instead of staying silent.
+    'outlook': const ResolvedToolAvailability(
+      enabled: false,
+      scope: ToolScope.builtin,
+      capabilityPresent: false,
+      reason: 'available in the Outlook add-in host only',
+    ),
     for (final entry in _swTools.entries)
       entry.key: ResolvedToolAvailability(
         enabled: entry.value,
@@ -742,6 +758,21 @@ final class RelayAgentService extends AgentService {
   /// provider state of its own in extension mode.
   @override
   Future<void> reconfigure(AgentConfig config) async {
+    // Issue #327: the same guard the local service runs in reconfigure -
+    // the relay override dispatched settings_put blindly (the exact
+    // surface where an OpenRouter-format model id rode a CodeMie
+    // connection). Refuse BEFORE the SW ever sees the connection.
+    final problem = providerConnectionProblem(
+      providerRegistry,
+      config,
+      extensionHost: isExtensionHost(),
+    );
+    if (problem != null) {
+      debugPrint('[fah][relay] reconfigure refused: $problem');
+      _error = problem;
+      notifyListeners();
+      throw ProviderConnectionException(problem);
+    }
     debugPrint(
       '[fah][relay] reconfigure -> settings_put: '
       'baseUrl=${config.baseUrl} model=${config.modelId} '

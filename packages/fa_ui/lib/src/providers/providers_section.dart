@@ -6,7 +6,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show ModelsEndpointFetcher, isCodeMieBaseUrl, isCopilotBaseUrl, isAiinBaseUrl;
+    show
+        ModelsEndpointFetcher,
+        isCodeMieBaseUrl,
+        isCopilotBaseUrl,
+        isAiinBaseUrl;
 
 import 'package:fa_ui/src/providers/add_provider_picker.dart';
 import 'package:fa_ui/src/providers/connection.dart';
@@ -156,6 +160,10 @@ class ProvidersSection extends StatelessWidget {
                 context,
                 theme,
                 label: provider.name,
+                // Provenance (issue #327 AC4): `[local]` vs `[synced]`, the
+                // extension panel's wording — a pane partition holding
+                // only synced seeds (or only local edits) is visible.
+                badge: _provenanceBadge(provider.provenance),
                 subtitle: provider.modelId.isEmpty
                     ? providerHostOf(provider.baseUrl)
                     : strings.mediaModelsOverrideSummary(
@@ -214,6 +222,7 @@ class ProvidersSection extends StatelessWidget {
     BuildContext context,
     ThemeData theme, {
     required String label,
+    String? badge,
     String? subtitle,
     Widget? leading,
     IconData? leadingIcon = Icons.cloud_outlined,
@@ -237,7 +246,23 @@ class ProvidersSection extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(label, overflow: TextOverflow.ellipsis),
+                      ),
+                      if (badge != null) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          badge,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                   if (subtitle != null)
                     Text(
                       subtitle,
@@ -290,6 +315,8 @@ class ProvidersSection extends StatelessWidget {
           name: result.name,
           baseUrl: existing.baseUrl,
           modelId: result.modelId,
+          provenance: existing.provenance,
+          requiresKey: existing.requiresKey,
         ),
       );
       if (result.apiKey.isNotEmpty) {
@@ -344,6 +371,8 @@ class ProvidersSection extends StatelessWidget {
       name: result.name,
       baseUrl: result.baseUrl,
       modelId: result.modelId,
+      provenance: provider.provenance,
+      requiresKey: provider.requiresKey,
     );
     await registry.update(updated);
     if (result.apiKey.isNotEmpty) {
@@ -372,3 +401,9 @@ class ProvidersSection extends StatelessWidget {
     );
   }
 }
+
+/// The provenance badge for a saved provider row (issue #327 AC4) — the
+/// extension panel's wording: `local` renders `[local]`, any synced
+/// provenance (`synced-from-cli@<host>`) renders `[synced]`.
+String _provenanceBadge(String provenance) =>
+    provenance == localProviderProvenance ? '[local]' : '[synced]';

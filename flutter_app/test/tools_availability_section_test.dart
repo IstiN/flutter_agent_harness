@@ -70,6 +70,13 @@ void main() {
         expect(availability['checkpoint']!.capabilityPresent, isFalse);
         expect(availability['rewind']!.capabilityPresent, isFalse);
         expect(availability['inspect_image']!.capabilityPresent, isFalse);
+        // The office family is add-in-host-bound (issue #327 AC5): a
+        // gated row naming the host that does wire it.
+        expect(availability['outlook']!.capabilityPresent, isFalse);
+        expect(
+          availability['outlook']!.reason,
+          'available in the Outlook add-in host only',
+        );
       },
     );
 
@@ -218,6 +225,11 @@ void main() {
       expect(sqliteRow.value, isFalse);
       expect(sqliteRow.onChanged, isNull);
       expect(find.textContaining('FFI SQLite engine'), findsOneWidget);
+      // Host-bound family row (issue #327 AC5): present, off, disabled.
+      final outlookRow = tester.widget<SwitchListTile>(_row('outlook'));
+      expect(outlookRow.value, isFalse);
+      expect(outlookRow.onChanged, isNull);
+      expect(find.textContaining('Outlook add-in host'), findsOneWidget);
     });
 
     testWidgets('toggling a row hides the tool live', (tester) async {

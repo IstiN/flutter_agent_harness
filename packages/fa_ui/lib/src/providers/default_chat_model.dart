@@ -159,15 +159,26 @@ class DefaultChatModelSection extends StatelessWidget {
                 if (result == null || result.cleared) return;
                 final override = result.override!;
                 if (!context.mounted) return;
-                await onApply(
-                  FaChatModelConfig(
-                    providerKind: override.providerKind,
-                    modelId: override.modelId,
-                    baseUrl: override.baseUrl,
-                    apiKey: _resolveKeyByName(registry, override.apiKeyName),
-                    providerId: override.providerId,
-                  ),
-                );
+                // The host's apply reconfigures its service and can refuse
+                // a broken connection (issue #327: model and auth resolved
+                // from different provider rows) — surface the message
+                // instead of dying in the gesture handler.
+                try {
+                  await onApply(
+                    FaChatModelConfig(
+                      providerKind: override.providerKind,
+                      modelId: override.modelId,
+                      baseUrl: override.baseUrl,
+                      apiKey: _resolveKeyByName(registry, override.apiKeyName),
+                      providerId: override.providerId,
+                    ),
+                  );
+                } catch (error) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(error.toString())),
+                  );
+                }
               },
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6),
