@@ -115,8 +115,12 @@ final class OpenPromptMsg extends Msg {
 
 /// Message opening or refreshing the agents-hub overlay (issue #277).
 final class HubStateMsg extends Msg {
-  HubStateMsg(this.state);
+  HubStateMsg(this.state, {this.refreshOnly = false});
   final FaHubState state;
+
+  /// Refresh-only push (issue #382): the model drops it while the overlay
+  /// is closed — background events may refresh an open hub, never open one.
+  final bool refreshOnly;
 }
 
 /// Message hiding the agents-hub overlay (issue #277).

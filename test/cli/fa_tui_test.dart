@@ -822,8 +822,7 @@ void main() {
     // format cache is keyed on width+content, so the theme change must
     // drop it explicitly.
     controller.switchTo('pi');
-    model = model.update(FaTuiModel.themeChangedMsgForTest()).$1
-        as FaTuiModel;
+    model = model.update(FaTuiModel.themeChangedMsgForTest()).$1 as FaTuiModel;
     final view = model.view().content;
     expect(view, contains('\x1b[48;2;52;53;65m'), reason: 'pi bg live');
     expect(
