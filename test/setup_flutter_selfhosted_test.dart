@@ -36,9 +36,7 @@ ProcessResult resolve(
   String? marker,
   String? manifest,
 }) {
-  if (marker != null) {
-    File('$sdkRoot/.fah-version').writeAsStringSync(marker);
-  }
+  File('$sdkRoot/.fah-version').writeAsStringSync(marker ?? '');
   return runSlot(
     ['resolve', spec, '$sdkRoot/.fah-version'],
     env: {if (manifest != null) 'FAH_RELEASES_MANIFEST': manifest},
