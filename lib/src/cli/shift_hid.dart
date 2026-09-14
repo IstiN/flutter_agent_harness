@@ -74,15 +74,23 @@ bool hidShiftPollingEnabled(Map<String, String> env) {
   return env['SSH_CONNECTION'] == null && env['SSH_TTY'] == null;
 }
 
-/// Probe entry: answers the live Shift state once. Runs in a sacrificial
-/// isolate ([probeHidShiftPolling]) so a wedged CoreGraphics call cannot
-/// freeze the host; tests inject their own entry to simulate a hang.
-void _hidProbeEntry(SendPort port) => port.send(isShiftPressedViaHid());
+/// Probe entry: performs the HID read once, then ACKs. The message is a
+/// completion signal — its VALUE is irrelevant (the live Shift state at
+/// boot is almost always up and says nothing about probe health). Runs
+/// in a sacrificial isolate ([probeHidShiftPolling]) so a wedged
+/// CoreGraphics call cannot freeze the host; tests inject their own
+/// entry to simulate a hang.
+void _hidProbeEntry(SendPort port) {
+  isShiftPressedViaHid();
+  port.send(true);
+}
 
-/// Runs [entry] in a fresh isolate and waits [timeout] for its single
-/// bool answer. A hang (a GUI-less session where CoreGraphics blocks) or
-/// a `false` answer means HID polling is unavailable. The isolate is
-/// killed unconditionally — a wedged probe never leaks.
+/// Runs [entry] in a fresh isolate and waits [timeout] for its
+/// completion ACK. True means the HID read COMPLETED in time — the
+/// session is healthy enough to poll; a hang (a GUI-less session where
+/// CoreGraphics blocks) answers false. Any message counts: the payload
+/// value is ignored. The isolate is killed unconditionally — a wedged
+/// probe never leaks.
 Future<bool> probeHidShiftPolling({
   void Function(SendPort port)? entry,
   Duration timeout = const Duration(milliseconds: 300),
@@ -90,8 +98,10 @@ Future<bool> probeHidShiftPolling({
   final port = ReceivePort();
   final isolate = await Isolate.spawn(entry ?? _hidProbeEntry, port.sendPort);
   try {
-    final answer = await port.first.timeout(timeout, onTimeout: () => false);
-    return answer == true;
+    await port.first.timeout(timeout);
+    return true; // any message = the HID read completed in time
+  } on TimeoutException {
+    return false;
   } finally {
     port.close();
     isolate.kill(priority: Isolate.immediate);
@@ -100,9 +110,11 @@ Future<bool> probeHidShiftPolling({
 
 /// Resolves the TUI host callback for Shift detection: the HID poll when
 /// the session allows it, null when it must stay off — a non-macOS host,
-/// the kill switch, an SSH session, or a startup probe that timed out
-/// (issue #355). The probe runs ONCE, at startup, off the UI isolate;
-/// [probeEntry] is the test seam for the isolate payload.
+/// the kill switch, an SSH session, or a startup probe whose HID read
+/// failed to complete in time (issue #355). Wiring keys on probe
+/// COMPLETION, never on the live Shift value it happened to read. The
+/// probe runs ONCE, at startup, off the UI isolate; [probeEntry] is the
+/// test seam for the isolate payload.
 Future<bool Function()?> resolveHidShiftPressed({
   Map<String, String>? env,
   bool isMacOS = true,

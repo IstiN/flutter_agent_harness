@@ -69,7 +69,7 @@ void main() {
       expect(poll, isNull);
     });
 
-    test('a healthy probe wires the poll', () async {
+    test('a probe that answers in time wires the poll', () async {
       final poll = await resolveHidShiftPressed(
         env: {},
         probeEntry: (port) => port.send(true),
@@ -77,13 +77,20 @@ void main() {
       expect(poll, isNotNull);
     });
 
-    test('a probe answering false leaves the poll unwired', () async {
-      final poll = await resolveHidShiftPressed(
-        env: {},
-        probeEntry: (port) => port.send(false),
-      );
-      expect(poll, isNull);
-    });
+    test(
+      'the live Shift value is irrelevant: Shift-up at boot wires',
+      () async {
+        // The probe reports probe health, not the modifier: a GUI-session
+        // boot reads Shift-up near always, and wiring on the VALUE (true =
+        // shift held) never wired the poll at all — the bare-CR Shift+Enter
+        // regression called out in the #356 review.
+        final poll = await resolveHidShiftPressed(
+          env: {},
+          probeEntry: (port) => port.send(false),
+        );
+        expect(poll, isNotNull);
+      },
+    );
 
     test('a hanging probe times out bounded and disables the poll', () async {
       final watch = Stopwatch()..start();
@@ -112,10 +119,11 @@ void main() {
     expect(ok, isFalse);
   });
 
-  test('the default probe answers from the real HID read bounded', () async {
-    // False wherever CoreGraphics is unavailable (every CI host); a live
-    // GUI-session macOS host answers with the actual Shift state.
+  test('the default probe completes in time on healthy hosts', () async {
+    // Wherever the HID read fails fast (no CoreGraphics — every CI host)
+    // or answers fast (GUI session), the probe completes: true. Only a
+    // wedged HID system (SSH macOS) hangs past the timeout.
     final ok = await probeHidShiftPolling(timeout: const Duration(seconds: 2));
-    expect(ok, isA<bool>());
+    expect(ok, isTrue);
   });
 }
