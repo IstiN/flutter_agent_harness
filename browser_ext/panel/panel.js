@@ -31,7 +31,9 @@ function render(s) {
       `session: ${agent.session?.messages ?? 0} msgs${agent.running ? ' · running…' : ''}` +
       // Issue #137: in yolo the chrome.* bridge never prompts — a
       // persistent indicator keeps that visible.
-      `${agent.approval === 'yolo' ? ' · bridge: yolo — no prompts' : ''}`;
+      `${agent.approval === 'yolo' ? ' · bridge: yolo — no prompts' : ''}` +
+      // Issue #320 AC3: queued inbound mail stays visible.
+      `${agent.mail ? ` · mail: ${agent.mail.pending} queued` : ''}`;
   } else {
     $('agentStatus').textContent = 'embedded agent not built — run scripts/build_browser_ext.sh';
   }
@@ -60,6 +62,13 @@ function bubble(role, text) {
   return div;
 }
 
+// User rows arrive with the SW's per-turn `[context] …` header when the
+// turn injected tool-tab context; it is plumbing, not conversation.
+function stripTurnContext(raw) {
+  const at = raw.indexOf('\n');
+  return raw.startsWith('[context] ') && at > 0 ? raw.slice(at + 1) : raw;
+}
+
 let streamingBubble = null;
 // Issue #314: steering a running stream queues the message for the next
 // step boundary - show it instantly as a neutral pending row, never an
@@ -68,6 +77,7 @@ let steerMarkers = [];
 function popSteerMarker() {
   steerMarkers.shift()?.remove();
 }
+let lastMailSig = '';
 function onAgentEvent(ev) {
   switch (ev?.type) {
     case 'steer_queued':
@@ -84,7 +94,10 @@ function onAgentEvent(ev) {
         streamingBubble.textContent = ev.text ?? streamingBubble.textContent;
         streamingBubble = null;
       } else if (ev.role === 'user') {
-        bubble('user', ev.text ?? '');
+        // Replay/live user rows carry the SW's per-turn `[context] …`
+        // header; plumbing, not conversation — strip for display (v2
+        // parity, issue #320).
+        bubble('user', stripTurnContext(ev.text ?? ''));
         popSteerMarker();
       } else if (ev.role === 'toolResult') {
         bubble('tool', `${ev.toolName}: ${ev.text ?? ''}`);
@@ -100,13 +113,26 @@ function onAgentEvent(ev) {
       hideApproval();
       log(`approval ${ev.id}: ${ev.allow ? 'allowed' : 'denied'}${ev.note ? ` (${ev.note})` : ''}`);
       break;
-    case 'status':
+    case 'status': {
       if (ev.running !== undefined && !ev.running) {
         if (streamingBubble) streamingBubble = null;
         steerMarkers.forEach((m) => m.remove());
         steerMarkers = [];
       }
       if (ev.hub) $('hubStatus').textContent = hubText(ev.hub);
+      // Issue #320 AC3: queued mail is announced until the boundary delivers.
+      const sig = ev.mail ? `${ev.mail.pending}:${(ev.mail.senders ?? []).join(',')}` : '';
+      if (sig !== lastMailSig) {
+        lastMailSig = sig;
+        if (ev.mail) {
+          log(`mail: ${ev.mail.pending} queued from ${(ev.mail.senders ?? []).join(', ')} — lands at the next step boundary`);
+        }
+      }
+      break;
+    }
+    case 'mail_routed':
+      // Issue #320 AC4: say the session switch out loud.
+      log(`mail from ${ev.from} routed to session ${ev.sessionId}`);
       break;
     case 'error':
       log(`agent error: ${ev.error}`);
