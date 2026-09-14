@@ -8,7 +8,6 @@ import 'package:fa/apps/fa_chat_overlay.dart';
 import 'package:fa/apps/session_chat_sheet.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
-import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -142,6 +141,8 @@ void main() {
       expect(find.text('Демо динамического сообщения'), findsOneWidget);
       // ...and the emitting tool card stays (audit trail, AC E3).
       expect(find.textContaining('presented to the user'), findsOneWidget);
+      // AC4 (issue #378): the surface exposes the tile's ⋮ menu.
+      expect(find.byTooltip('More actions'), findsOneWidget);
     });
 
     testWidgets('a boot failure renders the expandable error tile, never '
@@ -180,6 +181,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // AC4 (issue #378): the overlay surface exposes the ⋮ menu too.
+      expect(find.byTooltip('More actions'), findsOneWidget);
       expect(find.byType(DynamicWidgetTile), findsOneWidget);
       expect(find.text('Демо динамического сообщения'), findsOneWidget);
       debugDefaultTargetPlatformOverride = null;

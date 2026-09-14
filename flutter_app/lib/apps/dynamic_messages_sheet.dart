@@ -70,8 +70,9 @@ Future<void> showDynamicMessagesSheet(
 }
 
 /// The session's dynamic messages: title, timestamp, event count, live
-/// badge; tap jumps to the widget's transcript position, the archive
-/// action graduates it into an installed app.
+/// badge; tap jumps to the widget's transcript position, the ⋮ menu
+/// carries the secondary actions — ephemeral open, graduation into an
+/// installed app, permissions (issue #378 AC4).
 class DynamicMessagesSheet extends StatelessWidget {
   const DynamicMessagesSheet({
     super.key,
@@ -131,12 +132,16 @@ class DynamicMessagesSheet extends StatelessWidget {
                       children: [
                         if (dynamicMessages.engineFor(definition.id) != null)
                           const DynamicLiveBadge(),
-                        IconButton(
-                          tooltip: l10n.dynamicTileSaveAsApp,
-                          icon: const Icon(Icons.archive_outlined, size: 20),
-                          onPressed: () {
+                        dynamicWidgetMenuButton(
+                          context: context,
+                          service: dynamicMessages,
+                          definition: definition,
+                          // Closing the sheet first mirrors the old
+                          // inline archive button, then the host
+                          // graduates the widget (issue #378).
+                          onSaveAsApp: (d) async {
                             Navigator.of(context).pop();
-                            unawaited(onSaveAsApp(definition));
+                            await onSaveAsApp(d);
                           },
                         ),
                       ],
