@@ -86,6 +86,11 @@ void main() {
         contains('SQLite engine not wired by this host'),
         reason: 'the reason column carries the absent note',
       );
+      expect(
+        output,
+        contains('available in the Outlook add-in host only'),
+        reason: 'the office family gates with the add-in-only reason (#327)',
+      );
     },
   );
 
@@ -220,7 +225,7 @@ void main() {
       expect(project, contains('read: false'));
 
       // The loop comes back around; flip it back and exit via `done`
-      // (option 25 = 24 known ids + done — the browser family added two).
+      // (done = knownToolIds.length + 1; the outlook family joined in #327).
       await waitForOutput('tools — pick a tool');
       io.sendLine('1'); // read
       await waitForOutput('tools — read');
@@ -231,7 +236,7 @@ void main() {
       expect(offeredTools(cli), contains('read'));
 
       await waitForOutput('tools — pick a tool');
-      io.sendLine('25'); // done
+      io.sendLine('26'); // done (25 known ids — outlook joined in #327)
       await flow;
 
       project = (await env.readTextFile('/work/.fah/config.yaml')).valueOrNull;

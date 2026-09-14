@@ -214,6 +214,37 @@ void main() {
   });
 
   group('SessionChatSheet', () {
+    testWidgets('the drawer selection debug line emits on CHANGE only '
+        '(issue #327 AC6: 60 s idle, not 20 identical lines)', (tester) async {
+      final lines = <String>[];
+      final prev = debugPrint;
+      // Restored in-body: the foundation-var invariant check runs before
+      // tearDowns.
+      void capture(String? message, {int? wrapWidth}) {
+        if (message != null && message.contains('[fah][drawer] selection:')) {
+          lines.add(message);
+        }
+      }
+
+      try {
+        debugPrint = capture;
+        await _pumpSheet(tester);
+        lines.clear(); // The boot sighting is not the spam under test.
+
+        // One idle fake-clock minute: the 3 s poll runs ~20 reloads and
+        // the unchanged selection must print NOTHING.
+        await tester.pump(const Duration(seconds: 61));
+        expect(lines, isEmpty);
+
+        // One selection change (drawer → row): exactly one line.
+        await _openPanelViaDrawer(tester, 'sess-a');
+        expect(lines, hasLength(1));
+        expect(lines.single, contains('selected=sess-a'));
+      } finally {
+        debugPrint = prev;
+      }
+    });
+
     testWidgets('rests as the input bar: composer + sessions button, no '
         'panel, no drawer', (tester) async {
       await _pumpSheet(tester);

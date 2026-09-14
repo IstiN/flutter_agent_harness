@@ -102,6 +102,9 @@ String _absentToolReason(String id, {required bool onDevice}) => switch (id) {
   'mcp' => 'MCP servers connect through the CLI harness',
   'dap' => 'DAP hub transport is CLI-only',
   'checkpoint' || 'rewind' => 'checkpointing is CLI-only',
+  // Office tools register only inside the Outlook add-in host (issue
+  // #327 AC5): the row says so instead of a generic unwired note.
+  'outlook' => 'available in the Outlook add-in host only',
   _ => 'not wired by this host',
 };
 

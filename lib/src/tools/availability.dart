@@ -65,6 +65,12 @@ const knownToolIds = <String>{
   'transcribe_audio',
   'dap',
 
+  /// The office-host-bound outlook family (issue #89, visibility #327):
+  /// the tools register only inside the Outlook add-in host; every other
+  /// surface lists the family as a gated row with the add-in-only reason
+  /// instead of staying silent.
+  'outlook',
+
   /// The browser family (issue #23) plus `browser_eval` as its own id:
   /// JS evaluation can be disabled alone (the reverse index resolves a
   /// name that IS an availability id to itself, never to the family).
@@ -135,6 +141,11 @@ const coreToolFamilies = <String, Set<String>>{
     'browser_wait_for',
   },
   'browser_eval': {'browser_eval'},
+  'outlook': {
+    'outlook.read_current_item',
+    'outlook.read_attachment',
+    'outlook.insert_draft_body',
+  },
 };
 
 /// Reverse index of [coreToolFamilies]: member tool name → availability
