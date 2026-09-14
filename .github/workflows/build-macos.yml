@@ -1,5 +1,11 @@
 name: Build macOS Release (Fa)
 
+# Issue #343: the daily-publish CLI leg and a human can dispatch this
+# workflow in the same window; the run-name embeds the input so the
+# watcher's displayTitle match (the only distinguisher in the run-list
+# API) never adopts someone else's run.
+run-name: "build-macos (create_release=${{ inputs.create_release }})"
+
 on:
   workflow_dispatch:
     inputs:

@@ -1,5 +1,12 @@
 name: Build Mobile Apps
 
+# Issue #343: the daily-publish TestFlight and Play legs dispatch this
+# workflow in the same minute with different content inputs; the run-name
+# embeds those inputs so `gh run list` displayTitle (the ONLY distinguisher
+# the list API offers) tells the legs apart — each watcher matches its own
+# run instead of latching a sibling's or a stale same-shaped one.
+run-name: "build-mobile (${{ inputs.android_content }}/${{ inputs.ios_content }})"
+
 on:
   workflow_dispatch:
     inputs:
@@ -243,6 +250,11 @@ jobs:
     name: Build iOS IPA
     needs: version
     runs-on: [self-hosted, macOS, ARM64]
+    # Issue #344: a wedged self-hosted worker (lost completion report)
+    # otherwise holds the slot AND the in_progress status until the 300m
+    # daily-publish watcher times out; a job-level timeout lets GitHub
+    # fail the run server-side and unblock the pool + watchers.
+    timeout-minutes: 90
     if: |
       github.event.inputs.ios_content != 'none' &&
       github.event.inputs.ios_content != '' &&
@@ -513,6 +525,10 @@ jobs:
     name: Submit iOS to TestFlight
     needs: [build-ios]
     runs-on: [self-hosted, macOS, ARM64]
+    # Issue #344: same wedge bound as build-ios — TestFlight upload is a
+    # short job; 45m is generous while never parking a lost-slot run for
+    # hours.
+    timeout-minutes: 45
     if: needs.build-ios.result == 'success'
     steps:
       - name: Update local git mirror
