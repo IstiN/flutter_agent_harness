@@ -9,6 +9,10 @@ extension FaTuiModelHub on FaTuiModel {
   /// interactive bits over so a re-push never resets the user's selection
   /// or scroll anchor.
   (Model, Cmd?) _handleHubStateMsg(HubStateMsg msg) {
+    // Refresh-only pushes never open a closed overlay (issue #382). The
+    // guard reads the live state at handling time, so a close that raced
+    // the in-flight push still wins.
+    if (msg.refreshOnly && hub == null) return (this, null);
     return (copyWith(hub: msg.state.carryingFrom(hub)), null);
   }
 
