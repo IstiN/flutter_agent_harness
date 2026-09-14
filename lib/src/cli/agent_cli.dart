@@ -227,7 +227,10 @@ class AgentCli {
       ansiSupported: useTui || useColor,
       environment: environment,
     );
-    _applyBootTheme();
+    // Boot theme: async — user themes load through the FileSystem seam
+    // before the persisted name resolves (issue #279 AC4); fire-and-forget
+    // keeps the constructor sync.
+    unawaited(_applyBootTheme());
     final pluginTools = <AgentTool>[];
     for (final plugin in config.plugins) {
       final context = PluginContext(
@@ -753,6 +756,13 @@ class AgentCli {
   @visibleForTesting
   Future<void> tuiPickAddProviderForTest(String key) =>
       _tuiPickAddProvider(key);
+
+  /// Test seam: the picker-id → handler dispatch map's keys. A picker id
+  /// opened by `openPicker` without an entry here is a dead menu entry
+  /// (selection routes to `null?.call()` — the picker closes and nothing
+  /// happens), so the dispatch test asserts the id set exactly.
+  @visibleForTesting
+  Set<String> pickerHandlerKeysForTest() => _tuiPickerHandlers.keys.toSet();
 
   /// Test seam: opens the sessions picker (building its rows) without a
   /// TUI; the built items land in [sessionPickerItemsForTest].
@@ -1629,6 +1639,7 @@ class AgentCli {
     'approval': (key) async => _handleApprovalMode(key),
     'theme': (key) => _applyThemeChoice(key, persist: true),
     'provider': _tuiPickProvider,
+    'addProvider': _tuiPickAddProvider,
     'settings': _tuiPickSetting,
     'agents': pickAgentFromTree,
     'agentAction': pickAgentAction,

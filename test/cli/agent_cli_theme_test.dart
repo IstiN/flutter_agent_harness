@@ -8,6 +8,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dart_tui/dart_tui.dart' show ColorProfile;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -50,6 +51,14 @@ void main() {
       useColor: useColor,
       environment: environment,
     );
+  }
+
+  /// Awaits the constructor's unawaited boot-theme chain (user-theme load
+  /// runs on the FileSystem seam's microtasks).
+  Future<void> cliThemeSettle() async {
+    for (var i = 0; i < 50; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
   }
 
   /// Polls the (sync) output buffer until [condition] holds.
@@ -128,13 +137,67 @@ void main() {
     expect(FaThemeController.instance.currentName, 'default');
   });
 
-  test('boot applies the persisted tui.theme', () {
+  test('boot applies the persisted tui.theme', () async {
     cliFor(tuiTheme: 'pi');
+    await cliThemeSettle();
     expect(FaThemeController.instance.currentName, 'pi');
   });
 
-  test('boot with an unknown tui.theme warns and keeps the default', () {
+  test('user themes load at boot: a persisted user theme applies (AC4)',
+      () async {
+    await env.writeFile(
+      '/home/.fah/themes/warm.json',
+      jsonEncode({
+        'roles': {'accent': '#ff8800', 'error': '#ff1122'},
+      }),
+    );
+    cliFor(useColor: true, tuiTheme: 'warm');
+    await cliThemeSettle();
+    expect(FaThemeController.instance.currentName, 'warm');
+    // The user palette drives the live emitters.
+    expect(tuiAccent('x'), contains('38;2;255;136;0'));
+    expect(FaThemeController.instance.available().keys, contains('warm'));
+  });
+
+  test('/theme resolves a user theme written mid-session (AC5)', () async {
+    final cli = cliFor(useColor: true);
+    final run = cli.run();
+    await env.writeFile(
+      '/home/.fah/themes/moss.json',
+      jsonEncode({
+        'roles': {'accent': '#00ff88'},
+      }),
+    );
+    io.sendLine('/theme moss');
+    await waitForOut((out) => out.contains('theme: moss'));
+    expect(FaThemeController.instance.currentName, 'moss');
+    expect(io.out.toString(), contains('38;2;0;255;136'));
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('broken and shadowing user themes warn at boot, default survives',
+      () async {
+    await env.writeFile('/home/.fah/themes/broken.json', '{nope');
+    await env.writeFile(
+      '/home/.fah/themes/pi.json',
+      jsonEncode({
+        'roles': {'accent': '#123456'},
+      }),
+    );
+    cliFor(useColor: true, tuiTheme: 'pi');
+    await cliThemeSettle();
+    final out = io.out.toString();
+    expect(out, contains('broken: not valid JSON'));
+    expect(out, contains('cannot shadow a built-in theme name'));
+    // The shadowing file never replaced the built-in.
+    expect(tuiAccent('x'), contains('38;2;138;190;183'));
+    expect(FaThemeController.instance.currentName, 'pi');
+  });
+
+  test('boot with an unknown tui.theme warns and keeps the default', () async {
     cliFor(tuiTheme: 'solarized');
+    await cliThemeSettle();
     expect(io.out.toString(), contains('unknown theme "solarized"'));
     expect(FaThemeController.instance.currentName, 'default');
   });

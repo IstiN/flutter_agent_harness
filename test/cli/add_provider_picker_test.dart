@@ -100,6 +100,35 @@ void main() {
     await run;
   });
 
+  test('every TUI picker id routes to a dispatch handler', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+
+    // THE dispatch regression guard (issue #279 review): a picker opened
+    // under an id with no _tuiPickerHandlers entry is a dead menu entry —
+    // selection resolves `null?.call()`, the picker closes and nothing
+    // happens. The 'addProvider' entry was deleted exactly this way by an
+    // unrelated hunk. This set is closed: every static openPicker id must
+    // have a handler and vice versa (wizard:* ids route separately).
+    expect(cli.pickerHandlerKeysForTest(), {
+      'sessions',
+      'mode',
+      'approval',
+      'provider',
+      'addProvider',
+      'settings',
+      'agents',
+      'agentAction',
+      'modelProvider',
+      'theme',
+    });
+
+    io.sendLine('/exit');
+    await run;
+  });
+
   test(
     'the picker covers the whole catalog — preset or documented exclusion',
     () async {

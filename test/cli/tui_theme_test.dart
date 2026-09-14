@@ -245,6 +245,36 @@ void main() {
       // No `muted` role: inherits the default theme's dim style.
       expect(theme.muted.isDim ?? false, isTrue);
       expect(theme.muted.foregroundRgb, kDefaultTuiTheme.muted.foregroundRgb);
+      // EVERY unspecified role inherits the default palette — not just
+      // muted: warning/success/focusBorder keep their colors, border keeps
+      // its dim flag, and the background roles keep the default surfaces
+      // (E3: a partial theme overrides only what it names).
+      expect(theme.warning.foregroundRgb, kDefaultTuiTheme.warning.foregroundRgb);
+      expect(theme.success.foregroundRgb, kDefaultTuiTheme.success.foregroundRgb);
+      expect(theme.focusBorder.foregroundRgb, kDefaultTuiTheme.focusBorder.foregroundRgb);
+      expect(theme.border.isDim ?? false, isTrue);
+      expect(
+        theme.userMessageBg.backgroundRgb,
+        kDefaultTuiTheme.userMessageBg.backgroundRgb,
+      );
+      expect(theme.highlight.backgroundRgb, kDefaultTuiTheme.highlight.backgroundRgb);
+      // The named accent2 keeps its default bold; the soft variant
+      // follows the same color with bold off.
+      expect(theme.accent2.isBold ?? false, isTrue);
+      expect(
+        theme.accent2.foregroundRgb,
+        theme.accent2Soft.foregroundRgb,
+      );
+    });
+
+    test('a fully-specified theme overrides every role it names', () {
+      const text =
+          '{"roles": {"accent": "#010203", "warning": "#040506", '
+          '"userMessageBg": "#070809"}}';
+      final theme = parseUserTheme(text, 'full');
+      expect(theme.accent.foregroundRgb, const RgbColor(1, 2, 3));
+      expect(theme.warning.foregroundRgb, const RgbColor(4, 5, 6));
+      expect(theme.userMessageBg.backgroundRgb, const RgbColor(7, 8, 9));
     });
 
     test('invalid values and unknown roles are named with their line', () {
@@ -331,6 +361,26 @@ void main() {
       expect(
         lines.singleWhere((l) => l.trim().startsWith('ohmypi-dark ')),
         isNot(startsWith('›')),
+      );
+    });
+
+    test('themeTableLines lists user themes with the source mark', () {
+      FaThemeController.instance.addUserThemes({
+        'moss': parseUserTheme(
+          '{"roles": {"accent": "#00ff88"}}',
+          'moss',
+        ),
+      });
+      final lines = themeTableLines();
+      expect(lines.length, kBuiltInTuiThemes.length + 1);
+      expect(
+        lines.singleWhere((l) => l.trim().startsWith('moss ')),
+        contains('(user)'),
+      );
+      // Built-ins carry no mark.
+      expect(
+        lines.singleWhere((l) => l.trim().startsWith('pi ')),
+        isNot(contains('(user)')),
       );
     });
   });

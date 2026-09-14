@@ -228,15 +228,18 @@ final class AnsiMarkdown {
   /// ordinary lines. Padding is cell-width aware: the renderer measures
   /// grapheme clusters, so `padRight` (UTF-16 units) underpads any echo
   /// carrying wide characters and stale cells survive on the right.
+  ///
+  /// The background SGR is re-applied from the CURRENT session theme, not
+  /// the stored prefix — a mid-session `/theme` switch repaints the whole
+  /// transcript (issue #279, E1); the stored escape only marks the line as
+  /// a user echo so markdown leaves it alone.
   String? _formatPreStyled(String line) {
     if (!line.startsWith('\x1b[48')) return null;
     final visible = line.replaceAll(_ansiRe, '');
     final pad = width - tuiTextWidth(visible);
-    if (pad <= 0) return line;
-    final body = line.endsWith(_reset)
-        ? line.substring(0, line.length - _reset.length)
-        : line;
-    return '$body${' ' * pad}$_reset';
+    final bg = tuiUserMessageBgSgr();
+    if (pad <= 0) return '$bg$visible$_reset';
+    return '$bg$visible${' ' * pad}$_reset';
   }
 
   /// Code fences swallow everything between the markers verbatim (pi:

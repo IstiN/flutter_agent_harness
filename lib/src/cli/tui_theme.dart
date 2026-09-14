@@ -224,15 +224,25 @@ Theme parseUserTheme(String text, String fileName) {
   }
   if (problems.isNotEmpty) throw ThemeParseException(problems);
 
+  // Missing roles inherit the DEFAULT palette (E3): a partial theme
+  // overrides only what it names — the rest keeps the default's color
+  // and flags (border stays dim, muted stays faint) instead of degrading
+  // to unstyled text.
   Style fg(String role, {bool bold = false, bool dim = false}) {
-    final color = resolved[role];
-    if (color == null) return Style(isBold: bold ? true : null, isDim: dim);
+    final defStyle = _defaultRoleStyle(role);
+    final color = resolved[role] ?? defStyle?.foregroundRgb;
+    if (color == null) return defStyle ?? const Style();
     return Style(
       foregroundRgb: color,
-      isBold: bold ? true : null,
-      isDim: dim ? true : null,
+      isBold: bold || (defStyle?.isBold ?? false) ? true : null,
+      isDim: dim || (defStyle?.isDim ?? false) ? true : null,
     );
   }
+
+  // Background roles: same inheritance, against the default's background.
+  Style bg(String role) => Style(
+      backgroundRgb: resolved[role] ?? _defaultRoleStyle(role)?.backgroundRgb,
+    );
 
   return Theme(
     name: fileName,
@@ -241,19 +251,31 @@ Theme parseUserTheme(String text, String fileName) {
     accent2: fg('accent2', bold: true),
     accent2Soft: fg('accent2'),
     muted: fg('muted', dim: true),
-    highlight: resolved['highlight'] == null
-        ? const Style()
-        : Style(backgroundRgb: resolved['highlight']!),
+    highlight: bg('highlight'),
     success: fg('success'),
     warning: fg('warning'),
     error: fg('error'),
     border: fg('border'),
     focusBorder: fg('focusBorder'),
-    userMessageBg: resolved['userMessageBg'] == null
-        ? const Style()
-        : Style(backgroundRgb: resolved['userMessageBg']!),
+    userMessageBg: bg('userMessageBg'),
   );
 }
+
+/// The [role]'s style in the default palette (`null` for roles the
+/// default leaves plain).
+Style? _defaultRoleStyle(String role) => switch (role) {
+      'accent' => kDefaultTuiTheme.accent,
+      'accent2' => kDefaultTuiTheme.accent2,
+      'muted' => kDefaultTuiTheme.muted,
+      'highlight' => kDefaultTuiTheme.highlight,
+      'success' => kDefaultTuiTheme.success,
+      'warning' => kDefaultTuiTheme.warning,
+      'error' => kDefaultTuiTheme.error,
+      'border' => kDefaultTuiTheme.border,
+      'focusBorder' => kDefaultTuiTheme.focusBorder,
+      'userMessageBg' => kDefaultTuiTheme.userMessageBg,
+      _ => null,
+    };
 
 /// Loads user themes from `<home>/.fah/themes/*.json`. Filenames that
 /// shadow a built-in are skipped (user themes can never shadow built-ins);
@@ -466,14 +488,16 @@ String themeSwatchRow(Theme theme) {
   ].join();
 }
 
-/// The `/theme` listing lines: name + swatch + `(current)` marker.
+/// The `/theme` listing lines: name + swatch + `(current)` marker. User
+/// themes follow the built-ins, marked by source.
 List<String> themeTableLines({String? current}) {
-  final available = {...kBuiltInTuiThemes};
+  final available = FaThemeController.instance.available();
   return [
     for (final entry in available.entries)
       '${entry.key == current ? '›' : ' '} '
           '${entry.key.padRight(13)} '
-          '${themeSwatchRow(entry.value)}',
+          '${themeSwatchRow(entry.value)}'
+          '${kBuiltInTuiThemes.containsKey(entry.key) ? '' : '  (user)'}',
   ];
 }
 

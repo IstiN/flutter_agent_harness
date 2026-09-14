@@ -22,6 +22,7 @@ extension ThemeCommands on AgentCli {
       }
       return;
     }
+    await _reloadUserThemes();
     final resolved = name == 'reset' ? kDefaultTuiTheme.name : name;
     await _applyThemeChoice(resolved, persist: true);
   }
@@ -83,8 +84,16 @@ extension ThemeCommands on AgentCli {
     }
   }
 
-  /// Applies the persisted `tui.theme` at boot (no persist round-trip).
-  void _applyBootTheme() {
+  /// Test seam: runs the async half of the boot theme application — the
+  /// constructor fires [_applyBootTheme] unawaited; tests await this.
+  @visibleForTesting
+  Future<void> bootThemeForTest() => _applyBootTheme();
+
+  /// Applies the persisted `tui.theme` at boot: user themes load first so
+  /// a persisted user theme resolves end to end (AC4). No persist
+  /// round-trip.
+  Future<void> _applyBootTheme() async {
+    await _reloadUserThemes();
     final persisted = config.tuiTheme;
     if (persisted == null || persisted.isEmpty) return;
     if (!FaThemeController.instance.switchTo(persisted)) {
@@ -92,6 +101,39 @@ extension ThemeCommands on AgentCli {
         'config tui.theme: unknown theme "$persisted" — using default '
             '(available: ${FaThemeController.instance.available().keys.join(', ')})',
       );
+    }
+  }
+
+  /// (Re)loads `~/.fah/themes/*.json` into the controller — at boot and
+  /// before every `/theme` resolution, so a theme the agent just wrote
+  /// resolves without a restart (AC5). Shadowing names and unparseable
+  /// files surface as warnings, never a boot failure.
+  Future<void> _reloadUserThemes() async {
+    final home = config.homeDir;
+    if (home == null || home.isEmpty) return;
+    final dir = '$home/.fah/themes';
+    final listed = await _env.listDir(dir);
+    final names = (listed.valueOrNull ?? const [])
+        .map((entry) => entry.name)
+        .where((name) => name.endsWith('.json'))
+        .toList()
+      ..sort();
+    // Pre-read through the FileSystem seam (web-safe); unreadable files
+    // drop out here instead of parsing as garbage.
+    final readable = <String, String>{};
+    for (final name in names) {
+      final path = '$dir/$name';
+      final text = (await _env.readTextFile(path)).valueOrNull;
+      if (text != null) readable[path] = text;
+    }
+    final loaded = loadUserThemes(
+      home,
+      (_) => readable.keys.toList(),
+      (path) => readable[path] ?? '',
+    );
+    FaThemeController.instance.addUserThemes(loaded.themes);
+    for (final error in loaded.errors) {
+      io.writeln(error);
     }
   }
 }
