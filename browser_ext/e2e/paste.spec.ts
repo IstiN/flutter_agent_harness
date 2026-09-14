@@ -17,14 +17,16 @@ const LONG = [
   ...Array.from({ length: 3500 }, (_, i) => `line-${i} ${'x'.repeat(50)}`),
 ].join('\n');
 
-/** Dispatches a REAL paste event with the given text into #prompt. */
+/**
+ * Dispatches a REAL paste event with the given text into #prompt.
+ * Returns whether the composer consumed it (preventDefault): the DOM
+ * dispatchEvent contract is inverted — it returns FALSE when a cancelable
+ * event was prevented, which is exactly the staging path.
+ */
 async function pasteText(page: Page, text: string): Promise<boolean> {
-  return page.evaluate((payload) => {
+  const dispatched = await page.evaluate((payload) => {
     const dt = new DataTransfer();
     dt.setData('text/plain', payload);
-    // ClipboardEventInit.clipboardData is not honored by Chrome's
-    // constructor path (the handler would read an empty string) — attach
-    // the DataTransfer onto the event object explicitly.
     const ev = new ClipboardEvent('paste', {
       bubbles: true,
       cancelable: true,
@@ -32,6 +34,7 @@ async function pasteText(page: Page, text: string): Promise<boolean> {
     Object.defineProperty(ev, 'clipboardData', { value: dt });
     return document.getElementById('prompt')!.dispatchEvent(ev);
   }, text);
+  return !dispatched;
 }
 
 function logText(page: Page): Promise<string> {
@@ -63,22 +66,16 @@ test.describe('panel paste staging (issue #313)', () => {
 
     // 2. Ask the agent to read the staged file back — over the SAME env
     //    the staging wrote to (one SW hop, no phase-2 uploads surface).
+    //    (The outgoing-turn FORMAT — one `[attached file: …]` reference
+    //    line instead of the 200 KB inline — is pinned by the vm suite,
+    //    test/panel_paste_test.mjs; the SW event stream carries only the
+    //    assistant side, so the user turn is not observable here.)
     const staged = /staged paste -> (uploads\/pasted-\d+\.txt)/.exec(
       await logText(fa.panel),
     )![1];
     const after = (await fa.eventCount()) - 1;
     await fa.panel.fill('#prompt', `tool read {"path": "${staged}"}`);
     await fa.panel.click('#sendPrompt');
-
-    // The outgoing turn carries the reference, NOT the 200 KB inline.
-    const user = await fa.waitEvent(
-      (e) => e.type === 'message_done' && e.role === 'user',
-      45_000,
-      after,
-    );
-    const userText = String(user.text ?? '');
-    expect(userText).toContain(`[attached file: ${staged}`);
-    expect(userText.length).toBeLessThan(1000);
 
     // 3. The read tool result proves the hop end to end: the SW agent
     //    read the REAL staged bytes from its sandbox.
