@@ -141,13 +141,11 @@ final class _Style implements TuiStyle {
   @override
   String magenta(String text) => _wrap(text, '35');
 
-  /// The site's teal accent (#5eead4), used for the banner title.
-  String teal(String text) =>
-      enabled ? '\x1B[38;2;94;234;212m$text\x1B[0m' : text;
+  /// The theme's first accent (fg only), used for the banner title.
+  String teal(String text) => enabled ? tuiAccentSoft(text) : text;
 
-  /// The site's indigo accent-2 (#818cf8), used for tool call markers.
-  String indigo(String text) =>
-      enabled ? '\x1B[38;2;129;140;248m$text\x1B[0m' : text;
+  /// The theme's second accent (fg only), used for tool call markers.
+  String indigo(String text) => enabled ? tuiAccent2Soft(text) : text;
 }
 
 /// Run-notice wiring for [AgentCli], split from agent_cli.dart to keep it

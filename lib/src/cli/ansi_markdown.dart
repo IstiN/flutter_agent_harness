@@ -24,6 +24,7 @@
 library;
 
 import 'tui_text_width.dart' show tuiTextWidth;
+import 'tui_theme.dart';
 
 /// Lightweight inline renderer for streaming reasoning: bold (`**x**`),
 /// italic (`*x*`), inline code (`` `x` ``). Skips block constructs
@@ -105,10 +106,16 @@ final class AnsiMarkdown {
   var _inFence = false;
   final _tableBuffer = <String>[];
 
-  // Site palette (site/styles.css): teal accent, indigo accent-2.
-  static const _teal = '\x1b[38;2;94;234;212m';
-  static const _indigo = '\x1b[38;2;129;140;248m';
-  static const _dim = '\x1b[2m';
+  // Palette escapes ride the session theme (issue #279) — the default
+  // theme reproduces these three byte-identically. Cached per formatter
+  // instance: a theme switch repaints through a fresh pass, never
+  // mid-pass.
+  String get _teal => _tealSgr ??= tuiAccentSoftSgr();
+  String get _indigo => _indigoSgr ??= tuiAccent2SoftSgr();
+  String get _dim => _dimSgr ??= tuiDimSgr();
+  String? _tealSgr;
+  String? _indigoSgr;
+  String? _dimSgr;
   static const _bold = '\x1b[1m';
   static const _italic = '\x1b[3m';
   static const _underline = '\x1b[4m';
@@ -221,15 +228,18 @@ final class AnsiMarkdown {
   /// ordinary lines. Padding is cell-width aware: the renderer measures
   /// grapheme clusters, so `padRight` (UTF-16 units) underpads any echo
   /// carrying wide characters and stale cells survive on the right.
+  ///
+  /// The background SGR is re-applied from the CURRENT session theme, not
+  /// the stored prefix — a mid-session `/theme` switch repaints the whole
+  /// transcript (issue #279, E1); the stored escape only marks the line as
+  /// a user echo so markdown leaves it alone.
   String? _formatPreStyled(String line) {
     if (!line.startsWith('\x1b[48')) return null;
     final visible = line.replaceAll(_ansiRe, '');
     final pad = width - tuiTextWidth(visible);
-    if (pad <= 0) return line;
-    final body = line.endsWith(_reset)
-        ? line.substring(0, line.length - _reset.length)
-        : line;
-    return '$body${' ' * pad}$_reset';
+    final bg = tuiUserMessageBgSgr();
+    if (pad <= 0) return '$bg$visible$_reset';
+    return '$bg$visible${' ' * pad}$_reset';
   }
 
   /// Code fences swallow everything between the markers verbatim (pi:
