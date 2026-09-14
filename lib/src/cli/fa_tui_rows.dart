@@ -124,6 +124,7 @@ extension _TuiRowRenderers on FaTuiModel {
       row++;
     }
     b.writeln(_dim('─' * termWidth));
+    row++;
     return row - baseRow;
   }
 
