@@ -456,11 +456,13 @@ const _androidCommands = <SandboxCommand>[
   SandboxCommand('sqlite3', 'SQLite CLI'),
   SandboxCommand(
     'python3',
-    'CPython 3.14 with the standard library; no sockets',
+    'CPython 3.14 with the standard library; HTTP/HTTPS ride the host '
+        'bridge (no ssl module)',
   ),
   SandboxCommand(
     'python',
-    'CPython 3.14 with the standard library; no sockets',
+    'CPython 3.14 with the standard library; HTTP/HTTPS ride the host '
+        'bridge (no ssl module)',
   ),
   SandboxCommand('pip3', 'installs pure-Python wheels only'),
   SandboxCommand('pip', 'installs pure-Python wheels only'),
@@ -546,6 +548,22 @@ String formatSandboxCommandSection(SandboxPlatform platform) {
       'root / is your writable workspace.',
     )
     ..write('- NOT available: ${_notAvailable(platform)}');
+  if (platform == SandboxPlatform.android ||
+      platform == SandboxPlatform.ios) {
+    buffer
+      ..writeln()
+      ..writeln(
+        '- python3/python TLS: the build has no `ssl` module and no raw '
+        'sockets, but urllib/requests/http.client (http AND https) are '
+        'transparently routed through the host network bridge, so they '
+        'work; `import ssl` itself fails. pip/pip3 installs pure-Python '
+        'wheels only (downloaded by the host).',
+      )
+      ..write(
+        '- Recommended HTTP path: `curl` (JSON bodies: `-d @file` or '
+        "`--data-raw '...'" '`), or python urllib/requests.',
+      );
+  }
   return buffer.toString();
 }
 
