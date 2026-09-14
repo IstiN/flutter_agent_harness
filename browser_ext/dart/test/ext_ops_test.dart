@@ -2,10 +2,14 @@
 // response shapes the panel relay expects, the http(s)-only fetch rule,
 // and unknown-op rejection. The SW backend (chrome.* + fetch) is thin.
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:test/test.dart';
 
 import '../src/ext_ops.dart';
+import 'package:flutter_agent_harness/src/uploads.dart'
+    show kMaxStageUploadBytes;
 
 final class _FakeBackend implements ExtOpsBackend {
   _FakeBackend();
@@ -51,6 +55,25 @@ final class _FakeBackend implements ExtOpsBackend {
   Future<void> tabsCreate(String url) async {
     lastTabUrl = url;
   }
+
+  final staged = <String, Uint8List>{};
+  final discarded = <String>[];
+  Set<String> missingNow = {};
+
+  @override
+  Future<String> stageUpload(String name, Uint8List bytes) async {
+    staged[name] = bytes;
+    return 'uploads/$name';
+  }
+
+  @override
+  Future<void> discardUpload(String path) async {
+    discarded.add(path);
+  }
+
+  @override
+  Future<List<String>> missingUploads(List<String> paths) async =>
+      paths.where(missingNow.contains).toList();
 }
 
 void main() {
@@ -115,5 +138,72 @@ void main() {
 
   test('unknown op is an error', () {
     expect(handleExtOp(backend, 'exec', {}), throwsA(contains('unknown')));
+  });
+
+  test('agent.stageUpload delegates and returns the env-relative path', () async {
+    final result = await handleExtOp(backend, 'agent.stageUpload', {
+      'name': 'pasted-1789302656781.txt',
+      'bytes': base64Encode(utf8.encode('hello')),
+    });
+    expect(result, {'path': 'uploads/pasted-1789302656781.txt'});
+    expect(utf8.decode(backend.staged['pasted-1789302656781.txt']!), 'hello');
+  });
+
+  test('agent.stageUpload without a name is an error', () {
+    expect(
+      handleExtOp(backend, 'agent.stageUpload', {
+        'bytes': base64Encode(utf8.encode('x')),
+      }),
+      throwsA(contains('"name"')),
+    );
+  });
+
+  test('agent.stageUpload without bytes is an error', () {
+    expect(
+      handleExtOp(backend, 'agent.stageUpload', {'name': 'a.txt'}),
+      throwsA(contains('base64')),
+    );
+  });
+
+  test('agent.stageUpload with non-base64 bytes is an error', () {
+    expect(
+      handleExtOp(backend, 'agent.stageUpload', {
+        'name': 'a.txt',
+        'bytes': 'not base64!',
+      }),
+      throwsA(contains('base64')),
+    );
+  });
+
+  test('agent.stageUpload refuses oversized payloads before decoding', () {
+    final huge = base64.encode(List.filled(kMaxStageUploadBytes, 120));
+    expect(
+      handleExtOp(backend, 'agent.stageUpload', {
+        'name': 'a.bin',
+        'bytes': huge,
+      }),
+      throwsA(contains('upload too large')),
+    );
+  });
+
+  test('agent.discardUpload reaches the backend and validates params', () async {
+    await handleExtOp(backend, 'agent.discardUpload', {
+      'path': 'uploads/a.txt',
+    });
+    expect(backend.discarded, ['uploads/a.txt']);
+    expect(
+      handleExtOp(backend, 'agent.discardUpload', {}),
+      throwsA(contains('"path"')),
+    );
+  });
+
+  test('agent.missingUploads reports only the absent paths', () async {
+    backend.missingNow = {'uploads/gone.txt'};
+    final result = await handleExtOp(backend, 'agent.missingUploads', {
+      'paths': ['uploads/here.txt', 'uploads/gone.txt'],
+    });
+    expect(result, {
+      'missing': ['uploads/gone.txt'],
+    });
   });
 }

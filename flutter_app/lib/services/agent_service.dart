@@ -2278,7 +2278,7 @@ class AgentService extends ChangeNotifier
 
   /// Directory (relative to [env]'s working directory) where chat
   /// attachments are staged before the outgoing message references them.
-  static const String uploadsDir = 'uploads';
+  static const String uploadsDir = uploadsDirName;
 
   /// Whether the active provider accepts inline image content: hosted
   /// providers do; the on-device text-only backends (WebLLM, Gemma,
@@ -2296,39 +2296,7 @@ class AgentService extends ChangeNotifier
   Future<String> stageAttachment({
     required String name,
     required Uint8List bytes,
-  }) async {
-    // A picked name can carry browser-supplied subdirectories
-    // (webkitRelativePath); chat attachments flatten into uploads/.
-    final base = sanitizeUploadName(name).split('/').last;
-    if (base.isEmpty) {
-      throw StateError('"$name" has no usable file name.');
-    }
-    final dirResult = await env.createDir(uploadsDir);
-    if (dirResult.isErr) {
-      throw StateError(
-        'Could not create $uploadsDir: ${dirResult.errorOrNull!.message}',
-      );
-    }
-    var candidate = '$uploadsDir/$base';
-    for (var n = 1; (await env.exists(candidate)).valueOrNull ?? false; n++) {
-      candidate = '$uploadsDir/${_dedupeName(base, n)}';
-    }
-    final writeResult = await env.writeBinaryFile(candidate, bytes);
-    if (writeResult.isErr) {
-      throw StateError(
-        'Could not store $base: ${writeResult.errorOrNull!.message}',
-      );
-    }
-    return candidate;
-  }
-
-  /// `name.ext` → `name-1.ext` for n = 1; names without an extension get
-  /// the suffix appended whole.
-  static String _dedupeName(String name, int n) {
-    final dot = name.lastIndexOf('.');
-    if (dot <= 0) return '$name-$n';
-    return '${name.substring(0, dot)}-$n${name.substring(dot)}';
-  }
+  }) => stageUpload(env, name: name, bytes: bytes);
 
   /// Best-effort delete of a file staged via [stageAttachment] — used when
   /// a pending attachment chip is removed before sending. Only paths inside

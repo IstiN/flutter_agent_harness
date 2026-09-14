@@ -3,13 +3,20 @@
 // the user's LIVE cookie jar (CodeMie's cookie auth without any SSO
 // dance), SW-relayed HTTP (MV3 service workers + `<all_urls>` host
 // permissions bypass CORS, so provider endpoints that never send CORS
-// headers are reachable), and tab creation (open the provider's login
-// page for an interactive sign-in).
+// headers are reachable), tab creation (open the provider's login page
+// for an interactive sign-in), and chat-attachment staging into the
+// embedded agent's sandbox (issue #313 — the sandbox is SW-local; the
+// "relay" hop is one message).
 //
 // The backend is injectable so the VM suite pins the dispatch (params
 // validation, response shapes, bounded waits) while the SW wires it to
 // chrome.* + fetch.
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:flutter_agent_harness/src/uploads.dart'
+    show kMaxStageUploadBytes, stageUploadTooLargeError;
 
 /// One cookie of the user's live jar (scoped read — see [handleExtOp]).
 final class ExtCookie {
@@ -35,6 +42,20 @@ abstract interface class ExtOpsBackend {
   });
 
   Future<void> tabsCreate(String url);
+
+  /// Stages one chat attachment into the agent env's uploads/ with the
+  /// app's EXACT semantics (the shared core `stageUpload` helper —
+  /// sanitize, dedupe, directory); returns the env-relative path the
+  /// outgoing message references.
+  Future<String> stageUpload(String name, Uint8List bytes);
+
+  /// Best-effort delete of a staged upload path (a pending chip removed
+  /// before send). Only uploads/ paths qualify; failures are ignored.
+  Future<void> discardUpload(String path);
+
+  /// The [paths] NOT present in the agent env right now — a chip staged
+  /// before an SW restart can point at a file that no longer exists.
+  Future<List<String>> missingUploads(List<String> paths);
 }
 
 final class ExtHttpResponse {
@@ -42,6 +63,26 @@ final class ExtHttpResponse {
 
   final int status;
   final String body;
+}
+
+/// Per-owner serialization for chat-attachment staging (issue #313 review
+/// E3): the check-then-write inside `stageUpload` is not atomic across
+/// awaits — two racing ops on the same name can interleave (A checks,
+/// B checks, A writes a.txt, B overwrites as a-1.txt) and leave BOTH
+/// callers referencing the wrong bytes. The SW is single-threaded but
+/// await-separated, so each host chains its staging through one gate;
+/// VM tests pin the ordering here because the SW-only host file itself
+/// is a `dart:js_interop` surface.
+final class StageGate {
+  Future<void> _tail = Future.value();
+
+  /// Runs [body] strictly after every previously submitted body finished
+  /// (or failed — the gate never stalls on an error).
+  Future<T> run<T>(Future<T> Function() body) {
+    final staged = _tail.then((_) => body());
+    _tail = staged.then((_) {}, onError: (_) {});
+    return staged;
+  }
 }
 
 /// Ops bound per request. Unknown ops are a structured error, never a
@@ -93,6 +134,41 @@ Future<Map<String, dynamic>> handleExtOp(
           .tabsCreate(url)
           .then((_) => {'opened': true})
           .timeout(const Duration(seconds: 15));
+    case 'agent.stageUpload':
+      final name = params['name'] as String?;
+      final encoded = params['bytes'] as String?;
+      if (name == null || name.isEmpty) {
+        throw 'agent.stageUpload needs a "name"';
+      }
+      if (encoded == null) {
+        throw 'agent.stageUpload needs base64 "bytes"';
+      }
+      // Size guard BEFORE the decode allocates (base64 inflates by 4/3).
+      // The cap constant and the refusal wording are the SHARED core ones —
+      // the panel pre-check refuses with the same message (review minor 3).
+      if (encoded.length * 3 ~/ 4 > kMaxStageUploadBytes) {
+        throw stageUploadTooLargeError(encoded.length * 3 ~/ 4);
+      }
+      final Uint8List bytes;
+      try {
+        bytes = base64Decode(encoded);
+      } on FormatException {
+        throw 'agent.stageUpload needs base64 "bytes"';
+      }
+      if (bytes.length > kMaxStageUploadBytes) {
+        throw stageUploadTooLargeError(bytes.length);
+      }
+      return {'path': await backend.stageUpload(name, bytes)};
+    case 'agent.discardUpload':
+      final path = params['path'] as String?;
+      if (path == null || path.isEmpty) {
+        throw 'agent.discardUpload needs a "path"';
+      }
+      await backend.discardUpload(path);
+      return const {'discarded': true};
+    case 'agent.missingUploads':
+      final paths = (params['paths'] as List?)?.cast<String>() ?? const [];
+      return {'missing': await backend.missingUploads(paths)};
     default:
       throw 'unknown ext op: $op';
   }

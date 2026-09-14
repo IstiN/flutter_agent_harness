@@ -2,6 +2,12 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+// The shared `sanitizeUploadName` moved to the pure core (issue #313) so
+// the extension service worker stages with the exact same semantics;
+// re-exported here to keep the fa_ui import surface stable.
+export 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show sanitizeUploadName;
+
 import 'dart:typed_data';
 
 /// One file picked for upload into the sandbox filesystem. [name] is the
@@ -77,18 +83,6 @@ String? uploadBatchSizeError(
 
 String _formatMb(int bytes) =>
     '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-
-/// Strips path separators and `.`/`..` segments from a picked file [name]
-/// (some browsers send a `webkitRelativePath`), so the upload stays inside
-/// the target directory. Returns the cleaned relative path — possibly with
-/// subdirectories — or an empty string when nothing usable is left.
-String sanitizeUploadName(String name) {
-  final segments = name
-      .split(RegExp(r'[/\\]'))
-      .where((s) => s.isNotEmpty && s != '.' && s != '..')
-      .toList();
-  return segments.join('/');
-}
 
 /// Formats a byte count as a short human-readable string.
 String formatFileSize(int bytes) {
