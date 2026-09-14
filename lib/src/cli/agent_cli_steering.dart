@@ -94,6 +94,12 @@ extension AgentCliSteering on AgentCli {
   @visibleForTesting
   void steerForTest(String text) => _steerResolved(text);
 
+  /// Test seam: steers with clipboard chips through the same
+  /// `_steerResolved` path a busy composer submit takes (issue #276).
+  @visibleForTesting
+  void steerImagesForTest(String text, List<TuiImageAttachment> images) =>
+      _steerResolved(text, images: images);
+
   /// Test seam: the run-settle steering resolution (leftover run or loud
   /// drop) so driver tests can exercise both branches deterministically
   /// instead of racing the real settle window.

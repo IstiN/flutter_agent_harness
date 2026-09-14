@@ -2667,6 +2667,9 @@ final class FaTuiController {
   /// Drains the queued messages (the model echoes them into the history) —
   /// the host runs them as separate turns after the current one settles.
   Future<List<String>> drainQueue() {
+    // No attached program: the model never sees the drain request, so the
+    // completer would park forever — nothing can be queued either.
+    if (!_running) return Future<List<String>>.value(const []);
     final completer = Completer<List<String>>();
     _send(DrainQueueMsg(completer));
     return completer.future;

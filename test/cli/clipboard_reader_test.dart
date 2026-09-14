@@ -67,4 +67,43 @@ void main() {
     );
     expect((read as PasteboardImage).bytes, _pngish);
   });
+
+  test('the macOS path reads the scratch file the script wrote', () async {
+    Future<ProcessResult> runner(String exe, List<String> args) async {
+      expect(exe, 'osascript');
+      // The script embeds the target path: the fake osascript honors it
+      // exactly like the real one — write the image, exit 0.
+      final script = args.join(' ');
+      final match = RegExp(r'POSIX file "([^"]+)"').firstMatch(script)!;
+      File(match.group(1)!).writeAsBytesSync(_pngish);
+      return _ok(const []);
+    }
+
+    final read = await readPasteboardImage(runner: runner, platform: 'macos');
+    expect(read, isA<PasteboardImage>());
+    expect((read as PasteboardImage).bytes, _pngish);
+  });
+
+  test('the macOS path falls through PNG to JPEG, then gives up', () async {
+    var calls = 0;
+    Future<ProcessResult> runner(String exe, List<String> args) async {
+      calls++;
+      return ProcessResult(1, 1, '', 'clipboard holds no image');
+    }
+
+    final read = await readPasteboardImage(runner: runner, platform: 'macos');
+    expect(calls, 2, reason: 'PNGf tried, then JPEG');
+    expect(read, isA<PasteboardUnavailable>());
+  });
+
+  test('the pinned platform falls through to the platform note', () async {
+    final read = await readPasteboardImage(
+      runner: (exe, args) async => _ok(const []),
+      platform: 'plan9',
+    );
+    expect(
+      (read as PasteboardUnavailable).reason,
+      contains('no pasteboard reader'),
+    );
+  });
 }

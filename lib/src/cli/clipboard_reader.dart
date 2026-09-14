@@ -51,6 +51,10 @@ Future<PasteboardRead> readPasteboardImage({
   ProcessRunner? runner,
   Directory? tempDir,
   Map<String, String> environment = const {},
+  /// Pins the platform branch so unit tests can exercise every
+  /// platform path (macOS/Windows readers are unreachable on a Linux
+  /// CI runner, which would push their CRAP through the roof).
+  String? platform,
 }) async {
   final run = runner ?? _runBinaryProcess;
   // The explicit map wins (unit tests); the real process env is the seam
@@ -70,9 +74,18 @@ Future<PasteboardRead> readPasteboardImage({
   // a ProcessException here — turn it into the named unavailable result
   // the transcript prints as a clean note (edge E1).
   try {
-    if (Platform.isMacOS) return await _readMacos(run, tmp);
-    if (Platform.isLinux) return await _readLinux(run);
-    if (Platform.isWindows) return await _readWindows(run, tmp);
+    final isMacOS = platform != null
+        ? platform == 'macos'
+        : Platform.isMacOS;
+    final isLinux = platform != null
+        ? platform == 'linux'
+        : Platform.isLinux;
+    final isWindows = platform != null
+        ? platform == 'windows'
+        : Platform.isWindows;
+    if (isMacOS) return await _readMacos(run, tmp);
+    if (isLinux) return await _readLinux(run);
+    if (isWindows) return await _readWindows(run, tmp);
   } on Object catch (error) {
     return PasteboardUnavailable('pasteboard read failed: $error');
   }
