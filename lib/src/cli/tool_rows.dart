@@ -108,37 +108,49 @@ String toolRowDetail(
 }) {
   switch (toolName) {
     case 'ask':
-      final questions = args['questions'];
-      if (questions is List && questions.isNotEmpty) {
-        final first = questions.first;
-        if (first is Map && first['question'] is String) {
-          return (first['question'] as String).trim();
-        }
-      }
-      return _firstString(args);
+      return _askDetail(args);
     case 'bash':
       return collapseCd(_firstString(args));
     case 'read':
-      final path = _firstString(args);
-      if (path.isEmpty) return '';
-      final offset = args['offset'];
-      final limit = args['limit'];
-      final lines = offset is num
-          ? (limit is num
-                ? ':${offset.toInt()}-${limit.toInt()}'
-                : ':${offset.toInt()}')
-          : '';
-      return '${_briefPath(path, cwd: cwd, home: home)}$lines';
+      return _readDetail(args, cwd: cwd, home: home);
     case 'write':
     case 'edit':
     case 'ls':
     case 'bash_job':
-      final action = _firstString(args);
-      final id = args['id'];
-      return id is String && id.isNotEmpty ? '$action $id' : action;
+      return _actionDetail(args);
     default:
       return _firstString(args);
   }
+}
+
+String _askDetail(Map<String, dynamic> args) {
+  final questions = args['questions'];
+  if (questions is List && questions.isNotEmpty) {
+    final first = questions.first;
+    if (first is Map && first['question'] is String) {
+      return (first['question'] as String).trim();
+    }
+  }
+  return _firstString(args);
+}
+
+String _readDetail(Map<String, dynamic> args, {String? cwd, String? home}) {
+  final path = _firstString(args);
+  if (path.isEmpty) return '';
+  final offset = args['offset'];
+  final limit = args['limit'];
+  final lines = offset is num
+      ? (limit is num
+            ? ':${offset.toInt()}-${limit.toInt()}'
+            : ':${offset.toInt()}')
+      : '';
+  return '${_briefPath(path, cwd: cwd, home: home)}$lines';
+}
+
+String _actionDetail(Map<String, dynamic> args) {
+  final action = _firstString(args);
+  final id = args['id'];
+  return id is String && id.isNotEmpty ? '$action $id' : action;
 }
 
 /// Collapses a leading `cd <dir> && …` compound to the meaningful tail
