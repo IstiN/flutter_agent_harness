@@ -785,7 +785,9 @@ void main() {
         // run was in flight on main — a cross-leg cancellation vector.
         // Choice pinned here: the group is suffixed with run_id so every
         // dispatch is independent (supersede-cancellation #177 is traded
-        // away; the daily legs serialize via `needs` instead).
+        // away; since #359 the play/testflight legs dispatch this workflow
+        // CONCURRENTLY by design — correlation rests on the distinct
+        // run-name (#343), not on serialization).
         final y =
             loadYaml(read('.github/workflows/build-mobile.yml')) as YamlMap;
         final concurrency = y['concurrency'] as YamlMap;

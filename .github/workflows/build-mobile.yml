@@ -61,8 +61,10 @@ permissions:
 # main (a manual dispatch, or the sibling daily leg's child in a
 # single-leg run): a cross-run cancellation vector. Every dispatch is now
 # independent; the #177 supersede-cancellation is intentionally traded
-# away (the daily legs are serialized — play needs testflight — and the
-# single self-hosted macOS runner serializes the iOS builds physically).
+# away. The daily play/testflight legs dispatch this workflow CONCURRENTLY
+# by design (#359 — decoupled from each other): their runs tell apart by
+# the run-name correlation (#343), not by serialization, and the single
+# self-hosted macOS runner serializes the iOS builds physically.
 concurrency:
   group: Build Mobile Apps-${{ github.ref }}-${{ github.run_id }}
   cancel-in-progress: false
