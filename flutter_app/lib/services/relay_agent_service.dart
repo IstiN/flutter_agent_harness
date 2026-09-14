@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:fa_browser_agent/fa_browser_agent.dart';
 import 'package:fa_ui/fa_ui.dart' as fa_ui;
@@ -29,10 +30,14 @@ import 'session_names_store.dart';
 /// The local agent loop under the hood is an idle shell: it never runs
 /// (see [AgentService.relayBase]); every chat surface member is overridden.
 ///
-/// v1 limits (issue #34): attachments are not staged over the relay, the
-/// trajectory ledger stays empty (the panel should hide the tab via
-/// `FaChatFeatures`), and approval *mode* is a local preference — the SW
-/// gate keeps its own mode until `settings_put` carries it.
+/// v1 limits (issue #34): the trajectory ledger stays empty (the panel
+/// should hide the tab via `FaChatFeatures`), and approval *mode* is a
+/// local preference — the SW gate keeps its own mode until `settings_put`
+/// carries it. Attachment staging is NO LONGER one of them (issue #313):
+/// `stageAttachment` rides the id-matched `agent.stageUpload` ext_request
+/// op into the SW-local sandbox, with the app's exact semantics (shared
+/// core helper). Binary-heavy flows (real file pickers with huge files)
+/// stay a #34 phase-2 topic; text pastes and normal attachments do not.
 final class RelayAgentService extends AgentService {
   RelayAgentService._(this._transport) : super.relayBase() {
     _transport.events.listen(_onTransportEvent);
@@ -75,6 +80,10 @@ final class RelayAgentService extends AgentService {
   /// [reconfigure] - issue #327 (the relay path skipped the guard the
   /// local service runs; the SW reconfigured blindly).
   ProviderRegistry? providerRegistry;
+  /// Id-matched `ext_request` round-trips in flight (staging ops, issue
+  /// #313). The SW answers on the SAME channel with an `ext_result`.
+  final _pendingExt = <String, Completer<Map<String, dynamic>>>{};
+  int _extSeq = 0;
 
   ApprovalPrompt? _approvalHandler;
   AskCallback? _askHandler;
@@ -192,25 +201,91 @@ final class RelayAgentService extends AgentService {
     required List<fa_ui.FaStagedAttachment> attachments,
     String text = '',
   }) async {
-    throw UnsupportedError(
-      'attachment staging over the extension relay lands with the #34 '
-      'phase 2 (SW-side uploads surface)',
-    );
+    if (attachments.isEmpty) return sendText(text);
+    // A chip staged before an SW restart can point at a file the memory
+    // FS already lost (AC4) — verify BEFORE composing, so the composer
+    // restores the chips with a clean note instead of sending a
+    // silently-empty reference.
+    final check = await _extRequest('agent.missingUploads', {
+      'paths': [for (final attachment in attachments) attachment.path],
+    });
+    final missing =
+        (check['missing'] as List?)?.cast<String>() ?? const <String>[];
+    if (missing.isNotEmpty) {
+      throw StateError('staged file lost — re-attach: ${missing.join(', ')}');
+    }
+    // Same path-reference contract as the app (agent_service.dart): the
+    // text names each sandbox path so the agent reads the file with its
+    // tools. The v2 prompt is text-only, so image attachments travel as
+    // references too — there is no inline-image lane over the relay.
+    final fullText = [
+      for (final attachment in attachments)
+        '[attached file: ${attachment.path} — read it with your tools]',
+      if (text.trim().isNotEmpty) text.trim(),
+    ].join('\n');
+    _error = null;
+    _append(fa_ui.FaChatMessage(role: 'user', content: fullText));
+    _trajectoryAppend(UserMessage.text(fullText, timestamp: DateTime.now()));
+    if (_running) {
+      _transport.steer(fullText);
+    } else {
+      _transport.sendPrompt(
+        'p-${DateTime.now().microsecondsSinceEpoch}-$_promptSeq',
+        fullText,
+      );
+    }
   }
 
   @override
   Future<String> stageAttachment({
     required String name,
     required Uint8List bytes,
-  }) {
-    throw UnsupportedError(
-      'attachment staging over the extension relay lands with the #34 '
-      'phase 2 (SW-side uploads surface)',
-    );
+  }) async {
+    // Pre-check BEFORE the base64 encode (review minor 2): an oversized
+    // paste is refused with the SAME shared-core message the SW op would
+    // throw, instead of wasting a 4/3 expansion before the refusal.
+    if (bytes.length > kMaxStageUploadBytes) {
+      throw StateError(stageUploadTooLargeError(bytes.length));
+    }
+    final result = await _extRequest('agent.stageUpload', {
+      'name': name,
+      'bytes': base64Encode(bytes),
+    });
+    final path = result['path'];
+    if (path is! String || path.isEmpty) {
+      throw StateError('the service worker returned no staged path');
+    }
+    return path;
   }
 
   @override
-  Future<void> discardStagedAttachment(String path) async {}
+  Future<void> discardStagedAttachment(String path) async {
+    if (!path.startsWith('$uploadsDirName/')) return;
+    try {
+      await _extRequest('agent.discardUpload', {'path': path});
+    } on Object {
+      // Best effort: a leftover file in uploads/ is harmless.
+    }
+  }
+
+  /// One-shot id-matched `ext_request` round-trip. Throws [StateError]
+  /// with the SW's message on `ok:false`; throws up front while the
+  /// transport is not attached (scaffold checkout without sw/agent.js —
+  /// the same named refusal the SW's agent-guarded ops give).
+  Future<Map<String, dynamic>> _extRequest(
+    String op,
+    Map<String, dynamic> params,
+  ) {
+    if (!_transport.isReady) {
+      throw StateError('agent not built (missing sw/agent.js)');
+    }
+    final id = 'ui-${DateTime.now().microsecondsSinceEpoch}-$_extSeq';
+    _extSeq += 1;
+    final pending = Completer<Map<String, dynamic>>();
+    _pendingExt[id] = pending;
+    _transport.dispatch(ExtRequestMsg(id: id, op: op, params: params));
+    return pending.future;
+  }
 
   @override
   void abort() => _transport.cancel();
@@ -528,6 +603,16 @@ final class RelayAgentService extends AgentService {
       case Dropped():
         _running = false;
         _error = 'extension service worker disconnected';
+        // Staging round-trips in flight can never answer now (AC4): fail
+        // them so a pending paste surfaces a note instead of hanging.
+        for (final pending in _pendingExt.values) {
+          if (!pending.isCompleted) {
+            pending.completeError(
+              StateError('extension service worker disconnected'),
+            );
+          }
+        }
+        _pendingExt.clear();
         notifyListeners();
       case Reconnected():
         _error = null;
@@ -610,6 +695,13 @@ final class RelayAgentService extends AgentService {
         notifyListeners();
       case SessionsResultMsg(:final sessions):
         _sessionsQuery?.complete(sessions);
+      case ExtResultMsg(:final id, :final ok, :final data, :final error):
+        final pending = _pendingExt.remove(id);
+        if (pending != null && !pending.isCompleted) {
+          ok
+              ? pending.complete(data ?? const <String, dynamic>{})
+              : pending.completeError(StateError(error ?? 'ext op failed'));
+        }
       case ToolsPutMsg():
         break; // UI -> SW only
       case ErrorMsg(:final message):

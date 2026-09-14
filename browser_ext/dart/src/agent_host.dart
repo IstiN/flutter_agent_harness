@@ -9,6 +9,7 @@
 // here is ever exposed to content scripts or pages (AC8).
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/src/config/config_service.dart';
 import 'package:flutter_agent_harness/src/config/config_tool.dart';
@@ -30,6 +31,7 @@ import 'package:flutter_agent_harness/src/session/uuid.dart';
 import 'package:flutter_agent_harness/src/session/session_tree.dart';
 import 'package:flutter_agent_harness/src/tools/builtin_tools.dart';
 import 'package:flutter_agent_harness/src/types.dart';
+import 'package:flutter_agent_harness/src/uploads.dart' as uploads;
 import 'package:http/http.dart' as http;
 
 import 'active_tab_context.dart';
@@ -120,6 +122,11 @@ final class AgentHost implements UiHostBackend {
   String _mailbox = '';
   bool _running = false;
   bool _booted = false;
+
+  /// Chat-attachment staging runs through this gate (issue #313 review
+  /// E3): one op at a time, so the check-then-write in `stageUpload`
+  /// cannot interleave across awaits.
+  final StageGate _stageGate = StageGate();
 
   /// Hub presence (null when no faDap config).
   DapIntegration? _dap;
@@ -808,6 +815,9 @@ final class AgentHost implements UiHostBackend {
         'fake': provider == null || isFakeModel(provider.model),
       },
       'approval': _approvals.mode.label,
+      // The panel's oversized-paste pre-check reads the cap from here
+      // (main.js snapshot -> status payload) — no JS-side constant.
+      'staging': {'capBytes': uploads.kMaxStageUploadBytes},
       if (_dap case final dap?) 'hub': dap.snapshot(),
       'session': {
         'path': _sessionPath,
@@ -1201,5 +1211,36 @@ final class _ExtOpsBackend implements ExtOpsBackend {
     final chrome = _host._chromeApi;
     if (chrome == null) throw 'no chrome binding (v1-only build)';
     await chrome.tabs.create(url: url);
+  }
+
+  @override
+  Future<String> stageUpload(String name, Uint8List bytes) =>
+      // The same core routine the app's AgentService.stageAttachment runs
+      // (issue #313): identical sanitize/dedupe/uploads/ semantics —
+      // through the host's StageGate so concurrent ops cannot interleave
+      // (review E3).
+      _host._stageGate.run(
+        () => uploads.stageUpload(_host._env, name: name, bytes: bytes),
+      );
+
+  @override
+  Future<void> discardUpload(String path) async {
+    if (!path.startsWith('${uploads.uploadsDirName}/')) return;
+    try {
+      await _host._env.remove(path);
+    } on Object {
+      // Best effort: a leftover file in uploads/ is harmless.
+    }
+  }
+
+  @override
+  Future<List<String>> missingUploads(List<String> paths) async {
+    final missing = <String>[];
+    for (final path in paths) {
+      if ((await _host._env.exists(path)).valueOrNull != true) {
+        missing.add(path);
+      }
+    }
+    return missing;
   }
 }

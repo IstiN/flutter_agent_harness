@@ -3,6 +3,8 @@
 // in the LICENSE file.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:fa/services/agent_service.dart' show AgentConfig, ProviderConnectionException;
 import 'package:fa/services/relay_agent_service.dart';
@@ -697,7 +699,6 @@ void main() {
     expect(service.messages.last.content, faEmptyResponsePlaceholder);
     addTearDown(channel.close);
   });
-
   test('reconfigure runs the mixed-row guard BEFORE settings_put '
       '(issue #327)', () async {
     final (:service, :channel) = await _attached();
@@ -725,6 +726,218 @@ void main() {
     );
     expect(channel.sentOf('settings_put'), isNull);
     expect(service.error, isNotNull);
+  });
+
+  group('attachment staging over the relay (#313)', () {
+    Future<Map<String, dynamic>> _nextExtFrame(
+      FakePortChannel channel,
+      String op,
+    ) async {
+      for (var i = 0; i < 50; i++) {
+        final frame = channel.sentOf('ext_request');
+        if (frame != null && frame['op'] == op) return frame;
+        await Future<void>.delayed(Duration.zero);
+      }
+      fail('no $op ext_request frame sent');
+    }
+
+    test('stageAttachment dispatches agent.stageUpload and returns '
+        'the SW path', () async {
+      final (:service, :channel) = await _attached();
+      addTearDown(channel.close);
+      final bytes = Uint8List.fromList(List.filled(200 * 1024, 0x61));
+      final staged = service.stageAttachment(
+        name: 'pasted-1789302656781.txt',
+        bytes: bytes,
+      );
+      final frame = await _nextExtFrame(channel, 'agent.stageUpload');
+      expect(frame['params']['name'], 'pasted-1789302656781.txt');
+      expect(base64Decode(frame['params']['bytes'] as String), bytes);
+      channel.fromWorker(
+        ExtResultMsg(
+          id: frame['id'] as String,
+          ok: true,
+          data: {'path': 'uploads/pasted-1789302656781.txt'},
+        ),
+      );
+      expect(await staged, 'uploads/pasted-1789302656781.txt');
+    });
+
+    test('stageAttachment surfaces a named SW refusal', () async {
+      final (:service, :channel) = await _attached();
+      addTearDown(channel.close);
+      final staged = service.stageAttachment(
+        name: 'big.bin',
+        bytes: Uint8List(1),
+      );
+      final frame = await _nextExtFrame(channel, 'agent.stageUpload');
+      channel.fromWorker(
+        ExtResultMsg(
+          id: frame['id'] as String,
+          ok: false,
+          error: 'upload too large: 1 byte exceeds the 20 MB staging cap',
+        ),
+      );
+      await expectLater(staged, throwsStateError);
+    });
+
+    test('stageAttachment pre-checks the cap BEFORE encoding (review '
+        'minor 2)', () async {
+      final (:service, :channel) = await _attached();
+      addTearDown(channel.close);
+      final staged = service.stageAttachment(
+        name: 'pasted-huge.txt',
+        bytes: Uint8List(kMaxStageUploadBytes + 1),
+      );
+      await expectLater(
+        staged,
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'upload too large: ${kMaxStageUploadBytes + 1} bytes exceeds '
+                'the 20 MB staging cap',
+          ),
+        ),
+      );
+      // No frame ever left the panel: the refusal is local, no wasted
+      // 4/3 base64 expansion over the wire.
+      expect(channel.sentOf('ext_request'), isNull);
+    });
+
+    test('a dropped SW port fails pending staging with a clean note '
+        '(AC4)', () async {
+      final (:service, :channel) = await _attached();
+      final staged = service.stageAttachment(
+        name: 'pasted-2.txt',
+        bytes: Uint8List(1),
+      );
+      final frame = await _nextExtFrame(channel, 'agent.stageUpload');
+      expect(frame, isNotNull);
+      // The SW dies before the ext_result: the port closes, the transport
+      // goes Dropped, and the in-flight paste must not hang forever.
+      channel.close();
+      await expectLater(
+        staged,
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'extension service worker disconnected',
+          ),
+        ),
+      );
+    });
+
+    test('sendAttachments verifies staged files and references their '
+        'paths before the typed text', () async {
+      final (:service, :channel) = await _attached();
+      addTearDown(channel.close);
+      final sent = service.sendAttachments(
+        attachments: [
+          (
+            path: 'uploads/pasted-1.txt',
+            bytes: Uint8List(0),
+            mimeType: 'text/plain',
+          ),
+        ],
+        text: 'summarize this',
+      );
+      final frame = await _nextExtFrame(channel, 'agent.missingUploads');
+      expect(frame['params']['paths'], ['uploads/pasted-1.txt']);
+      channel.fromWorker(
+        ExtResultMsg(
+          id: frame['id'] as String,
+          ok: true,
+          data: {'missing': <String>[]},
+        ),
+      );
+      await sent;
+      final prompt = channel.sentOf('prompt');
+      expect(prompt, isNotNull);
+      expect(
+        prompt!['text'],
+        '[attached file: uploads/pasted-1.txt — read it with your tools]\n'
+        'summarize this',
+      );
+    });
+
+    test('sendAttachments names lost staged files — never a silently '
+        'empty reference (SW restart with a pending chip)', () async {
+      final (:service, :channel) = await _attached();
+      addTearDown(channel.close);
+      final sent = service.sendAttachments(
+        attachments: [
+          (
+            path: 'uploads/pasted-1.txt',
+            bytes: Uint8List(0),
+            mimeType: 'text/plain',
+          ),
+        ],
+        text: 'summarize this',
+      );
+      final frame = await _nextExtFrame(channel, 'agent.missingUploads');
+      channel.fromWorker(
+        ExtResultMsg(
+          id: frame['id'] as String,
+          ok: true,
+          data: {'missing': ['uploads/pasted-1.txt']},
+        ),
+      );
+      await expectLater(
+        sent,
+        throwsA(
+          predicate(
+            (StateError e) => e.message.contains('re-attach'),
+            'StateError naming re-attach',
+          ),
+        ),
+      );
+      expect(channel.sentOf('prompt'), isNull);
+    });
+
+    test('discardStagedAttachment best-effort deletes only inside '
+        'uploads/', () async {
+      final (:service, :channel) = await _attached();
+      addTearDown(channel.close);
+      await service.discardStagedAttachment('session-1.jsonl');
+      expect(channel.sentOf('ext_request'), isNull);
+      final removed = service.discardStagedAttachment('uploads/a.txt');
+      final frame = await _nextExtFrame(channel, 'agent.discardUpload');
+      expect(frame['params']['path'], 'uploads/a.txt');
+      channel.fromWorker(
+        ExtResultMsg(id: frame['id'] as String, ok: true, data: {}),
+      );
+      await removed;
+    });
+
+    test('E1: staging without the SW agent is a named refusal, not a '
+        'crash', () async {
+      final channel = FakePortChannel();
+      addTearDown(channel.close);
+      final transport = WorkerRelayTransport(
+        portFactory: () => channel,
+        channel: channel,
+      );
+      final service = RelayAgentService.forTest(transport);
+      // No hello/attach handshake: the port server is up (scaffold
+      // checkout) but the agent host never booted — the op refuses with
+      // the same named string the SW agent-guarded ops give.
+      await expectLater(
+        service.stageAttachment(
+          name: 'pasted-1.txt',
+          bytes: Uint8List.fromList('x'.codeUnits),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'agent not built (missing sw/agent.js)',
+          ),
+        ),
+      );
+      expect(channel.sentOf('ext_request'), isNull);
+    });
   });
   _mailTests();
   _reviewFixTests();
