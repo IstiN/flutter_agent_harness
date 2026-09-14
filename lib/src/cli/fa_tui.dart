@@ -10,6 +10,7 @@ import 'composer_overlay.dart';
 import 'ansi_markdown.dart';
 import 'agent_hub_tui.dart';
 import 'tui_prompt.dart';
+import 'tui_theme.dart';
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
 import 'system_notice_render.dart';
 import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
@@ -33,13 +34,14 @@ List<ProgramOption> _programHookOptions(TuiProgramHooks? hooks) {
   ];
 }
 
-/// The site palette (site/styles.css): a teal accent (#5eead4) and an indigo
-/// accent-2 (#818cf8) on a dark background. Width math in the view always
-/// uses the raw strings — escapes are added only at write time.
-String _accent(String s) => '\x1b[1m\x1b[38;2;94;234;212m$s\x1b[0m';
-String _accent2(String s) => '\x1b[1m\x1b[38;2;129;140;248m$s\x1b[0m';
-String _accent2Plain(String s) => '\x1b[38;2;129;140;248m$s\x1b[0m';
-String _dim(String s) => '\x1b[2m$s\x1b[0m';
+/// The session TUI theme (issue #279) supplies every palette escape;
+/// width math in the view always uses the raw strings — escapes are
+/// added only at write time. Byte-identical to the historical site
+/// palette (teal #5eead4, indigo #818cf8) under the default theme.
+String _accent(String s) => tuiAccent(s);
+String _accent2(String s) => tuiAccent2(s);
+String _accent2Plain(String s) => tuiAccent2Soft(s);
+String _dim(String s) => tuiDim(s);
 
 /// Host callbacks supplied by [AgentCli] to the dart_tui REPL.
 final class FaTuiCallbacks {
@@ -879,6 +881,7 @@ final class FaTuiModel extends Model {
 
   (Model, Cmd?) _updateAfterExitCheck(Msg msg) {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
+    if (msg is _ThemeChangedMsg) return _handleThemeChanged();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
     if (msg is OpenPickerMsg) return _handleOpenPicker(msg);
     if (msg is HubStateMsg) return _handleHubStateMsg(msg);
@@ -942,6 +945,24 @@ final class FaTuiModel extends Model {
     if (_modelPickerOpen) return _refreshedModelMenu();
     return (this, null);
   }
+
+  /// Theme switched (issue #279): drop rendered-color caches and repaint.
+  /// The wrap cache holds text geometry only (colors apply at emit time),
+  /// so invalidation is a cache reset plus a redraw on the next frame
+  /// boundary — never a torn frame (E1).
+  (Model, Cmd?) _handleThemeChanged() {
+    final copy = copyWith(menuSelected: menuSelected);
+    copy._wrapCache = _WrapCache();
+    // The sticky echo caches formatted rows keyed on width+content —
+    // both unchanged by a theme switch — so drop it explicitly or the
+    // pinned lines keep the old palette until the next submit.
+    copy._stickyFmtSource = null;
+    return (copy, null);
+  }
+
+  /// Test seam: the private [_ThemeChangedMsg] (tests drive the model
+  /// update loop directly and cannot name the class).
+  static Msg themeChangedMsgForTest() => _ThemeChangedMsg();
 
   /// Whether the open menu is the model picker (not the slash menu).
   bool get _modelPickerOpen => menuOpen && menuModelMode;
@@ -1867,7 +1888,7 @@ final class FaTuiModel extends Model {
   /// `>_Fa` prefix), leaving one visible empty line after the user message.
   List<String> _echoAppend(List<String> lines, String text) {
     final rule = _dim('─' * termWidth);
-    const bg = '\x1b[48;2;30;34;42m';
+    final bg = tuiUserMessageBgSgr();
     const reset = '\x1b[0m';
     final styledInput = text
         .split('\n')
@@ -1883,7 +1904,7 @@ final class FaTuiModel extends Model {
   /// the host callback.
   (FaTuiModel, Cmd?) _submit(String text) {
     final rule = _dim('─' * termWidth);
-    const bg = '\x1b[48;2;30;34;42m';
+    final bg = tuiUserMessageBgSgr();
     const reset = '\x1b[0m';
     // Empty submits (guided-flow "keep the default" answers) skip the
     // message echo — an empty backgrounded block would read as a glitch.
@@ -1901,13 +1922,16 @@ final class FaTuiModel extends Model {
     // commands), consecutive duplicates collapsed, capped at 100.
     final history = _recordInputHistory(inputHistory, text);
     // The pinned echo for long answers (Copilot-style): rule + the first
-    // input line, truncated to the width with a dim ellipsis marking any
+    // input line, truncated to the width with an ellipsis marking any
     // remainder — a multi-line message or one simply longer than a row
     // (a bare long line previously got visually cut without any marker).
+    // The ellipsis is stored PLAIN: the sticky formatter paints it with
+    // the current theme at emit time; a baked dim SGR would freeze the
+    // old palette after a mid-session /theme switch (issue #279 E1).
     final firstLine = inputText.split('\n').first;
     final fits = firstLine.length <= termWidth - 3 || termWidth <= 3;
     final shown = fits ? firstLine : firstLine.substring(0, termWidth - 3);
-    final more = inputText.contains('\n') || !fits ? _dim(' …') : '';
+    final more = inputText.contains('\n') || !fits ? ' …' : '';
     final cleared = copyWith(
       inputText: '',
       cursor: 0,
@@ -2588,6 +2612,10 @@ final class FaTuiController {
 
   void sendModelsRefresh() {
     _send(_ModelsRefreshMsg());
+  }
+
+  void sendThemeChanged() {
+    _send(_ThemeChangedMsg());
   }
 
   void openModelMenu() {

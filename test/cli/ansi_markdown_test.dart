@@ -1,4 +1,6 @@
+import 'package:dart_tui/style.dart' show ColorProfile;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
 import 'package:test/test.dart';
 
@@ -87,6 +89,40 @@ void main() {
       final stored = '\x1b[2m${'─' * 200}\x1b[0m';
       final out = AnsiMarkdown(width: 80).formatLine(stored);
       expect(out.replaceAll(RegExp(r'\x1b\[[0-9;]*m'), ''), '─' * 80);
+    });
+
+    test('user echo bg repaints with the CURRENT theme at emit time', () {
+      final controller = FaThemeController.instance;
+      controller
+        ..reset()
+        ..profile = ColorProfile.trueColor;
+      addTearDown(controller.reset);
+      // Stored by _echoAppend under the default theme.
+      const line = '\x1b[48;2;30;34;42mhello\x1b[0m';
+      expect(
+        AnsiMarkdown(width: 40).formatLine(line),
+        contains('\x1b[48;2;30;34;42m'),
+      );
+      // Mid-session /theme pi: the SAME stored line renders with pi's
+      // userMessageBg — the palette of the submit must not leak forever.
+      controller.switchTo('pi');
+      final out = AnsiMarkdown(width: 40).formatLine(line);
+      expect(out, contains('\x1b[48;2;52;53;65m'));
+      expect(out, isNot(contains('\x1b[48;2;30;34;42m')));
+      expect(out, contains('hello'));
+    });
+
+    test('stored rules re-render in the CURRENT theme dim color', () {
+      final controller = FaThemeController.instance;
+      controller
+        ..reset()
+        ..profile = ColorProfile.trueColor;
+      addTearDown(controller.reset);
+      final stored = '\x1b[2m${'─' * 200}\x1b[0m';
+      controller.switchTo('pi');
+      final out = AnsiMarkdown(width: 80).formatLine(stored);
+      // pi's muted (dim + #666666), not the bare default faint.
+      expect(out, contains('\x1b[38;2;102;102;102m'));
     });
 
     group('wrapAnsiLine', () {
