@@ -183,6 +183,30 @@ void main() {
       expect(section, isNot(contains('apt-get')));
     });
 
+    test('android and ios prompts carry the TLS/HTTP guidance (issue 337)',
+        () {
+      for (final platform in [
+        SandboxPlatform.android,
+        SandboxPlatform.ios,
+      ]) {
+        final section = formatSandboxCommandSection(platform);
+        expect(
+          section,
+          contains('HTTP/HTTPS ride the host bridge (no ssl module)'),
+          reason: '$platform python3 summary',
+        );
+        expect(section, contains('urllib/requests/http.client'));
+        expect(section, contains('transparently routed through the host'));
+        expect(section, contains('-d @file'));
+        expect(section, contains('Recommended HTTP path'));
+      }
+      // Desktop shells have a real toolchain; no guidance needed.
+      expect(
+        formatSandboxCommandSection(SandboxPlatform.desktop),
+        isNot(contains('Recommended HTTP path')),
+      );
+    });
+
     test('consecutive entries with the same summary render merged', () {
       final section = formatSandboxCommandSection(SandboxPlatform.web);
       expect(section, contains('curl/wget — HTTP(S) requests and downloads'));

@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
@@ -183,6 +184,10 @@ final class SandboxBuiltins {
   /// still create their parents). See [SandboxDirMaker].
   final SandboxDirMaker? makeDirectory;
 
+  /// Hard cap for a `-d`/`--data` request body (issue #337 E1): bigger
+  /// payloads fail with a clean error instead of corrupting the request.
+  static const int maxCurlBodyBytes = 1024 * 1024;
+
   static SandboxBuiltinResult _ok(
     List<int> stdout, [
     List<int> stderr = const [],
@@ -206,6 +211,7 @@ final class SandboxBuiltins {
   /// subset (`-X`, `-H`, `-d`, `-o`, `-s`, `-L`, `--version`, `--help`).
   Future<SandboxBuiltinResult> curl(
     List<String> args, {
+    List<int>? stdinBytes,
     Duration? timeout,
   }) async {
     if (args.contains('--version') || args.contains('-V')) {
@@ -224,7 +230,10 @@ final class SandboxBuiltins {
           'Usage: curl [options...] <url>\n'
           ' -X, --request <method>   HTTP method\n'
           ' -H, --header <header>    Pass custom header\n'
-          ' -d, --data <data>        HTTP POST data\n'
+          ' -d, --data <data>        HTTP POST data; @file reads the file,\n'
+          '                          multiple flags join with &, -d implies POST\n'
+          '    --data-binary <data>  Like --data (bytes sent verbatim)\n'
+          '    --data-raw <data>     Like --data but @ is literal (no file)\n'
           ' -o, --output <file>      Write to file instead of stdout\n'
           ' -s, --silent             Silent mode\n'
           ' -L, --location           Follow redirects\n'
@@ -244,9 +253,20 @@ final class SandboxBuiltins {
       return _error('curl: invalid URL\n', 3);
     }
 
-    final request = http.Request(parsed.method, uri);
+    final (bodyBytes, bodyError) = await _curlBody(
+      parsed.dataArgs,
+      stdinBytes: stdinBytes,
+    );
+    if (bodyError != null) return _error(bodyError, 26);
+
+    // Like curl, a data argument implies POST unless -X says otherwise
+    // (an explicit `-X GET -d ...` sends GET with a body).
+    final method = !parsed.explicitMethod && parsed.dataArgs.isNotEmpty
+        ? 'POST'
+        : parsed.method;
+    final request = http.Request(method, uri);
     request.headers.addAll(parsed.headers);
-    if (parsed.body != null) request.body = parsed.body!;
+    if (bodyBytes != null) request.bodyBytes = bodyBytes;
     request.followRedirects = parsed.followRedirects;
 
     final effectiveTimeout = timeout ?? const Duration(seconds: 30);
@@ -309,24 +329,29 @@ final class SandboxBuiltins {
     String? url,
     String method,
     Map<String, String> headers,
-    String? body,
+    List<(String, bool)> dataArgs,
     String? outputFile,
     bool silent,
     bool followRedirects,
+    bool explicitMethod,
   })
   _parseCurlArgs(List<String> args) {
     var method = 'GET';
     final headers = <String, String>{};
-    String? body;
+    final dataArgs = <(String, bool)>[]; // (value, expand @)
     String? outputFile;
     var silent = false;
     var followRedirects = false;
+    var explicitMethod = false;
     String? url;
 
     for (var i = 0; i < args.length; i++) {
       final arg = args[i];
       if (arg == '-X' || arg == '--request') {
-        if (i + 1 < args.length) method = args[++i];
+        if (i + 1 < args.length) {
+          method = args[++i];
+          explicitMethod = true;
+        }
       } else if (arg == '-H' || arg == '--header') {
         if (i + 1 < args.length) {
           final header = args[++i];
@@ -337,8 +362,14 @@ final class SandboxBuiltins {
                 .trim();
           }
         }
-      } else if (arg == '-d' || arg == '--data' || arg == '--data-raw') {
-        if (i + 1 < args.length) body = args[++i];
+      } else if (arg == '-d' ||
+          arg == '--data' ||
+          arg == '--data-raw' ||
+          arg == '--data-binary') {
+        if (i + 1 < args.length) {
+          // `--data-raw` treats the value literally: no @file/@- expansion.
+          dataArgs.add((args[++i], arg != '--data-raw'));
+        }
       } else if (arg == '-o' || arg == '--output') {
         if (i + 1 < args.length) outputFile = args[++i];
       } else if (arg == '-s' || arg == '--silent') {
@@ -356,11 +387,57 @@ final class SandboxBuiltins {
       url: url,
       method: method,
       headers: headers,
-      body: body,
+      dataArgs: dataArgs,
       outputFile: outputFile,
       silent: silent,
       followRedirects: followRedirects,
+      explicitMethod: explicitMethod,
     );
+  }
+
+  /// Resolves the POST body from the `-d/--data/--data-binary` arguments:
+  /// `@file` reads the file's bytes, `-` reads stdin, plain values are sent
+  /// verbatim, and multiple flags join with `&` (curl semantics). Returns
+  /// `(null, error)` when a referenced file is missing or the body exceeds
+  /// the sandbox size cap.
+  Future<(List<int>?, String?)> _curlBody(
+    List<(String, bool)> dataArgs, {
+    List<int>? stdinBytes,
+  }) async {
+    if (dataArgs.isEmpty) return (null, null);
+    final segments = BytesBuilder(copy: false);
+    var first = true;
+    for (final (value, expand) in dataArgs) {
+      if (!first) segments.add(utf8.encode('&'));
+      first = false;
+      // Real curl reads the request body from stdin for `-d -` and `-d @-`.
+      if (expand && (value == '-' || value == '@-') && stdinBytes != null) {
+        segments.add(stdinBytes);
+      } else if (expand && value.startsWith('@')) {
+        final path = value.substring(1);
+        final List<int>? data;
+        try {
+          data = await readBinaryFile?.call(path);
+        } on Object catch (e) {
+          return (null, 'curl: $path: $e\n');
+        }
+        if (data == null) {
+          return (null, 'curl: $path: No such file or directory\n');
+        }
+        segments.add(data);
+      } else {
+        segments.add(utf8.encode(value));
+      }
+    }
+    final bytes = segments.toBytes();
+    if (bytes.length > maxCurlBodyBytes) {
+      return (
+        null,
+        'curl: body exceeds the 1 MiB sandbox limit '
+            '(${bytes.length} bytes); split the request or shrink the body\n',
+      );
+    }
+    return (bytes, null);
   }
 
   // ---------------------------------------------------------------------------
@@ -406,14 +483,29 @@ final class SandboxBuiltins {
     String? stdin,
     required ({Object? value, String? error}) Function(String content) parse,
   }) async {
-    if (args.isEmpty) {
+    // Leading flags (`-r`, `--raw-output`, `-c`, `-e`, ...) are accepted but
+    // only `-r`/`-c` change the output; the first positional argument is the
+    // filter and an optional second one is the input file (real jq reads
+    // stdin when no file is given).
+    var rawOutput = false;
+    var compact = false;
+    final positional = <String>[];
+    for (final arg in args) {
+      if (positional.isEmpty && arg.startsWith('-') && arg != '-') {
+        if (arg == '-r' || arg == '--raw-output') rawOutput = true;
+        if (arg == '-c' || arg == '--compact-output') compact = true;
+        continue;
+      }
+      positional.add(arg);
+    }
+    if (positional.isEmpty) {
       return _error('$name: missing filter\n', 2);
     }
-    final filter = args.first;
+    final filter = positional.first;
 
     final String content;
-    if (args.length > 1) {
-      final inputFile = args[1];
+    if (positional.length > 1) {
+      final inputFile = positional[1];
       final read = await readTextFile(inputFile);
       if (read == null) {
         return _error('$name: $inputFile: No such file or directory\n', 2);
@@ -431,8 +523,15 @@ final class SandboxBuiltins {
     }
 
     final results = _applyJqFilter(parsed.value, filter);
-    const encoder = JsonEncoder.withIndent('  ');
-    final output = results.map(encoder.convert).join('\n');
+    final encoder = compact
+        ? JsonEncoder()
+        : const JsonEncoder.withIndent('  ');
+    final output = results
+        .map(
+          (value) =>
+              rawOutput && value is String ? value : encoder.convert(value),
+        )
+        .join('\n');
     return _ok(utf8.encode(output.isNotEmpty ? '$output\n' : ''));
   }
 
