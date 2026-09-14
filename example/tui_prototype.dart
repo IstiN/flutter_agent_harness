@@ -139,7 +139,6 @@ Future<void> main() async {
         withTickInterval(const Duration(milliseconds: 100)),
         withHideCursor(false),
         withInput(_preprocessInput(stdin)),
-        withMouseAllMotion(),
       ],
     ).run(FaPrototypeModel());
   } finally {
@@ -735,6 +734,9 @@ final class FaPrototypeModel extends Model {
     return View(
       content: '$frame$cursorLine\n',
       cursor: Cursor(x: cursorCol, y: cursorRow, shape: CursorShape.bar),
+      // Mouse modes are view-driven per frame (issue #278): all-motion
+      // while the prototype is up, no boot-static option anymore.
+      mouseMode: MouseMode.allMotion,
     );
   }
 }

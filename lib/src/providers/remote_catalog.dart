@@ -62,14 +62,10 @@ final class RemoteModelsCatalog {
   }
 }
 
-/// The catalog entry for one provider (matched by `providerKind` like
-/// `minimax`). The endpoint's own `/v1/models` is always the source of
-/// truth for chat ids; the catalog only fills the metadata the endpoint
-/// doesn't publish (context windows for models it lists) and the media
-/// lists the endpoint never returns (image/video/tts/asr).
 final class RemoteProviderEntry {
   const RemoteProviderEntry({
     this.contextWindows = const {},
+    this.pricing = const {},
     this.media = const {},
   });
 
@@ -77,12 +73,18 @@ final class RemoteProviderEntry {
   /// `/v1/models` payload doesn't carry one).
   final Map<String, int> contextWindows;
 
+  /// `modelId` → input/output USD per million tokens. The catalog only
+  /// carries pricing for models the provider documents flat per-Mtok rates
+  /// for; absent entry = unknown (the picker renders `—`, never 0.00).
+  final Map<String, RemoteModelPricing> pricing;
+
   /// `slotName` → list of model ids (`imageGeneration`,
   /// `videoGeneration`, `speech`, `transcription`).
   final Map<String, List<String>> media;
 
   factory RemoteProviderEntry.fromJson(Map<String, Object?> json) {
     final windowsRaw = json['contextWindows'];
+    final pricingRaw = json['pricing'];
     final mediaRaw = json['media'];
     final windows = <String, int>{};
     if (windowsRaw is Map) {
@@ -91,6 +93,23 @@ final class RemoteProviderEntry {
         final value = entry.value;
         if (key is String && value is num && value > 0) {
           windows[key] = value.round();
+        }
+      }
+    }
+    final pricing = <String, RemoteModelPricing>{};
+    if (pricingRaw is Map) {
+      for (final entry in pricingRaw.entries) {
+        final key = entry.key;
+        final value = entry.value;
+        if (key is String && value is Map) {
+          final input = value['input'];
+          final output = value['output'];
+          if (input is num && output is num) {
+            pricing[key] = RemoteModelPricing(
+              input: input.toDouble(),
+              output: output.toDouble(),
+            );
+          }
         }
       }
     }
@@ -107,9 +126,25 @@ final class RemoteProviderEntry {
         if (ids.isNotEmpty) media[key] = ids;
       }
     }
-    return RemoteProviderEntry(contextWindows: windows, media: media);
+    return RemoteProviderEntry(
+      contextWindows: windows,
+      pricing: pricing,
+      media: media,
+    );
   }
 }
+
+/// Flat per-million-token pricing for one model, in USD.
+final class RemoteModelPricing {
+  const RemoteModelPricing({required this.input, required this.output});
+
+  /// USD per million input tokens.
+  final double input;
+
+  /// USD per million output tokens.
+  final double output;
+}
+
 
 /// The catalog endpoint — overridable via `fa1.dev/models-catalog-url`
 /// (the `models:` yaml section keys ride the same resolver) for staging
@@ -141,7 +176,6 @@ Future<RemoteModelsCatalog?> fetchRemoteModelsCatalog({
     if (ownsClient) httpClient.close();
   }
 }
-
 /// Bundled fallback catalog — ships in-process so the picker still
 /// works when the remote URL is down (the user just reported "только
 /// одна m3 захардкожена" because the GitHub Pages site at fa1.dev
@@ -171,6 +205,12 @@ final RemoteModelsCatalog bundledRemoteModelsCatalog =
             'MiniMax-M2.7': 204800,
             'MiniMax-M2': 204800,
             'MiniMax-M1': 128000,
+          },
+          'pricing': {
+            // MiniMax's published flat per-Mtok rates (M2 launch pricing).
+            // Models without a documented flat rate stay absent — the
+            // picker renders `—` rather than a fabricated number.
+            'MiniMax-M2': {'input': 0.30, 'output': 1.20},
           },
           'media': {
             'imageGeneration': ['image-01', 'image-01-live'],
