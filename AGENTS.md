@@ -504,6 +504,11 @@ factual: paths, commands, invariants — no essays.
   scrollback); selection works via the terminal's bypass modifier (Shift),
   and `FA_TUI_MOUSE=0` (`AgentCliConfig.tuiMouseCapture`) hands the mouse
   back for always-on native select-to-copy.
+  Shift+Enter's HID poll is resolved once at startup
+  (`lib/src/cli/shift_hid.dart`, issue #355): disabled when
+  `SSH_CONNECTION`/`SSH_TTY` is set, under `FA_TUI_SHIFT_HID=0`, or when
+  the one-shot CoreGraphics probe (sacrificial isolate, ~300 ms timeout)
+  hangs — the returned callback is null and a bare CR stays a submit.
 - `lib/src/cli/` — REPL machinery: `/provider [name] [baseUrl] [token] |
   custom` (guided wizard in `provider_flow.dart` + `provider_commands.dart`;
   `/models` fetched for openai-like endpoints), custom providers in the

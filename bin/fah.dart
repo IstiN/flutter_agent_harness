@@ -26,7 +26,6 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -104,40 +103,6 @@ Never _fail(String message) {
   stderr.writeln('fa: $message');
   stderr.writeln('Run with --help for usage.');
   exit(64);
-}
-
-/// macOS Core Graphics modifier check, mirroring pi's native-modifiers
-/// helper: terminals that do not encode Shift+Enter in the input stream
-/// still let us read the live Shift state from the HID system. Lazily opened
-/// so non-macOS hosts never touch the dylib.
-typedef _CGEventSourceFlagsStateC = ffi.Uint64 Function(ffi.Uint32);
-typedef _CGEventSourceFlagsStateDart = int Function(int);
-
-/// Resolved once at first use; null when CoreGraphics is unavailable
-/// (non-macOS hosts — the dylib path simply fails to open).
-final int Function(int)? _cgEventSourceFlagsState =
-    _lookupCGEventSourceFlagsState();
-
-int Function(int)? _lookupCGEventSourceFlagsState() {
-  try {
-    final coreGraphics = ffi.DynamicLibrary.open(
-      '/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics',
-    );
-    return coreGraphics.lookupFunction<
-      _CGEventSourceFlagsStateC,
-      _CGEventSourceFlagsStateDart
-    >('CGEventSourceFlagsState');
-  } on Object {
-    return null;
-  }
-}
-
-bool _isShiftPressed() {
-  final fn = _cgEventSourceFlagsState;
-  if (fn == null) return false;
-  const kCGEventSourceStateHIDSystemState = 1;
-  const kCGEventFlagMaskShift = 0x00020000;
-  return fn(kCGEventSourceStateHIDSystemState) & kCGEventFlagMaskShift != 0;
 }
 
 Never _exitWithUsage(String version) {
@@ -1822,6 +1787,14 @@ Future<void> _runApp(List<String> args) async {
     io = HepEventsIO(io);
   }
 
+  // Shift+Enter HID polling (issue #355): resolved ONCE at startup, off
+  // the UI isolate — a CoreGraphics call wedged by a GUI-less session
+  // (SSH) must never block the REPL. Null: modifier-encoding terminals
+  // still deliver Shift+Enter on the wire (kitty, legacy ESC CR).
+  final hidShiftPressed = await resolveHidShiftPressed(
+    isMacOS: Platform.isMacOS,
+  );
+
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
     useTui:
@@ -2048,9 +2021,10 @@ Future<void> _runApp(List<String> args) async {
         skillsAccess = access;
         await persistConfig();
       },
-      // Shift+Enter in the TUI: terminals that do not encode the modifier
-      // still expose it through the HID state (macOS only; null elsewhere).
-      isShiftPressed: Platform.isMacOS ? _isShiftPressed : null,
+      // Shift+Enter in the TUI: HID polling when the startup gate allows
+      // it (issue #355) — null over SSH, under FA_TUI_SHIFT_HID=0, after
+      // a probe timeout, and on non-macOS hosts.
+      isShiftPressed: hidShiftPressed,
       // Mouse capture is ON by default (wheel scrolls the session view —
       // in the alternate screen the terminal has no native scrollback, so
       // without capture two-finger scroll does nothing). FA_TUI_MOUSE=0
