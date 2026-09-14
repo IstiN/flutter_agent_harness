@@ -5,6 +5,7 @@ import 'dart:io'
     show IOSink, Platform, Process, ProcessException, ProcessResult, stdin;
 
 import 'package:dart_tui/dart_tui.dart';
+import 'package:meta/meta.dart';
 
 import 'composer_overlay.dart';
 import 'ansi_markdown.dart';
@@ -18,11 +19,15 @@ import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks;
 import 'system_notice_render.dart';
 import 'tui_text_width.dart' show tuiFitWidth, tuiPadRight, tuiTextWidth;
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
+import 'paste_image.dart';
 
 part 'fa_tui_messages.dart';
 part 'fa_tui_hub.dart';
 part 'fa_tui_mouse.dart';
 part 'fa_tui_rows.dart';
+part 'fa_tui_paste.dart';
+part 'fa_tui_theme_swap.dart';
+part 'fa_tui_controller_io.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -65,10 +70,14 @@ final class FaTuiCallbacks {
     this.onSteer,
     this.pathCandidates,
     this.onHubAction,
+    this.readClipboardImage,
   });
 
-  /// Called when the user submits a non-empty input line.
-  final Future<void> Function(String line) onSubmit;
+  /// Called when the user submits a non-empty input line. [images] carries
+  /// the clipboard chips attached via Ctrl+V (empty for slash/bang
+  /// commands — those never consume attachments).
+  final Future<void> Function(String line, {List<TuiImageAttachment> images})
+  onSubmit;
 
   /// Called when the user picks a model from the picker.
   final Future<void> Function(String modelId) onModelSelected;
@@ -117,6 +126,11 @@ final class FaTuiCallbacks {
   /// keystroke — the host must cache the listing (the issue's "candidates
   /// cached" clause). Null disables path completion.
   final List<String> Function(String fragment)? pathCandidates;
+
+  /// Reads the platform pasteboard for an image (Ctrl+V). Null = no
+  /// reader wired (prints the unavailable hint). Runs OFF the UI loop —
+  /// the result comes back as a [PasteboardResultMsg].
+  final Future<PasteboardRead> Function()? readClipboardImage;
 
   /// Agents-hub overlay actions (issue #277): [FaHubAction.enter] drills
   /// into the selected agent's transcript ([key] = row key), back returns
@@ -207,6 +221,7 @@ final class FaTuiModel extends Model {
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
     this.queue = const [],
+    this.attachments = const [],
     this.inputHistory = const [],
     this.historyIndex = -1,
     this.historyDraft,
@@ -346,6 +361,11 @@ final class FaTuiModel extends Model {
   /// interrupt at the next step boundary (the soft-yield steering path)
   /// and render badged; plain rows wait for the run to settle.
   final List<QueuedMessage> queue;
+
+  /// Clipboard images attached via Ctrl+V, waiting in the composer as
+  /// chips; consumed by the next plain submit (slash/bang commands keep
+  /// them), rendered above the input frame.
+  final List<TuiImageAttachment> attachments;
 
   /// Submitted non-empty lines, oldest first (shell-style input history).
   /// Slash and bang commands are not recorded — ↑ recalls MESSAGES.
@@ -595,6 +615,7 @@ final class FaTuiModel extends Model {
     int? stickyIndex,
     int? stickyEchoLineCount,
     List<QueuedMessage>? queue,
+    List<TuiImageAttachment>? attachments,
     List<String>? inputHistory,
     int? historyIndex,
     int? scheduledCount,
@@ -643,6 +664,7 @@ final class FaTuiModel extends Model {
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
       queue: queue ?? this.queue,
+      attachments: attachments ?? this.attachments,
       inputHistory: inputHistory ?? this.inputHistory,
       historyIndex: historyIndex ?? this.historyIndex,
       scheduledCount: scheduledCount ?? this.scheduledCount,
@@ -768,8 +790,9 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleOutputMsg(OutputMsg msg) {
-    // System-notice blocks render as dim blockquotes, not raw tags.
-    final displayText = msg.text.contains('<system-notice>')
+    // System-notice blocks and service lines (the compaction report
+    // header) render as dim blockquotes, not raw text.
+    final displayText = needsSystemNoticeRewrite(msg.text)
         ? renderSystemNoticeLines(msg.text).join('\n')
         : msg.text;
     final newLines = _appendOutput(outputLines, displayText, msg.newline);
@@ -899,6 +922,13 @@ final class FaTuiModel extends Model {
     return (copyWith(queue: const []), null);
   }
 
+  /// Test seam: drives the composer prefill (`/skills` menu →
+  /// `sendInputText`) into the model without a running program, so the
+  /// message branch is exercisable headlessly.
+  @visibleForTesting
+  FaTuiModel setInputTextForTest(String text) =>
+      update(_SetInputTextMsg(text)).$1 as FaTuiModel;
+
   (Model, Cmd?) _updateAfterExitCheck(Msg msg) {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
     if (msg is _ThemeChangedMsg) return _handleThemeChanged();
@@ -929,6 +959,8 @@ final class FaTuiModel extends Model {
       );
     }
     if (msg is _QuitRequestedMsg) return (this, () => quit());
+    if (msg is ThemeSwappedMsg) return _handleThemeSwapped();
+    if (msg is PasteboardResultMsg) return _handlePasteboardResult(msg);
     return _handleTerminalMsg(msg);
   }
 
@@ -1267,7 +1299,7 @@ final class FaTuiModel extends Model {
       return (
         copyWith(menuOpen: false, inputText: '', cursor: 0, pickerId: ''),
         () async {
-          await callbacks.onSubmit(item.key);
+          await callbacks.onSubmit(item.key, images: const []);
           return null;
         },
       );
@@ -1306,7 +1338,8 @@ final class FaTuiModel extends Model {
   /// Normal-mode control keys (submit/steer/newline/interrupt/abort); null
   /// when the key belongs to another cluster.
   (Model, Cmd?)? _handleControlKey(KeyMsg msg) {
-    return _handleSubmitKeys(msg) ??
+    return _handlePasteImageKey(msg) ??
+        _handleSubmitKeys(msg) ??
         _handleQueueKeys(msg) ??
         _handleInterruptKeys(msg);
   }
@@ -1949,6 +1982,12 @@ final class FaTuiModel extends Model {
     // slash commands bypass the busy queue.
     final mouseCommand = _handleMouseCommand(text);
     if (mouseCommand != null) return mouseCommand;
+    // Slash/bang commands execute instantly and never consume clipboard
+    // chips — they persist for the next real message (E2).
+    final keepAttachments = text.startsWith('/') || text.startsWith('!');
+    final images = keepAttachments
+        ? const <TuiImageAttachment>[]
+        : List<TuiImageAttachment>.of(attachments);
     final rule = _dim('─' * termWidth);
     final bg = tuiUserMessageBgSgr();
     const reset = '\x1b[0m';
@@ -1956,9 +1995,15 @@ final class FaTuiModel extends Model {
     // message echo — an empty backgrounded block would read as a glitch.
     if (inputText.isEmpty) {
       return (
-        copyWith(inputText: '', cursor: 0, menuOpen: false, menuTokenStart: -1),
+        copyWith(
+          inputText: '',
+          cursor: 0,
+          menuOpen: false,
+          menuTokenStart: -1,
+          attachments: keepAttachments ? null : const [],
+        ),
         () async {
-          await callbacks.onSubmit(text);
+          await callbacks.onSubmit(text, images: images);
           return null;
         },
       );
@@ -1990,6 +2035,7 @@ final class FaTuiModel extends Model {
       stickyLines: [rule, '$bg$shown$reset$more'],
       stickyIndex: outputLines.length,
       stickyEchoLineCount: 2 + inputText.split('\n').length,
+      attachments: keepAttachments ? null : const [],
     );
     return (
       // A fresh submit always jumps to the bottom AND re-attaches follow:
@@ -2000,7 +2046,7 @@ final class FaTuiModel extends Model {
         followTail: true,
       ),
       () async {
-        await callbacks.onSubmit(text);
+        await callbacks.onSubmit(text, images: images);
         return null;
       },
     );
@@ -2302,6 +2348,7 @@ final class FaTuiModel extends Model {
   }
 
 
+
   /// The busy indicator line (one row): spinner + label + honesty
   /// suffixes. Extracted from [_writeBusyAndQueue] to keep both methods'
   /// CRAP scores under the ratchet.
@@ -2588,94 +2635,6 @@ final class FaTuiController {
     }
   }
 
-  void sendOutput(String text, {bool newline = false}) {
-    // Merge semantics match sending the pieces separately: text just
-    // concatenates and the newline flag is a trailing '\n' (the model's
-    // _appendOutput splits on '\n' and its trailing empty part plays the
-    // role of the flag's extra empty line).
-    _outputBuffer.write(text);
-    if (newline) _outputBuffer.write('\n');
-    if (_running) {
-      _outputFlushTimer ??= Timer(_outputFlushInterval, _flushOutput);
-    } else {
-      _flushOutput();
-    }
-  }
-
-  void _flushOutput() {
-    _outputFlushTimer?.cancel();
-    _outputFlushTimer = null;
-    if (_outputBuffer.isEmpty) return;
-    final text = _outputBuffer.toString();
-    _outputBuffer.clear();
-    _send(OutputMsg(text));
-  }
-
-  void sendModelsRefresh() {
-    _send(_ModelsRefreshMsg());
-  }
-
-  void sendThemeChanged() {
-    _send(_ThemeChangedMsg());
-  }
-
-  void openModelMenu() {
-    _send(_OpenModelMenuMsg());
-  }
-
-  /// Opens a generic host picker (sessions, mode, approval, ...) with a
-  /// static item list; selection resolves via [FaTuiCallbacks.onPickerSelected].
-  void openPicker(
-    String pickerId,
-    String title,
-    List<MenuItem> items, {
-    String? initialKey,
-  }) {
-    var selected = 0;
-    if (initialKey != null) {
-      final index = items.indexWhere((item) => item.key == initialKey);
-      if (index >= 0) selected = index;
-    }
-    _send(OpenPickerMsg(pickerId, title, items, initialIndex: selected));
-  }
-
-  /// Opens or refreshes the agents-hub overlay with a whole new state
-  /// (issue #277). Pass hub = null-equivalent via `closeHub` to hide it.
-  void pushHub(FaHubState state) {
-    _send(HubStateMsg(state));
-  }
-
-  /// Hides the agents-hub overlay.
-  void closeHub() {
-    _send(const _CloseHubMsg());
-  }
-
-  void sendQuit() {
-    _send(_QuitRequestedMsg());
-  }
-
-  /// Replaces the composer text (the `/skills` menu prefills `/skill:<name> `
-  /// so the user can type arguments before pressing Enter).
-  void sendInputText(String text) {
-    _send(_SetInputTextMsg(text));
-  }
-
-  /// Replaces the submitted-message history (a resumed session restores
-  /// its recorded messages so ↑ recalls them instead of scrolling).
-  void setInputHistory(List<String> history) {
-    _send(SetInputHistoryMsg(history));
-  }
-
-  /// Opens the interactive prompt zone (ask/secret/approval) and resolves
-  /// when the user answers (or cancels). The caller awaits the returned
-  /// future, which completes from the model once the prompt key handler
-  /// produces an answer.
-  Future<TuiPromptAnswer?> openPrompt(TuiPromptSpec spec) {
-    final completer = Completer<TuiPromptAnswer?>();
-    _send(OpenPromptMsg(spec, completer));
-    return completer.future;
-  }
-
   var _busyDepth = 0;
 
   /// Toggles the animated thinking indicator while a run streams.
@@ -2716,6 +2675,9 @@ final class FaTuiController {
   /// Drains the queued messages (the model echoes them into the history) —
   /// the host runs them as separate turns after the current one settles.
   Future<List<String>> drainQueue() {
+    // No attached program: the model never sees the drain request, so the
+    // completer would park forever — nothing can be queued either.
+    if (!_running) return Future<List<String>>.value(const []);
     final completer = Completer<List<String>>();
     _send(DrainQueueMsg(completer));
     return completer.future;

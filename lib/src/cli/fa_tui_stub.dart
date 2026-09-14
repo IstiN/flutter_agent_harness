@@ -16,6 +16,7 @@
 library;
 
 import 'agent_hub_tui.dart';
+import 'paste_image.dart';
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
 
@@ -40,9 +41,11 @@ final class FaTuiCallbacks {
     this.onSteer,
     this.pathCandidates,
     this.onHubAction,
+    this.readClipboardImage,
   });
 
-  final Future<void> Function(String line) onSubmit;
+  final Future<void> Function(String line, {List<TuiImageAttachment> images})
+  onSubmit;
   final Future<void> Function(String modelId) onModelSelected;
   final List<MenuItem> Function(String prefix) buildSlashMenu;
   final List<MenuItem> Function(String filter, int width) buildModelMenu;
@@ -58,6 +61,10 @@ final class FaTuiCallbacks {
 
   /// Agents-hub overlay actions (issue #277). See fa_tui.dart.
   final Future<void> Function(String action, String? key)? onHubAction;
+
+  /// Reads the platform pasteboard image on Ctrl+V. Always null here —
+  /// web builds report the pasteboard as unavailable (edge E1).
+  final Future<PasteboardRead> Function()? readClipboardImage;
 }
 
 /// No-op stand-in for the real TUI controller (never run on web).
@@ -115,6 +122,10 @@ final class FaTuiController {
   /// controller's method so agent_cli call sites compile for BOTH targets
   /// (issue #115 scheduled-follow-ups indicator).
   void setScheduled(int count, int? nextDueMs) {}
+
+  /// No-op on web (the TUI never runs there). Mirrors the dart_tui
+  /// controller's method so /theme hot swaps compile for BOTH targets.
+  void applyTheme() {}
 
   Future<TuiPromptAnswer?> openPrompt(TuiPromptSpec spec) async => null;
 
