@@ -38,6 +38,10 @@ jobs:
   office-addin-suite:
     name: Office add-in suite
     runs-on: ubuntu-latest
+    # Ceiling for the daily addin watcher's budget arithmetic (#351):
+    # dart + chrome-platform tests + add-in build + Playwright
+    # chromium/webkit install & e2e; historically ~20m.
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:

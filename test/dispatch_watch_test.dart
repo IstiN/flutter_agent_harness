@@ -17,6 +17,18 @@
 // a budgeted watch in the shared dispatcher that cancels a wedged run and
 // re-dispatches exactly once before failing.
 //
+// #351 (timeout arithmetic recompute): the original budgets sat BELOW the
+// children's ceilings — the watcher cancelled legitimate slow children
+// (testflight 90m budget vs a 220m chain whose submit-ios alone can spend
+// 90m waiting for Apple processing + 15m verifying distribution), and the
+// website/addin budgets could never even complete their cancel +
+// re-dispatch inside the 45m leg timeout (dead self-heal). Now: every job
+// in a watched child chain carries an explicit timeout-minutes; child
+// worst-case = sum along the serialized critical path; budget =
+// worst-case + ~15m margin; leg timeout > budget, and ≥ 2×budget + margin
+// whenever that fits under GitHub's 360m job cap so the second-wedge
+// fail-fast can actually fire inside the leg.
+//
 // Structural lint over the workflow YAML plus behavioral tests of
 // scripts/dispatch_and_watch.sh against a stubbed `gh` (same style as
 // release_hygiene_test.dart). The stub pipes fixtures through the REAL jq
@@ -24,6 +36,7 @@
 // itself (title filter, window, newest-match) is under test.
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
@@ -470,7 +483,15 @@ void main() {
     test(
       'self-hosted build-mobile jobs carry a job-level timeout-minutes (server-side wedge bound)',
       () {
-        for (final jobId in ['build-ios', 'submit-ios']) {
+        // #351: submit-ios must clear the fastlane submit_only lane's own
+        // worst case — 90m wait_processing_timeout_duration
+        // (TESTFLIGHT_WAIT_TIMEOUT_SECONDS default 5400s) + 15m
+        // verify_external_distribution! (TESTFLIGHT_VERIFY_TIMEOUT_SECONDS
+        // 900s) = 105m of pure lane time, plus setup/upload ≈ 15m. The
+        // old 45m killed healthy slow submits mid-wait.
+        const laneWorstCaseMinutes = 90 + 15;
+        final ceilings = {'build-ios': 90, 'submit-ios': 120};
+        ceilings.forEach((jobId, expected) {
           final job =
               jobsOf('.github/workflows/build-mobile.yml')[jobId] as YamlMap;
           expect(
@@ -486,9 +507,22 @@ void main() {
                 'issue #344: a wedged self-hosted worker held the slot 5h; '
                 '$jobId needs a job-level timeout so GitHub fails it server-side',
           );
-          expect(t, lessThanOrEqualTo(120));
-          expect(t, greaterThanOrEqualTo(30));
-        }
+          expect(
+            t,
+            expected,
+            reason:
+                '$jobId ceiling is part of the #351 budget arithmetic — '
+                'update the daily-publish leg table with it, not just this pin',
+          );
+        });
+        expect(
+          ceilings['submit-ios']!,
+          greaterThanOrEqualTo(laneWorstCaseMinutes),
+          reason:
+              '#351 BLOCKER: a submit-ios ceiling below 105m contradicts '
+              'the lane it runs — healthy slow TestFlight submits die at the '
+              'job timeout while fastlane is still waiting on Apple',
+        );
       },
     );
 
@@ -563,10 +597,216 @@ void main() {
           contains('--budget-seconds'),
           reason:
               'leg "$leg" must bound its watch so a wedged child run '
-              'self-heals instead of eating the 300m leg timeout (#344)',
+              'self-heals instead of eating the whole leg timeout (#344)',
         );
       }
     });
+
+    // ── #351 — timeout arithmetic ──────────────────────────────────────────
+    // Child worst-case = sum of explicit job timeout-minutes along the
+    // serialized critical path of the child DAG, for the exact dispatch
+    // shape the leg sends ([skip] = jobs whose `if` skips them there;
+    // [serial] = matrix jobs that QUEUE on the single self-hosted runner,
+    // so their ceiling counts once per matrix leg). Parallel branches take
+    // the max; a skipped dependency contributes 0 (a job like
+    // release-mobile with `if: always()` still runs after skipped needs).
+    int childWorstCase(
+      String workflowPath, {
+      Set<String> skip = const {},
+      Map<String, int> serial = const {},
+    }) {
+      final jobs = jobsOf(workflowPath);
+      final memo = <String, int>{};
+      int finish(String id) => memo.putIfAbsent(id, () {
+        final job = jobs[id] as YamlMap;
+        var duration = (job['timeout-minutes'] as num).toInt();
+        duration *= serial[id] ?? 1;
+        final needs = job['needs'];
+        final deps = needs is List
+            ? needs.cast<String>().toList()
+            : needs == null
+            ? const <String>[]
+            : <String>[needs as String];
+        var start = 0;
+        for (final d in deps) {
+          if (!skip.contains(d)) start = math.max(start, finish(d));
+        }
+        return start + duration;
+      });
+      var worst = 0;
+      for (final id in jobs.keys.cast<String>()) {
+        if (!skip.contains(id)) worst = math.max(worst, finish(id));
+      }
+      return worst;
+    }
+
+    // The #351 arithmetic table — must mirror the "Timeout arithmetic"
+    // comment in daily-publish.yml and the per-leg comments. budget =
+    // worst-case + ≥15m margin (appear window 10m + cancel wait 3m +
+    // poll slack); leg timeout > budget, and ≥ 2×budget + 15m whenever
+    // that fits under GitHub's 360m job cap (so the second wedge's
+    // fail-fast can fire inside the leg — testflight/cli cannot, and are
+    // pinned at the 360m cap instead).
+    const legArithmetic =
+        <String, (String, Set<String>, Map<String, int>, int, int, int)>{
+          // leg: (child workflow, skipped jobs, matrix-serialized jobs,
+          //       child worst-case m, budget s, leg timeout m)
+          'testflight': (
+            '.github/workflows/build-mobile.yml',
+            {'build-android', 'submit-android'},
+            {},
+            220,
+            14400,
+            360,
+          ),
+          'play': (
+            '.github/workflows/build-mobile.yml',
+            {'build-ios', 'submit-ios'},
+            {},
+            85,
+            6000,
+            240,
+          ),
+          'cli': (
+            '.github/workflows/build-macos.yml',
+            {},
+            {'build-macos': 2},
+            325,
+            20400,
+            360,
+          ),
+          'website': ('.github/workflows/pages.yml', {}, {}, 60, 4500, 180),
+          'addin': (
+            '.github/workflows/office-addin.yml',
+            {},
+            {},
+            45,
+            3600,
+            150,
+          ),
+        };
+
+    test(
+      'every job in a watched child workflow carries an explicit timeout-minutes (#351)',
+      () {
+        // The worst-case sums above are only real if every ceiling is
+        // explicit — a job without timeout-minutes silently inherits
+        // GitHub's 360m default and breaks the arithmetic.
+        for (final workflow in {
+          '.github/workflows/build-mobile.yml',
+          '.github/workflows/build-macos.yml',
+          '.github/workflows/pages.yml',
+          '.github/workflows/office-addin.yml',
+        }) {
+          jobsOf(workflow).forEach((id, job) {
+            expect(
+              (job as YamlMap)['timeout-minutes'],
+              isNotNull,
+              reason:
+                  '$workflow job "$id" has no timeout-minutes — the #351 '
+                  'watch-budget arithmetic needs an explicit per-job ceiling',
+            );
+          });
+        }
+      },
+    );
+
+    test(
+      'watch budgets and leg timeouts clear the child worst-case (#351 arithmetic)',
+      () {
+        legArithmetic.forEach((leg, spec) {
+          final (workflow, skip, serial, wcMinutes, budgetSeconds, legTimeout) =
+              spec;
+          final computed = childWorstCase(workflow, skip: skip, serial: serial);
+          expect(
+            computed,
+            wcMinutes,
+            reason:
+                'leg "$leg": the documented child worst-case drifted — '
+                'update the arithmetic table (daily-publish.yml comment AND '
+                'this test) together',
+          );
+          expect(
+            budgetSeconds >= 60 * (wcMinutes + 15),
+            isTrue,
+            reason:
+                'leg "$leg": budget ${budgetSeconds}s must exceed the '
+                'child worst-case $wcMinutes m by ≥15m margin — otherwise the '
+                'watcher cancels legitimate slow children (#351)',
+          );
+          final legMinutes =
+              (jobsOf('.github/workflows/daily-publish.yml')[leg]
+                      as YamlMap)['timeout-minutes']
+                  as num;
+          expect(
+            legMinutes.toInt(),
+            legTimeout,
+            reason: 'leg "$leg": leg timeout drifted from the #351 table',
+          );
+          expect(
+            legTimeout > budgetSeconds ~/ 60,
+            isTrue,
+            reason:
+                'leg "$leg": the watcher (budget ${budgetSeconds ~/ 60}m '
+                '+ cancel + re-dispatch) must always outlive the child',
+          );
+          // Second-wedge headroom, capped by GitHub's 360m job maximum.
+          final needed = math.min(360, 2 * (budgetSeconds ~/ 60) + 15);
+          expect(
+            legTimeout >= needed,
+            isTrue,
+            reason:
+                'leg "$leg": $legTimeout m cannot fit the second watch '
+                'budget ($needed m) — a second wedge dies as a bare leg '
+                'timeout instead of the #344 fail-fast',
+          );
+          // The workflow text pins the same number the table claims.
+          final m = RegExp(
+            r'--budget-seconds (\d+)',
+          ).firstMatch(dispatchStepRun(leg));
+          expect(m, isNotNull, reason: 'leg "$leg" passes no --budget-seconds');
+          expect(
+            int.parse(m!.group(1)!),
+            budgetSeconds,
+            reason:
+                'leg "$leg": --budget-seconds drifted from the #351 '
+                'arithmetic table',
+          );
+        });
+      },
+    );
+
+    test(
+      'build-mobile concurrency group is per-dispatch — no cross-run cancellation (#351)',
+      () {
+        // The watcher's wedge self-heal RE-DISPATCHES build-mobile.yml; with
+        // the old ref-scoped cancel-in-progress group that re-dispatch (or
+        // any concurrent manual dispatch) cancelled whatever build-mobile
+        // run was in flight on main — a cross-leg cancellation vector.
+        // Choice pinned here: the group is suffixed with run_id so every
+        // dispatch is independent (supersede-cancellation #177 is traded
+        // away; the daily legs serialize via `needs` instead).
+        final y =
+            loadYaml(read('.github/workflows/build-mobile.yml')) as YamlMap;
+        final concurrency = y['concurrency'] as YamlMap;
+        expect(
+          concurrency['group'].toString(),
+          contains('github.run_id'),
+          reason:
+              'the build-mobile concurrency group must be scoped '
+              'per-dispatch (run_id suffix) so no dispatch can cancel '
+              'another (#351)',
+        );
+        expect(
+          concurrency['cancel-in-progress'],
+          isFalse,
+          reason:
+              'with a per-dispatch group there is never anything to '
+              'cancel — cancel-in-progress: true would be dead config '
+              'implying the old cross-run vector still exists',
+        );
+      },
+    );
 
     test(
       'dispatching legs check out the repo (the watcher script lives there)',
