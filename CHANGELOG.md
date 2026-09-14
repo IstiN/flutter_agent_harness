@@ -1,6 +1,18 @@
 # Changelog
 
 ## Unreleased
+- fix(365): the TUI busy row no longer jumps horizontally while a run or
+  an ask prompt is open — the row is laid out in FIXED cells: the label
+  zone holds a constant 24 cells (overlong labels ellipsize inside it),
+  the elapsed field a constant 6 cells (`0s`…`3599s`, then `1h00m`…
+  `99h59m`, capped `99h+`), and the honesty suffixes render
+  provenance-first with the quiet hint LAST, so a zone that appears or
+  grows never sits left of a stable one. The row is fitted AND padded to
+  the terminal width like the status row: digit growth at power-of-ten
+  seconds, the 180 s quiet-threshold crossing and mid-run phase swaps
+  repaint only their own cells — the parked cursor column and every hint
+  column stay put. The renderer moved to `fa_tui_rows.dart`, next to its
+  caller.
 
 - perf(369): `--session <name>` cold start no longer reads session
   bodies — name resolution (`sessionNameQuick`, shared by the CLI

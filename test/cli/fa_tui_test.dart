@@ -341,7 +341,7 @@ void main() {
       // The busy row carries the elapsed seconds — a wedged endpoint is
       // visible instead of looking like a frozen UI.
       expect(
-        spinnerRows.every((row) => RegExp(r'Working… \d+s').hasMatch(row)),
+        spinnerRows.every((row) => RegExp(r'Working…\s*\d+s').hasMatch(row)),
         isTrue,
       );
     },
@@ -417,7 +417,7 @@ void main() {
           .content
           .split('\n')
           .firstWhere((line) => line.contains('Compacting'));
-      expect(RegExp(r'Compacting context… \d+s').hasMatch(row), isTrue);
+      expect(RegExp(r'Compacting context…\s*\d+s').hasMatch(row), isTrue);
       // The elapsed window belongs to the RUN: a relabel must not restart it.
       expect(model.busyStartedAtMs, started);
 
@@ -822,8 +822,7 @@ void main() {
     // format cache is keyed on width+content, so the theme change must
     // drop it explicitly.
     controller.switchTo('pi');
-    model = model.update(FaTuiModel.themeChangedMsgForTest()).$1
-        as FaTuiModel;
+    model = model.update(FaTuiModel.themeChangedMsgForTest()).$1 as FaTuiModel;
     final view = model.view().content;
     expect(view, contains('\x1b[48;2;52;53;65m'), reason: 'pi bg live');
     expect(
