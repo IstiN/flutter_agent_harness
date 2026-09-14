@@ -18,6 +18,30 @@ int graphemeWidth(String grapheme) {
   return 1;
 }
 
+/// Whether this grapheme's 2-cell width is a heuristic other tables reject.
+///
+/// Stable widths are 1 (plain text) and 2 via the East-Asian WIDE blocks
+/// (`_isEastAsianWide`) — every wcwidth implementation agrees on those. A
+/// 2 that comes from the emoji heuristics instead (emoji ranges without
+/// VS16, VS16/emoji-modifier sequences, regional indicators) is
+/// East-Asian-AMBIGUOUS territory: wcwidth-based terminals — the PTY
+/// harness emulator, tmux, default western xterm/iTerm2 — measure those
+/// clusters ONE cell wide. A differential renderer must not address or
+/// skip cells past such a glyph: its absolute cursor moves land one
+/// column off on disagreeing terminals and skipped "unchanged" cells
+/// leave the previous frame's bytes on screen (#342).
+bool isUnstableWideGrapheme(String grapheme) {
+  if (grapheme.isEmpty) return false;
+
+  final runes = grapheme.runes.toList(growable: false);
+  if (runes.every(_isZeroWidth)) return false;
+
+  // A CJK-wide rune pins the cluster to 2 cells on every width table.
+  if (runes.any(_isEastAsianWide)) return false;
+
+  return graphemeWidth(grapheme) == 2;
+}
+
 /// Returns the terminal-cell width of [text], measured by grapheme cluster.
 int textWidth(String text) {
   var width = 0;
