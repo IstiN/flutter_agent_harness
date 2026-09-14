@@ -143,12 +143,50 @@ jobs:
   # Shape per leg: dispatch the child workflow pinned to main, capture the
   # new run id, watch it, fail on any non-success conclusion. The child run
   # URL is exported even on failure so the report can excerpt its log.
+  #
+  # ── Timeout arithmetic (#351) ────────────────────────────────────────────
+  # Invariants: watch budget > child worst-case (a legitimate slow child is
+  # NEVER cancelled by the watcher — that was the #351 bug), leg
+  # timeout > budget (the watcher, including its one cancel + re-dispatch
+  # cycle, always outlives the child), and where the math fits under
+  # GitHub's 360m job cap, leg timeout ≥ 2×budget + ~15m so the SECOND
+  # wedge's fail-fast can actually fire inside the leg.
+  #
+  # Child worst-case = sum of the serialized job timeout-minutes along the
+  # child's critical path (every job in a watched chain carries an explicit
+  # timeout for exactly this). Margin = appear window (60×10s) + cancel
+  # wait (180s) + poll slack ≈ 15m.
+  #
+  #   leg        child worst-case (serialized chain)          budget    leg timeout
+  #   testflight version 10 → build-ios 90 → submit-ios 120   220m  →  240m (14400s) ; 360m
+  #             (∥ release-mobile 15, covered by the max)
+  #   play       version 10 → build-android 45 →              85m   →  100m (6000s)  ; 240m
+  #             submit-android 30 (∥ release-mobile 15)
+  #   cli        version 10 → build-macos 150×2 (arm64 +      325m  →  340m (20400s) ; 360m
+  #             x86_64 SERIALIZE on the single self-hosted
+  #             runner) → release-macos 15
+  #             (∥ cli matrix 45, extension 30 — shorter paths)
+  #   website    pages build 45 → deploy 15                   60m   →   75m (4500s)  ; 180m
+  #   addin      office-addin-suite 45 (single job)           45m   →   60m (3600s)  ; 150m
+  #
+  # Second-wedge headroom (2×budget + ~15m vs leg timeout): play 213 ≤
+  # 240 ✓, website 163 ≤ 180 ✓, addin 133 ≤ 150 ✓. testflight (493 > 360)
+  # and cli (693 > 360) CANNOT fit two full budgets under GitHub's 360m
+  # job cap — their first wedge still self-heals (cancel at budget +
+  # re-dispatch ≈ budget+13m), and a second wedge is bounded by the leg
+  # timeout instead of the watcher's fail-fast; both children carry
+  # per-job server-side timeouts (#344) so a wedged job self-fails even
+  # without the watcher.
 
   testflight:
     name: 'Leg: TestFlight'
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    # #351 arithmetic: child wc 220m (version 10 + build-ios 90 +
+    # submit-ios 120) → budget 240m; 360m leg > budget. Two full budgets
+    # (493m) exceed GitHub's 360m cap — a second wedge is bounded by this
+    # leg timeout, not the watcher fail-fast.
+    timeout-minutes: 360
     permissions:
       contents: read
       actions: write
@@ -160,6 +198,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Inject failure (test)
         if: inputs.inject_failure == 'testflight'
         run: |
@@ -170,49 +210,42 @@ jobs:
         id: dispatch
         run: |
           set -euo pipefail
-          repo="${GITHUB_REPOSITORY}"
-          # Capture the run WE dispatched: poll for a workflow_dispatch run
-          # created after this moment. NOTE: `gh run list --json` does NOT
-          # support the `actor` field on the runner's gh version (fails with
-          # "Unknown JSON field: actor" — and `set -e` then kills the step in
-          # seconds, while the dispatched run IS created). Filter by
-          # createdAt only; build-mobile.yml is dispatched solely by this leg
-          # and manually, so a same-minute collision is not a real risk.
-          epoch=$(date +%s)
-          gh workflow run build-mobile.yml --repo "$repo" --ref main \
-            -f android_content=none -f ios_content=all
-          run_id=""
-          for _ in $(seq 1 60); do
-            id=$(gh run list --repo "$repo" --workflow build-mobile.yml \
-              --event workflow_dispatch --limit 10 \
-              --json databaseId,createdAt \
-              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
-            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
-            sleep 10
-          done
-          if [ -z "$run_id" ]; then
-            echo "::error::dispatched build-mobile.yml run never appeared after 10 minutes"
-            exit 1
+          # Shared watcher (issues #343/#344): correlates OUR run by the
+          # child's run-name ("build-mobile (none/all)" — displayTitle is
+          # the only distinguisher in the run-list API), newest match in a
+          # tight window; a wedged run (self-hosted slot lost, #344) is
+          # cancelled and re-dispatched once before failing.
+          # Budget 240m = child worst-case 220m (version 10 + build-ios 90
+          # + submit-ios 120, #351) + 20m margin — a healthy slow TestFlight
+          # submit (Apple processing can legitimately take the full 90m
+          # ASC wait + 15m verify) is never cancelled by the watcher.
+          rc=0
+          bash scripts/dispatch_and_watch.sh build-mobile.yml \
+            --repo "${GITHUB_REPOSITORY}" --ref main \
+            --title 'build-mobile (none/all)' \
+            --budget-seconds 14400 \
+            -f android_content=none -f ios_content=all \
+            --out-run-id run_id.txt || rc=$?
+          if [ -s run_id.txt ]; then
+            echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/$(cat run_id.txt)" >> "$GITHUB_OUTPUT"
           fi
-          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
-          echo "watching build-mobile.yml run $run_id (ios_content=all, android_content=none)"
-          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
-            tail -n 30 watch.log || true
-          fi
-          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
-          echo "build-mobile.yml conclusion: $conclusion"
-          [ "$conclusion" = "success" ] || exit 1
+          exit "$rc"
 
   play:
     name: 'Leg: Play (Android external beta)'
     # Serialized after the testflight leg (#343, #346): both legs dispatch
-    # build-mobile.yml and its concurrency group cancels in-progress runs on
-    # the same ref — a concurrent play dispatch would kill the testflight
-    # child mid-build (and the created-at-only watch could adopt the wrong
-    # run). One build-mobile dispatch at a time.
+    # build-mobile.yml and each child independently derives version =
+    # latest-tag+1 — concurrent dispatches would race on the SAME next tag
+    # (duplicate release-mobile drafts, asset clobbering) and strain the
+    # title-correlation window. build-mobile's concurrency group is
+    # per-dispatch (#351), so the serialization is what guarantees one
+    # daily build-mobile child at a time.
     needs: [plan, testflight]
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    # #351 arithmetic: child wc 85m (version 10 + build-android 45 +
+    # submit-android 30) → budget 100m; 240m leg ≥ 2×budget + 15m, so the
+    # second-wedge fail-fast fits inside the leg.
+    timeout-minutes: 240
     permissions:
       contents: read
       actions: write
@@ -237,6 +270,8 @@ jobs:
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Inject failure (test)
         if: inputs.inject_failure == 'play'
         run: |
@@ -264,41 +299,40 @@ jobs:
         id: dispatch
         run: |
           set -euo pipefail
-          repo="${GITHUB_REPOSITORY}"
           # app_only: build + Play upload, no store metadata/screenshots
           # (Android store CONTENT is a follow-up — reuse iOS texts later).
           # beta = the external/open testing track, mirroring the iOS leg's
           # external TestFlight group (#239 pattern).
-          epoch=$(date +%s)
-          gh workflow run build-mobile.yml --repo "$repo" --ref main \
-            -f android_content=app_only -f android_track=beta -f ios_content=none
-          run_id=""
-          for _ in $(seq 1 60); do
-            id=$(gh run list --repo "$repo" --workflow build-mobile.yml \
-              --event workflow_dispatch --limit 10 \
-              --json databaseId,createdAt \
-              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
-            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
-            sleep 10
-          done
-          if [ -z "$run_id" ]; then
-            echo "::error::dispatched build-mobile.yml run never appeared after 10 minutes"
-            exit 1
+          # Shared watcher (issues #343/#344): the TestFlight sibling leg
+          # dispatches the SAME workflow in the same minute — correlation
+          # is by the child's run-name ("build-mobile (app_only/none)"),
+          # never by "first run in the window"; a wedged run is cancelled
+          # and re-dispatched once.
+          # Budget 100m = child worst-case 85m (#351: version 10 +
+          # build-android 45 + submit-android 30) + 15m margin.
+          rc=0
+          bash scripts/dispatch_and_watch.sh build-mobile.yml \
+            --repo "${GITHUB_REPOSITORY}" --ref main \
+            --title 'build-mobile (app_only/none)' \
+            --budget-seconds 6000 \
+            -f android_content=app_only -f android_track=beta -f ios_content=none \
+            --out-run-id run_id.txt || rc=$?
+          if [ -s run_id.txt ]; then
+            echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/$(cat run_id.txt)" >> "$GITHUB_OUTPUT"
           fi
-          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
-          echo "watching build-mobile.yml run $run_id (android_content=app_only, android_track=beta)"
-          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
-            tail -n 30 watch.log || true
-          fi
-          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
-          echo "build-mobile.yml conclusion: $conclusion"
-          [ "$conclusion" = "success" ] || exit 1
+          exit "$rc"
 
   cli:
     name: 'Leg: CLI + macOS desktop'
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    # #351 arithmetic: child wc 325m (version 10 + build-macos 150×2 — the
+    # arm64 AND x86_64 matrix legs SERIALIZE on the single self-hosted
+    # macOS runner — + release-macos 15) → budget 340m; 360m leg > budget.
+    # Two full budgets (693m) far exceed GitHub's 360m cap — a second
+    # wedge is bounded by this leg timeout, not the watcher fail-fast
+    # (both build-macos jobs carry 150m server-side timeouts, #344).
+    timeout-minutes: 360
     permissions:
       contents: read
       actions: write
@@ -310,6 +344,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Inject failure (test)
         if: inputs.inject_failure == 'cli'
         run: |
@@ -320,43 +356,37 @@ jobs:
         id: dispatch
         run: |
           set -euo pipefail
-          repo="${GITHUB_REPOSITORY}"
           # Children derive version themselves (latest tag + 1 at their own
           # dispatch moment) — a tag pinned here would race auto_release and
           # could attach assets to a tag pointing at a different commit.
-          # Capture the run WE dispatched: poll for a workflow_dispatch run
-          # created after this moment, triggered by github-actions[bot] —
-          # never adopt a human's concurrent dispatch.
-          epoch=$(date +%s)
-          gh workflow run build-macos.yml --repo "$repo" --ref main \
-            -f create_release=true
-          run_id=""
-          for _ in $(seq 1 60); do
-            id=$(gh run list --repo "$repo" --workflow build-macos.yml \
-              --event workflow_dispatch --limit 10 \
-              --json databaseId,createdAt \
-              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
-            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
-            sleep 10
-          done
-          if [ -z "$run_id" ]; then
-            echo "::error::dispatched build-macos.yml run never appeared after 10 minutes"
-            exit 1
+          # Shared watcher (issues #343/#344): correlates OUR run by the
+          # child's run-name ("build-macos (create_release=true)") so a
+          # concurrent human dispatch is never adopted; a wedged self-hosted
+          # run is cancelled and re-dispatched once. Budget 340m = child
+          # worst-case 325m (#351: version 10 + build-macos 150 ×2 arches
+          # serialized on the one self-hosted runner + release-macos 15)
+          # + 15m margin.
+          rc=0
+          bash scripts/dispatch_and_watch.sh build-macos.yml \
+            --repo "${GITHUB_REPOSITORY}" --ref main \
+            --title 'build-macos (create_release=true)' \
+            --budget-seconds 20400 \
+            -f create_release=true \
+            --out-run-id run_id.txt || rc=$?
+          if [ -s run_id.txt ]; then
+            echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/$(cat run_id.txt)" >> "$GITHUB_OUTPUT"
           fi
-          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
-          echo "watching build-macos.yml run $run_id (create_release=true)"
-          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
-            tail -n 30 watch.log || true
-          fi
-          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
-          echo "build-macos.yml conclusion: $conclusion"
-          [ "$conclusion" = "success" ] || exit 1
+          exit "$rc"
 
   website:
     name: 'Leg: Website'
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # #351 arithmetic: child wc 60m (pages build 45 + deploy 15) → budget
+    # 75m; 180m leg ≥ 2×budget + 15m, so the second-wedge fail-fast fits
+    # (the old 45m leg made the self-heal dead code: 40m budget + 10m
+    # appear window never completed inside it).
+    timeout-minutes: 180
     permissions:
       contents: read
       actions: write
@@ -368,6 +398,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Inject failure (test)
         if: inputs.inject_failure == 'website'
         run: |
@@ -381,38 +413,30 @@ jobs:
         id: dispatch
         run: |
           set -euo pipefail
-          repo="${GITHUB_REPOSITORY}"
-          # Capture the run WE dispatched (created-at filter) —
-          # never adopt a human's concurrent dispatch of the same workflow.
-          epoch=$(date +%s)
-          gh workflow run pages.yml --repo "$repo" --ref main
-          run_id=""
-          for _ in $(seq 1 60); do
-            id=$(gh run list --repo "$repo" --workflow pages.yml \
-              --event workflow_dispatch --limit 10 \
-              --json databaseId,createdAt \
-              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
-            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
-            sleep 10
-          done
-          if [ -z "$run_id" ]; then
-            echo "::error::dispatched pages.yml run never appeared after 10 minutes"
-            exit 1
+          # Shared watcher (issues #343/#344). pages.yml takes no inputs, so
+          # there is no displayTitle to disambiguate on — the watcher falls
+          # back to newest-in-tight-window, and still bounds the watch
+          # (cancel + one re-dispatch) instead of blocking forever.
+          # Budget 75m = child worst-case 60m (#351: pages build 45 +
+          # deploy 15) + 15m margin.
+          rc=0
+          bash scripts/dispatch_and_watch.sh pages.yml \
+            --repo "${GITHUB_REPOSITORY}" --ref main \
+            --budget-seconds 4500 \
+            --out-run-id run_id.txt || rc=$?
+          if [ -s run_id.txt ]; then
+            echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/$(cat run_id.txt)" >> "$GITHUB_OUTPUT"
           fi
-          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
-          echo "watching pages.yml run $run_id"
-          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
-            tail -n 30 watch.log || true
-          fi
-          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
-          echo "pages.yml conclusion: $conclusion"
-          [ "$conclusion" = "success" ] || exit 1
+          exit "$rc"
 
   addin:
     name: 'Leg: Outlook add-in'
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # #351 arithmetic: child wc 45m (single office-addin-suite job) →
+    # budget 60m; 150m leg ≥ 2×budget + 15m, so the second-wedge fail-fast
+    # fits (the old 45m leg made the self-heal dead code).
+    timeout-minutes: 150
     permissions:
       contents: read
       actions: write
@@ -424,6 +448,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Inject failure (test)
         if: inputs.inject_failure == 'addin'
         run: |
@@ -437,32 +463,18 @@ jobs:
         id: dispatch
         run: |
           set -euo pipefail
-          repo="${GITHUB_REPOSITORY}"
-          # Capture the run WE dispatched (created-at filter) —
-          # never adopt a human's concurrent dispatch of the same workflow.
-          epoch=$(date +%s)
-          gh workflow run office-addin.yml --repo "$repo" --ref main
-          run_id=""
-          for _ in $(seq 1 60); do
-            id=$(gh run list --repo "$repo" --workflow office-addin.yml \
-              --event workflow_dispatch --limit 10 \
-              --json databaseId,createdAt \
-              --jq "[.[] | select((.createdAt | fromdateiso8601) >= $epoch - 60)][0].databaseId // 0")
-            if [ "$id" -gt 0 ]; then run_id="$id"; break; fi
-            sleep 10
-          done
-          if [ -z "$run_id" ]; then
-            echo "::error::dispatched office-addin.yml run never appeared after 10 minutes"
-            exit 1
+          # Shared watcher (issues #343/#344). No inputs to disambiguate on
+          # (newest-in-tight-window fallback), watch bounded at 60m =
+          # child worst-case 45m (#351) + 15m margin.
+          rc=0
+          bash scripts/dispatch_and_watch.sh office-addin.yml \
+            --repo "${GITHUB_REPOSITORY}" --ref main \
+            --budget-seconds 3600 \
+            --out-run-id run_id.txt || rc=$?
+          if [ -s run_id.txt ]; then
+            echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/$(cat run_id.txt)" >> "$GITHUB_OUTPUT"
           fi
-          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
-          echo "watching office-addin.yml run $run_id"
-          if ! gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 > watch.log 2>&1; then
-            tail -n 30 watch.log || true
-          fi
-          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
-          echo "office-addin.yml conclusion: $conclusion"
-          [ "$conclusion" = "success" ] || exit 1
+          exit "$rc"
 
   # ── pub.dev leg ──────────────────────────────────────────────────────────
   # The ONLY publish path is the ci.yml tag job (pub.dev trusted publishing
