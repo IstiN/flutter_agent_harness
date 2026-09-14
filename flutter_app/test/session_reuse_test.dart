@@ -324,23 +324,23 @@ void main() {
     });
 
     test(
-      'openSession throws SessionTooLarge for an oversized session',
+      'openSession opens an oversized session windowed (issue #381: no '
+      'refusal, the gate only guards the full-open fallback)',
       () async {
         await _persistSession(repo, userText: 'x' * 2048);
         // The sidebar passes metadata straight from the repo listing, which
         // carries the filesystem size.
         final big = (await repo.list()).single;
         final manager = limitedManager();
-        await expectLater(
-          manager.openSession(
-            big,
-            config: _config,
-            serviceFactory: () async => _fakeService(env),
-          ),
-          throwsA(isA<SessionTooLargeException>()),
+        // The old freeze-era gate threw SessionTooLargeException here; the
+        // windowed loader opens the tail instead.
+        final managed = await manager.openSession(
+          big,
+          config: _config,
+          serviceFactory: () async => _fakeService(env),
         );
-        // And nothing was half-loaded into the manager.
-        expect(manager.active?.id, isNot(big.id));
+        expect(managed.id, big.id);
+        expect(manager.active?.id, big.id);
       },
     );
   });

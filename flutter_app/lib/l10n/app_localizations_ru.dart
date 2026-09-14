@@ -1864,8 +1864,16 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String sessionTooLargeTitle(String size) {
-    return 'Сессия слишком большая для открытия в приложении ($size). Откройте её через CLI.';
+    return 'Сессия ($size МБ) превышает бюджет мгновенного открытия — открыть её безопасно не удалось.';
   }
+
+  @override
+  String sessionBootSkippedOversize(String name, String size) {
+    return 'Открыта новая сессия — «$name» ($size МБ) превышает бюджет мгновенного открытия.';
+  }
+
+  @override
+  String get sessionBootSkippedOpen => 'Открыть частями';
 
   @override
   String get dynamicMessagesButtonTooltip => 'Динамические сообщения';
