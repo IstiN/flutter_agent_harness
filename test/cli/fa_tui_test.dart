@@ -58,7 +58,7 @@ void main() {
             )
             .toList();
       },
-      buildModelMenu: (filter) => [
+      buildModelMenu: (filter, _) => [
         if ('model-a'.contains(filter))
           const MenuItem(key: 'model-a', label: 'model-a'),
         if ('model-b'.contains(filter))
@@ -847,7 +847,7 @@ void main() {
             description: 'with an extremely long description that will not fit',
           ),
         ],
-        buildModelMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [],
         statusLine: () =>
             '/a/very/long/path/that/goes/on/and/on/and/on/and/on · ctx 99% '
             '(999k/1M) · 123456tok · \$9.9999 · turn 99 · a/very-long-model-id',
@@ -885,7 +885,7 @@ void main() {
         onSubmit: (_) async {},
         onModelSelected: (_) async {},
         buildSlashMenu: (_) => const [],
-        buildModelMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [],
         statusLine: () => status,
         prompt: '',
       ),
@@ -1265,7 +1265,7 @@ void main() {
         onSubmit: (_) async {},
         onModelSelected: (_) async {},
         buildSlashMenu: (_) => const [],
-        buildModelMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [],
         statusLine: () => '',
         prompt: '',
         onPickerCancelled: cancelled.add,
@@ -2601,7 +2601,7 @@ void main() {
         onInterrupt: onInterrupt,
         onModelSelected: (_) async {},
         buildSlashMenu: (_) => const [],
-        buildModelMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [],
         statusLine: () => '/work · 0tok · turn 0 · test-model',
         prompt: 'fa> ',
         onHubAction: onAction,

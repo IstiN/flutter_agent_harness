@@ -65,7 +65,7 @@ void main(List<String> args) async {
       onSubmit: (_) async {},
       onModelSelected: (_) async {},
       buildSlashMenu: (_) => const [],
-      buildModelMenu: (_) => const [],
+      buildModelMenu: (_, _) => const [],
       statusLine: () {
         statusCalls++;
         return '/tmp/bench · ctx 12% (20k/160k) · 15k tok · turn 3 · '

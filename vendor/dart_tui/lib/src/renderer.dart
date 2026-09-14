@@ -148,14 +148,12 @@ final class AnsiRenderer implements TeaRenderer {
     IOSink? logSink,
     required bool defaultAltScreen,
     required bool defaultHideCursor,
-    MouseMode defaultMouseMode = MouseMode.none,
     bool defaultReportFocus = false,
   })  : _output = output,
         _logSink = logSink,
         _modes = TerminalModeState(
           defaultAltScreen: defaultAltScreen,
           defaultHideCursor: defaultHideCursor,
-          defaultMouseMode: defaultMouseMode,
           defaultReportFocus: defaultReportFocus,
         );
 
@@ -382,14 +380,12 @@ final class CellRenderer implements TeaRenderer {
     IOSink? logSink,
     required bool defaultAltScreen,
     required bool defaultHideCursor,
-    MouseMode defaultMouseMode = MouseMode.none,
     bool defaultReportFocus = false,
   })  : _output = output,
         _logSink = logSink,
         _modes = TerminalModeState(
           defaultAltScreen: defaultAltScreen,
           defaultHideCursor: defaultHideCursor,
-          defaultMouseMode: defaultMouseMode,
           defaultReportFocus: defaultReportFocus,
         );
 

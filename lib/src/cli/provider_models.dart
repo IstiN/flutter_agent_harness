@@ -89,7 +89,7 @@ extension on AgentCli {
     }
   }
 
-  List<MenuItem> _buildModelMenu(String filter) {
+  List<MenuItem> _buildModelMenu(String filter, int width) {
     if (_modelCacheNeedsRefresh) {
       unawaited(_refreshAllProvidersModelCache());
     }
@@ -100,7 +100,78 @@ extension on AgentCli {
     if (providers.length > 1) {
       return _providerMenuItems(providers, filter);
     }
-    return _crossProviderModelMenuItems(_crossProviderCandidates(filter));
+    return _modelTableMenuItems(_crossProviderCandidates(filter), width);
+  }
+
+  /// The `/model` picker rows as a resolved table (issue #278): every
+  /// candidate gets its context window (endpoint report → remote catalog
+  /// → provider spec) and $/Mtok (remote catalog; `—` when the catalog
+  /// ships no number) from resolved sources, then
+  /// [buildModelPickerTable] lays out columns, marker and sorting.
+  List<MenuItem> _modelTableMenuItems(
+    List<(String, String)> entries,
+    int width,
+  ) {
+    if (entries.isEmpty) {
+      return const [MenuItem(key: '', label: 'loading models...')];
+    }
+    final current = _agent.state.model;
+    final rows = <ModelRowSpec>[
+      for (var i = 0; i < entries.length; i++)
+        ModelRowSpec(
+          provider: entries[i].$1,
+          modelId: entries[i].$2,
+          recency: i,
+          contextWindow: _resolvedContextWindow(entries[i].$1, entries[i].$2),
+          cost: _resolvedPricing(entries[i].$1, entries[i].$2),
+          isCurrent:
+              entries[i].$1 == current.provider &&
+              entries[i].$2 == current.id,
+        ),
+    ];
+    return buildModelPickerTable(rows, width);
+  }
+
+  /// The catalog kind a provider name resolves to: the catalog name
+  /// itself, else a saved registry entry's api type, else null.
+  String? _catalogKindForProviderName(String name) {
+    if (catalogProvider(name) != null) return name;
+    final registry = config.customProviders;
+    for (final entry in registry?.entries ?? const <CustomProviderEntry>[]) {
+      if (entry.name == name) return entry.apiType;
+    }
+    return null;
+  }
+
+  /// The resolved context window for [provider]/[modelId]: the active
+  /// provider's endpoint-reported window first (live values win), then the
+  /// remote catalog, then the provider spec default; null when nothing
+  /// resolves (renders `—`).
+  int? _resolvedContextWindow(String provider, String modelId) {
+    final activeProvider = _agent.state.model.provider;
+    if (provider == activeProvider || provider == _activeCustomName) {
+      final reported = _modelContextWindows[modelId];
+      if (reported != null) return reported;
+    }
+    final kind = _catalogKindForProviderName(provider);
+    final fromCatalog = remoteCatalogEnrichment.cached
+        ?.providers[kind ?? '']
+        ?.contextWindows[modelId];
+    if (fromCatalog != null) return fromCatalog;
+    return catalogProvider(provider)?.contextWindow;
+  }
+
+  /// The resolved $/Mtok pricing for [provider]/[modelId], or null when
+  /// the catalog carries none (renders `—`, never 0.00 — E3).
+  ({double input, double output})? _resolvedPricing(
+    String provider,
+    String modelId,
+  ) {
+    final pricing = remoteCatalogEnrichment.pricingFor(
+      _catalogKindForProviderName(provider),
+      modelId,
+    );
+    return pricing == null ? null : (input: pricing.input, output: pricing.output);
   }
 
   /// The distinct provider names behind the cross-provider candidates, in
@@ -155,55 +226,15 @@ extension on AgentCli {
   /// `provider|model` — the selection routes back through
   /// [_tuiSelectModel]'s cross-provider switch.
   void _openProviderModelPicker(String name) {
-    final currentModel = _agent.state.model;
     final models = [
       for (final entry in _crossProviderCandidates(''))
         if (entry.$1 == name) entry,
     ];
     if (models.isEmpty) return;
-    _tuiController?.openPicker('modelProvider', 'Models — $name', [
-      for (var i = 0; i < models.length; i++)
-        MenuItem(
-          key: '${models[i].$1}|${models[i].$2}',
-          label:
-              '${i + 1}) ${models[i].$2}'
-              '${models[i].$2 == currentModel.id ? ' (current)' : ''}',
-          description: visionMarker(models[i].$2),
-        ),
-    ]);
-  }
-
-  /// Builds MenuItem list from cross-provider candidates. Each entry is
-  /// `provider/model-id` with a vision marker; the key encodes
-  /// `providerName|modelId` for the selection handler.
-  List<MenuItem> _crossProviderModelMenuItems(
-    List<(String provider, String modelId)> entries,
-  ) {
-    if (entries.isEmpty) {
-      return const [MenuItem(key: '', label: 'loading models...')];
-    }
-    final currentModel = _agent.state.model;
-    return [
-      for (var i = 0; i < entries.length; i++)
-        _crossProviderMenuItem(entries[i], i, currentModel),
-    ];
-  }
-
-  /// One cross-provider model row.
-  MenuItem _crossProviderMenuItem(
-    (String, String) entry,
-    int index,
-    dynamic currentModel,
-  ) {
-    final (provider, modelId) = entry;
-    final isCurrent =
-        provider == currentModel.provider && modelId == currentModel.id;
-    return MenuItem(
-      key: '$provider|$modelId',
-      label:
-          '${index + 1}) $provider/$modelId'
-          '${isCurrent ? ' (current)' : ''}',
-      description: visionMarker(modelId),
+    _tuiController?.openPicker(
+      'modelProvider',
+      'Models — $name',
+      _modelTableMenuItems(models, _tuiController?.termWidth ?? 80),
     );
   }
 

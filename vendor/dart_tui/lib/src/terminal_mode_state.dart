@@ -7,17 +7,15 @@ final class TerminalModeState {
   TerminalModeState({
     required bool defaultAltScreen,
     required bool defaultHideCursor,
-    MouseMode defaultMouseMode = MouseMode.none,
     bool defaultReportFocus = false,
   })  : _defaultAltScreen = defaultAltScreen,
         _defaultHideCursor = defaultHideCursor,
-        _defaultMouseMode = defaultMouseMode,
         _defaultReportFocus = defaultReportFocus;
 
   final bool _defaultAltScreen;
   final bool _defaultHideCursor;
-  final MouseMode _defaultMouseMode;
   final bool _defaultReportFocus;
+
 
   bool get altScreenEnabled => _altScreenEnabled;
 
@@ -51,9 +49,10 @@ final class TerminalModeState {
       _bracketedPasteEnabled = wantsBracketedPaste;
     }
 
-    final effectiveMouseMode = view.mouseMode.index >= _defaultMouseMode.index
-        ? view.mouseMode
-        : _defaultMouseMode;
+    // The view fully owns the mouse mode (issue #278): a frame that drops
+    // it to none must disarm the terminal, so no boot-default floor here —
+    // the transition below emits the full disable sequence.
+    final effectiveMouseMode = view.mouseMode;
     if (effectiveMouseMode != _mouseMode) {
       output.write('\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l');
       switch (effectiveMouseMode) {
