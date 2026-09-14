@@ -33,6 +33,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/a2a': (cli, rest) async => cli._printA2aStatus(),
   '/terminal-setup': (cli, rest) async => cli._printTerminalSetup(),
   '/ext': (cli, rest) async => cli._extSlash(rest),
+  '/power': (cli, rest) async => cli._powerSlash(),
 };
 
 /// Slash-command dispatch on [AgentCli].
@@ -101,6 +102,60 @@ extension SlashCommandDispatch on AgentCli {
     for (final line in lines) {
       io.writeln(line);
     }
+  }
+
+  /// The session's sleep-prevention controller (issues #325/#326) — null
+  /// when no runner was injected. Exposed so wiring tests can assert the
+  /// acquire/release lifecycle without spawning a real helper.
+  @visibleForTesting
+  PowerAssertionController? get powerAssertionsForTesting => _powerAssertions;
+
+  /// Session-open hook for the sleep-prevention assertion (#326):
+  /// acquires only in the explicit `power.hold: session` mode — the
+  /// DEFAULT is per-run (see [runPowerAssertionsStarted]), so an idle
+  /// agent never pins the machine awake. No-op without an injected
+  /// runner (tests, web).
+  @visibleForTesting
+  Future<void> acquirePowerAssertions() async =>
+      await _powerAssertions?.onSessionOpened();
+
+  /// Releases the sleep-prevention assertion (idempotent,
+  /// warn-not-crash) — both modes: the per-run mode's safety net for an
+  /// exit mid-run, the session mode's regular release.
+  @visibleForTesting
+  Future<void> releasePowerAssertions() async =>
+      await _powerAssertions?.onSessionClosed();
+
+  /// Run-start hook (#326): the per-run hold acquires here, fire-and-
+  /// forget — sleep prevention must never delay the first streamed byte.
+  @visibleForTesting
+  void runPowerAssertionsStarted() => _powerAssertions?.onRunStarted();
+
+  /// Run-settle hook (#326): the per-run hold releases once the run has
+  /// fully settled (post-run compaction included).
+  @visibleForTesting
+  Future<void> runPowerAssertionsSettled() async =>
+      await _powerAssertions?.onRunSettled();
+
+  /// `/power`: the configured `power.sleepPrevention` level, the
+  /// `power.hold` lifecycle, and whether the assertion is held right
+  /// now.
+  Future<void> _powerSlash() async {
+    final controller = _powerAssertions;
+    if (controller == null) {
+      io.writeln(
+        'sleepPrevention=${config.powerSleepPrevention.value} '
+        'hold=${config.powerSleepPreventionHold.value} held=no '
+        '(no runner on this host)',
+      );
+    } else {
+      io.writeln(controller.status().toString());
+    }
+    io.writeln(
+      'configure: power.sleepPrevention: off|idle|display|system, '
+      'power.hold: per-run|session (~/.fah/config.yaml, defaults '
+      'idle + per-run)',
+    );
   }
 
   /// `/exit`, `/help`, `/stats`, `/tasks`.
@@ -371,3 +426,19 @@ extension SlashCommandDispatch on AgentCli {
     await _switchMode(rest);
   }
 }
+
+/// Builds the session's sleep-prevention controller (issues #325/#326)
+/// from the host-injected runner + configured level + hold lifecycle; a
+/// null runner (tests, web) means no assertions — power is
+/// host-best-effort.
+PowerAssertionController? sessionPowerAssertions(
+  AgentCliConfig config,
+  void Function(String message) onWarn,
+) => config.powerRunner == null
+    ? null
+    : PowerAssertionController(
+        runner: config.powerRunner!,
+        level: config.powerSleepPrevention,
+        hold: config.powerSleepPreventionHold,
+        onWarn: onWarn,
+      );

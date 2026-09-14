@@ -87,6 +87,8 @@ export 'src/model.dart';
 export 'src/model_roles/model_roles.dart';
 export 'src/model_roles/vision_models.dart';
 export 'src/overflow.dart';
+export 'src/power_config.dart';
+export 'src/power_runner.dart';
 export 'src/providers/anthropic.dart';
 export 'src/providers/aiin_auth.dart';
 export 'src/providers/chatgpt_codex.dart';
