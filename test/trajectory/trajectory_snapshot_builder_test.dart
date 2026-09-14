@@ -936,15 +936,30 @@ void main() {
     });
 
     test('scaling 30k to 60k records is near-linear, not quadratic', () {
-      TrajectorySnapshotBuilder().appendAll(bulkRecords(100)); // JIT warmup.
-      final sw30 = Stopwatch()..start();
-      TrajectorySnapshotBuilder().appendAll(bulkRecords(7500));
-      sw30.stop();
-      final sw60 = Stopwatch()..start();
-      TrajectorySnapshotBuilder().appendAll(bulkRecords(15000));
-      sw60.stop();
-      final ratio = sw60.elapsedMicroseconds / sw30.elapsedMicroseconds;
-      expect(ratio, lessThan(3.0));
+      // Structural complexity assert (issue #358). The original form timed
+      // 30k vs 60k backfills and asserted a wall-clock ratio < 3.0 — that
+      // flaked twice on CI shard 2: one GC pause, scheduler deschedule, or
+      // hypervisor steal inside the 2x-longer 60k window flips a true 2.0
+      // ratio past 3.0 on a loaded shared runner. Wall clock cannot tell
+      // "slower machine" from "quadratic algorithm".
+      //
+      // Instead count the operation the #262 quadratic actually wasted:
+      // parent-chain hops walked while folding turn/step. The incremental
+      // fold is O(1) hops per chained record, so a linear backfill stays
+      // under a small per-record envelope; the pre-#262 fold (full chain
+      // walk per user/assistant record) walks ~n²/8 hops — hundreds of
+      // millions at 30k — and must still fail this.
+      final builder30 = TrajectorySnapshotBuilder()
+        ..appendAll(bulkRecords(7500)); // 30 001.
+      final builder60 = TrajectorySnapshotBuilder()
+        ..appendAll(bulkRecords(15000)); // 60 001.
+      // Linear envelope: ≤ 2 hops per record on average (chained bulk
+      // scripts walk ~0; the slack tolerates bounded branch/replay walks).
+      expect(builder30.chainWalkHops, lessThan(2 * 30001));
+      expect(builder60.chainWalkHops, lessThan(2 * 60001));
+      // Per-append snapshot materialization is the other #262 quadratic.
+      expect(builder30.snapshotsBuilt, 1);
+      expect(builder60.snapshotsBuilt, 1);
     });
   });
 }

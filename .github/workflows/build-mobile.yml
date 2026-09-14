@@ -312,15 +312,20 @@ jobs:
             https://github.com/IstiN/flutter_agent_harness.git "$GITHUB_WORKSPACE"
           echo "Checked out: $(git -C $GITHUB_WORKSPACE log -1 --oneline)"
 
+      # Persistent pinned SDK (issue #354): subosito/flutter-action with
+      # cache: true on this PERSISTENT runner cost 5m39s setup (untar ~1GB
+      # archive) + 8m47s POST (re-tar the whole SDK) per job — 14.5 of
+      # 19.7 min around a 4-min build (run 34815041052). The composite
+      # action keeps the SDK at ~/actions-runner-yoloit/flutter-sdk with a
+      # .fah-version marker: subsecond reuse when the pin is unchanged,
+      # exactly one download per pin bump, no cache POST step at all.
+      # Still a pinned 3.47.x install — the runner's hardcoded
+      # $HOME/.local/flutter is a stale 3.44.4, below the repo floor
+      # >=3.47.0 (daily-publish #260).
       - name: Setup Flutter (self-hosted)
-        # Pinned install — the hardcoded $HOME/.local/flutter on the
-        # runner is a stale 3.44.4, below the repo floor >=3.47.0
-        # (daily-publish #260).
-        uses: subosito/flutter-action@v2
+        uses: ./.github/actions/setup-flutter-selfhosted
         with:
           flutter-version: '3.47.x'
-          channel: stable
-          cache: true
 
       - name: Setup environment (self-hosted)
         run: |
