@@ -15,6 +15,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter_agent_harness/src/uploads.dart'
+    show kMaxStageUploadBytes, stageUploadTooLargeError;
+
 /// One cookie of the user's live jar (scoped read — see [handleExtOp]).
 final class ExtCookie {
   const ExtCookie({required this.name, required this.value, this.domain});
@@ -62,16 +65,25 @@ final class ExtHttpResponse {
   final String body;
 }
 
-/// Hard cap for one staged upload: 20 MB (issue #313). The SW's memory FS
-/// holds everything in RAM and mirrors it into chrome.storage, so the
-/// staging surface refuses oversized payloads BEFORE writing — the app's
-/// IndexedDB quota story does not apply here. Text pastes and normal
-/// attachments fit with an order of magnitude to spare.
-const int kMaxStageUploadBytes = 20 * 1024 * 1024;
+/// Per-owner serialization for chat-attachment staging (issue #313 review
+/// E3): the check-then-write inside `stageUpload` is not atomic across
+/// awaits — two racing ops on the same name can interleave (A checks,
+/// B checks, A writes a.txt, B overwrites as a-1.txt) and leave BOTH
+/// callers referencing the wrong bytes. The SW is single-threaded but
+/// await-separated, so each host chains its staging through one gate;
+/// VM tests pin the ordering here because the SW-only host file itself
+/// is a `dart:js_interop` surface.
+final class StageGate {
+  Future<void> _tail = Future.value();
 
-String _tooLarge(int bytes) =>
-    'upload too large: $bytes bytes exceeds the '
-    '${kMaxStageUploadBytes ~/ (1024 * 1024)} MB staging cap';
+  /// Runs [body] strictly after every previously submitted body finished
+  /// (or failed — the gate never stalls on an error).
+  Future<T> run<T>(Future<T> Function() body) {
+    final staged = _tail.then((_) => body());
+    _tail = staged.then((_) {}, onError: (_) {});
+    return staged;
+  }
+}
 
 /// Ops bound per request. Unknown ops are a structured error, never a
 /// crash; every fetch URL must be http(s) — the panel is trusted (an
@@ -132,8 +144,10 @@ Future<Map<String, dynamic>> handleExtOp(
         throw 'agent.stageUpload needs base64 "bytes"';
       }
       // Size guard BEFORE the decode allocates (base64 inflates by 4/3).
+      // The cap constant and the refusal wording are the SHARED core ones —
+      // the panel pre-check refuses with the same message (review minor 3).
       if (encoded.length * 3 ~/ 4 > kMaxStageUploadBytes) {
-        throw _tooLarge(encoded.length * 3 ~/ 4);
+        throw stageUploadTooLargeError(encoded.length * 3 ~/ 4);
       }
       final Uint8List bytes;
       try {
@@ -142,7 +156,7 @@ Future<Map<String, dynamic>> handleExtOp(
         throw 'agent.stageUpload needs base64 "bytes"';
       }
       if (bytes.length > kMaxStageUploadBytes) {
-        throw _tooLarge(bytes.length);
+        throw stageUploadTooLargeError(bytes.length);
       }
       return {'path': await backend.stageUpload(name, bytes)};
     case 'agent.discardUpload':

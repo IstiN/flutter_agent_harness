@@ -17,6 +17,24 @@ import 'env/execution_env.dart';
 /// attachments are staged before the outgoing message references them.
 const String uploadsDirName = 'uploads';
 
+/// Hard cap for ONE staged upload: 20 MB (issue #313, review minor 3 —
+/// single-sourced here so every surface agrees). The extension's memory FS
+/// holds everything in RAM and mirrors it into chrome.storage, so the
+/// staging surface refuses oversized payloads BEFORE writing; the app's
+/// IndexedDB quota story does not apply there. Text pastes and normal
+/// attachments fit with an order of magnitude to spare. The panel-side
+/// pre-check ([RelayAgentService.stageAttachment] for the extension, the
+/// composer for picked files) uses the same constant — an oversized paste
+/// is refused before any base64 expansion, not after a wasted encode.
+const int kMaxStageUploadBytes = 20 * 1024 * 1024;
+
+/// The named refusal both sides surface for an oversized upload — one
+/// wording for the SW op and the panel pre-check, so a user sees the
+/// same message no matter which hop rejects the paste.
+String stageUploadTooLargeError(int bytes) =>
+    'upload too large: $bytes bytes exceeds the '
+    '${kMaxStageUploadBytes ~/ (1024 * 1024)} MB staging cap';
+
 /// Strips path separators and `.`/`..` segments from a picked file [name]
 /// (some browsers send a `webkitRelativePath`), so the upload stays inside
 /// the target directory. Returns the cleaned relative path — possibly with

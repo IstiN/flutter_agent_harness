@@ -781,6 +781,30 @@ void main() {
       await expectLater(staged, throwsStateError);
     });
 
+    test('stageAttachment pre-checks the cap BEFORE encoding (review '
+        'minor 2)', () async {
+      final (:service, :channel) = await _attached();
+      addTearDown(channel.close);
+      final staged = service.stageAttachment(
+        name: 'pasted-huge.txt',
+        bytes: Uint8List(kMaxStageUploadBytes + 1),
+      );
+      await expectLater(
+        staged,
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'upload too large: ${kMaxStageUploadBytes + 1} bytes exceeds '
+                'the 20 MB staging cap',
+          ),
+        ),
+      );
+      // No frame ever left the panel: the refusal is local, no wasted
+      // 4/3 base64 expansion over the wire.
+      expect(channel.sentOf('ext_request'), isNull);
+    });
+
     test('a dropped SW port fails pending staging with a clean note '
         '(AC4)', () async {
       final (:service, :channel) = await _attached();

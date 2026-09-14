@@ -59,6 +59,7 @@ function boot({ respond }) {
     fetch: () => Promise.resolve({ ok: false }),
     location: { replace() {} },
     setTimeout,
+    clearTimeout,
     URL, // the vm realm has no WHATWG globals; the panel runs in a browser
     Date,
     chrome: {

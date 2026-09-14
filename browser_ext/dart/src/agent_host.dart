@@ -123,6 +123,11 @@ final class AgentHost implements UiHostBackend {
   bool _running = false;
   bool _booted = false;
 
+  /// Chat-attachment staging runs through this gate (issue #313 review
+  /// E3): one op at a time, so the check-then-write in `stageUpload`
+  /// cannot interleave across awaits.
+  final StageGate _stageGate = StageGate();
+
   /// Hub presence (null when no faDap config).
   DapIntegration? _dap;
   DapConfig? _dapConfig;
@@ -777,6 +782,9 @@ final class AgentHost implements UiHostBackend {
         'fake': provider == null || isFakeModel(provider.model),
       },
       'approval': _approvals.mode.label,
+      // The panel's oversized-paste pre-check reads the cap from here
+      // (main.js snapshot -> status payload) — no JS-side constant.
+      'staging': {'capBytes': uploads.kMaxStageUploadBytes},
       if (_dap case final dap?) 'hub': dap.snapshot(),
       'session': {
         'path': _sessionPath,
@@ -1166,8 +1174,12 @@ final class _ExtOpsBackend implements ExtOpsBackend {
   @override
   Future<String> stageUpload(String name, Uint8List bytes) =>
       // The same core routine the app's AgentService.stageAttachment runs
-      // (issue #313): identical sanitize/dedupe/uploads/ semantics.
-      uploads.stageUpload(_host._env, name: name, bytes: bytes);
+      // (issue #313): identical sanitize/dedupe/uploads/ semantics —
+      // through the host's StageGate so concurrent ops cannot interleave
+      // (review E3).
+      _host._stageGate.run(
+        () => uploads.stageUpload(_host._env, name: name, bytes: bytes),
+      );
 
   @override
   Future<void> discardUpload(String path) async {

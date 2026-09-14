@@ -3,6 +3,17 @@ const $ = (id) => document.getElementById(id);
 const MAX_LOG = 20;
 const MAX_BUBBLES = 200;
 
+// Attachment staging for long pastes (issue #313): the fallback composer
+// has no chip UI of its own, so a long multi-line paste stages the
+// clipboard text into the SW agent's uploads/ sandbox over
+// `agent.stageUpload` and sends a short path-reference on Send — the SAME
+// semantics the app's stageAttachment has. The oversized guard reads the
+// cap from the agent status payload (single source: core uploads.dart via
+// getState) — no JS-side constant; 0 = unknown, skip the pre-check and
+// let the SW refuse.
+const stagedFiles = [];
+let stagingCapBytes = 0;
+
 function log(line) {
   const li = document.createElement('li');
   li.textContent = `[${new Date().toLocaleTimeString()}] ${line}`;
@@ -25,6 +36,7 @@ function render(s) {
   $('status').textContent = text;
   const agent = s.agent;
   if (agent) {
+    if (agent.staging?.capBytes) stagingCapBytes = agent.staging.capBytes;
     const p = agent.provider;
     $('agentStatus').textContent =
       `${p?.configured ? p.model : 'no provider configured (fake echoes)'} · approval: ${agent.approval} · ` +
@@ -145,6 +157,42 @@ $('send').addEventListener('click', async () => {
   if (res?.ok) log(`mail → ${$('to').value.trim()} (queued for ack)`);
 });
 $('sendPrompt').addEventListener('click', sendPrompt);
+
+// UTF-8-safe base64 in chunks (String.fromCharCode spread is stack-bound).
+function base64EncodeUtf8(text) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+$('prompt').addEventListener('paste', (e) => {
+  const text = e.clipboardData?.getData('text/plain') ?? '';
+  // Short or single-line pastes are normal input, not attachments.
+  if (!text || !text.includes('\n')) return;
+  const cap = stagingCapBytes;
+  if (cap && text.length > cap) {
+    e.preventDefault();
+    log(`paste rejected: ${text.length} bytes exceeds the ${Math.floor(cap / (1024 * 1024))} MB staging cap — text kept for editing`);
+    return;
+  }
+  e.preventDefault();
+  const name = `pasted-${Date.now()}.txt`;
+  extCall('agent.stageUpload', { name, bytes: base64EncodeUtf8(text) })
+    .then((res) => {
+      stagedFiles.push(res.path);
+      $('prompt').value = '';
+      log(`staged paste -> ${res.path} (${text.length} bytes) — attach on send`);
+    })
+    .catch((err) => {
+      // Staging failed: put the pasted text back — inline paste is the
+      // fallback, never a lost clipboard.
+      $('prompt').value = text;
+      log(`staging failed (${err.message}) — pasted inline instead`);
+    });
+});
 $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -153,13 +201,20 @@ $('prompt').addEventListener('keydown', (e) => {
 });
 function sendPrompt() {
   const text = $('prompt').value.trim();
-  if (!text) return;
+  const staged = stagedFiles.splice(0);
+  if (!text && !staged.length) return;
   $('prompt').value = '';
   // A Send-button click leaves DOM focus on the button; after fa's reply the
   // next typed text goes nowhere (issue #39). Keep the caret in the composer
   // so a follow-up message never needs a fresh click on the field.
   $('prompt').focus();
-  call({ type: 'agent.send', text });
+  const fullText = [
+    ...staged.map((path) => `[attached file: ${path} — read it with your tools]`),
+    text,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  call({ type: 'agent.send', text: fullText });
 }
 $('approve').addEventListener('click', () => {
   call({ type: 'agent.decide', id: $('approval').dataset.id, allow: true });
@@ -192,17 +247,18 @@ extPort.onMessage.addListener((m) => {
   const p = extPending.get(m.id);
   if (!p) return;
   extPending.delete(m.id);
+  clearTimeout(p.timer);
   if (m.ok) p.resolve(m.data ?? {});
   else p.reject(new Error(m.error || 'ext op failed'));
 });
 function extCall(op, params = {}) {
   return new Promise((resolve, reject) => {
     const id = `x${++extSeq}`;
-    extPending.set(id, { resolve, reject });
-    extPort.postMessage({ kind: 'ext_request', id, op, params });
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (extPending.delete(id)) reject(new Error(`${op} timed out`));
     }, 45000);
+    extPending.set(id, { resolve, reject, timer });
+    extPort.postMessage({ kind: 'ext_request', id, op, params });
   });
 }
 

@@ -240,6 +240,12 @@ final class RelayAgentService extends AgentService {
     required String name,
     required Uint8List bytes,
   }) async {
+    // Pre-check BEFORE the base64 encode (review minor 2): an oversized
+    // paste is refused with the SAME shared-core message the SW op would
+    // throw, instead of wasting a 4/3 expansion before the refusal.
+    if (bytes.length > kMaxStageUploadBytes) {
+      throw StateError(stageUploadTooLargeError(bytes.length));
+    }
     final result = await _extRequest('agent.stageUpload', {
       'name': name,
       'bytes': base64Encode(bytes),

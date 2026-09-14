@@ -8,6 +8,8 @@ import 'dart:typed_data';
 import 'package:test/test.dart';
 
 import '../src/ext_ops.dart';
+import 'package:flutter_agent_harness/src/uploads.dart'
+    show kMaxStageUploadBytes;
 
 final class _FakeBackend implements ExtOpsBackend {
   _FakeBackend();
