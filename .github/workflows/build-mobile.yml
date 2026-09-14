@@ -143,6 +143,23 @@ jobs:
           channel: 'stable'
           cache: true
 
+      # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
+      # newer flutter validates assets at build time, so the placeholder must
+      # exist BEFORE flutter pub get (issue #368: aot_android_asset_bundle
+      # died on "No file or variants found for asset: .env"). Content mirrors
+      # the ci.yml/build-macos.yml incantation — bare `touch` is not enough
+      # on ubuntu/flutter 3.47.4.
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
       - name: Install dependencies
         working-directory: flutter_app
         run: flutter pub get
