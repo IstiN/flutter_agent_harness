@@ -18,6 +18,7 @@ import '../approval/approval.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import 'tui_text_width.dart';
+import 'tui_theme.dart';
 
 /// A transport-neutral key event — dart_tui's `KeyMsg` carries the same
 /// info but depends on `dart_tui`, so we re-shape it here and convert at
@@ -1044,12 +1045,14 @@ _PromptKeyResult? _handleTextEnterKey(TuiPromptState state, PromptKey key) {
 // Rendering
 // ---------------------------------------------------------------------------
 
-String _accent(String s) => '\x1b[1m\x1b[38;2;94;234;212m$s\x1b[0m';
-String _accent2Plain(String s) => '\x1b[38;2;129;140;248m$s\x1b[0m';
-String _dim(String s) => '\x1b[2m$s\x1b[0m';
+// Palette escapes ride the session theme (issue #279); bold stays
+// structural. Byte-identical to the historical palette under the default.
+String _accent(String s) => tuiAccent(s);
+String _accent2Plain(String s) => tuiAccent2Soft(s);
+String _dim(String s) => tuiDim(s);
 String _bold(String s) => '\x1b[1m$s\x1b[0m';
-String _yellow(String s) => '\x1b[38;2;250;204;21m$s\x1b[0m';
-String _red(String s) => '\x1b[38;2;248;113;113m$s\x1b[0m';
+String _yellow(String s) => tuiWarning(s);
+String _red(String s) => tuiError(s);
 
 List<String> _frameRows(TuiPromptState state, int width) {
   final inner = width - 2;

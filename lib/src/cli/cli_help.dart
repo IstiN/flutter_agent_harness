@@ -446,6 +446,10 @@ REPL COMMANDS
                      /skills access [ask|granted|denied] manages third-party
                      consent, /skills import copies third-party skills into
                      .fah/skills
+  /theme [name|reset] switch the TUI color palette (bare: picker with
+                      swatches in the TUI, table in line mode); the choice
+                      persists as tui.theme; user themes load from
+                      ~/.fah/themes/*.json
   /agents             list available agent types (built-in + discovered from
                       .fah/.agents/.claude/.github/.codex agents dirs)
   /cube [use <name|path>|off|reload|list|cache status|cache clear]
