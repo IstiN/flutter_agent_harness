@@ -159,7 +159,14 @@ def verify_external_distribution!(bundle_id:, group:, app_version:)
     ).select { |b| b.app_version == app_version && group_build_ids.include?(b.id) }
      .max_by { |b| b.version.to_i }
     if build
-      if build.ready_for_external_testing?
+      # fastlane deleted BuildBetaDetail#ready_for_external_testing? but left
+      # Build#ready_for_external_testing? calling it — NoMethodError the
+      # moment ASC returns buildBetaDetail (issue #362; green runs only saw
+      # nil, which short-circuits). Read external_build_state from the beta
+      # detail directly: IN_BETA_TESTING/BETA_APPROVED = live, anything else
+      # (incl. nil detail) = still waiting for Beta App Review.
+      external_state = build.build_beta_detail&.external_build_state
+      if external_state == "IN_BETA_TESTING" || external_state == "BETA_APPROVED"
         UI.success("✅ #{app_version} (build #{build.version}) is live to the external group '#{group}' — distributed with zero clicks")
       else
         UI.important("Build #{app_version} (#{build.version}) is in '#{group}' and waiting for Beta App Review — external visibility flips automatically on approval, no clicks needed.")
