@@ -38,6 +38,7 @@ import '../exceptions.dart';
 import '../messaging/fabric_config.dart';
 import '../mcp/mcp_config.dart';
 import '../memory_config.dart';
+import '../power_config.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
 import '../tools/availability.dart';
@@ -76,6 +77,7 @@ const configTopLevelKeys = <String>{
   'images',
   'skills',
   'fabric',
+  'power',
 };
 
 /// Top-level keys that carry a plain string value.
@@ -1061,6 +1063,10 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'providerTimeouts': (value, _) => _validateProviderTimeouts(value),
   'agent': (value, _) => _validateAgentSection(value),
   'skills': (value, _) => _validateSkillsSection(value),
+  // The power section (sleep prevention, issue #325) delegates to the
+  // SAME public strict parser CliConfig.fromYaml uses — no mirror to
+  // keep in sync, unlike the private-parser sections above.
+  'power': (value, _) => parsePowerSection(value),
   // Deep validation (strict prompt names) lives behind cli_config.dart's
   // strict parser; here the section must be a string-valued map.
   'prompts': (value, _) => _validateStringMap(value, 'prompts'),

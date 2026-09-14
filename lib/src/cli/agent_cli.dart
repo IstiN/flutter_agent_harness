@@ -133,6 +133,8 @@ import '../memory/compaction_memory_hook.dart';
 import '../memory/harness_llm_provider.dart';
 import '../memory/memory_controller.dart';
 import '../memory_config.dart';
+import '../power_config.dart';
+import '../power_runner.dart';
 import '../messaging/agent_fabric.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
@@ -208,6 +210,8 @@ class AgentCli {
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
        _useTui = useTui && io.supportsRawMode {
+    // Sleep prevention (issue #325): null runner (tests, web) → none.
+    _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
     _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
     _currentMode = _modes[config.initialMode] ?? _modes['code']!;
@@ -961,6 +965,9 @@ class AgentCli {
   /// cancel or input shutdown.
   Completer<String?>? _pendingPromptAnswer;
   final Map<String, SlashCommand> _pluginSlashCommands = {};
+
+  /// Session sleep-prevention (#325): held on [run], freed on teardown.
+  PowerAssertionController? _powerAssertions;
   final Map<String, String> _pluginSlashDescriptions = {};
   final List<ExternalInbox> _pluginInboxes = [];
 
@@ -1134,6 +1141,10 @@ class AgentCli {
     // revalidates on the first menu open (stale entries) — no boot HTTP.
     await _loadPersistedModelCache();
     _session = await _initializeSession();
+    // Sleep prevention (#325/#326): only the EXPLICIT session hold
+    // acquires here — the default per-run hold acquires at every run
+    // start instead, so an idle agent never pins the machine awake.
+    await acquirePowerAssertions();
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
     _syncMailboxPrefix();
@@ -1244,6 +1255,7 @@ class AgentCli {
   ) async {
     _cancelPendingAnswers();
     _hubTeardown();
+    await releasePowerAssertions();
     final exitSpec = _cubeEnv.activeSpec;
     if (exitSpec != null) {
       try {
@@ -1810,279 +1822,11 @@ class AgentCli {
     _tuiController?.openPicker('approval', 'Approval mode', items);
   }
 
-  Future<Session> _initializeSession() async {
-    final name = config.sessionName?.trim();
-    if (name != null && name.isNotEmpty) {
-      final matches = await _sessionNameMatches(name);
-      final metadata = _resolveSessionNameMatch(
-        matches,
-        onAmbiguous: (all) {
-          // Interactive prompting is impossible this early (the input pump
-          // starts after init): auto-resolve and let the TUI offer the
-          // scoped picker after boot; line mode gets the printed hint.
-          _startupAmbiguousSessions = all;
-          _startupAmbiguousName = name;
-        },
-      );
-      if (metadata != null) {
-        if (matches.length > 1) {
-          io.writeln(
-            _style.dim(
-              "note: ${matches.length} sessions named '$name' — opened "
-              '${metadata.id} (${metadata.cwd}); pick another with '
-              '/sessions or restart with fa --session <id>',
-            ),
-          );
-        }
-        return _loadSession(metadata);
-      }
-      return _createSession(name: name);
-    }
-    return _createSession();
-  }
-
-  Future<Session> _createSession({String? name}) async {
-    try {
-      final session = await _repo.create(
-        JsonlSessionCreateOptions(
-          cwd: _env.cwd,
-          // `agent: cli` marks the owning process — the Fa app's live badge
-          // and attach view key off presence, but the metadata tells
-          // sessions apart in listings (the app writes 'fa').
-          metadata: {'agent': 'cli', 'model': _agent.state.model.id},
-        ),
-      );
-      if (name != null && name.isNotEmpty) {
-        await session.appendSessionName(name);
-      }
-      return session;
-    } on SessionException catch (error) {
-      final fallbackRoot = '${config.homeDir ?? _env.cwd}/.fah/sessions';
-      if (config.sessionRoot != fallbackRoot) {
-        try {
-          final fallbackRepo = JsonlSessionRepo(
-            fs: _env,
-            sessionsRoot: fallbackRoot,
-          );
-          final session = await fallbackRepo.create(
-            JsonlSessionCreateOptions(
-              cwd: _env.cwd,
-              metadata: {'agent': 'cli', 'model': _agent.state.model.id},
-            ),
-          );
-          _repo = fallbackRepo;
-          // Storage moved — the mailboxes move with it. Without this the
-          // fabric keeps pointing at the failed root: presence/register
-          // throws, and an attached app's messages land where this process
-          // never looks (the silent-dead-attach bug).
-          _fileFabric.swap(
-            FileMessagingRepository(
-              env: _env,
-              root: '$fallbackRoot/${encodeSessionCwd(_env.cwd)}/messages',
-              decodeSessionCwd: decodeSessionCwd,
-              homeDir: config.homeDir,
-            ),
-          );
-          if (name != null && name.isNotEmpty) {
-            await session.appendSessionName(name);
-          }
-          io.writeln(
-            _style.yellow(
-              'warning: Failed to create session under ${config.sessionRoot} (${error.message}).\n'
-              'Falling back to session storage at $fallbackRoot.\n'
-              'To fix permissions for shared macOS sessions, run:\n'
-              '  sudo chown -R \$(whoami) ~/Library/"Group Containers"/group.dev.fa1.shared\n'
-              '  chmod -R u+rwx ~/Library/"Group Containers"/group.dev.fa1.shared',
-            ),
-          );
-          return session;
-        } catch (_) {
-          // Fall through to rethrow original error.
-        }
-      }
-      rethrow;
-    }
-  }
-
-  /// Label-only session-name read (issue #199): the repo's backward tail
-  /// scan when the concrete repo supports it, else the legacy full open.
-  /// Never keeps the opened [Session] — switching paths open their own.
-  Future<String?> _sessionNameQuick(SessionMetadata metadata) async {
-    final repo = _repo;
-    if (repo is JsonlSessionRepo) return repo.sessionNameQuick(metadata);
-    return (await _repo.open(metadata)).getSessionName();
-  }
-
-  /// Every session whose id IS [name] (exact id short-circuits — ids are
-  /// unique) or whose session_info name equals it, across every workspace
-  /// (the exit hint prints `fa --session '<id>'` for unnamed sessions, so
-  /// ids must resolve too). Several sessions can share a NAME — different
-  /// project folders, or renamed twice — so callers get the full list and
-  /// disambiguate (see [_resolveSessionNameMatch]).
-  Future<List<SessionMetadata>> _sessionNameMatches(String name) async {
-    final sessions = await _repo.list();
-    final matches = <SessionMetadata>[];
-    for (final metadata in sessions) {
-      if (metadata.id == name.trim()) return [metadata];
-      final sessionName = await _sessionNameQuick(metadata);
-      if (sessionName != null && sessionName.trim() == name.trim()) {
-        matches.add(metadata);
-      }
-    }
-    return matches;
-  }
-
-  /// Finds a session by display name OR exact id — the first match. Kept
-  /// for the rename-conflict check ("the name is taken anywhere").
-  Future<SessionMetadata?> _findSessionByName(String name) async {
-    final matches = await _sessionNameMatches(name);
-    return matches.isEmpty ? null : matches.first;
-  }
-
-  /// Disambiguates same-named sessions: the LAUNCH folder's session beats a
-  /// namesake from another project (the "fa --session X opens the wrong
-  /// folder's session" bug); a clear single local wins silently, anything
-  /// else is ambiguous and [onAmbiguous] receives the full match list so
-  /// the caller can offer a choice. The fallback pick is the most recently
-  /// updated local (or global when the folder has none).
-  SessionMetadata? _resolveSessionNameMatch(
-    List<SessionMetadata> matches, {
-    void Function(List<SessionMetadata> matches)? onAmbiguous,
-  }) {
-    if (matches.isEmpty) return null;
-    if (matches.length == 1) return matches.single;
-    final local = [
-      for (final m in matches)
-        if (m.cwd == _env.cwd) m,
-    ];
-    if (local.length == 1) return local.single;
-    onAmbiguous?.call(matches);
-    final pool = local.isNotEmpty ? local : matches;
-    pool.sort(
-      (a, b) => (b.lastUpdatedAt ?? b.createdAt).compareTo(
-        a.lastUpdatedAt ?? a.createdAt,
-      ),
-    );
-    return pool.first;
-  }
-
   /// Same-named matches pending a startup choice: set when `--session X`
   /// resolved ambiguously, consumed by [_runTuiRepl] to offer the sessions
   /// picker scoped to these matches once the TUI owns the screen.
   List<SessionMetadata>? _startupAmbiguousSessions;
   String? _startupAmbiguousName;
-
-  /// Offers the startup ambiguity choice: the sessions picker scoped to
-  /// the same-named matches. The current session stays the auto-resolved
-  /// one; picking another switches, Esc keeps it.
-  Future<void> _offerStartupSessionChoice() async {
-    final matches = _startupAmbiguousSessions;
-    final name = _startupAmbiguousName;
-    _startupAmbiguousSessions = null;
-    _startupAmbiguousName = null;
-    if (matches == null || name == null) return;
-    _lastSessionRows = await _sessionPickerRows(matches);
-    _tuiController?.openPicker(
-      'sessions',
-      "Several sessions named '$name' — which one?",
-      sessionPickerItems(
-        _lastSessionRows!,
-        flat: _sessionPickerFlat,
-        toggle: false,
-      ),
-    );
-  }
-
-  Future<Session> _loadSession(SessionMetadata metadata) async {
-    final session = await _repo.open(metadata);
-    final messages = await session.buildContextMessages();
-    // Loaded usage anchors are generation-time: post-compaction they
-    // phantom-report the pre-compaction size (183k on a 27k branch) and
-    // fire a no-op compaction on every resume. Re-anchor at chars/4.
-    _agent.state.messages = resetLoadedUsageAnchors(messages);
-    _persistedCount = messages.length;
-    // Adopt the session's original project folder. This matters both when
-    // switching mid-run and when the CLI starts with --session: tools like
-    // bash/read/edit must operate in the session's directory, not the launch
-    // directory.
-    if (_env.cwd != metadata.cwd) {
-      _env.cwd = metadata.cwd;
-      _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
-      _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
-      await _loadAgentContext();
-    }
-    // The session may live in a DIFFERENT folder than the launch cwd: the
-    // boot applied the launch folder's model memory, so a session opened
-    // across folders landed on the wrong provider (user report: a z.ai
-    // session reopened as copilot). Re-apply the session folder's saved
-    // triple.
-    await _applySessionFolderModelState(session);
-    return session;
-  }
-
-  /// Re-applies the model/provider triple saved for the CURRENT folder
-  /// ([loadFolderModelState]) — the runtime twin of the boot restore in
-  /// bin/fah.dart. Best-effort: a stale or broken state file keeps the
-  /// current model.
-  Future<void> _applySessionFolderModelState(Session session) async {
-    if (!config.folderModelStateApplies) return;
-    final state = await loadFolderModelState(
-      _env,
-      sessionsRoot: config.sessionRoot,
-      cwd: _env.cwd,
-    );
-    if (state == null) return;
-    final current = _agent.state.model;
-    if (current.id == state.modelId && current.baseUrl == state.baseUrl) {
-      return; // already on this triple (the boot applied this folder)
-    }
-    final Model built;
-    try {
-      built = buildCliDefaultModel(
-        state.providerKind,
-        modelId: state.modelId,
-        baseUrl: state.baseUrl,
-      );
-    } on ConfigException {
-      io.writeln(
-        _style.dim(
-          'note: saved folder model state is stale '
-          '(${state.providerKind}) — keeping ${current.id}',
-        ),
-      );
-      return;
-    }
-    final spec = catalogProvider(built.provider)!;
-    final key = _providerKeyFor(spec, built.baseUrl) ?? '';
-    _providerKind = state.providerKind;
-    _apiKey = key;
-    _explicitToken = false;
-    _streamFunction = _catalogStreamFunction(state.providerKind, key);
-    _agent.streamFunction = _streamFunction;
-    _agent.state.model = built;
-    // The cached model list belongs to the previous provider/endpoint.
-    _modelCache = const [];
-    _modelContextWindows = const {};
-    _modelMaxTokens = const {};
-    _lastModelList = null;
-    unawaited(_refreshModelCache());
-    await session.appendModelChange(
-      provider: built.provider,
-      modelId: built.id,
-    );
-    io.writeln(
-      _style.dim('restored ${built.id} (${built.provider}) from this folder'),
-    );
-  }
-
-  /// The label for a startup-resumed session's replay header, or null when
-  /// this run started a fresh session (no messages to replay).
-  Future<String?> _resumedSessionLabel() async {
-    if (_agent.state.messages.isEmpty) return null;
-    final session = _session;
-    if (session == null) return null;
-    return await session.getSessionName() ?? (await session.getMetadata()).id;
-  }
 
   /// Runs a single non-interactive prompt (headless mode: `fah "<prompt>"`)
   /// and returns the process exit code: 0 on success, 1 when the run ends
@@ -2112,6 +1856,11 @@ class AgentCli {
     }
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
+    // Sleep prevention (#325/#326) — headless wraps exactly ONE run, so
+    // both holds bracket it the same way: session-held acquires on the
+    // session open, per-run on the run start (the prompt below).
+    await acquirePowerAssertions();
+    runPowerAssertionsStarted();
     // Warm the endpoint metadata (model list, dial features, reported
     // limits) BEFORE the first turn; failures are silent.
     await _warmModelCacheQuietly();
@@ -2152,6 +1901,7 @@ class AgentCli {
       );
       return 1;
     } finally {
+      await releasePowerAssertions();
       await _cubeCacheSaveQuietly();
       await interruptSub.cancel();
       await taskSub.cancel();
@@ -2330,6 +2080,10 @@ class AgentCli {
     // before the first streamed byte, and isBusy readers (inbox watcher,
     // shell-job settle, steer-vs-start) must not start a parallel run here.
     _runStarting = true;
+    // Per-run sleep prevention (#326): the default hold acquires with the
+    // run going in flight — fire-and-forget, never a reason to delay the
+    // turn.
+    runPowerAssertionsStarted();
     // Busy bracket HERE, not in the TUI submit handler: every run trigger
     // (submit, inbox wake, shell-job settle, scheduled message) must spin,
     // and an unbracketed trigger leaves the spinner on after the run
@@ -2353,6 +2107,9 @@ class AgentCli {
       settled.whenComplete(() {
         _tuiController?.sendBusy(false, source: 'run');
         _runStarting = false;
+        // Per-run sleep prevention (#326): the run has fully settled —
+        // drop the assertion so an idle agent lets the machine sleep.
+        unawaited(runPowerAssertionsSettled());
         _settleLeftoverSteering();
         if (!_exited) _writeIdlePrompt();
       }),
