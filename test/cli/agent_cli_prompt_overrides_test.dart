@@ -182,7 +182,7 @@ void main() {
       // the busy guard of the compaction flow).
       await _waitFor(() => !cli.isBusy);
       io.sendLine('/compact');
-      await _waitFor(() => io.out.toString().contains('[compacted]'));
+      await _waitFor(() => io.out.toString().contains('● compacted'));
       io.sendLine('/exit');
       await run;
       // The summarization call carries the overridden system prompt, and the
@@ -214,7 +214,7 @@ void main() {
       await _waitFor(() => contexts.isNotEmpty);
       await _waitFor(() => !cli.isBusy);
       io.sendLine('/compact');
-      await _waitFor(() => io.out.toString().contains('[compacted]'));
+      await _waitFor(() => io.out.toString().contains('● compacted'));
       io.sendLine('/exit');
       await run;
       final summarization = contexts.where(

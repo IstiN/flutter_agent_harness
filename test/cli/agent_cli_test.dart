@@ -814,7 +814,7 @@ void main() {
     await waitForIt(() => fake.calls == 1 && !cli.isBusy);
     io.sendLine('/compact');
     await waitForIt(() => fake.calls == 2, reason: 'summarizer called');
-    await waitForIt(() => io.out.toString().contains('[compacted]'));
+    await waitForIt(() => io.out.toString().contains('● compacted'));
     io.sendLine('next');
     await waitForIt(() => fake.calls == 3 && !cli.isBusy);
     io.sendLine('/exit');
@@ -861,7 +861,7 @@ void main() {
 
     io.sendLine('q');
     await waitForIt(() => fake.calls == 2, reason: 'summarizer called');
-    await waitForIt(() => io.out.toString().contains('[auto-compacted]'));
+    await waitForIt(() => io.out.toString().contains('● auto-compacted'));
     io.sendLine('/exit');
     await run;
 
@@ -937,7 +937,7 @@ void main() {
     // (auto-compaction recovers right after)…
     expect(output, contains('note: Context window exhausted'));
     expect(output, isNot(contains('error: Context window exhausted')));
-    expect(output, contains('[auto-compacted]'));
+    expect(output, contains('● auto-compacted'));
     // …and the turn visibly continued on its own.
     expect(output, contains('auto-compacted; continuing'));
     // request 1 (tool turn) + summarizer + the continuation request.

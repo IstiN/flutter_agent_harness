@@ -29,15 +29,30 @@ void main() {
       ),
       ['> ⚙ memory tools wired'],
     );
-    expect(
-      renderSystemNoticeLines('[auto-compacted] 210925 tokens summarized'),
-      ['> ⚙ [auto-compacted] 210925 tokens summarized'],
-    );
+    // Issue #276: the report block header replaced the bracketed
+    // receipts — the quote treatment follows the header line.
+    expect(renderSystemNoticeLines('● compacted · smol'), [
+      '> ⚙ ● compacted · smol',
+    ]);
+    expect(renderSystemNoticeLines('● auto-compacted'), [
+      '> ⚙ ● auto-compacted',
+    ]);
     expect(
       renderSystemNoticeLines(
         '[context trimmed] 1000 → 200 tokens (summarizer unavailable)',
       ),
       ['> ⚙ [context trimmed] 1000 → 200 tokens (summarizer unavailable)'],
     );
+  });
+
+  test('needsSystemNoticeRewrite gates the TUI output path', () {
+    expect(needsSystemNoticeRewrite('plain user text'), isFalse);
+    expect(
+      needsSystemNoticeRewrite('<system-notice>x</system-notice>'),
+      isTrue,
+    );
+    // The styled header still matches — the ANSI styling rides inside
+    // the line, the marker stays greppable.
+    expect(needsSystemNoticeRewrite('● auto-compacted · smol'), isTrue);
   });
 }
