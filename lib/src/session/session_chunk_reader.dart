@@ -293,18 +293,26 @@ final class SessionChunkReader {
   /// [locateRecord] makes with `"id":`).
   static const String _sessionInfoNeedle = '"type":"session_info"';
 
-  /// Scan block size for the needle scan and its newline seeks.
-  static const int _scanBlockBytes = 1 << 20;
+  /// Byte cap per name-probe window (issue #369 AC1): fixed bounded
+  /// reads at each end of the file instead of any backward walk. A
+  /// 400 MB giant pays at most 2 MiB plus the probed lines' own bytes —
+  /// far below the file size by construction, so proving a name is
+  /// ABSENT never touches the body between the windows.
+  static const int _nameProbeBytes = 1 << 20;
 
-  /// The newest `session_info` record's name via a raw backward byte
-  /// scan (issue #369): 1 MiB blocks from EOF, an ASCII needle gate,
-  /// and only gate-matching lines decode + JSON-parse. A
-  /// named-at-creation 400 MB session — its only session_info at the
-  /// file START — costs one raw byte pass, never the per-chunk
-  /// full-record parse [_scanBackward] pays. Returns the name, `null`
-  /// when the file holds no session_info record or the newest one
-  /// clears the name (empty/whitespace — the caller's contract).
-  /// Throws [SessionException] like [readTail] when the file is missing.
+  /// The newest `session_info` record's name via two bounded probes
+  /// (issue #369). The HEAD window is read first: a named-at-creation
+  /// session keeps its session_info among the first records, so the
+  /// 400 MB giant case resolves from the file start without any
+  /// backward walk (AC2). The TAIL window's verdict wins whenever it
+  /// sees a record — bytes after the head are newer, so a
+  /// rename-at-end still beats the header name (AC5, newest within the
+  /// cap) — and on a head miss it is the bounded-cap fallback AC1
+  /// names. The body between the windows is never read. Returns the
+  /// name, `null` when the probes see no session_info or the newest
+  /// probed record clears the name (empty/whitespace — the caller's
+  /// contract). Throws [SessionException] like [readTail] when the
+  /// file is missing.
   Future<String?> readNewestSessionInfoName() async {
     final info = await stat();
     if (info == null) {
@@ -313,26 +321,49 @@ final class SessionChunkReader {
         code: SessionErrorCode.notFound,
       );
     }
+    if (info.size == 0) return null;
+    if (info.size <= _nameProbeBytes) {
+      // One window covers the file - the whole name history is probed.
+      return (await _newestSessionInfoInWindow(0, info.size, info.size))?.name;
+    }
+    final head = await _newestSessionInfoInWindow(
+      0,
+      _nameProbeBytes,
+      info.size,
+    );
+    final tail = await _newestSessionInfoInWindow(
+      info.size - _nameProbeBytes,
+      info.size,
+      info.size,
+    );
+    return tail?.name ?? head?.name;
+  }
+
+  /// The newest `session_info` record whose LINE starts inside
+  /// [start, end), probed with a needle-length overlap past each edge
+  /// so a gate hit on a line crossing the boundary still resolves
+  /// through the line-seek parse. `null` when the window sees no
+  /// session_info.
+  Future<SessionInfoRecord?> _newestSessionInfoInWindow(
+    int start,
+    int end,
+    int size,
+  ) async {
+    if (end <= start) return null;
     final needle = ascii.encode(_sessionInfoNeedle);
     final overlap = needle.length - 1;
-    var end = info.size;
-    while (end > 0) {
-      final start = end > _scanBlockBytes ? end - _scanBlockBytes : 0;
-      // The tail overlap re-exposes needles spanning the block
-      // boundary: one starting before [end] and ending inside the newer
-      // block was invisible there and is found here; hits starting
-      // at/after [end] belong to the newer block, which saw them whole.
-      final readEnd = end + overlap < info.size ? end + overlap : info.size;
-      final bytes = await _readRange(start, readEnd);
-      final blockLimit = end - start;
-      for (var i = bytes.length - needle.length; i >= 0; i--) {
-        if (bytes[i] != needle[0]) continue;
-        if (i >= blockLimit) continue; // owned by the newer block
-        if (!_matchesAsciiAt(bytes, i, needle)) continue;
-        final record = await _parseLineContaining(start + i, info.size);
-        if (record is SessionInfoRecord) return record.name;
-      }
-      end = start;
+    final readStart = start > overlap ? start - overlap : 0;
+    final readEnd = end + overlap < size ? end + overlap : size;
+    final bytes = await _readRange(readStart, readEnd);
+    for (var i = bytes.length - needle.length; i >= 0; i--) {
+      if (bytes[i] != needle[0]) continue;
+      if (!_matchesAsciiAt(bytes, i, needle)) continue;
+      final (lineStart, record) = await _parseLineContaining(
+        readStart + i,
+        size,
+      );
+      if (lineStart >= end) continue; // the record lives beyond the window
+      if (record is SessionInfoRecord) return record;
     }
     return null;
   }
@@ -346,35 +377,45 @@ final class SessionChunkReader {
     return true;
   }
 
-  /// Parses the record whose line contains absolute byte offset [hit].
-  /// The line may extend far beyond one scan block (a megabyte-wide
+  /// Parses the record on the JSONL line containing absolute byte
+  /// offset [hit]; returns the line's start offset with the record.
+  /// The line may extend far beyond one probe window (a megabyte-wide
   /// image record can quote the needle in its payload), so its bounds
   /// are found with block-wise newline seeks and the exact range is
-  /// read once. Torn or foreign lines return `null` — the scan moves
-  /// on, never fatal in a read-only probe.
-  Future<SessionRecord?> _parseLineContaining(int hit, int size) async {
+  /// read once. Torn or foreign lines return a `null` record — the
+  /// scan moves on, never fatal in a read-only probe. The line start
+  /// is always hit's own line, so the caller can tell records that
+  /// begin beyond its window from boundary-crossing ones.
+  Future<(int, SessionRecord?)> _parseLineContaining(int hit, int size) async {
     final nlBefore = await _lastNewlineBefore(hit);
-    final lineStart = nlBefore ?? 0;
+    final lineStart = nlBefore == null ? 0 : nlBefore + 1;
     final lineEnd = await _firstNewlineFrom(hit) ?? size;
-    if (lineEnd <= lineStart) return null;
     final bytes = await _readRange(lineStart, lineEnd);
     try {
-      return parseSessionEntryLine(
-        utf8.decode(bytes, allowMalformed: true),
-        path,
+      return (
         lineStart,
+        parseSessionEntryLine(
+          utf8.decode(bytes, allowMalformed: true),
+          path,
+          lineStart,
+        ),
       );
     } on Object {
-      return null;
+      return (lineStart, null);
     }
   }
+
+  /// Seek block for the line bounds below: JSONL lines are short, so a
+  /// small block keeps a probe's byte budget tight; megabyte-wide
+  /// records just take a few more bounded reads.
+  static const int _lineSeekBytes = 1 << 16;
 
   /// Offset of the last 0x0A strictly below [from], block-wise; `null`
   /// when none exists above the file start.
   Future<int?> _lastNewlineBefore(int from) async {
     var end = from;
     while (end > 0) {
-      final start = end > _scanBlockBytes ? end - _scanBlockBytes : 0;
+      final start = end > _lineSeekBytes ? end - _lineSeekBytes : 0;
       final bytes = await _readRange(start, end);
       for (var i = bytes.length - 1; i >= 0; i--) {
         if (bytes[i] == 0x0A) return start + i;
@@ -391,8 +432,8 @@ final class SessionChunkReader {
     if (info == null) return null;
     var start = from;
     while (start < info.size) {
-      final end = start + _scanBlockBytes < info.size
-          ? start + _scanBlockBytes
+      final end = start + _lineSeekBytes < info.size
+          ? start + _lineSeekBytes
           : info.size;
       final bytes = await _readRange(start, end);
       final nl = bytes.indexOf(0x0A);

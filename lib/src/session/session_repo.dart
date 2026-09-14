@@ -387,17 +387,20 @@ final class JsonlSessionRepo implements SessionRepo {
 
   /// The session's display name WITHOUT a full open (issue #199): the
   /// newest `session_info` record — the same record `(await open(m))
-  /// .getSessionName()` reports (last one in file order wins; an
-  /// empty/whitespace name clears it). Read-only: never rewrites torn
-  /// lines. Ranged-read hosts take the raw needle scan (issue #369 —
-  /// the CLI cold start resolves `--session <name>` across every
-  /// session file, and named-at-creation sessions keep their only
-  /// session_info at the file START, so chunk-paged parsing made a
-  /// 400 MB file cost its whole JSON body per scan): one backward byte
-  /// pass, JSON-decoding only gate-matching lines. Hosts without
-  /// ranged reads keep the chunk-paged parse. Throws
-  /// [SessionException] like [open] when the file is missing/unreadable
-  /// — callers already guard.
+  /// .getSessionName()` reports within the probe cap (an empty or
+  /// whitespace newest name clears it). Read-only: never rewrites torn
+  /// lines. Issue #369 — the CLI cold start resolves `--session NAME`
+  /// across every session file, and named-at-creation sessions
+  /// keep their only session_info at the file START, so chunk-paged
+  /// parsing made a 400 MB file cost its whole JSON body per scan.
+  /// Resolution is two bounded byte probes instead: the file's head
+  /// window first (where creation-time names live), then the tail
+  /// window, whose record wins whenever present — at most `2 MiB` +
+  /// the probed lines' bytes, never a full read, on hosts with ranged
+  /// reads (ranged-read support is required; hosts without it cannot
+  /// open sessions windowed at all). Throws [SessionException] like
+  /// [open] when the file is missing/unreadable — callers already
+  /// guard.
   Future<String?> sessionNameQuick(SessionMetadata metadata) async {
     final reader = SessionChunkReader(
       fs: _fs,
