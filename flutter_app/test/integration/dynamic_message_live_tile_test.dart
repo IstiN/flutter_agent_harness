@@ -19,6 +19,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
+import 'package:fa_ui/fa_ui.dart' show ChatMessageTile;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -95,9 +96,34 @@ void main() {
       // The splice queued exactly one widget marker for the tool call...
       expect(service!.messages.where((m) => m.role == 'widget'), hasLength(1));
       // ...the interactive tile mounted in the transcript (AC1)...
-      expect(find.byType(DynamicWidgetTile), findsOneWidget);
-      // ...and the emitting tool card stays (audit trail, AC E3).
-      expect(find.textContaining('presented to the user'), findsOneWidget);
+      //
+      // Viewport-independence (issue #341): the transcript auto-scrolls to
+      // the tail and default finders skip OFFSTAGE ListView children, so
+      // whether an older row is found depends on how tall the tile renders
+      // on THIS host — a booted engine paints the live ~320px body and
+      // pushes the tool card above the fold (macOS: 0 found), a bridge-less
+      // host paints the short boot-error tile and keeps it onscreen
+      // (ubuntu CI: 1 found). The rows are built either way: assert against
+      // the built tree (skipOffstage: false), not the visible slice of it.
+      expect(
+        find.byType(DynamicWidgetTile, skipOffstage: false),
+        findsOneWidget,
+      );
+      // ...and the emitting tool card stays (audit trail, AC E3). Scoped
+      // inside the transcript tile: the card's copy button mirrors its
+      // content in a root-overlay Tooltip, which an unscoped text finder
+      // would double-count.
+      expect(
+        find.descendant(
+          of: find.byType(ChatMessageTile, skipOffstage: false),
+          matching: find.textContaining(
+            'presented to the user',
+            skipOffstage: false,
+          ),
+          skipOffstage: false,
+        ),
+        findsOneWidget,
+      );
     },
   );
 }
