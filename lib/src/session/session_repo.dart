@@ -385,31 +385,31 @@ final class JsonlSessionRepo implements SessionRepo {
     return Session(storage);
   }
 
-  /// The session's display name WITHOUT a full open (issue #199): scans
-  /// the tail backward through the chunk reader until the newest
-  /// `session_info` record surfaces — the same record `(await open(m))
-  /// .getSessionName()` reports (last one in file order wins; an
-  /// empty/whitespace name clears it). Read-only: unlike a full open it
-  /// never rewrites torn lines. Throws [SessionException] like [open]
-  /// when the file is missing/unreadable — callers already guard.
+  /// The session's display name WITHOUT a full open (issue #199): the
+  /// newest `session_info` record — the same record `(await open(m))
+  /// .getSessionName()` reports within the probe cap (an empty or
+  /// whitespace newest name clears it). Read-only: never rewrites torn
+  /// lines. Issue #369 — the CLI cold start resolves `--session NAME`
+  /// across every session file, and named-at-creation sessions
+  /// keep their only session_info at the file START, so chunk-paged
+  /// parsing made a 400 MB file cost its whole JSON body per scan.
+  /// Resolution is two bounded byte probes instead: the file's head
+  /// window first (where creation-time names live), then the tail
+  /// window, whose record wins whenever present — at most `2 MiB` +
+  /// the probed lines' bytes, never a full read, on hosts with ranged
+  /// reads (ranged-read support is required; hosts without it cannot
+  /// open sessions windowed at all). Throws [SessionException] like
+  /// [open] when the file is missing/unreadable — callers already
+  /// guard.
   Future<String?> sessionNameQuick(SessionMetadata metadata) async {
     final reader = SessionChunkReader(
       fs: _fs,
       path: metadata.path,
       parseExecutor: _parseExecutor,
     );
-    SessionChunk chunk = await reader.readTail();
-    while (true) {
-      for (final entry in chunk.entries.reversed) {
-        final record = entry.record;
-        if (record is SessionInfoRecord) {
-          final name = record.name?.trim();
-          return name != null && name.isNotEmpty ? name : null;
-        }
-      }
-      if (!chunk.hasOlder || chunk.isEmpty) return null;
-      chunk = await reader.readBefore(chunk.firstOffset);
-    }
+    final name = await reader.readNewestSessionInfoName();
+    final trimmed = name?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
 
   /// Batch form of [sessionNameQuick]: bounded 16-way fan-out, results
@@ -433,7 +433,8 @@ final class JsonlSessionRepo implements SessionRepo {
     }
 
     await Future.wait([
-      for (var i = 0; i < _listConcurrency && i < sessions.length; i++) worker(),
+      for (var i = 0; i < _listConcurrency && i < sessions.length; i++)
+        worker(),
     ]);
     return names;
   }
