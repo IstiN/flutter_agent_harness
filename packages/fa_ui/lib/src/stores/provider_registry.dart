@@ -356,6 +356,7 @@ class ProviderRegistry extends ChangeNotifier {
     if (keychain != null && await keychain.isAvailable()) {
       _useKeychain = true;
       final secure = await keychain.readAll();
+      var markerUpgraded = false;
       for (var i = 0; i < _providers.length; i++) {
         final provider = _providers[i];
         var value = secure[keyNameFor(provider.baseUrl)];
@@ -375,7 +376,8 @@ class ProviderRegistry extends ChangeNotifier {
         if (value != null && value.isNotEmpty) {
           _sessionKeys[provider.id] = value;
           // Upgrade path: a key stored before the marker existed is a
-          // keyed entry — the flag rides the next save (issue #329).
+          // keyed entry. Persist the flip HERE — waiting for the next
+          // save would redo the upgrade on every boot (issue #329).
           if (!provider.requiresKey) {
             _providers[i] = CustomProvider(
               id: provider.id,
@@ -385,9 +387,11 @@ class ProviderRegistry extends ChangeNotifier {
               provenance: provider.provenance,
               requiresKey: true,
             );
+            markerUpgraded = true;
           }
         }
       }
+      if (markerUpgraded) await _save();
     }
   }
 

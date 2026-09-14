@@ -376,17 +376,18 @@ class FaUiStringsEn extends FaUiStrings {
       'proxied or stored.';
   @override
   String get settingsKeyNoteHostedSecure =>
-      'Saved keys are stored in the Keychain on this device; a key only '
-      'typed into the form stays in memory for this session. Calls go '
-      'straight from the app to the provider — nothing is proxied.';
+      "Saved keys are stored in the device's secure key store "
+      '(Keychain/Keystore) while it\'s available; a key only typed into '
+      'the form stays in memory for this session. Calls go straight from '
+      'the app to the provider — nothing is proxied.';
   @override
   String get settingsEditorKeyNote =>
       'Name, URL and model are saved; the key is kept in memory for this '
       'session only — never persisted.';
   @override
   String get settingsEditorKeyNoteSecure =>
-      'Name, URL and model are saved; the key is stored in the Keychain on '
-      'this device.';
+      "Name, URL and model are saved; the key is stored in the device's "
+      "secure key store (Keychain/Keystore) while it's available.";
 
   @override
   String missingKeyOnDevice(String name) =>
@@ -605,17 +606,18 @@ class FaUiStringsRu extends FaUiStrings {
       'не проксируется и не хранится.';
   @override
   String get settingsKeyNoteHostedSecure =>
-      'Сохранённые ключи хранятся в Keychain на этом устройстве; ключ, '
-      'только введённый в форму, остаётся в памяти на этот сеанс. Запросы '
-      'идут напрямую из приложения к провайдеру — ничего не проксируется.';
+      'Сохранённые ключи хранятся в защищённом хранилище ключей устройства '
+      '(Keychain/Keystore), пока оно доступно; ключ, только введённый в '
+      'форму, остаётся в памяти на этот сеанс. Запросы идут напрямую из '
+      'приложения к провайдеру — ничего не проксируется.';
   @override
   String get settingsEditorKeyNote =>
       'Имя, URL и модель сохраняются; ключ хранится в памяти только для '
       'этого сеанса — он не записывается на диск.';
   @override
   String get settingsEditorKeyNoteSecure =>
-      'Имя, URL и модель сохраняются; ключ хранится в Keychain на этом '
-      'устройстве.';
+      'Имя, URL и модель сохраняются; ключ хранится в защищённом хранилище '
+      'ключей устройства (Keychain/Keystore), пока оно доступно.';
 
   @override
   String missingKeyOnDevice(String name) =>

@@ -330,7 +330,7 @@ void main() {
       // on the default android target: the hosted note states on-device
       // secure storage instead of "in-memory only … gone on reload".
       expect(
-        find.textContaining('stored in the Keychain on this device'),
+        find.textContaining('secure key store (Keychain/Keystore)'),
         findsOneWidget,
       );
       expect(find.textContaining('gone on reload'), findsNothing);

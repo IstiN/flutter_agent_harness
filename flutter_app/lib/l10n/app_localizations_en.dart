@@ -1279,7 +1279,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsEditorKeyNoteSecure =>
-      'Name, URL and model are saved; the key is stored in the Keychain on this device.';
+      'Name, URL and model are saved; the key is stored in the device\'s secure key store (Keychain/Keystore) while it\'s available.';
 
   @override
   String get settingsEditorKeepKeyNote =>
@@ -1297,7 +1297,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsKeyNoteCustomSecure =>
-      'The provider definition (name, URL, model) is saved — no secrets. Saved keys are stored in the Keychain on this device; an unsaved key stays in memory for this session only.';
+      'The provider definition (name, URL, model) is saved — no secrets. Saved keys are stored in the device\'s secure key store (Keychain/Keystore) while it\'s available; an unsaved key stays in memory for this session only.';
 
   @override
   String get settingsKeyNoteHosted =>
@@ -1305,7 +1305,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsKeyNoteHostedSecure =>
-      'Saved keys are stored in the Keychain on this device; a key only typed into the form stays in memory for this session. Calls go straight from the app to the provider — nothing is proxied.';
+      'Saved keys are stored in the device\'s secure key store (Keychain/Keystore) while it\'s available; a key only typed into the form stays in memory for this session. Calls go straight from the app to the provider — nothing is proxied.';
 
   @override
   String get settingsLoadingModel => 'Loading model…';

@@ -261,9 +261,9 @@ String providerHostOf(String baseUrl) {
   return host.isEmpty ? baseUrl : host;
 }
 
-/// The key-storage notes match the platform: on iOS/macOS saved keys land
-/// in the Keychain (see [KeychainStore]); elsewhere the session/app-sandbox
-/// wording applies.
+/// The key-storage notes match the platform: on secure-store surfaces
+/// (iOS/macOS Keychain, Android Keystore — see [KeychainStore]) saved keys
+/// persist on device; elsewhere the session/app-sandbox wording applies.
 String faKeyNoteHosted(FaUiStrings strings) => KeychainStore.isSupported
     ? strings.settingsKeyNoteHostedSecure
     : strings.settingsKeyNoteHosted;
