@@ -1481,6 +1481,62 @@ void main() {
       expect(settled.result!.output, contains('child done'));
     });
 
+    test('task_cancel on a yield-CONVERTED job aborts its LIVE inline child, '
+        'too (issue #332)', () async {
+      // The yield moves still-running blocking children under job ids
+      // whose cancel token never reached the child — cancelling the job
+      // must also abort the inline runner, or the job record lies
+      // 'cancelled' over a running child.
+      final childStream = _GatedChildStream();
+      final manager = SubagentManager(parentSessionId: 'p');
+      final config = TaskToolConfig(
+        childTools: _pool(),
+        streamFunction: () => childStream.call,
+        model: () => _model,
+        subagentManager: manager,
+      );
+      final tool = taskTool(config: config);
+      final cancelTool = subagentMonitoringTools(
+        manager: manager,
+        jobs: config.jobManager,
+        executor: config.executor,
+      ).firstWhere((t) => t.name == 'task_cancel');
+      final yieldSource = CancelTokenSource();
+
+      final resultFuture = runZoned(
+        () => tool.execute(
+          {
+            'context': 'ctx',
+            'tasks': [
+              {'name': 'Long', 'task': 'long job'},
+            ],
+          },
+          null,
+          null,
+        ),
+        zoneValues: {yieldTokenZoneKey: yieldSource.token},
+      );
+      while (childStream.calls == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      yieldSource.cancel();
+      final result = await resultFuture;
+      expect(_resultText(result), contains('Moved 1 still-running agent'));
+
+      final job = config.jobManager.job('Long')!;
+      expect(job.status, TaskJobStatus.running);
+      expect(config.executor.isInFlight('Long'), isTrue);
+
+      final cancelResult = await cancelTool.execute({'id': 'Long'}, null, null);
+      expect(_resultText(cancelResult), 'cancelled job Long');
+
+      // The LIVE inline child aborts, so the job record and the
+      // registry row both settle aborted — nothing keeps running.
+      await job.settled;
+      expect(job.status, TaskJobStatus.aborted);
+      expect(manager['Long']!.status, SubagentStatus.aborted);
+    });
+
     test('without a yield the blocking result is unchanged', () async {
       final h = _harness(
         rules: [
@@ -1544,6 +1600,123 @@ void main() {
 
       // A settled job reports its state instead of cancelling again.
       final again = await cancelTool.execute({'id': 'Bg'}, null, null);
+      expect(_resultText(again), contains('already aborted'));
+    });
+
+    test('task_cancel tombstones an orphaned registry row with no live runner '
+        '(issue #332)', () async {
+      // A child interrupted before its first request: the registry row
+      // says running, but the runner died with the previous host process
+      // — the job registry has no such job.
+      final manager = SubagentManager(parentSessionId: 'p');
+      await manager.register(
+        id: 'Task-18',
+        name: 'Task-18',
+        agentType: 'task',
+        task: 'never ran',
+      );
+      await manager.update('Task-18', status: SubagentStatus.running);
+
+      final config = TaskToolConfig(
+        childTools: _pool(),
+        streamFunction: () => throw UnimplementedError(),
+        model: () => _model,
+      );
+      final cancelTool = subagentMonitoringTools(
+        manager: manager,
+        jobs: config.jobManager,
+      ).firstWhere((t) => t.name == 'task_cancel');
+
+      final result = await cancelTool.execute({'id': 'Task-18'}, null, null);
+      final text = _resultText(result);
+      expect(text, contains('Task-18'));
+      expect(text, contains('aborted'));
+
+      // The registry row is terminal now — no more zombie 'running'.
+      final handle = manager['Task-18']!;
+      expect(handle.isTerminal, isTrue);
+      expect(handle.status, SubagentStatus.aborted);
+      expect(handle.error, isNotNull);
+      expect(handle.statusLine, contains('aborted'));
+
+      // A repeat cancel reports the settled state instead of erroring.
+      final again = await cancelTool.execute({'id': 'Task-18'}, null, null);
+      expect(_resultText(again), contains('already aborted'));
+
+      // Unknown ids still error honestly.
+      final unknown = await cancelTool.execute({'id': 'nope'}, null, null);
+      expect(_resultText(unknown), contains('no background job'));
+    });
+
+    test('task_cancel aborts a LIVE blocking child — no false tombstone, '
+        'steering stays open (issue #332)', () async {
+      // Blocking-batch children run inline: NO TaskJob exists for them
+      // by design. The cancel fallback must consult the executor's
+      // in-flight set and abort the live child — tombstoning here would
+      // lie 'aborted' over a RUNNING child and lock steering out.
+      final childStream = _GatedChildStream();
+      final manager = SubagentManager(parentSessionId: 'p');
+      final config = TaskToolConfig(
+        childTools: _pool(),
+        streamFunction: () => childStream.call,
+        model: () => _model,
+        subagentManager: manager,
+      );
+      final spawn = taskTool(config: config);
+      final cancelTool = subagentMonitoringTools(
+        manager: manager,
+        jobs: config.jobManager,
+        executor: config.executor,
+      ).firstWhere((t) => t.name == 'task_cancel');
+
+      final spawnFuture = spawn.execute(
+        {
+          'context': 'ctx',
+          'tasks': [
+            {'name': 'Blocky', 'task': 'long job'},
+          ],
+        },
+        null,
+        null,
+      );
+      while (childStream.calls == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(config.executor.isInFlight('Blocky'), isTrue);
+
+      // While the child is LIVE it stays steerable: messages queue for
+      // delivery at its next turn boundary (a false tombstone would
+      // have flipped the row to aborted, which refuses messages).
+      await manager.enqueueMessage(
+        'Blocky',
+        SubagentMessage(
+          fromId: 'main',
+          text: 'focus on the cache layer',
+          sentAt: '2026-09-14T10:00:00Z',
+        ),
+      );
+
+      final cancelResult = await cancelTool.execute(
+        {'id': 'Blocky'},
+        null,
+        null,
+      );
+      final cancelText = _resultText(cancelResult);
+      expect(cancelText, contains('cancel requested'));
+      expect(cancelText, isNot(contains('tombstoned')));
+
+      // The child settles through its NORMAL run path — the batch result
+      // reports the aborted entry, and the registry row carries the
+      // run's own error, never the tombstone's 'no live runner'.
+      final result = _resultText(await spawnFuture);
+      expect(result, contains('aborted'));
+      final handle = manager['Blocky']!;
+      expect(handle.status, SubagentStatus.aborted);
+      expect(handle.error, contains('aborted'));
+      expect(handle.error, isNot(contains('no live runner')));
+
+      // Once settled (for real), a repeat cancel reports the state.
+      final again = await cancelTool.execute({'id': 'Blocky'}, null, null);
       expect(_resultText(again), contains('already aborted'));
     });
   });
