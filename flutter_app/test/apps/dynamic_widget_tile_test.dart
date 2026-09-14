@@ -7,6 +7,7 @@ import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/apps/dynamic_messages_sheet.dart';
 import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_view.dart' show AppPermissionsDialog;
 import 'package:fa/services/agent_service.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatMessage;
 import 'package:flutter/material.dart';
@@ -167,6 +168,82 @@ void main() {
       await tester.tap(find.byTooltip('Save as app'));
       await tester.pump();
       expect(saved?.id, 'dm-1');
+    });
+
+    testWidgets('save icon without a save callback never toggles collapse '
+        '(issue #377)', (tester) async {
+      // The chat overlay / session sheet build the tile without
+      // onSaveAsApp: the disabled save button sits inside the collapse
+      // zone and its tap must be a no-op, not a collapse (owner symptom:
+      // "Save as app" collapses instead of saving).
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def));
+      await pumpTile(tester, dm, 'dm-1');
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await tester.tap(find.byTooltip('Save as app'));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('save tap fires the action exactly, never the collapse '
+        '(issue #377)', (tester) async {
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def));
+      var saves = 0;
+      await pumpTile(tester, dm, 'dm-1', onSaveAsApp: (d) async => saves++);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      // AC2 rapid double-tap: the tile fires per tap (the host debounces),
+      // and zero collapse toggles happen either way.
+      await tester.tap(find.byTooltip('Save as app'));
+      await tester.pump();
+      await tester.tap(find.byTooltip('Save as app'));
+      await tester.pump();
+      expect(saves, 2);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('permissions tap opens its dialog, never the collapse '
+        '(issue #377)', (tester) async {
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def));
+      await pumpTile(tester, dm, 'dm-1');
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await tester.tap(find.byTooltip('Permissions'));
+      // Fixed pump: the boot spinner animates forever, pumpAndSettle
+      // would time out; a route transition needs ~300ms.
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(AppPermissionsDialog), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('long-press on save fires no action and no collapse '
+        '(issue #377 E3)', (tester) async {
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def));
+      var saves = 0;
+      await pumpTile(tester, dm, 'dm-1', onSaveAsApp: (d) async => saves++);
+      await tester.longPress(find.byTooltip('Save as app'));
+      await tester.pump();
+      expect(saves, 0);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('expand chevron zone still toggles collapse '
+        '(issue #377 no dead zones)', (tester) async {
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def));
+      await pumpTile(tester, dm, 'dm-1');
+      await tester.tap(find.byIcon(Icons.expand_less));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await tester.tap(find.byIcon(Icons.expand_more));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
     });
   });
 
