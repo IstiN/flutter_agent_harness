@@ -726,7 +726,325 @@ void main() {
     expect(channel.sentOf('settings_put'), isNull);
     expect(service.error, isNotNull);
   });
+  _mailTests();
+  _reviewFixTests();
 }
 
 /// The fa_ui placeholder, re-exported for the assertion above.
 const faEmptyResponsePlaceholder = emptyResponsePlaceholder;
+
+// -- Issue #320: inbound hub/DAP/bridge mail is visible in the v2 chat ------
+
+void _mailTests() {
+  test('IT-mailvisible: inbound mail renders a user bubble at arrival '
+      'before the assistant reply (#320 S1)', () async {
+    final (:service, :channel) = await _attached();
+    // Idle-arrival mail: the SW starts the turn and announces the
+    // attributed user message before any assistant delta. No composer
+    // echo exists for host-initiated turns — the row must render live.
+    channel.fromWorker(
+      const MessageDoneMsg(
+        message: {'role': 'user', 'text': '[from peer-1] hallo from hub'},
+      ),
+    );
+    channel.fromWorker(
+      const StreamMsg(event: {'type': 'delta', 'text': 'fake: working'}),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      service.messages
+          .where((m) => m.role == 'user')
+          .map((m) => m.content)
+          .toList(),
+      ['[from peer-1] hallo from hub'],
+    );
+    addTearDown(channel.close);
+  });
+
+  test('the composer echo stays singular — the live user message_done '
+      'matching the echoed text is skipped (#320 keeps AC)', () async {
+    final (:service, :channel) = await _attached();
+    await service.sendText('привет');
+    channel.fromWorker(
+      const MessageDoneMsg(message: {'role': 'user', 'text': 'привет'}),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      service.messages
+          .where((m) => m.role == 'user')
+          .map((m) => m.content)
+          .toList(),
+      ['привет'],
+    );
+    addTearDown(channel.close);
+  });
+
+  test('a per-turn [context] prefix does not break the echo match '
+      '(#320 keeps AC)', () async {
+    final (:service, :channel) = await _attached();
+    await service.sendText('tab question');
+    channel.fromWorker(
+      const MessageDoneMsg(
+        message: {
+          'role': 'user',
+          'text': '[context] active tab: Example — https://example.com\n'
+              'tab question',
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      service.messages
+          .where((m) => m.role == 'user')
+          .map((m) => m.content)
+          .toList(),
+      ['tab question'],
+    );
+    addTearDown(channel.close);
+  });
+
+  test('IT-pending: mid-run mail shows a queued indicator until the '
+      'boundary delivery renders the bubble once (#320 S3/AC3)', () async {
+    final (:service, :channel) = await _attached();
+    channel.fromWorker(
+      const StreamMsg(
+        event: {
+          'type': 'status',
+          'running': true,
+          'mail': {'pending': 2, 'senders': ['peer-1', 'peer-2']},
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      service.messages.map((m) => m.content),
+      contains(
+        '2 queued messages from peer-1, peer-2 — '
+        'will land at the next step boundary',
+      ),
+    );
+    // The boundary: the drain refresh clears the indicator, then the
+    // delivered mail renders exactly once.
+    channel.fromWorker(
+      const StreamMsg(event: {'type': 'status', 'running': true}),
+    );
+    channel.fromWorker(
+      const MessageDoneMsg(
+        message: {'role': 'user', 'text': '[from peer-1] mid-run hello'},
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(service.messages.where((m) => m.role == 'system'), isEmpty);
+    expect(
+      service.messages.where(
+        (m) => m.role == 'user' && m.content == '[from peer-1] mid-run hello',
+      ),
+      hasLength(1),
+    );
+    addTearDown(channel.close);
+  });
+
+  test('IT-routing: a binding session switch renders the routing notice '
+      '(#320 S4/AC4)', () async {
+    final (:service, :channel) = await _attached();
+    channel.fromWorker(
+      const StreamMsg(
+        event: {'type': 'mail_routed', 'from': 'peer-1', 'sessionId': 'ded-7'},
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      service.messages.map((m) => m.content),
+      contains('mail from peer-1 routed to session ded-7'),
+    );
+    addTearDown(channel.close);
+  });
+
+  test('IT-transcript: a mail user row in transcriptReplay renders after '
+      'attach, exactly once (#320 S2/AC2)', () async {
+    final (:service, :channel) = await _attached(
+      replay: [
+        {
+          'type': 'message_done',
+          'role': 'user',
+          'text': '[from peer-1] hallo from history',
+        },
+      ],
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      service.messages
+          .where((m) => m.role == 'user')
+          .map((m) => m.content)
+          .toList(),
+      ['[from peer-1] hallo from history'],
+    );
+    addTearDown(channel.close);
+  });
+
+  test('IT-transcript: a replayed composer row keeps its per-turn [context] '
+      'header stripped, mail rows verbatim (#320 S2)', () async {
+    final (:service, :channel) = await _attached(
+      replay: [
+        {
+          'type': 'message_done',
+          'role': 'user',
+          'text': '[context] active tab: Example — https://example.com\n'
+              'my composer text',
+        },
+        {
+          'type': 'message_done',
+          'role': 'user',
+          'text': '[from peer-2] verbatim mail',
+        },
+      ],
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      service.messages
+          .where((m) => m.role == 'user')
+          .map((m) => m.content)
+          .toList(),
+      ['my composer text', '[from peer-2] verbatim mail'],
+    );
+    addTearDown(channel.close);
+  });
+}
+
+// -- PR #324 rework: ledger reset on re-attach, CodeMie auto-resend,
+// -- FIFO composer echoes, mail_routed paint. ------------------------------
+
+void _reviewFixTests() {
+  test('IT-reattach: a re-attach resets the trajectory ledger — it never '
+      'stacks the new session replay on top of the old one (#320 MAJOR 1)',
+      () async {
+    final (:service, :channel) = await _attached(
+      replay: [
+        {'type': 'message_done', 'role': 'user', 'text': 's1 question'},
+        {
+          'type': 'message_done',
+          'role': 'assistant',
+          'text': 's1 answer',
+        },
+      ],
+    );
+    await Future<void>.delayed(Duration.zero);
+    final before = await service.trajectory.first;
+    expect(before.records.length, 2);
+    // A DIFFERENT session's ring: the ledger must reset, not append.
+    channel.fromWorker(
+      const AttachedMsg(
+        sessionId: 'sw-2',
+        replay: [
+          {'type': 'message_done', 'role': 'user', 'text': 's2 question'},
+        ],
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    final after = await service.trajectory.first;
+    expect(after.records.length, 1);
+    addTearDown(channel.close);
+  });
+
+  test('IT-codemie: the auth-expired auto flow resends the failed prompt '
+      'once the sign-in poll succeeds (#320 MAJOR 2)', () async {
+    RelayAgentService.codemieSignInPollOverride =
+        ({required probe, required openLoginPage}) async => ['glm-5.3-flash'];
+    addTearDown(() => RelayAgentService.codemieSignInPollOverride = null);
+    final (:service, :channel) = await _attached();
+    // The SW's persisted provider: an absolute CodeMie base URL so the
+    // auth-expired path arms the reactive flow.
+    channel.fromWorker(
+      const SettingsResultMsg(settings: {
+        'faProvider': {
+          'model': 'glm-5.3-flash',
+          'baseUrl': 'https://codemie.example.com/api',
+          'apiKey': 'k',
+        },
+      }),
+    );
+    await service.sendText('resend me');
+    // Real time between the original send and the failure: the resend
+    // mints a fresh prompt id (same-microsecond ids are deduped by the
+    // transport as double-taps — by design).
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+    // The dead turn ends the way the SW reports it: the status mirror
+    // clears `running`, then the errored assistant row lands.
+    channel.fromWorker(
+      const StreamMsg(event: {'type': 'status', 'running': false}),
+    );
+    channel.fromWorker(
+      const StreamMsg(
+        event: {
+          'type': 'message_done',
+          'role': 'assistant',
+          'text': '',
+          'error': '[[auth-expired:codemie]] session expired',
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    final prompts = channel.sent.where((j) => j['kind'] == 'prompt').toList();
+    expect(prompts.length, 2);
+    expect(prompts.last['text'], 'resend me');
+    expect(
+      service.messages.last.content,
+      contains('resending your message'),
+    );
+    addTearDown(channel.close);
+  });
+
+  test('IT-steerfifo: several steers inside one boundary window each '
+      'render exactly once — no duplicate bubbles (#320 MAJOR 3)',
+      () async {
+    final (:service, :channel) = await _attached();
+    channel.fromWorker(
+      const StreamMsg(event: {'type': 'status', 'running': true}),
+    );
+    await service.sendText('first');
+    await service.sendText('second');
+    // The SW echoes BOTH steered rows at the boundary, in order.
+    channel.fromWorker(
+      const MessageDoneMsg(message: {'role': 'user', 'text': 'first'}),
+    );
+    channel.fromWorker(
+      const MessageDoneMsg(message: {'role': 'user', 'text': 'second'}),
+    );
+    // Host-initiated mail at the same boundary still renders.
+    channel.fromWorker(
+      const MessageDoneMsg(
+        message: {'role': 'user', 'text': '[from peer-3] mail'},
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      service.messages
+          .where((m) => m.role == 'user')
+          .map((m) => m.content)
+          .toList(),
+      ['first', 'second', '[from peer-3] mail'],
+    );
+    addTearDown(channel.close);
+  });
+
+  test('IT-routedpaint: the mail_routed notice paints at arrival, not at '
+      'the routed turn\'s first delta (#320 MINOR)', () async {
+    final (:service, :channel) = await _attached();
+    var notifications = 0;
+    service.addListener(() => notifications++);
+    channel.fromWorker(
+      const StreamMsg(
+        event: {
+          'type': 'mail_routed',
+          'from': 'peer-9',
+          'sessionId': 'sw-route',
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications, greaterThan(0));
+    expect(service.messages.last.content, contains('sw-route'));
+    addTearDown(channel.close);
+  });
+}
