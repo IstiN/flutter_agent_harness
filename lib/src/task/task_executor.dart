@@ -266,28 +266,9 @@ final class TaskExecutor {
   /// resume (e.g. the provider role is still quota-limited) returns the
   /// child to failed-resumable with the resolver's error recorded (E2).
   Future<void> resumeChild(String id, String message) async {
-    final manager = subagentManager;
-    final handle = manager?[id];
-    if (manager == null || handle == null) {
-      throw StateError('no subagent with id "$id"');
-    }
-    if (handle.status == SubagentStatus.running ||
-        handle.status == SubagentStatus.queued ||
-        _resumesInFlight.contains(id)) {
-      throw StateError(
-        'subagent "$id" is already running — duplicate resume rejected',
-      );
-    }
-    if (handle.status == SubagentStatus.aborted) {
-      throw StateError('subagent "$id" is aborted and cannot be resumed');
-    }
-    if (handle.agentType.startsWith('a2a:')) {
-      throw StateError(
-        'subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
-        'it has no local session to resume; follow up with a new task item '
-        '(agent ${handle.agentType}) carrying your message in its task text',
-      );
-    }
+    final managerOrNull = subagentManager;
+    final (manager, handle) =
+        _assertResumable(id, managerOrNull, managerOrNull?[id]);
     final session = await _resumeSession(id, handle);
     final prior = await session.buildContextMessages();
     _childSessions[id] = session;
@@ -360,6 +341,37 @@ final class TaskExecutor {
       _currentSubagentIds.remove(id);
       _inFlightCancels.remove(id);
     }
+  }
+
+  /// Resume guards (E4 + a2a): everything resumable must be a local,
+  /// non-running, non-aborted child; violations throw named errors so the
+  /// CLI surface can explain the refusal.
+  (SubagentManager, SubagentHandle) _assertResumable(
+    String id,
+    SubagentManager? manager,
+    SubagentHandle? handle,
+  ) {
+    if (manager == null || handle == null) {
+      throw StateError('no subagent with id "$id"');
+    }
+    if (handle.status == SubagentStatus.running ||
+        handle.status == SubagentStatus.queued ||
+        _resumesInFlight.contains(id)) {
+      throw StateError(
+        'subagent "$id" is already running — duplicate resume rejected',
+      );
+    }
+    if (handle.status == SubagentStatus.aborted) {
+      throw StateError('subagent "$id" is aborted and cannot be resumed');
+    }
+    if (handle.agentType.startsWith('a2a:')) {
+      throw StateError(
+        'subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
+        'it has no local session to resume; follow up with a new task item '
+        '(agent ${handle.agentType}) carrying your message in its task text',
+      );
+    }
+    return (manager, handle);
   }
 
   /// Reopens the child's JSONL session for a resume: the still-open
