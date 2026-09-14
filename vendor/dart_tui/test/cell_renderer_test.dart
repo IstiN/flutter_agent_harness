@@ -474,7 +474,65 @@ void main() {
       renderer.render(newView('你b'));
       expect(buf.toString(), equals('\x1b[1;3Hb'));
     });
+
+    // The unstable-repaint branch resets the frame's SGR/OSC-8 trackers to
+    // '' after _paintRow — but a surgical write ABOVE the repaint (a styled
+    // spinner tick) had left a style open that _paintRow never closes when
+    // the repainted row is all-plain: the row painted under the leaked
+    // style, the end-of-frame reset was skipped, and the style leaked
+    // across frames.
+    test('repaint under a styled surgical write ends all attributes off', () {
+      renderer.render(newView('\x1b[90m⠋ working\x1b[0m\n▸ provider'));
+      buf.clear();
+      // Spinner ticks above (styled surgical write); the picker row below
+      // loses ▸ and goes all-plain (unstable repaint).
+      renderer.render(newView('\x1b[90m⠙ working\x1b[0m\nEdit provider'));
+
+      final output = buf.toString();
+      expect(output, contains('Edit provider'));
+      expect(_sgrOpenAtEnd(output), isFalse,
+          reason: 'frame must end with every SGR attribute off');
+    });
+
+    test('repaint under a hyperlinked surgical write closes OSC 8', () {
+      renderer.render(newView(
+        '${const Style(hyperlinkUrl: 'https://log.example').render('⠋ working')}\n'
+        '▸ provider',
+      ));
+      buf.clear();
+      renderer.render(newView(
+        '${const Style(hyperlinkUrl: 'https://log.example').render('⠙ working')}\n'
+        'Edit provider',
+      ));
+
+      final output = buf.toString();
+      expect(output, contains('Edit provider'));
+      expect(_osc8OpenAtEnd(output), isFalse,
+          reason: 'frame must end with no OSC 8 hyperlink open');
+    });
   });
+}
+
+/// Whether the last SGR sequence in [bytes] leaves attributes open —
+/// `\x1b[0m` (and empty/bare-zero parameter forms) close, anything else
+/// the renderer emits (Style attr sequences) opens.
+bool _sgrOpenAtEnd(String bytes) {
+  var open = false;
+  for (final m in RegExp(r'\x1b\[([0-9;]*)m').allMatches(bytes)) {
+    final params = m.group(1)!;
+    open = !params.split(';').every((p) => p.isEmpty || p == '0');
+  }
+  return open;
+}
+
+/// Whether the last OSC 8 in [bytes] leaves a hyperlink open — an empty
+/// URI field (`\x1b]8;;\x1b\\`) closes, any other payload opens.
+bool _osc8OpenAtEnd(String bytes) {
+  var open = false;
+  for (final m in RegExp(r'\x1b\]8;([^\x07\x1b]*)').allMatches(bytes)) {
+    open = m.group(1)!.split(';').last.isNotEmpty;
+  }
+  return open;
 }
 
 /// Replays renderer bytes on a terminal that measures every printable

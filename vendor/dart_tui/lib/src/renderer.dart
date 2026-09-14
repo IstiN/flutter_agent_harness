@@ -623,6 +623,8 @@ final class CellRenderer implements TeaRenderer {
         if (!_rowsEqual(nextRow, prevRow)) {
           wrote = true;
           _syncBegin();
+          if (lastAttrs.isNotEmpty) _output.write('\x1b[0m');
+          if (lastHyperlink.isNotEmpty) _output.write('\x1b]8;;\x1b\\');
           _paintRow(row, nextRow);
           // _paintRow homes the cursor per row and closes SGR/hyperlinks;
           // forget the tracked position so the next surgical write always
