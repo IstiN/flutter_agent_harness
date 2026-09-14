@@ -860,6 +860,22 @@ extension ApprovalCommands on AgentCli {
       io.writeln(shellOutput);
       return;
     }
+    // Issue #332: a retained registry row with no live runner (the host
+    // restarted before the child started) is tombstoned instead of
+    // reporting 'unknown job' — cancel must always clear a running row.
+    final handle = _taskConfig.subagentManager?[id];
+    if (handle != null && !handle.isTerminal) {
+      unawaited(
+        _taskConfig.subagentManager!.update(
+          id,
+          status: SubagentStatus.aborted,
+          error: 'cancelled by /tasks cancel: no live runner '
+              '(the host session restarted before this child settled)',
+        ),
+      );
+      io.writeln('tombstoned $id as aborted — no live runner');
+      return;
+    }
     io.writeln('unknown job: $id');
   }
 

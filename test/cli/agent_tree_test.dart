@@ -193,5 +193,22 @@ void main() {
       expect(badge, contains(',+3'));
       expect(badge.split(',').length, 3);
     });
+
+    test(
+      'a settled (interrupted/cancelled) child produces no status-line noise '
+      '(issue #332)',
+      () {
+        // The zombie-row symptom: a rehydrated child that stayed 'running'
+        // forever rendered bg:task:Task-18(100275s) in the composer status
+        // line. Once the row settles to a terminal state the badge must be
+        // empty.
+        final zombie = _handle(id: 'Task-18', status: SubagentStatus.running);
+        expect(formatActiveAgentsBadge([zombie]), isNotEmpty);
+        zombie.status = SubagentStatus.failed;
+        expect(formatActiveAgentsBadge([zombie]), '');
+        zombie.status = SubagentStatus.aborted;
+        expect(formatActiveAgentsBadge([zombie]), '');
+      },
+    );
   });
 }

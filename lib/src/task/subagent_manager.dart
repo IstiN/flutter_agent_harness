@@ -141,14 +141,41 @@ final class SubagentManager {
   SubagentHandle? operator [](String id) => _handles[id];
 
   /// Rehydrates the registry from the parent session (idempotent).
+  ///
+  /// Issue #332: rows that were `queued`/`running` when the snapshot was
+  /// written belong to a runner in the process that wrote it — no live
+  /// runner exists in THIS one (restart/interrupt before the child's first
+  /// request is the common case). Left as-is they stay 'running' forever
+  /// (zombie rows in task_status and the composer badge, and task_cancel
+  /// can't clear them), so they settle here to [SubagentStatus.failed] —
+  /// failed, not aborted, so a child with partial progress stays resumable
+  /// (`task_resume` refuses aborted children). Terminal rows and `idle`
+  /// (waiting for input — an actionable, resumable state, not a liveness
+  /// claim) pass through untouched, and the settled snapshot is persisted
+  /// so a later restart reads terminal rows instead of resurrecting the
+  /// zombie.
   Future<void> rehydrate() async {
     if (_rehydrated) return;
     _rehydrated = true;
     final raw = await source?.call() ?? const [];
+    var settled = false;
     for (final entry in raw) {
       final handle = SubagentHandle.fromJson(entry);
       _handles[handle.id] = handle;
+      if (handle.status == SubagentStatus.queued ||
+          handle.status == SubagentStatus.running) {
+        handle.status = SubagentStatus.failed;
+        handle.error = handle.requests == 0
+            ? 'interrupted before start: the host session ended before this '
+                  'child made its first request'
+            : 'interrupted: the host session ended while this child was '
+                  'running';
+        handle.lastActivity = DateTime.now().toUtc().toIso8601String();
+        settled = true;
+        _emit(handle);
+      }
     }
+    if (settled) _persist();
   }
 
   /// Drops the registry view so the next [rehydrate] loads afresh — used

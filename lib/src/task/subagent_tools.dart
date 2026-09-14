@@ -58,7 +58,7 @@ List<AgentTool> subagentMonitoringTools({
     _taskObserveTool(manager, readMessages),
     _taskSendTool(manager, resumeChild),
     _taskResumeTool(manager, resumeChild),
-    if (jobs != null) _taskCancelTool(jobs),
+    if (jobs != null) _taskCancelTool(jobs, manager),
     _replyTool(manager, currentSubagentId),
     _agentMessageTool(manager, currentSubagentId),
     _agentDirectoryTool(manager),
@@ -66,7 +66,12 @@ List<AgentTool> subagentMonitoringTools({
 }
 
 /// `task_cancel` — abort a running background subagent job.
-AgentTool _taskCancelTool(TaskJobManager jobs) {
+///
+/// Issue #332: a registry row whose runner is gone (the host restarted
+/// before the child's first request, so the job registry has no live job)
+/// is tombstoned as [SubagentStatus.aborted] instead of erroring — cancel
+/// must always be able to clear a 'running' row.
+AgentTool _taskCancelTool(TaskJobManager jobs, SubagentManager? manager) {
   return AgentTool(
     name: 'task_cancel',
     description:
@@ -88,7 +93,7 @@ AgentTool _taskCancelTool(TaskJobManager jobs) {
       final id = args['id'] as String;
       final job = jobs.job(id);
       if (job == null) {
-        return ToolExecutionResult.text('no background job with id "$id"');
+        return _cancelOrphanedRegistryRow(id, manager);
       }
       if (job.status != TaskJobStatus.queued &&
           job.status != TaskJobStatus.running) {
@@ -97,6 +102,34 @@ AgentTool _taskCancelTool(TaskJobManager jobs) {
       job.cancel();
       return ToolExecutionResult.text('cancelled job $id');
     },
+  );
+}
+
+/// Tombstones the retained-subagent registry row for [id] when no live job
+/// exists (issue #332): the row's runner died with a previous host process,
+/// so nothing else can ever settle it — cancel settles it here.
+Future<ToolExecutionResult> _cancelOrphanedRegistryRow(
+  String id,
+  SubagentManager? manager,
+) async {
+  final handle = manager?[id];
+  if (handle == null) {
+    return ToolExecutionResult.text('no background job with id "$id"');
+  }
+  if (handle.isTerminal) {
+    return ToolExecutionResult.text(
+      'subagent $id already ${handle.status.name}',
+    );
+  }
+  await manager!.update(
+    id,
+    status: SubagentStatus.aborted,
+    error: 'cancelled by task_cancel: no live runner '
+        '(the host session restarted before this child settled)',
+  );
+  return ToolExecutionResult.text(
+    'tombstoned subagent $id as aborted — no live runner existed '
+    '(interrupted before start), registry row cleared',
   );
 }
 

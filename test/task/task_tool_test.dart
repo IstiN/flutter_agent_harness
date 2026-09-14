@@ -1546,6 +1546,54 @@ void main() {
       final again = await cancelTool.execute({'id': 'Bg'}, null, null);
       expect(_resultText(again), contains('already aborted'));
     });
+
+    test(
+      'task_cancel tombstones an orphaned registry row with no live runner '
+      '(issue #332)',
+      () async {
+        // A child interrupted before its first request: the registry row
+        // says running, but the runner died with the previous host process
+        // — the job registry has no such job.
+        final manager = SubagentManager(parentSessionId: 'p');
+        await manager.register(
+          id: 'Task-18',
+          name: 'Task-18',
+          agentType: 'task',
+          task: 'never ran',
+        );
+        await manager.update('Task-18', status: SubagentStatus.running);
+
+        final config = TaskToolConfig(
+          childTools: _pool(),
+          streamFunction: () => throw UnimplementedError(),
+          model: () => _model,
+        );
+        final cancelTool = subagentMonitoringTools(
+          manager: manager,
+          jobs: config.jobManager,
+        ).firstWhere((t) => t.name == 'task_cancel');
+
+        final result = await cancelTool.execute({'id': 'Task-18'}, null, null);
+        final text = _resultText(result);
+        expect(text, contains('Task-18'));
+        expect(text, contains('aborted'));
+
+        // The registry row is terminal now — no more zombie 'running'.
+        final handle = manager['Task-18']!;
+        expect(handle.isTerminal, isTrue);
+        expect(handle.status, SubagentStatus.aborted);
+        expect(handle.error, isNotNull);
+        expect(handle.statusLine, contains('aborted'));
+
+        // A repeat cancel reports the settled state instead of erroring.
+        final again = await cancelTool.execute({'id': 'Task-18'}, null, null);
+        expect(_resultText(again), contains('already aborted'));
+
+        // Unknown ids still error honestly.
+        final unknown = await cancelTool.execute({'id': 'nope'}, null, null);
+        expect(_resultText(unknown), contains('no background job'));
+      },
+    );
   });
 }
 
