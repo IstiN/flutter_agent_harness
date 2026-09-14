@@ -90,14 +90,6 @@ ProgramOption withTickInterval(Duration interval) =>
 /// Append renderer output to [file] while the program is running.
 ProgramOption withLogFile(File file) => (p) => p._logFile = file;
 
-/// Enable cell-motion mouse tracking at startup (button events + drag).
-ProgramOption withMouseCellMotion() =>
-    (p) => p._defaultMouseMode = MouseMode.cellMotion;
-
-/// Enable all-motion mouse tracking at startup (includes hover).
-ProgramOption withMouseAllMotion() =>
-    (p) => p._defaultMouseMode = MouseMode.allMotion;
-
 /// Enable terminal focus/blur reporting at startup.
 ProgramOption withReportFocus() => (p) => p._defaultReportFocus = true;
 
@@ -131,7 +123,6 @@ final class Program {
   bool _altScreen = false;
   bool _hideCursor = true;
   Duration? _tickInterval;
-  MouseMode _defaultMouseMode = MouseMode.none;
   bool _defaultReportFocus = false;
 
   File? _logFile;
@@ -547,7 +538,7 @@ final class Program {
         enqueue(InterruptMsg());
         return true;
       }
-      final (nextModel, cmd) = updateResult!;
+      final (nextModel, cmd) = updateResult;
       _runningModel = nextModel;
       // Fire cmd asynchronously so its result message is queued and processed
       // in the next event-loop batch, unblocking key-event handling.
@@ -565,7 +556,6 @@ final class Program {
                   logSink: _logSink,
                   defaultAltScreen: _altScreen,
                   defaultHideCursor: _hideCursor,
-                  defaultMouseMode: _defaultMouseMode,
                   defaultReportFocus: _defaultReportFocus,
                 )
               : AnsiRenderer(
@@ -573,7 +563,6 @@ final class Program {
                   logSink: _logSink,
                   defaultAltScreen: _altScreen,
                   defaultHideCursor: _hideCursor,
-                  defaultMouseMode: _defaultMouseMode,
                   defaultReportFocus: _defaultReportFocus,
                 );
       if (_forceSyncUpdates) _renderer?.setSyncUpdates(true);
