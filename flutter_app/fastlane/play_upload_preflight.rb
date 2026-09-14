@@ -63,6 +63,26 @@ module PlayUploadPreflight
     %w[1 true yes].include?(env["PLAY_VALIDATE_ONLY"].to_s.strip.downcase)
   end
 
+  # Package name (Android application id) for upload_to_play_store. fastlane
+  # cannot infer it from a supply/metadata dir here (there is none in the
+  # CI job context — #374), so every Play upload passes it explicitly. The
+  # gradle file stays the single source of truth: applicationId is parsed
+  # from android/app/build.gradle.kts (it is immutable after the first
+  # Play upload; test/android_release_guard_test.rb pins it).
+  def package_name!(repo_root)
+    gradle_path = File.join(repo_root, "android/app/build.gradle.kts")
+    application_id = nil
+    if File.exist?(gradle_path)
+      application_id = File.read(gradle_path)[/^\s*applicationId\s*=\s*"([^"]+)"/, 1]
+    end
+    unless application_id
+      raise "applicationId not found in #{gradle_path} — upload_to_play_store " \
+            "needs package_name (fastlane cannot infer it without a supply " \
+            "metadata dir, #374)"
+    end
+    application_id
+  end
+
   # Options hash for upload_to_play_store. Metadata/screenshots never ride
   # the app upload (store content is a separate lane, mirroring iOS).
   def supply_options(track:, aab:, validate_only:)
