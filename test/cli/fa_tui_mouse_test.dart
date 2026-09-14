@@ -9,7 +9,7 @@ import 'package:test/test.dart';
 
 void main() {
   FaTuiCallbacks callbacks() => FaTuiCallbacks(
-    onSubmit: (_) async {},
+    onSubmit: (_, {images = const []}) async {},
     onModelSelected: (_) async {},
     buildSlashMenu: (_) => const [],
     buildModelMenu: (_, _) => const [],
@@ -208,7 +208,7 @@ void main() {
     }
 
     FaTuiCallbacks slashCb() => FaTuiCallbacks(
-      onSubmit: (_) async {},
+      onSubmit: (_, {images = const []}) async {},
       onModelSelected: (_) async {},
       buildSlashMenu: (_) => const [
         MenuItem(key: '/exit', label: '/exit', description: 'quit'),
@@ -245,7 +245,7 @@ void main() {
     test('a closed model picker leaves no stale picker id behind', () async {
       var selected = false;
       FaTuiCallbacks cb() => FaTuiCallbacks(
-        onSubmit: (_) async {},
+        onSubmit: (_, {images = const []}) async {},
         onModelSelected: (_) async => selected = true,
         buildSlashMenu: (_) => const [
           MenuItem(key: '/help', label: '/help', description: 'help'),
@@ -296,7 +296,7 @@ void main() {
         () async {
       var selected = '';
       FaTuiCallbacks cb() => FaTuiCallbacks(
-        onSubmit: (_) async {},
+        onSubmit: (_, {images = const []}) async {},
         onModelSelected: (key) async => selected = key,
         buildSlashMenu: (_) => const [],
         buildModelMenu: (_, _) => const [

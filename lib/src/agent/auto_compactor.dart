@@ -34,6 +34,7 @@ import '../types.dart';
 import 'agent.dart' show AgentState;
 import 'agent_loop.dart' show StreamFunction;
 import 'tool_pairing.dart' show repairToolPairing;
+import '../session/session_record.dart' show CompactionRecord, MessageRecord;
 
 /// Per-pass outcome surfaced through [AutoCompactorHooks.onPass].
 final class AutoCompactorPass {
@@ -44,6 +45,9 @@ final class AutoCompactorPass {
     required this.fallback,
     required this.ok,
     this.error,
+    this.summary,
+    this.hiddenRecords = 0,
+    this.summarizedMessages = 0,
   });
 
   /// 1-based pass number.
@@ -64,6 +68,16 @@ final class AutoCompactorPass {
 
   /// The error that failed the pass, when [ok] is `false`.
   final Object? error;
+
+  /// The summary text the pass wrote (from the compaction record); `null`
+  /// for failed / no-work / local-trim passes.
+  final String? summary;
+
+  /// Session records hidden behind the compaction boundary.
+  final int hiddenRecords;
+
+  /// Message records folded into [summary].
+  final int summarizedMessages;
 }
 
 /// Hooks for a host UI to observe progress. Implementations should not
@@ -348,6 +362,9 @@ final class AutoCompactor {
         tokensAfter: tokensAfter,
         fallback: attempt.fallback,
         ok: true,
+        summary: attempt.summary,
+        hiddenRecords: attempt.hiddenRecords,
+        summarizedMessages: attempt.summarizedMessages,
       ),
     );
     if (!shouldCompact(tokensAfter, window, settings)) {
@@ -410,8 +427,20 @@ final class AutoCompactor {
   }
 
   /// Picks the summarizer for this pass: smol first, main as fallback when
-  /// [runFallback] is true. Returns the outcome plus the fallback label used.
-  Future<({bool ok, Object? error, bool noWork, String? fallback})>
+  /// [runFallback] is true. Returns the outcome, the fallback label used and
+  /// the winning attempt's record data (summary + hidden/summarized counts)
+  /// for the pass report.
+  Future<
+    ({
+      bool ok,
+      Object? error,
+      bool noWork,
+      String? fallback,
+      String? summary,
+      int hiddenRecords,
+      int summarizedMessages,
+    })
+  >
   _pickAttempt(
     int pass, {
     required bool runFallback,
@@ -432,6 +461,9 @@ final class AutoCompactor {
           error: null,
           noWork: smolOk.noWork,
           fallback: 'smol=$smolLabel',
+          summary: smolOk.summary,
+          hiddenRecords: smolOk.hiddenRecords,
+          summarizedMessages: smolOk.summarizedMessages,
         );
       }
       final mainOk = await _attempt(
@@ -446,6 +478,9 @@ final class AutoCompactor {
           error: null,
           noWork: mainOk.noWork,
           fallback: 'main=$mainLabel',
+          summary: mainOk.summary,
+          hiddenRecords: mainOk.hiddenRecords,
+          summarizedMessages: mainOk.summarizedMessages,
         );
       }
       return (
@@ -453,6 +488,9 @@ final class AutoCompactor {
         error: mainOk.error ?? smolOk.error,
         noWork: false,
         fallback: null,
+        summary: null,
+        hiddenRecords: 0,
+        summarizedMessages: 0,
       );
     }
 
@@ -469,18 +507,40 @@ final class AutoCompactor {
         error: null,
         noWork: mainOk.noWork,
         fallback: 'main=$mainLabel',
+        summary: mainOk.summary,
+        hiddenRecords: mainOk.hiddenRecords,
+        summarizedMessages: mainOk.summarizedMessages,
       );
     }
-    return (ok: false, error: mainOk.error, noWork: false, fallback: null);
+    return (
+      ok: false,
+      error: mainOk.error,
+      noWork: false,
+      fallback: null,
+      summary: null,
+      hiddenRecords: 0,
+      summarizedMessages: 0,
+    );
   }
 
   /// Runs one pass with up to [maxAttempts] retries on transient errors.
-  /// Returns `{ok, error, noWork}` so the caller can decide whether to fall
-  /// back to the main summarizer or surface a hard failure. `noWork` means
-  /// the branch had nothing left to compact (already compacted at the
-  /// leaf) — the caller stops the pass loop instead of spinning identical
-  /// no-op passes to [maxPasses].
-  Future<({bool ok, Object? error, bool noWork})> _attempt(
+  /// Returns the outcome plus, on success, the compaction record's summary
+  /// and the hidden/summarized counts (computed from the branch up to
+  /// `firstKeptEntryId`) for the pass report. `noWork` means the branch had
+  /// nothing left to compact (already compacted at the leaf) — the caller
+  /// stops the pass loop instead of spinning identical no-op passes to
+  /// [maxPasses].
+  Future<
+    ({
+      bool ok,
+      Object? error,
+      bool noWork,
+      String? summary,
+      int hiddenRecords,
+      int summarizedMessages,
+    })
+  >
+  _attempt(
     String label, {
     required SummarizeFn summarize,
     required int pass,
@@ -499,6 +559,9 @@ final class AutoCompactor {
             totalBudget,
           ),
           noWork: false,
+          summary: null,
+          hiddenRecords: 0,
+          summarizedMessages: 0,
         );
       }
       hooks.onAttemptStart(label, attempt, attemptBudget);
@@ -519,11 +582,36 @@ final class AutoCompactor {
                 attemptBudget,
               ),
             );
-        return (ok: true, error: null, noWork: record == null);
+        if (record == null) {
+          return (
+            ok: true,
+            error: null,
+            noWork: true,
+            summary: null,
+            hiddenRecords: 0,
+            summarizedMessages: 0,
+          );
+        }
+        final (hidden, summarized) = await _compactionCounts(record);
+        return (
+          ok: true,
+          error: null,
+          noWork: false,
+          summary: record.summary,
+          hiddenRecords: hidden,
+          summarizedMessages: summarized,
+        );
       } catch (error) {
         final isTransient = _transient.hasMatch(error.toString());
         if (attempt >= maxAttempts || !isTransient) {
-          return (ok: false, error: error, noWork: false);
+          return (
+            ok: false,
+            error: error,
+            noWork: false,
+            summary: null,
+            hiddenRecords: 0,
+            summarizedMessages: 0,
+          );
         }
         final backoff = baseBackoff * attempt;
         hooks.onRetry(attempt, maxAttempts, backoff, error);
@@ -534,7 +622,24 @@ final class AutoCompactor {
       ok: false,
       error: StateError('unreachable: compact attempt loop'),
       noWork: false,
+      summary: null,
+      hiddenRecords: 0,
+      summarizedMessages: 0,
     );
+  }
+
+  /// Counts the records hidden behind [record]'s compaction boundary and
+  /// the message records folded into its summary — one branch walk, ids
+  /// only (never positions).
+  Future<(int, int)> _compactionCounts(CompactionRecord record) async {
+    final path = await session.getBranch();
+    final keptIndex = path.indexWhere((e) => e.id == record.firstKeptEntryId);
+    final hidden = keptIndex <= 0 ? 0 : keptIndex;
+    var summarized = 0;
+    for (final entry in path.take(hidden)) {
+      if (entry is MessageRecord) summarized++;
+    }
+    return (hidden, summarized);
   }
 }
 

@@ -115,6 +115,14 @@ extension _TuiRowRenderers on FaTuiModel {
       b.writeln(_dim('↑ edit · ctrl+x delete · ctrl-s send immediately'));
       row++;
     }
+    if (attachments.isNotEmpty) {
+      for (final attachment in attachments) {
+        b.writeln(_accent2Plain(attachment.chip));
+        row++;
+      }
+      b.writeln(_dim('chips send with your next message'));
+      row++;
+    }
     b.writeln(_dim('─' * termWidth));
     row++;
     return row - baseRow;

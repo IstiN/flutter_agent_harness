@@ -146,6 +146,15 @@ ContentBlock _redactBlock(
     onChange?.call();
     return block.copyWith(text: text);
   }
+  if (block is ImageContent) {
+    // AC5 (#276): the pipeline runs on pasted-image METADATA (the mime
+    // label) but never touches the payload — redaction must not block or
+    // corrupt the paste itself.
+    final mime = redactor.redact(block.mimeType);
+    if (mime == block.mimeType) return block;
+    onChange?.call();
+    return ImageContent(data: block.data, mimeType: mime);
+  }
   if (block is ThinkingContent) {
     final thinking = redactor.redact(block.thinking);
     if (thinking == block.thinking) return block;

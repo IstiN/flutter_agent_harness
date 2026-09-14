@@ -274,7 +274,7 @@ extension on AgentCli {
       // in the transcript like it did when the switch was awaited inline.
       if (!_exited && !isBusy) _writeIdlePrompt();
       for (final line in buffered) {
-        if (line.isNotEmpty) unawaited(_dispatchInput(line, line));
+        if (line.isNotEmpty) unawaited(_dispatchInput(line, line, const []));
       }
     });
   }

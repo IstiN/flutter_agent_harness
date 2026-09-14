@@ -292,7 +292,7 @@ void main() {
       () => factory.calls.length == 2,
       reason: 'summarizer called',
     );
-    await _waitFor(() => io.out.toString().contains('[compacted]'));
+    await _waitFor(() => io.out.toString().contains('● compacted'));
     io.sendLine('/exit');
     await run;
 
@@ -348,7 +348,7 @@ void main() {
     await _waitFor(() => legacyCalls.isNotEmpty && !cli.isBusy);
     io.sendLine('/compact');
     await _waitFor(() => factory.calls.isNotEmpty, reason: 'smol summarizer');
-    await _waitFor(() => io.out.toString().contains('[compacted]'));
+    await _waitFor(() => io.out.toString().contains('● compacted'));
     io.sendLine('/exit');
     await run;
 

@@ -434,6 +434,9 @@ REPL COMMANDS
   /exit              quit
   /reset             start a new session
   /compact           summarize history to free context
+  /theme [name]      hot-swap the TUI palette (site, catppuccin, nord,
+                     dracula, or ~/.fah/themes/<name>.yaml); persists the
+                     choice; bare /theme lists what is available
   /stats             show token and cost totals
   /tasks [cancel <id>] list (or cancel) background agents and shell jobs
   /trajectory [view|cost|tail|inspect <n>]
