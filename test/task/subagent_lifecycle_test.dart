@@ -6,9 +6,13 @@ library;
 /// `name-2`), cross-session child addressing, and the supersedes chain in
 /// `agent_directory`.
 
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/task/child_session_io.dart';
 import 'package:test/test.dart';
+
+import '../cli/agent_cli_test_support.dart' show toolTurn;
 
 const _model = Model(
   id: 'parent-model',
@@ -192,13 +196,14 @@ final class _FakeFabric implements MessagingRepository {
 /// The executor + manager + JSONL session wiring, mirroring how
 /// `AgentCli` wires `TaskToolConfig` (child sessions in a real repo).
 final class _Wiring {
-  _Wiring([List<_Rule> rules = const []]) {
+  _Wiring([List<_Rule> rules = const [], StreamFunction? streamFn]) {
     stream = _ScriptedStream(rules);
+    _streamFn = streamFn;
     manager = SubagentManager(parentSessionId: 'parent-session')
       ..mailboxPrefix = 'parent-session';
     executor = TaskExecutor(
       childTools: [_fakeTool('read', ApprovalTier.read)],
-      streamFunction: () => stream.call,
+      streamFunction: () => _streamFn ?? stream.call,
       model: () => _model,
       registry: TaskAgentRegistry(const []),
       semaphore: Semaphore(4),
@@ -222,6 +227,7 @@ final class _Wiring {
   final env = MemoryExecutionEnv(cwd: '/work');
   late final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
   late final _ScriptedStream stream;
+  StreamFunction? _streamFn;
   late final SubagentManager manager;
   late final TaskExecutor executor;
 
@@ -1015,6 +1021,159 @@ void main() {
         w.manager['scout']!.toJson(),
       );
       expect(roundTripped.context, contains('KEY-CTX-42'));
+    });
+
+    test('cancelling an IN-FLIGHT resume aborts it — no tombstone over the '
+        'live child, and it stays resumable (issue #332)', () async {
+      // A resume runs inline (no TaskJob): the shared cancel helper must
+      // abort it through the executor's in-flight source instead of
+      // tombstoning the registry row over the LIVE run.
+      final gates = <int, Completer<void>>{};
+      var call = 0;
+      AssistantMessageEventStream gated(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final mine = ++call;
+        final stream = AssistantMessageEventStream();
+        if (mine == 1) {
+          // The original run fails (resumable).
+          for (final event in _errorTurn('provider 403: quota')) {
+            stream.push(event);
+          }
+          stream.end();
+          return stream;
+        }
+        if (mine == 2) {
+          // The resume hangs until cancelled, then reports aborted.
+          stream.push(StartEvent(partial: _assistant()));
+          cancelToken?.onCancel.then((_) {
+            stream.push(
+              ErrorEvent(
+                reason: StopReason.aborted,
+                error: _assistant(
+                  stopReason: StopReason.aborted,
+                  errorMessage: 'Operation aborted',
+                ),
+              ),
+            );
+            stream.end();
+          });
+          gates[2] = Completer<void>()..complete(); // signal: resumed
+          return stream;
+        }
+        // A later re-resume answers normally.
+        for (final event in _usageTurn('recovered', _usageOf(10, 2))) {
+          stream.push(event);
+        }
+        stream.end();
+        return stream;
+      }
+
+      final w = _Wiring(const [], gated);
+      final result = await w.spawn('scout', 'explode now');
+      expect(result.status, TaskSpawnStatus.failed);
+      await w.settle('scout');
+      expect(w.manager['scout']!.status, SubagentStatus.failed);
+
+      final resumeFuture = w.executor.resumeChild('scout', 'try again');
+      while (!(gates[2]?.isCompleted ?? false)) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(w.executor.isInFlight('scout'), isTrue);
+
+      final text = await cancelSubagentWithoutJob(
+        id: 'scout',
+        manager: w.manager,
+        executor: w.executor,
+        source: '/tasks cancel',
+      );
+      expect(text, contains('cancel requested'));
+      expect(text, isNot(contains('tombstoned')));
+
+      await expectLater(resumeFuture, throwsStateError);
+      final handle = w.manager['scout']!;
+      // Settled failed-RESUMABLE by the run path — never the tombstone's
+      // 'no live runner' aborted, and a follow-up resume still works.
+      expect(handle.status, SubagentStatus.failed);
+      expect(handle.error, contains('resume cancelled'));
+      expect(handle.error, isNot(contains('no live runner')));
+
+      await w.executor.resumeChild('scout', 'once more');
+      expect(w.manager['scout']!.status, SubagentStatus.completed);
+    });
+
+    test('usage is billed at TURN BOUNDARIES — a mid-run snapshot carries it, '
+        'totals unchanged at completion (issue #332)', () async {
+      // Two provider requests in ONE run: turn 1 carries a tool call
+      // (the loop continues), turn 2 is the final text. The registry
+      // snapshot written after turn 1 must already carry the turn's
+      // usage — the persisted state rehydrate distinguishes now.
+      final snapshots = <List<Map<String, dynamic>>>[];
+      final manager = SubagentManager(
+        parentSessionId: 'p',
+        sink: (registry) async => snapshots.add(registry),
+      );
+      var call = 0;
+      AssistantMessageEventStream twoTurn(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        if (++call == 1) {
+          for (final event in toolTurn([
+            const ToolCall(id: 'c1', name: 'read', arguments: {}),
+          ])) {
+            stream.push(event);
+          }
+        } else {
+          for (final event in _usageTurn('all done', _usageOf(50, 5))) {
+            stream.push(event);
+          }
+        }
+        stream.end();
+        return stream;
+      }
+
+      final executor = TaskExecutor(
+        childTools: [_fakeTool('read', ApprovalTier.read)],
+        streamFunction: () => twoTurn,
+        model: () => _model,
+        registry: TaskAgentRegistry(const []),
+        semaphore: Semaphore(4),
+        store: AgentOutputStore(),
+        subagentManager: manager,
+      );
+      final result = await executor.runSpawn(
+        item: const TaskItem(name: 'scout', task: 'survey'),
+        index: 0,
+        context: '',
+      );
+      expect(result.status, TaskSpawnStatus.completed);
+      // Pump the fire-and-forget snapshot writes.
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      // The MID-RUN snapshot (running, after turn 1, before completion)
+      // carries the first request — this state is persisted for real.
+      final midRun = snapshots.where(
+        (snapshot) => snapshot.any(
+          (row) =>
+              row['id'] == 'scout' &&
+              row['status'] == 'running' &&
+              (row['requests'] as num? ?? 0) > 0,
+        ),
+      );
+      expect(midRun, isNotEmpty, reason: 'turn 1 billed while running');
+
+      // And no double-billing at completion: totals equal the run.
+      final handle = manager['scout']!;
+      expect(handle.status, SubagentStatus.completed);
+      expect(handle.requests, 2);
+      expect(handle.tokens, 55, reason: 'only the final turn carries tokens');
+      expect(result.tokens, 55);
     });
   });
 }
