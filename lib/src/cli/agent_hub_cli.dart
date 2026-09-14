@@ -69,7 +69,10 @@ extension AgentCliHubDriver on AgentCli {
   /// Rebuilds and pushes the tree-mode overlay. No-op when the TUI is not
   /// attached (line mode renders the same rows via the bare `/agents`
   /// fallback) — unless [target] overrides the destination (test seam).
-  void _pushHubTree([FaTuiController? target]) {
+  /// [refreshOnly] (issue #382): event-driven refreshes pass it so a
+  /// closed overlay stays closed — only a user action (`/agents`, the
+  /// tree's `back`) may open the hub.
+  void _pushHubTree({FaTuiController? target, bool refreshOnly = false}) {
     final controller = target ?? _tuiController;
     if (controller == null) return;
     _hubUpsertFleet();
@@ -81,6 +84,7 @@ extension AgentCliHubDriver on AgentCli {
         ],
         footer: hubFooterLine(_hubProjection.footer()),
       ),
+      refreshOnly: refreshOnly,
     );
   }
 
@@ -89,7 +93,7 @@ extension AgentCliHubDriver on AgentCli {
   /// tests can cover it without a PTY model loop.
   @visibleForTesting
   void pushHubTreeForTest(FaTuiController controller) =>
-      _pushHubTree(controller);
+      _pushHubTree(target: controller);
 
   /// Test seam: the live fleet snapshot + aggregates the tree overlay
   /// renders from (the same upsert + rows assembly as `_pushHubTree`).
@@ -148,15 +152,24 @@ extension AgentCliHubDriver on AgentCli {
 
   /// Pushes [id]'s transcript (main = the session ledger, a child = its
   /// JSONL) into the overlay, and arms the live-follow re-push timer while
-  /// the subject is running.
+  /// the subject is running. Every caller refreshes an overlay the user
+  /// already opened (enter from the tree, live-follow tick, event
+  /// refresh), so the push is always refresh-only and can never force the
+  /// hub open over the chat (issue #382).
   Future<void> _pushHubTranscript(String id) async {
-    final width = _tuiController?.termWidth ?? 80;
-    final (lines, running) = await _hubTranscriptLines(id, width);
     final controller = _tuiController;
     if (controller == null) return;
+    // Claim the slot BEFORE the (async) read: a user close landing
+    // mid-read nulls it and the bail below drops this push instead of
+    // resurrecting the follow state over a closed overlay.
     _hubTranscriptId = id;
+    final (lines, running) = await _hubTranscriptLines(
+      id,
+      controller.termWidth,
+    );
     controller.pushHub(
       FaHubState.transcript(agentId: id, lines: lines, running: running),
+      refreshOnly: true,
     );
     _armHubFollow(id, running: running);
   }
@@ -245,7 +258,10 @@ extension AgentCliHubDriver on AgentCli {
       if (transcriptId != null) {
         unawaited(_pushHubTranscript(transcriptId));
       } else {
-        _pushHubTree();
+        // Refresh-only (issue #382): a child event may refresh an open
+        // hub, never force it open over the user's chat — the model
+        // drops the push while the overlay is closed.
+        _pushHubTree(refreshOnly: true);
       }
     });
     _hubTaskStartsSub ??= _taskConfig.jobManager.starts.listen(
