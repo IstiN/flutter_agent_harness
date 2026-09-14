@@ -2,16 +2,14 @@
 // Use of this source code is governed by a MIT license that can be found in
 // the LICENSE file.
 
-/// Issue #387 — the over-window guard's emergency relief.
-///
-/// The mid-turn guard refuses to send a request past the model window
-/// (gross overflow). With a host-provided [OverWindowRelief] the loop runs
-/// ONE synchronous compaction and retries the request once with the
-/// relieved context — the turn completes instead of dying. A relief that
-/// cannot get under the window (or none hideable) keeps today's verbatim
-/// error, bounded to a single attempt (never a loop).
-
-import 'dart:async';
+// Issue #387 — the over-window guard's emergency relief.
+//
+// The mid-turn guard refuses to send a request past the model window
+// (gross overflow). With a host-provided over-window relief the loop runs
+// ONE synchronous compaction and retries the request once with the
+// relieved context — the turn completes instead of dying. A relief that
+// cannot get under the window (or none hideable) keeps today's verbatim
+// error, bounded to a single attempt (never a loop).
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
