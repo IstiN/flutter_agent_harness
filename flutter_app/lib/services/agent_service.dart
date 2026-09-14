@@ -19,6 +19,8 @@ import 'package:fa_ui/fa_ui.dart'
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'power_guard.dart';
+
 import 'app_log.dart';
 import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
@@ -119,6 +121,11 @@ class AgentService extends ChangeNotifier
   /// surface sees them; `null` keeps the env-file store.
   SessionNamesStore? get namesStoreOverride => null;
 
+  /// The sleep-prevention guard (issue #325): acquired on `initialize`,
+  /// released on `dispose`. Null (tests, web, `off` config) runs the
+  /// session unguarded; failures only log.
+  final PowerAssertionController? powerAssertion;
+
   AgentService({
     required this._agent,
     required this.env,
@@ -131,6 +138,7 @@ class AgentService extends ChangeNotifier
     ApprovalMode? initialApprovalMode,
     @visibleForTesting bool watchExternalSessions = true,
     @visibleForTesting bool includeSharedSessionRoots = true,
+    this.powerAssertion,
   }) : _resolveSecretName = null,
       _providerRegistry = null,
        // ignore: prefer_initializing_formals
@@ -295,6 +303,9 @@ class AgentService extends ChangeNotifier
       skillsAccessStore: skillsAccessStore,
       initialToolsConfig: savedToolsConfig,
       toolsAvailabilityStore: toolsAvailabilityStore,
+      // Sleep prevention (issue #325): one assertion for the app
+      // session's lifetime; null on web / off / unreadable config.
+      powerAssertion: createAppPowerAssertion(),
       skillsHomeDir: desktopHomeDir(),
       // Live stores FIRST: a key edited in Settings must win over the
       // boot-time snapshot (the keychain write updates the registry, not
@@ -421,6 +432,7 @@ class AgentService extends ChangeNotifier
     ToolsConfig? initialToolsConfig,
     this._toolsAvailabilityStore,
     String? skillsHomeDir,
+    this.powerAssertion,
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
     : _skillsHomeDir = skillsHomeDir,
@@ -1525,6 +1537,10 @@ class AgentService extends ChangeNotifier
       // Keep the screen awake for the whole run — the OS must not lock the
       // phone mid-stream.
       unawaited(BackgroundExecution.setScreenAwake(true));
+      // Per-run sleep prevention (#326): the default hold acquires with
+      // the run going in flight (the session-held opt-in acquired at
+      // session open instead); fire-and-forget, never delays the turn.
+      powerAssertion?.onRunStarted();
       unawaited(
         LiveActivity.start(
           sessionTitle: 'Fa agent run',
@@ -1533,6 +1549,10 @@ class AgentService extends ChangeNotifier
       );
     } else {
       unawaited(BackgroundExecution.setScreenAwake(false));
+      // The run settled: drop the per-run sleep assertion so an idle
+      // agent lets the machine sleep (#326). Idempotent/no-op for the
+      // session-held mode's controller policy.
+      unawaited(powerAssertion?.onRunSettled());
       final id = _backgroundTaskId;
       _backgroundTaskId = null;
       unawaited(BackgroundExecution.end(id));
@@ -2473,6 +2493,9 @@ class AgentService extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    // Drop the sleep-prevention assertion (issue #325): best-effort and
+    // fire-and-forget — dispose stays synchronous.
+    unawaited(powerAssertion?.release());
     // Disposing the service cancels an in-flight run: the agent's idle
     // watchdog would otherwise outlive the host by minutes (and wedge
     // widget tests' fake_async invariants on a pending timer).

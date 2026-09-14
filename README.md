@@ -182,11 +182,41 @@ capabilities and limits). The device-flow client id is overridable via
 `FA_COPILOT_CLIENT_ID` — that GitHub endpoint is undocumented, so a
 custom client id carries an account-ban risk; override only with cause.
 
+### Sleep prevention (`power.sleepPrevention`, `power.hold`)
+
+Long-running runs die with the machine: when the Mac sleeps mid-run,
+scheduled wake-ups never deliver. A power assertion holds the machine
+awake while the agent is WORKING — by default one assertion per RUN,
+acquired when the run goes in flight and released when it settles, so
+an agent idling between turns never pins the machine awake for hours.
+Controlled by `~/.fah/config.yaml`:
+
+```yaml
+power:
+  sleepPrevention: idle # off | idle (default) | display | system
+  hold: per-run # per-run (default) | session (hold the whole session)
+```
+
+Levels are cumulative — `idle` prevents idle sleep (`caffeinate -i`),
+`display` also keeps the display awake (`-i -d`), `system` also blocks
+AC system sleep and declares the user active (`-i -d -s -u`). `hold:
+session` opts into holding the assertion from session start to exit
+(always-on deployments). macOS runs `caffeinate -w <fa pid>` (it
+self-exits with fa, so the assertion can never leak); Linux tries
+`systemd-inhibit --what=idle:sleep` behind a pid watchdog; other
+platforms no-op. A failed assertion logs a warning and the run
+continues; a helper that ignores SIGTERM at release gets a SIGKILL
+after 5s and release proceeds. `/power` shows the level, the hold, and
+whether the assertion is currently held (`pmset -g assertions` on macOS
+shows the real thing). Windows (`SetThreadExecutionState`) is a tracked
+stub.
+
 ### Slash commands (selection)
+
 
 `/provider`, `/models`, `/model`, `/approval`, `/allow`, `/tools`,
 `/skills`, `/agents`, `/tasks`, `/trajectory [view|cost|tail|inspect]`,
-`/memory [maintain]`, `/compact`, `/reset`, `/checkpoint`/`/rewind`,
+`/memory [maintain]`, `/power`, `/compact`, `/reset`, `/checkpoint`/`/rewind`,
 `/mcp`, `/a2a`, `/dap`, `/stats`, `/mouse`, `/settings`, `/help` — plus
 every discovered skill as `/skill:<name>` (a bare `/<name>` alias works
 too). While a run streams, typed input steers the agent; Ctrl-C aborts

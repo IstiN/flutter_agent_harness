@@ -320,6 +320,89 @@ prompts:
       expect(loadCliConfig(tmp.path).images, isNull);
     });
 
+    test('parses the power section and round-trips it (issue #325)', () async {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('power:\n  sleepPrevention: system\n');
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.powerSleepPrevention, PowerAssertionLevel.system);
+
+      await saveCliConfig(tmp.path, loaded);
+      final reloaded = loadCliConfig(tmp.path);
+      expect(reloaded.powerSleepPrevention, PowerAssertionLevel.system);
+    });
+
+    test('parses the power hold lifecycle and round-trips it (#326)', () async {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync(
+        'power:\n  sleepPrevention: display\n  hold: session\n',
+      );
+      final loaded = loadCliConfig(tmp.path);
+      expect(loaded.powerSleepPrevention, PowerAssertionLevel.display);
+      expect(loaded.powerHold, PowerAssertionHold.session);
+
+      await saveCliConfig(tmp.path, loaded);
+      final reloaded = loadCliConfig(tmp.path);
+      expect(reloaded.powerSleepPrevention, PowerAssertionLevel.display);
+      expect(reloaded.powerHold, PowerAssertionHold.session);
+      // The per-run default stays absent when not configured.
+      expect(loadCliConfig(tmp.path).powerHold, PowerAssertionHold.session);
+    });
+
+    test(
+      'hold alone round-trips (level stays absent → idle default)',
+      () async {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('power:\n  hold: session\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.powerSleepPrevention, isNull);
+        expect(loaded.powerHold, PowerAssertionHold.session);
+        await saveCliConfig(tmp.path, loaded);
+        expect(loadCliConfig(tmp.path).powerHold, PowerAssertionHold.session);
+      },
+    );
+
+    test('rejects a bad power.hold value', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('power:\n  hold: forever\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"power.hold" must be per-run or session'),
+          ),
+        ),
+      );
+    });
+
+    test('power defaults to null when absent (the host applies idle)', () {
+      expect(loadCliConfig(tmp.path).powerSleepPrevention, isNull);
+    });
+
+    test('rejects a bad power.sleepPrevention value', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('power:\n  sleepPrevention: sometimes\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains(
+              '"power.sleepPrevention" must be off, idle, display or '
+              'system',
+            ),
+          ),
+        ),
+      );
+    });
+
     test('rejects unknown images keys', () {
       final file = File('${tmp.path}/.fah/config.yaml');
       file.createSync(recursive: true);
@@ -610,8 +693,10 @@ prompts:
       test('rejects an unknown agent key', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
-        file.writeAsStringSync('agent:\n  contextWindowCap: 256000\n'
-            '  temperature: 0\n');
+        file.writeAsStringSync(
+          'agent:\n  contextWindowCap: 256000\n'
+          '  temperature: 0\n',
+        );
         expect(
           () => loadCliConfig(tmp.path),
           throwsA(
