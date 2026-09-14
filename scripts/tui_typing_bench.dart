@@ -62,7 +62,7 @@ void main(List<String> args) async {
   var statusCalls = 0;
   final controller = FaTuiController(
     callbacks: FaTuiCallbacks(
-      onSubmit: (_) async {},
+      onSubmit: (_, {images = const []}) async {},
       onModelSelected: (_) async {},
       buildSlashMenu: (_) => const [],
       buildModelMenu: (_, _) => const [],

@@ -25,6 +25,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/cube': (cli, rest) async => cli._handleCubeCommand(rest),
   '/memory': (cli, rest) async => cli._handleMemoryCommand(rest),
   '/redact': (cli, rest) async => cli._handleRedactCommand(rest),
+  '/theme': (cli, rest) async => cli._themeSlash(rest),
   '/trajectory': (cli, rest) async => cli._handleTrajectoryCommand(rest),
   '/mail': (cli, rest) async => cli.handleMailCommand(rest),
   '/reply': (cli, rest) async => cli.handleReplyCommand(rest),
@@ -34,7 +35,6 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/terminal-setup': (cli, rest) async => cli._printTerminalSetup(),
   '/ext': (cli, rest) async => cli._extSlash(rest),
   '/power': (cli, rest) async => cli._powerSlash(),
-  '/theme': (cli, rest) async => cli._themeSlash(rest),
 };
 
 /// Slash-command dispatch on [AgentCli].
