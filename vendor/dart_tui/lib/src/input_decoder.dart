@@ -160,6 +160,31 @@ _ParseResult _tryParseCsi(List<int> buffer) {
   if (buffer.length < 2) return _ParseState.none;
   if (buffer[0] != 0x1b || buffer[1] != 0x5b) return _ParseState.none;
 
+  // X10 mouse (modes 9/1000, terminals without SGR mouse): `ESC [ M Cb Cx
+  // Cy` — the 'M' here OPENS a 3-byte payload instead of terminating the
+  // CSI. Without this special-case the parser consumes the lone 'M' and
+  // the payload bytes leak through as keypresses (mojibake states).
+  if (buffer.length >= 3 && buffer[2] == 0x4d) {
+    const x10Length = 6;
+    final payloadPrintable =
+        buffer.length >= x10Length &&
+        buffer[3] >= 0x20 &&
+        buffer[4] >= 0x20 &&
+        buffer[5] >= 0x20;
+    if (payloadPrintable) {
+      return _ParsedMessages(
+        consumed: x10Length,
+        msgs: _decodeX10Mouse(buffer[3], buffer[4], buffer[5]),
+      );
+    }
+    if (buffer.length < x10Length &&
+        buffer.sublist(3).every((b) => b >= 0x20)) {
+      return _ParseState.partial; // payload still arriving
+    }
+    // Not a mouse payload (e.g. an ESC follows): fall through to the
+    // generic path, which consumes the lone 'M' as an unknown sequence.
+  }
+
   var i = 2;
   while (i < buffer.length) {
     final b = buffer[i];
@@ -378,6 +403,22 @@ String? _decodeClipboardPayload(String data) {
   } catch (_) {
     return null;
   }
+}
+
+/// Decodes an X10 mouse payload (modes 9/1000): [cbByte]/[cxByte]/[cyByte]
+/// are the terminal's 32-offset bytes — button code, column, row.
+List<Msg> _decodeX10Mouse(int cbByte, int cxByte, int cyByte) {
+  final cb = cbByte - 32;
+  final mouse = Mouse(
+    x: cxByte >= 33 ? cxByte - 33 : 0,
+    y: cyByte >= 33 ? cyByte - 33 : 0,
+    button: cb == 3 ? MouseButton.none : _mouseButtonFromCb(cb),
+    modifiers: _mouseModifiersFromCb(cb),
+  );
+  if (cb == 3) return [MouseReleaseMsg(mouse)];
+  if ((cb & 64) != 0) return [MouseWheelMsg(mouse)];
+  if ((cb & 32) != 0) return [MouseMotionMsg(mouse)];
+  return [MouseClickMsg(mouse)];
 }
 
 Set<KeyMod> _mouseModifiersFromCb(int cb) {
