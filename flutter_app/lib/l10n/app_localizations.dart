@@ -3296,11 +3296,23 @@ abstract class AppLocalizations {
   /// **'One-time code from fa1.dev'**
   String get githubBrowserCodeHint;
 
-  /// No description provided for @sessionTooLargeTitle.
+  /// Fallback when an over-budget session cannot open windowed — the full open is refused (issue #381)
   ///
   /// In en, this message translates to:
-  /// **'Session too large to open in the app ({size}). Open it with the CLI instead.'**
+  /// **'Session ({size} MB) is over the instant-open budget and couldn\'t be opened safely.'**
   String sessionTooLargeTitle(String size);
+
+  /// Boot notice when the last-active session is over the instant-open budget and was not resumed (issue #381); the action opens it windowed
+  ///
+  /// In en, this message translates to:
+  /// **'Resumed a fresh session — “{name}” ({size} MB) is over the instant-open budget.'**
+  String sessionBootSkippedOversize(String name, String size);
+
+  /// Action on the boot oversize notice: opens the skipped session through the windowed loader
+  ///
+  /// In en, this message translates to:
+  /// **'Open windowed'**
+  String get sessionBootSkippedOpen;
 
   /// Top-bar button listing the session's dynamic messages (issue #102)
   ///

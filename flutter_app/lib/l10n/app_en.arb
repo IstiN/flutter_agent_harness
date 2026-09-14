@@ -639,13 +639,30 @@
   "@githubBrowserCodeHint": {
     "description": "Hint of the one-time-code field on the Browser tab"
   },
-  "sessionTooLargeTitle": "Session too large to open in the app ({size}). Open it with the CLI instead.",
+  "sessionTooLargeTitle": "Session ({size} MB) is over the instant-open budget and couldn't be opened safely.",
   "@sessionTooLargeTitle": {
+    "description": "Fallback when an over-budget session cannot open windowed — the full open is refused (issue #381)",
     "placeholders": {
       "size": {
         "type": "String"
       }
     }
+  },
+  "sessionBootSkippedOversize": "Resumed a fresh session — “{name}” ({size} MB) is over the instant-open budget.",
+  "@sessionBootSkippedOversize": {
+    "description": "Boot notice when the last-active session is over the instant-open budget and was not resumed (issue #381); the action opens it windowed",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "sessionBootSkippedOpen": "Open windowed",
+  "@sessionBootSkippedOpen": {
+    "description": "Action on the boot oversize notice: opens the skipped session through the windowed loader"
   },
   "dynamicMessagesButtonTooltip": "Dynamic messages",
   "@dynamicMessagesButtonTooltip": {

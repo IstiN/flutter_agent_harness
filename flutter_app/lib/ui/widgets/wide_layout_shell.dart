@@ -26,6 +26,7 @@ import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/widgets/quick_model_chip.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/widgets/file_browser.dart';
+import 'package:fa/ui/widgets/boot_oversize_notice.dart';
 import 'package:fa/ui/widgets/sidebar_nav_item.dart';
 import 'package:fa/ui/widgets/sidebar_sessions_list.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -251,6 +252,14 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     _subscribeToActiveService();
     unawaited(_reloadPersistedSessions());
     unawaited(_ensureNamesStore());
+    // Issue #381: boot skipped an oversized last-active session — say so
+    // instead of the old silent swap; the action opens it windowed.
+    showBootOversizeNotice(
+      context,
+      manager: widget.manager,
+      names: widget.sessionNamesStore,
+      onOpen: (metadata) => _openPersistedSession(metadata),
+    );
     FaChatHost.jsAppNavigatorKey = _appsNavigatorKey;
   }
 
@@ -452,9 +461,11 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       // the chat renders everything in a single row above the
       // transcript. On macOS the traffic lights float over the bar, so
       // the header insets by the same top padding the session row used.
-      data: MediaQuery.of(
-        context,
-      ).copyWith(padding: MediaQuery.paddingOf(context) + EdgeInsets.only(top: _isMacOS ? 28 : 0)),
+      data: MediaQuery.of(context).copyWith(
+        padding:
+            MediaQuery.paddingOf(context) +
+            EdgeInsets.only(top: _isMacOS ? 28 : 0),
+      ),
       child: ChatScreen(
         manager: widget.manager,
         registry: widget.registry,
@@ -655,6 +666,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
         serviceFactory: () => service.clone(),
       );
     } on SessionTooLargeException {
+      if (!mounted) return;
       final messenger = ScaffoldMessenger.maybeOf(context);
       final sizeMb = (metadata.sizeBytes ?? 0) / (1024 * 1024);
       messenger?.showSnackBar(
