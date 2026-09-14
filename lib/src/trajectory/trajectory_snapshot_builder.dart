@@ -71,6 +71,17 @@ final class TrajectorySnapshotBuilder {
   int get snapshotsBuilt => _snapshotsBuilt;
   int _snapshotsBuilt = 0;
 
+  /// Total parent hops walked by [_chainToRoot] over this builder's life.
+  ///
+  /// Linear backfills fold turn/step incrementally (issue #262) and walk
+  /// O(1) hops per record; the pre-#262 quadratic fold walked the whole
+  /// parent chain per user/assistant record — O(n²) hops over a backfill.
+  /// Scaling tests assert against this instead of wall-clock ratios, which
+  /// flake on loaded shared runners when one GC/scheduler pause lands in
+  /// the larger window (issue #358).
+  int get chainWalkHops => _chainWalkHops;
+  int _chainWalkHops = 0;
+
   // Incremental turn/step fold over the appended record chain (issue #262):
   // `_turnStep`'s full parent-chain walk per user/assistant record is O(n)
   // per append — O(n²) over a backfill. These track the fold state through
@@ -224,6 +235,7 @@ final class TrajectorySnapshotBuilder {
     _eventCounter = 0;
     _revision = 0;
     _snapshotsBuilt = 0;
+    _chainWalkHops = 0;
     _incTipId = null;
     _incTurn = 0;
     _incStep = 0;
@@ -757,6 +769,7 @@ final class TrajectorySnapshotBuilder {
     while (current.parentId != null) {
       final parent = _byId[current.parentId!];
       if (parent == null) break;
+      _chainWalkHops++;
       chain.add(parent);
       current = parent;
     }
