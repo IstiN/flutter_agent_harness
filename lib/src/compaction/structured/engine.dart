@@ -181,6 +181,7 @@ final class StructuredCompactor {
         picks,
         view.ledger,
         protectLastN: protectLastN,
+        keepRecentTokens: settings.keepRecentTokens,
       );
       if (ids.isEmpty) break;
       await session.appendHiddenRange(recordIds: ids.toList()..sort());
@@ -235,11 +236,17 @@ final class StructuredCompactor {
   }
 
   List<LedgerEntry> _hideableEntries(ContextLedger ledger) {
-    final tailStart = ledger.entries.length - protectLastN < 0
-        ? 0
-        : ledger.entries.length - protectLastN;
+    // Issue #388 keep-recent floor: the newest records totalling the
+    // keep-recent budget are the active working set — an emergency hide
+    // never amputates them (the incident hid 504 records up to 5 minutes
+    // old behind a count-only tail of 8).
+    final floor = hideFloorStart(
+      ledger.entries,
+      protectLastN: protectLastN,
+      keepRecentTokens: settings.keepRecentTokens,
+    );
     return [
-      for (var i = 0; i < tailStart; i++)
+      for (var i = 0; i < floor; i++)
         if (!ledger.entries[i].exempt) ledger.entries[i],
     ];
   }

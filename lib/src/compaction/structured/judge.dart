@@ -64,12 +64,39 @@ Set<int> _parsePickItem(Object? item) {
   return single != null && single > 0 ? {single} : const {};
 }
 
+/// First ledger index hide passes may touch: everything newer is the
+/// protected recent working set — the last [protectLastN] entries (live
+/// edge) and the newest entries totalling [keepRecentTokens] (issue #388
+/// floor: the same keep-recent budget the checkpoint pass and the classic
+/// compactor honor). When the whole ledger fits the budget nothing is
+/// hideable (index 0). The record at the floor edge stays (E3).
+int hideFloorStart(
+  List<LedgerEntry> entries, {
+  required int protectLastN,
+  required int keepRecentTokens,
+}) {
+  final countFloor = entries.length - protectLastN < 0
+      ? 0
+      : entries.length - protectLastN;
+  var budget = keepRecentTokens;
+  var kept = 0;
+  while (kept < entries.length && budget > 0) {
+    kept++;
+    budget -= entries[entries.length - kept].tokens;
+  }
+  final tokenFloor = entries.length - kept;
+  // The smaller start protects more: the count floor and the token floor
+  // both bind (union of the protected tails).
+  return countFloor < tokenFloor ? countFloor : tokenFloor;
+}
+
 /// Narrows judge picks to ids that are safe to hide.
 ///
 /// - ids the ledger does not know (hallucinated) are dropped;
 /// - `·exempt` real user turns are dropped (F8);
-/// - the last [protectLastN] ledger entries are dropped (live edge — the
-///   working set the model is actively reasoning over);
+/// - the protected floor ([hideFloorStart]) is dropped: the live edge AND
+///   the recent working set (issue #388 — an emergency hide must never
+///   amputate it);
 /// - every surviving pick snaps OUTWARD to its whole pair group (D6), and
 ///   a group touching the protected tail is dropped entirely (a hidden
 ///   call with a live result orphans the wire).
@@ -77,12 +104,15 @@ Set<String> validateHidePicks(
   Set<int> picks,
   ContextLedger ledger, {
   int protectLastN = 8,
+  required int keepRecentTokens,
 }) {
   final protected = <String>{
     for (final entry in ledger.entries.skip(
-      ledger.entries.length - protectLastN < 0
-          ? 0
-          : ledger.entries.length - protectLastN,
+      hideFloorStart(
+        ledger.entries,
+        protectLastN: protectLastN,
+        keepRecentTokens: keepRecentTokens,
+      ),
     ))
       entry.recordId,
   };

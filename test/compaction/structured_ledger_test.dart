@@ -163,12 +163,22 @@ void main() {
       4, // bash result (inside the protected tail: last 8)
       5, // assistant right after the pair
     };
-    final ids = validateHidePicks(picks, ledger, protectLastN: 8);
+    final ids = validateHidePicks(
+      picks,
+      ledger,
+      protectLastN: 8,
+      keepRecentTokens: 0,
+    );
     // Picks 4 (bash result) and 5 (notice) sit outside the last-8 tail
     // (r5..r12 of 12 records); the result snaps to its whole pair group.
     expect(ids, {'r2', 'r3', 'r4'});
 
-    final idsLoose = validateHidePicks({4}, ledger, protectLastN: 2);
+    final idsLoose = validateHidePicks(
+      {4},
+      ledger,
+      protectLastN: 2,
+      keepRecentTokens: 0,
+    );
     // With a tiny protected tail the pair group survives — snapped.
     expect(idsLoose, containsAll(['r2', 'r3']));
 
@@ -176,8 +186,68 @@ void main() {
     // picking the carrier alone never splits the pair. With a 10-entry
     // protected tail covering the result (r3) but not the carrier's
     // neighbors, the whole group drops.
-    final snapCarrier = validateHidePicks({3}, ledger, protectLastN: 10);
+    final snapCarrier = validateHidePicks(
+      {3},
+      ledger,
+      protectLastN: 10,
+      keepRecentTokens: 0,
+    );
     expect(snapCarrier, isEmpty);
+  });
+
+  test('validateHidePicks honors the keep-recent token floor (issue #388)', () {
+    // 3 pairs, then 9 fillers: 12 records. The last-8 count floor only
+    // protects r5..r12 — but the two newest pairs carry huge results, so
+    // the token floor (4000 tokens ≈ 16k chars) must extend protection
+    // back over them (the #388 amputation: 504 records up to 5 minutes
+    // old hidden behind a count-only tail).
+    final records = <SessionRecord>[];
+    void add(Message message) {
+      records.add(
+        MessageRecord(
+          id: 'r${records.length + 1}',
+          parentId: records.isEmpty ? null : 'r${records.length}',
+          timestamp: DateTime.utc(2026),
+          message: message,
+        ),
+      );
+    }
+
+    add(UserMessage.text('ask one'));
+    for (var i = 0; i < 3; i++) {
+      add(
+        _assistant(
+          'pair $i',
+          calls: [ToolCall(id: 'c$i', name: 'bash', arguments: {})],
+        ),
+      );
+      add(_result('c$i', 'bash', 'o' * 20000));
+    }
+    for (var i = 0; i < 9; i++) {
+      add(_assistant('filler $i'));
+    }
+    final ledger = buildContextLedger(
+      visiblePath: records,
+      seqs: RecordSeqIndex(records),
+    );
+
+    // 12 records; count floor 8 protects r5..r12. The newest pairs are
+    // r6/r7 and r4/r5 — the token floor pulls r4 (its 5000-token result)
+    // into the protected set too, so the whole group drops.
+    final ids = validateHidePicks(
+      {2, 3, 4, 5, 6},
+      ledger,
+      protectLastN: 8,
+      keepRecentTokens: 5500,
+    );
+    expect(ids, {'r2', 'r3'}, reason: 'r4 snaps to its pair and stays');
+
+    // Whole ledger within the budget: nothing is hideable (E3 edge — the
+    // record at the floor edge stays, never half-protected).
+    expect(
+      validateHidePicks({2, 3}, ledger, protectLastN: 1, keepRecentTokens: 999999),
+      isEmpty,
+    );
   });
   group('streamFunctionHideJudge', () {
     AssistantMessage msg(
