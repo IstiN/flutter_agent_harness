@@ -9,6 +9,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
@@ -85,6 +86,7 @@ class FaChatScreen extends StatefulWidget {
     this.audioControllerFactory,
     this.videoControllerFactory,
     this.dynamicWidgetTileBuilder,
+    this.onOpenWidgetAsApp,
     this.imagePreviewCacheWidth = kDefaultImagePreviewCacheWidth,
     this.projectIcon,
     this.projectIconColor,
@@ -164,6 +166,12 @@ class FaChatScreen extends StatefulWidget {
   /// tile for them.
   final FaDynamicWidgetTileBuilder? dynamicWidgetTileBuilder;
 
+  /// Opens the current turn's live dynamic widget full-screen ephemerally
+  /// when the bottom chip is tapped (issue #379 AC3, the #378
+  /// open-without-saving contract). Returning false — or leaving null on
+  /// surfaces without the ephemeral API — falls back to scroll-to-widget.
+  final Future<bool> Function(FaChatMessage message)? onOpenWidgetAsApp;
+
   /// The project identity in the adaptive header (issue #225): the folder
   /// glyph + label ("Personal" or the folder basename) the host renders
   /// instead of a separate project bar row. Null renders no project slot.
@@ -232,6 +240,14 @@ class _FaChatScreenState extends State<FaChatScreen>
   final _chatScrollController = ScrollController();
   bool _userNearBottom = true;
 
+  /// True once the USER dragged the transcript away (parked at ≥ the
+  /// near-bottom latch). Programmatic scrolls — the tail follow and the
+  /// live-widget clamp's own animateTo — never set this, so the clamp
+  /// keeps working after it moves the viewport past the latch threshold,
+  /// while a real user scroll always wins (issue #379 AC2). Dragging
+  /// back to the bottom relatches.
+  bool _userScrolledAway = false;
+
   /// Loads sandbox images referenced from Markdown / `generate_image` tool
   /// results through the session's env (memoized — see
   /// [SandboxImageResolver]).
@@ -261,6 +277,24 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// Transcript row keys by message id (`msg-<index>`): jump-to-message
   /// targets (see [_scrollToMessage]); pruned on every sync.
   final Map<String, GlobalKey> _itemKeys = {};
+
+  /// Issue #379 live-widget state, keyed by the widget id
+  /// ([FaChatMessage.data] — stable across history-window index shifts,
+  /// E4): chips the user dismissed with ×, widgets the user touched, and
+  /// widgets whose scroll clamp was released (chip tap, turn end + the
+  /// user scrolled away). A widget id entering the current turn afresh
+  /// re-arms (E3) — see the sync in [_syncMessages].
+  final Set<String> _dismissedWidgetChips = {};
+  final Set<String> _interactedWidgets = {};
+  final Set<String> _releasedClamps = {};
+
+  /// The widget ids seen in the current turn: the baseline for the
+  /// re-arm rule above.
+  Set<String> _turnWidgetIds = {};
+
+  /// The widget id the chip targeted at the last sync: the rebuild
+  /// trigger for the chip's shell-level (non-list) rendering.
+  String? _lastChipTargetId;
 
   /// Wraps a transcript row in its jump anchor.
   Widget _keyed(String id, Widget child) =>
@@ -451,20 +485,67 @@ class _FaChatScreenState extends State<FaChatScreen>
     _userNearBottom = position.pixels < 150;
   }
 
+  /// Classifies scroll activity on the transcript's own scrollable
+  /// (depth 0 — inner tool-output scrollables don't count): a user drag
+  /// parking above the latch threshold marks the transcript
+  /// scrolled-away; anything landing back under the threshold relatches.
+  void _trackUserScroll(ScrollNotification notification) {
+    if (notification.depth != 0) return;
+    if (notification is! ScrollUpdateNotification &&
+        notification is! ScrollEndNotification) {
+      return;
+    }
+    if (!_chatScrollController.hasClients) return;
+    final pixels = _chatScrollController.position.pixels;
+    if (notification is ScrollUpdateNotification &&
+        notification.dragDetails != null) {
+      _userScrolledAway = pixels >= 150;
+    } else if (pixels < 150) {
+      _userScrolledAway = false;
+    }
+  }
+
   /// Pins the chat to the tail after a sync when the user hasn't scrolled
   /// away. The REVERSED list already sits at the bottom (offset 0) and new
   /// rows grow upwards without shifting the viewport — this is only needed
-  /// when the user scrolled up a little during streaming.
+  /// when the user scrolled up a little during streaming. The live-widget
+  /// clamp (issue #379) runs on the scrolled-away latch alone: its own
+  /// scrolling carries the viewport past the near-bottom threshold by
+  /// design, and that must not disarm it — only a real user drag does.
   void _scrollToTailIfFollowing() {
-    if (!_userNearBottom) return;
+    if (_userScrolledAway) return;
+    final clampActive =
+        _clampTarget() != null &&
+        MediaQuery.sizeOf(context).width < kWideLayoutBreakpoint;
+    if (!clampActive && !_userNearBottom) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_chatScrollController.hasClients) return;
-      if (_chatScrollController.offset < 1) return;
+      // Issue #379: while the current turn holds a live (un-interacted)
+      // widget, the follow clamps to keep the widget's leading edge
+      // inside the viewport instead of pinning the tail. Manual scroll
+      // still wins — this only runs while following (AC2).
+      final target = _liveWidgetClampOffset() ?? 0.0;
+      if ((target - _chatScrollController.offset).abs() < 1) return;
       _chatScrollController.animateTo(
-        0,
+        target,
         duration: const Duration(milliseconds: 150),
         curve: Curves.linearToEaseOut,
       );
+      // The animated list mounts the freshly inserted row one frame
+      // later, so this frame's geometry (and the target above) lags one
+      // chunk behind. Re-measure on the next frame and correct — the
+      // leading edge must land inside the viewport exactly (AC1).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_chatScrollController.hasClients) return;
+        if (!_userNearBottom) return;
+        final corrected = _liveWidgetClampOffset();
+        if (corrected == null) return;
+        if ((corrected - _chatScrollController.offset).abs() < 1) return;
+        _chatScrollController.animateTo(
+          corrected,
+          duration: const Duration(milliseconds: 100),
+          curve: Curves.linearToEaseOut,
+        );
+      });
     });
   }
 
@@ -499,6 +580,164 @@ class _FaChatScreenState extends State<FaChatScreen>
       );
       await WidgetsBinding.instance.endOfFrame;
     }
+  }
+
+  // ---- Live dynamic-widget affordances (issue #379) --------------------
+
+  /// The current turn: the messages after the last user-authored message
+  /// in the synced window. Returns its `widget`-role entries as
+  /// `(widgetId, rowId)`, newest first (E1 documents that order).
+  List<(String, String)> _turnWidgets() {
+    var lastUser = -1;
+    for (var i = 0; i < _lastSynced.length; i++) {
+      if (_lastSynced[i].authorId == 'user') lastUser = i;
+    }
+    final widgets = <(String, String)>[];
+    for (var i = _lastSynced.length - 1; i > lastUser; i--) {
+      final message = _lastSynced[i];
+      if (message is! CustomMessage) continue;
+      final metadata = message.metadata ?? const {};
+      if (metadata['role'] != 'widget') continue;
+      widgets.add(((metadata['data'] ?? message.id).toString(), message.id));
+    }
+    return widgets;
+  }
+
+  /// Newest current-turn widget the chip still shows (AC3): not touched,
+  /// not dismissed. E1: newest-first targeting.
+  (String, String)? _chipTarget() {
+    for (final entry in _turnWidgets()) {
+      if (!_interactedWidgets.contains(entry.$1) &&
+          !_dismissedWidgetChips.contains(entry.$1)) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /// [_chipTarget] minus clamp-released ids (chip tap, turn end + the
+  /// user scrolled away): the chip outlives the clamp (GOAL §2).
+  (String, String)? _clampTarget() {
+    for (final entry in _turnWidgets()) {
+      if (!_interactedWidgets.contains(entry.$1) &&
+          !_dismissedWidgetChips.contains(entry.$1) &&
+          !_releasedClamps.contains(entry.$1)) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  /// The clamped follow target for a live widget, or null (follow the
+  /// tail exactly as before): the scroll offset that keeps the widget's
+  /// leading (top) edge inside the viewport — never fully past it (E2: a
+  /// widget taller than the viewport keeps its top visible). Narrow
+  /// viewports only (AC4); render-object offsets only (E4): history
+  /// insertion above can never skew the math.
+  double? _liveWidgetClampOffset() {
+    if (MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint) {
+      return null;
+    }
+    final target = _clampTarget();
+    if (target == null) return null;
+    final rowContext = _itemKeys[target.$2]?.currentContext;
+    final row = rowContext?.findRenderObject();
+    if (row is! RenderBox || !row.attached) return null;
+    final viewport = RenderAbstractViewport.of(row);
+    final topReveal = viewport.getOffsetToReveal(row, 1.0).offset;
+    if (topReveal <= 0) return null; // fully visible at the tail already
+    return topReveal + 16; // a small margin keeps the edge strictly inside
+  }
+
+  /// A touch anywhere on a live widget row is an interaction (AC3): the
+  /// chip auto-hides and the clamp releases for that widget (E1: the
+  /// targeting then falls back to an older live one).
+  void _markWidgetInteracted(String widgetId) {
+    if (_interactedWidgets.contains(widgetId)) return;
+    setState(() => _interactedWidgets.add(widgetId));
+  }
+
+  /// The pinned bottom chip (GOAL §2): «✦ Open widget as app» while the
+  /// newest current-turn widget is live and un-interacted; hidden on
+  /// wide viewports (AC4). Tap opens it ephemerally through the host,
+  /// falling back to scroll-to-widget when the surface has no ephemeral
+  /// API.
+  Widget? _buildWidgetOpenChip(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint) {
+      return null;
+    }
+    final target = _chipTarget();
+    if (target == null) return null;
+    final strings = FaChatStrings.of(context);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+        child: Material(
+          key: const Key('fa-widget-open-chip'),
+          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _openChipTarget(target),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    strings.chatOpenWidgetAsApp,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('fa-widget-open-chip-dismiss'),
+                    tooltip: strings.chatOpenWidgetAsAppDismiss,
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () =>
+                        setState(() => _dismissedWidgetChips.add(target.$1)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Chip tap (AC3): opens ephemerally through the host when available,
+  /// otherwise scrolls the widget row back into view; either way the
+  /// clamp releases for that widget (GOAL §1).
+  Future<void> _openChipTarget((String, String) target) async {
+    final opener = widget.onOpenWidgetAsApp;
+    var opened = false;
+    if (opener != null) {
+      for (final message in _lastSynced) {
+        if (message.id != target.$2) continue;
+        opened = await opener(_faMessageFromMetadata(message));
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _releasedClamps.add(target.$1));
+    if (!opened) await _scrollToMessage(target.$2);
+  }
+
+  /// Rebuilds the host-facing [FaChatMessage] of a synced custom message
+  /// (the same fields [_buildCustomMessage] renders from).
+  FaChatMessage _faMessageFromMetadata(Message message) {
+    final metadata = message.metadata ?? const {};
+    return FaChatMessage(
+      role: (metadata['role'] as String?) ?? 'system',
+      content: (metadata['content'] as String?) ?? '',
+      toolName: metadata['toolName'] as String?,
+      isError: (metadata['isError'] as bool?) ?? false,
+      data: metadata['data'],
+    );
   }
 
   void _subscribeToService(FaChatService service) {
@@ -582,6 +821,7 @@ class _FaChatScreenState extends State<FaChatScreen>
         widget.service.historyBelowCount != _historyBelow ||
         widget.service.historyTotalCount != _historyTotal;
     if (needsRebuild) {
+      final wasStreaming = _isStreaming;
       _isStreaming = widget.service.isStreaming;
       _error = widget.service.error;
       _historyAbove = widget.service.historyAboveCount;
@@ -590,6 +830,14 @@ class _FaChatScreenState extends State<FaChatScreen>
       _historyHasNewer = widget.service.historyHasNewer;
       _historyBelow = widget.service.historyBelowCount;
       _historyTotal = widget.service.historyTotalCount;
+
+      // Issue #379: the turn ended while the user had scrolled away —
+      // release the clamp for the current target; returning to the tail
+      // later must not re-clamp it (GOAL §1).
+      if (wasStreaming && !_isStreaming && _userScrolledAway) {
+        final target = _clampTarget();
+        if (target != null) _releasedClamps.add(target.$1);
+      }
       if (mounted) setState(() {});
     }
   }
@@ -666,6 +914,26 @@ class _FaChatScreenState extends State<FaChatScreen>
       }
 
       _lastSynced = newList;
+
+      // E3 (issue #379): a widget id entering the current turn afresh —
+      // a NEW dynamic message, or the same widget re-presented later —
+      // re-arms its chip/clamp state.
+      final turnIds = {for (final (id, _) in _turnWidgets()) id};
+      for (final id in turnIds) {
+        if (_turnWidgetIds.contains(id)) continue;
+        _dismissedWidgetChips.remove(id);
+        _interactedWidgets.remove(id);
+        _releasedClamps.remove(id);
+      }
+      _turnWidgetIds = turnIds;
+      // The chip lives outside the animated list: rebuild the shell when
+      // a sync changed its target (a new widget appeared, or the current
+      // one aged out of the turn).
+      final chipId = _chipTarget()?.$1;
+      if (chipId != _lastChipTargetId) {
+        _lastChipTargetId = chipId;
+        if (mounted) setState(() {});
+      }
       if (emptinessFlipped && mounted) setState(() {});
       // Drop jump anchors for ids the sync removed (edits rebuild ids).
       final liveIds = {for (final message in newList) message.id};
@@ -890,7 +1158,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     MessageGroupStatus? groupStatus,
   }) {
     final metadata = message.metadata ?? const {};
-    return _keyed(
+    final row = _keyed(
       message.id,
       ChatMessageTile(
         message: FaChatMessage(
@@ -909,6 +1177,16 @@ class _FaChatScreenState extends State<FaChatScreen>
         dynamicWidgetTileBuilder: widget.dynamicWidgetTileBuilder,
       ),
     );
+    // Issue #379 AC3: a touch anywhere on a live widget row is an
+    // interaction — the chip auto-hides and the clamp releases for it.
+    if ((metadata['role'] as String?) == 'widget') {
+      final widgetId = (metadata['data'] ?? message.id).toString();
+      return Listener(
+        onPointerDown: (_) => _markWidgetInteracted(widgetId),
+        child: row,
+      );
+    }
+    return row;
   }
 
   Widget _buildChatBody(BuildContext context) {
@@ -956,46 +1234,57 @@ class _FaChatScreenState extends State<FaChatScreen>
                 !(historyAbove == 0 && _historyLoadError == null),
           ),
         Expanded(
-          child: Chat(
-            currentUserId: 'user',
-            resolveUser: _resolveUser,
-            chatController: _chatController,
-            // With a wallpaper layer the transcript surface paints
-            // transparent so the layer underneath shows through (E2: the
-            // layer itself owns the color fallback when the image is gone).
-            backgroundColor: wallpaper == null ? null : const Color(0x00000000),
-            builders: Builders(
-              textMessageBuilder: _buildTextMessage,
-              customMessageBuilder: _buildCustomMessage,
-              imageMessageBuilder: _buildImageMessage,
-              chatAnimatedListBuilder: (context, itemBuilder) =>
-                  ChatAnimatedList(
-                    itemBuilder: itemBuilder,
-                    scrollController: _chatScrollController,
-                    // Reversed list (the learn.ai pattern): index 0 is the
-                    // newest message, the list starts AT the bottom — no
-                    // initial scroll-to-end, no jump, or "stuck mid-list"
-                    // on long transcripts. New rows grow upwards, exactly
-                    // like a chat.
-                    reversed: true,
-                    // The initial history load (and big external reloads)
-                    // renders without the per-row insert animation cascade;
-                    // live messages keep the default animation. 1ms instead
-                    // of a true zero: a zero duration leaves the package's
-                    // initial-scroll timer unsettled inside fake_async
-                    // test bindings.
-                    insertAnimationDurationResolver: (_) =>
-                        _suppressInsertAnimations
-                        ? const Duration(milliseconds: 1)
-                        : const Duration(milliseconds: 250),
-                  ),
-              composerBuilder: (_) => const SizedBox.shrink(),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              _trackUserScroll(notification);
+              return false;
+            },
+            child: Chat(
+              currentUserId: 'user',
+              resolveUser: _resolveUser,
+              chatController: _chatController,
+              // With a wallpaper layer the transcript surface paints
+              // transparent so the layer underneath shows through (E2: the
+              // layer itself owns the color fallback when the image is gone).
+              backgroundColor: wallpaper == null
+                  ? null
+                  : const Color(0x00000000),
+              builders: Builders(
+                textMessageBuilder: _buildTextMessage,
+                customMessageBuilder: _buildCustomMessage,
+                imageMessageBuilder: _buildImageMessage,
+                chatAnimatedListBuilder: (context, itemBuilder) =>
+                    ChatAnimatedList(
+                      itemBuilder: itemBuilder,
+                      scrollController: _chatScrollController,
+                      // Reversed list (the learn.ai pattern): index 0 is the
+                      // newest message, the list starts AT the bottom — no
+                      // initial scroll-to-end, no jump, or "stuck mid-list"
+                      // on long transcripts. New rows grow upwards, exactly
+                      // like a chat.
+                      reversed: true,
+                      // The initial history load (and big external reloads)
+                      // renders without the per-row insert animation cascade;
+                      // live messages keep the default animation. 1ms instead
+                      // of a true zero: a zero duration leaves the package's
+                      // initial-scroll timer unsettled inside fake_async
+                      // test bindings.
+                      insertAnimationDurationResolver: (_) =>
+                          _suppressInsertAnimations
+                          ? const Duration(milliseconds: 1)
+                          : const Duration(milliseconds: 250),
+                    ),
+                composerBuilder: (_) => const SizedBox.shrink(),
+              ),
+              theme: Theme.of(context).brightness == Brightness.light
+                  ? buildFahChatThemeLight(
+                      uiTheme: FaUiThemeProvider.of(context),
+                    )
+                  : buildFahChatTheme(uiTheme: FaUiThemeProvider.of(context)),
             ),
-            theme: Theme.of(context).brightness == Brightness.light
-                ? buildFahChatThemeLight(uiTheme: FaUiThemeProvider.of(context))
-                : buildFahChatTheme(uiTheme: FaUiThemeProvider.of(context)),
           ),
         ),
+        if (_buildWidgetOpenChip(context) case final chip?) chip,
         if (_historyHasNewer)
           _historyPinnedBanner(
             top: false,

@@ -59,6 +59,12 @@ abstract class FaChatStrings {
   String chatLoadEarlierCount(String count);
   String get chatLoadEarlierFailed;
   String chatBeginningOfSession(String count);
+
+  /// The bottom quick-action chip label (issue #379).
+  String get chatOpenWidgetAsApp;
+
+  /// The chip dismiss tooltip (issue #379).
+  String get chatOpenWidgetAsAppDismiss;
   String get chatLoadNewer;
   String chatLoadNewerCount(String count);
   String get chatCollapse;
@@ -179,6 +185,10 @@ class FaChatStringsEn extends FaChatStrings {
   @override
   String chatBeginningOfSession(String count) =>
       'Beginning of session (1 of $count)';
+  @override
+  String get chatOpenWidgetAsApp => '✦ Open widget as app';
+  @override
+  String get chatOpenWidgetAsAppDismiss => 'Dismiss';
   @override
   String get chatLoadNewer => 'Load newer';
   @override
@@ -339,6 +349,10 @@ class FaChatStringsRu extends FaChatStrings {
       'Не удалось загрузить более ранние — нажмите, чтобы повторить';
   @override
   String chatBeginningOfSession(String count) => 'Начало сессии (1 из $count)';
+  @override
+  String get chatOpenWidgetAsApp => '✦ Открыть виджет как приложение';
+  @override
+  String get chatOpenWidgetAsAppDismiss => 'Скрыть';
   @override
   String get chatLoadNewer => 'Загрузить более новые';
   @override
