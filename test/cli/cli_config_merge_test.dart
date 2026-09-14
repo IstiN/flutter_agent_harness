@@ -282,4 +282,26 @@ void main() {
       expect(providerNames(config), ['kimi_me']);
     });
   });
+
+  group('tui.theme (issue #279)', () {
+    test('fromYaml reads the nested tui.theme key', () {
+      final doc = loadYaml('tui:\n  theme: pi\n');
+      expect(CliConfig.fromYaml(doc as YamlMap).tuiTheme, 'pi');
+    });
+
+    test('absent key stays null', () {
+      final doc = loadYaml('model: m\n');
+      expect(CliConfig.fromYaml(doc as YamlMap).tuiTheme, isNull);
+    });
+
+    test('toYaml round-trips a set theme and omits a null one', () {
+      final doc = loadYaml('tui:\n  theme: ohmypi-dark\n');
+      final config = CliConfig.fromYaml(doc as YamlMap);
+      expect(config.toYaml(), contains('theme: ohmypi-dark'));
+      expect(
+        CliConfig.fromYaml(loadYaml('model: m') as YamlMap).toYaml(),
+        isNot(contains('tui:')),
+      );
+    });
+  });
 }

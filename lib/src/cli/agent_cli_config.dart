@@ -69,6 +69,7 @@ final class AgentCliConfig {
     this.powerSleepPrevention = PowerAssertionLevel.idle,
     this.powerSleepPreventionHold = PowerAssertionHold.perRun,
     this.powerRunner,
+    this.tuiTheme,
     this.tuiProgramHooks,
     this.openRouterOAuthExchangeFn,
     this.chatGptOAuthExchangeFn,
@@ -105,6 +106,10 @@ final class AgentCliConfig {
   /// skill/context discovery: `~/.fah/skills`, `~/.fah/AGENTS.md`). Null on
   /// sandboxed hosts (web) where only the project FS exists.
   final String? homeDir;
+
+  /// Persisted TUI theme name (`tui.theme`, issue #279): a built-in key or
+  /// a user theme file stem. `null`/unknown → default theme at boot.
+  final String? tuiTheme;
 
   /// Backend agent mode (issue #155): persist aborted assistant partials
   /// so a SIGTERM/SIGINT graceful cancel leaves a resumable JSONL (the
