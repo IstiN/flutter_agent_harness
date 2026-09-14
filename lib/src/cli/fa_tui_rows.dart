@@ -79,8 +79,7 @@ extension _TuiRowRenderers on FaTuiModel {
   /// True while the models picker (or its two-step provider page) is open —
   /// the only pickers that carry the footer hint row.
   bool get _modelPickerFamilyOpen =>
-      menuOpen &&
-      menuModelMode &&
+      menuOpen && menuModelMode &&
       (pickerId == 'models' || pickerId == 'modelProvider');
 
   /// One menu row (label + dim description, truncated to the width).
