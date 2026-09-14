@@ -450,6 +450,14 @@ final class RemoteCatalogEnrichment {
     );
   }
 
+  /// Flat per-Mtok pricing the catalog lists for [providerKind]/[modelId],
+  /// or null when the catalog ships no number — the picker renders `—`
+  /// (never 0.00) on a miss (issue #278 E3).
+  RemoteModelPricing? pricingFor(String? providerKind, String modelId) {
+    final entry = _cached?.providers[providerKind ?? ''];
+    return entry?.pricing[modelId];
+  }
+
   /// Chat model ids the catalog knows about for [providerKind] — the
   /// LAST-RESORT fallback the picker uses when the live `/v1/models`
   /// fetch is empty. Endpoint-reported ids always win; this list is
