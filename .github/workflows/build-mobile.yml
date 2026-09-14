@@ -180,6 +180,13 @@ jobs:
           if [ -z "$ANDROID_KEY_ALIAS" ]; then echo "::error::ANDROID_KEY_ALIAS secret is not set"; exit 1; fi
           echo "All required Android secrets are present"
 
+      - name: Setup Ruby
+        # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
+        # found` exit 127 (issue #353). Same setup as store-metadata.yml.
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
       - name: Install fastlane
         working-directory: flutter_app
         run: bundle install
@@ -252,6 +259,13 @@ jobs:
         with:
           name: android-aab
           path: flutter_app/aab/
+
+      - name: Setup Ruby
+        # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
+        # found` exit 127 (issue #353). Same setup as store-metadata.yml.
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
 
       - name: Install fastlane
         working-directory: flutter_app
