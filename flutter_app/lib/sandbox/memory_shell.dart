@@ -465,7 +465,11 @@ final class MemoryShell implements Shell, BackgroundShell {
 
   Future<_StageResult> _curl(_Context ctx) {
     return _toStage(
-      _builtinsFor(ctx).curl(ctx.args, timeout: ctx.options?.timeout),
+      _builtinsFor(ctx).curl(
+        ctx.args,
+        stdinBytes: ctx.stdin == null ? null : utf8.encode(ctx.stdin!),
+        timeout: ctx.options?.timeout,
+      ),
     );
   }
 
