@@ -60,6 +60,16 @@ void main() {
     expect(cmd, isNull);
   });
 
+  test('the composer prefill lands in the input zone with menus closed', () {
+    final model = FaTuiModel(
+      callbacks: _callbacks(),
+      isExited: () => false,
+    ).setInputTextForTest('/skill:demo ');
+    expect(model.inputText, '/skill:demo ');
+    expect(model.cursor, '/skill:demo '.length);
+    expect(model.menuOpen, isFalse);
+  });
+
   test('openPrompt returns the model-resolved answer future', () async {
     final controller = FaTuiController(
       callbacks: _callbacks(),

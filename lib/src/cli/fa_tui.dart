@@ -5,6 +5,7 @@ import 'dart:io'
     show IOSink, Platform, Process, ProcessException, ProcessResult, stdin;
 
 import 'package:dart_tui/dart_tui.dart';
+import 'package:meta/meta.dart';
 
 import 'composer_overlay.dart';
 import 'ansi_markdown.dart';
@@ -920,6 +921,13 @@ final class FaTuiModel extends Model {
     if (queue.isEmpty) return (this, null);
     return (copyWith(queue: const []), null);
   }
+
+  /// Test seam: drives the composer prefill (`/skills` menu →
+  /// `sendInputText`) into the model without a running program, so the
+  /// message branch is exercisable headlessly.
+  @visibleForTesting
+  FaTuiModel setInputTextForTest(String text) =>
+      update(_SetInputTextMsg(text)).$1 as FaTuiModel;
 
   (Model, Cmd?) _updateAfterExitCheck(Msg msg) {
     if (msg is _ModelsRefreshMsg) return _handleModelsRefresh();
