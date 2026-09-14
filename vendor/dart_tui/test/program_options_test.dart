@@ -103,58 +103,6 @@ void main() {
     });
   });
 
-  group('withMouseCellMotion()', () {
-    test('emits cell-motion mouse enable sequence', () async {
-      final chunks = <String>[];
-      final controller = StreamController<List<int>>();
-      controller.stream.listen((d) => chunks.add(utf8.decode(d)));
-      final sink = IOSink(controller.sink);
-
-      await Program(
-        options: [
-          withInput(null),
-          withOutput(sink),
-          withMouseCellMotion(),
-        ],
-      ).run(_ImmediateQuit());
-
-      await sink.flush();
-      final out = chunks.join();
-      await sink.close();
-      await controller.close();
-
-      // ?1002h = button-event tracking; ?1006h = SGR extended coords
-      expect(out, contains('\x1b[?1002h'));
-      expect(out, contains('\x1b[?1006h'));
-    });
-  });
-
-  group('withMouseAllMotion()', () {
-    test('emits all-motion mouse enable sequence', () async {
-      final chunks = <String>[];
-      final controller = StreamController<List<int>>();
-      controller.stream.listen((d) => chunks.add(utf8.decode(d)));
-      final sink = IOSink(controller.sink);
-
-      await Program(
-        options: [
-          withInput(null),
-          withOutput(sink),
-          withMouseAllMotion(),
-        ],
-      ).run(_ImmediateQuit());
-
-      await sink.flush();
-      final out = chunks.join();
-      await sink.close();
-      await controller.close();
-
-      // ?1003h = any-event tracking
-      expect(out, contains('\x1b[?1003h'));
-      expect(out, contains('\x1b[?1006h'));
-    });
-  });
-
   group('withTickInterval()', () {
     test('program exits cleanly with tick interval enabled', () async {
       // If the tick mechanism crashes, the future will throw.

@@ -3,7 +3,8 @@
 // behavior unchanged with regions present, capture off silences regions.
 import 'package:dart_tui/dart_tui.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
-import 'package:flutter_agent_harness/src/cli/tui_repl.dart' show QueuedMessage;
+import 'package:flutter_agent_harness/src/cli/tui_repl.dart'
+    show MenuItem, QueuedMessage;
 import 'package:test/test.dart';
 
 void main() {
@@ -193,6 +194,166 @@ void main() {
       );
       expect(model.view().content, contains('usage: /mouse'));
       expect(model.mouseCapture, isTrue);
+    });
+  });
+
+  group('menuRow routing (E1)', () {
+    // click+release, running the returned Cmd (accept effects are async).
+    Future<FaTuiModel> click(FaTuiModel m, int x, int y) async {
+      var (next, cmd) = m.update(MouseClickMsg(mouseAt(x, y)));
+      await cmd?.call();
+      (next, cmd) = next.update(MouseReleaseMsg(mouseAt(x, y)));
+      await cmd?.call();
+      return next as FaTuiModel;
+    }
+
+    FaTuiCallbacks slashCb() => FaTuiCallbacks(
+      onSubmit: (_) async {},
+      onModelSelected: (_) async {},
+      buildSlashMenu: (_) => const [
+        MenuItem(key: '/exit', label: '/exit', description: 'quit'),
+        MenuItem(key: '/model', label: '/model', description: 'model'),
+      ],
+      buildModelMenu: (_, _) => const [
+        MenuItem(key: 'glm', label: 'glm', description: 'x'),
+      ],
+      statusLine: () => 'test',
+      prompt: 'fa> ',
+    );
+
+    test('click on a plain slash menu row inserts the item, not the '
+        'picker accept', () async {
+      var model = FaTuiModel(
+        callbacks: slashCb(),
+        isExited: () => false,
+        termHeight: 12,
+      ).copyWith(
+        inputText: '/',
+        menuOpen: true,
+        menuTokenStart: 0,
+        menuItems: slashCb().buildSlashMenu('/'),
+      );
+      final y = rowOf(frameLines(model), '/exit');
+      model.view(); // register this frame's regions
+      model = await click(model, 3, y);
+      // Picker-accept would have cleared the input to '' and fired the
+      // (empty) onPickerSelected — the slash path fills the command.
+      expect(model.inputText, '/exit');
+      expect(model.menuOpen, isFalse);
+    });
+
+    test('a closed model picker leaves no stale picker id behind', () async {
+      var selected = false;
+      FaTuiCallbacks cb() => FaTuiCallbacks(
+        onSubmit: (_) async {},
+        onModelSelected: (_) async => selected = true,
+        buildSlashMenu: (_) => const [
+          MenuItem(key: '/help', label: '/help', description: 'help'),
+          MenuItem(key: '/model', label: '/model', description: 'model'),
+        ],
+        buildModelMenu: (_, _) => const [
+          MenuItem(key: 'glm', label: 'glm', description: 'x'),
+        ],
+        statusLine: () => 'test',
+        prompt: 'fa> ',
+      );
+      var model = FaTuiModel(
+        callbacks: cb(),
+        isExited: () => false,
+        termHeight: 12,
+      ).copyWith(
+        inputText: '/',
+        menuOpen: true,
+        menuTokenStart: 0,
+        menuItems: cb().buildSlashMenu('/'),
+      );
+      // Click the /model row -> opens the models picker (pickerId set).
+      final yModel = rowOf(frameLines(model), '/model');
+      model.view();
+      model = await click(model, 3, yModel);
+      expect(model.pickerId, 'models');
+
+      // Esc closes the picker; the id must reset (stale id would route a
+      // later plain-slash click into onPickerSelected('models', …)).
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.escape)));
+      expect(model.pickerId, isEmpty);
+
+      // A slash click after the close takes the plain-menu path again.
+      model = model.copyWith(
+        inputText: '/',
+        menuOpen: true,
+        menuTokenStart: 0,
+        menuItems: cb().buildSlashMenu('/'),
+      );
+      final yHelp = rowOf(frameLines(model), '/help');
+      model.view();
+      model = await click(model, 3, yHelp);
+      expect(model.inputText, '/help');
+      expect(selected, isFalse);
+    });
+
+    test('clicking a picker row still resolves via onModelSelected',
+        () async {
+      var selected = '';
+      FaTuiCallbacks cb() => FaTuiCallbacks(
+        onSubmit: (_) async {},
+        onModelSelected: (key) async => selected = key,
+        buildSlashMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [
+          MenuItem(key: 'glm', label: 'glm', description: 'x'),
+        ],
+        statusLine: () => 'test',
+        prompt: 'fa> ',
+      );
+      var model = FaTuiModel(
+        callbacks: cb(),
+        isExited: () => false,
+        termHeight: 12,
+      ).copyWith(
+        menuOpen: true,
+        menuModelMode: true,
+        pickerId: 'models',
+        menuItems: const [
+          MenuItem(key: 'glm', label: 'glm', description: 'x'),
+        ],
+      );
+      final y = rowOf(frameLines(model), 'glm');
+      model.view();
+      model = await click(model, 3, y);
+      expect(selected, 'glm');
+      expect(model.pickerId, isEmpty);
+    });
+  });
+
+
+  group('/mouse off wires the terminal down (AC4)', () {
+    Future<FaTuiModel> submit(FaTuiModel model, String line) async {
+      var m = model.copyWith(inputText: line);
+      m = send(m, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      return m;
+    }
+
+    test('wheel bytes arriving after off do not scroll', () async {
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termHeight: 12,
+      );
+      for (var i = 0; i < 30; i++) {
+        model = send(model, OutputMsg('line $i', newline: true));
+      }
+      final bottom = model.scrollOffset;
+      model = await submit(model, '/mouse off');
+      expect(model.mouseCapture, isFalse);
+      model = send(
+        model,
+        MouseWheelMsg(
+          const Mouse(x: 0, y: 0, button: MouseButton.wheelUp),
+        ),
+      );
+      // The hint promises a keyboard-only session — honor it even for
+      // bytes a not-yet-disarmed terminal still sends.
+      expect(model.scrollOffset, bottom);
     });
   });
 }

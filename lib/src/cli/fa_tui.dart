@@ -1031,6 +1031,9 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleMouseWheel(MouseWheelMsg msg) {
+    // Capture off: the hint says wheel is disabled — honor it even for
+    // bytes a not-yet-disarmed terminal still sends (issue #278, AC4).
+    if (!mouseCapture) return (this, null);
     // Hub overlay: the wheel moves the fleet-tree selection.
     if (hub != null) {
       final delta = switch (msg.mouse.button) {
@@ -1241,7 +1244,7 @@ final class FaTuiModel extends Model {
     // /approval) submit immediately instead of filling the input.
     if (callbacks.opensPicker?.call(item.key) ?? false) {
       return (
-        copyWith(menuOpen: false, inputText: '', cursor: 0),
+        copyWith(menuOpen: false, inputText: '', cursor: 0, pickerId: ''),
         () async {
           await callbacks.onSubmit(item.key);
           return null;
@@ -1691,9 +1694,16 @@ final class FaTuiModel extends Model {
           callbacks.onPickerCancelled?.call(pickerId);
         }
         return (
-          copyWith(menuOpen: false, modelFilter: '', menuAllItems: const []),
+          copyWith(
+            menuOpen: false,
+            menuModelMode: false,
+            modelFilter: '',
+            menuAllItems: const [],
+            pickerId: '',
+            pickerTitle: '',
+          ),
           null,
-        );
+      );
       default:
         return null;
     }
@@ -1802,14 +1812,18 @@ final class FaTuiModel extends Model {
   /// region, issue #278). Closes the picker and resolves the selection
   /// through the host ([FaTuiCallbacks.onPickerSelected] for pickers).
   (Model, Cmd?) _acceptPickerAt(int index) {
+    final pickerId = this.pickerId;
     final isModelsPicker = pickerId == 'models';
     final item = menuItems[index];
     if (item.key.isEmpty) return (this, null);
     return (
       copyWith(
         menuOpen: false,
+        menuModelMode: false,
         modelFilter: '',
         menuAllItems: const [],
+        pickerId: '',
+        pickerTitle: '',
         inputText: '',
         cursor: 0,
       ),
@@ -2501,7 +2515,9 @@ final class FaTuiController {
     options: [
       withAltScreen(),
       withHideCursor(false),
-      if (mouseCapture) withMouseCellMotion(),
+      // Mouse modes are VIEW-driven per frame (the view emits
+      // cellMotion/none from mouseCapture) — never boot-static, so
+      // /mouse off can actually disarm the terminal (issue #278, AC4).
       // Differential cell renderer (#274): cell-level diff + pure-scroll
       // ops + BSU/ESU framing — the line renderer repaints every shifted
       // row on scroll and has no atomic frames.

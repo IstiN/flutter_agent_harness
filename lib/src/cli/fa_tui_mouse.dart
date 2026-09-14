@@ -55,7 +55,12 @@ extension _TuiMouseRegions on FaTuiModel {
         );
       case TuiRegionKind.menuRow:
         final index = region.index.clamp(0, menuItems.length - 1);
-        return copyWith(menuSelected: index)._acceptPickerAt(index);
+        // Picker rows go through the picker accept; slash/path menu rows
+        // take the SAME handler keyboard-Enter uses (a plain slash menu
+        // has no picker id, so the picker path would silently no-op).
+        final selected = copyWith(menuSelected: index);
+        if (!menuModelMode) return selected._acceptSlashMenuItem();
+        return selected._acceptPickerAt(index);
       case TuiRegionKind.queueRow:
         final index = region.index;
         if (index < 0 || index >= queue.length) return (this, null);
