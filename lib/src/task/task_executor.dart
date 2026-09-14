@@ -301,6 +301,18 @@ final class TaskExecutor {
       unawaited(resumeCancel.token.onCancel.then((_) => child!.abort()));
       untrackUsage = _trackChildUsage(id, child, from: prior.length);
       child.state.messages = prior;
+      // Issue #383 heartbeat: the same in-flight liveness as a fresh
+      // spawn — completed provider responses touch the handle. The
+      // seeded prior transcript is excluded, and the stale previous
+      // run's live snapshot resets to zero up front.
+      final resumedChild = child!;
+      manager.touch(id, tokens: 0, requests: 0);
+      resumedChild.subscribe((event, cancelToken) async {
+        if (event is MessageEndEvent && event.message is AssistantMessage) {
+          final live = _usageStats(resumedChild, from: prior.length);
+          manager.touch(id, tokens: live.tokens, requests: live.requests);
+        }
+      });
       await child.prompt(message);
       resumeCancel.token.throwIfCancelled();
       // The agent loop surfaces provider failures as an error-tagged final
@@ -463,6 +475,19 @@ final class TaskExecutor {
           ? null
           : () => _inboxSteeringMessages(id),
     );
+    // Issue #383 heartbeat: in-flight liveness — every completed provider
+    // response touches the handle, so the parent's digest sees fresh
+    // last-activity and live request/token counts while the child runs.
+    // The listener dies with the child agent; no unsubscription needed.
+    final manager = subagentManager;
+    if (manager != null) {
+      child.subscribe((event, cancelToken) async {
+        if (event is MessageEndEvent && event.message is AssistantMessage) {
+          final usage = _usageStats(child);
+          manager.touch(id, tokens: usage.tokens, requests: usage.requests);
+        }
+      });
+    }
     if (cancelToken != null) {
       unawaited(cancelToken.onCancel.then((_) => child.abort()));
     }
