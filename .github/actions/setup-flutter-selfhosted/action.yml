@@ -1,0 +1,111 @@
+name: 'Setup Flutter (persistent self-hosted SDK)'
+description: >-
+  Marker-pinned Flutter SDK kept under $HOME/actions-runner-yoloit across
+  runs. On a persistent self-hosted runner the subosito/flutter-action
+  cache is an anti-optimization (issue #354): setup untars a ~1GB archive
+  every job and the POST step re-tars the whole SDK every run even when
+  the version did not change — 14.5 of 19.7 minutes around a 4-minute
+  iOS build. This action downloads the SDK exactly once per pinned
+  version and reuses it subsecond afterwards.
+
+inputs:
+  flutter-version:
+    description: 'Version spec — wildcard (3.47.x) or exact (3.47.4), same semantics as subosito/flutter-action'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve pin and reuse-or-install the SDK
+      id: sdk
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        SPEC='${{ inputs.flutter-version }}'
+        SDK_ROOT="$HOME/actions-runner-yoloit/flutter-sdk"
+        SDK="$SDK_ROOT/current"
+        MARKER="$SDK_ROOT/.fah-version"
+        mkdir -p "$SDK_ROOT"
+
+        # Resolve the spec to a concrete stable version from the official
+        # manifest (same resolution subosito/flutter-action performs), then
+        # decide: SKIP (marker == wanted), REUSE (manifest unreachable but
+        # the pinned SDK still satisfies the spec) or INSTALL.
+        DECISION="$(python3 - "$SPEC" "$MARKER" <<'PY'
+        import json, os, sys, urllib.request
+
+        spec, marker_path = sys.argv[1], sys.argv[2]
+        prefix = spec[:-1] if spec.endswith('x') else None  # '3.47.x' -> '3.47.'
+        marked = ''
+        try:
+            with open(marker_path) as f:
+                marked = f.read().strip()
+        except OSError:
+            pass
+
+        def satisfies(version):
+            if prefix is not None:
+                return version.startswith(prefix)
+            return version == spec
+
+        wanted = None
+        try:
+            url = ('https://storage.googleapis.com/flutter_infra_release/releases/'
+                   'releases_macos.json')
+            with urllib.request.urlopen(url, timeout=30) as r:
+                releases = json.load(r)['releases']
+            best = None
+            for rel in releases:
+                v = rel.get('version', '')
+                if rel.get('channel') == 'stable' and satisfies(v):
+                    key = tuple(int(p) for p in v.split('.'))
+                    if best is None or key > best[0]:
+                        best = key, v
+            if best is not None:
+                wanted = best[1]
+        except Exception as e:  # noqa: BLE001 — degrade, never fail the job here
+            print(f'manifest fetch failed: {e}', file=sys.stderr)
+
+        if wanted is not None and wanted == marked:
+            print(f'SKIP {wanted}')
+        elif wanted is None and marked and satisfies(marked):
+            print(f'REUSE {marked}')
+        elif wanted is not None:
+            print(f'INSTALL {wanted}')
+        else:
+            print(f'no stable release matches {spec!r} and no pinned SDK '
+                  f'satisfies it (marker: {marked!r})', file=sys.stderr)
+            sys.exit(1)
+        PY
+        )"
+        echo "$DECISION"
+        VER="${DECISION#* }"
+
+        if [[ "$DECISION" == INSTALL* ]]; then
+          echo "Downloading Flutter $VER (spec: $SPEC) — one-time per pinned version..."
+          STAGE="$(mktemp -d "$SDK_ROOT/.stage.XXXXXX")"
+          curl -fL --retry 3 --retry-all-errors --retry-delay 5 \
+            -o "$STAGE/flutter.zip" \
+            "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${VER}-stable.zip"
+          unzip -q "$STAGE/flutter.zip" -d "$STAGE"
+          # Swap the whole tree in one mv — a job dying mid-download never
+          # leaves a torn SDK behind, and the marker is written only after.
+          rm -rf "$SDK_ROOT/next"
+          mv "$STAGE/flutter" "$SDK_ROOT/next"
+          rm -rf "$SDK"
+          mv "$SDK_ROOT/next" "$SDK"
+          rm -rf "$STAGE"
+          echo "$VER" > "$MARKER"
+          echo "Pinned Flutter $VER at $SDK"
+        elif [[ "$DECISION" == REUSE* ]]; then
+          echo "::warning::Flutter manifest unreachable — reusing pinned SDK $VER (satisfies $SPEC)"
+        else
+          echo "Flutter $VER already pinned at $SDK — skipping the download (issue #354)"
+        fi
+
+        # No actions/cache anywhere in this path: there is no POST step, so
+        # no re-tar of the ~1GB SDK after every job.
+        echo "$SDK/bin" >> "$GITHUB_PATH"
+        echo "FLUTTER_ROOT=$SDK" >> "$GITHUB_ENV"
+        "$SDK/bin/flutter" --version
