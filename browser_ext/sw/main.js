@@ -32,7 +32,13 @@ if (agent && typeof agent.boot === 'function') {
   const seamBoot = agent.boot.bind(agent);
   agent.boot = (config) => {
     const result = seamBoot(config);
-    Promise.resolve(result).finally(() => pushPanels({ type: 'status', status: snapshot() }));
+    Promise.resolve(result)
+      .finally(() => {
+        try {
+          pushPanels({ type: 'status', status: snapshot() });
+        } catch {}
+      })
+      .catch(() => {});
     return result;
   };
 }

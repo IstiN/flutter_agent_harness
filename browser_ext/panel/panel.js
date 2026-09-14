@@ -170,28 +170,44 @@ function base64EncodeUtf8(text) {
 
 $('prompt').addEventListener('paste', (e) => {
   const text = e.clipboardData?.getData('text/plain') ?? '';
-  // Short or single-line pastes are normal input, not attachments.
+  // Short or single-line pastes are normal input, not attachments. A
+  // multi-line paste is owned by this handler in both outcomes (attachment
+  // or refusal), so preventDefault synchronously - the default inline paste
+  // must never race the async staging flow.
   if (!text || !text.includes('\n')) return;
-  const cap = stagingCapBytes;
-  if (cap && text.length > cap) {
-    e.preventDefault();
-    log(`paste rejected: ${text.length} bytes exceeds the ${Math.floor(cap / (1024 * 1024))} MB staging cap — text kept for editing`);
+  e.preventDefault();
+  const stage = (cap) => {
+    if (cap && text.length > cap) {
+      log(`paste rejected: ${text.length} bytes exceeds the ${Math.floor(cap / (1024 * 1024))} MB staging cap — text kept for editing`);
+      return;
+    }
+    const name = `pasted-${Date.now()}.txt`;
+    extCall('agent.stageUpload', { name, bytes: base64EncodeUtf8(text) })
+      .then((res) => {
+        stagedFiles.push(res.path);
+        $('prompt').value = '';
+        log(`staged paste -> ${res.path} (${text.length} bytes) — attach on send`);
+      })
+      .catch((err) => {
+        // Staging failed: put the pasted text back — inline paste is the
+        // fallback, never a lost clipboard.
+        $('prompt').value = text;
+        log(`staging failed (${err.message}) — pasted inline instead`);
+      });
+  };
+  if (stagingCapBytes) {
+    stage(stagingCapBytes);
     return;
   }
-  e.preventDefault();
-  const name = `pasted-${Date.now()}.txt`;
-  extCall('agent.stageUpload', { name, bytes: base64EncodeUtf8(text) })
+  // Cap unknown (pre-boot panel view): pull a fresh status so the local
+  // pre-check sees the current cap; the SW-side cap remains the backstop.
+  chrome.runtime
+    .sendMessage({ type: 'status' })
     .then((res) => {
-      stagedFiles.push(res.path);
-      $('prompt').value = '';
-      log(`staged paste -> ${res.path} (${text.length} bytes) — attach on send`);
+      if (res?.ok) render(res.status);
     })
-    .catch((err) => {
-      // Staging failed: put the pasted text back — inline paste is the
-      // fallback, never a lost clipboard.
-      $('prompt').value = text;
-      log(`staging failed (${err.message}) — pasted inline instead`);
-    });
+    .catch(() => {})
+    .finally(() => stage(stagingCapBytes));
 });
 $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
