@@ -141,14 +141,54 @@ final class SubagentManager {
   SubagentHandle? operator [](String id) => _handles[id];
 
   /// Rehydrates the registry from the parent session (idempotent).
+  ///
+  /// Issue #332: rows that were `queued`/`running` when the snapshot was
+  /// written belong to a runner in the process that wrote it — no live
+  /// runner exists in THIS one (restart/interrupt before the child's first
+  /// request is the common case). Left as-is they stay 'running' forever
+  /// (zombie rows in task_status and the composer badge, and task_cancel
+  /// can't clear them), so they settle here to [SubagentStatus.failed] —
+  /// failed, not aborted, so a child with partial progress stays resumable
+  /// (`task_resume` refuses aborted children). Terminal rows and `idle`
+  /// (waiting for input — an actionable, resumable state, not a liveness
+  /// claim) pass through untouched, and the settled snapshot is persisted
+  /// so a later restart reads terminal rows instead of resurrecting the
+  /// zombie.
+  ///
+  /// Hosts AWAIT this at boot (interactive [AgentCli.run], headless
+  /// [AgentCli.runHeadless], session switch): the registry must be loaded
+  /// and its zombie rows settled before the first prompt can spawn children
+  /// — otherwise a same-id spawn races the load and its persist replaces
+  /// the not-yet-loaded rows. A mid-run row (requests > 0) is REAL since
+  /// the executor bills usage at every turn boundary; an interrupted resume
+  /// also carries its prior generation's usage.
   Future<void> rehydrate() async {
     if (_rehydrated) return;
     _rehydrated = true;
     final raw = await source?.call() ?? const [];
+    var settled = false;
     for (final entry in raw) {
       final handle = SubagentHandle.fromJson(entry);
+      // Boot-race guard (issue #332): a row registered by THIS process
+      // (a spawn that beat the registry load) is newer than the snapshot
+      // — the live in-process row wins and the snapshot copy is dropped,
+      // so a late-finishing load can never settle or clobber a live child.
+      if (_handles.containsKey(handle.id)) continue;
       _handles[handle.id] = handle;
+      if (handle.status == SubagentStatus.queued ||
+          handle.status == SubagentStatus.running) {
+        handle.status = SubagentStatus.failed;
+        handle.error = handle.requests == 0
+            ? 'interrupted before start: the host session ended before this '
+                  'child completed its first request'
+            : 'interrupted: the host session ended while this child was '
+                  'running';
+        handle.lastActivity = DateTime.now().toUtc().toIso8601String();
+        settled = true;
+        _emit(handle);
+      }
     }
+    if (settled) _persist();
   }
 
   /// Drops the registry view so the next [rehydrate] loads afresh — used
@@ -325,12 +365,10 @@ final class SubagentManager {
       return 'subagent "$id" is aborted and takes no messages';
     }
     if (handle != null && handle.agentType.startsWith('a2a:')) {
-      return (
-        'subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
-        'it has no local inbox to deliver into; follow up with a new '
-        'task item (agent ${handle.agentType}) carrying your message in '
-        'its task text'
-      );
+      return ('subagent "$id" (${handle.agentType}) runs on a remote a2a server — '
+          'it has no local inbox to deliver into; follow up with a new '
+          'task item (agent ${handle.agentType}) carrying your message in '
+          'its task text');
     }
     return null;
   }

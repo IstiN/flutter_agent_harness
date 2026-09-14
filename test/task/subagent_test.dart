@@ -179,6 +179,174 @@ void main() {
       expect(mgr['old-1']!.tokens, 500);
     });
 
+    test('rehydrate settles interrupted-before-start rows to a terminal state '
+        '(issue #332)', () async {
+      // A snapshot written by a host that died before a spawned child made
+      // its first request: the row says running/queued forever — no live
+      // runner exists to settle it in THIS process.
+      final persisted = <List<Map<String, dynamic>>>[];
+      final mgr = SubagentManager(
+        parentSessionId: 'p',
+        source: () async => [
+          {
+            'id': 'Task-18',
+            'name': 'Task-18',
+            'agentType': 'task',
+            'sessionId': 'p/Task-18',
+            'createdAt': '2026-09-12T16:25:00Z',
+            'lastActivity': '2026-09-12T16:25:00Z',
+            'status': 'running',
+            'tokens': 0,
+            'requests': 0,
+          },
+          {
+            'id': 'Task-19',
+            'name': 'Task-19',
+            'agentType': 'explore',
+            'sessionId': 'p/Task-19',
+            'createdAt': '2026-09-12T16:25:00Z',
+            'lastActivity': '2026-09-12T16:25:00Z',
+            'status': 'queued',
+            'tokens': 0,
+            'requests': 0,
+          },
+        ],
+        sink: (registry) async => persisted.add(registry),
+      );
+
+      await mgr.rehydrate();
+
+      // Never-started children settle to a terminal state…
+      for (final id in ['Task-18', 'Task-19']) {
+        final handle = mgr[id]!;
+        expect(handle.isTerminal, isTrue, reason: '$id must be terminal');
+        expect(handle.status, SubagentStatus.failed);
+        expect(handle.error, contains('interrupted'));
+      }
+      // …and stay resumable (task_resume works on failed, not aborted).
+      expect(mgr['Task-18']!.requests, 0);
+
+      // The tombstoned snapshot is persisted, so a LATER restart reads
+      // terminal rows instead of resurrecting the zombie.
+      await Future<void>.delayed(Duration.zero);
+      final snapshot = persisted.last;
+      final settled = snapshot.firstWhere((h) => h['id'] == 'Task-18');
+      expect(settled['status'], 'failed');
+    });
+
+    test('rehydrate settles a mid-run interrupted row (usage billed at turn '
+        'boundaries) and passes terminal and idle rows through untouched '
+        '(issue #332)', () async {
+      // A REAL persisted mid-run row: the executor bills usage onto the
+      // registry row at every turn boundary, so a child interrupted
+      // mid-run leaves 'running' + the usage earned so far (an
+      // interrupted RESUME carries its prior generation's usage the
+      // same way). Before turn-boundary billing this state could never
+      // persist — usage was only recorded at completion.
+      final mgr = SubagentManager(
+        parentSessionId: 'p',
+        source: () async => [
+          {
+            'id': 'mid-run',
+            'name': 'mid-run',
+            'agentType': 'task',
+            'sessionId': 'p/mid-run',
+            'createdAt': '2026-09-13T16:31:00Z',
+            'lastActivity': '2026-09-13T16:31:00Z',
+            'status': 'running',
+            'tokens': 900,
+            'requests': 3,
+          },
+          {
+            'id': 'done-1',
+            'name': 'done-1',
+            'agentType': 'task',
+            'sessionId': 'p/done-1',
+            'createdAt': '2026-09-13T16:00:00Z',
+            'lastActivity': '2026-09-13T16:05:00Z',
+            'status': 'completed',
+            'tokens': 500,
+            'requests': 2,
+          },
+          {
+            'id': 'idle-1',
+            'name': 'idle-1',
+            'agentType': 'task',
+            'sessionId': 'p/idle-1',
+            'createdAt': '2026-09-13T16:00:00Z',
+            'lastActivity': '2026-09-13T16:05:00Z',
+            'status': 'idle',
+            'tokens': 100,
+            'requests': 1,
+          },
+        ],
+      );
+
+      await mgr.rehydrate();
+
+      final midRun = mgr['mid-run']!;
+      expect(midRun.isTerminal, isTrue);
+      expect(midRun.status, SubagentStatus.failed);
+      expect(midRun.error, contains('interrupted'));
+      expect(midRun.tokens, 900); // usage recorded so far is preserved
+      expect(mgr['done-1']!.status, SubagentStatus.completed);
+      expect(mgr['done-1']!.error, isNull);
+      // idle = waiting for input: an actionable, resumable state — NOT a
+      // liveness lie, so it passes through.
+      expect(mgr['idle-1']!.status, SubagentStatus.idle);
+    });
+
+    test('rehydrate never clobbers a row registered by THIS process — the '
+        'boot race stays closed (issue #332)', () async {
+      // The boot-race shape: a spawn that beat the (awaited-at-boot)
+      // registry load registered a LIVE row; a late-finishing load must
+      // not overwrite or settle it with the stale snapshot copy.
+      final mgr = SubagentManager(
+        parentSessionId: 'p',
+        source: () async => [
+          {
+            'id': 'Scout-1',
+            'name': 'Scout',
+            'agentType': 'task',
+            'sessionId': 'p/Scout-1',
+            'createdAt': '2026-09-13T16:40:00Z',
+            'lastActivity': '2026-09-13T16:40:00Z',
+            'status': 'running',
+            'tokens': 0,
+            'requests': 0,
+          },
+          {
+            'id': 'Old-2',
+            'name': 'Old',
+            'agentType': 'task',
+            'sessionId': 'p/Old-2',
+            'createdAt': '2026-09-13T16:00:00Z',
+            'lastActivity': '2026-09-13T16:05:00Z',
+            'status': 'running',
+            'tokens': 0,
+            'requests': 0,
+          },
+        ],
+      );
+      await mgr.register(
+        id: 'Scout-1',
+        name: 'Scout',
+        agentType: 'task',
+        task: 'live in this process',
+      );
+      await mgr.update('Scout-1', status: SubagentStatus.running);
+
+      await mgr.rehydrate();
+
+      // The LIVE same-id row survives untouched — still running, never
+      // settled 'failed' by the snapshot's zombie copy.
+      expect(mgr['Scout-1']!.status, SubagentStatus.running);
+      expect(mgr['Scout-1']!.isTerminal, isFalse);
+      // Rows this process does NOT own still settle as zombie rows.
+      expect(mgr['Old-2']!.status, SubagentStatus.failed);
+      expect(mgr['Old-2']!.error, contains('interrupted'));
+    });
+
     test('events stream emits on register and update', () async {
       final mgr = SubagentManager(parentSessionId: 'p');
       final events = <SubagentEvent>[];

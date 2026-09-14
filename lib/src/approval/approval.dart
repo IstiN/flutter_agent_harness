@@ -157,12 +157,17 @@ final class ApprovalOutcome {
 final class ApprovalManager {
   /// Creates a manager. [overrides] and [alwaysAllow] seed the per-tool
   /// policy map and the session always-allow set (both are copied).
+  /// [overrideOrigins] names where an override came from (config scope,
+  /// host always-prompt guard, …) — surfaced in the prompt reason so a
+  /// surprise override is self-diagnosing (issue #380 AC3).
   ApprovalManager({
     this.mode = ApprovalMode.yolo,
     Map<String, ApprovalPolicy> overrides = const {},
+    Map<String, String> overrideOrigins = const {},
     Set<String> alwaysAllow = const {},
     this.prompt,
   }) : _overrides = Map.of(overrides),
+       _overrideOrigins = Map.of(overrideOrigins),
        _alwaysAllow = Set.of(alwaysAllow);
 
   /// The active session mode. Mutable at runtime (`/approval`, settings UI).
@@ -173,6 +178,10 @@ final class ApprovalManager {
   ApprovalPrompt? prompt;
 
   final Map<String, ApprovalPolicy> _overrides;
+
+  /// Where each override came from (see the ctor's [overrideOrigins]).
+  final Map<String, String> _overrideOrigins;
+
   final Set<String> _alwaysAllow;
 
   /// Turn-scoped skill grants (`allowed-tools`) / revocations
@@ -208,14 +217,27 @@ final class ApprovalManager {
   /// The per-tool override for [toolName], or `null` when unset.
   ApprovalPolicy? overrideFor(String toolName) => _overrides[toolName];
 
-  /// Sets (or replaces) the per-tool override for [toolName].
-  void setOverride(String toolName, ApprovalPolicy policy) {
+  /// Where [toolName]'s override came from (see [setOverride]'s [origin]),
+  /// or `null` when unset — the settings-surface hook for showing the
+  /// override's scope (issue #380 AC3).
+  String? overrideOriginFor(String toolName) => _overrideOrigins[toolName];
+
+  /// Sets (or replaces) the per-tool override for [toolName]. [origin]
+  /// names where the override comes from (config scope, host
+  /// always-prompt guard, …) — shown in the prompt reason.
+  void setOverride(String toolName, ApprovalPolicy policy, {String? origin}) {
     _overrides[toolName] = policy;
+    if (origin == null) {
+      _overrideOrigins.remove(toolName);
+    } else {
+      _overrideOrigins[toolName] = origin;
+    }
   }
 
   /// Removes the per-tool override for [toolName].
   void clearOverride(String toolName) {
     _overrides.remove(toolName);
+    _overrideOrigins.remove(toolName);
   }
 
   /// Adds [toolName] to the session always-allow set.
@@ -313,11 +335,15 @@ final class ApprovalManager {
       case ApprovalPolicy.allow:
         return const ApprovalOutcome.allowed();
       case ApprovalPolicy.prompt:
+        final origin = _overrideOrigins[toolName];
         return _requestDecision(
           toolName: toolName,
           tier: tier,
           arguments: arguments,
-          reason: 'Tool "$toolName" is set to always ask for approval',
+          reason: origin == null
+              ? 'Tool "$toolName" is set to always ask for approval'
+              : 'Tool "$toolName" is set to always ask for approval '
+                    '(from: $origin)',
         );
       case ApprovalPolicy.deny || null:
         return null; // deny was handled first; nothing overrides here.
