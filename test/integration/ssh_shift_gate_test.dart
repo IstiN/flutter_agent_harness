@@ -7,6 +7,10 @@
 /// bounded; the FA_TUI_SHIFT_HID=0 kill switch keeps the submit path
 /// intact without SSH env. Drives the REAL binary over a PTY (see
 /// pty_harness.dart).
+///
+/// LOCAL-ONLY regression probe: no CI workflow runs the PTY legs (CI
+/// hardware has no interactive TUI harness); run it on a workstation
+/// with `dart test test/integration/ssh_shift_gate_test.dart`.
 library;
 
 import 'dart:async';

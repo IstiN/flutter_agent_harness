@@ -1787,20 +1787,21 @@ Future<void> _runApp(List<String> args) async {
     io = HepEventsIO(io);
   }
 
+  // The TUI predicate, shared with the HID gate below: a headless run
+  // never polls the HID state, so it never pays for the probe.
+  final useTui =
+      headlessPrompt == null && stdout.supportsAnsiEscapes && io.isInteractive;
   // Shift+Enter HID polling (issue #355): resolved ONCE at startup, off
   // the UI isolate — a CoreGraphics call wedged by a GUI-less session
   // (SSH) must never block the REPL. Null: modifier-encoding terminals
   // still deliver Shift+Enter on the wire (kitty, legacy ESC CR).
-  final hidShiftPressed = await resolveHidShiftPressed(
-    isMacOS: Platform.isMacOS,
-  );
+  final hidShiftPressed = useTui
+      ? await resolveHidShiftPressed(isMacOS: Platform.isMacOS)
+      : null;
 
   cli = AgentCli(
     useColor: headlessPrompt == null && stdout.supportsAnsiEscapes,
-    useTui:
-        headlessPrompt == null &&
-        stdout.supportsAnsiEscapes &&
-        io.isInteractive,
+    useTui: useTui,
     version: packageVersion,
     config: AgentCliConfig(
       wakeExecutable: wakeExecutable(),
