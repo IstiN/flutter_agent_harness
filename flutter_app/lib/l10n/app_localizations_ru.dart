@@ -1293,7 +1293,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsEditorKeyNoteSecure =>
-      'Имя, URL и модель сохраняются; ключ хранится в Keychain на этом устройстве.';
+      'Имя, URL и модель сохраняются; ключ хранится в защищённом хранилище ключей устройства (Keychain/Keystore), пока оно доступно.';
 
   @override
   String get settingsEditorKeepKeyNote =>
@@ -1311,7 +1311,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsKeyNoteCustomSecure =>
-      'Определение провайдера (имя, URL, модель) сохраняется — без секретов. Сохранённые ключи хранятся в Keychain на этом устройстве; несохранённый ключ остаётся в памяти только на этот сеанс.';
+      'Определение провайдера (имя, URL, модель) сохраняется — без секретов. Сохранённые ключи хранятся в защищённом хранилище ключей устройства (Keychain/Keystore), пока оно доступно; несохранённый ключ остаётся в памяти только на этот сеанс.';
 
   @override
   String get settingsKeyNoteHosted =>
@@ -1319,7 +1319,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get settingsKeyNoteHostedSecure =>
-      'Сохранённые ключи хранятся в Keychain на этом устройстве; ключ, только введённый в форму, остаётся в памяти на этот сеанс. Запросы идут напрямую из приложения к провайдеру — ничего не проксируется.';
+      'Сохранённые ключи хранятся в защищённом хранилище ключей устройства (Keychain/Keystore), пока оно доступно; ключ, только введённый в форму, остаётся в памяти на этот сеанс. Запросы идут напрямую из приложения к провайдеру — ничего не проксируется.';
 
   @override
   String get settingsLoadingModel => 'Загрузка модели…';

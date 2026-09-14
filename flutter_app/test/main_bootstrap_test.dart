@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:fa/main.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -206,5 +209,61 @@ void main() {
         isNull,
       );
     });
+
+    test('null when a keyed custom entry lost its key (issue #329)', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        '${env.cwd}/providers.json',
+        jsonEncode({
+          'version': 1,
+          'providers': [
+            {
+              'id': 'p1',
+              'name': 'z.ai',
+              'baseUrl': 'https://api.z.ai/api/coding/paas/v4',
+              'modelId': 'glm-4.7',
+              'requiresKey': true,
+            },
+          ],
+        }),
+      );
+      expect(
+        restorableBootConfig(
+          connection: const LastConnection(
+            providerKind: 'openai-completions',
+            modelId: 'glm-4.7',
+            baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          ),
+          registry: await ProviderRegistry.load(env),
+          sessionKeysStore: SessionKeysStore.inMemory(),
+        ),
+        isNull,
+        reason: 'a doomed keyless auto-connect would 401 on the first turn',
+      );
+    });
+
+    test(
+      'a keyless custom endpoint still boots (Ollama stays legal)',
+      () async {
+        final registry = ProviderRegistry.inMemory();
+        final ollama = await registry.add(
+          name: 'Ollama',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          modelId: 'llama3',
+        );
+        expect(ollama.requiresKey, isFalse);
+        final config = restorableBootConfig(
+          connection: const LastConnection(
+            providerKind: 'openai-completions',
+            modelId: 'llama3',
+            baseUrl: 'http://127.0.0.1:11434/v1',
+          ),
+          registry: registry,
+          sessionKeysStore: SessionKeysStore.inMemory(),
+        );
+        expect(config, isNotNull);
+        expect(config!.apiKey, '');
+      },
+    );
   });
 }

@@ -160,6 +160,15 @@ final class AgentHost implements UiHostBackend {
   /// Bridge mail waiting for the next turn boundary (drained as steering).
   final _mail = <({String from, String text})>[];
 
+  /// Mail that landed before the agent finished booting — routed after
+  /// boot instead of dropped by the not-booted guard (issue #320 E1).
+  final _preBootMail = <({String from, String text})>[];
+
+  /// Serializes mail routing: two near-simultaneous idle-time mails race
+  /// the same `_running` window and the loser's turn was silently
+  /// refused (its text vanished — issue #320).
+  Future<void> _routeChain = Future.value();
+
   /// Live visited-origin set shared with the browser tools' exfil gate
   /// (the same instance agent_main passes in); null = gate off.
   Set<String>? _visitedOrigins;
@@ -294,8 +303,16 @@ final class AgentHost implements UiHostBackend {
     // from storage, and without this call the hub presence silently never
     // starts (config parses, no socket, panel shows "Unreachable").
     _applyDapConfig(config.dap);
+    // Mail that landed while booting routes now — in arrival order, on
+    // the routing chain (issue #320 E1: queued, never dropped).
+    if (_preBootMail.isNotEmpty) {
+      final queued = List.of(_preBootMail);
+      _preBootMail.clear();
+      for (final m in queued) {
+        unawaited(_routeMail(m.from, m.text));
+      }
+    }
     unawaited(_refreshArchives());
-    _emitStatus();
   }
 
   /// Re-reads provider/approval/tool config (panel "Save"): swaps the
@@ -661,16 +678,30 @@ final class AgentHost implements UiHostBackend {
     if (!_mailDedupe.first(from, text)) return; // AC18: bridge/DAP duplicate
     unawaited(_routeMail(from, text));
   }
-
-  /// Routes one inbound mail: the session binding (faDap.boundSession)
-  /// pins hub mail to a dedicated or user-picked session — when idle, that
-  /// session becomes live BEFORE the turn so the conversation lands where
-  /// the user pointed it. A running turn keeps the classic behavior: the
-  /// mail steers into the active session (switching mid-run is refused).
   Future<void> _routeMail(String from, String text) async {
+    _routeChain = _routeChain.then((_) => _routeOne(from, text));
+  }
+
+  /// Routes one routed mail, isolated on [_routeChain]. Pre-boot: queued
+  /// with a pending indicator, routed once booted (E1). Idle: the
+  /// session binding may switch the live session FIRST — the switch is
+  /// announced (`mail_routed`), silent session-switching was the
+  /// invisibility amplifier (#320 AC4). Mid-run: queued for steering at
+  /// the next step boundary with a pending indicator (AC3).
+  Future<void> _routeOne(String from, String text) async {
+    if (!_booted) {
+      _preBootMail.add((from: from, text: text));
+      _emitStatus();
+      return;
+    }
+    final visibleSession = sessionId;
     if (!_running) await _ensureBoundSession();
+    if (sessionId != visibleSession) {
+      _sink({'type': 'mail_routed', 'from': from, 'sessionId': sessionId});
+    }
     if (_running) {
       _mail.add((from: from, text: text));
+      _emitStatus();
       return;
     }
     await _runTurn('[from $from] $text');
@@ -728,6 +759,8 @@ final class AgentHost implements UiHostBackend {
       for (final m in _mail) UserMessage.text('[from ${m.from}] ${m.text}'),
     ];
     _mail.clear();
+    // The pending indicator clears at the boundary that delivers (AC3).
+    _emitStatus();
     return drained;
   }
 
@@ -790,6 +823,15 @@ final class AgentHost implements UiHostBackend {
         'path': _sessionPath,
         'messages': _booted ? _agent.state.messages.length : 0,
       },
+      // Mid-run/pre-boot queued mail — the pending indicator's source
+      // (issue #320 AC3).
+      if (_mail.isNotEmpty || _preBootMail.isNotEmpty)
+        'mail': {
+          'pending': _mail.length + _preBootMail.length,
+          'senders': [
+            for (final m in [..._preBootMail, ..._mail]) m.from,
+          ],
+        },
     };
   }
 

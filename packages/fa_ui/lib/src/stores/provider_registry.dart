@@ -25,12 +25,12 @@ const localProviderProvenance = 'local';
 /// definition — keys live in memory for the session only (see
 /// [ProviderRegistry.rememberKey]).
 final class CustomProvider {
-  /// Creates a provider definition.
   const CustomProvider({
     required this.id,
     required this.name,
     required this.baseUrl,
     required this.modelId,
+    this.requiresKey = false,
     this.provenance = localProviderProvenance,
   });
 
@@ -41,6 +41,7 @@ final class CustomProvider {
     name: json['name'] as String,
     baseUrl: json['baseUrl'] as String,
     modelId: json['modelId'] as String,
+    requiresKey: json['requiresKey'] == true,
     provenance: (json['provenance'] as String?) ?? localProviderProvenance,
   );
 
@@ -56,6 +57,13 @@ final class CustomProvider {
   /// Default model id, prefilled when the provider is selected.
   final String modelId;
 
+  /// Whether a key was ever remembered for this entry (issue #329): the
+  /// non-secret marker letting the keyless-request guard tell "keyless by
+  /// design" (Ollama/llama.cpp, never had a key) from "keyed entry whose
+  /// key does not resolve on this surface" (secure store lost/broken) —
+  /// the latter must fail with a named message, never a raw provider 401.
+  final bool requiresKey;
+
   /// Where this entry came from: [localProviderProvenance] or a synced
   /// seed (`synced-from-cli@<host>`). Drives the panel's provenance badge.
   final String provenance;
@@ -66,6 +74,7 @@ final class CustomProvider {
     'name': name,
     'baseUrl': baseUrl,
     'modelId': modelId,
+    if (requiresKey) 'requiresKey': true,
     'provenance': provenance,
   };
 
@@ -192,54 +201,73 @@ class ProviderRegistry extends ChangeNotifier {
   }
 
   /// Remembers [key] for provider [id]; an empty key forgets the entry.
-  /// With a Keychain backend the key persists there (host-scoped name);
-  /// otherwise it stays session-only. Notifies listeners so key-aware UI
-  /// (the settings Keys section) refreshes.
+  /// With a secure backend the key persists there (host-scoped name);
+  /// otherwise it stays session-only — a state the UI must state plainly
+  /// (issue #329), never one discovered via a 401 after a restart.
+  /// Either way the entry's [CustomProvider.requiresKey] marker flips with
+  /// the key so the keyless-request guard can name an entry whose key is
+  /// gone. Notifies listeners so key-aware UI (the settings Keys section)
+  /// refreshes.
   void rememberKey(String id, String key) {
     if (key.isEmpty) {
       _sessionKeys.remove(id);
     } else {
       _sessionKeys[id] = key;
     }
-    notifyListeners();
-    if (_useKeychain) {
-      final provider = _providers.where((p) => p.id == id).firstOrNull;
-      if (provider != null) {
+    final index = _providers.indexWhere((p) => p.id == id);
+    if (index >= 0) {
+      final provider = _providers[index];
+      if (provider.requiresKey != key.isNotEmpty) {
+        _providers[index] = CustomProvider(
+          id: provider.id,
+          name: provider.name,
+          baseUrl: provider.baseUrl,
+          modelId: provider.modelId,
+          provenance: provider.provenance,
+          requiresKey: key.isNotEmpty,
+        );
+        // The marker rides providers.json — persist the flip (best
+        // effort, fire-and-forget like every save).
+        _save();
+      }
+      final keychain = _keychain;
+      if (_useKeychain && keychain != null) {
+        // Fire and forget: persistence must never block the form.
         final name = keyNameFor(provider.baseUrl);
-        final keychain = _keychain;
-        if (keychain != null) {
-          // Fire and forget: persistence must never block the form.
-          if (key.isEmpty) {
-            keychain.delete(name);
-          } else {
-            keychain.set(name, key);
-          }
+        if (key.isEmpty) {
+          keychain.delete(name);
+        } else {
+          keychain.set(name, key);
         }
       }
     }
+    notifyListeners();
   }
 
   /// Adds a provider and returns it (with its assigned [CustomProvider.id]).
-  /// With a Keychain backend an already-stored key for this endpoint is
-  /// picked up immediately (re-created providers keep their key).
+  /// With a secure backend an already-stored key for this endpoint is
+  /// picked up immediately (re-created providers keep their key — and are
+  /// marked keyed, issue #329).
   Future<CustomProvider> add({
     required String name,
     required String baseUrl,
     required String modelId,
   }) async {
+    var remembered = '';
+    if (_useKeychain) {
+      final secure = await _keychain?.readAll();
+      remembered = secure?[keyNameFor(baseUrl)] ?? '';
+    }
     final provider = CustomProvider(
       id: 'p${DateTime.now().microsecondsSinceEpoch}',
       name: name,
       baseUrl: baseUrl,
       modelId: modelId,
+      requiresKey: remembered.isNotEmpty,
     );
     _providers.add(provider);
-    if (_useKeychain) {
-      final secure = await _keychain?.readAll();
-      final value = secure?[keyNameFor(baseUrl)];
-      if (value != null && value.isNotEmpty) {
-        _sessionKeys[provider.id] = value;
-      }
+    if (remembered.isNotEmpty) {
+      _sessionKeys[provider.id] = remembered;
     }
     await _save();
     notifyListeners();
@@ -328,24 +356,42 @@ class ProviderRegistry extends ChangeNotifier {
     if (keychain != null && await keychain.isAvailable()) {
       _useKeychain = true;
       final secure = await keychain.readAll();
-      for (final provider in _providers) {
-        final value = secure[keyNameFor(provider.baseUrl)];
+      var markerUpgraded = false;
+      for (var i = 0; i < _providers.length; i++) {
+        final provider = _providers[i];
+        var value = secure[keyNameFor(provider.baseUrl)];
+        if (value == null || value.isEmpty) {
+          // Copilot entries persist the GitHub token ENTRY-scoped
+          // (`FA_KEY_COPILOT_<NAME>`, the connect flow / CLI contract),
+          // never host-scoped — hydrate from that slot or a restart loses
+          // the key and every model fetch silently 401s.
+          if (isCopilotBaseUrl(provider.baseUrl)) {
+            final scoped =
+                secure[CustomProviderRegistry.copilotEntryKeyName(
+                  provider.name,
+                )];
+            if (scoped != null && scoped.isNotEmpty) value = scoped;
+          }
+        }
         if (value != null && value.isNotEmpty) {
           _sessionKeys[provider.id] = value;
-          continue;
-        }
-        // Copilot entries persist the GitHub token ENTRY-scoped
-        // (`FA_KEY_COPILOT_<NAME>`, the connect flow / CLI contract), never
-        // host-scoped — hydrate from that slot or a restart loses the key
-        // and every model fetch silently 401s.
-        if (isCopilotBaseUrl(provider.baseUrl)) {
-          final scoped =
-              secure[CustomProviderRegistry.copilotEntryKeyName(provider.name)];
-          if (scoped != null && scoped.isNotEmpty) {
-            _sessionKeys[provider.id] = scoped;
+          // Upgrade path: a key stored before the marker existed is a
+          // keyed entry. Persist the flip HERE — waiting for the next
+          // save would redo the upgrade on every boot (issue #329).
+          if (!provider.requiresKey) {
+            _providers[i] = CustomProvider(
+              id: provider.id,
+              name: provider.name,
+              baseUrl: provider.baseUrl,
+              modelId: provider.modelId,
+              provenance: provider.provenance,
+              requiresKey: true,
+            );
+            markerUpgraded = true;
           }
         }
       }
+      if (markerUpgraded) await _save();
     }
   }
 

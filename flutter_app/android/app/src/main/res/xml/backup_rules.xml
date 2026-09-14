@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Issue #329 E4: the fah_keychain prefs hold only AES-GCM ciphertext —
+     its AndroidKeyStore master key never leaves the device, so a restored
+     blob is undecryptable garbage. Keep the store out of cloud backups
+     (API ≤ 30 rule; API 31+ lives in data_extraction_rules.xml). -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="fah_keychain.xml" />
+</full-backup-content>

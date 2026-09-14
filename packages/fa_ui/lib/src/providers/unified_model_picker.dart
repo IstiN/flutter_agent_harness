@@ -394,6 +394,24 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
 
   Future<void> _selectModel(_ModelEntry entry) async {
     setState(() => _error = null);
+    // The keyless-request guard (issue #329): a keyed entry whose key
+    // does not resolve on this surface never reaches the host — the named
+    // message replaces the raw provider 401 the user would otherwise
+    // discover after the first turn.
+    if (entry.apiKey.isEmpty) {
+      final custom = widget.registry?.providers
+          .where((p) => p.id == entry.providerId)
+          .firstOrNull;
+      if (custom != null &&
+          isKeyMissingOnSurface(custom, registry: widget.registry)) {
+        setState(
+          () => _error = FaUiStrings.of(
+            context,
+          ).missingKeyOnDevice(custom.name),
+        );
+        return;
+      }
+    }
     try {
       await widget.onApply(
         FaChatModelConfig(

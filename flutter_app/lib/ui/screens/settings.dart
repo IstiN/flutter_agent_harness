@@ -103,9 +103,9 @@ String settingsKeyEnv(String name, SessionKeysStore? keysStore) {
   return '';
 }
 
-/// The key-storage notes match the platform: on iOS/macOS saved keys land
-/// in the Keychain (see [KeychainStore]); elsewhere the session/app-sandbox
-/// wording applies.
+/// The key-storage notes match the platform: on secure-store surfaces
+/// (iOS/macOS Keychain, Android Keystore — see [KeychainStore]) saved keys
+/// persist on device; elsewhere the session/app-sandbox wording applies.
 String settingsKeyNoteHostedFor(AppLocalizations l10n) =>
     KeychainStore.isSupported
     ? l10n.settingsKeyNoteHostedSecure

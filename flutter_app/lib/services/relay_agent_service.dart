@@ -185,6 +185,7 @@ final class RelayAgentService extends AgentService {
     _append(fa_ui.FaChatMessage(role: 'user', content: text));
     _trajectoryAppend(UserMessage.text(text, timestamp: DateTime.now()));
     _lastUserText = text;
+    _pendingEchoes.add(text);
     if (_running) {
       _transport.steer(text);
     } else {
@@ -387,6 +388,21 @@ final class RelayAgentService extends AgentService {
   bool _codemieReauthInFlight = false;
   String? _lastUserText;
 
+  /// The raw composer texts awaiting their SW-side user message_done —
+  /// the echo reconciliation that keeps composer sends single-bubble
+  /// while host-initiated mail renders (issue #320). FIFO: several
+  /// steers inside one boundary window each match their own SW copy,
+  /// so no steered row double-renders.
+  final List<String> _pendingEchoes = <String>[];
+
+  /// Test seam: overrides the CodeMie sign-in poll (defaults to the
+  /// real [pollCodeMieSignIn] over the extension fetch).
+  @visibleForTesting
+  static Future<List<String>?> Function({
+    required Future<({int status, String body})> Function() probe,
+    required void Function() openLoginPage,
+  })? codemieSignInPollOverride;
+
   Future<void> _autoReauthCodemie() async {
     if (_codemieReauthInFlight) return;
     _codemieReauthInFlight = true;
@@ -408,7 +424,7 @@ final class RelayAgentService extends AgentService {
       // not yield an ABSOLUTE probe would resolve against the extension
       // origin and 404 the poll forever.
       if (!(Uri.tryParse(probeUrl)?.hasScheme ?? false)) return;
-      final models = await pollCodeMieSignIn(
+      final models = await (codemieSignInPollOverride ?? pollCodeMieSignIn)(
         probe: () async {
           final result = await extFetchString(probeUrl);
           // Not an extension host: the auth-expired card stays the
@@ -641,13 +657,26 @@ final class RelayAgentService extends AgentService {
         debugPrint('[fah][relay] settings_query sent');
       case MessageDoneMsg(:final message):
         if ((message['role'] as String? ?? 'assistant') == 'user') {
-          // Live user copy: the composer already echoed the raw text
-          // (the SW's version carries the per-turn [context] prefix —
-          // rendering both reads as a duplicated bubble). Replay covers
-          // history via _onHostEvent's silent branch instead.
-          break;
+          // Composer sends were echoed locally at sendText time; the
+          // matching live row is that echo's SW copy (consume, don't
+          // render). A NON-matching row is host-initiated — inbound
+          // hub/DAP/bridge mail — and must render at ARRIVAL with the
+          // attributed text verbatim (issue #320; it used to be dropped
+          // and the mail stayed invisible until a reload).
+          final content = _stripTurnContext(message['text'] as String? ?? '');
+          // FIFO consume: each steered send matches its own SW copy
+          // (several steers may queue inside one boundary window).
+          if (_pendingEchoes.remove(content)) {
+            break;
+          }
+          _append(fa_ui.FaChatMessage(role: 'user', content: content));
+          _trajectoryAppend(
+            UserMessage.text(content, timestamp: _rowTimestamp(message)),
+          );
+          notifyListeners();
+        } else {
+          _finishAssistant(message);
         }
-        _finishAssistant(message);
       case ApprovalRequestMsg(:final id, :final call, :final reason):
         unawaited(_decideApproval(id, call, reason));
       case StreamMsg(:final event):
@@ -688,6 +717,8 @@ final class RelayAgentService extends AgentService {
     _messages.clear();
     _currentAssistant = null;
     _currentThinking = null;
+    _pendingEchoes.clear();
+    _pendingMailRow = null;
     // New session, new ledger — replay rows rebuild it record by record.
     _trajectoryFeed.reset();
     _trajectoryLastId = null;
@@ -722,17 +753,10 @@ final class RelayAgentService extends AgentService {
         _currentThinking!.content += event['text'] as String? ?? '';
       case 'message_done':
         if ((event['role'] as String? ?? 'assistant') == 'user') {
-          // The composer echoes the raw text locally, so the live user
-          // message_done is redundant (and carries the per-turn [context]
-          // prefix — rendering it reads as a duplicated bubble). On
-          // replay there is no local echo, so the copy is needed there.
+          // The composer echo is reconciled in the live path; replay
+          // has no local echo, so the copy is needed there.
           if (silent) {
-            // Replay rows carry the SW's per-turn context header; it is
-            // plumbing, not conversation — strip it for display.
-            final raw = event['text'] as String? ?? '';
-            final content = raw.startsWith('[context] ')
-                ? raw.split('\n').skip(1).join('\n')
-                : raw;
+            final content = _stripTurnContext(event['text'] as String? ?? '');
             _append(fa_ui.FaChatMessage(role: 'user', content: content));
             _trajectoryAppend(
               UserMessage.text(content, timestamp: _rowTimestamp(event)),
@@ -769,8 +793,24 @@ final class RelayAgentService extends AgentService {
           _modelId = provider['model'] as String? ?? _modelId;
           _baseUrl = provider['baseUrl'] as String? ?? _baseUrl;
         }
+        _syncPendingMail(event['mail']);
+      case 'mail_routed':
+        // Issue #320 AC4: the session binding re-pointed the live
+        // session for inbound mail — say so instead of silently moving
+        // the conversation out from under the user.
+        _append(
+          fa_ui.FaChatMessage(
+            role: 'system',
+            content: 'mail from ${event['from']} routed to session '
+                '${event['sessionId']}',
+          ),
+        );
+        // Paint NOW — _append alone does not notify, and the notice must
+        // not wait for the routed turn's first delta.
+        if (!silent) notifyListeners();
       case 'error':
         _error = event['error'] as String? ?? 'unknown relay error';
+        _pendingEchoes.clear();
       case 'debug':
         // SW-side diagnostics (provider response/terminal events): the
         // SW console is a separate DevTools window nobody opens, so the
@@ -971,6 +1011,43 @@ final class RelayAgentService extends AgentService {
   fa_ui.FaChatMessage _append(fa_ui.FaChatMessage message) {
     _messages.add(message);
     return message;
+  }
+
+  /// The mid-run mail indicator (issue #320 AC3): one system row while
+  /// inbound mail waits for the next step boundary, removed on the
+  /// drain refresh that delivers it.
+  fa_ui.FaChatMessage? _pendingMailRow;
+
+  void _syncPendingMail(Object? mail) {
+    final map = mail is Map ? mail : null;
+    final pending = (map?['pending'] as num?)?.toInt() ?? 0;
+    if (pending <= 0) {
+      if (_pendingMailRow != null) {
+        _messages.remove(_pendingMailRow);
+        _pendingMailRow = null;
+        notifyListeners();
+      }
+      return;
+    }
+    final senders = {for (final s in map?['senders'] as List? ?? const []) '$s'}
+        .join(', ');
+    final text = '$pending queued message${pending == 1 ? '' : 's'} from '
+        '$senders — will land at the next step boundary';
+    if (_pendingMailRow != null) {
+      _pendingMailRow!.content = text;
+    } else {
+      _pendingMailRow = _append(
+        fa_ui.FaChatMessage(role: 'system', content: text),
+      );
+    }
+    notifyListeners();
+  }
+
+  /// Replay/live rows carry the SW's per-turn `[context] …` header; it
+  /// is plumbing, not conversation — strip it for display and matching.
+  static String _stripTurnContext(String raw) {
+    final at = raw.indexOf('\n');
+    return raw.startsWith('[context] ') && at > 0 ? raw.substring(at + 1) : raw;
   }
 
   Future<void> _decideApproval(
