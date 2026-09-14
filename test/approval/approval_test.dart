@@ -332,6 +332,32 @@ void main() {
       },
     );
 
+    test('override origins: set, replace, clear, and read (issue #380 AC3 '
+        'surface API)', () {
+      final manager = ApprovalManager(
+        mode: ApprovalMode.yolo,
+        overrides: const {'bash': ApprovalPolicy.prompt},
+        overrideOrigins: const {'bash': 'configured scope'},
+      );
+      expect(manager.overrideOriginFor('bash'), 'configured scope');
+      expect(manager.overrideOriginFor('write'), isNull);
+
+      // setOverride with an origin records (and replaces) it.
+      manager.setOverride('write', ApprovalPolicy.prompt, origin: 'guard');
+      expect(manager.overrideOriginFor('write'), 'guard');
+      manager.setOverride('write', ApprovalPolicy.prompt, origin: 'config');
+      expect(manager.overrideOriginFor('write'), 'config');
+
+      // setOverride without an origin drops the recorded one.
+      manager.setOverride('bash', ApprovalPolicy.prompt);
+      expect(manager.overrideOriginFor('bash'), isNull);
+
+      // clearOverride drops the override and its origin together.
+      manager.clearOverride('write');
+      expect(manager.overrideFor('write'), isNull);
+      expect(manager.overrideOriginFor('write'), isNull);
+    });
+
     test(
       'null prompt callback denies with a "no approval UI" reason',
       () async {
