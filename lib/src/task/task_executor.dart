@@ -305,7 +305,7 @@ final class TaskExecutor {
       // spawn — completed provider responses touch the handle. The
       // seeded prior transcript is excluded, and the stale previous
       // run's live snapshot resets to zero up front.
-      final resumedChild = child!;
+      final resumedChild = child;
       manager.touch(id, tokens: 0, requests: 0);
       resumedChild.subscribe((event, cancelToken) async {
         if (event is MessageEndEvent && event.message is AssistantMessage) {
