@@ -10,6 +10,7 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -103,6 +104,30 @@ Future<(Future<bool>, _RecordingService, ProviderRegistry)> _launch(
 }
 
 void main() {
+  // Issue #329: Android now counts as a KeychainStore surface, so the
+  // flow probes the fah/keychain channel. Under FakeAsync an unmocked
+  // channel reply never arrives and the flow future never completes.
+  // These tests own the saved-keys fallback contract (no secure backend),
+  // so answer the probe accordingly — same pattern as
+  // copilot_connect_flow_test.dart.
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('fah/keychain'), (
+          call,
+        ) async {
+          return switch (call.method) {
+            'isAvailable' => false,
+            'readAll' => <String, String>{},
+            'set' || 'delete' => false,
+            _ => null,
+          };
+        });
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('fah/keychain'), null);
+  });
+
   test('chatgptEntryKeyName matches the CLI sanitizer', () {
     // Byte-identical with CustomProviderRegistry.keyNameFor(
     // chatGptCodexBaseUrl, providerName: entryName).
