@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:flutter_agent_harness/src/cli/cli_config.dart';
 import 'package:flutter_agent_harness/src/config/config_service.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
+import 'package:flutter_agent_harness/src/power_config.dart';
 import 'package:flutter_agent_harness/src/exceptions.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
@@ -599,7 +600,8 @@ void main() {
         'providerTimeouts:\n  connectTimeoutMs: 1000\n'
         'skills:\n  access: ask\n'
         'prompts:\n  bootstrap: hi\n'
-        'images:\n  maxPerRequest: 20\n',
+        'images:\n  maxPerRequest: 20\n'
+        'power:\n  sleepPrevention: display\n',
       );
       final report = await service.check();
       expect(
@@ -686,6 +688,29 @@ void main() {
       );
     });
 
+    test('power rejects bad values and unknown keys (issue #325)', () async {
+      await env.writeFile(
+        _globalConfig,
+        'power:\n  sleepPrevention: sometimes\n',
+      );
+      expect(
+        (await service.check()).errors.single.message,
+        contains('"power.sleepPrevention" must be off, idle, display or '
+            'system'),
+      );
+      await env.writeFile(_globalConfig, 'power:\n  bogus: 1\n');
+      expect(
+        (await service.check()).errors.single.message,
+        contains('unknown "power" key: bogus'),
+      );
+      // A good value is accepted and reads back.
+      await env.writeFile(_globalConfig, 'power:\n  sleepPrevention: off\n');
+      expect((await service.check()).errors, isEmpty);
+      final get = await service.get('power.sleepPrevention');
+      expect(get.found, isTrue);
+      expect(get.display, 'off');
+    });
+
     test('agent rejects unknown keys, non-ints and sub-reserve caps '
         '(issue #273)', () async {
       await env.writeFile(_globalConfig, 'agent:\n  bogus: 1\n');
@@ -761,6 +786,16 @@ void main() {
       expect(() => CliConfig.fromYaml(bad), throwsConfigException);
       final good = loadYaml('skills:\n  access: ask\n') as YamlMap;
       expect(() => CliConfig.fromYaml(good), returnsNormally);
+    });
+
+    test('power validation agrees with CliConfig.fromYaml (issue #325)', () {
+      final bad = loadYaml('power:\n  sleepPrevention: nap\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(bad), throwsConfigException);
+      final good = loadYaml('power:\n  sleepPrevention: system\n') as YamlMap;
+      expect(
+        CliConfig.fromYaml(good).powerSleepPrevention,
+        PowerAssertionLevel.system,
+      );
     });
 
     test('agent validation agrees with CliConfig.fromYaml (issue #273)', () {
