@@ -1404,8 +1404,8 @@ final class FaTuiModel extends Model {
   /// Normal-mode Enter: submit, queue while busy, or Shift+Enter newline.
   (Model, Cmd?) _handleEnterKey() {
     // Enter submits; Shift+Enter inserts a newline. Terminals that do not
-    // distinguish Shift+Enter in the input stream are handled through the
-    // host modifier check (Core Graphics on macOS, like pi's helper).
+    // distinguish Shift+Enter in the input stream use the host modifier
+    // check (Core Graphics on macOS, session-gated — issue #355).
     if (callbacks.isShiftPressed?.call() ?? false) {
       return _insertNewlineAtCursor();
     }
