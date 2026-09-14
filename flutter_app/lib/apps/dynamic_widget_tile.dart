@@ -109,46 +109,70 @@ class _DynamicWidgetTileState extends State<DynamicWidgetTile> {
 
   Widget _titleBar(BuildContext context, DynamicMessageDefinition definition) {
     final live = widget.service.engineFor(definition.id) != null;
-    return InkWell(
-      onTap: () => setState(() => _expanded = !_expanded),
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
-        child: Row(
-          children: [
-            Text(
-              '✦',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.primary,
-                fontWeight: FontWeight.bold,
+    // Hit-test isolation (issue #377): the collapse tap zone covers ONLY
+    // the title zone (spark, title, live badge); the action buttons and
+    // the chevron live outside its gesture scope, so an action tap can
+    // never reach the collapse handler — even for the disabled save
+    // button (no onSaveAsApp), whose tap used to toggle the tile.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: () => setState(() => _expanded = !_expanded),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Text(
+                    '✦',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      definition.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  if (live) DynamicLiveBadge(),
+                ],
               ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                definition.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleSmall,
+          ),
+          IconButton(
+            tooltip: context.l10n.dynamicTileSaveAsApp,
+            icon: const Icon(Icons.archive_outlined, size: 20),
+            onPressed: widget.onSaveAsApp == null
+                ? null
+                : () => unawaited(widget.onSaveAsApp!(definition)),
+          ),
+          IconButton(
+            tooltip: context.l10n.dynamicTilePermissions,
+            icon: const Icon(Icons.shield_outlined, size: 20),
+            onPressed: () => unawaited(_editPermissions(definition)),
+          ),
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            // 28px zone = the old [Icon, SizedBox(8)] footprint, so the
+            // chevron (and everything left of it) sits pixel-identical.
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(0, 8, 8, 8),
+              child: Icon(
+                _expanded ? Icons.expand_less : Icons.expand_more,
+                size: 20,
               ),
             ),
-            if (live) DynamicLiveBadge(),
-            IconButton(
-              tooltip: context.l10n.dynamicTileSaveAsApp,
-              icon: const Icon(Icons.archive_outlined, size: 20),
-              onPressed: widget.onSaveAsApp == null
-                  ? null
-                  : () => unawaited(widget.onSaveAsApp!(definition)),
-            ),
-            IconButton(
-              tooltip: context.l10n.dynamicTilePermissions,
-              icon: const Icon(Icons.shield_outlined, size: 20),
-              onPressed: () => unawaited(_editPermissions(definition)),
-            ),
-            Icon(_expanded ? Icons.expand_less : Icons.expand_more, size: 20),
-            const SizedBox(width: 8),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
