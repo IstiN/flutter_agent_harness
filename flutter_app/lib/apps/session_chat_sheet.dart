@@ -42,6 +42,7 @@ import 'package:fa/ui/markdown_style.dart';
 import 'package:fa/ui/screens/attached_session_screen.dart';
 import 'package:fa/ui/screens/chat_screen.dart';
 import 'package:fa/ui/screens/models_settings_page.dart';
+import 'package:fa/ui/widgets/boot_oversize_notice.dart';
 import 'package:fa/ui/widgets/chat_composer.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/media_player.dart';
@@ -324,6 +325,14 @@ class SessionChatSheetState extends State<SessionChatSheet>
     // session restore) — the manager alone never notifies on those.
     _subscribeToActiveService();
     unawaited(_reloadPersisted());
+    // Issue #381: boot skipped an oversized last-active session — say so
+    // instead of the old silent swap; the action opens it windowed.
+    showBootOversizeNotice(
+      context,
+      manager: widget.manager,
+      names: _namesStore,
+      onOpen: (metadata) => _openPersisted(metadata),
+    );
     // Live-session presence: sessions a `fa` CLI currently owns show a
     // green dot and attach (read-only view + input hand-over) on tap.
     _presence = CliSessionPresence.start(
