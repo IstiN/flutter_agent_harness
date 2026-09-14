@@ -2315,7 +2315,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsEditorKeyNoteSecure.
   ///
   /// In en, this message translates to:
-  /// **'Name, URL and model are saved; the key is stored in the Keychain on this device.'**
+  /// **'Name, URL and model are saved; the key is stored in the device\'s secure key store (Keychain/Keystore) while it\'s available.'**
   String get settingsEditorKeyNoteSecure;
 
   /// No description provided for @settingsEditorKeepKeyNote.
@@ -2345,7 +2345,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsKeyNoteCustomSecure.
   ///
   /// In en, this message translates to:
-  /// **'The provider definition (name, URL, model) is saved — no secrets. Saved keys are stored in the Keychain on this device; an unsaved key stays in memory for this session only.'**
+  /// **'The provider definition (name, URL, model) is saved — no secrets. Saved keys are stored in the device\'s secure key store (Keychain/Keystore) while it\'s available; an unsaved key stays in memory for this session only.'**
   String get settingsKeyNoteCustomSecure;
 
   /// No description provided for @settingsKeyNoteHosted.
@@ -2357,7 +2357,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsKeyNoteHostedSecure.
   ///
   /// In en, this message translates to:
-  /// **'Saved keys are stored in the Keychain on this device; a key only typed into the form stays in memory for this session. Calls go straight from the app to the provider — nothing is proxied.'**
+  /// **'Saved keys are stored in the device\'s secure key store (Keychain/Keystore) while it\'s available; a key only typed into the form stays in memory for this session. Calls go straight from the app to the provider — nothing is proxied.'**
   String get settingsKeyNoteHostedSecure;
 
   /// No description provided for @settingsLoadingModel.

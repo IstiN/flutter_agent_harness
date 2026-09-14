@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Issue #329 E4: the fah_keychain prefs hold only AES-GCM ciphertext —
+     its AndroidKeyStore master key never leaves the device, so neither
+     cloud backup nor device transfer may carry it (see backup_rules.xml
+     for the API ≤ 30 equivalent). -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="fah_keychain.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="fah_keychain.xml" />
+    </device-transfer>
+</data-extraction-rules>
