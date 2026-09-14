@@ -682,6 +682,18 @@
   "@dynamicTileRetry": {
     "description": "Retry button on the dynamic-message error tile (issue #102 AC9)"
   },
+  "dynamicTileMenu": "Ещё действия",
+  "@dynamicTileMenu": {
+    "description": "Overflow (⋮) menu on the dynamic-message tile title bar (issue #378)"
+  },
+  "dynamicTileOpenAsApp": "Открыть как приложение (без сохранения)",
+  "@dynamicTileOpenAsApp": {
+    "description": "Ephemeral full-screen launch of a dynamic message; nothing is installed (issue #378)"
+  },
+  "dynamicTileOpenUnavailable": "Виджет не запускается — ошибка загрузки. Сначала повторите запуск в чате.",
+  "@dynamicTileOpenUnavailable": {
+    "description": "Reason shown when the ephemeral open action is disabled for a failed widget (issue #378 E1)"
+  },
   "themeConsentTitle": "Применить тему?",
   "themeConsentBody": "Приложение {app} просит применить тему \"{pack}\".",
   "@themeConsentBody": { "placeholders": { "app": { "type": "String" }, "pack": { "type": "String" } } },

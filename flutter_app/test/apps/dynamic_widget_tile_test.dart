@@ -105,6 +105,13 @@ void main() {
     await tester.pump();
   }
 
+  /// Opens the ⋮ overflow menu (issue #378) and settles its entrance.
+  Future<void> openMenu(WidgetTester tester) async {
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+  }
+
   group('DynamicWidgetTile', () {
     testWidgets('unknown widget id renders nothing', (tester) async {
       await pumpTile(tester, service(), 'dm-missing');
@@ -164,9 +171,121 @@ void main() {
       dm.debugAdd(def, engine: engine(def));
       DynamicMessageDefinition? saved;
       await pumpTile(tester, dm, 'dm-1', onSaveAsApp: (d) async => saved = d);
-      await tester.tap(find.byTooltip('Save as app'));
+      await openMenu(tester);
+      await tester.tap(find.text('Save as app').last);
       await tester.pump();
       expect(saved?.id, 'dm-1');
+    });
+
+    testWidgets('title bar shows one overflow affordance with three items', (
+      tester,
+    ) async {
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def));
+      await pumpTile(tester, dm, 'dm-1');
+      // AC1: exactly one ⋮; the old inline save/permissions icons are gone.
+      expect(find.byTooltip('More actions'), findsOneWidget);
+      expect(find.byIcon(Icons.archive_outlined), findsNothing);
+      expect(find.byIcon(Icons.shield_outlined), findsNothing);
+      await openMenu(tester);
+      expect(find.text('Save as app'), findsOneWidget);
+      expect(find.text('Open as app (without saving)'), findsOneWidget);
+      expect(find.text('Permissions'), findsOneWidget);
+    });
+
+    testWidgets('menu tap does not toggle collapse (issue #377)', (
+      tester,
+    ) async {
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def));
+      await pumpTile(tester, dm, 'dm-1');
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await openMenu(tester);
+      // The body survived the ⋮ tap: the menu never collapses the tile.
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      await tester.tapAt(const Offset(10, 10)); // dismiss the menu
+      await tester.pump();
+    });
+
+    testWidgets('open-as-app pushes an ephemeral full-screen view', (
+      tester,
+    ) async {
+      final dm = service();
+      final def = definition('dm-1');
+      final liveEngine = engine(def);
+      dm.debugAdd(def, engine: liveEngine);
+      await pumpTile(tester, dm, 'dm-1');
+      await openMenu(tester);
+      await tester.tap(find.text('Open as app (without saving)'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      // Full-screen route mounted, its app bar carries the widget title.
+      expect(
+        find.byKey(const ValueKey('ephemeral-dynamic-app')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Checklist'),
+        ),
+        findsOneWidget,
+      );
+      // AC2: no graduation — the env never gains an apps/<id> entry.
+      expect(
+        (dm.env as FsSnapshotExporter).exportSnapshot().files.keys.where(
+          (path) => path.contains('apps/'),
+        ),
+        isEmpty,
+      );
+      // AC2: the view reuses the tile's engine — no second runtime.
+      expect(dm.engineFor('dm-1'), same(liveEngine));
+      // Closing pops the route; the tile renders again underneath.
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byKey(const ValueKey('ephemeral-dynamic-app')), findsNothing);
+      expect(find.text('Checklist'), findsOneWidget);
+    });
+
+    testWidgets('failed boot disables open with a reason, save stays', (
+      tester,
+    ) async {
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def), bootError: 'boom');
+      DynamicMessageDefinition? saved;
+      await pumpTile(tester, dm, 'dm-1', onSaveAsApp: (d) async => saved = d);
+      await openMenu(tester);
+      // E1: Open ships the failure reason inline…
+      expect(find.textContaining("Widget can't start"), findsOneWidget);
+      // …and stays disabled: tapping it mounts no route.
+      await tester.tap(find.text('Open as app (without saving)'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byKey(const ValueKey('ephemeral-dynamic-app')), findsNothing);
+      // Save stays available: it works from the persisted definition.
+      await tester.tap(find.text('Save as app'));
+      await tester.pump();
+      expect(saved?.id, 'dm-1');
+    });
+
+    testWidgets('overflow stays reachable at a narrow phone width', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 700);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final dm = service();
+      final def = definition('dm-1');
+      dm.debugAdd(def, engine: engine(def));
+      await pumpTile(tester, dm, 'dm-1');
+      await tester.ensureVisible(find.byTooltip('More actions'));
+      await tester.tap(find.byTooltip('More actions'), warnIfMissed: false);
+      await tester.pump();
+      expect(find.text('Open as app (without saving)'), findsOneWidget);
     });
   });
 
@@ -235,9 +354,29 @@ void main() {
         agentService,
         onSaveAsApp: (d) async => saved = d,
       );
-      await tester.tap(find.byTooltip('Save as app'));
+      await openMenu(tester);
+      await tester.tap(find.text('Save as app'));
       await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
       expect(saved?.id, 'dm-1');
+    });
+
+    testWidgets('row menu offers ephemeral open without popping first', (
+      tester,
+    ) async {
+      final (agentService, dm) = await makeService();
+      dm.debugAdd(definition('dm-1'));
+      await pumpSheet(tester, agentService);
+      await openMenu(tester);
+      await tester.tap(find.text('Open as app (without saving)'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      // AC4: the sheet surface opens the widget ephemerally too — full
+      // screen, on top of the sheet.
+      expect(
+        find.byKey(const ValueKey('ephemeral-dynamic-app')),
+        findsOneWidget,
+      );
     });
   });
 }
