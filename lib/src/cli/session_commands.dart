@@ -394,32 +394,40 @@ extension on AgentCli {
     }
   }
 
-  /// Label-only session-name read (issue #199): the repo's backward tail
-  /// scan when the concrete repo supports it, else the legacy full open.
-  /// Never keeps the opened [Session] — switching paths open their own.
-  Future<String?> _sessionNameQuick(SessionMetadata metadata) async {
-    final repo = _repo;
-    if (repo is JsonlSessionRepo) return repo.sessionNameQuick(metadata);
-    return (await _repo.open(metadata)).getSessionName();
-  }
-
   /// Every session whose id IS [name] (exact id short-circuits — ids are
   /// unique) or whose session_info name equals it, across every workspace
   /// (the exit hint prints `fa --session '<id>'` for unnamed sessions, so
   /// ids must resolve too). Several sessions can share a NAME — different
   /// project folders, or renamed twice — so callers get the full list and
-  /// disambiguate (see [_resolveSessionNameMatch]).
+  /// disambiguate (see [_resolveSessionNameMatch]). The id check is pure
+  /// metadata — zero file IO; the name scan fans out through the bounded
+  /// [JsonlSessionRepo.sessionNamesQuick] pool, so a 300-session store
+  /// probes its files in parallel instead of per-file serial (issue
+  /// #369).
   Future<List<SessionMetadata>> _sessionNameMatches(String name) async {
+    final wanted = name.trim();
     final sessions = await _repo.list();
-    final matches = <SessionMetadata>[];
     for (final metadata in sessions) {
-      if (metadata.id == name.trim()) return [metadata];
-      final sessionName = await _sessionNameQuick(metadata);
-      if (sessionName != null && sessionName.trim() == name.trim()) {
-        matches.add(metadata);
-      }
+      if (metadata.id == wanted) return [metadata];
     }
-    return matches;
+    final repo = _repo;
+    if (repo is! JsonlSessionRepo) {
+      // Foreign repo implementation: no batch API - open per session.
+      final matches = <SessionMetadata>[];
+      for (final metadata in sessions) {
+        final session = await _repo.open(metadata);
+        final sessionName = await session.getSessionName();
+        if (sessionName != null && sessionName.trim() == wanted) {
+          matches.add(metadata);
+        }
+      }
+      return matches;
+    }
+    final names = await repo.sessionNamesQuick(sessions);
+    return [
+      for (final metadata in sessions)
+        if (names[metadata.id]?.trim() == wanted) metadata,
+    ];
   }
 
   /// Finds a session by display name OR exact id — the first match. Kept

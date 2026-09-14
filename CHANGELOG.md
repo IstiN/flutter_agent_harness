@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- perf(369): `--session <name>` cold start no longer reads session
+  bodies — name resolution (`sessionNameQuick`, shared by the CLI
+  matcher, `/sessions` listing, and `/trajectory`) costs two bounded
+  byte probes per file: the HEAD window first (named-at-creation
+  sessions keep their `session_info` at the file START), then the TAIL
+  window, whose record wins whenever present (rename-at-end). At most
+  ~2 MiB is touched per file, the body between the windows is never
+  read to prove a name is absent, and only gate-matching lines
+  JSON-decode (an ASCII `"type":"session_info"` needle selects them).
+  The old chunk-paged scan full-parsed every file on every cold start
+  (two ~400 MB sessions cost ~36 s). Newest-record-wins within the
+  probe cap, empty-name-clears, exact-id-first, and ambiguity
+  semantics are unchanged; the CLI matcher now fans the per-session
+  probes through the bounded `sessionNamesQuick` pool (16-way) after a
+  zero-IO exact-id pass, and hosts without ranged reads keep the
+  previous error contract. Perf gates: `dart test --tags perf` runs
+  the 300-session + two 400 MB giants store at <= 2 s per boot
+  (AC3/AC4).
 - feat!(325, #326 rework): per-run sleep assertions — the default hold is
   now `per-run` (acquired when a run goes in flight, released when it
   settles, so an idle agent never pins the machine awake); the previous
