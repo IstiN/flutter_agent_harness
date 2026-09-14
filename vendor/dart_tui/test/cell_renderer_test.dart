@@ -175,7 +175,12 @@ void main() {
 
       renderer.render(newView('A❤️C'));
 
-      expect(buf.toString(), contains('\x1b[1;4HC'));
+      // VS16 emoji widths are not universally agreed (wcwidth-based
+      // terminals say 1 cell), so the row repaints whole instead of
+      // addressing cells past the cluster (#342): the sequence stays
+      // unsplit and the bytes stay faithful for screen-scrapers.
+      expect(buf.toString(), contains('A❤️C'));
+      expect(buf.toString(), isNot(contains('\x1b[1;4H')));
     });
 
     test('does not render ST-terminated OSC payloads or terminators', () {
@@ -415,6 +420,166 @@ void main() {
       expect(buf.toString(), '\x1b[1;1H中X');
     });
   });
+
+  // #342: East-Asian-AMBIGUOUS glyphs (▸ U+25B8, ✓ U+2713, … emoji-range
+  // clusters without VS16) measure 2 cells by dart_tui's emoji heuristics
+  // but 1 cell on wcwidth-based terminals (the PTY harness's vendored
+  // xterm, tmux, default western xterm/iTerm2). The surgical diff paths
+  // address and skip cells by OUR table — on a disagreeing terminal the
+  // absolute cursor moves land one column off and skipped "unchanged"
+  // cells leave the previous frame's bytes on screen ('▸ tEdi- rovider h').
+  // Rows containing such glyphs must stay byte-faithful.
+  group('ambiguous-width glyph rows stay byte-faithful (#342)', () {
+    late StringBuffer buf;
+    late CellRenderer renderer;
+
+    setUp(() {
+      buf = StringBuffer();
+      renderer = CellRenderer(
+        output: _StringSink(buf),
+        logSink: null,
+        defaultAltScreen: false,
+        defaultHideCursor: false,
+      );
+    });
+
+    test('overlay transition onto a shared ambiguous row repaints it whole', () {
+      // The /settings → Edit/Delete picker shape: both rows start with ▸
+      // and share cells ('t', 'provider') with the old row.
+      renderer.render(newView('▸ test-provider'));
+      buf.clear();
+      renderer.render(newView('▸ Edit provider'));
+      // The new label must arrive as contiguous bytes — screen-scraping
+      // consumers (PTY harnesses, tmux panes) read the byte stream.
+      expect(buf.toString(), contains('Edit provider'));
+    });
+
+    test('bytes converge on a wcwidth (ambiguous=1) terminal', () {
+      renderer.render(newView('▸ test-provider'));
+      buf.clear();
+      renderer.render(newView('▸ Edit provider'));
+      expect(_replayAmbiguousNarrow(buf.toString()), contains('Edit provider'));
+    });
+
+    test('identical ambiguous row stays byte-silent', () {
+      renderer.render(newView('▸ Edit provider'));
+      buf.clear();
+      renderer.render(newView('▸ Edit provider'));
+      expect(buf.toString(), '');
+    });
+
+    test('stable wide (CJK) rows keep surgical emission', () {
+      renderer.render(newView('你a'));
+      buf.clear();
+      renderer.render(newView('你b'));
+      expect(buf.toString(), equals('\x1b[1;3Hb'));
+    });
+
+    // The unstable-repaint branch resets the frame's SGR/OSC-8 trackers to
+    // '' after _paintRow — but a surgical write ABOVE the repaint (a styled
+    // spinner tick) had left a style open that _paintRow never closes when
+    // the repainted row is all-plain: the row painted under the leaked
+    // style, the end-of-frame reset was skipped, and the style leaked
+    // across frames.
+    test('repaint under a styled surgical write ends all attributes off', () {
+      renderer.render(newView('\x1b[90m⠋ working\x1b[0m\n▸ provider'));
+      buf.clear();
+      // Spinner ticks above (styled surgical write); the picker row below
+      // loses ▸ and goes all-plain (unstable repaint).
+      renderer.render(newView('\x1b[90m⠙ working\x1b[0m\nEdit provider'));
+
+      final output = buf.toString();
+      expect(output, contains('Edit provider'));
+      expect(_sgrOpenAtEnd(output), isFalse,
+          reason: 'frame must end with every SGR attribute off');
+    });
+
+    test('repaint under a hyperlinked surgical write closes OSC 8', () {
+      renderer.render(newView(
+        '${const Style(hyperlinkUrl: 'https://log.example').render('⠋ working')}\n'
+        '▸ provider',
+      ));
+      buf.clear();
+      renderer.render(newView(
+        '${const Style(hyperlinkUrl: 'https://log.example').render('⠙ working')}\n'
+        'Edit provider',
+      ));
+
+      final output = buf.toString();
+      expect(output, contains('Edit provider'));
+      expect(_osc8OpenAtEnd(output), isFalse,
+          reason: 'frame must end with no OSC 8 hyperlink open');
+    });
+  });
+}
+
+/// Whether the last SGR sequence in [bytes] leaves attributes open —
+/// `\x1b[0m` (and empty/bare-zero parameter forms) close, anything else
+/// the renderer emits (Style attr sequences) opens.
+bool _sgrOpenAtEnd(String bytes) {
+  var open = false;
+  for (final m in RegExp(r'\x1b\[([0-9;]*)m').allMatches(bytes)) {
+    final params = m.group(1)!;
+    open = !params.split(';').every((p) => p.isEmpty || p == '0');
+  }
+  return open;
+}
+
+/// Whether the last OSC 8 in [bytes] leaves a hyperlink open — an empty
+/// URI field (`\x1b]8;;\x1b\\`) closes, any other payload opens.
+bool _osc8OpenAtEnd(String bytes) {
+  var open = false;
+  for (final m in RegExp(r'\x1b\]8;([^\x07\x1b]*)').allMatches(bytes)) {
+    open = m.group(1)!.split(';').last.isNotEmpty;
+  }
+  return open;
+}
+
+/// Replays renderer bytes on a terminal that measures every printable
+/// character one cell wide — the wcwidth / East-Asian-Ambiguous=1 contract
+/// of the PTY harness emulator and default western terminals.
+String _replayAmbiguousNarrow(String bytes) {
+  final rows = List.generate(8, (_) => List<String>.filled(60, ''));
+  var r = 0;
+  var c = 0;
+  var i = 0;
+  while (i < bytes.length) {
+    if (bytes.codeUnitAt(i) == 0x1b) {
+      final cup = RegExp(r'\x1b\[(\d*);(\d*)H').matchAsPrefix(bytes, i);
+      if (cup != null) {
+        r = (int.tryParse(cup.group(1)!) ?? 1) - 1;
+        c = (int.tryParse(cup.group(2)!) ?? 1) - 1;
+        i = cup.end;
+        continue;
+      }
+      final el = RegExp(r'\x1b\[[0-9?]*K').matchAsPrefix(bytes, i);
+      if (el != null) {
+        for (var j = c; j < rows[r].length; j++) {
+          rows[r][j] = '';
+        }
+        i = el.end;
+        continue;
+      }
+      // Any other escape run (SGR, OSC 8, mode sets) is layout-neutral.
+      final esc = RegExp(
+        r'\x1b(\[[0-9;?]*[A-Za-z]|\][^\x07\x1b]*(\x07|\x1b\\)|.)',
+      ).matchAsPrefix(bytes, i);
+      i = esc?.end ?? i + 1;
+      continue;
+    }
+    final ch = bytes[i];
+    if (ch == '\n') {
+      r++;
+      c = 0;
+    } else if (ch == '\r') {
+      c = 0;
+    } else {
+      rows[r][c] = ch;
+      c++;
+    }
+    i++;
+  }
+  return rows.map((row) => row.join()).join('\n');
 }
 
 class _StringSink implements IOSink {
