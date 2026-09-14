@@ -190,6 +190,18 @@ void main() {
       expect(a.exitCode, 0);
     });
 
+    test('onStart fires exactly once per started job', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final started = <String>[];
+      final registry = ShellJobRegistry(
+        env: env,
+        onStart: (job) => started.add(job.id),
+      );
+      final a = await registry.start('echo a');
+      final b = await registry.start('echo b');
+      expect(started, [a.id, b.id]);
+    });
+
     test('tail reads the job log through the env', () async {
       final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
       final registry = ShellJobRegistry(env: env);

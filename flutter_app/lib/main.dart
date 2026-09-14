@@ -550,8 +550,15 @@ AgentConfig? restorableBootConfig({
   if (key.isEmpty) {
     // Hosted catalog kinds resolve their standard key names
     // (GOOGLE_API_KEY, ANTHROPIC_API_KEY, …) from the saved-keys chain.
+    // Hosted env names (OPENROUTER_API_KEY, KIMI_API_KEY, ...) resolve
+    // only for KNOWN catalog endpoints (issue #327 review MINOR): a
+    // custom or unknown base URL must not consume another provider's
+    // key. Catalog endpoints keep the kind-first resolution contract.
+    final isCatalogEndpoint = providerCatalog.values
+        .any((s) => s.defaultBaseUrl == baseUrl);
     for (final spec in providerCatalog.values) {
       if (spec.kind != kind) continue;
+      if (!isCatalogEndpoint) break;
       for (final name in spec.apiKeyEnvNames) {
         key = settingsKeyEnv(name, sessionKeysStore);
         if (key.isNotEmpty) break;
@@ -559,17 +566,36 @@ AgentConfig? restorableBootConfig({
       break;
     }
   }
-  if (key.isEmpty) {
-    key = settingsKeyEnv('OPENROUTER_API_KEY', sessionKeysStore);
-  }
   if (key.isEmpty && custom == null) return null;
-  return AgentConfig(
+  final config = AgentConfig(
     providerKind: kind,
     modelId: connection.modelId,
     baseUrl: baseUrl,
     apiKey: key,
     supportsImages: modelIdSuggestsVision(connection.modelId),
   );
+  // Issue #327: a connection whose model and auth resolve from
+  // DIFFERENT registry rows must not silently 401 with the wrong
+  // provider's wording - but (review MAJOR 2) a stale persisted
+  // connection must not brick the session either: restore it and let
+  // AgentService refuse the REQUEST with the row-naming message. The
+  // credential half still refuses the boot (nothing usable to send
+  // with).
+  final mismatch = modelRowMismatch(registry, config);
+  if (mismatch != null) {
+    debugPrint('[Fa] boot: degraded connection restored — $mismatch');
+    return config;
+  }
+  final problem = providerConnectionProblem(
+    registry,
+    config,
+    extensionHost: isExtensionHost(),
+  );
+  if (problem != null) {
+    debugPrint('[Fa] boot: refusing broken connection — $problem');
+    return null;
+  }
+  return config;
 }
 
 /// A transparent 28px strip at the top of the macOS window that allows
@@ -861,6 +887,9 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
       // instance, and an empty one makes the picker show nothing while the
       // Providers screen (its own null-fallback registry) looks fine.
       final registry = await ProviderRegistry.load(env);
+      // Issue #327: the guard needs the registry rows to judge a
+      // settings_put against (review MINOR - the relay path skipped it).
+      relay.providerRegistry = registry;
       final sw = relay.swProvider;
       debugPrint(
         '[fah] relay boot: session=${relay.relaySessionId} '
@@ -1283,6 +1312,8 @@ class SetupScreen extends StatelessWidget {
     // agent, no keys in the UI); null keeps the plain-web local path.
     final relay = await createRelayServiceIfHosted();
     if (relay != null) {
+      // Issue #327: the mixed-row guard in reconfigure reads these rows.
+      relay.providerRegistry = registry;
       // The relay session id is the SW's; the manager only needs a stable
       // key for the tile/active-session bookkeeping. The local session
       // lifecycle below does not apply — the SW owns the JSONL session.

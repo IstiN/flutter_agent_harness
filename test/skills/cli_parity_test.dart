@@ -87,6 +87,8 @@ const _nonSettingsCommands = <String, String>{
   '/browser': 'bridge command passthrough',
   '/a2a': 'read-only server status',
   '/ext': 'extension store/bootstrap state, not config.yaml',
+  '/mail': 'deferred-panel history view + send, not config.yaml',
+  '/reply': 'fabric message send, not config.yaml',
   '/key': 'OS secure store only — key values never live in config.yaml',
   '/queue': 'in-memory queued follow-ups (view/clear), nothing persisted',
   '/power': 'read-only sleep-prevention level/held state',

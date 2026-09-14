@@ -151,7 +151,10 @@ const builtinSlashCommands = <String, String>{
   '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
   '/ext': '[list|enable|disable|audit|remove|update|reload] — JS extensions',
-  '/agents': '[types|<id>|open <id>] — live agents tree, observe, open session',
+  '/agents': '[types|<id>|open <id>] — agents hub: fleet tree, transcript, '
+      'observe, open session',
+  '/mail': '[<id>] — deferred messages (btw panels) and their state',
+  '/reply': '<id|agent|mailbox> <text> — answer a panel or agent',
   '/model': '<provider/model> — select model (opens selector)',
   '/models': '[filter] | config | set <slot> <model> [baseUrl] | remove <slot>',
   '/model-edit':

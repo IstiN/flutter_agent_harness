@@ -50,6 +50,7 @@ import 'package:fa_hub_client/fa_hub_client.dart'
         persistDapConfig,
         readDapConfig,
         resolveDapSettings;
+import 'fah_dap_command.dart';
 import 'fah_hub_plugin.dart';
 import 'fah_hub_serve.dart';
 import 'hub_fabric_repository.dart';
@@ -357,9 +358,10 @@ TtsrConfig? _resolveTtsr(CliConfig saved, String cwd) {
 /// Resolves the enabled plugins and their `.fah/packages.yaml` config
 /// (the loader lives in `lib/src/plugins/packages_config.dart`). A parse
 /// failure is a hard startup error. With the hub plugin enabled AND DAP
-/// unlocked (`DAP_MASTER_SECRET` — the plugin's own kill switch), the
-/// returned [HubFabricRepository] becomes the messaging fabric's hub
-/// layer (issue #27) and the plugin host skips its separate inbox.
+/// unlocked (`DAP_MASTER_SECRET` — the plugin's own kill switch) AND the
+/// `fabric.hub` kill switch not off (issue #304 E6), the returned
+/// [HubFabricRepository] becomes the messaging fabric's hub layer
+/// (issue #27) and the plugin host skips its separate inbox.
 Future<
   ({
     List<FahPlugin> plugins,
@@ -371,8 +373,9 @@ _resolvePlugins(
   CliArgs args,
   ExecutionEnv env,
   HubPlugin hubPlugin,
-  Map<String, String> dapEnvironment,
-) async {
+  Map<String, String> dapEnvironment, {
+  bool fabricHubAllowed = true,
+}) async {
   final Map<String, dynamic> config;
   try {
     config = await loadPackagesConfig(env);
@@ -380,9 +383,11 @@ _resolvePlugins(
     _fail(error.message);
   }
   final enabled = resolveEnabledPlugins(args.plugins, config);
-  final hubEnabled =
-      enabled.contains('hub') &&
-      (dapEnvironment[envMasterSecret] ?? '').isNotEmpty;
+  final hubEnabled = hubFabricWired(
+    hubPluginEnabled: enabled.contains('hub'),
+    dapUnlocked: (dapEnvironment[envMasterSecret] ?? '').isNotEmpty,
+    fabricHubAllowed: fabricHubAllowed,
+  );
   final hubFabric = hubEnabled ? HubFabricRepository(hubPlugin) : null;
   final plugins = <FahPlugin>[];
   for (final name in enabled) {
@@ -1167,6 +1172,12 @@ Future<void> _runApp(List<String> args) async {
   if (args.isNotEmpty && args.first == 'hub') {
     exit(await runHubCommand(args.sublist(1)));
   }
+  // `fa dap start|stop|status [--port N]` — the one-step local DAP hub
+  // (issue #304): probe/spawn/enroll/stop with no agent boot, same raw-
+  // args interception as `fa hub serve`.
+  if (args.isNotEmpty && args.first == 'dap') {
+    exit(await runDapCommand(args.sublist(1)));
+  }
   final serveMarkerCount =
       (serve.serveA2a ? 1 : 0) + (serve.serveBridge ? 1 : 0);
   if (serveMarkerCount != 1 && args.contains('serve')) {
@@ -1606,6 +1617,9 @@ Future<void> _runApp(List<String> args) async {
     cliEnv,
     hubPlugin,
     dapEnvironment,
+    // `fabric.hub: false` (issue #304 E6) — the legacy kill switch: no
+    // hub primary in the messaging fabric, byte-identical directory.
+    fabricHubAllowed: saved.fabric?.hub ?? true,
   );
 
   if (!const {'code', 'architect', 'review'}.contains(effective.mode)) {

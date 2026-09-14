@@ -67,9 +67,39 @@ fabric:
         throwsConfigException,
       );
     });
+
+    group('hub kill switch (issue #304 E6)', () {
+      test('defaults to enabled — the hub fabric is on when DAP is', () {
+        expect(parse('fabric: {}').hub, isTrue);
+        expect(parse('fabric:\n  capabilities:\n  - name: a.b').hub, isTrue);
+      });
+
+      test('fabric.hub: false parses', () {
+        expect(parse('fabric: {hub: false}').hub, isFalse);
+        expect(parse('fabric: {hub: true}').hub, isTrue);
+      });
+
+      test('rejects a non-boolean hub value', () {
+        expect(
+          () => parse('fabric: {hub: "nope"}'),
+          throwsConfigException,
+        );
+        expect(() => parse('fabric: {hub: 0}'), throwsConfigException);
+      });
+    });
   });
 
   group('FabricConfig.toYaml', () {
+    test('toYaml round-trips the hub kill switch (issue #304 E6)', () {
+      const config = FabricConfig(hub: false);
+      final yaml = config.toYaml();
+      expect(yaml, contains('hub: false'));
+      final reparsed = FabricConfig.fromYaml(
+        (loadYaml(yaml) as YamlMap)['fabric'],
+      );
+      expect(reparsed.hub, isFalse);
+    });
+
     test('emits nothing without capabilities', () {
       expect(const FabricConfig().toYaml(), isEmpty);
     });

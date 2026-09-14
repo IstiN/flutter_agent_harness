@@ -379,7 +379,29 @@ factual: paths, commands, invariants — no essays.
   reconnect, merged drains deduped by id. `AgentCliConfig.hubFabric`
   hosts inject it; the plugin host skips its separate inbox when the
   fabric owns delivery (one hub-mail consumer). Subagent drains never
-  touch the hub.
+  touch the hub. Issue #304 adds the one-step CLI surface over it:
+  `fa dap start|stop|status` (bin/fah_dap_command.dart —
+  `DapHubController`, every IO a seam) probes the port (`/healthz` + a
+  `/ws` presence handshake; foreign server = clear error naming the
+  port, no enrollment), spawns `fa hub serve` detached, prompts the
+  master key ONCE (hidden; empty = open hub, the zero-config extension
+  default; non-interactive starts prompt nothing), enrolls per the
+  DAP_MASTER_SECRET flow and persists only the hub-issued clientSecret
+  (0600 `~/.dap/config.json`; wrong key re-prompts 3x then a manual
+  hint — a rejected secret is never persisted). The hub pid/state file
+  `~/.dap/hub.pid` (parse in lib/src/hub/dap_local_hub_state.dart) lets
+  a second CLI attach (no double-spawn) and `fa dap stop` work from ANY
+  instance exactly once — stop names connected peers (e.g. "Browser")
+  and SIGTERMs the owning pid; the fabric falls back to file inboxes.
+  The `/dap` menu's leading row is state-dependent (AC7): "Start DAP
+  locally (one step)" stopped, "Stop DAP" running
+  (lib/src/cli/dap_menu_options.dart `dapMenuOptions(hubRunning:)`).
+  `agent_directory` renders hub roster entries (MailboxEntry.source ==
+  'hub') with a `[hub]` marker; the `fabric.hub: false` kill switch
+  (FabricConfig.hub, gate `hubFabricWired` in bin/hub_fabric_
+  repository.dart, mirrors images.registry) leaves the fabric the bare
+  file layer — byte-identical legacy listing (REG test
+  test/messaging/fabric_kill_switch_reg_test.dart).
   Issue #27 phase 3 adds the A2A boundary gateway: `agent_message` accepts
   `name@machine` for OTHER machines — `A2aMailGateway` (lib/src/a2a/
   a2a_mail_gateway.dart) resolves the machine against the `a2a:` config
@@ -958,6 +980,19 @@ factual: paths, commands, invariants — no essays.
 - `flutter_app/lib/sandbox/sandbox_registry.dart` — central registry of
   sandbox shell commands per platform; the Fa system prompt's `{{commands}}`
   renders from it. Never list commands in prompt text or UI by hand.
+- `flutter_app/lib/sandbox/python_http_bridge.dart` — the mobile WASM
+  python HTTP bridge (issue #337): the WASI CPython build has no sockets and
+  no `ssl` module, so `fa_http.py` + `sitecustomize.py` (materialized into
+  site-packages by `WasiSandboxShell._ensurePythonBridge`) patch
+  `http.client`/`urllib`/`urllib3` to print each request to stdout as a
+  `\x01FAHTTP1` control line and poll `/dev/.fahttp/<id>` for the raw
+  response. `FaHttpBridge` (wired into `WasiSandboxShell._runStage` for
+  python stages) strips those lines from captured stdout, performs the
+  request with the shell's real-TLS HTTP client and writes the response
+  back; the authority in the control line carries the scheme
+  (`https://host:port`). Curl `-d` follows real-curl semantics (`@file`,
+  `@-`, multiple flags join with `&`, 1 MiB cap, `-d` implies POST) and the
+  mobile prompt advertises the TLS path via `sandbox_registry.dart`.
 - `flutter_app/lib/services/project_mount_env.dart` — macOS project-folder
   mount (`/project` → user-picked host dir; security-scoped bookmarks in
   `project_mount.json`; stale bookmark = "pick again" warning). Sessions on

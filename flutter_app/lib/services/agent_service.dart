@@ -11,7 +11,11 @@ import 'package:fa_ui/fa_ui.dart'
         FaChatConnection,
         FaChatMessage,
         FaChatService,
-        TrajectoryServiceFeed;
+        ProviderPreset,
+        TrajectoryServiceFeed,
+        hostedProviderKeyName,
+        hostedProviderPresets,
+        providerForBaseUrl;
 import 'package:fa_ui/fa_ui.dart' as fa_ui show emptyResponsePlaceholder;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -22,6 +26,7 @@ import 'image_registry_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
 import 'agent_tool_availability.dart';
+import 'relay/ext_runtime.dart';
 import 'session_names_store.dart';
 
 import 'package:fa/apps/apps_store.dart';
@@ -82,11 +87,9 @@ part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
 part 'agent_service_sessions.dart';
 part 'agent_service_runs.dart';
+part 'agent_service_connection_guard.dart';
 
 /// A UI-facing chat message.
-/// the adapter skips `Authorization: Bearer` when the key is empty.
-bool isCodeMieProvider(String baseUrl) =>
-    baseUrl.contains('/code-assistant-api/');
 
 /// Shown in place of an assistant bubble when a completed turn produced
 /// neither text nor tool calls — a small on-device model occasionally
@@ -137,6 +140,7 @@ class AgentService extends ChangeNotifier
     @visibleForTesting bool includeSharedSessionRoots = true,
     this.powerAssertion,
   }) : _resolveSecretName = null,
+      _providerRegistry = null,
        // ignore: prefer_initializing_formals
        _watchExternalSessions = watchExternalSessions,
        // ignore: prefer_initializing_formals
@@ -283,6 +287,7 @@ class AgentService extends ChangeNotifier
       secretsEnv: secretsEnv,
       sessionKeys: sessionKeys,
       config: config,
+      providerRegistry: providerRegistry,
       redactor: redactor,
       bootSecrets: secrets,
       streamFunction: streamFunction,
@@ -418,6 +423,7 @@ class AgentService extends ChangeNotifier
     this._secretsEnv,
     this._sessionKeys,
     this._taskModelsStore,
+    ProviderRegistry? providerRegistry,
     this._promptSuffix = '',
     ApprovalMode? initialApprovalMode,
     this._approvalModeStore,
@@ -436,7 +442,9 @@ class AgentService extends ChangeNotifier
        _includeSharedSessionRoots = includeSharedSessionRoots,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
-       _resolveSecretName = resolveSecretName,
+      _resolveSecretName = resolveSecretName,
+      // ignore: prefer_initializing_formals
+      _providerRegistry = providerRegistry,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
          // Outlook taskpane (issue #182): read_attachment streams
@@ -823,12 +831,22 @@ class AgentService extends ChangeNotifier
     // CodeMie: the cookie rides in model.headers (set by toModel); pass an
     // empty key so the adapter skips `Authorization: Bearer`.
     final apiKey = isCodeMieProvider(config.baseUrl) ? '' : config.apiKey;
-    return providerStreamFunction(
-      config.providerKind,
-      apiKey,
-      sessionId: () => _session?.cachedId,
+    // Issue #327: provider auth failures surface the owning row's name —
+    // a bare `401: No cookie auth credentials found` gives the user no
+    // idea WHICH provider row to fix. On-device bridges keep raw errors.
+    return decorateAuthErrors(
+      providerStreamFunction(
+        config.providerKind,
+        apiKey,
+        sessionId: () => _session?.cachedId,
+      ),
+      () => _connectionDisplayName(
+        _providerRegistry,
+        config.baseUrl,
+      ), // null = pass-through, no registry row to name.
     );
   }
+
 
   /// The system prompt plus a secret-name hint (names only, never values).
   ///
@@ -995,6 +1013,13 @@ class AgentService extends ChangeNotifier
   /// tool still works, the value just is not persisted (the result text
   /// reflects that via [RequestSecretResult.persisted]).
   final SessionKeysStore? _sessionKeys;
+
+  /// The custom-provider registry ([AgentService.create] path). Backs the
+  /// issue #327 connection guards: reconfigure refuses a config whose
+  /// model id and endpoint/auth resolve from different registry rows, and
+  /// auth-error messages name the owning entry. `null` for services built
+  /// around a pre-constructed [Agent] (tests) — guards stay silent.
+  final ProviderRegistry? _providerRegistry;
 
   /// Per-task-role model overrides (`task_models.json`); `null` for services
   /// built around a pre-constructed [Agent] (tests). When the `smol` role
@@ -2229,6 +2254,12 @@ class AgentService extends ChangeNotifier
       notifyListeners();
       return;
     }
+    final rowProblem = _liveConnectionRowProblem();
+    if (rowProblem != null) {
+      error = rowProblem;
+      notifyListeners();
+      return;
+    }
     // Wall-clock catch-up (issue #259): records that came due while the
     // host slept are swept at turn start, not at the next timer tick, so
     // the fresh turn's steering poll already sees the fired reminder.
@@ -2337,6 +2368,12 @@ class AgentService extends ChangeNotifier
     ];
     final inline = images.isNotEmpty && inlinesImageAttachments;
     _clearError();
+    final rowProblem = _liveConnectionRowProblem();
+    if (rowProblem != null) {
+      error = rowProblem;
+      notifyListeners();
+      return;
+    }
     // Gemini's inlineData limit is ~4 MB of raw image bytes — base64
     // inflates by ~4/3, so a 3 MB PNG becomes a 4 MB payload. Cap at
     // 3 MB so the backend never sees an oversized inlineData (its
@@ -2379,6 +2416,12 @@ class AgentService extends ChangeNotifier
     String text = '',
   }) async {
     _clearError();
+    final rowProblem = _liveConnectionRowProblem();
+    if (rowProblem != null) {
+      error = rowProblem;
+      notifyListeners();
+      return;
+    }
     final content = <ContentBlock>[
       if (text.isNotEmpty) TextContent(text: text),
       ImageContent(data: base64Encode(bytes), mimeType: mimeType),
@@ -2481,6 +2524,19 @@ class AgentService extends ChangeNotifier
   /// engine is a singleton), so the new stream function reuses the warm
   /// instance. The switch is recorded as a `model_change` session record.
   Future<void> reconfigure(AgentConfig config) async {
+    // Issue #327: refuse a connection whose model and auth resolve from
+    // DIFFERENT registry rows, or a hosted/CodeMie endpoint with no
+    // credential on this surface — before any state changes (fail fast,
+    // no side effects; pickers surface the message verbatim).
+    final problem = providerConnectionProblem(
+      _providerRegistry,
+      config,
+      extensionHost: isExtensionHost(),
+    );
+    if (problem != null) {
+      debugPrint('[Fa] reconfigure refused: $problem');
+      throw ProviderConnectionException(problem);
+    }
     abort();
     await waitForIdle();
     final newModel = config.toModel();

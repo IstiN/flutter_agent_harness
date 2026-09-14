@@ -30,6 +30,22 @@
 
 ## 0.1.358
 
+- fix(327): provider connections can no longer assemble a model from
+  one provider row and auth from another — the app-level guard
+  (`restorableBootConfig` + `AgentService`) refuses mismatched
+  model/auth entries up front with a `ProviderConnectionException`
+  naming the entry, and 401-style auth failures surface the entry name
+  (`[<entry>]` decoration) instead of a bare provider error. The
+  Settings Providers section marks each saved row with a provenance
+  badge — `[local]` for entries added on this surface, `[synced]` for
+  seeds synced from the CLI (pre-provenance rows read as local) — and
+  the office-host-bound `outlook.*` family now renders as a gated
+  Tools row with the "available in the Outlook add-in host only"
+  reason on every other surface (app, relay/SW registry, CLI `tools`
+  listing) instead of staying silent. The drawer session selection
+  debug line prints on CHANGE only (issue #327 AC6: the 3 s idle poll
+  no longer spams 20 identical lines per minute).
+  docs/tool-availability.md documents the outlook family row.
 - fix(259): sleep-resilient scheduled wake-ups for `schedule_message`.
   All due-time math in `ScheduledMessageQueue` now rides an injectable
   wall clock (`clock:`), long waits are split into ≤60s timer legs that
