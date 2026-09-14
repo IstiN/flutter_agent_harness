@@ -467,7 +467,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-    timeout-minutes: 10
+    # End-of-run drain can stall minutes under shared-runner load while
+    # every test already passed (0 failures, killed mid-drain on #330):
+    # fa_ui shards get 12m and flutter_app is the heaviest package.
+    timeout-minutes: 20
     permissions:
       contents: read
     strategy:
