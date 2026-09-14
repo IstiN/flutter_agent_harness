@@ -1,5 +1,12 @@
 name: Build Mobile Apps
 
+# Issue #343: the daily-publish TestFlight and Play legs dispatch this
+# workflow in the same minute with different content inputs; the run-name
+# embeds those inputs so `gh run list` displayTitle (the ONLY distinguisher
+# the list API offers) tells the legs apart — each watcher matches its own
+# run instead of latching a sibling's or a stale same-shaped one.
+run-name: "build-mobile (${{ inputs.android_content }}/${{ inputs.ios_content }})"
+
 on:
   workflow_dispatch:
     inputs:
@@ -47,15 +54,26 @@ permissions:
   actions: write
   id-token: write
 
-# Cancel superseded runs of the same ref (issue #177).
+# Per-dispatch group (#351): the group is scoped by run_id so NO run can
+# cancel another. The old ref-scoped group with cancel-in-progress made
+# every fresh dispatch — including the daily watcher's wedge self-heal
+# RE-DISPATCH (#344) — cancel whatever build-mobile run was in flight on
+# main (a manual dispatch, or the sibling daily leg's child in a
+# single-leg run): a cross-run cancellation vector. Every dispatch is now
+# independent; the #177 supersede-cancellation is intentionally traded
+# away (the daily legs are serialized — play needs testflight — and the
+# single self-hosted macOS runner serializes the iOS builds physically).
 concurrency:
-  group: Build Mobile Apps-${{ github.ref }}
-  cancel-in-progress: true
+  group: Build Mobile Apps-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   version:
     name: Derive version
     runs-on: ubuntu-latest
+    # Explicit ceiling so the daily watchers' budget arithmetic (#351) has
+    # a real per-job bound instead of GitHub's 360m default.
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -98,6 +116,9 @@ jobs:
     name: Build Android AAB
     needs: version
     runs-on: ubuntu-latest
+    # Ceiling for the daily watchers' budget arithmetic (#351): gradle AAB
+    # + bundletool validate historically ~20m, 45m is the slow-day bound.
+    timeout-minutes: 45
     if: |
       github.event.inputs.android_content != 'none' &&
       github.event.inputs.android_content != '' &&
@@ -204,6 +225,9 @@ jobs:
     name: Submit Android to Play
     needs: [build-android]
     runs-on: ubuntu-latest
+    # Ceiling for the daily watchers' budget arithmetic (#351): supply
+    # upload historically ~5m.
+    timeout-minutes: 30
     if: needs.build-android.result == 'success'
     steps:
       - name: Checkout repository
@@ -255,6 +279,11 @@ jobs:
     name: Build iOS IPA
     needs: version
     runs-on: [self-hosted, macOS, ARM64]
+    # Issue #344: a wedged self-hosted worker (lost completion report)
+    # otherwise holds the slot AND the in_progress status until the 300m
+    # daily-publish watcher times out; a job-level timeout lets GitHub
+    # fail the run server-side and unblock the pool + watchers.
+    timeout-minutes: 90
     if: |
       github.event.inputs.ios_content != 'none' &&
       github.event.inputs.ios_content != '' &&
@@ -530,6 +559,20 @@ jobs:
     name: Submit iOS to TestFlight
     needs: [build-ios]
     runs-on: [self-hosted, macOS, ARM64]
+    # Issue #344 wedge bound + #351 arithmetic: the submit_only lane waits
+    # for Apple processing (TESTFLIGHT_WAIT_TIMEOUT_SECONDS, default 5400s
+    # = 90m — a healthy slow ASC processing is NOT a wedge) then verifies
+    # external distribution (TESTFLIGHT_VERIFY_TIMEOUT_SECONDS, 900s =
+    # 15m). Job ceiling must exceed the lane worst case:
+    #   ~5m setup (mirror clone + artifact + bundle install)
+    # + ~10m IPA upload to ASC
+    # + 90m wait_processing_timeout_duration
+    # + 15m distribution verify
+    # = 120m. The old 45m killed healthy slow submits mid-wait (the exact
+    # failure #351 was filed for); a genuinely wedged job is still bounded
+    # server-side at 120m, and the daily testflight watch budget (240m)
+    # covers the whole version→build-ios(90)→submit-ios(120) chain.
+    timeout-minutes: 120
     if: needs.build-ios.result == 'success'
     steps:
       - name: Update local git mirror
@@ -594,6 +637,8 @@ jobs:
     name: Create Mobile GitHub Release
     needs: [version, build-android, build-ios]
     runs-on: ubuntu-latest
+    # Ceiling for the daily watchers' budget arithmetic (#351).
+    timeout-minutes: 15
     if: |
       always() &&
       (needs.build-android.result == 'success' || needs.build-android.result == 'skipped') &&
