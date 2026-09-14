@@ -234,6 +234,18 @@ const fileOnlyConfigKeys = <String, String>{
       'Owner-side context cap (agent.contextWindowCap, issue #273) bounds '
       'the usable window on this machine; a deployment knob tuned in the '
       'file, not an interactive preference on any surface.',
+
+  // The power section (power.sleepPrevention + power.hold, issues
+  // #325/#326) picks the host machine's sleep-prevention level and hold
+  // lifecycle for long sessions — hardware policy of the machine the
+  // agent runs on, not a per-conversation preference. Both surfaces
+  // treat it read-only: the CLI's /power shows the level and held-ness
+  // (pointing at the file to change it) and the app's power_guard only
+  // loads it; no settings TUI edits it on any platform.
+  'power':
+      'Sleep-prevention level and hold lifecycle (power.sleepPrevention, '
+      'power.hold, #325/#326) is machine hardware policy for long-running '
+      'sessions; /power and the app guard read it, only the file sets it.',
 };
 
 /// Which app surfaces carry a shared setting: the Flutter app on macOS,

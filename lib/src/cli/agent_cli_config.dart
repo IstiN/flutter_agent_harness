@@ -66,6 +66,9 @@ final class AgentCliConfig {
     this.isShiftPressed,
     this.processId,
     this.homeDir,
+    this.powerSleepPrevention = PowerAssertionLevel.idle,
+    this.powerSleepPreventionHold = PowerAssertionHold.perRun,
+    this.powerRunner,
     this.tuiProgramHooks,
     this.openRouterOAuthExchangeFn,
     this.chatGptOAuthExchangeFn,
@@ -395,6 +398,24 @@ final class AgentCliConfig {
   /// The host process id (diagnostics on the presence heartbeat). Null
   /// where the platform exposes no pid (web).
   final int? processId;
+
+  /// The effective `power.sleepPrevention` level (issue #325): what the
+  /// held sleep-prevention assertion asks the platform for. Defaults to
+  /// [PowerAssertionLevel.idle] like oh-my-pi.
+  final PowerAssertionLevel powerSleepPrevention;
+
+  /// When the sleep-prevention assertion is held (`power.hold`, #326):
+  /// per-run by default — acquired at run start, released at settle, so
+  /// an idle agent never pins the machine awake;
+  /// [PowerAssertionHold.session] is the explicit hold-the-whole-session
+  /// opt-in.
+  final PowerAssertionHold powerSleepPreventionHold;
+
+  /// The platform sleep-prevention runner (host-injected through
+  /// `lib/io.dart`'s `hostPowerRunner`). Null disables assertions
+  /// entirely — the test runtime and web hosts pass no runner, so no
+  /// unit test ever spawns a real `caffeinate`.
+  final PowerAssertionRunner? powerRunner;
 
   /// Headless TUI test hooks (scripted key bytes, captured frames) handed to
   /// the TUI controller — null in production, where the dart_tui program

@@ -24,6 +24,7 @@ import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
 import '../agent/image_registry.dart';
+import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
 import 'custom_providers.dart';
@@ -174,10 +175,15 @@ final class CliConfig {
     this.compactionEngine,
     this.images,
     this.contextWindowCap,
+    this.powerSleepPrevention,
+    this.powerHold,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
     final skillsSection = _parseSkillsSection(map['skills']);
+    // The power section (sleep-prevention level + hold lifecycle) is
+    // parsed once, strictly (issues #325/#326).
+    final powerSection = parsePowerSection(map['power']);
     return CliConfig(
       providerKind: map['provider'] as String? ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
@@ -253,6 +259,8 @@ final class CliConfig {
         label: '~/.fah/config.yaml',
       ),
       images: _parseImagesSection(map['images']),
+      powerSleepPrevention: powerSection.sleepPrevention,
+      powerHold: powerSection.hold,
       // The agent section (owner-side context cap, issue #273) is strict
       // too.
       contextWindowCap: _parseAgentSection(map['agent']),
@@ -416,6 +424,18 @@ final class CliConfig {
   /// the loop guard). `null` = uncapped (the raw model window).
   final int? contextWindowCap;
 
+  /// Sleep-prevention level from the `power:` section
+  /// (`power.sleepPrevention`, issue #325 — after oh-my-pi's
+  /// `power.sleepPrevention`). `null` means the section is absent; the
+  /// host resolves the `idle` default, keeping "not configured" and
+  /// "explicitly off" distinct.
+  final PowerAssertionLevel? powerSleepPrevention;
+
+  /// Sleep-assertion hold lifecycle (`power.hold`, #326): `null` means
+  /// absent — the host resolves the `per-run` default (acquire at run
+  /// start, release at settle); `session` is the explicit hold-the-whole-
+  /// session opt-in.
+  final PowerAssertionHold? powerHold;
 
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
@@ -447,6 +467,8 @@ final class CliConfig {
       compactionEngine: compactionEngine,
       images: images,
       contextWindowCap: contextWindowCap,
+      powerSleepPrevention: powerSleepPrevention,
+      powerHold: powerHold,
     );
   }
 
@@ -509,6 +531,24 @@ final class CliConfig {
     if (images != null) buffer.write(_imagesYaml());
     if (contextWindowCap != null) {
       buffer.write('agent:\n  contextWindowCap: $contextWindowCap\n');
+    }
+    buffer.write(_powerYaml());
+    return buffer.toString();
+  }
+
+  /// The `power:` section (issue #325), only when sleep prevention or hold
+  /// is explicitly configured; defaults are never written so the file stays
+  /// minimal.
+  String _powerYaml() {
+    final sleepPrevention = powerSleepPrevention;
+    final hold = powerHold;
+    if (sleepPrevention == null && hold == null) return '';
+    final buffer = StringBuffer('power:\n');
+    if (sleepPrevention != null) {
+      buffer.write('  sleepPrevention: ${sleepPrevention.value}\n');
+    }
+    if (hold != null) {
+      buffer.write('  hold: ${hold.value}\n');
     }
     return buffer.toString();
   }
