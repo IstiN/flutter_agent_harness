@@ -213,13 +213,21 @@ const fileOnlyConfigKeys = <String, String>{
       'Image-tool runtime tuning (registry on/off, per-request cap) — '
       'operational knobs, tuned in the file.',
 
-  // Trajectory capture tuning (opt-in raw wire dumps, issue #385): a
+// Trajectory capture tuning (opt-in raw wire dumps, issue #385): a
   // deliberate, size/pII-sensitive escape hatch — file-only by design so
   // it cannot be flipped casually mid-session.
   'trajectory':
       'Trajectory wire-dump capture is an opt-in, size/pII-sensitive '
       'debugging escape hatch (issue #385); provisioned deliberately in '
       'the file per environment.',
+
+  // Background-subagent heartbeat cadence and stall threshold (issue
+  // #383): operational knobs for long-running sessions, tuned in the
+  // file; 0/0 disables the heartbeat entirely.
+  'subagents':
+      'Heartbeat cadence and stall threshold for background-subagent '
+      'status digests (issue #383) — operational knobs, tuned in the '
+      'file.',
 
   // The fabric section carries the HOST's discovery announcements (issue
   // #27 phase 2) — written by hosts, read by the runtime, never user-edited.
