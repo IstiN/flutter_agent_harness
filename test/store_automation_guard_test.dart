@@ -378,28 +378,41 @@ void main() {
     });
 
     test(
-      'play leg is serialized after testflight — one build-mobile dispatch at a time (#343, #346)',
+      'play leg is independent of the testflight leg outcome (#359)',
       () {
+        // #348 serialized play after testflight (needs: [plan, testflight]
+        // + a result() guard) as a mitigation for the #343 sibling-dispatch
+        // race. #351 fixed that race structurally — exact displayTitle
+        // correlation (distinct run-names per dispatch shape), newest-match,
+        // 30s window, per-run_id concurrency group — so the edge only
+        // bought cascading skips (a cancelled testflight watcher skipped
+        // Play; run 34827074052 showed one leg's external blocker stopping
+        // the train) and up to 360m of start latency. This pins the
+        // decoupling: nothing in the play job may reference the testflight
+        // leg, by needs or by result guard.
         final play = ((loadYaml(daily) as Map)['jobs'] as Map)['play'] as Map;
         // needs may be a scalar (`needs: plan`) or a list.
         final needs = play['needs'];
         final needsList = needs is List ? needs : [needs];
         expect(
-          needsList.contains('testflight'),
-          isTrue,
-          reason:
-              'both legs dispatch build-mobile.yml and each child derives '
-              'the same next tag independently — concurrent dispatches would race '
-              'on one release (duplicate drafts, asset clobbering) and strain the '
-              '#343 title-correlation window. (#351: build-mobile\'s concurrency '
-              'group is per-dispatch, so this serialization — not the group — is '
-              'what guarantees one daily build-mobile child at a time)',
+          needsList,
+          contains('plan'),
+          reason: 'play still orders after plan (change detection + versions)',
         );
         expect(
-          play['if'],
-          contains('!cancelled()'),
+          needsList,
+          isNot(contains('testflight')),
           reason:
-              '!cancelled() keeps single-leg play dispatches runnable when the testflight leg skips',
+              'needs: testflight couples Play to the TestFlight outcome — '
+              'the #348 serialization is obsolete after #351 correlation '
+              '(#359)',
+        );
+        expect(
+          play['if'].toString(),
+          isNot(contains('testflight')),
+          reason:
+              'a needs.testflight.result guard re-introduces the coupling '
+              'the missing edge removed (#348 guard, dropped in #359)',
         );
       },
     );

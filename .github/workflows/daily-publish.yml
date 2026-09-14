@@ -233,27 +233,39 @@ jobs:
 
   play:
     name: 'Leg: Play (Android external beta)'
-    # Serialized after the testflight leg (#343, #346): both legs dispatch
-    # build-mobile.yml and each child independently derives version =
-    # latest-tag+1 — concurrent dispatches would race on the SAME next tag
-    # (duplicate release-mobile drafts, asset clobbering) and strain the
-    # title-correlation window. build-mobile's concurrency group is
-    # per-dispatch (#351), so the serialization is what guarantees one
-    # daily build-mobile child at a time.
-    needs: [plan, testflight]
+    # Independent of the testflight leg (#359). The #348 serialization was
+    # a mitigation for the #343 sibling-dispatch race; #351 eliminated that
+    # race structurally — exact displayTitle correlation (this leg's child
+    # runs as "build-mobile (app_only/none)", the testflight leg's as
+    # "(none/all)"), NEWEST match, a tight 30s window, and build-mobile's
+    # per-run_id concurrency group (no dispatch can cancel another). With
+    # the race gone the needs-edge only bought harm: a cancelled testflight
+    # watcher skipped Play behind it and the edge added up to 360m of start
+    # latency (one leg's external blocker stopped the train — run
+    # 34827074052, BETA_REVIEW_CONTACT_EMAIL user-owned).
+    #
+    # The two residual #346 concerns are handled structurally, not by
+    # ordering:
+    #   * same-tag convergence — both children independently derive
+    #     latest-tag+1, so they can attach to ONE release concurrently;
+    #     release_attach_or_create.sh is race-idempotent (a lost create
+    #     uploads into the winner's release) with an ownership-scoped draft
+    #     guard, and the asset sets never collide (AAB vs IPA).
+    #   * runner contention — none: the Android chain is all GitHub-hosted
+    #     runners; only build-ios touches the single self-hosted macOS
+    #     runner (which already serializes physically with the cli leg's
+    #     build-macos children — that pair has always been independent).
+    needs: plan
     runs-on: ubuntu-latest
-    # #351 arithmetic: child wc 85m (version 10 + build-android 45 +
-    # submit-android 30) → budget 100m; 240m leg ≥ 2×budget + 15m, so the
-    # second-wedge fail-fast fits inside the leg.
+    # #351 arithmetic (unchanged by #359 — only the leg's START moved):
+    # child wc 85m (version 10 + build-android 45 + submit-android 30) →
+    # budget 100m; 240m leg ≥ 2×budget + 15m, so the second-wedge
+    # fail-fast fits inside the leg.
     timeout-minutes: 240
     permissions:
       contents: read
       actions: write
-    # !cancelled() keeps single-leg play dispatches runnable when the
-    # testflight leg skips; result != 'cancelled' holds play back while a
-    # cancelled testflight watcher leaves its build-mobile child in flight.
     if: >-
-      !cancelled() && needs.testflight.result != 'cancelled' &&
       (needs.plan.outputs.changed == 'true' || inputs.force == true) &&
       (inputs.legs == '' || inputs.legs == 'all' || inputs.legs == 'play')
     outputs:
@@ -303,11 +315,14 @@ jobs:
           # (Android store CONTENT is a follow-up — reuse iOS texts later).
           # beta = the external/open testing track, mirroring the iOS leg's
           # external TestFlight group (#239 pattern).
-          # Shared watcher (issues #343/#344): the TestFlight sibling leg
-          # dispatches the SAME workflow in the same minute — correlation
-          # is by the child's run-name ("build-mobile (app_only/none)"),
-          # never by "first run in the window"; a wedged run is cancelled
-          # and re-dispatched once.
+          # Shared watcher (issues #343/#344). Since #359 the TestFlight
+          # sibling leg fires CONCURRENTLY with this one (both needs: plan)
+          # and dispatches the SAME workflow in the same minute —
+          # correlation is by the child's run-name ("build-mobile
+          # (app_only/none)" vs the sibling's "(none/all)", pinned by
+          # test), never by "first run in the window", with newest-match +
+          # the 30s window; a wedged run is cancelled and re-dispatched
+          # once (with the same distinct inputs → same distinct title).
           # Budget 100m = child worst-case 85m (#351: version 10 +
           # build-android 45 + submit-android 30) + 15m margin.
           rc=0
