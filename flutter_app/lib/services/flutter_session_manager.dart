@@ -41,9 +41,13 @@ final class FlutterManagedSession {
 /// Manages several concurrent [AgentService] sessions for the Flutter chat
 /// UI. Shared resources (env, repo) are injected once; per-session resources
 /// (the [AgentService]) are created lazily.
-/// A session file exceeds the manager's load budget — refused instead of
-/// loaded, because multi-hundred-MB sessions monopolize the Dart heap and
-/// wedge the app in a permanent GC storm (the macOS boot freeze).
+///
+/// The load budget ([maxSessionLoadBytes], issue #381) is the instant-open
+/// ceiling: sessions over it open through the windowed loader (tail window
+/// + paged history) and boot never auto-resumes them — the typed
+/// [SessionTooLargeException] survives only as the guard on the one path
+/// that would still whole-file read them: a failed windowed open degrading
+/// to a FULL open (the 2026-09-10 macOS freeze mode).
 final class SessionTooLargeException implements Exception {
   /// Creates the exception.
   SessionTooLargeException(this.metadata, this.limitBytes);
@@ -77,10 +81,12 @@ final class FlutterSessionManager extends ChangeNotifier {
              parseExecutor: createSessionParseExecutor(),
            );
 
-  /// The default per-session load budget (64 MiB): a JSONL session file
-  /// balloons to many times its size as Dart objects, so anything in the
-  /// tens of MB can wedge a host. Bigger sessions stay on disk — open them
-  /// with the CLI (`fa --session <id>`) until tail-loading lands.
+  /// The default per-session load budget (64 MiB): beyond it the session
+  /// file would balloon to many times its size as Dart objects and wedge a
+  /// host in a GC storm. Over-budget sessions still OPEN — windowed, only
+  /// the tail chunk materializes (issue #381) — but boot never resumes
+  /// them and a failed windowed open is refused instead of falling back
+  /// to the whole-file load.
   static const int defaultMaxSessionLoadBytes = 64 * 1024 * 1024;
 
   /// The execution environment shared by all sessions.
@@ -89,15 +95,21 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// Root directory for JSONL sessions.
   final String sessionsRoot;
 
-  /// Sessions whose file exceeds this many bytes are never auto-resumed at
-  /// boot and refused by [openSession] (typed
-  /// [SessionTooLargeException]) instead of freezing the host.
+  /// The instant-open budget: sessions whose file exceeds this many bytes
+  /// are never auto-resumed at boot (a one-shot notice says why) and their
+  /// [openSession] refuses the full-open fallback of a failed windowed
+  /// open with [SessionTooLargeException].
   final int maxSessionLoadBytes;
 
   /// True when [metadata]'s file is over the load budget (unknown size is
   /// allowed — only paths that know the size can guard).
   bool _tooLarge(SessionMetadata metadata) =>
       (metadata.sizeBytes ?? 0) > maxSessionLoadBytes;
+
+  /// The last-active session boot skipped for size (issue #381), or null.
+  /// The shells surface it once as a notice — a fresh session plus a
+  /// tap-to-open-windowed action — instead of the old silent swap.
+  SessionMetadata? bootSkippedOversize;
 
   final JsonlSessionRepo _repo;
 
@@ -243,6 +255,11 @@ final class FlutterSessionManager extends ChangeNotifier {
     required FutureOr<AgentService> Function() serviceFactory,
   }) async {
     if (_sessions.containsKey(metadata.id)) return;
+    // Over-budget sessions never pre-cache: a speculative background open
+    // of a giant must not run (its windowed failure would degrade to the
+    // full-open fallback — the heap-storm path). They open on demand,
+    // windowed.
+    if (_tooLarge(metadata)) return;
     if (!_preCaching.add(metadata.id)) return; // already in flight
     try {
       final service = await serviceFactory();
@@ -356,19 +373,25 @@ final class FlutterSessionManager extends ChangeNotifier {
       '[fah][sessions] open ${metadata.id}: not in memory — loading from '
       'disk (${_sessions.length} loaded)',
     );
-    // Refuse pathological loads BEFORE building any service: a
-    // multi-hundred-MB session monopolizes the Dart heap and wedges the
-    // host in a GC storm (the macOS boot freeze of 2026-09-10).
-    if (_tooLarge(metadata)) {
+    // Issue #381: over-budget sessions route through the WINDOWED open —
+    // the old refuse-gate sat in front of a loader that only materializes
+    // the tail window. The full-open fallback is refused for them: a
+    // windowed failure there would degrade to a whole-file read of
+    // exactly the file the budget exists for — SessionTooLargeException
+    // is that fallback's guard, nothing else.
+    final oversized = _tooLarge(metadata);
+    final service = await serviceFactory();
+    try {
+      await service.loadSession(metadata, allowFullOpenFallback: !oversized);
+    } on Object catch (error) {
+      if (!oversized) rethrow;
       debugPrint(
-        '[fah][sessions] open ${metadata.id}: REFUSED — '
-        '${metadata.sizeBytes} bytes over the '
-        '${maxSessionLoadBytes}-byte budget',
+        '[fah][sessions] open ${metadata.id}: windowed open failed '
+        '($error) — over the $maxSessionLoadBytes-byte budget, '
+        'REFUSING the full open',
       );
       throw SessionTooLargeException(metadata, maxSessionLoadBytes);
     }
-    final service = await serviceFactory();
-    await service.loadSession(metadata);
     final managed = FlutterManagedSession(
       id: metadata.id,
       service: service,
@@ -464,12 +487,13 @@ final class FlutterSessionManager extends ChangeNotifier {
             .firstOrNull;
         if (metadata != null) {
           if (_tooLarge(metadata)) {
+            bootSkippedOversize = metadata;
             debugPrint(
               '[fah][sessions] boot: last active $lastActiveId is '
               '${metadata.sizeBytes} bytes — over the '
-              '${maxSessionLoadBytes}-byte load budget, NOT resuming '
-              '(it would wedge the app in GC). Starting fresh; open it '
-              'with the CLI instead.',
+              '$maxSessionLoadBytes-byte load budget, NOT resuming. '
+              'Starting fresh; the UI surfaces a notice to open it '
+              'windowed.',
             );
             // Fall through to the reusable pick below.
           } else {

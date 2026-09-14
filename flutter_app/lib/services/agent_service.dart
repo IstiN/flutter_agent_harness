@@ -2005,7 +2005,16 @@ class AgentService extends ChangeNotifier
     final windowed = _windowed;
     if (windowed == null) return;
     final gen = _loadGeneration;
-    final count = await windowed.countAbove();
+    // Best-effort: this runs unawaited (background banner count), so a
+    // read failure here would escape as an unhandled zone error. A
+    // failed count just leaves the count null - the banner renders
+    // without the number.
+    final int? count;
+    try {
+      count = await windowed.countAbove();
+    } on Object {
+      return;
+    }
     if (gen != _loadGeneration) return;
     if (_historyAboveCount != count || windowed.cachedTotalRecords != null) {
       _historyAboveCount = count;
