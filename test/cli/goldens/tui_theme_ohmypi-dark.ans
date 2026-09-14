@@ -1,0 +1,11 @@
+[1m[38;2;254;188;56mfa[0m[2m[38;2;95;102;115m · flutter_agent_harness — ready[0m
+[1m[38;2;178;129;214m● bash[0m[2m[38;2;95;102;115m deploy --verify · 3.2s[0m
+[38;2;178;129;214m[1m[4mDeployment finished[0m
+[38;2;254;188;56m•[0m 12 tests [1mpassed[0m, 0 failed
+[38;2;254;188;56m•[0m artifact: [38;2;254;188;56mbuild/app.apk[0m
+[2m[38;2;95;102;115m```[0m
+  fa deploy --verify
+[2m[38;2;95;102;115m```[0m
+[48;2;34;29;26m switch the theme to ohmypi [0m
+[38;2;228;192;15mretrying in 2s[0m [38;2;252;58;75mdenied: write outside workspace[0m
+  default       [1m[38;2;94;234;212m███[0m[1m[38;2;129;140;248m███[0m[38;2;74;222;128m███[0m[38;2;250;204;21m███[0m[38;2;248;113;113m███[0m[48;2;30;34;42m███[0m

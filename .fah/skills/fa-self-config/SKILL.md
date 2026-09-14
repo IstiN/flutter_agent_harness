@@ -4,13 +4,15 @@ description: >
   Configure fa (flutter_agent_harness) itself by editing the exact config
   files the CLI settings commands write: provider/model selection and roles,
   memory paths, tool availability, cubes, MCP servers, redaction, skills
-  access, approval and mode. Use when asked to reconfigure fa without a human
+  access, approval and mode, themes and TUI appearance (tui.theme: switch
+  or create a theme). Use when asked to reconfigure fa without a human
   in the REPL ("switch us to provider X", "point project memory at this
-  path", "disable web_search for this project").
+  path", "disable web_search for this project", "switch the theme to
+  ohmypi").
 when_to_use: Reconfiguring fa itself — settings, provider, models, memory,
-  tools, cubes, MCP, redaction, skills access — on any host (CLI headless,
-  REPL, app), by editing the YAML config the CLI persists, never by guessing
-  keys.
+  tools, cubes, MCP, redaction, skills access, themes/TUI appearance — on
+  any host (CLI headless, REPL, app), by editing the YAML config the CLI
+  persists (themes also via ~/.fah/themes/*.json), never by guessing keys.
 argument-hint: "[what to configure, e.g. 'point project memory at ./memory']"
 allowed-tools:
   - read
@@ -171,9 +173,10 @@ this skill has rotted — flag it in your report.
 | `/skills` | [Skills access](#skills-access) |
 | `/approval`, `/allow` | [Approval](#approval) |
 | `/mode`, `/code`, `/architect`, `/review` | [Mode](#mode) |
+| `/theme` | [Theme](#theme) |
 | `/settings` | [Settings hub](#settings-hub) |
 
-<!-- parity: /provider /providers /model /models /model-edit /memory /tools /cube /mcp /redact /skills /approval /allow /mode /code /architect /review /settings -->
+<!-- parity: /provider /providers /model /models /model-edit /memory /tools /cube /mcp /redact /skills /approval /allow /mode /code /architect /review /theme /settings -->
 
 The `fa config check|path|get|set` verbs and the `config` tool share their
 config-file equivalent with the topic sections above (see
@@ -463,6 +466,42 @@ mode: code                     # code | architect | review
 
 CLI equivalent: `/mode <name>` or the `/code`, `/architect`, `/review`
 shortcuts — they switch live AND persist this key.
+
+## Theme
+
+<!-- parity: /theme -->
+
+The TUI palette is data, never code. `/theme` lists every available theme
+(built-ins first, then user themes) with a swatch preview; `/theme <name>`
+switches immediately and persists the choice; `/theme reset` returns to
+the default.
+
+Config equivalent — the persisted theme name:
+
+```yaml
+tui:
+  theme: default   # a built-in name or a user theme file stem
+```
+
+Built-in names: `default` (the historical site palette — teal `#5eead4`,
+indigo `#818cf8`), `catppuccin`, `nord`, `dracula`, `ohmypi-dark`,
+`ohmypi-light`, `pi`.
+
+User themes live in `~/.fah/themes/<name>.json`; the file stem is the
+theme name, and a user theme can never shadow a built-in (a clashing file
+name is skipped with a boot note). The JSON holds a `"roles"` object mapping ROLE names to hex colors
+(`"#rgb"` or `"#rrggbb"`): `accent`, `accent2`, `muted`, `highlight`,
+`success`, `warning`, `error`, `border`, `focusBorder`, `userMessageBg`.
+Every role is optional — a missing role inherits the default theme for
+that slot. Unknown role names, invalid hex, or broken JSON produce a
+named error (file, role, line) at load time, never a crash.
+
+Applies: `/theme <name>` switches the live session in one frame; a direct
+YAML edit takes effect at next boot. Asked to create a theme from a
+description, write the JSON file, then apply it with `/theme <name>` and
+confirm the swatch line with the user. Asked for a palette "like X" where
+X is unknown, ask two or three palette questions first — never invent one
+silently.
 
 ## Prompts, TTSR & A2A
 

@@ -2,6 +2,7 @@ import '../context.dart';
 import '../session/session_tree.dart'
     show branchSummaryPrefix, compactionSummaryPrefix;
 import '../types.dart';
+import 'tui_theme.dart';
 
 /// A code-fence opener/closer line (```). Tracked by the replay so a
 /// truncated message never leaves a dangling fence: the view formats the
@@ -49,7 +50,7 @@ List<String> _replayUserTui(
         : markerLine;
     return [dim('─' * width), dim(line), ''];
   }
-  const bg = '\x1b[48;2;30;34;42m';
+  final bg = tuiUserMessageBgSgr();
   const reset = '\x1b[0m';
   return [
     dim('─' * width),
