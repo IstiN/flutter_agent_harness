@@ -6,7 +6,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:fa/services/agent_service.dart' show AgentConfig, ProviderConnectionException;
+import 'package:fa/services/agent_service.dart'
+    show AgentConfig, ProviderConnectionException;
 import 'package:fa/services/relay_agent_service.dart';
 import 'package:fa_browser_agent/fa_browser_agent.dart';
 import 'package:fa_ui/fa_ui.dart';
@@ -392,6 +393,44 @@ void main() {
     await pumpEventQueue();
     expect(service.namesStore.titleFor('s-3'), 'three');
     expect(service.namesStore.titleFor('s-2'), isNull);
+  });
+
+  test('settings snapshots forward the SW approval mode into the shell '
+      '(issue #380: mode forwarded, not defaulted)', () async {
+    final (:service, :channel) = await _attached();
+    addTearDown(channel.close);
+    // The relay shell defaults to write; the SW gate owns the real mode.
+    expect(service.approval.mode, ApprovalMode.write);
+    channel.fromWorker(
+      const SettingsResultMsg(settings: {'faApproval': 'yolo'}),
+    );
+    await pumpEventQueue();
+    expect(service.approval.mode, ApprovalMode.yolo);
+
+    // A snapshot without (or with an unknown) faApproval leaves the
+    // forwarded mode alone.
+    channel.fromWorker(const SettingsResultMsg(settings: {}));
+    await pumpEventQueue();
+    expect(service.approval.mode, ApprovalMode.yolo);
+    channel.fromWorker(
+      const SettingsResultMsg(settings: {'faApproval': 'nonsense'}),
+    );
+    await pumpEventQueue();
+    expect(service.approval.mode, ApprovalMode.yolo);
+
+    // A mode change from ANOTHER surface lands live (mid-session sync).
+    channel.fromWorker(
+      const SettingsResultMsg(settings: {'faApproval': 'unattended'}),
+    );
+    await pumpEventQueue();
+    expect(service.approval.mode, ApprovalMode.unattended);
+
+    // A panel toggle still writes through; the SW echo applies the same
+    // value (no put-back, no loop).
+    service.setApprovalMode(ApprovalMode.write);
+    final put = channel.sentOf('settings_put');
+    expect((put!['settings'] as Map)['faApproval'], 'write');
+    expect(service.approval.mode, ApprovalMode.write);
   });
 
   test('openSessionAction dispatches session_open with the id', () async {
@@ -881,7 +920,9 @@ void main() {
         ExtResultMsg(
           id: frame['id'] as String,
           ok: true,
-          data: {'missing': ['uploads/pasted-1.txt']},
+          data: {
+            'missing': ['uploads/pasted-1.txt'],
+          },
         ),
       );
       await expectLater(
@@ -1000,7 +1041,8 @@ void _mailTests() {
       const MessageDoneMsg(
         message: {
           'role': 'user',
-          'text': '[context] active tab: Example — https://example.com\n'
+          'text':
+              '[context] active tab: Example — https://example.com\n'
               'tab question',
         },
       ),
@@ -1024,7 +1066,10 @@ void _mailTests() {
         event: {
           'type': 'status',
           'running': true,
-          'mail': {'pending': 2, 'senders': ['peer-1', 'peer-2']},
+          'mail': {
+            'pending': 2,
+            'senders': ['peer-1', 'peer-2'],
+          },
         },
       ),
     );
@@ -1102,7 +1147,8 @@ void _mailTests() {
         {
           'type': 'message_done',
           'role': 'user',
-          'text': '[context] active tab: Example — https://example.com\n'
+          'text':
+              '[context] active tab: Example — https://example.com\n'
               'my composer text',
         },
         {
@@ -1128,36 +1174,34 @@ void _mailTests() {
 // -- FIFO composer echoes, mail_routed paint. ------------------------------
 
 void _reviewFixTests() {
-  test('IT-reattach: a re-attach resets the trajectory ledger — it never '
-      'stacks the new session replay on top of the old one (#320 MAJOR 1)',
-      () async {
-    final (:service, :channel) = await _attached(
-      replay: [
-        {'type': 'message_done', 'role': 'user', 'text': 's1 question'},
-        {
-          'type': 'message_done',
-          'role': 'assistant',
-          'text': 's1 answer',
-        },
-      ],
-    );
-    await Future<void>.delayed(Duration.zero);
-    final before = await service.trajectory.first;
-    expect(before.records.length, 2);
-    // A DIFFERENT session's ring: the ledger must reset, not append.
-    channel.fromWorker(
-      const AttachedMsg(
-        sessionId: 'sw-2',
+  test(
+    'IT-reattach: a re-attach resets the trajectory ledger — it never '
+    'stacks the new session replay on top of the old one (#320 MAJOR 1)',
+    () async {
+      final (:service, :channel) = await _attached(
         replay: [
-          {'type': 'message_done', 'role': 'user', 'text': 's2 question'},
+          {'type': 'message_done', 'role': 'user', 'text': 's1 question'},
+          {'type': 'message_done', 'role': 'assistant', 'text': 's1 answer'},
         ],
-      ),
-    );
-    await Future<void>.delayed(Duration.zero);
-    final after = await service.trajectory.first;
-    expect(after.records.length, 1);
-    addTearDown(channel.close);
-  });
+      );
+      await Future<void>.delayed(Duration.zero);
+      final before = await service.trajectory.first;
+      expect(before.records.length, 2);
+      // A DIFFERENT session's ring: the ledger must reset, not append.
+      channel.fromWorker(
+        const AttachedMsg(
+          sessionId: 'sw-2',
+          replay: [
+            {'type': 'message_done', 'role': 'user', 'text': 's2 question'},
+          ],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      final after = await service.trajectory.first;
+      expect(after.records.length, 1);
+      addTearDown(channel.close);
+    },
+  );
 
   test('IT-codemie: the auth-expired auto flow resends the failed prompt '
       'once the sign-in poll succeeds (#320 MAJOR 2)', () async {
@@ -1168,13 +1212,15 @@ void _reviewFixTests() {
     // The SW's persisted provider: an absolute CodeMie base URL so the
     // auth-expired path arms the reactive flow.
     channel.fromWorker(
-      const SettingsResultMsg(settings: {
-        'faProvider': {
-          'model': 'glm-5.3-flash',
-          'baseUrl': 'https://codemie.example.com/api',
-          'apiKey': 'k',
+      const SettingsResultMsg(
+        settings: {
+          'faProvider': {
+            'model': 'glm-5.3-flash',
+            'baseUrl': 'https://codemie.example.com/api',
+            'apiKey': 'k',
+          },
         },
-      }),
+      ),
     );
     await service.sendText('resend me');
     // Real time between the original send and the failure: the resend
@@ -1201,16 +1247,12 @@ void _reviewFixTests() {
     final prompts = channel.sent.where((j) => j['kind'] == 'prompt').toList();
     expect(prompts.length, 2);
     expect(prompts.last['text'], 'resend me');
-    expect(
-      service.messages.last.content,
-      contains('resending your message'),
-    );
+    expect(service.messages.last.content, contains('resending your message'));
     addTearDown(channel.close);
   });
 
   test('IT-steerfifo: several steers inside one boundary window each '
-      'render exactly once — no duplicate bubbles (#320 MAJOR 3)',
-      () async {
+      'render exactly once — no duplicate bubbles (#320 MAJOR 3)', () async {
     final (:service, :channel) = await _attached();
     channel.fromWorker(
       const StreamMsg(event: {'type': 'status', 'running': true}),
