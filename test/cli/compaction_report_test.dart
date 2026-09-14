@@ -106,6 +106,11 @@ void main() {
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
         skillsAccess: SkillsAccess.granted,
+        // The structured default (issue #287) gates every pass on the
+        // same threshold the auto guard uses, so a manual /compact on a
+        // small transcript is a no-op there. The report block under test
+        // is the classic engine's — pin it (the documented rollback).
+        compactionEngine: CompactionEngine.classic,
       ),
       io: io,
       streamFunction: streamFunction,
