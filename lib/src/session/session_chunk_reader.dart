@@ -286,6 +286,122 @@ final class SessionChunkReader {
     return false;
   }
 
+  /// ASCII needle for the raw `session_info` gate. Records serialize
+  /// `type` first, compact (no whitespace), so the byte pattern is
+  /// stable; the parse of the containing line stays the real check —
+  /// the needle only selects candidate lines (the same bet
+  /// [locateRecord] makes with `"id":`).
+  static const String _sessionInfoNeedle = '"type":"session_info"';
+
+  /// Scan block size for the needle scan and its newline seeks.
+  static const int _scanBlockBytes = 1 << 20;
+
+  /// The newest `session_info` record's name via a raw backward byte
+  /// scan (issue #369): 1 MiB blocks from EOF, an ASCII needle gate,
+  /// and only gate-matching lines decode + JSON-parse. A
+  /// named-at-creation 400 MB session — its only session_info at the
+  /// file START — costs one raw byte pass, never the per-chunk
+  /// full-record parse [_scanBackward] pays. Returns the name, `null`
+  /// when the file holds no session_info record or the newest one
+  /// clears the name (empty/whitespace — the caller's contract).
+  /// Throws [SessionException] like [readTail] when the file is missing.
+  Future<String?> readNewestSessionInfoName() async {
+    final info = await stat();
+    if (info == null) {
+      throw SessionException(
+        'Session not found: $path',
+        code: SessionErrorCode.notFound,
+      );
+    }
+    final needle = ascii.encode(_sessionInfoNeedle);
+    final overlap = needle.length - 1;
+    var end = info.size;
+    while (end > 0) {
+      final start = end > _scanBlockBytes ? end - _scanBlockBytes : 0;
+      // The tail overlap re-exposes needles spanning the block
+      // boundary: one starting before [end] and ending inside the newer
+      // block was invisible there and is found here; hits starting
+      // at/after [end] belong to the newer block, which saw them whole.
+      final readEnd = end + overlap < info.size ? end + overlap : info.size;
+      final bytes = await _readRange(start, readEnd);
+      final blockLimit = end - start;
+      for (var i = bytes.length - needle.length; i >= 0; i--) {
+        if (bytes[i] != needle[0]) continue;
+        if (i >= blockLimit) continue; // owned by the newer block
+        if (!_matchesAsciiAt(bytes, i, needle)) continue;
+        final record = await _parseLineContaining(start + i, info.size);
+        if (record is SessionInfoRecord) return record.name;
+      }
+      end = start;
+    }
+    return null;
+  }
+
+  /// Full ASCII match of [needle] at [bytes] offset [i]; the caller has
+  /// already matched the first byte.
+  static bool _matchesAsciiAt(Uint8List bytes, int i, List<int> needle) {
+    for (var j = 1; j < needle.length; j++) {
+      if (bytes[i + j] != needle[j]) return false;
+    }
+    return true;
+  }
+
+  /// Parses the record whose line contains absolute byte offset [hit].
+  /// The line may extend far beyond one scan block (a megabyte-wide
+  /// image record can quote the needle in its payload), so its bounds
+  /// are found with block-wise newline seeks and the exact range is
+  /// read once. Torn or foreign lines return `null` — the scan moves
+  /// on, never fatal in a read-only probe.
+  Future<SessionRecord?> _parseLineContaining(int hit, int size) async {
+    final nlBefore = await _lastNewlineBefore(hit);
+    final lineStart = nlBefore ?? 0;
+    final lineEnd = await _firstNewlineFrom(hit) ?? size;
+    if (lineEnd <= lineStart) return null;
+    final bytes = await _readRange(lineStart, lineEnd);
+    try {
+      return parseSessionEntryLine(
+        utf8.decode(bytes, allowMalformed: true),
+        path,
+        lineStart,
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Offset of the last 0x0A strictly below [from], block-wise; `null`
+  /// when none exists above the file start.
+  Future<int?> _lastNewlineBefore(int from) async {
+    var end = from;
+    while (end > 0) {
+      final start = end > _scanBlockBytes ? end - _scanBlockBytes : 0;
+      final bytes = await _readRange(start, end);
+      for (var i = bytes.length - 1; i >= 0; i--) {
+        if (bytes[i] == 0x0A) return start + i;
+      }
+      end = start;
+    }
+    return null;
+  }
+
+  /// Offset of the first 0x0A at or after [from], block-wise; `null`
+  /// when the file has none above [from] (torn final line).
+  Future<int?> _firstNewlineFrom(int from) async {
+    final info = await stat();
+    if (info == null) return null;
+    var start = from;
+    while (start < info.size) {
+      final end = start + _scanBlockBytes < info.size
+          ? start + _scanBlockBytes
+          : info.size;
+      final bytes = await _readRange(start, end);
+      final nl = bytes.indexOf(0x0A);
+      if (nl >= 0) return start + nl;
+      start = end;
+    }
+    return null;
+  }
+
   /// Forward scan bounded by both caps: 1 MiB blocks, the torn tail line
   /// carries into the next block, unparseable lines are skipped (never
   /// fatal in a windowed read).

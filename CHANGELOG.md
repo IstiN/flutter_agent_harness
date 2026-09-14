@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- perf(369): `--session <name>` cold start no longer parses session
+  bodies — name resolution (`sessionNameQuick`, shared by the CLI
+  matcher, `/sessions` listing, and `/trajectory`) scans the JSONL
+  backward in raw 1 MiB blocks behind an ASCII needle gate and
+  JSON-decodes only the newest `session_info` line it finds. A
+  named-at-creation session keeps that record at the file START, so the
+  old chunk-paged scan full-parsed the file on every cold start
+  (two ~400 MB sessions cost ~36 s); the raw pass is read-speed
+  (9.4 s → ~1.3 s for both giants in a synthetic repro). Newest-record-
+  wins, empty-name-clears, exact-id-first, and ambiguity semantics are
+  unchanged; hosts without ranged reads keep the previous error
+  contract.
 - feat!(325, #326 rework): per-run sleep assertions — the default hold is
   now `per-run` (acquired when a run goes in flight, released when it
   settles, so an idle agent never pins the machine awake); the previous

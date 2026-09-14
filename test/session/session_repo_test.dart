@@ -71,8 +71,7 @@ class ProbeFs implements FileSystem {
   Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
       _delegate.listDir(path);
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
   @override
   Future<Result<void, FileError>> createDir(
     String path, {
@@ -84,6 +83,19 @@ class ProbeFs implements FileSystem {
     bool recursive = false,
     bool force = false,
   }) => _delegate.remove(path, recursive: recursive, force: force);
+}
+
+/// Counts parse batches crossing the executor boundary. The raw
+/// needle scan (issue #369) must never send the session body through
+/// it — zero batches is the "no full parse" proof on a big fixture.
+class CountingParseExecutor implements SessionParseExecutor {
+  int batchCount = 0;
+
+  @override
+  Future<SessionParseResult> parse(SessionParseBatch batch) async {
+    batchCount++;
+    return parseSessionEntryLinesSync(batch);
+  }
 }
 
 void main() {
@@ -405,7 +417,8 @@ void main() {
       expect(
         probe.maxInFlight,
         greaterThanOrEqualTo(2),
-        reason: 'sequential listing never overlaps header reads '
+        reason:
+            'sequential listing never overlaps header reads '
             '(issue #199: latency adds up linearly)',
       );
       expect(
@@ -480,6 +493,133 @@ void main() {
         'there-new',
         'here-old',
       ]);
+    });
+  });
+  group('issue #369 — session-name resolution without full parse', () {
+    const mb = 1 << 20;
+
+    /// Header + one session_info record naming the session.
+    Future<SessionMetadata> namedSession(String name) async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendSessionName(name);
+      return session.getMetadata();
+    }
+
+    /// One valid filler message record; [textChars] x's wide.
+    String fillerLine(int textChars) =>
+        '{"type":"message","id":"pad","parentId":null,'
+        '"timestamp":"2026-01-01T00:00:00.000","message":{"role":"user",'
+        '"content":[{"type":"text","text":"${'x' * textChars}"}]}}';
+
+    test(
+      'big named-at-creation file resolves with zero parse batches',
+      () async {
+        final executor = CountingParseExecutor();
+        final bigRepo = JsonlSessionRepo(
+          fs: fs,
+          sessionsRoot: '/sessions',
+          parseExecutor: executor,
+        );
+        final session = await bigRepo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        // Named at creation: the only session_info sits at the file
+        // START, so resolution must walk every block backward — via raw
+        // bytes, never the per-record executor parse the chunk-paged
+        // scan paid (hundreds of batches on this file size).
+        await session.appendSessionName('giant');
+        final metadata = await session.getMetadata();
+        await fs.appendFile(
+          metadata.path,
+          '${fillerLine(4096)}\n' * 640, // ~2.7 MiB across 3 blocks
+        );
+        expect(await bigRepo.sessionNameQuick(metadata), 'giant');
+        expect(executor.batchCount, 0);
+      },
+    );
+
+    test('rename at the tail wins over the creation name', () async {
+      final metadata = await namedSession('early');
+      final session = await repo.open(metadata);
+      await session.appendSessionName('tail');
+      expect(await repo.sessionNameQuick(metadata), 'tail');
+    });
+
+    test('newest empty name clears an older name', () async {
+      final metadata = await namedSession('early');
+      final session = await repo.open(metadata);
+      await session.appendSessionName('');
+      expect(await repo.sessionNameQuick(metadata), isNull);
+    });
+
+    test('file without session_info resolves to null', () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendMessage(UserMessage.text('hi'));
+      expect(await repo.sessionNameQuick(await session.getMetadata()), isNull);
+    });
+
+    test('a foreign torn line carrying the needle is skipped', () async {
+      final metadata = await namedSession('early');
+      await fs.appendFile(
+        metadata.path,
+        'garbage "type":"session_info" garbage\n${fillerLine(64)}\n',
+      );
+      expect(await repo.sessionNameQuick(metadata), 'early');
+    });
+
+    test('needle straddling a 1 MiB block boundary is found', () async {
+      final metadata = await namedSession('early');
+      final path = metadata.path;
+      final prefixBytes = (await fs.fileInfo(path)).valueOrNull!.size;
+      // Blocks are anchored at EOF, so place the crafted record by
+      // byte arithmetic: the padding line length is solved so the
+      // boundary at finalSize - 1 MiB lands 10 bytes into the needle.
+      const crafted =
+          '{"type":"session_info","id":"si2","parentId":null,'
+          '"timestamp":"2026-01-01T00:00:00.000","name":"straddle"}\n';
+      final needleAt = crafted.indexOf('"type":"session_info"');
+      final finalLine = '${fillerLine(100)}\n';
+      final fillerOverhead = fillerLine(0).length + 1;
+      final padChars =
+          mb -
+          crafted.length -
+          finalLine.length +
+          needleAt +
+          10 -
+          fillerOverhead;
+      await fs.appendFile(path, '$crafted${fillerLine(padChars)}\n$finalLine');
+      final total = (await fs.fileInfo(path)).valueOrNull!.size;
+      expect(total - mb - (prefixBytes + needleAt), 10);
+      expect(await repo.sessionNameQuick(metadata), 'straddle');
+    });
+
+    test('missing file throws like open', () async {
+      final metadata = SessionMetadata(
+        id: 'gone',
+        createdAt: DateTime.utc(2026, 1, 1),
+        cwd: '/work',
+        path: '/sessions/gone.jsonl',
+      );
+      await expectLater(
+        repo.sessionNameQuick(metadata),
+        throwsA(isA<SessionException>()),
+      );
+    });
+
+    test('non-ranged store keeps the ranged-read error contract', () async {
+      final metadata = await namedSession('early');
+      final probeRepo = JsonlSessionRepo(
+        fs: ProbeFs(fs),
+        sessionsRoot: '/sessions',
+      );
+      await expectLater(
+        probeRepo.sessionNameQuick(metadata),
+        throwsA(isA<SessionException>()),
+      );
     });
   });
 }
