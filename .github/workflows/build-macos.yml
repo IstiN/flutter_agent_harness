@@ -169,16 +169,20 @@ jobs:
             mv "$BUILD_CACHE_DIR/macos" build/
           fi
 
+      # Persistent pinned SDK (issue #354): same rationale as
+      # build-mobile.yml — on a persistent self-hosted runner the
+      # flutter-action cache costs a ~1GB untar on setup plus a whole-SDK
+      # re-tar POST per job. The composite action pins the SDK at
+      # ~/actions-runner-yoloit/flutter-sdk (.fah-version marker):
+      # subsecond reuse, one download per pin bump, no POST step.
+      # Still a pinned 3.47.x install instead of the runner's
+      # pre-installed SDK — the candidate-path loop picked up a stale
+      # 3.44.4 at ~/.local/flutter, which broke `flutter pub get` the
+      # moment the repo floor moved to >=3.47.0 (daily-publish #260/#261).
       - name: Setup Flutter environment
-        # Pinned install instead of the runner's pre-installed SDK: the
-        # candidate-path loop picked up a stale 3.44.4 at
-        # ~/.local/flutter, which broke `flutter pub get` the moment the
-        # repo floor moved to >=3.47.0 (daily-publish #260/#261).
-        uses: subosito/flutter-action@v2
+        uses: ./.github/actions/setup-flutter-selfhosted
         with:
           flutter-version: '3.47.x'
-          channel: stable
-          cache: true
 
       - name: Setup host toolchains
         run: |

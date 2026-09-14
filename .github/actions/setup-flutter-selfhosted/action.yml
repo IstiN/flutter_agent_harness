@@ -1,0 +1,113 @@
+name: 'Setup Flutter (persistent self-hosted SDK)'
+description: >-
+  Marker-pinned Flutter SDK kept under $HOME/actions-runner-yoloit across
+  runs. On a persistent self-hosted runner the subosito/flutter-action
+  cache is an anti-optimization (issue #354): setup untars a ~1GB archive
+  every job and the POST step re-tars the whole SDK every run even when
+  the version did not change — 14.5 of 19.7 minutes around a 4-minute
+  iOS build. This action downloads the SDK exactly once per pinned
+  version and reuses it subsecond afterwards. The SDK lives in
+  per-version directories with an atomically-flipped `current` symlink
+  (#357 review): both build-macos matrix arch legs run CONCURRENTLY on
+  the one self-hosted runner, so every slot mutation is a single
+  rename(2) and concurrent installs of the same pin converge instead of
+  racing (sdk_slot.py documents the contract; test/
+  setup_flutter_selfhosted_test.dart pins the decision scenarios and
+  the regression guard).
+
+inputs:
+  flutter-version:
+    description: 'Version spec — wildcard (3.47.x) or exact (3.47.4), same semantics as subosito/flutter-action'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve pin and reuse-or-install the SDK
+      id: sdk
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        SPEC='${{ inputs.flutter-version }}'
+        SDK_ROOT="$HOME/actions-runner-yoloit/flutter-sdk"
+        CURRENT="$SDK_ROOT/current"   # symlink -> $SDK_ROOT/<version>
+        MARKER="$SDK_ROOT/.fah-version"
+        SLOT="${{ github.action_path }}/sdk_slot.py"
+        mkdir -p "$SDK_ROOT"
+
+        # Pre-#357 layouts kept the live SDK in a real `current`
+        # directory — move it into its per-version slot once,
+        # race-tolerantly (a concurrent leg that loses the migration
+        # no-ops; os.rename never merges).
+        python3 "$SLOT" migrate "$SDK_ROOT" "$MARKER"
+
+        # Resolve the spec to a concrete stable version from the
+        # official manifest (same resolution subosito/flutter-action
+        # performs), then decide: SKIP (marker == wanted), REUSE
+        # (manifest unreachable but the pinned SDK still satisfies the
+        # spec) or INSTALL. The committed scenarios live in
+        # test/setup_flutter_selfhosted_test.dart.
+        DECISION="$(python3 "$SLOT" resolve "$SPEC" "$MARKER")"
+        echo "$DECISION"
+        VER="${DECISION#* }"
+        DEST="$SDK_ROOT/$VER"
+
+        # Self-heal before trusting a non-INSTALL verdict: a marker can
+        # point at a version dir that a human or disk cleanup removed.
+        # Without this the SKIP path would export a PATH entry with no
+        # flutter binary under it and every later step would die at
+        # `flutter --version` until someone deletes the marker by hand —
+        # the brick the #357 review flagged on the old swap.
+        if [[ "$DECISION" != INSTALL* && ! -d "$DEST" ]]; then
+          echo "pinned $VER is missing from $SDK_ROOT — reinstalling"
+          DECISION="INSTALL $VER"
+        fi
+
+        if [[ "$DECISION" == INSTALL* ]]; then
+          if [[ -d "$DEST" ]]; then
+            echo "Flutter $VER already installed by a concurrent leg — reusing it"
+          else
+            echo "Downloading Flutter $VER (spec: $SPEC) — one-time per pinned version..."
+            STAGE="$(mktemp -d "$SDK_ROOT/.stage.XXXXXX")"
+            # --max-time bounds EACH transfer, --retry-max-time bounds
+            # the whole retry cycle: a wedged ~1GB download can never
+            # hang the job until GitHub's ceiling kills it. (Same
+            # pattern as the bounded asset downloads in build-macos.)
+            if ! curl -fL --retry 3 --retry-all-errors --retry-delay 5 \
+                --max-time 600 --retry-max-time 900 \
+                -o "$STAGE/flutter.zip" \
+                "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${VER}-stable.zip"; then
+              echo "::error::Flutter SDK download for $VER failed after retries (bounded: --max-time 600 per attempt, --retry-max-time 900 total). The runner's network or storage.googleapis.com is unhealthy — check and re-run; partial state stayed inside $STAGE only, the pinned slot is untouched."
+              exit 1
+            fi
+            unzip -q "$STAGE/flutter.zip" -d "$STAGE"
+            # Atomic slot-in: rename(2) either lands the complete tree
+            # or refuses because a concurrent leg already installed the
+            # identical version — the loser discards its duplicate
+            # (both legs fetch the same archive, so the bytes match).
+            python3 "$SLOT" install "$STAGE/flutter" "$DEST"
+            rm -rf "$STAGE"
+          fi
+        elif [[ "$DECISION" == REUSE* ]]; then
+          echo "::warning::Flutter manifest unreachable — reusing pinned SDK $VER (satisfies $SPEC)"
+        else
+          echo "Flutter $VER already pinned at $CURRENT — skipping the download (issue #354)"
+        fi
+
+        # Publish the slot with one atomic symlink swap — idempotent
+        # under concurrency (both matrix legs flip to the same target).
+        # Readers resolve `current` per use, so they observe either the
+        # previous complete tree or this one, never a missing or
+        # half-populated SDK; superseded trees are only gc'd after a
+        # 2-day drain window, so in-flight legs keep a complete tree.
+        python3 "$SLOT" flip "$DEST" "$CURRENT"
+        echo "$VER" > "$MARKER"
+        echo "Pinned Flutter $VER at $CURRENT -> $DEST"
+        python3 "$SLOT" gc "$SDK_ROOT" "$DEST" 2
+
+        # No actions/cache anywhere in this path: there is no POST step,
+        # so no re-tar of the ~1GB SDK after every job.
+        echo "$CURRENT/bin" >> "$GITHUB_PATH"
+        echo "FLUTTER_ROOT=$CURRENT" >> "$GITHUB_ENV"
+        "$CURRENT/bin/flutter" --version
