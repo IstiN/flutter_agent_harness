@@ -81,6 +81,7 @@ final class AgentCliConfig {
     this.compactionSettings,
     this.compactionEngine,
     this.contextWindowCap,
+    this.subagents = const SubagentsConfig(),
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -141,6 +142,10 @@ final class AgentCliConfig {
   /// of the effective window (compaction thresholds, ctx meter/footer).
   /// `null` = uncapped.
   final int? contextWindowCap;
+
+  /// The `subagents:` section (issue #383): heartbeat cadence and stall
+  /// threshold for background-subagent status digests.
+  final SubagentsConfig subagents;
 
   /// Live compaction-engine override set by the settings-hub Compaction
   /// flow (session scope, or after a yaml write). Wins over the

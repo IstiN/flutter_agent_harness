@@ -4,8 +4,8 @@
 /// per running child: age, provider requests/tokens, last activity, and a
 /// `healthy | stalled | no-progress-since-spawn` classification. A child
 /// that never issued a provider request, or went quiet for
-/// `subagents.stallMinutes`, gets a loud `⚠ STALLED` line (escalating to
-/// `⚠⚠` at twice the threshold) carrying the suggested
+/// `subagents.stallMinutes`, gets a loud `[WARN] STALLED` line (escalating to
+/// `[WARN][WARN]` at twice the threshold) carrying the suggested
 /// `task_status → task_cancel → respawn` action. Zero running children →
 /// no digest; `heartbeatMinutes: 0` disables the whole thing.
 ///
@@ -41,7 +41,7 @@ final class SubagentsConfig {
   final int heartbeatMinutes;
 
   /// Minutes without provider activity before a running child is flagged
-  /// `⚠ STALLED`; `0` disables stall flagging.
+  /// `[WARN] STALLED`; `0` disables stall flagging.
   final int stallMinutes;
 
   factory SubagentsConfig.fromYaml(Object? node) {
@@ -172,7 +172,7 @@ final class SubagentHeartbeat {
   /// One child's digest line. Stalled means "no provider request ever"
   /// (the dead-on-arrival shape — zero requests is flagged from the first
   /// digest) or "no provider activity for [stall] minutes"; twice the
-  /// threshold escalates to `⚠⚠`. `stall <= 0` disables flagging.
+  /// threshold escalates to `[WARN][WARN]`. `stall <= 0` disables flagging.
   String _lineOf(SubagentHandle handle, DateTime now, int stall) {
     final label = '${handle.id} (${handle.agentType})';
     final requests = handle.requests + handle.liveRequests;
@@ -194,7 +194,7 @@ final class SubagentHeartbeat {
         ? now.difference(created) >= Duration(minutes: stall * 2)
         : quietFor >= Duration(minutes: stall * 2);
     final classification = noRequestYet ? 'no-progress-since-spawn' : 'stalled';
-    final marker = escalated ? '⚠⚠ STALLED' : '⚠ STALLED';
+    final marker = escalated ? '[WARN][WARN] STALLED' : '[WARN] STALLED';
     return '$marker $label — $facts · $classification · '
         'suggest: task_status → task_cancel → respawn';
   }
