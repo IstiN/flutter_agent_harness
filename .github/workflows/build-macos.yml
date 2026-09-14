@@ -294,24 +294,34 @@ jobs:
           echo "Build info generated:"
           cat lib/core/services/build_info.dart
 
+      - name: Cache vendored WasmRun macOS framework
+        uses: actions/cache@v4
+        with:
+          path: vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework
+          key: wasmrun-xcframework-v0.1.0
       - name: Restore vendored WasmRun macOS framework
         timeout-minutes: 15
         run: |
           set -euo pipefail
-          # The prebuilt XCFramework is excluded from git. Prefer the local
-          # working copy on this self-hosted runner; fall back to the upstream
-          # release asset if the local copy is unavailable.
+          # The prebuilt XCFramework is excluded from git. Order of preference:
+          # 1) actions/cache hit (per-runner, keyed by the release tag) —
+          #    every slot is first-run-warm forever;
+          # 2) local working copy on this self-hosted runner;
+          # 3) upstream release asset — the curl budget MUST fit the 15-min
+          #    step cap: 3 retries × 240s max-time + connect + unzip < 900s
+          #    (the old 3 × 600s floor guaranteed a timeout on slow links).
           LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework"
           DEST="vendor/wasm_run_flutter/macos/Frameworks"
-          rm -rf "$DEST/WasmRun.xcframework"
           mkdir -p "$DEST"
-          if [ -d "$LOCAL_SRC" ]; then
+          if [ -f "$DEST/WasmRun.xcframework/Info.plist" ]; then
+            echo "Using framework already in place (actions/cache hit or valid leftover)"
+          elif [ -d "$LOCAL_SRC" ]; then
             echo "Using local framework: $LOCAL_SRC"
             cp -R "$LOCAL_SRC" "$DEST/"
           else
-            echo "Local framework not found, downloading from upstream release..."
+            echo "No cache, no local copy — downloading from upstream release..."
             # --retry alone skips transient mid-transfer resets (curl 56)
-            curl -L --retry 3 --retry-all-errors --retry-delay 10 --max-time 600 \
+            curl -L --retry 3 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 240 \
               -o /tmp/WasmRun.xcframework.zip \
               https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
             unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
