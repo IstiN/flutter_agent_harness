@@ -521,7 +521,17 @@ extension ApprovalCommands on AgentCli {
     // (agents visualization): named live badges — up to 3 active children
     // with type and elapsed seconds, then a +N overflow counter.
     final badge = _agentsBadge();
-    return '$cwd · ctx $pct% '
+    // Mid-run fold badge (issue #438 AC3): «compacted and still working»
+    // must be distinguishable from «hung» at a glance — the badge shows
+    // while the run continues after an auto-compaction and clears when
+    // the turn settles. Multiple folds in one run count (E2). It LEADS the
+    // row: narrow terminals truncate the tail, and the transient service
+    // state matters more than the static cwd.
+    final foldBadge = _autoFoldCount == 0
+        ? ''
+        : '[auto-compacted${_autoFoldCount > 1 ? ' ×$_autoFoldCount' : ''}'
+              ' · continuing] · ';
+    return '$foldBadge$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
         '$costPart · turn ${_usage.turns}$badge · '
