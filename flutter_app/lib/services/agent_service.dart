@@ -56,6 +56,7 @@ import 'package:fa/services/media_tools.dart';
 import 'package:fa/services/notify_service.dart';
 import 'package:fa/services/notify_tool.dart';
 import 'package:fa/services/office/office_boot.dart';
+import 'package:fa/services/agent_network_controller.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/video_service.dart';
 import 'package:fa/services/video_tool.dart';
@@ -116,10 +117,21 @@ const _noProcessPlatforms = {'web', 'android', 'ios'};
 /// agent lifecycle events into a list of [FahChatMessage].
 class AgentService extends ChangeNotifier
     implements FaChatConnection, FaApprovalModeController, FaChatService {
+  /// The app's live service, when one exists (cleared on dispose).
+  /// Settings surfaces that need agent-scoped state (the DAP page's
+  /// agent-network row, issue #402) read it here instead of threading the
+  /// service through widget trees. Null in widget tests.
+  static AgentService? maybeCurrent;
+
   /// A hosted service (the SW relay) overrides this with a session-names
   /// store whose renames round-trip through the hosting backend so every
   /// surface sees them; `null` keeps the env-file store.
   SessionNamesStore? get namesStoreOverride => null;
+
+  /// The agent's opt-in hub membership (issue #402) — surfaces read the
+  /// live state and toggle the join from here.
+  AgentNetworkController get agentNetwork =>
+      _agentNetwork ?? (throw StateError('agentNetwork before initialize()'));
 
   /// The sleep-prevention guard (issue #325): acquired on `initialize`,
   /// released on `dispose`. Null (tests, web, `off` config) runs the
@@ -157,6 +169,7 @@ class AgentService extends ChangeNotifier
          mode: initialApprovalMode ?? ApprovalMode.write,
        ),
        _repo = repo ?? JsonlSessionRepo(fs: env, sessionsRoot: sessionsRoot) {
+    maybeCurrent = this;
     _responseTimeout = responseTimeout ?? const Duration(seconds: 90);
     _providerKind = _agent.state.model.provider;
     // Seed the active endpoint from the model (reconfigure overwrites it) so
@@ -467,6 +480,7 @@ class AgentService extends ChangeNotifier
          sessionsRoot: sessionsRoot,
          parseExecutor: parseExecutor,
        ) {
+    maybeCurrent = this;
     _wireImageDropNotice();
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
@@ -518,12 +532,16 @@ class AgentService extends ChangeNotifier
     // instance sharing this root can exchange messages with them.
     final messagesRoot =
         '$sessionsRoot/${encodeSessionCwd(env.sessionCwd)}/messages';
-    final fabricRepo = FileMessagingRepository(
+    final fileFabricRepo = FileMessagingRepository(
       env: env,
       root: messagesRoot,
       decodeSessionCwd: decodeSessionCwd,
       homeDir: null,
     );
+    // The fabric behind the agent is swappable: opting into the hub
+    // network (issue #402) swaps the hub-primary composite in without
+    // touching any holder of the reference.
+    final fabricRepo = SwappableMessagingRepository(fileFabricRepo);
     _scheduledMessages = ScheduledMessageQueue(
       env: env,
       repo: () => fabricRepo,
@@ -550,6 +568,16 @@ class AgentService extends ChangeNotifier
       messaging: fabricRepo,
       selfId: 'main',
     );
+    // The app agent's opt-in hub membership (issue #402 AC3): the
+    // controller owns the settings store and swaps the hub-primary
+    // composite over the file fabric when enabled.
+    final network = AgentNetworkController(
+      env: env,
+      fileLayer: fileFabricRepo,
+      fileFabric: fabricRepo,
+    );
+    _agentNetwork = network;
+    unawaited(network.start());
     // Real JSONL child sessions at completion (fast register keeps the
     // steering race away; transcript lands when the child finishes).
     Future<Session> childSessionFactory(String parentId, String childId) async {
@@ -626,8 +654,7 @@ class AgentService extends ChangeNotifier
         toolEnv,
         webSearch: isOnDevice ? null : webSearchConfig,
         shellJobs: _shellJobs,
-        onPasswordPrompt:
-            (prompt) async => passwordPromptHandler?.call(prompt),
+        onPasswordPrompt: (prompt) async => passwordPromptHandler?.call(prompt),
         // Self-configuration on every host (issue #29 S5/AC10/AC11): the
         // same core the `fa config` CLI verbs wrap, over THIS host's env —
         // desktop container, browser storage, or mobile sandbox. Hosts
@@ -1048,6 +1075,12 @@ class AgentService extends ChangeNotifier
 
   /// Subagent manager (Phase 3a): tracks spawned children for the task tool.
   SubagentManager? _subagentManager;
+
+  /// The app agent's opt-in hub membership (issue #402); owns its own
+  /// settings store and lifecycle, disposed with the service. Null until
+  /// [initialize] builds it — a service disposed without initializing
+  /// (tests) has nothing to tear down.
+  AgentNetworkController? _agentNetwork;
 
   /// The session's retained-subagent registry (null before the agent is
   /// built). The settings Agents section renders the live tree from it.
@@ -2529,6 +2562,7 @@ class AgentService extends ChangeNotifier
 
   @override
   void dispose() {
+    if (identical(maybeCurrent, this)) maybeCurrent = null;
     _disposed = true;
     // Drop the sleep-prevention assertion (issue #325): best-effort and
     // fire-and-forget — dispose stays synchronous.
@@ -2537,6 +2571,7 @@ class AgentService extends ChangeNotifier
     // watchdog would otherwise outlive the host by minutes (and wedge
     // widget tests' fake_async invariants on a pending timer).
     _agent.abort();
+    _agentNetwork?.dispose();
     _compactExpand?.dispose();
     if (_subagentManager != null) _scheduledMessages.dispose();
     _inboxWatchTimer?.cancel();

@@ -63,14 +63,22 @@ void main() {
       expect(parseHubServeSpec(const []), (
         port: defaultHubServePort,
         flagSecret: null,
+        flagBind: null,
       ));
       expect(parseHubServeSpec(const ['--port', 'x']), (
         port: defaultHubServePort,
         flagSecret: null,
+        flagBind: null,
       ));
       expect(parseHubServeSpec(const ['--port', '9100', '--secret', 'k']), (
         port: 9100,
         flagSecret: 'k',
+        flagBind: null,
+      ));
+      expect(parseHubServeSpec(const ['--bind', 'lan']), (
+        port: defaultHubServePort,
+        flagSecret: null,
+        flagBind: 'lan',
       ));
     });
   });

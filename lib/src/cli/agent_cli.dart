@@ -84,6 +84,7 @@ import '../js_ext/extension_store.dart';
 import '../js_ext/jsr_runtime.dart';
 import '../js_ext/trust.dart';
 import '../lsp/lsp_tool.dart';
+import '../mcp/mcp_client.dart';
 import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
@@ -120,6 +121,7 @@ import 'openrouter_oauth_server.dart';
 import '../secrets/secure_key_store.dart';
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
+import '../session_io_retry.dart';
 import '../session/attach/session_presence.dart';
 import '../config/config_service.dart';
 import 'startup.dart';
@@ -507,7 +509,12 @@ class AgentCli {
       },
       // Issue #222: the resume path reopens a child's JSONL session by
       // path so task_resume/task_send continue the child in the SAME file.
-      childSessionOpener: jsonlChildSessionOpener(_env),
+      // Issue #427: the task-resume reopen of a child's session file
+      // rides the same transient-ENOENT retry, logged to fa.log.
+      childSessionOpener: jsonlChildSessionOpener(
+        _env,
+        ioRetry: SessionIoRetryConfig(logger: _logDiagnostic),
+      ),
     );
     final monitoringTools = subagentMonitoringTools(
       manager: _subagentManager,
@@ -1029,6 +1036,9 @@ class AgentCli {
   late SessionRepo _repo = JsonlSessionRepo(
     fs: _env,
     sessionsRoot: config.sessionRoot,
+    // Issue #427: transient-ENOENT retries of session-file IO log one
+    // `session_io_retry` line each into the diagnostic log (fa.log).
+    ioRetry: SessionIoRetryConfig(logger: _logDiagnostic),
   );
   Session? _session;
 

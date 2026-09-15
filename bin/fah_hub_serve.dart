@@ -1,4 +1,4 @@
-/// `fa hub serve [--port N] [--secret S]` — runs a local DAP/1 hub
+/// `fa hub serve [--port N] [--secret S] [--bind lan]` — runs a local DAP/1 hub
 /// (`package:flutter_agent_harness/io.dart` `LocalHub`, docs/dap.md §8.1)
 /// in the foreground until killed. `/dap start` spawns this detached so
 /// the hub outlives the CLI that launched it; other zero-config clients
@@ -54,7 +54,7 @@ Future<int> runHubCommand(
 }) async {
   final verb = args.isEmpty ? null : hubSubcommands[args.first];
   if (verb == null) {
-    stderr.writeln('usage: fa hub serve [--port N] [--secret S]');
+    stderr.writeln('usage: fa hub serve [--port N] [--secret S] [--bind lan]');
     return 1;
   }
   return verb(args.sublist(1), (
@@ -89,9 +89,10 @@ Future<int> _hubServe(List<String> flags, HubServeDeps deps) async {
 }
 
 /// The parsed `fa hub serve` flags: the [port] (a bad `--port` value
-/// keeps the zero-config default, as the old hand-rolled loop did) and
-/// the `--secret` override.
-typedef HubServeSpec = ({int port, String? flagSecret});
+/// keeps the zero-config default, as the old hand-rolled loop did), the
+/// `--secret` override and the `--bind` scope (`lan` = all interfaces,
+/// issue #402 AC4; anything else = loopback, the default).
+typedef HubServeSpec = ({int port, String? flagSecret, String? flagBind});
 
 /// Collapses `--flag value` pairs; later duplicates win (the same
 /// sequential-overwrite shape the hand-rolled loop had).
@@ -112,6 +113,7 @@ HubServeSpec parseHubServeSpec(List<String> flags) {
   return (
     port: int.tryParse(values['--port'] ?? '') ?? defaultHubServePort,
     flagSecret: values['--secret'],
+    flagBind: values['--bind'],
   );
 }
 
@@ -187,6 +189,7 @@ Future<int> hubServe(
   }
   final hub = LocalHub(
     port: spec.port,
+    bind: spec.flagBind ?? 'loopback',
     masterSecret: secret,
     stateFile: stateFile,
   );
@@ -206,6 +209,18 @@ Future<int> hubServe(
   stdout.writeln(
     'DAP hub on ${hub.url}${hub.isProtected ? ' (password-protected)' : ''}',
   );
+  if (spec.flagBind == 'lan') {
+    // The pairing surface (issue #402 AC4): a LAN peer enters one of
+    // these URLs (plus the password) by hand — no scanning magic.
+    for (final interface in await NetworkInterface.list()) {
+      for (final addr in interface.addresses) {
+        if (addr.type != InternetAddressType.IPv4 || addr.isLoopback) continue;
+        stdout.writeln(
+          'LAN: ws://${addr.address}:${hub.url.port}/ws${hub.isProtected ? ' + password' : ''}',
+        );
+      }
+    }
+  }
   await (serveLoop ?? _serveUntilKilled)(hub, pidFile);
   return 0;
 }
