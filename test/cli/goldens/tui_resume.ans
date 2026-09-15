@@ -1,0 +1,11 @@
+<d>────────────────────────────────────────────────────────────────────────────────</d>
+ship it
+
+>_Fa # Plan
+
+- cancel the run
+- **verify**
+✓ bash · gh run cancel 123 —
+✓ read · lib/a.dart —
+> ⚙ Background shell job sh-9 finished with exit code 0.
+>_Fa done — the run is cancelled

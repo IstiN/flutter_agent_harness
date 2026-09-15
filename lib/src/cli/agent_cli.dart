@@ -187,6 +187,7 @@ import 'text_format.dart';
 import 'terminal_setup.dart';
 import 'tui_helpers.dart';
 import 'tui_prompt.dart';
+import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
 import 'tui_theme.dart';
@@ -280,6 +281,7 @@ class AgentCli {
 
     _streamFunction =
         streamFunction ??
+        scriptedTestStreamFunction() ??
         _catalogStreamFunction(config.providerKind, config.apiKey);
     // MCP servers connect lazily in the background; their tools land in
     // the registry via _onMcpChanged (registered after the agent exists).
@@ -1575,10 +1577,6 @@ class AgentCli {
     _printThirdPartySkillsDisabledHint();
     await _replayRestoredSession();
 
-    // Warm the model cache in the background so the first /models picker is
-    // fast; failures are silent and the cache falls back to the hardcoded list.
-    _printThirdPartySkillsDisabledHint();
-    await _replayRestoredSession();
     // Issue #429: rebuild the background-job board from the session's
     // shell_job_registry records; live-at-restart jobs announce as lost.
     await _rehydrateJobBoard();
@@ -2604,6 +2602,11 @@ class AgentCli {
         'Check the result with bash_job (action: output) or by reading the '
         'log file, and act on it when the result was awaited.\n'
         '</system-notice>';
+    // The notice is a persisted user message: echo it into the live
+    // transcript through the same system-notice renderer the replay path
+    // uses (#446), so resume matches live 1:1. Steered messages skip the
+    // composer echo — without this the rows exist only after resume.
+    _tuiController?.sendOutput('$message\n');
     if (isBusy) {
       // Mid-run: the steering queue delivers it at the next step boundary.
       _agent.steer(UserMessage.text(message));
