@@ -224,6 +224,7 @@ part 'agent_cli_io.dart';
 part 'agent_cli_hep_io.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_waiting.dart';
+part 'agent_cli_mcp_print.dart';
 part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
 part 'agent_cli_theme.dart';
@@ -2281,50 +2282,6 @@ class AgentCli {
     // this clear (it goes through `/skill:` / the slash alias above).
     _approval.clearTurnGrants();
     _startRun(line, images: images);
-  }
-
-  /// `/mcp`: prints the configured MCP servers and their live connection
-  /// status, or a guidance line when none are configured.
-  void _printMcpStatus() {
-    final manager = _mcp.manager;
-    if (manager == null || manager.config.servers.isEmpty) {
-      io.writeln(
-        'No MCP servers configured. Add servers to the mcp: section of '
-        '~/.fah/config.yaml:\n'
-        '  mcp:\n'
-        '    servers:\n'
-        '      example:\n'
-        '        command: npx\n'
-        '        args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]\n'
-        '      # or a remote server:\n'
-        '      remote:\n'
-        '        url: https://example.com/mcp',
-      );
-      return;
-    }
-    io.writeln('MCP servers:');
-    final states = manager.states;
-    for (final entry in manager.config.servers.entries) {
-      final name = entry.key;
-      final state = states[name];
-      final status = switch (state?.status) {
-        null => _style.dim('(connecting…)'),
-        _ => switch (state!.status) {
-          McpServerStatus.connected =>
-            '${tuiSuccess('connected')} — ${state.tools.length} tool(s)',
-          McpServerStatus.failed =>
-            '${tuiError('failed')}: ${state.error ?? 'unknown'}',
-          McpServerStatus.connecting => _style.dim('(connecting…)'),
-        },
-      };
-      final server = entry.value;
-      final detail = server is McpStdioServerConfig
-          ? '${server.command} ${(server.args).join(' ')}'
-          : server is McpHttpServerConfig
-          ? server.url
-          : '';
-      io.writeln('  $name — $status  ${_style.dim(detail)}');
-    }
   }
 
   void _startRun(String text, {List<TuiImageAttachment> images = const []}) {
