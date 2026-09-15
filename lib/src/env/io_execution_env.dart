@@ -498,8 +498,15 @@ final class LocalShell implements Shell, BackgroundShell {
     final stderr = StringBuffer();
     ExecutionError? callbackError;
     // Feed optional stdin data (bash tool `stdin` param: a passphrase the
-    // user supplied via the ask UI, a `y\n`), then close the pipe so
-    // tools like ripgrep that fall back to stdin do not hang forever.
+    // user supplied via the ask UI, a `y\n`). With a live stdin channel
+    // (issue #367) the pipe stays OPEN for the process's lifetime so a
+    // mid-run password ask can be answered; otherwise it closes right
+    // after start so tools like ripgrep that fall back to stdin do not
+    // hang forever.
+    final liveStdin = options?.liveStdin;
+    if (liveStdin != null) {
+      liveStdin.bind(process.stdin.write);
+    }
     if (options?.stdinData != null) {
       try {
         process.stdin.write(options!.stdinData);
@@ -508,7 +515,7 @@ final class LocalShell implements Shell, BackgroundShell {
         // Process already gone — the exit path reports the real status.
       }
     }
-    unawaited(process.stdin.close());
+    if (liveStdin == null) unawaited(process.stdin.close());
     final stdoutDone = process.stdout
         .transform(utf8.decoder)
         .forEach(
@@ -549,6 +556,9 @@ final class LocalShell implements Shell, BackgroundShell {
 
     final exitCode = await process.exitCode;
     timer?.cancel();
+    if (liveStdin != null) {
+      unawaited(process.stdin.close().catchError((_) {}));
+    }
     await Future.wait([stdoutDone, stderrDone]);
 
     return _result(
@@ -576,8 +586,15 @@ final class LocalShell implements Shell, BackgroundShell {
     final started = await _start(command, options);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
-    // Feed optional stdin data (bash tool `stdin` param), then close the
-    // pipe — background jobs are not interactive beyond this.
+    // Feed optional stdin data (bash tool `stdin` param). With a live
+    // stdin channel (issue #367) the pipe stays OPEN for the process's
+    // lifetime so a mid-run password ask can be answered; otherwise it
+    // closes right after start — background jobs are not interactive
+    // beyond this.
+    final liveStdin = options?.liveStdin;
+    if (liveStdin != null) {
+      liveStdin.bind(process.stdin.write);
+    }
     if (options?.stdinData != null) {
       try {
         process.stdin.write(options!.stdinData);
@@ -586,7 +603,7 @@ final class LocalShell implements Shell, BackgroundShell {
         // Process already gone — the settle path reports the real status.
       }
     }
-    unawaited(process.stdin.close());
+    if (liveStdin == null) unawaited(process.stdin.close());
     final IOSink logSink;
     try {
       logSink = File(logPath).openWrite(mode: FileMode.append);
@@ -632,10 +649,15 @@ final class _LocalShellJob implements ShellJob {
     // wait and then cancel the subscriptions.
     final stdoutDone = Completer<void>();
     final stderrDone = Completer<void>();
+    void fanOut(String chunk) {
+      _logSink.write(chunk);
+      _output.add(chunk);
+    }
+
     _stdoutSub = process.stdout
         .transform(utf8.decoder)
         .listen(
-          _logSink.write,
+          fanOut,
           onError: (_) {},
           onDone: () {
             if (!stdoutDone.isCompleted) stdoutDone.complete();
@@ -644,7 +666,7 @@ final class _LocalShellJob implements ShellJob {
     _stderrSub = process.stderr
         .transform(utf8.decoder)
         .listen(
-          _logSink.write,
+          fanOut,
           onError: (_) {},
           onDone: () {
             if (!stderrDone.isCompleted) stderrDone.complete();
@@ -672,6 +694,8 @@ final class _LocalShellJob implements ShellJob {
         ]);
         await _stdoutSub.cancel();
         await _stderrSub.cancel();
+        unawaited(_process.stdin.close().catchError((_) {}));
+        await _output.close();
         await _logSink.flush();
         await _logSink.close();
         _settled.complete();
@@ -681,6 +705,7 @@ final class _LocalShellJob implements ShellJob {
 
   final Process _process;
   final IOSink _logSink;
+  final _output = StreamController<String>.broadcast();
   late final StreamSubscription<void> _stdoutSub;
   late final StreamSubscription<void> _stderrSub;
   Timer? _timer;
@@ -713,6 +738,20 @@ final class _LocalShellJob implements ShellJob {
   Future<void> stop() async {
     _stopReason ??= 'stopped';
     _process.kill();
+  }
+
+  @override
+  Stream<String> get output => _output.stream;
+
+  @override
+  bool writeStdin(String data) {
+    if (!isRunning) return false;
+    try {
+      _process.stdin.write(data);
+      return true;
+    } on Object {
+      return false;
+    }
   }
 }
 

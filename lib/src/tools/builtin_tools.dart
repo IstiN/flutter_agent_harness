@@ -59,6 +59,7 @@ import '../types.dart';
 import '../web_search/web_search.dart';
 import 'archive_reader.dart';
 import 'read_selector.dart';
+import 'password_prompt.dart';
 import 'shell_jobs.dart';
 import 'sqlite/sqlite_reader.dart';
 import 'tool_format.dart';
@@ -85,6 +86,10 @@ const bashToolMaxRetries = 2;
 
 /// Backoff between bash retry attempts.
 const _bashRetryBackoff = Duration(seconds: 1);
+
+/// Output-silence window before a pending password-ask match fires the
+/// sheet (issue #367); parameterized for tests.
+const _bashPasswordQuiet = Duration(milliseconds: 250);
 
 /// Creates the four built-in tools ([readFileTool], [writeFileTool],
 /// [listDirTool], [shellTool]) bound to [env].
@@ -130,6 +135,7 @@ List<AgentTool> builtinTools(
   LspToolConfig? lsp,
   McpManager? mcp,
   ShellJobRegistry? shellJobs,
+  PasswordPromptCallback? onPasswordPrompt,
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return [
@@ -137,8 +143,7 @@ List<AgentTool> builtinTools(
     writeFileTool(env),
     editFileTool(env, snapshots: store),
     listDirTool(env),
-    shellTool(env, jobs: shellJobs),
-    if (shellJobs != null) bashJobTool(shellJobs),
+    shellTool(env, jobs: shellJobs, onPasswordPrompt: onPasswordPrompt),
     if (lsp != null) lspTool(env, config: lsp),
     if (webSearch != null) ...[
       webSearchTool(config: webSearch),
@@ -2148,6 +2153,8 @@ AgentTool shellTool(
   ExecutionEnv env, {
   ShellJobRegistry? jobs,
   Duration retryBackoff = _bashRetryBackoff,
+  PasswordPromptCallback? onPasswordPrompt,
+  Duration passwordQuiet = _bashPasswordQuiet,
 }) {
   return AgentTool(
     name: bashToolName,
@@ -2243,6 +2250,8 @@ AgentTool shellTool(
           timeoutArg: timeoutArg,
           cancelToken: cancelToken,
           yieldToken: currentYieldToken()!,
+          onPasswordPrompt: onPasswordPrompt,
+          passwordQuiet: passwordQuiet,
         );
       }
 
@@ -2392,7 +2401,24 @@ Future<ToolExecutionResult> _shellViaJob(
   required num? timeoutArg,
   required CancelToken? cancelToken,
   required CancelToken yieldToken,
+  PasswordPromptCallback? onPasswordPrompt,
+  required Duration passwordQuiet,
 }) async {
+  // Live stdin + password-ask detection (issue #367): the channel keeps
+  // the pipe open so an answer reaches the RUNNING process; the detector
+  // watches the live output stream and, on a password ask, calls the host
+  // (the masked sheet) and writes the answer through the channel. The
+  // password itself never appears in the transcript — only in the sheet.
+  final channel = onPasswordPrompt == null ? null : LiveStdinChannel();
+  final detector = onPasswordPrompt == null
+      ? null
+      : PasswordPromptDetector(
+          onPrompt: (title) async {
+            final answer = await onPasswordPrompt(title);
+            channel!.write('${answer ?? ''}\n');
+          },
+          quiet: passwordQuiet,
+        );
   final entry = await jobs.start(
     command,
     options: ShellExecOptions(
@@ -2400,8 +2426,33 @@ Future<ToolExecutionResult> _shellViaJob(
       timeout: timeout,
       cancelToken: cancelToken,
       stdinData: stdinData,
+      liveStdin: channel,
     ),
   );
+  final outputSub = detector == null
+      ? null
+      : entry.job.output.listen(detector.feed);
+  try {
+    return await _awaitJobOutcome(
+      env,
+      jobs,
+      entry,
+      yieldToken,
+      timeoutArg: timeoutArg,
+    );
+  } finally {
+    await outputSub?.cancel();
+    detector?.dispose();
+  }
+}
+
+Future<ToolExecutionResult> _awaitJobOutcome(
+  ExecutionEnv env,
+  ShellJobRegistry jobs,
+  ShellJobEntry entry,
+  CancelToken yieldToken, {
+  required num? timeoutArg,
+}) async {
   final finished = await Future.any<bool>([
     entry.settled.then((_) => true),
     yieldToken.onCancel.then((_) => false),
