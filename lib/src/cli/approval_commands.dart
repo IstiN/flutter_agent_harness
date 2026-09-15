@@ -950,6 +950,7 @@ extension ApprovalCommands on AgentCli {
   }
 
   Future<void> _onAgentEvent(AgentEvent event, CancelToken cancelToken) async {
+    _lastAgentEventAt = DateTime.now(); // #437 steering heartbeat
     // Run-lifecycle forensics to fa.log: one line per phase transition, so
     // a wedged "Working…"/"Compacting…" row can be attributed to the exact
     // phase (provider turn vs named tool vs run) that never finished.

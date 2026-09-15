@@ -510,6 +510,10 @@ extension on AgentCli {
     // fire a no-op compaction on every resume. Re-anchor at chars/4.
     _agent.state.messages = resetLoadedUsageAnchors(messages);
     _persistedCount = messages.length;
+    // Issue #437: persisted-but-unconsumed steering from a crashed
+    // session re-enters the queue and wakes the idle agent (E1: one
+    // record, consumed once — restart-safe).
+    await _queueRecoveredSteering(session);
     // Adopt the session's original project folder. This matters both when
     // switching mid-run and when the CLI starts with --session: tools like
     // bash/read/edit must operate in the session's directory, not the launch

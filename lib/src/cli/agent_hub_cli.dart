@@ -410,23 +410,26 @@ extension AgentCliHubDriver on AgentCli {
 
   /// Registers a delivered mid-run message as a deferred panel and renders
   /// the bordered block into the transcript.
-  void _hubAddPanel({
+  DeferredPanel _hubAddPanel({
     required DeferredPanelKind kind,
     required String from,
     required String body,
     String? source,
     String? replyAddress,
+    DeferredPanelState state = DeferredPanelState.running,
   }) {
     final panel = _hubPanels.add(
       kind: kind,
       from: from,
       body: body,
+      state: state,
       source: source,
       replyAddress: replyAddress,
     );
     for (final line in deferredPanelLines(panel, width: _hubBlockWidth)) {
       io.writeln(_style.dim(line));
     }
+    return panel;
   }
 
   /// One panel per drained fabric message: the mail lands as a bordered
