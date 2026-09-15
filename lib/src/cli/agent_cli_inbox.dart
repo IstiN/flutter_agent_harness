@@ -160,6 +160,12 @@ extension AgentCliMessagingFlow on AgentCli {
 
   void _syncMailboxPrefix() {
     _subagentManager.mailboxPrefix = _session?.cachedId ?? '';
+    // Issue #426: child session headers carry `metadata.parent` from the
+    // manager's parentSessionId — pinned empty at construction because
+    // the session id does not exist yet. Assign it here (the moment the
+    // id materializes) so children of THIS session link back to it
+    // instead of being written with `parent: ""`.
+    _subagentManager.parentSessionId = _subagentManager.mailboxPrefix;
     // The prompt's messaging section carries the live mailbox address.
     _applyPromptComposition();
     // Re-arm scheduled-message delivery: pending records that came due

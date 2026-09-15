@@ -327,12 +327,7 @@ List<_Token> _tokenize(String input) {
     // text (balanced/quoted regions honored); the shell executes them at
     // expansion time. Single quotes below never reach this branch.
     if ((ch == '\$' && peek() == '(') || ch == '`') {
-      final end = substitutionSpanEnd(input, i);
-      if (end == -1) {
-        throw ShellParseException(ch == '`' ? 'unmatched `' : 'unmatched \$(');
-      }
-      buffer.write(input.substring(i, end));
-      i = end;
+      i = _scanSubstitution(input, i, buffer);
       continue;
     }
 
@@ -341,58 +336,15 @@ List<_Token> _tokenize(String input) {
       // one word (`X="a b"` is ONE word, `a'b'` is `ab`). The word ends at
       // the next unquoted separator.
       wordExpandable = false;
-      i++;
-      while (i < input.length && input[i] != "'") {
-        buffer.write(input[i]);
-        i++;
-      }
-      if (i >= input.length) throw const ShellParseException("unmatched '");
-      i++; // skip closing quote
+      i = _scanSingleQuote(input, i, buffer);
       continue;
     }
 
     if (ch == '"') {
       wordQuoted = true;
-      i++;
-      while (i < input.length && input[i] != '"') {
-        if (input[i] == '\\' && i + 1 < input.length) {
-          final next = input[i + 1];
-          if (next == '"' ||
-              next == '\\' ||
-              next == '\$' ||
-              next == '`' ||
-              next == '\n') {
-            // POSIX double-quote escapes: \" \\ \$ \` \<newline>
-            if (next == '\$') wordExpandable = false;
-            buffer.write(next);
-            i += 2;
-          } else {
-            // Backslash is literal for any other following character.
-            buffer.write('\\');
-            buffer.write(next);
-            i += 2;
-          }
-        } else if ((input[i] == '\$' &&
-                i + 1 < input.length &&
-                input[i + 1] == '(') ||
-            input[i] == '`') {
-          // Command substitution inside double quotes: keep the raw span so
-          // inner quotes do not terminate this quoted section.
-          final end = substitutionSpanEnd(input, i);
-          if (end == -1) {
-            throw ShellParseException(
-              input[i] == '`' ? 'unmatched `' : 'unmatched \$(',
-            );
-          }
-          buffer.write(input.substring(i, end));
-          i = end;
-        } else {
-          buffer.write(input[i]);
-          i++;
-        }
-      }
-      if (i >= input.length) throw const ShellParseException('unmatched "');
-      i++; // skip closing quote — the word continues until a separator.
+      final (end, expandable) = _scanDoubleQuote(input, i + 1, buffer);
+      if (!expandable) wordExpandable = false;
+      i = end + 1; // skip closing quote — the word continues until a separator
       continue;
     }
 
@@ -412,81 +364,24 @@ List<_Token> _tokenize(String input) {
 
     // Shell metacharacters always start a new token, even when they touch a
     // previous word (e.g. `a; b`, `echo>file`).
-    if (ch == '|' || ch == '&' || ch == ';' || ch == '>' || ch == '<') {
+    final meta = _metaToken(input, i);
+    if (meta != null) {
       flushWord();
-      if (ch == '|' && peek() == '|') {
-        tokens.add(_Operator('||'));
-        i += 2;
-        continue;
-      }
-      if (ch == '&' && peek() == '&') {
-        tokens.add(_Operator('&&'));
-        i += 2;
-        continue;
-      }
-      if (ch == '|') {
-        tokens.add(_Operator('|'));
-        i++;
-        continue;
-      }
-      if (ch == ';') {
-        tokens.add(_Operator(';'));
-        i++;
-        continue;
-      }
-      if (ch == '&' && i + 1 < input.length && input[i + 1] == '>') {
-        if (i + 2 < input.length && input[i + 2] == '>') {
-          tokens.add(_Redirect(-1, RedirectKind.append));
-          i += 3;
-        } else {
-          tokens.add(_Redirect(-1, RedirectKind.write));
-          i += 2;
-        }
-        continue;
-      }
-      if (ch == '>' && peek() == '>') {
-        tokens.add(_Redirect(1, RedirectKind.append));
-        i += 2;
-        continue;
-      }
-      if (ch == '<' && peek() == '<') {
-        throw const ShellParseException('here-documents are not supported');
-      }
-      if (ch == '>') {
-        tokens.add(_Redirect(1, RedirectKind.write));
-        i++;
-        continue;
-      }
-      if (ch == '<') {
-        tokens.add(_Redirect(0, RedirectKind.read));
-        i++;
-        continue;
-      }
+      tokens.addAll(meta.$1);
+      i = meta.$2;
+      continue;
     }
 
-    // File-descriptor redirects: N> N>> N>&1 (basic forms).
+    // File-descriptor redirects: N> N>> N>&1 (basic forms); a digit run
+    // that is not a redirect joins the word buffer.
     if (_isDigit(ch)) {
-      final start = i;
-      while (i < input.length && _isDigit(input[i])) {
-        i++;
+      final (added, next) = _scanDigits(input, i);
+      if (added.isNotEmpty) {
+        tokens.addAll(added);
+      } else {
+        buffer.write(input.substring(i, next));
       }
-      final number = input.substring(start, i);
-      if (i < input.length && (input[i] == '>' || input[i] == '<')) {
-        final fd = int.parse(number);
-        if (input[i] == '>' && i + 1 < input.length && input[i + 1] == '>') {
-          tokens.add(_Redirect(fd, RedirectKind.append));
-          i += 2;
-        } else if (input[i] == '>') {
-          tokens.add(_Redirect(fd, RedirectKind.write));
-          i++;
-        } else {
-          tokens.add(_Redirect(fd, RedirectKind.read));
-          i++;
-        }
-        continue;
-      }
-      // Not a redirect: treat the digits as part of the next word.
-      buffer.write(number);
+      i = next;
       continue;
     }
 
@@ -495,6 +390,137 @@ List<_Token> _tokenize(String input) {
   }
   flushWord();
   return tokens;
+}
+
+/// Consumes a raw command-substitution span (`$(...)` or a backquote pair)
+/// into [buffer]; throws on an unbalanced span.
+int _scanSubstitution(String input, int i, StringBuffer buffer) {
+  final end = substitutionSpanEnd(input, i);
+  if (end == -1) {
+    throw ShellParseException(
+      input[i] == '`' ? 'unmatched `' : 'unmatched \$(',
+    );
+  }
+  buffer.write(input.substring(i, end));
+  return end;
+}
+
+/// Consumes a single-quoted span starting at the opening quote at [i];
+/// returns the index just past the closing quote. No escapes exist inside
+/// single quotes.
+int _scanSingleQuote(String input, int i, StringBuffer buffer) {
+  i++;
+  while (i < input.length && input[i] != "'") {
+    buffer.write(input[i]);
+    i++;
+  }
+  if (i >= input.length) throw const ShellParseException("unmatched '");
+  return i + 1; // skip closing quote
+}
+
+/// Consumes a double-quoted span starting just after the opening quote;
+/// returns the index of the closing quote and whether the word stays
+/// expandable (a `\$` escape makes it literal).
+/// POSIX double-quote escapes: `\"` `\\` `\$` `` \` `` `\<newline>`; any
+/// other backslash pair is literal. Command substitution inside double
+/// quotes is kept as a raw span so inner quotes do not terminate the
+/// quoted section.
+(int, bool) _scanDoubleQuote(String input, int i, StringBuffer buffer) {
+  var expandable = true;
+  while (i < input.length && input[i] != '"') {
+    if (input[i] == '\\' && i + 1 < input.length) {
+      final next = input[i + 1];
+      if (next == '"' ||
+          next == '\\' ||
+          next == '\$' ||
+          next == '`' ||
+          next == '\n') {
+        if (next == '\$') expandable = false;
+        buffer.write(next);
+        i += 2;
+      } else {
+        // Backslash is literal for any other following character.
+        buffer.write('\\');
+        buffer.write(next);
+        i += 2;
+      }
+    } else if ((input[i] == '\$' &&
+            i + 1 < input.length &&
+            input[i + 1] == '(') ||
+        input[i] == '`') {
+      i = _scanSubstitution(input, i, buffer);
+    } else {
+      buffer.write(input[i]);
+      i++;
+    }
+  }
+  if (i >= input.length) throw const ShellParseException('unmatched "');
+  return (i, expandable);
+}
+
+/// Tokenizes a metacharacter (`|` `&` `;` `>` `<` and their doubled /
+/// appending forms) at [i]; returns the tokens and the new index, or null
+/// when [i] does not hold a metacharacter.
+(List<_Token>, int)? _metaToken(String input, int i) {
+  final ch = input[i];
+  if (ch != '|' && ch != '&' && ch != ';' && ch != '>' && ch != '<') {
+    return null;
+  }
+  String peek() => i + 1 < input.length ? input[i + 1] : '';
+  _Token token;
+  if (ch == '|' && peek() == '|') {
+    token = _Operator('||');
+    i += 2;
+  } else if (ch == '&' && peek() == '&') {
+    token = _Operator('&&');
+    i += 2;
+  } else if (ch == '|') {
+    token = _Operator('|');
+    i += 1;
+  } else if (ch == ';') {
+    token = _Operator(';');
+    i += 1;
+  } else if (ch == '&' && peek() == '>') {
+    if (i + 2 < input.length && input[i + 2] == '>') {
+      token = _Redirect(-1, RedirectKind.append);
+      i += 3;
+    } else {
+      token = _Redirect(-1, RedirectKind.write);
+      i += 2;
+    }
+  } else if (ch == '>' && peek() == '>') {
+    token = _Redirect(1, RedirectKind.append);
+    i += 2;
+  } else if (ch == '<' && peek() == '<') {
+    throw const ShellParseException('here-documents are not supported');
+  } else if (ch == '>') {
+    token = _Redirect(1, RedirectKind.write);
+    i += 1;
+  } else {
+    token = _Redirect(0, RedirectKind.read);
+    i += 1;
+  }
+  return ([token], i);
+}
+
+/// Scans a digit run at [i]: a redirect (`N>`, `N>>`, `N<`) yields its
+/// token and the index past it; a plain digit run yields no tokens and the
+/// index past the run (the caller folds the digits into the word buffer).
+(List<_Token>, int) _scanDigits(String input, int i) {
+  var j = i;
+  while (j < input.length && _isDigit(input[j])) {
+    j++;
+  }
+  final number = input.substring(i, j);
+  if (j < input.length && (input[j] == '>' || input[j] == '<')) {
+    final fd = int.parse(number);
+    if (input[j] == '>' && j + 1 < input.length && input[j + 1] == '>') {
+      return ([_Redirect(fd, RedirectKind.append)], j + 2);
+    }
+    if (input[j] == '>') return ([_Redirect(fd, RedirectKind.write)], j + 1);
+    return ([_Redirect(fd, RedirectKind.read)], j + 1);
+  }
+  return (const <_Token>[], j);
 }
 
 bool _isDigit(String ch) =>

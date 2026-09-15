@@ -67,6 +67,13 @@ if echo "$STAGED" | grep -qE '^(flutter_app/|packages/|lib/|scripts/|\.github/|p
   fi
 fi
 
+# Issue #433 AC1 (cheap, config-only): README CRAP badge must equal the
+# crap4dart.yaml thresholds — runs only when a config or the README is
+# staged, i.e. exactly the files that can drift apart.
+if echo "$STAGED" | grep -qE '(^|/)crap4dart\.yaml$|^README\.md$'; then
+  python3 scripts/check_crap_guards.py
+fi
+
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════════════════╗"
 echo "║  ✅ ALL QUALITY GATES PASSED — COMMIT APPROVED                            ║"

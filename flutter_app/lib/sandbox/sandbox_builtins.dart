@@ -648,61 +648,9 @@ final class SandboxBuiltins {
   /// written only when all of its hunks apply. Exit codes follow GNU patch:
   /// 0 when everything applied, 1 when hunks failed, 2 on error.
   Future<SandboxBuiltinResult> patch(List<String> args, {String? stdin}) async {
-    var strip = 0;
-    String? patchFile;
-    final positional = <String>[];
-    var noMoreFlags = false;
-    var i = 0;
-    while (i < args.length) {
-      final arg = args[i];
-      if (!noMoreFlags && arg == '--') {
-        noMoreFlags = true;
-      } else if (!noMoreFlags &&
-          (arg.startsWith('-p') || arg.startsWith('--strip'))) {
-        final String value;
-        if (arg.startsWith('--strip=')) {
-          value = arg.substring('--strip='.length);
-        } else if (arg == '--strip' || arg == '-p') {
-          if (i + 1 >= args.length) {
-            return _error('patch: option requires an argument -- p\n', 2);
-          }
-          value = args[++i];
-        } else if (arg.startsWith('-p') && !arg.startsWith('--')) {
-          value = arg.substring(2);
-        } else {
-          return _error("patch: unrecognized option '$arg'\n", 2);
-        }
-        final parsed = int.tryParse(value);
-        if (parsed == null || parsed < 0) {
-          return _error("patch: invalid strip count '$value'\n", 2);
-        }
-        strip = parsed;
-      } else if (!noMoreFlags &&
-          (arg.startsWith('-i') || arg.startsWith('--input'))) {
-        if (arg.startsWith('--input=')) {
-          patchFile = arg.substring('--input='.length);
-        } else if (arg == '--input' || arg == '-i') {
-          if (i + 1 >= args.length) {
-            return _error('patch: option requires an argument -- i\n', 2);
-          }
-          patchFile = args[++i];
-        } else if (arg.startsWith('-i') && !arg.startsWith('--')) {
-          patchFile = arg.substring(2);
-        } else {
-          return _error("patch: unrecognized option '$arg'\n", 2);
-        }
-      } else if (!noMoreFlags && arg.startsWith('-') && arg != '-') {
-        return _error("patch: unrecognized option '$arg'\n", 2);
-      } else {
-        positional.add(arg);
-      }
-      i++;
-    }
-    if (positional.length > 2) {
-      return _error('patch: too many file arguments\n', 2);
-    }
-    final target = positional.isNotEmpty ? positional[0] : null;
-    if (positional.length > 1) patchFile ??= positional[1];
+    final (error, parsed) = _parsePatchArgs(args);
+    if (parsed == null) return error!;
+    final (:strip, :patchFile, :target) = parsed;
 
     final String patchText;
     if (patchFile != null) {
@@ -773,6 +721,82 @@ final class SandboxBuiltins {
       stdout: utf8.encode(out.toString()),
       stderr: utf8.encode(err.toString()),
       exitCode: failed ? 1 : 0,
+    );
+  }
+
+  /// Parses `patch` CLI flags: `-p n` / `-pn` / `--strip=n` / `--strip n`,
+  /// `-i file` / `-ifile` / `--input=file` / `--input file`, `--`, and the
+  /// positional `[target] [patchfile]` operands. Returns the usage-error
+  /// result (exit code 2), or the parsed values with a null error.
+  (SandboxBuiltinResult?, ({int strip, String? patchFile, String? target})?)
+  _parsePatchArgs(List<String> args) {
+    var strip = 0;
+    String? patchFile;
+    final positional = <String>[];
+    var noMoreFlags = false;
+    var i = 0;
+    while (i < args.length) {
+      final arg = args[i];
+      if (!noMoreFlags && arg == '--') {
+        noMoreFlags = true;
+      } else if (!noMoreFlags &&
+          (arg.startsWith('-p') || arg.startsWith('--strip'))) {
+        final String value;
+        if (arg.startsWith('--strip=')) {
+          value = arg.substring('--strip='.length);
+        } else if (arg == '--strip' || arg == '-p') {
+          if (i + 1 >= args.length) {
+            return (
+              _error('patch: option requires an argument -- p\n', 2),
+              null,
+            );
+          }
+          value = args[++i];
+        } else if (arg.startsWith('-p') && !arg.startsWith('--')) {
+          value = arg.substring(2);
+        } else {
+          return (_error("patch: unrecognized option '$arg'\n", 2), null);
+        }
+        final parsed = int.tryParse(value);
+        if (parsed == null || parsed < 0) {
+          return (_error("patch: invalid strip count '$value'\n", 2), null);
+        }
+        strip = parsed;
+      } else if (!noMoreFlags &&
+          (arg.startsWith('-i') || arg.startsWith('--input'))) {
+        if (arg.startsWith('--input=')) {
+          patchFile = arg.substring('--input='.length);
+        } else if (arg == '--input' || arg == '-i') {
+          if (i + 1 >= args.length) {
+            return (
+              _error('patch: option requires an argument -- i\n', 2),
+              null,
+            );
+          }
+          patchFile = args[++i];
+        } else if (arg.startsWith('-i') && !arg.startsWith('--')) {
+          patchFile = arg.substring(2);
+        } else {
+          return (_error("patch: unrecognized option '$arg'\n", 2), null);
+        }
+      } else if (!noMoreFlags && arg.startsWith('-') && arg != '-') {
+        return (_error("patch: unrecognized option '$arg'\n", 2), null);
+      } else {
+        positional.add(arg);
+      }
+      i++;
+    }
+    if (positional.length > 2) {
+      return (_error('patch: too many file arguments\n', 2), null);
+    }
+    if (positional.length > 1) patchFile ??= positional[1];
+    return (
+      null,
+      (
+        strip: strip,
+        patchFile: patchFile,
+        target: positional.isNotEmpty ? positional[0] : null,
+      ),
     );
   }
 
