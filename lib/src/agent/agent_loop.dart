@@ -1166,14 +1166,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
   // Hardening over pi: short-circuit an already-cancelled token instead of
   // relying on the provider to surface the abort as an error event.
   if (cancelToken != null && cancelToken.isCancelled) {
-    return (
-      await _finishWithoutStream(
-        context,
-        emit,
-        _terminalMessage(config.model, StopReason.aborted, 'Operation aborted'),
-      ),
-      context,
-    );
+    return await _abortedTurn(context, config, emit);
   }
   for (var attempt = 0; ; attempt++) {
     final (requestContext, repairReport) = await _buildRequestContext(
@@ -1260,7 +1253,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
 
     await emit(ModelRequestEvent(detail: _summarizeRequest(requestContext)));
 
-    AssistantMessageEventStream response;
+    final AssistantMessageEventStream response;
     try {
       response = streamFunction(
         config.model,
@@ -1268,14 +1261,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
         cancelToken: cancelToken,
       );
     } catch (error) {
-      return (
-        await _finishWithoutStream(
-          context,
-          emit,
-          _terminalMessage(config.model, StopReason.error, '$error'),
-        ),
-        context,
-      );
+      return await _providerErrorTurn(context, config, emit, error);
     }
 
     final streamed = await _consumeResponseStream(response, context, emit);
@@ -1312,6 +1298,40 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       context,
     );
   }
+}
+
+/// The already-cancelled turn: no request leaves the loop.
+Future<(AssistantMessage, Context)> _abortedTurn(
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+) async {
+  return (
+    await _finishWithoutStream(
+      context,
+      emit,
+      _terminalMessage(config.model, StopReason.aborted, 'Operation aborted'),
+    ),
+    context,
+  );
+}
+
+/// A provider/runtime error thrown by the stream call itself becomes an
+/// error turn, not a crash.
+Future<(AssistantMessage, Context)> _providerErrorTurn(
+  Context context,
+  AgentLoopConfig config,
+  AgentEventSink emit,
+  Object error,
+) async {
+  return (
+    await _finishWithoutStream(
+      context,
+      emit,
+      _terminalMessage(config.model, StopReason.error, '$error'),
+    ),
+    context,
+  );
 }
 
 /// Builds the synthetic error turn for a provider stream that closed
