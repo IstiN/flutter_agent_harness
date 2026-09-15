@@ -50,6 +50,7 @@ import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import 'agent_tree.dart';
 import 'agent_hub_panel.dart';
+import 'shell_job_board.dart';
 import 'agent_hub_projection.dart';
 import 'agent_hub_tui.dart';
 import 'agent_hub_view.dart';
@@ -994,6 +995,11 @@ class AgentCli {
   // session that never opens the hub still gets task-block rendering.
   final AgentHubProjection _hubProjection = AgentHubProjection();
   final DeferredPanelLog _hubPanels = DeferredPanelLog();
+
+  /// Issue #429: the per-session background-job board — truthful phases,
+  /// per-turn collapse, records for reload. Replaced wholesale on session
+  /// resume by rehydration.
+  ShellJobBoard _jobBoard = ShellJobBoard();
   final DateTime _hubMainStartedAt = DateTime.now();
   String? _hubTranscriptId;
   Timer? _hubFollowTimer;
@@ -1561,8 +1567,11 @@ class AgentCli {
 
     // Warm the model cache in the background so the first /models picker is
     // fast; failures are silent and the cache falls back to the hardcoded list.
-    unawaited(_refreshModelCache());
-
+    _printThirdPartySkillsDisabledHint();
+    await _replayRestoredSession();
+    // Issue #429: rebuild the background-job board from the session's
+    // shell_job_registry records; live-at-restart jobs announce as lost.
+    await _rehydrateJobBoard();
     // One-time consent question for third-party skill roots: a TUI picker
     // over the first frame (Esc = "Not now", asked again next launch).
     unawaited(_maybePromptSkillsAccess());
@@ -2215,6 +2224,9 @@ class AgentCli {
     // before the first streamed byte, and isBusy readers (inbox watcher,
     // shell-job settle, steer-vs-start) must not start a parallel run here.
     _runStarting = true;
+    // Issue #429: a new agent turn opens a fresh board bucket — jobs from
+    // this turn collapse/count together and older buckets age out.
+    _jobBoard.newTurn();
     // Per-run sleep prevention (#326): the default hold acquires with the
     // run going in flight — fire-and-forget, never a reason to delay the
     // turn.
