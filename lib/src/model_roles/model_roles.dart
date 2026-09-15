@@ -25,3 +25,5 @@ export 'model_resolver.dart';
 export 'models_config.dart';
 export 'provider_catalog.dart';
 export 'roles_config.dart';
+export 'providers_queue.dart';
+export 'providers_queue_runtime.dart';
