@@ -363,9 +363,9 @@ final class FileSessionLeaseStore {
 /// app surfaces → `Fa.app`, else the raw kind.
 String leaseOwnerLabel(String host) => switch (host) {
   'cli' => 'fa CLI',
-  'macos' || 'ios' || 'android' => 'Fa.app',
+  'app' || 'macos' || 'ios' || 'android' => 'Fa.app',
   'extension' => 'Fa extension',
-  _ => host,
+  final other => other,
 };
 
 /// The viewer banner (AC3/AC9). Live:

@@ -646,6 +646,18 @@
   "@githubBrowserCodeHint": {
     "description": "Hint of the one-time-code field on the Browser tab"
   },
+"sessionDrivenElsewhere": "Сессией управляет {host} (pid {pid}) — вы просматриваете. Ваши сообщения будут переданы живому агенту.",
+  "@sessionDrivenElsewhere": {
+    "description": "Уведомление наблюдателя, когда живая аренда владения блокирует открытие сессии для управления (#428)",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      },
+      "pid": {
+        "type": "int"
+      }
+    }
+  },
   "sessionTooLargeTitle": "Сессия ({size} МБ) превышает бюджет мгновенного открытия — открыть её безопасно не удалось.",
   "sessionBootSkippedOversize": "Открыта новая сессия — «{name}» ({size} МБ) превышает бюджет мгновенного открытия.",
   "sessionBootSkippedOpen": "Открыть частями",

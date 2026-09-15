@@ -718,6 +718,11 @@ class SessionChatSheetState extends State<SessionChatSheet>
             ),
           ),
         );
+      } on SessionDrivenElsewhereException {
+        // Live lease (#428): never a second writer — attach as a viewer
+        // (transcript tail; the composer hands over to the driving agent).
+        if (!mounted) return;
+        await _attachToCliSession(metadata.id);
       }
     } finally {
       _opening.remove(metadata.id);

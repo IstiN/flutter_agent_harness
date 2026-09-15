@@ -64,6 +64,25 @@ final class SessionTooLargeException implements Exception {
       '(${metadata.sizeBytes} bytes > $limitBytes limit)';
 }
 
+/// Opening this session for DRIVE was refused: another host holds a
+/// live ownership lease (#428). No takeover exists — the app opens the
+/// session as a VIEWER (attach path) and the composer mails the owner.
+final class SessionDrivenElsewhereException implements Exception {
+  /// Creates the exception.
+  SessionDrivenElsewhereException(this.lease);
+
+  /// The owner's live lease (banner material).
+  final SessionLease lease;
+
+  /// Who drives, human-labeled: `fa CLI (pid 85634)`.
+  String get ownerLabel => leaseOwnerLabel(lease.host);
+
+  @override
+  String toString() =>
+      'Session ${lease.sessionId} is driven by $ownerLabel '
+      '(pid ${lease.pid})';
+}
+
 final class FlutterSessionManager extends ChangeNotifier {
   /// Creates a session manager.
   FlutterSessionManager({
@@ -71,6 +90,7 @@ final class FlutterSessionManager extends ChangeNotifier {
     required this.sessionsRoot,
     JsonlSessionRepo? repo,
     this.maxSessionLoadBytes = defaultMaxSessionLoadBytes,
+    this.leaseStore,
   }) : _repo =
            repo ??
            // Issue #199: record parsing rides background isolates on IO
@@ -100,6 +120,20 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// [openSession] refuses the full-open fallback of a failed windowed
   /// open with [SessionTooLargeException].
   final int maxSessionLoadBytes;
+
+  /// The ownership-lease store (from the shared env); null disables
+  /// enforcement (tests, web) — the app then behaves exactly as before.
+  final FileSessionLeaseStore? leaseStore;
+
+  /// The sidecar path of the lease this manager holds, if driving leased.
+  String? _heldLeasePath;
+
+  /// Heartbeat keeping our lease live while a managed session is open.
+  Timer? _leaseTimer;
+
+  /// Per-manager lease identity (E3): pid recycling cannot impersonate a
+  /// dead owner because this differs per app launch.
+  late final String _leaseBootId = FileSessionLeaseStore.newBootId();
 
   /// True when [metadata]'s file is over the load budget (unknown size is
   /// allowed — only paths that know the size can guard).
@@ -292,6 +326,14 @@ final class FlutterSessionManager extends ChangeNotifier {
     if (id == null) {
       throw StateError('AgentService did not initialize a session id');
     }
+    try {
+      final metadata = (await _repo.list())
+          .where((m) => m.id == id)
+          .firstOrNull;
+      if (metadata != null) await _acquireDriveLease(metadata);
+    } on Object {
+      // Lease lookup must never block session creation (fail-open).
+    }
     final now = DateTime.now();
     final managed = FlutterManagedSession(
       id: id,
@@ -380,6 +422,9 @@ final class FlutterSessionManager extends ChangeNotifier {
     // exactly the file the budget exists for — SessionTooLargeException
     // is that fallback's guard, nothing else.
     final oversized = _tooLarge(metadata);
+    // Ownership lease (#428): a live lease means another host is
+    // DRIVING this session — refuse before any second writer exists.
+    await _acquireDriveLease(metadata);
     final service = await serviceFactory();
     try {
       await service.loadSession(metadata, allowFullOpenFallback: !oversized);
@@ -443,7 +488,9 @@ final class FlutterSessionManager extends ChangeNotifier {
     if (_tooLarge(newest)) return null;
     Future<bool> hasUserMessages(SessionStorage storage) async {
       final messages = await storage.findEntries('message');
-      return messages.any((r) => r is MessageRecord && r.message is UserMessage);
+      return messages.any(
+        (r) => r is MessageRecord && r.message is UserMessage,
+      );
     }
 
     try {
@@ -574,10 +621,61 @@ final class FlutterSessionManager extends ChangeNotifier {
   /// and optionally deletes the session file.
   ///
   /// When the active session is closed, the most recently created remaining
+  /// Claims the ownership lease for a DRIVE-open of [metadata] (#428).
+  /// A live lease throws [SessionDrivenElsewhereException] — no takeover
+  /// exists; the caller opens the session as a viewer instead. Free or
+  /// expired: acquired (a dead owner is only noted in the sidecar
+  /// history). Lease IO failures never block opening (fail-open, E4).
+  Future<void> _acquireDriveLease(SessionMetadata metadata) async {
+    final store = leaseStore;
+    if (store == null) return;
+    final result = await store.acquire(
+      sessionFilePath: metadata.path,
+      sessionId: metadata.id,
+      host: 'app',
+      bootId: _leaseBootId,
+      pid: 0,
+    );
+    switch (result) {
+      case LeaseAcquired():
+        _heldLeasePath = store.sidecarPath(metadata.path);
+        _startLeaseHeartbeat();
+      case LeaseBlocked():
+        throw SessionDrivenElsewhereException(result.lease);
+      case LeaseUnenforced():
+        break;
+    }
+  }
+
+  /// Keeps our lease live while the managed session is open (5s cadence,
+  /// inside the 15s staleness window).
+  void _startLeaseHeartbeat() {
+    _leaseTimer?.cancel();
+    _leaseTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      final path = _heldLeasePath;
+      final store = leaseStore;
+      if (path == null || store == null) return;
+      unawaited(store.heartbeat(path, _leaseBootId));
+    });
+  }
+
+  /// Releases OUR lease (graceful close) and stops the heartbeat.
+  void _releaseDriveLease() {
+    _leaseTimer?.cancel();
+    _leaseTimer = null;
+    final path = _heldLeasePath;
+    _heldLeasePath = null;
+    final store = leaseStore;
+    if (path != null && store != null) {
+      unawaited(store.release(path, _leaseBootId));
+    }
+  }
+
   /// session becomes active, or none if the manager is empty.
   Future<void> closeSession(String sessionId, {bool deleteFile = false}) async {
     final managed = _sessions.remove(sessionId);
     if (managed == null) return;
+    if (_heldLeasePath != null) _releaseDriveLease();
     managed.service.abort();
     if (deleteFile) {
       final metadata = (await _repo.list())
