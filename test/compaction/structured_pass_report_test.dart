@@ -20,7 +20,10 @@ void main() {
 
   AssistantMessage assistant(String text, {List<ToolCall>? calls}) =>
       AssistantMessage(
-        content: [TextContent(text: text), ...?calls],
+        content: [
+          TextContent(text: text),
+          ...?calls,
+        ],
         api: 'anthropic-messages',
         provider: 'p',
         model: 'm1',
@@ -45,12 +48,13 @@ void main() {
   StreamFunction scriptedStream() => (model, context, {cancelToken}) {
     final last = context.messages.last;
     final promptText = switch (last) {
-      UserMessage() => last.content is String
-          ? last.content as String
-          : (last.content as List<Object>)
-              .whereType<TextContent>()
-              .map((b) => b.text)
-              .join(),
+      UserMessage() =>
+        last.content is String
+            ? last.content as String
+            : (last.content as List<Object>)
+                  .whereType<TextContent>()
+                  .map((b) => b.text)
+                  .join(),
       _ => '',
     };
     final answer = promptText.contains('<conversation>')
@@ -83,92 +87,101 @@ void main() {
       await session.appendMessage(result('c$i', 'payload $i ${'x' * 16000}'));
       await session.appendMessage(assistant('analysis $i findings'));
     }
-    await session.appendMessage(
-      UserMessage.text('what was the exact error?'),
-    );
+    await session.appendMessage(UserMessage.text('what was the exact error?'));
     return session;
   }
 
-  test('structured pass counters match the session hidden_range records',
-      () async {
-    final fs = MemoryFileSystem();
-    final repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
-    final session = await buildSession(repo);
-    final entries = await session.getEntries();
-    final state = AgentState(
-      model: model,
-      messages: [
-        for (final r in entries)
-          if (r is MessageRecord) r.message,
-      ],
-    );
+  test(
+    'structured pass counters match the session hidden_range records',
+    () async {
+      final fs = MemoryFileSystem();
+      final repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
+      final session = await buildSession(repo);
+      final entries = await session.getEntries();
+      final state = AgentState(
+        model: model,
+        messages: [
+          for (final r in entries)
+            if (r is MessageRecord) r.message,
+        ],
+      );
 
-    final passes = <AutoCompactorPass>[];
-    final ok = await AutoCompactorFactory(
-      session: session,
-      state: state,
-      window: 8000,
-      settings: settings,
-      sources: AutoCompactorSources(
-        smolStream: null,
-        smolModel: null,
-        mainStream: scriptedStream(),
-        mainModel: model,
-      ),
-      hooks: _RecordingHooks(passes),
-    ).run();
+      final passes = <AutoCompactorPass>[];
+      final ok = await AutoCompactorFactory(
+        session: session,
+        state: state,
+        window: 8000,
+        settings: settings,
+        sources: AutoCompactorSources(
+          smolStream: null,
+          smolModel: null,
+          mainStream: scriptedStream(),
+          mainModel: model,
+        ),
+        hooks: _RecordingHooks(passes),
+      ).run();
 
-    expect(ok, isTrue, reason: 'the structured engine gets under pressure');
-    expect(passes, isNotEmpty, reason: 'the fixture really folds');
+      expect(ok, isTrue, reason: 'the structured engine gets under pressure');
+      expect(passes, isNotEmpty, reason: 'the fixture really folds');
 
-    final hiddenRanges = (await session.getEntries())
-        .whereType<HiddenRangeRecord>()
-        .toList();
-    expect(
-      hiddenRanges,
-      isNotEmpty,
-      reason: 'the fixture must really hide records',
-    );
+      final hiddenRanges = (await session.getEntries())
+          .whereType<HiddenRangeRecord>()
+          .toList();
+      expect(
+        hiddenRanges,
+        isNotEmpty,
+        reason: 'the fixture must really hide records',
+      );
 
-    var renderedHidden = 0;
-    var hidePassIndex = 0;
-    for (final pass in passes) {
-      final report = formatCompactionReport(pass, auto: true).join('\n');
-      final match = RegExp(
-        r'records: (\d+) hidden · (\d+) summarized',
-      ).firstMatch(report);
-      expect(match, isNotNull, reason: 'report must carry counters:\n$report');
-      final hidden = int.parse(match!.group(1)!);
-      final summarized = int.parse(match.group(2)!);
-      if (pass.summary != null) {
-        // A checkpoint pass: the summarized count matches its covered
-        // message records and the summary renders in the fenced block.
+      var renderedHidden = 0;
+      var hidePassIndex = 0;
+      for (final pass in passes) {
+        final report = formatCompactionReport(pass, auto: true).join('\n');
+        final match = RegExp(
+          r'records: (\d+) hidden · (\d+) summarized',
+        ).firstMatch(report);
         expect(
-          summarized,
-          greaterThanOrEqualTo(1),
-          reason: 'a checkpoint that summarized nothing must not claim it:\n'
-              '$report',
+          match,
+          isNotNull,
+          reason: 'report must carry counters:\n$report',
         );
-        expect(report, contains(pass.summary!.trim()),
-            reason: 'the summary text must render');
-      } else {
-        // A hide pass: hidden matches the ids appended this pass.
-        expect(
-          hidden,
-          hiddenRanges[hidePassIndex].recordIds.length,
-          reason: 'hide pass ${pass.pass} claims $hidden, session recorded '
-              '${hiddenRanges[hidePassIndex].recordIds.length}',
-        );
-        hidePassIndex++;
+        final hidden = int.parse(match!.group(1)!);
+        final summarized = int.parse(match.group(2)!);
+        if (pass.summary != null) {
+          // A checkpoint pass: the summarized count matches its covered
+          // message records and the summary renders in the fenced block.
+          expect(
+            summarized,
+            greaterThanOrEqualTo(1),
+            reason:
+                'a checkpoint that summarized nothing must not claim it:\n'
+                '$report',
+          );
+          expect(
+            report,
+            contains(pass.summary!.trim()),
+            reason: 'the summary text must render',
+          );
+        } else {
+          // A hide pass: hidden matches the ids appended this pass.
+          expect(
+            hidden,
+            hiddenRanges[hidePassIndex].recordIds.length,
+            reason:
+                'hide pass ${pass.pass} claims $hidden, session recorded '
+                '${hiddenRanges[hidePassIndex].recordIds.length}',
+          );
+          hidePassIndex++;
+        }
+        renderedHidden += hidden;
       }
-      renderedHidden += hidden;
-    }
-    expect(
-      renderedHidden,
-      hiddenRanges.fold(0, (sum, r) => sum + r.recordIds.length),
-      reason: 'rendered hidden counts must match the session hidden_ranges',
-    );
-  });
+      expect(
+        renderedHidden,
+        hiddenRanges.fold(0, (sum, r) => sum + r.recordIds.length),
+        reason: 'rendered hidden counts must match the session hidden_ranges',
+      );
+    },
+  );
 
   test('checkpoint pass names its engine and summary in the report', () async {
     final fs = MemoryFileSystem();
