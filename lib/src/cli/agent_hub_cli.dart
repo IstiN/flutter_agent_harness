@@ -365,9 +365,7 @@ extension AgentCliHubDriver on AgentCli {
   /// After every board mutation: drain terminal material into the
   /// transcript, refresh the TUI's live region, persist the records.
   void _jobBoardAfterMutation() {
-    for (final line in _jobBoard.takeTranscriptLines(width: _hubBlockWidth)) {
-      io.writeln(_style.dim(line));
-    }
+    _printBoardLines(_jobBoard.takeTranscriptLines(width: _hubBlockWidth));
     _tuiController?.setJobBoard(_jobBoard.liveLines());
     unawaited(_persistJobBoard());
   }
@@ -389,23 +387,37 @@ extension AgentCliHubDriver on AgentCli {
   Future<void> _rehydrateJobBoard() async {
     final session = _session;
     if (session == null) return;
-    final entries = await session.getEntries();
-    var latest = const <Map<String, dynamic>>[];
-    for (final entry in entries) {
-      if (entry is CustomRecord &&
-          entry.customType == 'shell_job_registry' &&
-          entry.data is List) {
-        latest = [
-          for (final item in entry.data as List)
-            if (item is Map<String, dynamic>) item,
-        ];
-      }
-    }
+    final latest = _latestJobBoardRecords(await session.getEntries());
     if (latest.isEmpty) return;
     _jobBoard = ShellJobBoard.rehydrated(latest);
-    for (final line in _jobBoard.takeTranscriptLines(width: _hubBlockWidth)) {
+    _printBoardLines(_jobBoard.takeTranscriptLines(width: _hubBlockWidth));
+  }
+
+  /// Prints drained board lines dim - the one place board material reaches
+  /// the transcript (settle drain and rehydration alike).
+  void _printBoardLines(Iterable<String> lines) {
+    for (final line in lines) {
       io.writeln(_style.dim(line));
     }
+  }
+
+  /// The latest `shell_job_registry` records in a resumed session's entry
+  /// list (issue #429 AC9): later entries win wholesale - the board
+  /// snapshot is rewritten per mutation, never merged.
+  static List<Map<String, dynamic>> _latestJobBoardRecords(
+    List<Object> entries,
+  ) {
+    var latest = const <Map<String, dynamic>>[];
+    for (final entry in entries) {
+      if (entry is! CustomRecord) continue;
+      if (entry.customType != 'shell_job_registry') continue;
+      if (entry.data is! List) continue;
+      latest = [
+        for (final item in entry.data as List)
+          if (item is Map<String, dynamic>) item,
+      ];
+    }
+    return latest;
   }
 
   void _renderTaskBlock(TaskBlock block) {
