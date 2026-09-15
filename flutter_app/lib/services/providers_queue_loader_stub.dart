@@ -12,6 +12,9 @@ library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+/// Every platform-supported name the IO variant declares must exist here
+/// too — the editor section reads this flag for its disabled state.
+const bool appProviderQueueConfigSupported = false;
 
 /// Always unset on the web: no yaml scopes and no environment access.
 ProviderQueueResolution resolveAppProviderQueue({

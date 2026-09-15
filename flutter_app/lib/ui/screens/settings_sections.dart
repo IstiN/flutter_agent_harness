@@ -887,7 +887,7 @@ class _QueueEntryDialogState extends State<_QueueEntryDialog> {
     ];
     try {
       final parsed = parseProviderQueueJsonText(jsonEncode(json));
-      final parsedEntries = parsed?.entries ?? const [];
+      final parsedEntries = parsed.entries;
       if (parsedEntries.isEmpty) {
         setState(() => _error = context.l10n.settingsQueueInvalid('empty'));
         return;

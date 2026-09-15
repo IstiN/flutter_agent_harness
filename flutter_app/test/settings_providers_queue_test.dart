@@ -10,8 +10,6 @@
 library;
 
 import 'package:fa/l10n/app_localizations.dart';
-import 'package:fa/l10n/l10n_ext.dart';
-import 'package:fa/services/providers_queue_loader.dart';
 import 'package:fa/ui/screens/settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -22,9 +20,8 @@ ProviderQueueEntry _entry(String model, {String kind = 'openai-completions'}) =>
 
 ProviderQueueResolution _res(
   ProviderQueueScope? scope,
-  List<ProviderQueueEntry> entries, {
-  List<ProviderQueueScope> shadowed = const [],
-}) => ProviderQueueResolution(
+  List<ProviderQueueEntry> entries,
+) => ProviderQueueResolution(
   scope: scope ?? ProviderQueueScope.user,
   entries: entries,
   notices: const [],
