@@ -84,6 +84,7 @@ import '../js_ext/extension_store.dart';
 import '../js_ext/jsr_runtime.dart';
 import '../js_ext/trust.dart';
 import '../lsp/lsp_tool.dart';
+import '../mcp/mcp_client.dart';
 import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';

@@ -1052,9 +1052,8 @@ void main() {
         await run;
 
         expect(cli.config.liveCompactionEngine, CompactionEngine.structured);
-        final written = (await env.readTextFile(
-          '/work/.fah/config.yaml',
-        )).valueOrNull;
+        final written = (await env.readTextFile('/work/.fah/config.yaml'))
+            .valueOrNull;
         expect(written, isNotNull);
         // The written file parses through the REAL boot parser.
         final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
@@ -1151,9 +1150,8 @@ void main() {
       await run;
 
       expect(cli.config.liveCompactionEngine, CompactionEngine.structured);
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       expect(written, isNotNull);
       // The written file parses through the REAL boot parser.
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
@@ -1255,9 +1253,8 @@ void main() {
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/work/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/work/.fah/config.yaml'))
+          .valueOrNull;
       expect(written, isNotNull);
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
       expect(parsed.memory?.projectPath, './longterm');
@@ -1399,9 +1396,8 @@ memory:
         io.sendLine('/exit');
         await run;
 
-        final written = (await env.readTextFile(
-          '/home/u/.fah/config.yaml',
-        )).valueOrNull;
+        final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+            .valueOrNull;
         expect(written, isNotNull);
         // Surgical: everything outside the ttsr block is byte-identical.
         expect(written!, startsWith('model: test-model\nttsr:'));
@@ -1463,9 +1459,8 @@ memory:
         io.sendLine('/exit');
         await run;
 
-        final written = (await env.readTextFile(
-          '/home/u/.fah/config.yaml',
-        )).valueOrNull;
+        final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+            .valueOrNull;
         expect(written, isNotNull);
         expect(written!, contains('ttsr:'));
         // The absent block appends: memory stays first, ttsr lands last.
@@ -1503,9 +1498,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
       expect(parsed.ttsr!.rules.map((r) => r.name), ['no-secrets']);
       expect(written, endsWith('memory:\n  projectPath: ./mem\n'));
@@ -1556,9 +1550,8 @@ memory:
         cli.ttsr!.manager.rules.map((r) => r.name),
         containsAll(['boot-rule', 'no-secrets']),
       );
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
       expect(
         parsed.ttsr!.rules.singleWhere((r) => r.name == 'no-secrets').enabled,
@@ -1588,9 +1581,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
       expect(parsed.ttsr!.rules.single.enabled, isFalse);
       expect(fake.calls, 0);
@@ -1650,9 +1642,8 @@ memory:
         io.sendLine('/exit');
         await run;
 
-        final written = (await env.readTextFile(
-          '/home/u/.fah/config.yaml',
-        )).valueOrNull;
+        final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+            .valueOrNull;
         final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
         expect(parsed.ttsr!.rules.single.name, 'first');
         expect(parsed.ttsr!.settings.enabled, isTrue);
@@ -1706,9 +1697,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
       expect(
         parsed.ttsr!.rules.map((r) => r.name),
@@ -1853,9 +1843,8 @@ memory:
         await run;
 
         // The real boot parser re-reads the file.
-        final written = (await env.readTextFile(
-          '/home/u/.fah/config.yaml',
-        )).valueOrNull;
+        final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+            .valueOrNull;
         expect(written, isNotNull);
         final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
         final redact = parsed.redact!;
@@ -1950,9 +1939,8 @@ memory:
 
         expect(io.out.toString(), contains('not saved:'));
         // Byte-identical: nothing was written.
-        final written = (await env.readTextFile(
-          '/home/u/.fah/config.yaml',
-        )).valueOrNull;
+        final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+            .valueOrNull;
         expect(written, seed);
         // And the live pipeline keeps its previous config.
         expect(cli.config.redactionPipeline!.config.allowlistRegexes, isEmpty);
@@ -1976,9 +1964,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
       expect(parsed.redact!.blockMode, isTrue);
       expect(fake.calls, 0);
@@ -2088,9 +2075,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       expect(written, isNull);
       expect(fake.calls, 0);
     });
@@ -2186,9 +2172,8 @@ memory:
       await run;
 
       // The real boot parser re-reads the file.
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       expect(written, isNotNull);
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
       expect(parsed.contextWindowCap, 32768);
@@ -2214,9 +2199,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       expect(written, isNotNull);
       // The bare `agent:` would fail the strict diagnostics validator —
       // the whole one-key block is gone.
@@ -2275,9 +2259,8 @@ memory:
 
         expect(io.out.toString(), contains('not saved:'));
         // Byte-identical: nothing was written.
-        final written = (await env.readTextFile(
-          '/home/u/.fah/config.yaml',
-        )).valueOrNull;
+        final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+            .valueOrNull;
         expect(written, seed);
         expect(fake.calls, 0);
       },
@@ -2305,9 +2288,8 @@ memory:
       await run;
 
       expect(io.out.toString(), contains('not saved:'));
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       expect(written, seed);
       expect(fake.calls, 0);
     });
@@ -2357,9 +2339,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
       expect(parsed.contextWindowCap, 16384);
       expect(fake.calls, 0);
@@ -2415,9 +2396,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       expect(written, isNull);
       expect(fake.calls, 0);
     });
@@ -2434,9 +2414,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       expect(written, isNull);
       expect(fake.calls, 0);
     });
@@ -2514,9 +2493,8 @@ memory:
         io.sendLine('/exit');
         await run;
 
-        final written = (await env.readTextFile(
-          '/home/u/.fah/config.yaml',
-        )).valueOrNull;
+        final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+            .valueOrNull;
         expect(written, isNotNull);
         // Surgical: everything outside the images block is byte-identical.
         expect(
@@ -2640,9 +2618,8 @@ memory:
         io.sendLine('/exit');
         await run;
 
-        final written = (await env.readTextFile(
-          '/home/u/.fah/config.yaml',
-        )).valueOrNull;
+        final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+            .valueOrNull;
         expect(written!, startsWith('provider: openrouter\nmodel: m1\n'));
         final parsed = CliConfig.fromYaml(loadYaml(written) as YamlMap);
         expect(parsed.images!.enabled, isFalse);
@@ -2716,9 +2693,8 @@ memory:
       io.sendLine('/exit');
       await run;
 
-      final written = (await env.readTextFile(
-        '/home/u/.fah/config.yaml',
-      )).valueOrNull;
+      final written = (await env.readTextFile('/home/u/.fah/config.yaml'))
+          .valueOrNull;
       final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
       expect(parsed.images!.maxPerRequest, 9);
       expect(
