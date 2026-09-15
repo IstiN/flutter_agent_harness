@@ -71,11 +71,11 @@ allowedTools: []
       // Wait for task tool activity or the final response.
       try {
         await harness.waitForText(
-          '[task]',
+          'task ·',
           timeout: const Duration(seconds: 120),
         );
-        // The [task] marker confirms the model called the task tool.
-        expect(harness.screenText, contains('[task]'));
+        // The task row confirms the model called the task tool.
+        expect(harness.screenText, contains('task ·'));
       } on TimeoutException {
         // If the model didn't call task tool, check for any response.
         expect(
@@ -92,7 +92,7 @@ allowedTools: []
       final output = harness.rawOutput;
       expect(
         output,
-        anyOf(contains('[task]'), contains('agent://'), contains('explore')),
+        anyOf(contains('task ·'), contains('agent://'), contains('explore')),
         reason: 'Expected subagent activity in raw output',
       );
     },

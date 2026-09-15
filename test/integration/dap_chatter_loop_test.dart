@@ -258,7 +258,7 @@ Future<void> _dumpWedgeDiagnostics(
   ];
   printOnFailure(
     '[mail] total: ${mailLines.length}, '
-    'dap_dm count: ${RegExp(r'\[dap_dm\] done').allMatches(clean).length}',
+    'dap_dm count: ${RegExp('✓ dap_dm').allMatches(clean).length}',
   );
   printOnFailure('[mail] first 3:');
   for (final line in mailLines.take(3)) {

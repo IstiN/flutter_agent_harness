@@ -383,8 +383,8 @@ void main() {
 
       final output = io.out.toString();
       // The tool ran (start/end one-liners) and the job completed…
-      expect(output, contains('[task] context="repo state"'));
-      expect(output, contains('[task] done'));
+      expect(output, contains('• task · repo state'));
+      expect(output, contains('✓ task'));
       expect(output, contains('[task] Scout (task) completed'));
       expect(output, contains('agent://Scout'));
       // The child's output re-entered as a steered/re-wake async-result…
@@ -686,8 +686,8 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('[read] path="notes.txt"'));
-    expect(output, contains('[read] done'));
+    expect(output, contains('• read · notes.txt'));
+    expect(output, contains('✓ read'));
 
     final entries = await sessionEntries();
     final toolResults = entries
@@ -1109,7 +1109,7 @@ void main() {
     await run;
 
     final output = io.out.toString();
-    expect(output, contains('[read] error:'));
+    expect(output, contains('✗ read'));
     expect(output, contains('error: boom'));
     expect(cli.agent.state.model.id, 'test-model');
   });
@@ -1423,7 +1423,11 @@ void main() {
     io.sendLine('/exit');
     await run;
 
-    expect(io.out.toString(), contains('[ls] weird=[unserializable]'));
+    // The unserializable arg never crashes rendering or leaks JSON: the
+    // row degrades to the bare label (E2) and still completes.
+    expect(io.out.toString(), contains('• ls'));
+    expect(io.out.toString(), contains('✓ ls'));
+    expect(io.out.toString(), isNot(contains('unserializable')));
   });
 
   test('/compact on an empty session reports nothing to compact', () async {
@@ -1554,7 +1558,7 @@ void main() {
           .whereType<ToolResultMessage>()
           .firstWhere((m) => m.toolName == 'read');
       expect(readResult.isError, isFalse);
-      expect(io.out.toString(), contains('[rewind] done'));
+      expect(io.out.toString(), contains('✓ rewind'));
     },
   );
 
