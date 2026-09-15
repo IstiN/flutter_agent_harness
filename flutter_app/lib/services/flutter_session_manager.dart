@@ -11,6 +11,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/session_parse_factory.dart';
 import 'package:fa/services/sessions_root.dart';
+import 'package:fa/services/subagent_parent_resolver.dart';
 
 /// One managed chat session: the [AgentService] and the session id.
 final class FlutterManagedSession {
@@ -71,6 +72,7 @@ final class FlutterSessionManager extends ChangeNotifier {
     required this.sessionsRoot,
     JsonlSessionRepo? repo,
     this.maxSessionLoadBytes = defaultMaxSessionLoadBytes,
+    SubagentParentResolver? parentResolver,
   }) : _repo =
            repo ??
            // Issue #199: record parsing rides background isolates on IO
@@ -79,7 +81,8 @@ final class FlutterSessionManager extends ChangeNotifier {
              fs: env,
              sessionsRoot: sessionsRoot,
              parseExecutor: createSessionParseExecutor(),
-           );
+           ),
+       _parentResolver = parentResolver ?? SubagentParentResolver();
 
   /// The default per-session load budget (64 MiB): beyond it the session
   /// file would balloon to many times its size as Dart objects and wedge a
@@ -112,6 +115,11 @@ final class FlutterSessionManager extends ChangeNotifier {
   SessionMetadata? bootSkippedOversize;
 
   final JsonlSessionRepo _repo;
+
+  /// Re-links legacy child sessions (header `parent: ""`) to their parents
+  /// via the parent transcripts' subagent_registry records (issue #426).
+  /// Injectable so tests can pin the tail budget.
+  final SubagentParentResolver _parentResolver;
 
   final Map<String, FlutterManagedSession> _sessions = {};
   String? _activeId;
@@ -183,34 +191,47 @@ final class FlutterSessionManager extends ChangeNotifier {
     }
     try {
       final roots = allSessionRoots(sessionsRoot);
+      final listed = <SessionMetadata>[];
       if (roots.length <= 1) {
-        return await _repo.list();
-      }
-      final seen = <String>{};
-      final merged = <SessionMetadata>[];
-      for (final root in roots) {
-        try {
-          final repo = root == sessionsRoot
-              ? _repo
-              : JsonlSessionRepo(fs: env, sessionsRoot: root);
-          final list = await repo.list();
-          for (final item in list) {
-            if (seen.add(item.id)) {
-              merged.add(item);
+        listed.addAll(await _repo.list());
+      } else {
+        final seen = <String>{};
+        for (final root in roots) {
+          try {
+            final repo = root == sessionsRoot
+                ? _repo
+                : JsonlSessionRepo(fs: env, sessionsRoot: root);
+            final list = await repo.list();
+            for (final item in list) {
+              if (seen.add(item.id)) {
+                listed.add(item);
+              }
             }
+          } on Object {
+            // Secondary root list failure is non-fatal.
           }
-        } on Object {
-          // Secondary root list failure is non-fatal.
         }
+        listed.sort((a, b) {
+          final aTime = a.lastUpdatedAt ?? a.createdAt;
+          final bTime = b.lastUpdatedAt ?? b.createdAt;
+          final result = bTime.compareTo(aTime);
+          if (result != 0) return result;
+          return b.createdAt.compareTo(a.createdAt);
+        });
       }
-      merged.sort((a, b) {
-        final aTime = a.lastUpdatedAt ?? a.createdAt;
-        final bTime = b.lastUpdatedAt ?? b.createdAt;
-        final result = bTime.compareTo(aTime);
-        if (result != 0) return result;
-        return b.createdAt.compareTo(a.createdAt);
-      });
-      return merged;
+      // Issue #426: legacy child files carry `parent: ""` (both hosts
+      // pinned the subagent manager's parentSessionId before the session
+      // id existed). Re-link them from the parent transcripts'
+      // subagent_registry records — bounded + cached, so a listing with
+      // nothing to resolve costs nothing.
+      final relinked = await _parentResolver.resolve(listed);
+      if (relinked.isEmpty) return listed;
+      return [
+        for (final metadata in listed)
+          relinked.containsKey(metadata.id)
+              ? _withParentLink(metadata, relinked[metadata.id]!)
+              : metadata,
+      ];
     } on Object {
       return const [];
     }
@@ -629,4 +650,23 @@ final class FlutterSessionManager extends ChangeNotifier {
       await managed.service.waitForIdle();
     }
   }
+}
+
+/// A copy of [metadata] whose header `metadata.parent` is [parent] — the
+/// relink the sidebar's tree grouping consumes (issue #426). Every other
+/// header field is carried over unchanged.
+SessionMetadata _withParentLink(SessionMetadata metadata, String parent) {
+  return SessionMetadata(
+    id: metadata.id,
+    createdAt: metadata.createdAt,
+    cwd: metadata.cwd,
+    path: metadata.path,
+    lastUpdatedAt: metadata.lastUpdatedAt,
+    parentSessionPath: metadata.parentSessionPath,
+    sizeBytes: metadata.sizeBytes,
+    metadata: {
+      ...?metadata.metadata,
+      'parent': parent,
+    },
+  );
 }
