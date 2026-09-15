@@ -1422,6 +1422,8 @@ extension SettingsFlow on AgentCli {
   Map<String, Future<void> Function()> get _settingsPickerHandlers => {
     'provider': () async => _openProviderPicker(),
     'model': startChatModelFlow,
+    'approval': () async => _openApprovalPicker(),
+    'mode': () async => _openModePicker(),
     'model-edit': () => _handleModelEdit(''),
     'media': startMediaSlotFlow,
     'agent-models': startAgentModelFlow,
