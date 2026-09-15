@@ -753,8 +753,8 @@ extension SettingsFlow on AgentCli {
       _ => _redactionConfig.toolDeny.length,
     };
     final answer = await _askLine(
-      "$label, comma-separated ('-' clears; empty keeps '$current "
-      "entrie(s)'): ",
+      "$label, comma-separated ('-' clears; empty keeps the current "
+      "$current): ",
     );
     if (answer == null) return;
     final value = answer.trim();
