@@ -8,6 +8,30 @@
 // extensions cannot add fields.
 part of 'fa_tui.dart';
 
+/// Busy-row fixed cells (issue #365): the row used to reflow on every
+/// power-of-ten second (digit growth) and on the 180 s quiet-threshold
+/// crossing, so everything right of the timer jumped horizontally each
+/// tick. Overlong labels (long MCP tool names, compaction tails running
+/// counters) ellipsize inside the zone instead of pushing the timer.
+const _busyLabelCells = 24;
+
+/// The elapsed field always fits six cells: `0s`…`3599s`, then
+/// `1h00m`…`99h59m`, then the `99h+` cap — the layout never reflows.
+const _busyElapsedCells = 6;
+
+/// Formats busy-row elapsed seconds as a fixed-cell field: the value
+/// never exceeds [_busyElapsedCells] cells (the caller right-aligns it).
+String _formatBusyElapsed(int seconds) {
+  if (seconds < 1) return '0s';
+  if (seconds < 3600) return '${seconds}s';
+  final hours = seconds ~/ 3600;
+  // ponytail: stable cells beat honest digits past 99 h — a four-day
+  // watch freezes the field instead of reflowing it once more.
+  if (hours > 99) return '99h+';
+  final minutes = (seconds % 3600) ~/ 60;
+  return '${hours}h${minutes.toString().padLeft(2, '0')}m';
+}
+
 extension _TuiRowRenderers on FaTuiModel {
   /// The visible window of menu items, with the scroll-more hint rows when
   /// the list overflows above or below. Every item row registers a
@@ -73,6 +97,50 @@ extension _TuiRowRenderers on FaTuiModel {
     }
     final text = _fitWidth(full, termWidth - 2);
     return selected ? '$prefix${_accent(text)}' : '$prefix$text';
+  }
+
+  /// The busy indicator line (one row): spinner + label + honesty
+  /// suffixes in FIXED cells (issue #365). The label zone and the elapsed
+  /// field hold a constant cell count, so digit growth at a power-of-ten
+  /// second, the 180 s quiet-threshold crossing and a mid-run phase swap
+  /// never reflow the row — nothing right of a changing cell moves. The
+  /// suffixes render provenance-first (a zone that appears or grows must
+  /// never sit left of a stable one), and the row is fitted AND padded to
+  /// the terminal width like the status row: stale tails are overwritten
+  /// and the cursor parks at a stable column.
+  String _busyRowLine() {
+    if (menuOpen && menuModelMode) {
+      // An interactive host picker is open: the run is blocked on the
+      // user's choice, not working.
+      return _dim(tuiPadRight('waiting for your selection…', termWidth));
+    }
+    final frame = _spinnerFrames[spinnerFrame % _spinnerFrames.length];
+    final elapsedSeconds = busyStartedAtMs < 0
+        ? 0
+        : ((DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) / 1000)
+              .floor();
+    final label = busyPhase.isEmpty ? 'Working…' : busyPhase;
+    final quietSeconds = busyLastEventMs < 0
+        ? 0
+        : ((DateTime.now().millisecondsSinceEpoch - busyLastEventMs) / 1000)
+              .floor();
+    final suffix = [
+      if (busySource.isNotEmpty) '· $busySource',
+      if (quietSeconds >= 180) '· quiet ${quietSeconds ~/ 60}m',
+    ].join(' ');
+    final labelCell = tuiPadRight(
+      tuiFitWidth(label, _busyLabelCells),
+      _busyLabelCells,
+    );
+    final elapsedCell = _formatBusyElapsed(
+      elapsedSeconds,
+    ).padLeft(_busyElapsedCells);
+    final plain =
+        '$frame $labelCell $elapsedCell${suffix.isEmpty ? '' : ' $suffix'}';
+    final padded = tuiPadRight(tuiFitWidth(plain, termWidth), termWidth);
+    if (padded.length <= frame.length + 1) return _dim(padded);
+    return '${_accent2Plain(frame)} '
+        '${_dim(padded.substring(frame.length + 1))}';
   }
 
   int _writeBusyAndQueue(StringBuffer b, int baseRow) {
