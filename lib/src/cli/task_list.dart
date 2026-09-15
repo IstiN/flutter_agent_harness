@@ -11,6 +11,7 @@ List<String> taskJobLines(
   List<TaskJob> jobs, {
   required String Function(String) dim,
   Map<String, String> supersedesOf = const {},
+  Map<String, String> pressureNotes = const {},
 }) {
   // Only fold a job when its successor is ALSO listed: /tasks lists
   // background jobs only, and hiding a row whose successor never shows up
@@ -24,7 +25,12 @@ List<String> taskJobLines(
     'background agents:',
     for (final job in jobs)
       if (!superseded.contains(job.id))
-        taskJobLine(job, dim: dim, supersedesOf: supersedesOf),
+        taskJobLine(
+          job,
+          dim: dim,
+          supersedesOf: supersedesOf,
+          pressureNote: pressureNotes[job.id],
+        ),
   ];
 }
 
@@ -35,6 +41,7 @@ String taskJobLine(
   TaskJob job, {
   required String Function(String) dim,
   Map<String, String> supersedesOf = const {},
+  String? pressureNote,
 }) {
   final marker = switch (job.status) {
     TaskJobStatus.queued => '○',
@@ -59,6 +66,7 @@ String taskJobLine(
   final supersedesNote = chain.isEmpty
       ? ''
       : ' · supersedes ${chain.join(' ← ')}';
+  final pressure = pressureNote == null ? '' : ' · $pressureNote';
   return '  $marker ${job.id} (${job.agent}) ${job.status.name}$elapsed — '
-      '$task$supersedesNote  ${dim('agent://${job.id}')}';
+      '$task$supersedesNote$pressure  ${dim('agent://${job.id}')}';
 }

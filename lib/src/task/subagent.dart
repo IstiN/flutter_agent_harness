@@ -126,6 +126,39 @@ final class SubagentHandle {
   /// [liveTokens]).
   int liveRequests = 0;
 
+  /// Last-known context pressure of the child (issue #439): the executor
+  /// stamps the estimated request tokens and the effective window at every
+  /// turn boundary, so `task_status` can surface the wall before it is
+  /// hit. Null until the child's first turn.
+  int? estTokens;
+
+  /// The window [estTokens] was measured against (see [estTokens]).
+  int? windowTokens;
+
+  /// Completed proactive compactions (issue #439).
+  int compactions = 0;
+
+  /// Tokens freed by the most recent compaction (see [compactions]).
+  int lastCompactionFreed = 0;
+
+  /// When the most recent compaction ran (ISO 8601), or null.
+  String? lastCompactionAt;
+
+  /// `~NN%` context pressure for status lines, or null when unknown.
+  String? get contextPressureText {
+    final est = estTokens;
+    final window = windowTokens;
+    if (est == null || window == null || window <= 0) return null;
+    return '~${(est * 100 / window).round()}% ctx';
+  }
+
+  /// One-line last-compaction summary, or null when never compacted.
+  String? get lastCompactionText {
+    if (compactions == 0) return null;
+    return 'freed ${lastCompactionFreed}t · $compactions total'
+        '${lastCompactionAt == null ? '' : ' · $lastCompactionAt'}';
+  }
+
   /// The model id used for this child.
   String? modelId;
 
@@ -173,6 +206,11 @@ final class SubagentHandle {
     'lastReply': lastReply,
     'liveTokens': liveTokens,
     'liveRequests': liveRequests,
+    if (estTokens != null) 'estTokens': estTokens,
+    if (windowTokens != null) 'windowTokens': windowTokens,
+    'compactions': compactions,
+    'lastCompactionFreed': lastCompactionFreed,
+    'lastCompactionAt': lastCompactionAt,
     if (supersedes != null) 'supersedes': supersedes,
     'pendingMessages': [for (final m in pendingMessages) m.toJson()],
   };
@@ -198,6 +236,11 @@ final class SubagentHandle {
     handle.modelId = json['modelId'] as String?;
     handle.liveTokens = json['liveTokens'] as int? ?? 0;
     handle.liveRequests = json['liveRequests'] as int? ?? 0;
+    handle.estTokens = json['estTokens'] as int?;
+    handle.windowTokens = json['windowTokens'] as int?;
+    handle.compactions = json['compactions'] as int? ?? 0;
+    handle.lastCompactionFreed = json['lastCompactionFreed'] as int? ?? 0;
+    handle.lastCompactionAt = json['lastCompactionAt'] as String?;
     handle.lastReply = json['lastReply'] as String?;
     handle.supersedes = json['supersedes'] as String?;
     for (final entry
@@ -226,6 +269,8 @@ final class SubagentHandle {
         parts.add('🛑 aborted');
     }
     if (tokens > 0) parts.add('${tokens}t');
+    final pressure = contextPressureText;
+    if (pressure != null) parts.add(pressure);
     if (modelId != null) parts.add(modelId!);
     return parts.join(' · ');
   }
