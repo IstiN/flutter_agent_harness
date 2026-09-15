@@ -210,6 +210,7 @@ TrajectoryCompactedRecord projectCompactedRecord({
   required String summary,
   String? firstKeptEntryId,
   DateTime? previousTime,
+  List<String>? hiddenRecordIds,
 }) {
   return TrajectoryCompactedRecord(
     index: index,
@@ -219,6 +220,7 @@ TrajectoryCompactedRecord projectCompactedRecord({
     firstKeptEntryId: firstKeptEntryId,
     timeSeconds: trajectoryDurationSeconds(record.timestamp, previousTime),
     startedAt: record.timestamp,
+    hiddenRecordIds: hiddenRecordIds,
   );
 }
 
@@ -232,4 +234,80 @@ TrajectoryCompactedRecord projectCompactedRecord({
     isError: result.isError,
     timeSeconds: trajectoryDurationSeconds(result.timestamp, callTime),
   );
+}
+
+/// One drill-in row of a hidden range (issue #385 F4): a bounded preview
+/// of a record the compaction evicted from the context but the session
+/// file still holds.
+final class TrajectoryHiddenRecordPreview {
+  /// Creates a preview row.
+  const TrajectoryHiddenRecordPreview({
+    required this.id,
+    required this.type,
+    required this.preview,
+    this.timestamp,
+  });
+
+  /// The covered record's id.
+  final String id;
+
+  /// The record's durable type label (message, tool, system, …).
+  final String type;
+
+  /// Bounded text preview; `[hidden: unparseable record]` for records
+  /// with no text payload — never fabricated content.
+  final String preview;
+
+  /// The record's wall-clock time, when known.
+  final DateTime? timestamp;
+}
+
+/// Character bound of a hidden-record preview.
+const int hiddenRecordPreviewChars = 200;
+
+/// Maximum drill-in rows served for one hidden range (E4: an open tail
+/// range and a giant range both resolve bounded).
+const int hiddenRecordPreviewLimit = 500;
+
+/// Builds the bounded drill-in previews for the records a hidden range
+/// covers, in the order the caller supplies (chain order when the caller
+/// read the file). Records that resolved to nothing render as explicit
+/// `[hidden: not captured for this session]` placeholders (E6) — never
+/// fake content.
+List<TrajectoryHiddenRecordPreview> projectHiddenRecordPreviews({
+  required List<String> recordIds,
+  required Map<String, SessionRecord> resolved,
+}) {
+  return [
+    for (final id in recordIds.take(hiddenRecordPreviewLimit))
+      () {
+        final record = resolved[id];
+        if (record == null) {
+          return TrajectoryHiddenRecordPreview(
+            id: id,
+            type: 'missing',
+            preview: '[hidden: not captured for this session]',
+          );
+        }
+        final text = switch (record) {
+          MessageRecord(:final message) => switch (message) {
+            UserMessage(:final content) => textPayloadOf(content),
+            AssistantMessage(:final content) => textPayloadOf(content),
+            ToolResultMessage(:final content) => textPayloadOf(content),
+            _ => '',
+          },
+          _ => '',
+        };
+        return TrajectoryHiddenRecordPreview(
+          id: id,
+          type: record.runtimeType.toString(),
+          preview: text.isEmpty
+              ? '[hidden: unparseable record]'
+              : (text.length <= hiddenRecordPreviewChars
+                    ? text
+                    : '${text.substring(0, hiddenRecordPreviewChars)}…'),
+          timestamp: record.timestamp,
+        );
+      }(),
+  ];
 }

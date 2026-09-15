@@ -296,9 +296,18 @@ void main() {
         final metadata = (await repo.list()).single;
         final session = await repo.open(metadata);
         final entries = await session.getEntries();
-        final summaries = entries.whereType<CustomRecord>().toList();
+        final summaries = entries
+            .whereType<CustomRecord>()
+            .where((r) => r.customType == 'model_request_summary')
+            .toList();
         expect(summaries, hasLength(1));
-        expect(summaries.single.customType, 'model_request_summary');
+        // Issue #385 F1: the unseen prompt version lands as its own
+        // content-addressed blob record beside the summary.
+        final blobs = entries
+            .whereType<CustomRecord>()
+            .where((r) => r.customType == 'trajectory_prompt_blob')
+            .toList();
+        expect(blobs, hasLength(1));
 
         // Ordering: the summary sits on the chain before the assistant
         // message record it produced (the replay walk expects that).
@@ -347,46 +356,50 @@ void main() {
       expect(service.messages[1].role, 'assistant');
     });
 
-    test('cap drops surface in the app log, never silent (issue #195 F4)',
-        () async {
-      final env = MemoryExecutionEnv();
-      final service = AgentService(
-        agent: _createAgent(_singleTextResponse('ok')),
-        env: env,
-        sessionsRoot: '/sessions',
-      );
-      AppLog.reset();
-      await service.initialize();
+    test(
+      'cap drops surface in the app log, never silent (issue #195 F4)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_singleTextResponse('ok')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        AppLog.reset();
+        await service.initialize();
 
-      // The service owns the process-wide drop notice now: a drop must
-      // reach the debug log the user can copy, like the CLI's dim line.
-      expect(imageDropNotice, isNotNull);
-      imageDropNotice!(7, 'a1b2c3d4');
-      expect(AppLog.dump(), contains('[Image 7]'));
-      expect(AppLog.dump(), contains('a1b2c3d4'));
-    });
+        // The service owns the process-wide drop notice now: a drop must
+        // reach the debug log the user can copy, like the CLI's dim line.
+        expect(imageDropNotice, isNotNull);
+        imageDropNotice!(7, 'a1b2c3d4');
+        expect(AppLog.dump(), contains('[Image 7]'));
+        expect(AppLog.dump(), contains('a1b2c3d4'));
+      },
+    );
 
-    test('cap drops log on the production create() path too (issue #195 F4)',
-        () async {
-      AppLog.reset();
-      final service = await AgentService.create(
-        config: AgentConfig(
-          providerKind: 'openai-completions',
-          modelId: 'test-model',
-          baseUrl: 'https://example.test',
-          apiKey: 'test-key',
-        ),
-        env: MemoryExecutionEnv(cwd: '/'),
-        streamFunction: _singleTextResponse('ok'),
-      );
-      addTearDown(service.dispose);
+    test(
+      'cap drops log on the production create() path too (issue #195 F4)',
+      () async {
+        AppLog.reset();
+        final service = await AgentService.create(
+          config: AgentConfig(
+            providerKind: 'openai-completions',
+            modelId: 'test-model',
+            baseUrl: 'https://example.test',
+            apiKey: 'test-key',
+          ),
+          env: MemoryExecutionEnv(cwd: '/'),
+          streamFunction: _singleTextResponse('ok'),
+        );
+        addTearDown(service.dispose);
 
-      // The config-built constructor is what the real app boots through;
-      // its drop notice must be armed as well.
-      expect(imageDropNotice, isNotNull);
-      imageDropNotice!(3, 'deadbeef');
-      expect(AppLog.dump(), contains('[Image 3]'));
-    });
+        // The config-built constructor is what the real app boots through;
+        // its drop notice must be armed as well.
+        expect(imageDropNotice, isNotNull);
+        imageDropNotice!(3, 'deadbeef');
+        expect(AppLog.dump(), contains('[Image 3]'));
+      },
+    );
 
     test('error event surfaces error text', () async {
       final env = MemoryExecutionEnv();

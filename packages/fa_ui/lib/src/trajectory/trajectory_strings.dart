@@ -114,6 +114,12 @@ abstract class TrajectoryStrings {
   String get tabSystemPrompt;
   String get tabTools;
   String get tabUsage;
+  String get tabHiddenRecords;
+
+  String toolManifestChanged(int added, int removed);
+  String get hiddenRecordsLoading;
+  String get hiddenRecordsUnavailable;
+  String hiddenRecordsCount(int count);
 
   String get recordToolCallOnly;
   String get recordNoContent;
@@ -175,6 +181,13 @@ abstract class TrajectoryStrings {
   String statsDuration(String value);
   String statsTokensIn(String value);
   String statsTokensOut(String value);
+
+  /// The header pill naming unknown ledger records (issue #385 AC7).
+  String statsUnknown(int count);
+
+  /// Request-tab blob pointer rows (issue #385 F1/F2).
+  String get requestPromptHash;
+  String get requestManifestHash;
   String searchMatchPosition(int current, int total);
   String get searchPreviousMatch;
   String get searchNextMatch;
@@ -372,6 +385,18 @@ class TrajectoryStringsEn extends TrajectoryStrings {
   String get tabTools => 'Tools';
   @override
   String get tabUsage => 'Usage';
+  @override
+  String get tabHiddenRecords => 'Hidden Records';
+  @override
+  String toolManifestChanged(int added, int removed) =>
+      'Changed vs previous version: +$added −$removed tools';
+  @override
+  String get hiddenRecordsLoading => 'Resolving hidden records…';
+  @override
+  String get hiddenRecordsUnavailable =>
+      'Hidden records could not be read from this session file';
+  @override
+  String hiddenRecordsCount(int count) => '$count hidden records';
 
   @override
   String get recordToolCallOnly => '(tool call only)';
@@ -488,7 +513,17 @@ class TrajectoryStringsEn extends TrajectoryStrings {
   @override
   String statsTokensIn(String value) => 'In $value';
   @override
+  @override
   String statsTokensOut(String value) => 'Out $value';
+
+  @override
+  String statsUnknown(int count) => 'Unknown $count';
+
+  @override
+  String get requestPromptHash => 'System prompt hash';
+
+  @override
+  String get requestManifestHash => 'Tool manifest hash';
   @override
   String searchMatchPosition(int current, int total) => '$current of $total';
   @override
@@ -718,6 +753,18 @@ class TrajectoryStringsRu extends TrajectoryStrings {
   String get tabTools => 'Инструменты';
   @override
   String get tabUsage => 'Использование';
+  @override
+  String get tabHiddenRecords => 'Скрытые записи';
+  @override
+  String toolManifestChanged(int added, int removed) =>
+      'Отличия от предыдущей версии: +$added −$removed инструментов';
+  @override
+  String get hiddenRecordsLoading => 'Чтение скрытых записей…';
+  @override
+  String get hiddenRecordsUnavailable =>
+      'Скрытые записи недоступны в этом файле сессии';
+  @override
+  String hiddenRecordsCount(int count) => 'Скрытых записей: $count';
 
   @override
   String get recordToolCallOnly => '(только вызов инструмента)';
@@ -863,7 +910,17 @@ class TrajectoryStringsRu extends TrajectoryStrings {
   @override
   String statsTokensIn(String value) => 'Ввод $value';
   @override
+  @override
   String statsTokensOut(String value) => 'Вывод $value';
+
+  @override
+  String statsUnknown(int count) => 'Неизвестные $count';
+
+  @override
+  String get requestPromptHash => 'Хеш системного промпта';
+
+  @override
+  String get requestManifestHash => 'Хеш манифеста инструментов';
   @override
   String searchMatchPosition(int current, int total) => '$current из $total';
   @override

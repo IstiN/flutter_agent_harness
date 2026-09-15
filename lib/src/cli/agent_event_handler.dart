@@ -1,5 +1,4 @@
 import '../agent/agent_loop.dart';
-import '../trajectory/trajectory_record.dart' show TrajectoryRequestDetail;
 import '../types.dart';
 
 /// Routes an [AgentEvent] to the appropriate UI callback.
@@ -20,7 +19,7 @@ Future<void> handleAgentEvent(
   })
   onToolExecutionEnd,
   required void Function(AssistantMessage message) onTurnEnd,
-  Future<void> Function(TrajectoryRequestDetail detail)? onModelRequest,
+  Future<void> Function(ModelRequestEvent event)? onModelRequest,
 }) async {
   switch (event) {
     case MessageStartEvent(:final message) || MessageEndEvent(:final message):
@@ -33,8 +32,8 @@ Future<void> handleAgentEvent(
       onToolExecutionEnd(toolName, result, isError: isError);
     case TurnEndEvent(:final message):
       onTurnEnd(message);
-    case ModelRequestEvent(:final detail):
-      await onModelRequest?.call(detail);
+    case ModelRequestEvent():
+      await onModelRequest?.call(event);
     default:
   }
 }

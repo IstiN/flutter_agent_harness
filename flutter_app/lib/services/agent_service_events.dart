@@ -113,8 +113,8 @@ extension AgentServiceEvents on AgentService {
         }
         _pushLiveActivityStatus();
         _notify();
-      case ModelRequestEvent(:final detail):
-        _persistModelRequest(detail);
+      case ModelRequestEvent():
+        _persistModelRequest(event);
       case AgentEndEvent():
         _idleWatchdog?.cancel();
         isStreaming = false;
@@ -181,12 +181,19 @@ extension AgentServiceEvents on AgentService {
     return text.isEmpty ? null : text;
   }
 
-  /// Buffers the outbound-request summary for the next persist pass. The
+  /// Buffers the outbound-request capture for the next persist pass. The
   /// pass serializes through the same writer as message appends and flushes
-  /// summaries right before their assistant message, so the CustomRecord
+  /// records right before their assistant message, so the request summary
   /// stays ahead of it on the record chain (the replay walk expects that).
-  void _persistModelRequest(TrajectoryRequestDetail detail) {
-    _pendingRequestSummaries.add(detail);
+  void _persistModelRequest(ModelRequestEvent event) {
+    _pendingRequestRecords.addAll(
+      _trajectoryBlobPersisterFor().recordsFor(
+        event.detail,
+        promptBlob: event.promptBlob,
+        manifestBlob: event.manifestBlob,
+        rawWireDump: event.rawWireDump,
+      ),
+    );
   }
 
   void _appendAssistantDelta(String delta) {

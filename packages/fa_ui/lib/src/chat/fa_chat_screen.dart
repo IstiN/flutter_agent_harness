@@ -314,7 +314,9 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// service's snapshot stream) on first use.
   TrajectoryController get _trajectory {
     if (_trajectoryController == null) {
-      _trajectoryController = TrajectoryController();
+      final controller = TrajectoryController();
+      controller.resolveHiddenRecords = widget.service.resolveHiddenRecords;
+      _trajectoryController = controller;
       _trajectorySubscription = widget.service.trajectory.listen(
         _onTrajectorySnapshot,
       );

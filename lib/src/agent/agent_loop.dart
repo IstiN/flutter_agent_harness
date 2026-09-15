@@ -44,6 +44,7 @@ import '../exceptions.dart';
 import '../model.dart';
 import '../types.dart';
 import '../trajectory/event_projection.dart' show textPayloadOf;
+import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
 import 'image_registry.dart';
@@ -382,6 +383,7 @@ final class AgentLoopConfig {
     this.maxEmptyRetries = 1,
     this.maxSteeringTurns = 20,
     this.contextWindowCap,
+    this.wireDump = false,
   });
 
   /// The model to call each turn.
@@ -446,6 +448,12 @@ final class AgentLoopConfig {
   /// uncapped: the raw model window, byte-identical to the pre-cap loop.
   final int? contextWindowCap;
 
+  /// Opt-in raw wire-dump capture (issue #385 F5). When true, every
+  /// [ModelRequestEvent] carries `rawWireDump` — the serialized outbound
+  /// request JSON BEFORE provider shaping; hosts redact through their
+  /// active pipeline and cap before persisting. Default: false.
+  final bool wireDump;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -462,6 +470,7 @@ final class AgentLoopConfig {
       maxEmptyRetries: maxEmptyRetries,
       maxSteeringTurns: maxSteeringTurns,
       contextWindowCap: contextWindowCap,
+      wireDump: wireDump,
     );
   }
 }
@@ -584,10 +593,29 @@ final class ToolExecutionStartEvent extends AgentEvent {
 /// produces, and hosts persist it (a hidden `model_request_summary`
 /// record) so replayed sessions keep the same Request tab data.
 final class ModelRequestEvent extends AgentEvent {
-  const ModelRequestEvent({required this.detail});
+  const ModelRequestEvent({
+    required this.detail,
+    this.promptBlob,
+    this.manifestBlob,
+    this.rawWireDump,
+  });
 
   /// Cheap summary of the outbound request payload.
   final TrajectoryRequestDetail detail;
+
+  /// The full system prompt sent with this request (issue #385 F1), for
+  /// hosts to persist once per content hash. Null when the request had no
+  /// system prompt.
+  final TrajectoryPromptBlob? promptBlob;
+
+  /// The complete tool manifest (names, descriptions, schemas — F2), for
+  /// hosts to persist once per content hash. Null when no tools were sent.
+  final TrajectoryToolManifestBlob? manifestBlob;
+
+  /// The RAW serialized outbound request JSON (F5), only when
+  /// [AgentLoopConfig.wireDump] is on. Hosts MUST redact (secrets live in
+  /// plaintext inside) and cap before persisting.
+  final String? rawWireDump;
 }
 
 /// Emitted when the outbound request context needed tool-pairing surgery
@@ -1192,7 +1220,7 @@ Future<AssistantMessage> _streamAssistantResponse(
         tools: requestContext.tools ?? const [],
       );
       if (tokens > window) {
-      return _finishWithoutStream(
+        return _finishWithoutStream(
           context,
           emit,
           _terminalMessage(
@@ -1208,9 +1236,9 @@ Future<AssistantMessage> _streamAssistantResponse(
       }
     }
 
-    await emit(ModelRequestEvent(detail: _summarizeRequest(requestContext)));
-
     AssistantMessageEventStream response;
+
+    await emit(_captureRequest(config, requestContext));
     try {
       response = streamFunction(
         config.model,
@@ -1321,27 +1349,71 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   return (requestContext, repaired.report);
 }
 
-/// Builds the cheap outbound-request summary emitted with
-/// [ModelRequestEvent]: message count/sizes, tool names, and bounded text
-/// previews. Sizes are JSON-serialized lengths so tool-call arguments count
-/// like text does.
-TrajectoryRequestDetail _summarizeRequest(Context context) {
+/// Builds the outbound-request capture emitted with [ModelRequestEvent]
+/// (issue #385): the cheap summary (message count/sizes, tool names,
+/// bounded previews), the per-message block structure (F3), the full
+/// system-prompt blob (F1), the complete tool-manifest blob (F2), and —
+/// when [config.wireDump] is on — the RAW serialized request payload (F5;
+/// hosts redact and cap before persisting).
+ModelRequestEvent _captureRequest(AgentLoopConfig config, Context context) {
   final messages = [
     for (final message in context.messages)
       TrajectoryRequestMessageSummary(
         role: message.role,
-        chars: jsonEncode(message.toJson()).length,
+        // Unserializable arguments degrade to the placeholder instead of
+        // throwing mid-loop (issue #385 E3: never a crash).
+        chars: _safeJsonEncode(message.toJson()).length,
         preview: _requestPreview(message),
+        blocks: _requestBlocksOf(message),
       ),
   ];
   final tools = context.tools ?? const <Tool>[];
-  return TrajectoryRequestDetail(
-    messageCount: messages.length,
-    systemPromptChars: context.systemPrompt?.length ?? 0,
-    toolCount: tools.length,
-    toolNames: [for (final tool in tools) tool.name],
-    messages: messages,
+  final prompt = context.systemPrompt;
+  final promptBlob = prompt == null || prompt.isEmpty
+      ? null
+      : TrajectoryPromptBlob.of(prompt);
+  final manifestBlob = tools.isEmpty
+      ? null
+      : TrajectoryToolManifestBlob.of(tools);
+  return ModelRequestEvent(
+    detail: TrajectoryRequestDetail(
+      messageCount: messages.length,
+      systemPromptChars: prompt?.length ?? 0,
+      toolCount: tools.length,
+      toolNames: [for (final tool in tools) tool.name],
+      messages: messages,
+      systemPromptHash: promptBlob?.hash,
+      toolManifestHash: manifestBlob?.hash,
+    ),
+    promptBlob: promptBlob,
+    manifestBlob: manifestBlob,
+    rawWireDump: config.wireDump ? trajectoryWireDumpPayload(context) : null,
   );
+}
+
+/// Block structure of one outbound request message (F3): bounded full
+/// texts and `[image WxH]` markers per content block, in request order.
+List<TrajectoryRequestMessageBlock> _requestBlocksOf(Message message) {
+  final List<ContentBlock> blocks = switch (message) {
+    UserMessage(:final content) =>
+      content is String
+          ? [TextContent(text: content)]
+          : List<ContentBlock>.of(content as List<ContentBlock>),
+    AssistantMessage(:final content) => content,
+    ToolResultMessage(:final content) => content,
+    _ => const <ContentBlock>[],
+  };
+  return trajectoryRequestBlocks(blocks);
+}
+
+/// [jsonEncode] that never throws (cyclic/unserializable values degrade
+/// to a placeholder).
+String _safeJsonEncode(Object? value) {
+  try {
+    return jsonEncode(value);
+  } catch (_) {
+    return '[unserializable]';
+  }
 }
 
 /// Bounded plain-text preview of a request message
