@@ -14,6 +14,14 @@ class FakeChatService extends ChangeNotifier implements FaChatService {
 
   @override
   Stream<TrajectorySnapshot> get trajectory => feed.stream;
+
+  /// Settable hidden-range resolver (issue #385 F4) — tests assign this
+  /// to exercise the drill-in tab; null hides it.
+  @override
+  Future<List<TrajectoryHiddenRecordPreview>> Function(
+    TrajectoryCompactedRecord record,
+  )?
+  resolveHiddenRecords;
   @override
   List<FaChatMessage> get messages => const [];
   @override

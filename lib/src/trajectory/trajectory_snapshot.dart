@@ -10,6 +10,7 @@ import 'dart:collection';
 
 import '../types.dart';
 
+import 'trajectory_blobs.dart';
 import 'trajectory_record.dart';
 
 /// What a captured provider request was issued for.
@@ -137,6 +138,8 @@ final class TrajectorySnapshot {
     required this.runningCalls,
     required this.recordLocations,
     required this.revision,
+    this.blobs = const TrajectoryBlobTable(),
+    this.unknownRecordCount = 0,
   });
 
   /// Empty snapshot with [revision] `0`, used before any record is appended.
@@ -170,4 +173,13 @@ final class TrajectorySnapshot {
 
   /// Monotonic version of this snapshot; grows by one per builder append.
   final int revision;
+
+  /// Content-addressed blobs behind the request drill-in (issue #385):
+  /// system-prompt texts, tool manifests, and opt-in wire dumps. Empty
+  /// for old sessions — renderers degrade to counts honestly (E6).
+  final TrajectoryBlobTable blobs;
+
+  /// How many record kinds the builder did not know rendered as
+  /// `unknown record` context rows (F6: the ledger is provably lossless).
+  final int unknownRecordCount;
 }

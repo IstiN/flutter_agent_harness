@@ -243,7 +243,6 @@ class ThrottledTrajectorySearchIndex {
   /// Invoked after a trailing flush landed a parked index update.
   final void Function()? onFlushed;
 
-
   final TrajectorySearchIndex _index = TrajectorySearchIndex();
   Timer? _timer;
   List<List<TrajectoryTurnModel>>? _pending;

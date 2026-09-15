@@ -1002,6 +1002,103 @@ memory:
     );
   });
 
+  group('trajectory section (issue #385)', () {
+    late Directory tmp;
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-trajectory-config-');
+    });
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+    test('wireDump: true parses through the user config', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n  wireDump: true\n');
+      expect(loadCliConfig(tmp.path).wireDump, isTrue);
+      file.writeAsStringSync('trajectory:\n  wireDump: false\n');
+      expect(loadCliConfig(tmp.path).wireDump, isFalse);
+    });
+
+    test('an empty section defaults wireDump to false', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n');
+      expect(loadCliConfig(tmp.path).wireDump, isFalse);
+    });
+
+    test('rejects unknown trajectory keys', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n  bogus: 1\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown "trajectory" key'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a non-boolean wireDump', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory:\n  wireDump: "yes"\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('"trajectory.wireDump" must be a boolean'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a non-map trajectory section', () {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('trajectory: 42\n');
+      expect(
+        () => loadCliConfig(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('trajectory must be a map'),
+          ),
+        ),
+      );
+    });
+
+    test('loadProjectWireDump: absent file, section, and value cases', () {
+      final missing = Directory.systemTemp.createTempSync('fah-proj');
+      expect(loadProjectWireDump(missing.path), isNull);
+      missing.deleteSync(recursive: true);
+
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync('other:\n  key: 1\n');
+      expect(loadProjectWireDump(tmp.path), isNull);
+
+      file.writeAsStringSync('trajectory:\n  wireDump: true\n');
+      expect(loadProjectWireDump(tmp.path), isTrue);
+
+      file.writeAsStringSync('trajectory:\n  wireDump: bogus\n');
+      expect(
+        () => loadProjectWireDump(tmp.path),
+        throwsA(isA<ConfigException>()),
+      );
+
+      // A scalar document is not a config map: treated as absent.
+      file.writeAsStringSync('just-a-string\n');
+      expect(loadProjectWireDump(tmp.path), isNull);
+    });
+  });
+
   group('startup cube precedence', () {
     const project = CubeSettings(configPath: '.fah/cubes/dev.yaml');
     const user = CubeSettings(configPath: '.fah/cubes/user.yaml');

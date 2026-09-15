@@ -582,49 +582,44 @@ void main() {
       controller.dispose();
     });
 
-
     // Runs only on the macOS platform variant (meta-style shortcut).
-    testWidgets(
-      'cmd+C sends the selection to the clipboard on macOS',
-      (tester) async {
-        final clipboard = <String>[];
-        _mockClipboard(tester, clipboard);
-        final controller = tableFixtureController();
-        await tester.pumpWidget(_host(controller));
-        await tester.pumpAndSettle();
+    testWidgets('cmd+C sends the selection to the clipboard on macOS', (
+      tester,
+    ) async {
+      final clipboard = <String>[];
+      _mockClipboard(tester, clipboard);
+      final controller = tableFixtureController();
+      await tester.pumpWidget(_host(controller));
+      await tester.pumpAndSettle();
 
-        final regionFocus = tester
-            .widgetList<Focus>(
-              find.descendant(
-                of: find.byType(SelectableRegion),
-                matching: find.byWidgetPredicate(
-                  (widget) => widget is Focus && widget.focusNode != null,
-                ),
+      final regionFocus = tester
+          .widgetList<Focus>(
+            find.descendant(
+              of: find.byType(SelectableRegion),
+              matching: find.byWidgetPredicate(
+                (widget) => widget is Focus && widget.focusNode != null,
               ),
-            )
-            .first;
-        regionFocus.focusNode!.requestFocus();
-        tester
-            .state<SelectableRegionState>(find.byType(SelectableRegion))
-            .selectAll(SelectionChangedCause.toolbar);
-        await tester.pump();
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-        await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
-        await tester.pump();
+            ),
+          )
+          .first;
+      regionFocus.focusNode!.requestFocus();
+      tester
+          .state<SelectableRegionState>(find.byType(SelectableRegion))
+          .selectAll(SelectionChangedCause.toolbar);
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
 
-        expect(clipboard, hasLength(1));
-        expect(clipboard.single, contains('Run the deployment'));
-        controller.dispose();
-      },
-      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
-    );
+      expect(clipboard, hasLength(1));
+      expect(clipboard.single, contains('Run the deployment'));
+      controller.dispose();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
   });
 
   group('timeline focus reveal (P2-1)', () {
-    testWidgets('focusRecord scrolls the record row into view', (
-      tester,
-    ) async {
+    testWidgets('focusRecord scrolls the record row into view', (tester) async {
       final controller = TrajectoryController(
         initial: buildLargeFixtureSnapshot(turns: 40),
       );
@@ -636,7 +631,9 @@ void main() {
       // Near the tail (the exact offset lags the growing extent).
       expect(position.pixels, greaterThan(position.maxScrollExtent - 1000));
       // The timeline tap handler marks record 1 the same way.
-      controller.selectRecord(recordIds(controller, TrajectoryCellKind.user).first);
+      controller.selectRecord(
+        recordIds(controller, TrajectoryCellKind.user).first,
+      );
       controller.focusRecord(1);
       await tester.pumpAndSettle();
 
@@ -685,48 +682,48 @@ void main() {
   });
 
   group('long-session virtualisation (E5)', () {
-    testWidgets('a 2400-record long session stays virtualised while scrolling', (
-      tester,
-    ) async {
-      // Issue #283: was 3500 turns (10.5k records, ~220s locally / ~8.5 min
-      // in CI — 85% of the whole fa_ui suite, unshardable below file
-      // granularity). 800 turns = 2400 records still dwarfs the <400-row
-      // window asserted below, so the virtualisation guarantee (bounded
-      // window, no exceptions, correct content at the extremes) is fully
-      // preserved while the scroll simulation costs ~4x less.
-      final controller = TrajectoryController(
-        initial: buildLargeFixtureSnapshot(turns: 800),
-      );
-      await tester.pumpWidget(_host(controller));
-      await tester.pumpAndSettle();
+    testWidgets(
+      'a 2400-record long session stays virtualised while scrolling',
+      (tester) async {
+        // Issue #283: was 3500 turns (10.5k records, ~220s locally / ~8.5 min
+        // in CI — 85% of the whole fa_ui suite, unshardable below file
+        // granularity). 800 turns = 2400 records still dwarfs the <400-row
+        // window asserted below, so the virtualisation guarantee (bounded
+        // window, no exceptions, correct content at the extremes) is fully
+        // preserved while the scroll simulation costs ~4x less.
+        final controller = TrajectoryController(
+          initial: buildLargeFixtureSnapshot(turns: 800),
+        );
+        await tester.pumpWidget(_host(controller));
+        await tester.pumpAndSettle();
 
-      int builtRowTexts() =>
-          tester.widgetList<TrajectoryRowText>(
-            find.byType(TrajectoryRowText),
-          ).length;
-      final table = find.byType(TrajectoryTable);
+        int builtRowTexts() => tester
+            .widgetList<TrajectoryRowText>(find.byType(TrajectoryRowText))
+            .length;
+        final table = find.byType(TrajectoryTable);
 
-      // At the tail: a bounded window, not 2400 rows.
-      expect(builtRowTexts(), lessThan(400));
-      expect(tester.takeException(), isNull);
+        // At the tail: a bounded window, not 2400 rows.
+        expect(builtRowTexts(), lessThan(400));
+        expect(tester.takeException(), isNull);
 
-      // Scroll to the middle and back to the very top. The 45k px drag
-      // lands mid-list for a 2400-record session: neither the last turn's
-      // nor the first turn's prompt may be on screen there.
-      await tester.drag(table, const Offset(0, 45000));
-      await tester.pumpAndSettle();
-      expect(builtRowTexts(), lessThan(400));
-      expect(tester.takeException(), isNull);
-      expect(_texts(tester).join('\n'), isNot(contains('Turn 800 prompt')));
-      expect(_texts(tester).join('\n'), isNot(contains('Turn 1 prompt')));
+        // Scroll to the middle and back to the very top. The 45k px drag
+        // lands mid-list for a 2400-record session: neither the last turn's
+        // nor the first turn's prompt may be on screen there.
+        await tester.drag(table, const Offset(0, 45000));
+        await tester.pumpAndSettle();
+        expect(builtRowTexts(), lessThan(400));
+        expect(tester.takeException(), isNull);
+        expect(_texts(tester).join('\n'), isNot(contains('Turn 800 prompt')));
+        expect(_texts(tester).join('\n'), isNot(contains('Turn 1 prompt')));
 
-      await tester.drag(table, const Offset(0, 1000000));
-      await tester.pumpAndSettle();
-      expect(builtRowTexts(), lessThan(400));
-      expect(tester.takeException(), isNull);
-      expect(_texts(tester).join('\n'), contains('Turn 1 prompt'));
-      controller.dispose();
-    });
+        await tester.drag(table, const Offset(0, 1000000));
+        await tester.pumpAndSettle();
+        expect(builtRowTexts(), lessThan(400));
+        expect(tester.takeException(), isNull);
+        expect(_texts(tester).join('\n'), contains('Turn 1 prompt'));
+        controller.dispose();
+      },
+    );
   });
 }
 

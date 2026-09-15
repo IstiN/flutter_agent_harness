@@ -35,7 +35,11 @@ import 'key_event.dart';
 import 'key_status.dart';
 import 'provider_error_text.dart';
 import '../agent/agent_loop.dart';
-import '../trajectory/trajectory_record.dart' show TrajectoryRequestDetail;
+import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
+import '../trajectory/event_projection.dart'
+    show TrajectoryHiddenRecordPreview, projectHiddenRecordPreviews;
+import '../trajectory/trajectory_record.dart' show TrajectoryCompactedRecord;
+import '../trajectory/trajectory_blobs.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
 import '../providers/models_for_endpoint.dart';
@@ -513,6 +517,7 @@ class AgentCli {
       onRunIdleTimeout: (error) =>
           _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
       contextWindowCap: config.contextWindowCap,
+      wireDump: config.wireDump,
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
@@ -968,6 +973,11 @@ class AgentCli {
     sessionsRoot: config.sessionRoot,
   );
   Session? _session;
+
+  /// Issue-385 blob persistence state: one persister per session (dedup
+  /// sets live in it); recreated when the session changes.
+  TrajectoryBlobPersister? _trajectoryBlobPersister;
+  Session? _trajectoryBlobPersisterSession;
 
   /// HEP v1 writer for backend agent mode (`--output events`, issue #155);
   /// null in the REPL. Set by [runHeadless], read by the compaction pass

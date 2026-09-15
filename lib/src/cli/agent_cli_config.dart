@@ -100,6 +100,7 @@ final class AgentCliConfig {
     this.agentCapabilities = const [],
     this.machineName,
     this.persistAbortedPartials = false,
+    this.wireDump = false,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -116,6 +117,12 @@ final class AgentCliConfig {
   /// `cancelled` HEP frame's counterpart on disk). Default false: the
   /// REPL keeps discarding incomplete streams.
   final bool persistAbortedPartials;
+
+  /// Opt-in raw wire dumps (issue #385 F5, `trajectory.wireDump` yaml,
+  /// default false): when on, the full outbound request payload is
+  /// captured per request, redacted through the active pipeline, capped,
+  /// and persisted as a `trajectory_wire_dump` session record.
+  final bool wireDump;
 
   /// Override for the compaction thresholds (ratio-based trigger, reserve
   /// and recent-token budgets). When `null`, `defaultCompactionSettings`
