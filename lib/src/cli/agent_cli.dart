@@ -1955,6 +1955,18 @@ class AgentCli {
       _onTaskJobCompleted,
     );
     final hepSub = hep == null ? null : _agent.subscribe(hep.handleEvent);
+    // Terminal-outcome capture (issue #413): the visible transcript is
+    // REBUILT by post-run compaction (checkpoint records replace the
+    // assistant turns entirely), so the exit code cannot be derived from
+    // `state.messages` — the last completed turn's stop reason is taken
+    // from the turn events as they fire, before any folding.
+    StopReason? terminalStopReason;
+    final turnSub = _agent.subscribe((event, _) {
+      if (event is TurnEndEvent) {
+        terminalStopReason = event.message.stopReason;
+      }
+    });
+    _headlessMode = true;
     try {
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(prompt));
@@ -1971,9 +1983,21 @@ class AgentCli {
           ),
         );
       }
+      // Settle the finished turn exactly like the REPL's [_runPrompt]
+      // (issue #413): the over-window guard's one-shot compaction +
+      // continuation used to be REPL-only, so a headless run that
+      // exhausted the window mid-task abandoned it and exited — the
+      // freed window was never used.
+      final lastMessage = _agent.state.messages.lastOrNull;
+      final finished = await _settleAfterPrompt(
+        lastMessage,
+        isAutoContinue: false,
+      );
       // Awaits any in-flight TTSR retry chain, persists the messages, and
-      // auto-compacts — the same end-of-turn sequence as a REPL run.
-      await _afterRun();
+      // auto-compacts — the same end-of-turn sequence as a REPL run. The
+      // continuation paths recurse through [_runPrompt], which finalizes
+      // with its own [_afterRun]; only a normally-finished turn does.
+      if (finished) await _afterRun();
       await _awaitHeadlessBackgroundJobs();
     } catch (error) {
       io.writeln(
@@ -1981,15 +2005,23 @@ class AgentCli {
       );
       return 1;
     } finally {
+      _headlessMode = false;
+      turnSub();
       await releasePowerAssertions();
       await _cubeCacheSaveQuietly();
       await interruptSub.cancel();
       await taskSub.cancel();
       hepSub?.call();
     }
-    return switch (_agent.state.messages.lastOrNull) {
-      AssistantMessage(stopReason: StopReason.error) => 1,
-      AssistantMessage(stopReason: StopReason.aborted) => 130,
+    // The exit code describes the LAST completed turn's terminal outcome
+    // (captured from the turn events above) — not the visible transcript,
+    // which post-run compaction rebuilds: the checkpoint fold drops the
+    // assistant turns entirely, and the classic trim marker lands after
+    // the error stop; both used to mask a failed run as exit 0 (issue
+    // #413).
+    return switch (terminalStopReason) {
+      StopReason.error => 1,
+      StopReason.aborted => 130,
       _ => 0,
     };
   }
@@ -2226,6 +2258,12 @@ class AgentCli {
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
 
+  /// Whether this CLI instance is inside a headless (`fa "prompt"`, `-p`)
+  /// run — guards the REPL-only recovery flows (browser SSO re-auth) from
+  /// firing where no human can complete them. The settle path itself
+  /// (issue #413) stays shared with the REPL.
+  bool _headlessMode = false;
+
   /// Runs one prompt turn: pre-flight ([_beginUserPrompt]) → the agent
   /// stream → outcome settle ([_settleAfterPrompt], `true` = turn finished
   /// normally) → finalize ([_afterRun]); thrown errors land in
@@ -2408,6 +2446,9 @@ class AgentCli {
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
   /// `true` when the expiry was handled and the turn is finished.
   Future<bool> _maybeHandleCodeMieError(String message) async {
+    // Headless: the browser SSO re-auth awaits a human that is not there —
+    // surface the error instead and let the exit code carry the failure.
+    if (_headlessMode) return false;
     if (authExpiredProvider(message) != 'codemie') return false;
     await _handleCodeMieAuthExpired(message);
     return true;
