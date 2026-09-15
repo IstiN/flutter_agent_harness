@@ -740,12 +740,15 @@ int _findKeyLine(
 }
 
 /// Whether a single [leafLines] entry may ride the `key: value` line.
-/// A rendered block entry (a `- item` sequence line, or a map entry
-/// carrying its own indent) must go under a bare `key:` line — gluing it
-/// inline produced invalid yaml for one-element lists/maps.
+/// A rendered block entry (a `- item` sequence line — dash SPACE, the
+/// yaml sequence indicator — or a bare `-`) must go under a bare `key:`
+/// line — gluing it inline produced invalid yaml for one-element
+/// lists/maps. A negative number scalar (`-1`) is NOT an entry: the
+/// plain `startsWith('-')` check corrupted every nested scalar upsert
+/// with a negative value (issue #393 retry knobs).
 bool _inlineSafeLine(String line) {
   final trimmed = line.trim();
-  if (trimmed.startsWith('-')) return false;
+  if (trimmed.startsWith('- ') || trimmed == '-') return false;
   // An indented line is a block map entry; flow-empties stay inline-safe.
   if (line != trimmed) return false;
   return true;
@@ -1100,7 +1103,7 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'images': (value, _) => _validateImagesSection(value),
   'a2a': (value, _) => A2aConfig.fromYaml(value, (name) => '\${$name}'),
   'fabric': (value, _) => FabricConfig.fromYaml(value),
-  'providerTimeouts': (value, _) => _validateProviderTimeouts(value),
+  'providerTimeouts': (value, _) => validateProviderTimeoutsSection(value),
   'agent': (value, _) => validateAgentSection(value),
   'skills': (value, _) => _validateSkillsSection(value),
   // The power section (sleep prevention, issue #325) delegates to the
@@ -1148,8 +1151,10 @@ void _validateCustomProviders(Object? node) {
   }
 }
 
-/// Mirrors the strict private parser in `cli_config.dart` (pinned by test).
-void _validateProviderTimeouts(Object? node) {
+/// The strict `providerTimeouts:` section validator (mirrors the public
+/// parser `parseProviderTimeouts` in `cli_config.dart`; pinned by test).
+/// Shared by `check`, `set` and the settings flow (issue #393).
+void validateProviderTimeoutsSection(Object? node) {
   if (node is! YamlMap) {
     throw ConfigException('must be a map, got: $node');
   }

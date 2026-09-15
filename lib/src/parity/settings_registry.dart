@@ -109,6 +109,11 @@ enum SharedSetting {
   /// meter and the loop's over-window guard (issue #394).
   contextWindowCap,
 
+  /// Provider failure resilience: the watchdog timeouts
+  /// (`providerTimeouts.connectTimeoutMs`/`streamIdleTimeoutMs`) and the
+  /// chain retry policy (`retry:`, issue #393).
+  resiliencePolicy,
+
   /// TUI color palette (tui.theme + ~/.fah/themes/*.json, issue #279).
   tuiTheme,
 }
@@ -169,6 +174,12 @@ const cliOnlySettings = <SharedSetting>{
   // app has no agent loop to re-cap live (issue #394 is the CLI half —
   // the app keeps consuming the section read-only per #288's umbrella).
   SharedSetting.contextWindowCap,
+  // The resilience knobs (watchdog timeouts + retry policy) govern the
+  // CLI host process's provider connections: the timeouts are published
+  // onto a process-wide override and the retry policy rides the roles
+  // resolver's cached stream wrappers (issue #393 is the CLI half — the
+  // app keeps consuming the sections read-only per #288's umbrella).
+  SharedSetting.resiliencePolicy,
 
   // The TUI palette colors a terminal: the app renders through Flutter's
   // own theming stack (separate system by design — issue #279 non-goal).
@@ -245,6 +256,11 @@ const cliOnlyJustifications = <SharedSetting, String>{
   SharedSetting.tuiTheme:
       'The TUI palette colors a terminal emulator; the app themes through '
       'its own Flutter theming stack (separate system by design).',
+  SharedSetting.resiliencePolicy:
+      'The watchdog timeouts and retry policy govern the CLI host '
+      'process\'s provider connections; the app has no process-wide '
+      'override or roles resolver to re-arm. Configure them in the CLI '
+      '(issue #393).',
 };
 
 /// Top-level yaml keys that are intentionally NOT interactive settings on
@@ -258,11 +274,6 @@ const fileOnlyConfigKeys = <String, String>{
       'A2A gateways are deployment infrastructure (endpoints and '
       'credentials with env-token references); no surface edits them '
       'interactively.',
-
-  // Provider transport tuning: rarely-changed watchdog knobs.
-  'providerTimeouts':
-      'Provider transport watchdog tuning (connect/idle timeouts) — '
-      'rarely-changed knobs, tuned in the file.',
 
   // Trajectory capture tuning (opt-in raw wire dumps, issue #385): a
   // deliberate, size/pII-sensitive escape hatch — file-only by design so
@@ -285,14 +296,6 @@ const fileOnlyConfigKeys = <String, String>{
   'fabric':
       'Host discovery announcements are written BY hosts (issue #27), not '
       'by users; read-only config.',
-
-  // Roles-group member: chain retry/backoff policy, parsed together with
-  // roles:. Interactive editing covers the chains themselves (the
-  // agent-models flow); the retry policy is file-tuned.
-  'retry':
-      'Roles-group member (chain retry/backoff policy); interactive '
-      'editing covers the chains (agent models flow), the policy is '
-      'file-tuned.',
 
   // Roles-group member: per-path role pinning, parsed together with
   // roles:. Superseded for interactive use by the roles: chains the
@@ -488,6 +491,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'loop (the request-build rewrite); the app composes its own '
         'requests and reads the section read-only.',
   ),
+  SharedSetting.resiliencePolicy: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The watchdog override and roles resolver live in the CLI host '
+        'process; no app surface re-arms them.',
+  ),
   SharedSetting.sleepPrevention: SettingSurfaces(
     macos: false,
     ios: false,
@@ -652,6 +664,12 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — CLI agent loop only (see above).
     yamlKeys: ['agent'],
     description: 'Owner-side context cap (issue #394).',
+  ),
+  SharedSetting.resiliencePolicy: _SettingMeta(
+    cliRef: 'startResilienceFlow',
+    appRef: null, // exempted — lives in the CLI host (see above).
+    yamlKeys: ['providerTimeouts', 'retry'],
+    description: 'Provider failure resilience (issue #393).',
   ),
 };
 

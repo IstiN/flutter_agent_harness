@@ -170,6 +170,26 @@ final class McpStdioServerConfig extends McpServerConfig {
   /// Extra environment variables (merged over the inherited environment).
   final Map<String, String> env;
 
+  /// Value equality: the settings flow's live reload diffs sections by
+  /// comparing server entries (issue #396) — a byte-equal entry keeps its
+  /// live connection, a changed one reconnects.
+  @override
+  bool operator ==(Object other) =>
+      other is McpStdioServerConfig &&
+      other.name == name &&
+      other.command == command &&
+      _sameStringList(other.args, args) &&
+      _sameStringMap(other.env, env);
+
+  @override
+  int get hashCode => Object.hash(
+    name,
+    command,
+    Object.hashAll(args),
+    Object.hashAll(env.keys),
+    Object.hashAll(env.values),
+  );
+
   @override
   String _bodyToYaml() {
     final buffer = StringBuffer()
@@ -199,6 +219,26 @@ final class McpHttpServerConfig extends McpServerConfig {
   /// Extra HTTP headers (e.g. `Authorization`).
   final Map<String, String> headers;
 
+  /// Value equality: the settings flow's live reload diffs sections by
+  /// comparing server entries (issue #396) — a byte-equal entry keeps its
+  /// live connection, a changed one reconnects.
+  @override
+  bool operator ==(Object other) =>
+      other is McpHttpServerConfig &&
+      other.name == name &&
+      other.url == url &&
+      other.transport == transport &&
+      _sameStringMap(other.headers, headers);
+
+  @override
+  int get hashCode => Object.hash(
+    name,
+    url,
+    transport,
+    Object.hashAll(headers.keys),
+    Object.hashAll(headers.values),
+  );
+
   @override
   String _bodyToYaml() {
     final buffer = StringBuffer()
@@ -208,6 +248,13 @@ final class McpHttpServerConfig extends McpServerConfig {
     return buffer.toString();
   }
 }
+
+bool _sameStringList(List<String> a, List<String> b) =>
+    a.length == b.length && a.indexed.every((entry) => b[entry.$1] == entry.$2);
+
+bool _sameStringMap(Map<String, String> a, Map<String, String> b) =>
+    a.length == b.length &&
+    a.entries.every((entry) => b[entry.key] == entry.value);
 
 /// The `mcp:` config section: the server map plus the tool-call timeout.
 final class McpConfig {
@@ -271,7 +318,10 @@ final class McpConfig {
     final buffer = StringBuffer()
       ..write('mcp:\n')
       ..write('  toolCallTimeoutMs: ${toolCallTimeout.inMilliseconds}\n')
-      ..write('  servers:\n');
+      // A bare `servers:` key parses as a null scalar, which the strict
+      // parser rejects — an emptied section (the flow's last delete,
+      // issue #396) must still round-trip.
+      ..write(servers.isEmpty ? '  servers: {}\n' : '  servers:\n');
     for (final server in servers.values) {
       buffer.write('    ${server.name}:\n');
       for (final line in server._bodyToYaml().trimRight().split('\n')) {
