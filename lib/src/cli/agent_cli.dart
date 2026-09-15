@@ -57,6 +57,7 @@ import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
 import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
+import '../task/subagent_heartbeat.dart';
 import '../task/subagent_tools.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
@@ -440,6 +441,16 @@ class AgentCli {
       manager: _a2aManager,
       machineName: config.machineName,
     );
+    // Issue #383: the heartbeat rides the steering channel — the getters
+    // consult the config EVERY tick, so a config rewrite applies at the
+    // next digest without a restart (E6).
+    _subagentHeartbeat = SubagentHeartbeat(
+      manager: _subagentManager,
+      heartbeatMinutes: () => config.subagents.heartbeatMinutes,
+      stallMinutes: () => config.subagents.stallMinutes,
+      notify: _deliverHeartbeatDigest,
+    );
+    _subagentHeartbeat.start();
     // Discover agent types from the agent roots (.fah/.agents/.claude/.github/
     // .codex) — fire-and-forget; the registry starts with built-ins and merges
     // discovered types when they arrive. Third-party roots ride the same
@@ -765,6 +776,16 @@ class AgentCli {
   @visibleForTesting
   Map<String, String> addProviderExclusionsForTest() => _addProviderExclusions;
 
+  /// Test seam firing one heartbeat tick (issue #383) — the same path the
+  /// cadence timer drives, without waiting real minutes in tests.
+  @visibleForTesting
+  void heartbeatTickForTest() => _subagentHeartbeat.tick();
+
+  /// Test seam exposing the subagent registry — the heartbeat tests plant
+  /// running children without driving a real spawn.
+  @visibleForTesting
+  SubagentManager get subagentManagerForTest => _subagentManager;
+
   /// The preset names with a routing handler — the test asserts
   /// presets == handlers (a preset row without a handler is a dead menu
   /// entry: the picker closes and nothing happens — the live Copilot bug).
@@ -868,6 +889,11 @@ class AgentCli {
   }
 
   late final SubagentManager _subagentManager;
+
+  /// The background-subagent heartbeat (issue #383): periodic status
+  /// digests + loud stall flags, delivered through the same steer/wake
+  /// path as completion notices.
+  late final SubagentHeartbeat _subagentHeartbeat;
 
   /// The FILE fabric layer — re-pointed when session storage falls back to
   /// a different root so the mailboxes follow the sessions.
@@ -2410,9 +2436,24 @@ class AgentCli {
     }
   }
 
-  /// Called when a background shell job settles (the same async-result flow
-  /// as task-job completions): a transcript note, then a system-notice
-  /// steered into the running turn or run as a fresh turn while idle.
+  /// Delivers a background-subagent heartbeat digest (issue #383) through
+  /// the SAME channel as completion notices: busy → the steering queue
+  /// (delivered at the next step boundary, the turn is never aborted);
+  /// idle → a fresh run (the parent wakes). Text-only — the digest never
+  /// spawns or cancels anything.
+  void _deliverHeartbeatDigest(String digest) {
+    if (_exited) return;
+    if (isBusy) {
+      _agent.steer(UserMessage.text(digest));
+    } else {
+      _startRun(digest);
+    }
+  }
+
+  /// Called when a background shell job settles (the same async-result
+  /// flow as task-job completions): a transcript note, then a
+  /// system-notice steered into the running turn or run as a fresh turn
+  /// while idle.
   void _onShellJobSettled(ShellJobEntry job) {
     _onShellJobSettledBlock(job);
     io.writeln(
