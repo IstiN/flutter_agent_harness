@@ -144,6 +144,7 @@ List<AgentTool> builtinTools(
     editFileTool(env, snapshots: store),
     listDirTool(env),
     shellTool(env, jobs: shellJobs, onPasswordPrompt: onPasswordPrompt),
+    if (shellJobs != null) bashJobTool(shellJobs),
     if (lsp != null) lspTool(env, config: lsp),
     if (webSearch != null) ...[
       webSearchTool(config: webSearch),
