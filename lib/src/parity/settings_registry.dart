@@ -213,7 +213,7 @@ const fileOnlyConfigKeys = <String, String>{
       'Image-tool runtime tuning (registry on/off, per-request cap) — '
       'operational knobs, tuned in the file.',
 
-// Trajectory capture tuning (opt-in raw wire dumps, issue #385): a
+  // Trajectory capture tuning (opt-in raw wire dumps, issue #385): a
   // deliberate, size/pII-sensitive escape hatch — file-only by design so
   // it cannot be flipped casually mid-session.
   'trajectory':
