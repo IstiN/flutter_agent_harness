@@ -17,7 +17,11 @@ import 'execution_env.dart';
 
 /// An [ExecutionEnv] that injects secret env vars into every [exec].
 final class SecretsExecutionEnv
-    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
+    implements
+        ExecutionEnv,
+        BackgroundShell,
+        RangedReadFileSystem,
+        RenamableFileSystem {
   /// Creates a decorator over [delegate] injecting [secrets] (name → value).
   SecretsExecutionEnv(this._delegate, Map<String, String> secrets)
     : _secrets = Map.of(secrets);
@@ -144,6 +148,23 @@ final class SecretsExecutionEnv
           FileErrorCode.notSupported,
           'readRange not supported by $_delegate',
           path: path,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) {
+    final delegate = _delegate;
+    if (delegate case final RenamableFileSystem renamable) {
+      return renamable.renamePath(from, to);
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'renamePath not supported by $_delegate',
+          path: from,
         ),
       ),
     );

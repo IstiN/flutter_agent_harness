@@ -493,6 +493,37 @@ final class SubagentManager {
     handle.liveRequests = requests;
   }
 
+  /// Context-pressure stamp (issue #439): the executor calls this at every
+  /// child turn boundary with the estimated request tokens and the
+  /// effective window, so `task_status` can show the wall approaching.
+  /// In-memory only, like [touch] — the next boundary refreshes it.
+  void notePressure(
+    String id, {
+    required int estTokens,
+    required int windowTokens,
+  }) {
+    final handle = _handles[id];
+    if (handle == null) return;
+    handle.estTokens = estTokens;
+    handle.windowTokens = windowTokens;
+    _emit(handle);
+  }
+
+  /// Records a completed proactive compaction (issue #439): bumps the
+  /// counter, stamps the freed-token count and the time, and persists —
+  /// unlike [notePressure] this is a durable lifecycle fact.
+  void recordCompaction(String id, {required int freedTokens}) {
+    final handle = _handles[id];
+    if (handle == null || freedTokens <= 0) return;
+    handle.compactions++;
+    handle.lastCompactionFreed = freedTokens;
+    final now = clock().toIso8601String();
+    handle.lastCompactionAt = now;
+    handle.lastActivity = now;
+    _emit(handle);
+    _persist();
+  }
+
   /// Counts the unread inbox messages of [id] (0 without a fabric) — the
   /// `mail:N` indicator in the agents panel.
   Future<int> pendingInboxCount(String id) async =>

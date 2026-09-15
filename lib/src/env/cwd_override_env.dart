@@ -14,7 +14,11 @@ import 'execution_env.dart';
 /// created in a different project folder: the agent's tools continue to
 /// operate in the session's original directory without restarting the process.
 final class CwdOverrideEnv
-    implements ExecutionEnv, BackgroundShell, RangedReadFileSystem {
+    implements
+        ExecutionEnv,
+        BackgroundShell,
+        RangedReadFileSystem,
+        RenamableFileSystem {
   /// Creates a decorator over [delegate] whose effective cwd starts at
   /// [delegate.cwd].
   CwdOverrideEnv(this._delegate) : _cwd = _delegate.cwd;
@@ -133,6 +137,23 @@ final class CwdOverrideEnv
           FileErrorCode.notSupported,
           'readRange not supported by $_delegate',
           path: path,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Future<Result<void, FileError>> renamePath(String from, String to) {
+    final delegate = _delegate;
+    if (delegate case final RenamableFileSystem renamable) {
+      return renamable.renamePath(_resolve(from), _resolve(to));
+    }
+    return Future.value(
+      Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'renamePath not supported by $_delegate',
+          path: from,
         ),
       ),
     );

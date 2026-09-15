@@ -1910,6 +1910,11 @@ class AppLocalizationsRu extends AppLocalizations {
   String get githubBrowserCodeHint => 'Одноразовый код с fa1.dev';
 
   @override
+  String sessionDrivenElsewhere(String host, int pid) {
+    return 'Сессией управляет $host (pid $pid) — вы просматриваете. Ваши сообщения будут переданы живому агенту.';
+  }
+
+  @override
   String sessionTooLargeTitle(String size) {
     return 'Сессия ($size МБ) превышает бюджет мгновенного открытия — открыть её безопасно не удалось.';
   }
