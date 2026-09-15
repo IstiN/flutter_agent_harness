@@ -998,7 +998,7 @@ class SessionTile extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(10),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             child: Row(
               children: [
                 if (indent > 0) SizedBox(width: indent),
@@ -1095,47 +1095,57 @@ class SessionTile extends StatelessWidget {
                 ),
                 if (childCount > 0 && onToggleExpand != null) ...[
                   const SizedBox(width: 8),
-                  InkWell(
-                    onTap: onToggleExpand,
-                    borderRadius: BorderRadius.circular(999),
-                    child: Tooltip(
-                      message: context.l10n.sidebarSubagentSessionCount(
-                        childCount,
-                      ),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: colors.panelAlt,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            AnimatedRotation(
-                              turns: expanded ? 0.25 : 0,
-                              duration: const Duration(milliseconds: 120),
-                              child: Icon(
-                                Icons.keyboard_arrow_right,
-                                size: 14,
-                                color: colors.dim,
-                              ),
+                  // The pill looks compact but its TAP ZONE is a
+                  // comfortable 36px-tall band, vertically centered — the
+                  // user review found the bare pill too short to hit.
+                  SizedBox(
+                    height: 36,
+                    child: InkWell(
+                      onTap: onToggleExpand,
+                      borderRadius: BorderRadius.circular(999),
+                      child: Center(
+                        child: Tooltip(
+                          message: context.l10n.sidebarSubagentSessionCount(
+                            childCount,
+                          ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 3,
                             ),
-                            const SizedBox(width: 2),
-                            SubagentMark(size: 11, color: colors.dim),
-                            const SizedBox(width: 4),
-                            Text(
-                              '$childCount',
-                              style: TextStyle(
-                                color: colors.dim,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                height: 1.0,
-                              ),
+                            decoration: BoxDecoration(
+                              color: colors.panelAlt,
+                              borderRadius: BorderRadius.circular(999),
                             ),
-                          ],
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                AnimatedRotation(
+                                  turns: expanded ? 0.25 : 0,
+                                  duration: const Duration(
+                                    milliseconds: 120,
+                                  ),
+                                  child: Icon(
+                                    Icons.keyboard_arrow_right,
+                                    size: 14,
+                                    color: colors.dim,
+                                  ),
+                                ),
+                                const SizedBox(width: 2),
+                                SubagentMark(size: 11, color: colors.dim),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '$childCount',
+                                  style: TextStyle(
+                                    color: colors.dim,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.0,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ),

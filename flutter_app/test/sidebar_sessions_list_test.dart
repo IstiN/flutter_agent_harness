@@ -1218,6 +1218,14 @@ void main() {
         find.descendant(of: pill, matching: find.byType(SubagentMark)),
         findsOneWidget,
       );
+      // The tap zone is a 36px-tall band (user review: the bare pill was
+      // too short to hit); the painted pill stays compact inside it.
+      // Detected like the hit-map golden does: the 999-radius InkWell.
+      final pillInkWell = find.byWidgetPredicate(
+        (w) => w is InkWell && w.borderRadius == BorderRadius.circular(999),
+      );
+      expect(pillInkWell, findsOneWidget);
+      expect(tester.getSize(pillInkWell).height, greaterThanOrEqualTo(36));
       // Tapping the pill (glyph + number, no "agents" word) toggles.
       await tester.tap(find.text('1'));
       await tester.pumpAndSettle();
