@@ -2234,6 +2234,12 @@ class AgentService extends ChangeNotifier
   /// drain) instead of stranding in a mailbox nobody drains.
   void _setMailboxPrefix(String id) {
     _subagentManager?.mailboxPrefix = id;
+    // Issue #426: child session headers carry `metadata.parent` from the
+    // manager's parentSessionId — pinned empty at construction because
+    // the session id does not exist yet. Assign it here (the moment the
+    // id materializes) so children of THIS session link back to it
+    // instead of being written with `parent: ""`.
+    _subagentManager?.parentSessionId = id;
     // Lightweight test services (pre-constructed agent) have no fabric.
     if (_subagentManager == null) return;
     unawaited(_scheduledMessages.start());
