@@ -34,8 +34,8 @@ void main() {
         onMessageLifecycle: (m, {required start}) =>
             calls.add((message: m, start: start)),
         onMessageUpdate: (_) => fail('unexpected update'),
-        onToolExecutionStart: (_, _) => fail('unexpected tool start'),
-        onToolExecutionEnd: (_, _, {required isError}) =>
+        onToolExecutionStart: (_, _, _) => fail('unexpected tool start'),
+        onToolExecutionEnd: (_, _, _, {required isError}) =>
             fail('unexpected tool end'),
         onTurnEnd: (_) => fail('unexpected turn end'),
       );
@@ -44,8 +44,8 @@ void main() {
         onMessageLifecycle: (m, {required start}) =>
             calls.add((message: m, start: start)),
         onMessageUpdate: (_) => fail('unexpected update'),
-        onToolExecutionStart: (_, _) => fail('unexpected tool start'),
-        onToolExecutionEnd: (_, _, {required isError}) =>
+        onToolExecutionStart: (_, _, _) => fail('unexpected tool start'),
+        onToolExecutionEnd: (_, _, _, {required isError}) =>
             fail('unexpected tool end'),
         onTurnEnd: (_) => fail('unexpected turn end'),
       );
@@ -76,8 +76,8 @@ void main() {
         onMessageLifecycle: (_, {required start}) =>
             fail('unexpected lifecycle'),
         onMessageUpdate: events.add,
-        onToolExecutionStart: (_, _) => fail('unexpected tool start'),
-        onToolExecutionEnd: (_, _, {required isError}) =>
+        onToolExecutionStart: (_, _, _) => fail('unexpected tool start'),
+        onToolExecutionEnd: (_, _, _, {required isError}) =>
             fail('unexpected tool end'),
         onTurnEnd: (_) => fail('unexpected turn end'),
       );
@@ -85,8 +85,10 @@ void main() {
     });
 
     test('routes tool start/end events to tool callbacks', () {
+      final startIds = <String>[];
       final startNames = <String>[];
       final startArgs = <Map<String, Object?>>[];
+      final endIds = <String>[];
       final endNames = <String>[];
       final endErrors = <bool>[];
       final result = _toolResult();
@@ -100,11 +102,13 @@ void main() {
         onMessageLifecycle: (_, {required start}) =>
             fail('unexpected lifecycle'),
         onMessageUpdate: (_) => fail('unexpected update'),
-        onToolExecutionStart: (n, a) {
+        onToolExecutionStart: (id, n, a) {
+          startIds.add(id);
           startNames.add(n);
           startArgs.add(a);
         },
-        onToolExecutionEnd: (n, r, {required isError}) {
+        onToolExecutionEnd: (id, n, r, {required isError}) {
+          endIds.add(id);
           endNames.add(n);
           endErrors.add(isError);
         },
@@ -120,20 +124,24 @@ void main() {
         onMessageLifecycle: (_, {required start}) =>
             fail('unexpected lifecycle'),
         onMessageUpdate: (_) => fail('unexpected update'),
-        onToolExecutionStart: (n, a) {
+        onToolExecutionStart: (id, n, a) {
+          startIds.add(id);
           startNames.add(n);
           startArgs.add(a);
         },
-        onToolExecutionEnd: (n, r, {required isError}) {
+        onToolExecutionEnd: (id, n, r, {required isError}) {
+          endIds.add(id);
           endNames.add(n);
           endErrors.add(isError);
         },
         onTurnEnd: (_) => fail('unexpected turn end'),
       );
+      expect(startIds, ['c1']);
       expect(startNames, ['read']);
       expect(startArgs, [
         const {'path': 'x'},
       ]);
+      expect(endIds, ['c1']);
       expect(endNames, ['read']);
       expect(endErrors, [false]);
     });
@@ -146,8 +154,8 @@ void main() {
         onMessageLifecycle: (_, {required start}) =>
             fail('unexpected lifecycle'),
         onMessageUpdate: (_) => fail('unexpected update'),
-        onToolExecutionStart: (_, _) => fail('unexpected tool start'),
-        onToolExecutionEnd: (_, _, {required isError}) =>
+        onToolExecutionStart: (_, _, _) => fail('unexpected tool start'),
+        onToolExecutionEnd: (_, _, _, {required isError}) =>
             fail('unexpected tool end'),
         onTurnEnd: (m) => seen = m,
       );
@@ -161,8 +169,8 @@ void main() {
       ModelRequestEvent(detail: _requestDetail()),
       onMessageLifecycle: (_, {required start}) => fail('unexpected lifecycle'),
       onMessageUpdate: (_) => fail('unexpected update'),
-      onToolExecutionStart: (_, _) => fail('unexpected tool start'),
-      onToolExecutionEnd: (_, _, {required isError}) =>
+      onToolExecutionStart: (_, _, _) => fail('unexpected tool start'),
+      onToolExecutionEnd: (_, _, _, {required isError}) =>
           fail('unexpected tool end'),
       onTurnEnd: (_) => fail('unexpected turn end'),
       onModelRequest: (event) async => details.add(event.detail),
@@ -185,8 +193,8 @@ void main() {
       ModelRequestEvent(detail: _requestDetail()),
       onMessageLifecycle: (_, {required start}) => fail('unexpected lifecycle'),
       onMessageUpdate: (_) => fail('unexpected update'),
-      onToolExecutionStart: (_, _) => fail('unexpected tool start'),
-      onToolExecutionEnd: (_, _, {required isError}) =>
+      onToolExecutionStart: (_, _, _) => fail('unexpected tool start'),
+      onToolExecutionEnd: (_, _, _, {required isError}) =>
           fail('unexpected tool end'),
       onTurnEnd: (_) => fail('unexpected turn end'),
       onModelRequest: (event) => session.appendCustomEntry(

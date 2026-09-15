@@ -206,8 +206,8 @@ void main() {
     // tool indicators, banner, or prompt markers pollute the pipe.
     expect(io.out.toString(), 'done reading\n');
     // Diagnostics carry the tool one-liners.
-    expect(io.diag.toString(), contains('[read] path="notes.txt"'));
-    expect(io.diag.toString(), contains('[read] done'));
+    expect(io.diag.toString(), contains('• read · notes.txt'));
+    expect(io.diag.toString(), contains('✓ read'));
     expect(io.diag.toString(), isNot(contains('fa — flutter_agent_harness')));
     expect(io.diag.toString(), isNot(contains('fa> ')));
 
