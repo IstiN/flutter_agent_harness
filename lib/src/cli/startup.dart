@@ -13,9 +13,11 @@
 library;
 
 import 'dart:io';
+import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../model_roles/provider_catalog.dart';
+import '../model_roles/providers_queue.dart';
 import '../model_roles/roles_config.dart';
 import '../secrets/secrets_store.dart';
 import '../secrets/secure_key_store.dart';
@@ -386,4 +388,87 @@ Set<String> resolveEnabledPlugins(
     }
   }
   return enabled;
+}
+
+/// Resolves the FA_PROVIDERS_QUEUE scope chain at boot: the env var, the
+/// project `.fah/config.yaml` `providersQueue:` section, the user
+/// `~/.fah/config.yaml` one. Absent files/sections are not present; a
+/// present-but-invalid section throws [ConfigException] naming the file
+/// (strict, like every other config section).
+ProviderQueueResolution resolveProviderQueueAtBoot({
+  required String projectDir,
+  required String homeDir,
+  Map<String, String>? env,
+}) {
+  final environment = env ?? Platform.environment;
+  final envText = environment['FA_PROVIDERS_QUEUE'];
+  final inputs = <ProviderQueueScopeInput>[
+    ProviderQueueScopeInput(
+      scope: ProviderQueueScope.env,
+      isPresent: envText != null && envText.trim().isNotEmpty,
+      parse: envText == null || envText.trim().isEmpty
+          ? null
+          : parseProviderQueueEnv(envText),
+    ),
+    ...[
+      for (final (scope, path) in [
+        (ProviderQueueScope.project, '$projectDir/.fah/config.yaml'),
+        (ProviderQueueScope.user, '$homeDir/.fah/config.yaml'),
+      ])
+        ?_queueScopeFromFile(scope, path),
+    ],
+  ];
+  return resolveProviderQueueScopes(inputs);
+}
+
+ProviderQueueScopeInput? _queueScopeFromFile(
+  ProviderQueueScope scope,
+  String path,
+) {
+  final file = File(path);
+  if (!file.existsSync()) return null;
+  String body;
+  try {
+    body = file.readAsStringSync();
+  } on Object {
+    return null;
+  }
+  final Object? doc;
+  try {
+    doc = loadYaml(body);
+  } on Object catch (error) {
+    throw ConfigException('$path: ${error.toString()}');
+  }
+  if (doc is! YamlMap) return null;
+  final node = doc['providersQueue'];
+  if (node == null) return null;
+  return ProviderQueueScopeInput(
+    scope: scope,
+    isPresent: true,
+    parse: parseProviderQueueYaml(node, source: path),
+  );
+}
+
+/// Collects the secrets snapshot for the queue: each entry's `apiKeyEnv`
+/// resolves from the environment, else the secure store (env wins — the
+/// same precedence as the roles snapshot).
+Map<String, String> collectQueueSecrets(
+  List<ProviderQueueEntry> entries,
+  SecureKeyCache keys, {
+  Map<String, String>? env,
+}) {
+  final environment = env ?? Platform.environment;
+  final secrets = <String, String>{};
+  for (final entry in entries) {
+    final name = entry.apiKeyEnv;
+    if (name == null || secrets.containsKey(name)) continue;
+    final fromEnv = environment[name];
+    if (fromEnv != null && fromEnv.isNotEmpty) {
+      secrets[name] = fromEnv;
+      continue;
+    }
+    final stored = keys.read(name);
+    if (stored != null) secrets[name] = stored;
+  }
+  return secrets;
 }

@@ -116,6 +116,13 @@ enum SharedSetting {
 
   /// TUI color palette (tui.theme + ~/.fah/themes/*.json, issue #279).
   tuiTheme,
+
+  /// The main-model provider queue (`providersQueue:` yaml sections +
+  /// the `FA_PROVIDERS_QUEUE` env, issue #418): the ordered failover
+  /// chain, edited by the same list/add/remove/reorder editor on the
+  /// CLI (`/providers queue`) and in the app Settings; the env scope is
+  /// read-only everywhere.
+  providersQueue,
 }
 
 /// Settings that are currently CLI-only.
@@ -419,6 +426,16 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'and the extension have no shared config file — the web loader '
         'keeps the classic engine.',
   ),
+  SharedSetting.providersQueue: SettingSurfaces(
+    macos: true,
+    ios: true,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The app edits the queue through the shared config yaml on io '
+        'hosts (providersQueueLoader); the browser sandbox has no config '
+        'file and no environment to read FA_PROVIDERS_QUEUE from.',
+  ),
   SharedSetting.mcpServers: SettingSurfaces(
     macos: false,
     ios: false,
@@ -622,6 +639,16 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     yamlKeys: ['compaction'],
     description:
         'Compaction engine (structured default | classic rollback, #287).',
+  ),
+  SharedSetting.providersQueue: _SettingMeta(
+    cliRef: 'providersQueue',
+    // The app settings surface is the queue editor section (the richer
+    // loader symbol resolveAppProviderQueue also exists).
+    appRef: 'ProviderQueueSection',
+    yamlKeys: ['providersQueue'],
+    description:
+        'Main-model provider queue (ordered failover chain, #418); the '
+        'FA_PROVIDERS_QUEUE env scope is read-only on every surface.',
   ),
   SharedSetting.agentMode: _SettingMeta(
     cliRef: '_openModePicker',

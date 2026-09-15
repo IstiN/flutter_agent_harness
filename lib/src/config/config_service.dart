@@ -81,6 +81,11 @@ const configTopLevelKeys = <String>{
   'fabric',
   'power',
   'tui',
+
+  // The main-model provider queue (issue #418): a top-level section in
+  // project/user yaml (and the FA_PROVIDERS_QUEUE env) parsed by the
+  // queue resolver (lib/src/model_roles/providers_queue.dart).
+  'providersQueue',
 };
 
 /// Top-level keys that carry a plain string value.

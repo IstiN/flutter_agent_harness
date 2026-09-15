@@ -2575,6 +2575,11 @@ extension SettingsFlow on AgentCli {
         description: _redactionStatusLabel(),
       ),
       MenuItem(
+        key: 'providers-queue',
+        label: 'Provider queue',
+        description: _providersQueueStatusLabel(),
+      ),
+      MenuItem(
         key: 'context-cap',
         label: 'Context cap',
         description: _contextCapStatusLabel(),
@@ -2605,6 +2610,9 @@ extension SettingsFlow on AgentCli {
   Set<String> settingsPickerHandlerKeysForTest() =>
       _settingsPickerHandlers.keys.toSet();
 
+  @visibleForTesting
+  Future<void> pickSettingForTest(String key) => _tuiPickSetting(key);
+
   /// The live MCP manager when one runs this session (the flow tests
   /// assert real reconnect behavior through it).
   @visibleForTesting
@@ -2632,6 +2640,7 @@ extension SettingsFlow on AgentCli {
     'dap': startDapHubFlow,
     'cube': startCubeSandboxFlow,
     'resilience': startResilienceFlow,
+    'providers-queue': () async => _providersSlash(''),
     'redact': startRedactionFlow,
     'context-cap': startContextCapFlow,
     'memory': startMemoryStoresFlow,
@@ -2655,6 +2664,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('ttsr: ${_ttsrStatusLabel()}');
     io.writeln('redact: ${_redactionStatusLabel()}');
     io.writeln('ctx cap: ${_contextCapStatusLabel()}');
+    io.writeln('queue: ${_providersQueueStatusLabel()}');
     io.writeln('images: ${_imagesStatusLabel()}');
     io.writeln('power: ${_powerStatusLabel()}');
     io.writeln('mcp: ${_mcpStatusLabel()}');

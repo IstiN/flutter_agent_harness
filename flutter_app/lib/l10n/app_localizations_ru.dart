@@ -2072,5 +2072,74 @@ class AppLocalizationsRu extends AppLocalizations {
   String get settingsCompactionDocs => 'Документация по компакции';
 
   @override
+  String get settingsQueueTitle => 'Очередь провайдеров';
+
+  @override
+  String get settingsQueueHelper =>
+      'Упорядоченная цепочка провайдеров: когда текущий умирает (квота, авторизация, сеть, таймаут, битый поток, 5xx, плохой finish), следующий перехватывает работу, а победитель закрепляется на сессию. Применяется со следующего запуска.';
+
+  @override
+  String get settingsQueueEmpty =>
+      'Очередь не задана — применяется одиночный провайдер/модель. Добавьте запись, чтобы собрать цепочку.';
+
+  @override
+  String get settingsQueueScopeEnv =>
+      'действует из переменной окружения FA_PROVIDERS_QUEUE — правьте её (здесь только чтение)';
+
+  @override
+  String get settingsQueueUnsupported =>
+      'Недоступно в вебе — здесь нет конфига и переменных окружения.';
+
+  @override
+  String get settingsQueueAdd => 'Добавить запись';
+
+  @override
+  String get settingsQueueAddTitle => 'Новая запись очереди';
+
+  @override
+  String get settingsQueueKind =>
+      'Тип провайдера (например openai-completions)';
+
+  @override
+  String get settingsQueueModel => 'Модель (например moonshotai/Kimi-K2.6)';
+
+  @override
+  String get settingsQueueApiKeyEnv =>
+      'ENV с API-ключом (например KIMI_API_KEY)';
+
+  @override
+  String get settingsQueueBaseUrl => 'Base URL (необязательно)';
+
+  @override
+  String get settingsQueueCancel => 'Отмена';
+
+  @override
+  String get settingsQueueAddAction => 'Добавить';
+
+  @override
+  String get settingsQueueMoveUp => 'Выше';
+
+  @override
+  String get settingsQueueMoveDown => 'Ниже';
+
+  @override
+  String get settingsQueueRemove => 'Удалить';
+
+  @override
+  String settingsQueueSaved(String file) {
+    return 'Очередь сохранена в $file — применится со следующего запуска.';
+  }
+
+  @override
+  String settingsQueueSaveFailed(String error) {
+    return 'Не удалось сохранить очередь: $error';
+  }
+
+  @override
+  String settingsQueueInvalid(String error) {
+    return 'Очередь отклонена: $error';
+  }
+
+  @override
   String get themePackImportFailed => 'Тема отклонена';
 }
