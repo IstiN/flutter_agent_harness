@@ -582,9 +582,11 @@ final class SessionListRow {
 }
 
 /// Groups with at most this many subagent children render EXPANDED by
-/// default (issue #426 AC1): a couple of agents read fine inline; a big
-/// batch collapses behind the count badge until tapped.
-const sessionTreeAutoExpandChildren = 3;
+/// default (issue #426 user review 2026-09-15: "subagents пусть будут
+/// свернуты" — every group starts collapsed; the count pill shows the
+/// batch size and one tap reveals it). The ACTIVE session's group still
+/// force-opens (E2) regardless of this default.
+const sessionTreeAutoExpandChildren = 0;
 
 /// Folder-grouped, parent-nested rows for a session list (issue #198's
 /// app surface): folder headers stay the top level; under each header the

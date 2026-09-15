@@ -931,8 +931,9 @@ void main() {
       return session.getMetadata();
     }
 
-    testWidgets('small child groups (≤3) render expanded by default '
-        '(issue #426 AC1)', (tester) async {
+    testWidgets('child groups render collapsed by default '
+        '(issue #426 user review: subagents stay folded until tapped)',
+        (tester) async {
       final main = await persistSession(userText: 'main');
       final childA = await persistChild(parentId: main.id);
       final childB = await persistChild(parentId: main.id);
@@ -951,7 +952,13 @@ void main() {
 
       expect(find.text('Main chat'), findsOneWidget);
       expect(find.text('2'), findsOneWidget);
-      // A couple of agents read fine inline: children show, indented.
+      // Collapsed by default regardless of group size: children stay
+      // hidden behind the count pill until it is tapped.
+      expect(find.text('goal_builder'), findsNothing);
+      expect(find.text('scout'), findsNothing);
+
+      await tester.tap(find.text('2'));
+      await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsOneWidget);
       expect(find.text('scout'), findsOneWidget);
       expect(
@@ -1005,16 +1012,20 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Expanded by default (1 ≤ 3): the first tap collapses.
+      // Collapsed by default (issue #426 user review): the first tap
+      // expands.
+      expect(find.text('goal_builder'), findsNothing);
+      await tester.tap(find.text('1'));
+      await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsOneWidget);
+
       await tester.tap(find.text('1'));
       await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsNothing);
 
+      // Expand once more: children indent under their parent.
       await tester.tap(find.text('1'));
       await tester.pumpAndSettle();
-      expect(find.text('goal_builder'), findsOneWidget);
-      // Children indent under their parent.
       expect(
         tester.getTopLeft(find.text('goal_builder')).dx,
         greaterThan(tester.getTopLeft(find.text('Main chat')).dx),
@@ -1041,14 +1052,15 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      // Small group is open; the user collapses it.
+      // Collapsed by default (issue #426 user review); the user expands it.
+      expect(find.text('goal_builder'), findsNothing);
       await tester.tap(find.text('2'));
       await tester.pumpAndSettle();
-      expect(find.text('goal_builder'), findsNothing);
-      expect(prefs.collapsedParents, {main.id});
+      expect(find.text('goal_builder'), findsOneWidget);
+      expect(prefs.expandedParents, {main.id});
 
       // "Restart": a brand-new store instance re-reading the same env, a
-      // brand-new manager — the collapsed choice sticks.
+      // brand-new manager — the expanded choice sticks.
       final revived = await SessionUiPrefsStore.load(env);
       final manager2 = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
       addTearDown(manager2.dispose);
@@ -1070,14 +1082,14 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('2'), findsOneWidget);
-      expect(find.text('goal_builder'), findsNothing);
+      expect(find.text('goal_builder'), findsOneWidget);
 
-      // Re-expanding writes through the new store the same way.
+      // Collapsing again writes through the new store the same way.
       await tester.tap(find.text('2'));
       await tester.pumpAndSettle();
-      expect(find.text('goal_builder'), findsOneWidget);
-      expect(revived.expandedParents, {main.id});
-      expect(revived.collapsedParents, isEmpty);
+      expect(find.text('goal_builder'), findsNothing);
+      expect(revived.collapsedParents, {main.id});
+      expect(revived.expandedParents, isEmpty);
     });
 
     testWidgets('an active child auto-expands its parent group', (
@@ -1226,10 +1238,11 @@ void main() {
       );
       expect(pillInkWell, findsOneWidget);
       expect(tester.getSize(pillInkWell).height, greaterThanOrEqualTo(36));
-      // Tapping the pill (glyph + number, no "agents" word) toggles.
+      // Tapping the pill (glyph + number, no "agents" word) toggles:
+      // from the collapsed default the tap reveals the child.
       await tester.tap(find.text('1'));
       await tester.pumpAndSettle();
-      expect(find.text('goal_builder'), findsNothing);
+      expect(find.text('goal_builder'), findsOneWidget);
     });
 
     testWidgets('child tiles carry the same 3-dot actions', (tester) async {
@@ -1242,8 +1255,10 @@ void main() {
 
       await tester.pumpWidget(harness(names: names, persisted: [main, child]));
       await tester.pumpAndSettle();
-      // The small group renders expanded by default (issue #426) — the
-      // child row is already on screen.
+      // Collapsed by default (issue #426 user review): expand the group
+      // so the child row is on screen.
+      await tester.tap(find.text('1'));
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byIcon(Icons.more_horiz).last);
       await tester.pumpAndSettle();

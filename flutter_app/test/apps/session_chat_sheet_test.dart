@@ -1437,15 +1437,16 @@ void main() {
       );
 
       await _openDrawer(tester);
-      // Collapsed by default: the parent's count badge shows, the child
+      // Collapsed by default: the parent's count pill shows (v2 tile: the
+      // bare count digit — chevron + subagent glyph + "1"), the child
       // row does not.
       expect(find.text('Main chat'), findsOneWidget);
-      expect(find.text('1 agent'), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
       expect(find.text('goal_builder'), findsNothing);
 
       // Expanding from the drawer reveals the child with the SAME key
       // scheme as before the tree.
-      await tester.tap(find.text('1 agent'));
+      await tester.tap(find.text('1'));
       await tester.pumpAndSettle();
       expect(find.text('goal_builder'), findsOneWidget);
       expect(
@@ -1482,7 +1483,7 @@ void main() {
 
       await _openDrawer(tester);
       expect(find.text('Main chat'), findsOneWidget);
-      expect(find.text('1 agent'), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
       // No tap needed: the child IS the active session.
       expect(find.text('goal_builder'), findsOneWidget);
     });
