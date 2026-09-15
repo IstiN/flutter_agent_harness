@@ -25,6 +25,7 @@ final class AgentCliConfig {
     this.presenceStore,
     this.leaseStore,
     this.sessionName,
+    this.steeringStaleAfter = const Duration(minutes: 2),
     this.providerKind = 'openai-completions',
     this.envVarIsSet,
     this.envVarValue,
@@ -489,6 +490,13 @@ final class AgentCliConfig {
 
   /// Optional session name to resume or create on startup.
   final String? sessionName;
+
+  /// How long a busy run may stream NO agent events before mid-run
+  /// steering panels flip to `dead` (issue #437 E4): honest tool work
+  /// streams events continuously, so only a wedged run (the #355
+  /// mid-thinking family) crosses this threshold. A late delivery from
+  /// `dead` stays possible — dead means "not responding", not "lost".
+  final Duration steeringStaleAfter;
 
   /// Provider adapter kind: `openai-completions`, `anthropic`, or `google`.
   final String providerKind;

@@ -7,6 +7,8 @@
 /// `<sessionsRoot>/<--encoded-cwd-->/<timestamp>_<sessionId>.jsonl`.
 library;
 
+import 'dart:async';
+import 'dart:convert' as json_conv;
 import '../env/execution_env.dart';
 import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
@@ -423,6 +425,38 @@ final class JsonlSessionRepo implements SessionRepo {
     final name = await reader.readNewestSessionInfoName();
     final trimmed = name?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// Raw file scan for custom records whose `customType` is in [types]
+  /// (issue #437). Custom records are side-leaves of the record tree, so
+  /// the windowed storage's branch parse never materializes them into
+  /// [Session.getEntries] — restart-time scans (e.g. recovered steering)
+  /// must read the file instead of trusting the resident window. The
+  /// cheap substring gate keeps JSON decodes proportional to the match
+  /// count, not the file size. Returns [] for a missing/unreadable file:
+  /// a broken session must still boot.
+  Future<List<CustomRecord>> readCustomRecordsOfType(
+    SessionMetadata metadata,
+    Set<String> types,
+  ) async {
+    final read = await _fs.readTextLines(metadata.path);
+    if (read.isErr) return const [];
+    final records = <CustomRecord>[];
+    for (final line in read.valueOrNull ?? const <String>[]) {
+      if (!types.any(line.contains)) continue;
+      final Object? json;
+      try {
+        json = json_conv.jsonDecode(line);
+      } on Object {
+        continue; // torn tail line from a crash — skip.
+      }
+      if (json is! Map) continue;
+      final record = SessionRecord.fromJson(json.cast<String, dynamic>());
+      if (record is CustomRecord && types.contains(record.customType)) {
+        records.add(record);
+      }
+    }
+    return records;
   }
 
   /// Batch form of [sessionNameQuick]: bounded 16-way fan-out, results
