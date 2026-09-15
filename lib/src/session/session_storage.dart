@@ -13,6 +13,7 @@ import 'dart:convert';
 import '../env/execution_env.dart';
 import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
+import '../session_io_retry.dart';
 import 'session_record.dart';
 import 'uuid.dart';
 
@@ -298,6 +299,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     List<SessionRecord> entries,
     String? leafId, {
     int quarantined = 0,
+    this._ioRetry = const SessionIoRetryConfig(),
   }) : _metadata = headerToSessionMetadata(header, _filePath),
        _entries = entries,
        _byId = {for (final entry in entries) entry.id: entry},
@@ -311,6 +313,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   final FileSystem _fs;
   final String _filePath;
   final SessionMetadata _metadata;
+
+  /// Transient-ENOENT retry wiring (issue #427) for this storage's
+  /// appends; the static [open]/[create] calls take their own config.
+  final SessionIoRetryConfig _ioRetry;
   final List<SessionRecord> _entries;
   final Map<String, SessionRecord> _byId;
   final Map<String, String> _labelsById = {};
@@ -338,18 +344,28 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     FileSystem fs,
     String filePath, {
     SessionParseExecutor? parseExecutor,
+    SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
   }) async => withSessionFileLock(
     filePath,
-    () => _openLocked(fs, filePath, parseExecutor),
+    () => _openLocked(fs, filePath, parseExecutor, ioRetry),
   );
 
   static Future<JsonlSessionStorage> _openLocked(
     FileSystem fs,
     String filePath,
     SessionParseExecutor? parseExecutor,
+    SessionIoRetryConfig ioRetry,
   ) async {
     final content = _fsOrThrow(
-      await fs.readTextFile(filePath),
+      // Issue #427: the whole-file read behind an open can momentarily
+      // fail with a not-found-shaped error on some hosts; a short capped
+      // retry rides it out before the open gives up with a named error.
+      await retryTransientSessionFileIo(
+        () => fs.readTextFile(filePath),
+        op: 'open',
+        path: filePath,
+        config: ioRetry,
+      ),
       'Failed to read session $filePath',
     );
     final allLines = [
@@ -404,6 +420,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       entries,
       leafId,
       quarantined: quarantined,
+      ioRetry: ioRetry,
     );
   }
 
@@ -415,6 +432,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     required String sessionId,
     String? parentSessionPath,
     Map<String, dynamic>? metadata,
+    SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
   }) async {
     final header = SessionHeader(
       id: sessionId,
@@ -425,11 +443,23 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     );
     await withSessionFileLock(filePath, () async {
       _fsOrThrow(
-        await fs.writeFile(filePath, '${jsonEncode(header.toJson())}\n'),
+        await retryTransientSessionFileIo(
+          () => fs.writeFile(filePath, '${jsonEncode(header.toJson())}\n'),
+          op: 'create',
+          path: filePath,
+          config: ioRetry,
+        ),
         'Failed to create session $filePath',
       );
     });
-    return JsonlSessionStorage._(fs, filePath, header, [], null);
+    return JsonlSessionStorage._(
+      fs,
+      filePath,
+      header,
+      [],
+      null,
+      ioRetry: ioRetry,
+    );
   }
 
   @override
@@ -474,8 +504,16 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     // message records landing while subagent-registry snapshots flush —
     // can never interleave their byte ranges mid-record.
     await withSessionFileLock(_filePath, () async {
+      // Issue #427: a transient ENOENT on the record append (the
+      // submit-death path) rides a short capped retry instead of losing
+      // the record; exhaustion still fails as a named SessionException.
       _fsOrThrow(
-        await _fs.appendFile(_filePath, '${jsonEncode(record.toJson())}\n'),
+        await retryTransientSessionFileIo(
+          () => _fs.appendFile(_filePath, '${jsonEncode(record.toJson())}\n'),
+          op: 'append',
+          path: _filePath,
+          config: _ioRetry,
+        ),
         'Failed to append session entry ${record.id}',
       );
     });

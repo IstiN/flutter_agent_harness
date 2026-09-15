@@ -128,6 +128,7 @@ export 'src/session/attach/session_lease.dart';
 export 'src/session/session_record.dart';
 export 'src/session/session_repo.dart';
 export 'src/session/session_storage.dart';
+export 'src/session_io_retry.dart';
 export 'src/session/session_grouping.dart';
 export 'src/session/session_tree.dart';
 export 'src/session/session_chunk_reader.dart';

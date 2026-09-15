@@ -20,6 +20,7 @@ final _leadingPathLike = RegExp(r'^/[^/\s]*\/');
 final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/mcp': (cli, rest) async => cli._mcpSlash(rest),
   '/queue': (cli, rest) async => cli._queueSlash(rest),
+  '/providers': (cli, rest) async => cli._providersSlash(rest),
   '/skills': (cli, rest) async => cli._skillsSlash(rest),
   '/tools': (cli, rest) async => cli._toolsSlash(rest),
   '/cube': (cli, rest) async => cli._handleCubeCommand(rest),
@@ -137,6 +138,12 @@ extension SlashCommandDispatch on AgentCli {
   @visibleForTesting
   Future<void> runPowerAssertionsSettled() async =>
       await _powerAssertions?.onRunSettled();
+
+  /// Dispatches one input line through the normal pipeline. Editor-flow
+  /// unit tests drive slash commands through this instead of spawning a
+  /// full [AgentCli.run] loop.
+  @visibleForTesting
+  Future<void> handleLineForTest(String line) => _handleLine(line);
 
   /// `/power`: the configured `power.sleepPrevention` level, the
   /// `power.hold` lifecycle, and whether the assertion is held right
@@ -284,7 +291,6 @@ extension SlashCommandDispatch on AgentCli {
       case '/model-edit':
         await _handleModelEdit(rest);
       case '/provider':
-      case '/providers':
         await _providerSlash(rest);
       case '/key':
         await _handleKeyCommand(rest);
@@ -447,3 +453,264 @@ PowerAssertionController? sessionPowerAssertions(
         hold: config.powerSleepPreventionHold,
         onWarn: onWarn,
       );
+
+extension ProviderQueueEditor on AgentCli {
+  /// `/providers` — the provider-queue editor (issue #418). Line mode:
+  ///
+  ///     /providers                                        queue + health
+  ///     /providers queue add <kind> <model> <apiKeyEnv> [baseUrl]
+  ///     /providers queue remove <index>
+  ///     /providers queue move <from> <to>
+  ///     /providers queue test <index>
+  ///
+  /// Writes go to the PROJECT `.fah/config.yaml` `providersQueue:` section
+  /// (surgical upsert, validated with the real parser before the write).
+  /// A winning FA_PROVIDERS_QUEUE env scope cannot be rewritten — the
+  /// command says so instead of pretending. Edits go live at the next turn
+  /// boundary: the runtime is rebuilt from the boot scopes after a write.
+  Future<void> _providersSlash(String rest) async {
+    final parts = rest.trim().split(RegExp(r'\s+'))
+      ..removeWhere((p) => p.isEmpty);
+    final sub = parts.isEmpty || parts.first != 'queue'
+        ? ''
+        : (parts.length == 1 ? '' : parts[1]);
+    switch (sub) {
+      case '':
+        _printProviderQueue();
+      case 'add' when parts.length >= 4:
+        await _providerQueueAdd(
+          parts[2],
+          parts[3],
+          parts.length >= 5 ? parts[4] : null,
+          parts.length >= 6 ? parts[5] : null,
+        );
+      case 'remove' when parts.length == 3:
+        await _providerQueueEdit(
+          (entries) => providerQueueRemoveAt(entries, int.parse(parts[2])),
+        );
+      case 'move' when parts.length == 4:
+        await _providerQueueEdit(
+          (entries) => providerQueueMove(
+            entries,
+            int.parse(parts[2]),
+            int.parse(parts[3]),
+          ),
+        );
+      case 'test' when parts.length == 3:
+        await _providerQueueTest(int.parse(parts[2]));
+      default:
+        io.writeln(
+          'usage: /providers queue [add <kind> <model> <apiKeyEnv> [baseUrl] | '
+          'remove <n> | move <from> <to> | test <n>]',
+        );
+    }
+  }
+
+  /// The live queue with per-entry health badges (current / healthy /
+  /// cooldown ETA / dead + lastError).
+  void _printProviderQueue() {
+    final runtime = config.providersQueueRuntime;
+    if (runtime == null) {
+      io.writeln(
+        'no provider queue set — FA_PROVIDERS_QUEUE env, or `providersQueue:` '
+        'in project/user yaml (issue #418)',
+      );
+      return;
+    }
+    for (final row in renderProviderQueueRows(
+      entries: runtime.entries,
+      state: runtime.state,
+      now: DateTime.now(),
+    )) {
+      io.writeln(row);
+    }
+  }
+
+  /// Appends an entry (validated like the parsers) and persists.
+  Future<void> _providerQueueAdd(
+    String kind,
+    String model,
+    String? apiKeyEnv,
+    String? baseUrl,
+  ) async {
+    final ProviderQueueEntry entry;
+    try {
+      entry = ProviderQueueEntry(
+        providerType: kind,
+        model: model,
+        apiKeyEnv: apiKeyEnv,
+        baseUrl: baseUrl,
+      );
+    } on ArgumentError catch (error) {
+      io.writeln('/providers queue add refused: ${error.message}');
+      return;
+    }
+    await _providerQueueEdit((entries) => providerQueueAdd(entries, entry));
+  }
+
+  /// Runs [edit] on the live entries, persists the new list into the
+  /// project config (validated upsert), and rebuilds the runtime — the
+  /// edit is live from the next turn.
+  Future<void> _providerQueueEdit(
+    List<ProviderQueueEntry> Function(List<ProviderQueueEntry>) edit,
+  ) async {
+    final runtime = config.providersQueueRuntime;
+    if (runtime == null) {
+      io.writeln('no provider queue to edit — add the first entry first');
+      return;
+    }
+    final List<ProviderQueueEntry> next;
+    try {
+      next = edit(runtime.entries);
+    } on Object catch (error) {
+      io.writeln('not applied: $error');
+      return;
+    }
+    final scope = resolveProviderQueueAtBoot(
+      projectDir: config.env.cwd,
+      homeDir: config.homeDir ?? config.env.cwd,
+    );
+    if (scope.scope == ProviderQueueScope.env) {
+      io.writeln(
+        'FA_PROVIDERS_QUEUE env wins over any file queue — edit the env '
+        'value or unset it; nothing written',
+      );
+      return;
+    }
+    final body = const JsonEncoder.withIndent(
+      '  ',
+    ).convert([for (final entry in next) entry.toJson()]);
+    // The edit persists to the winning scope's own file: editing a
+    // project-defined queue never silently creates a shadowing user
+    // file, and vice versa (env wins are refused above).
+    final path = switch (scope.scope) {
+      ProviderQueueScope.project => '${config.env.cwd}/.fah/config.yaml',
+      ProviderQueueScope.user =>
+        '${config.homeDir ?? config.env.cwd}/.fah/config.yaml',
+      // Refused above; exhaustiveness keeps the switch total.
+      ProviderQueueScope.env => throw StateError('env scope unreachable'),
+    };
+    final source = switch (await config.env.readTextFile(path)) {
+      Ok(:final value) => value,
+      Err(:final error) when error.code == FileErrorCode.notFound => '',
+      Err(:final error) => _queueEditFail('cannot read $path: $error'),
+    };
+    final edited = upsertYamlPath(source, const [
+      'providersQueue',
+    ], configLeafLines(body, depth: 0));
+    // Never persist a file the next boot would reject.
+    try {
+      parseProviderQueueYaml(loadYaml(edited)['providersQueue'], source: path);
+    } on Object catch (error) {
+      _queueEditFail('not saved: $error');
+      return;
+    }
+    if (await config.env.writeFile(path, edited) is Err) {
+      _queueEditFail('could not write $path');
+      return;
+    }
+    await _rebuildProviderQueueRuntime();
+    io.writeln(
+      'providersQueue updated (${next.length} entries) → $path — '
+      'live from the next turn',
+    );
+  }
+
+  String _queueEditFail(String message) {
+    io.writeln(message);
+    return message;
+  }
+
+  /// Rebuilds the queue runtime from the boot scopes after an edit so the
+  /// next run resolves through the fresh queue (turn-boundary liveness).
+  Future<void> _rebuildProviderQueueRuntime() async {
+    try {
+      final queue = resolveProviderQueueAtBoot(
+        projectDir: config.env.cwd,
+        homeDir: config.homeDir ?? config.env.cwd,
+      );
+      config.providersQueueRuntime = queue.entries.isEmpty
+          ? null
+          : ProviderQueueRuntime.build(
+              queue,
+              secrets: _queueSecrets(queue.entries),
+            );
+    } on ConfigException catch (error) {
+      io.writeln('queue reload failed: ${error.message}');
+    }
+  }
+
+  /// Secrets for [entries]: the injected env lookup first (tests, embedders),
+  /// then the process environment, then the secure-key cache.
+  Map<String, String> _queueSecrets(List<ProviderQueueEntry> entries) {
+    final lookup = config.envVarValue;
+    final env = lookup == null
+        ? null
+        : {
+            for (final entry in entries)
+              if (entry.apiKeyEnv != null)
+                entry.apiKeyEnv!: lookup(entry.apiKeyEnv!) ?? '',
+          };
+    return collectQueueSecrets(
+      entries,
+      config.secureKeys ?? _secureKeysMissing,
+      env: env,
+    );
+  }
+
+  /// No secure store on this host: the env is the only key source (the
+  /// chain builder reports missing keys per entry).
+  SecureKeyCache get _secureKeysMissing => SecureKeyCache(null);
+
+  /// Runs a one-shot probe against entry [index]: a real minimal request
+  /// through the entry's own adapter. Prints the outcome, never advances
+  /// the cursor (the probe bypasses the queue state entirely).
+  Future<void> _providerQueueTest(int index) async {
+    final runtime = config.providersQueueRuntime;
+    if (runtime == null || index < 0 || index >= runtime.entries.length) {
+      io.writeln('no such queue entry: $index');
+      return;
+    }
+    final entry = runtime.entries[index];
+    final secrets = _queueSecrets([entry]);
+    try {
+      final chain = buildProviderQueueChain([entry], secrets: secrets);
+      final probe = chain.single;
+      final stream = probe.streamForKey(probe.keyRing.currentCredential.value)(
+        probe.model,
+        Context(
+          messages: [UserMessage.text('ping', timestamp: DateTime.now())],
+        ),
+      );
+      final sw = Stopwatch()..start();
+      Object? firstError;
+      await for (final event in stream) {
+        if (event is TextDeltaEvent || event is DoneEvent) break;
+        if (event is ErrorEvent) {
+          firstError = event.error.errorMessage;
+          break;
+        }
+      }
+      sw.stop();
+      if (firstError != null) {
+        io.writeln('${entry.label}: FAILED — $firstError');
+      } else {
+        io.writeln('${entry.label}: ok (${sw.elapsedMilliseconds}ms)');
+      }
+    } on ConfigException catch (error) {
+      io.writeln('${entry.label}: cannot probe — ${error.message}');
+    }
+  }
+
+  /// The settings-hub row description for the provider queue: a compact
+  /// summary of what the next turn resolves through.
+  String _providersQueueStatusLabel() {
+    final runtime = config.providersQueueRuntime;
+    final entries = runtime?.entries;
+    if (entries == null || entries.isEmpty) return 'not set';
+    final current = runtime!.state.currentIndex;
+    return '${entries.length} '
+        '${entries.length == 1 ? 'entry' : 'entries'}, '
+        'current: ${entries[current].model}';
+  }
+}

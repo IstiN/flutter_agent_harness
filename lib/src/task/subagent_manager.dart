@@ -72,8 +72,16 @@ final class SubagentManager {
 
   static DateTime _systemUtcClock() => DateTime.now().toUtc();
 
-  /// The parent session id (used to derive child session paths).
-  final String parentSessionId;
+  /// The parent session id (used to derive child session paths and to
+  /// write child session headers' `metadata.parent` at flush time).
+  ///
+  /// Mutable by necessity: both hosts construct the manager before their
+  /// session id exists (the JSONL header is written on first flush, well
+  /// after boot) and assign the real id when it materializes — the same
+  /// moment [mailboxPrefix] is set. Leaving this empty is what wrote
+  /// `parent: ""` into every real child file and flattened the sidebar
+  /// tree (issue #426).
+  String parentSessionId;
 
   /// Detached headless launcher for waking asleep mailboxes (see
   /// [MailboxWakeLauncher]). Null when the host cannot spawn processes.

@@ -1,6 +1,17 @@
 # Changelog
 
 ## Unreleased
+- fix(427): transient-ENOENT resilience for the JSONL session store —
+  session-file opens, creations and appends (full and windowed storage,
+  the task-resume child reopen included) retry a not-found-shaped
+  failure on a small capped exponential backoff (attempts at
+  0/50/250/1050 ms, ≤ ~1.5 s total — a submit never hangs long) instead
+  of dying on the first transient ENOENT (macOS Group Containers
+  materialization, backup/AV scans, cloud placeholders). Every retry
+  logs one `session_io_retry` line (op, attempt, path, wait, error)
+  through the hosts' diagnostic sink (the CLI wires `_logDiagnostic` →
+  `~/.fah/logs/fa.log`); exhausting the cap still fails as a named
+  `SessionException` — no wedge, no crash.
 - feat(402): app agents join the agent network (Phase 27.1 + app
   wiring) — `HubMessagingRepository implements MessagingRepository` in
   the harness (`lib/src/messaging/`, pure Dart over an injectable

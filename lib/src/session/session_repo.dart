@@ -10,6 +10,7 @@ library;
 import '../env/execution_env.dart';
 import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
+import '../session_io_retry.dart';
 import 'session_chunk_reader.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
@@ -151,16 +152,24 @@ final class JsonlSessionRepo implements SessionRepo {
   /// Creates a [JsonlSessionRepo] storing sessions under [sessionsRoot].
   /// [parseExecutor] moves record parsing off the calling isolate for
   /// [open] (issue #199); `null` keeps the inline batched path (web).
+  /// [ioRetry] wires the transient-ENOENT retry of session-file opens,
+  /// creations and appends (issue #427); hosts pass their diagnostic log
+  /// sink to see one `session_io_retry` line per retry.
   JsonlSessionRepo({
     required this._fs,
     required String sessionsRoot,
     this._parseExecutor,
+    this._ioRetry = const SessionIoRetryConfig(),
   }) : _sessionsRootInput = sessionsRoot;
 
   final FileSystem _fs;
   final String _sessionsRootInput;
   String? _sessionsRoot;
   final SessionParseExecutor? _parseExecutor;
+
+  /// Transient-ENOENT retry wiring (issue #427) threaded into every
+  /// session-file open/create this repo performs.
+  final SessionIoRetryConfig _ioRetry;
 
   /// Header-read concurrency for [list] (issue #199): bounded so 500+
   /// sessions never exhaust fds; ≥ 2 so latency overlaps (E4 pins the VM
@@ -232,6 +241,7 @@ final class JsonlSessionRepo implements SessionRepo {
       sessionId: id,
       parentSessionPath: options.parentSessionPath,
       metadata: options.metadata,
+      ioRetry: _ioRetry,
     );
     return Session(storage);
   }
@@ -262,11 +272,13 @@ final class JsonlSessionRepo implements SessionRepo {
               _fs,
               metadata.path,
               parseExecutor: _parseExecutor,
+              ioRetry: _ioRetry,
             )
           : await JsonlSessionStorage.open(
               _fs,
               metadata.path,
               parseExecutor: _parseExecutor,
+              ioRetry: _ioRetry,
             ),
     );
   }
@@ -378,6 +390,7 @@ final class JsonlSessionRepo implements SessionRepo {
       sessionId: sessionId,
       parentSessionPath: parentSessionPath ?? source.path,
       metadata: metadata ?? source.metadata,
+      ioRetry: _ioRetry,
     );
     for (final entry in forkedEntries) {
       await storage.appendEntry(entry);

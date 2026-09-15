@@ -578,21 +578,17 @@ void main() {
     expect((await run('cat /z_out/zdir/deep.txt')).stdout.trim(), 'deep');
   });
 
-  test(
-    'sqlite3 --version follows platform availability',
-    () async {
-      final r = await run('sqlite3 --version');
-      if (kIsWeb) {
-        // sql.js loads from the CDN in the browser.
-        expect(r.exitCode, 0, reason: r.stderr);
-        expect(r.stdout, contains('3.'));
-      } else {
-        expect(r.exitCode, 127);
-        expect(r.stderr, contains('command not found'));
-      }
-    },
-    timeout: kIsWeb ? const Timeout(Duration(seconds: 180)) : null,
-  );
+  test('sqlite3 --version follows platform availability', () async {
+    final r = await run('sqlite3 --version');
+    if (kIsWeb) {
+      // sql.js loads from the CDN in the browser.
+      expect(r.exitCode, 0, reason: r.stderr);
+      expect(r.stdout, contains('3.'));
+    } else {
+      expect(r.exitCode, 127);
+      expect(r.stderr, contains('command not found'));
+    }
+  }, timeout: kIsWeb ? const Timeout(Duration(seconds: 180)) : null);
 
   group('diff/patch', () {
     test('diff exits 0 with empty output for identical files', () async {
@@ -742,6 +738,27 @@ void main() {
       r = await run('patch /orig.txt /missing.diff');
       expect(r.exitCode, 2);
     });
+
+    test(
+      'patch rejects malformed -p/--strip/-i flags like GNU patch',
+      () async {
+        var r = await run('patch -p');
+        expect(r.exitCode, 2);
+        expect(r.stderr, 'patch: option requires an argument -- p\n');
+        r = await run('patch -p zz /orig.txt');
+        expect(r.exitCode, 2);
+        expect(r.stderr, "patch: invalid strip count 'zz'\n");
+        r = await run('patch --strip=2x /orig.txt');
+        expect(r.exitCode, 2);
+        expect(r.stderr, "patch: invalid strip count '2x'\n");
+        r = await run('patch -i');
+        expect(r.exitCode, 2);
+        expect(r.stderr, 'patch: option requires an argument -- i\n');
+        r = await run('patch --frobnicate /orig.txt');
+        expect(r.exitCode, 2);
+        expect(r.stderr, "patch: unrecognized option '--frobnicate'\n");
+      },
+    );
   });
 
   group('netdiag (nslookup/dig/whois)', () {

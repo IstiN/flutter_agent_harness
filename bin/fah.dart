@@ -763,15 +763,14 @@ Future<int> _runTrajectoryCommand(
   if (timing) {
     stderr.writeln(
       'trajectory timing: parse=${parseSw.elapsedMilliseconds}ms '
-          'build=${buildSw.elapsedMilliseconds}ms '
-          'render=${renderSw.elapsedMilliseconds}ms '
-          'total=${parseSw.elapsedMilliseconds + buildSw.elapsedMilliseconds + renderSw.elapsedMilliseconds}ms '
-          'records=${records.length}',
+      'build=${buildSw.elapsedMilliseconds}ms '
+      'render=${renderSw.elapsedMilliseconds}ms '
+      'total=${parseSw.elapsedMilliseconds + buildSw.elapsedMilliseconds + renderSw.elapsedMilliseconds}ms '
+      'records=${records.length}',
     );
   }
   return exitCode;
 }
-
 
 /// Prints trajectory payload lines to stdout (newline-terminated).
 int _printTrajectory(CliIO io, List<String> lines) {
@@ -1513,6 +1512,27 @@ Future<void> _runApp(List<String> args) async {
     _fail(error.message);
   }
 
+  // Provider queue (issue #418): FA_PROVIDERS_QUEUE env > project
+  // .fah/config.yaml `providersQueue:` > user ~/.fah/config.yaml. A parse
+  // error in a PRESENT scope is a hard startup error (line:col); no queue
+  // set anywhere = zero change (byte-identical legacy boot). The winning
+  // queue REPLACES the main-model resolution; the boot notes name the
+  // winning scope and the shadowed scopes.
+  ProviderQueueRuntime? queueRuntime;
+  final queueNotices = <String>[];
+  try {
+    final queue = resolveProviderQueueAtBoot(projectDir: cwd, homeDir: home);
+    if (queue.entries.isNotEmpty) {
+      queueRuntime = ProviderQueueRuntime.build(
+        queue,
+        secrets: collectQueueSecrets(queue.entries, keyCache),
+      );
+      queueNotices.addAll(queue.notices);
+    }
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
+
   // Redact the API keys this CLI knows about from tool results and the
   // provider context, so they cannot leak into the LLM conversation or the
   // session files (assembled by [buildSecretRedactor]).
@@ -1648,6 +1668,11 @@ Future<void> _runApp(List<String> args) async {
                   'model roles resolve to it unless roles: pins a chain',
       );
     }
+  }
+  // The provider-queue boot notes: winning scope + shadowed scopes —
+  // the loud handover, never a silent degrade (issue #418).
+  for (final notice in queueNotices) {
+    io.writeln(notice);
   }
   if (io.isInteractive && !io.supportsRawMode) {
     io.writeln(
@@ -1919,6 +1944,7 @@ Future<void> _runApp(List<String> args) async {
       contextWindowCap: saved.contextWindowCap,
       subagents: saved.subagents,
       modelRolesResolver: rolesResolver,
+      providersQueueRuntime: queueRuntime,
       // The live models config (`models:` section): `/models set`/`remove`
       // mutate its media slot overrides and `/model <name>` resolves its
       // custom model definitions — persisted via persistConfig. An absent

@@ -146,6 +146,128 @@ enum FallbackNoticeKind {
   transportRetry,
 }
 
+/// Why a queue entry died (issue #418 UT-kind-labeling): the exact string
+/// a switch event carries. Ordered by classification precedence.
+enum QueueDeathKind {
+  /// HTTP 429 / quota exhaustion (cooldown follows `Retry-After`).
+  quota('quota'),
+
+  /// HTTP 401/403 — the key is dead; advance immediately, no cooldown.
+  auth('auth'),
+
+  /// Connect refused / reset / DNS / dropped connection.
+  network('network'),
+
+  /// Provider watchdog death (connect or stream-idle timeout).
+  timeout('timeout'),
+
+  /// Malformed stream: bad SSE line, non-JSON delta, abrupt close without
+  /// a terminal event, 200-with-empty-stream (silent-empty-provider trap).
+  malformed('malformed'),
+
+  /// 5xx after the retry ladder is spent.
+  fivexx('5xx'),
+
+  /// Unknown/aborted wire finish_reason after transient retries (#312).
+  finishReason('finish_reason');
+
+  const QueueDeathKind(this.label);
+
+  /// The exact string switch events and health badges carry.
+  final String label;
+}
+
+/// One classified provider death: what killed the entry and how the chain
+/// should react.
+final class QueueDeath {
+  /// Creates the classification.
+  const QueueDeath({required this.kind, this.cooldown, this.immediate = false});
+
+  /// The death kind (the switch event's label).
+  final QueueDeathKind kind;
+
+  /// The base cooldown for the dead entry; null derives from the event's
+  /// `Retry-After` (quota) or the policy backoff (everything else).
+  final Duration? cooldown;
+
+  /// Whether the chain skips the retry ladder and advances at once
+  /// (auth — retrying a dead key is wasted latency).
+  final bool immediate;
+}
+
+/// Classifies an error event into a queue death, or null when the chain
+/// must NOT advance (content_filter family, user abort) and the error
+/// surfaces verbatim (issue #418: advance on ANY provider death, never on
+/// safety stops).
+typedef QueueDeathClassifier = QueueDeath? Function(ErrorEvent event);
+
+/// The sticky RAM cursor and per-entry health of a provider-queue-driven
+/// [FallbackStreamFunction] (issue #418). Volatile by contract — restart
+/// constructs a fresh wrapper and the queue restarts at its head (AC6);
+/// nothing ever persists this object.
+final class ProviderQueueState {
+  /// Per-entry health: cooldown deadline, consecutive failures, and the
+  /// last failure's story.
+  final _entries = <int, _QueueEntryHealth>{};
+
+  var _currentIndex = 0;
+
+  /// The entry serving requests right now (the sticky cursor).
+  int get currentIndex => _currentIndex;
+
+  /// Records a failed attempt on [index]: bumps the consecutive-failure
+  /// count and stores the error story. Returns the failure count AFTER
+  /// the bump (the cooldown doubling input).
+  int recordFailure(int index, QueueDeathKind kind, String errorText) {
+    final health = _entries.putIfAbsent(index, _QueueEntryHealth.new);
+    health.consecutiveFailures++;
+    health.lastError = errorText;
+    health.lastErrorKind = kind;
+    return health.consecutiveFailures;
+  }
+
+  /// Records a served request on [index]: counters and the error story
+  /// reset (success heals — AC5).
+  void recordSuccess(int index) {
+    _entries.remove(index);
+    _currentIndex = index;
+  }
+
+  /// Mirrors the wrapper's cooldown decision for [index].
+  void recordCooldown(int index, DateTime until) {
+    _entries.putIfAbsent(index, _QueueEntryHealth.new).cooldownUntil = until;
+  }
+
+  /// Mirrors the wrapper's active entry at call start.
+  void recordCurrentIndex(int index) => _currentIndex = index;
+
+  /// Cooldown remaining on [index], or null when healthy.
+  Duration? cooldownRemaining(int index, DateTime now) {
+    final until = _entries[index]?.cooldownUntil;
+    if (until == null) return null;
+    if (now.isBefore(until)) return until.difference(now);
+    return null;
+  }
+
+  /// The entry's consecutive failure count (0 when healthy).
+  int consecutiveFailures(int index) =>
+      _entries[index]?.consecutiveFailures ?? 0;
+
+  /// The entry's last error text, or null when it never failed.
+  String? lastError(int index) => _entries[index]?.lastError;
+
+  /// The entry's last death kind, or null when it never failed.
+  QueueDeathKind? lastErrorKind(int index) => _entries[index]?.lastErrorKind;
+}
+
+/// Mutable per-entry health of [ProviderQueueState].
+final class _QueueEntryHealth {
+  DateTime? cooldownUntil;
+  var consecutiveFailures = 0;
+  String? lastError;
+  QueueDeathKind? lastErrorKind;
+}
+
 /// The no-silent-degrade note: emitted through the listener callback before
 /// every retry/rotation/failover so the degradation is always visible.
 final class FallbackNotice {
@@ -233,14 +355,32 @@ sealed class _AttemptOutcome {
 /// The attempt's events (or its terminal failure) were forwarded to the
 /// caller; the wrapper's work is done.
 final class _Forwarded extends _AttemptOutcome {
-  const _Forwarded();
+  const _Forwarded({this.succeeded = false, this.death, this.deathText});
+
+  /// Issue #418 (UT-26): a post-commit (mid-answer) queue death — the
+  /// turn stands, but the cursor advances for the NEXT call.
+  final QueueDeath? death;
+
+  /// The death's short error text (for the queue health story).
+  final String? deathText;
+
+  /// Whether a DoneEvent was forwarded — the entry served the request and
+  /// its health counters reset (queue mode bookkeeping).
+  final bool succeeded;
 }
 
 /// The attempt failed with a retryable error (rate-limit/quota or a
 /// transient transport failure) before any observable output; nothing was
 /// forwarded.
 final class _Retryable extends _AttemptOutcome {
-  const _Retryable(this.retryAfter, this.error, {this.isTransport = false});
+  const _Retryable(
+    this.retryAfter,
+    this.error, {
+    this.isTransport = false,
+    this.deathKind,
+    this.deathCooldown,
+    this.immediate = false,
+  });
 
   /// The provider's `Retry-After` hint, when sent.
   final Duration? retryAfter;
@@ -253,6 +393,18 @@ final class _Retryable extends _AttemptOutcome {
   /// 502/503/504): retried in place — key rotation is pointless when the
   /// endpoint, not the credential, failed.
   final bool isTransport;
+
+  /// Issue #418: the queue death kind (null in roles mode).
+  final QueueDeathKind? deathKind;
+
+  /// Issue #418: the death's explicit base cooldown (quota default when
+  /// the provider sent no `Retry-After`); null derives from [retryAfter]
+  /// and the policy backoff.
+  final Duration? deathCooldown;
+
+  /// Issue #418: skip the retry ladder and advance to the next entry at
+  /// once (auth — the key is dead).
+  final bool immediate;
 }
 
 /// Mutable state of one [_drive] call, extracted so the event-loop phases
@@ -322,10 +474,20 @@ ErrorEvent _midAnswerEvent(ErrorEvent event) {
   );
 }
 
+/// Compact cooldown ETA for queue notices (`45s`, `12m`).
+String _etaText(Duration remaining) => remaining.inMinutes >= 1
+    ? '${remaining.inMinutes}m'
+    : '${remaining.inSeconds}s';
+
 /// Buffers one attempt's events until the first observable output commits
 /// the attempt (omp's observable-output guard): a rate-limited attempt that
 /// fails before any content leaves no trace in the caller's transcript.
 final class _AttemptBuffer {
+  _AttemptBuffer([this._queueClassifier]);
+
+  /// Issue #418: the queue death classifier, or null in roles mode.
+  final QueueDeathClassifier? _queueClassifier;
+
   final _buffer = <AssistantMessageEvent>[];
   var _committed = false;
 
@@ -342,7 +504,7 @@ final class _AttemptBuffer {
       case DoneEvent():
         _buffer.forEach(out.push);
         out.push(event);
-        return const _Forwarded();
+        return const _Forwarded(succeeded: true);
       case ErrorEvent():
         return _forwardOrRetryable(out, event);
       case StartEvent():
@@ -368,12 +530,20 @@ final class _AttemptBuffer {
   ) {
     if (event is ErrorEvent) {
       out.push(_midAnswerEvent(event));
-    } else {
+      // The turn stands (no replay — issue #290), but the queue records
+      // the death and advances the cursor for the next call (UT-26).
+      return _Forwarded(
+        death: _queueClassifier?.call(event),
+        deathText: (event.error.errorMessage ?? '').split('\n').first,
+      );
+    }
+    if (event is DoneEvent) {
       out.push(event);
+      // A completed answer is a success for queue health even when content
+      // already streamed (mid-answer completions heal the entry — AC5).
+      return const _Forwarded(succeeded: true);
     }
-    if (event is DoneEvent || event is ErrorEvent) {
-      return const _Forwarded();
-    }
+    out.push(event);
     return null;
   }
 
@@ -384,6 +554,27 @@ final class _AttemptBuffer {
     AssistantMessageEventStream out,
     ErrorEvent event,
   ) {
+    // Issue #418: queue mode — the classifier is the single decision
+    // point. A death rides the retry ladder (or advances at once for
+    // auth); a null answer (content_filter family, user abort, unknown)
+    // surfaces verbatim.
+    final classifier = _queueClassifier;
+    if (classifier != null) {
+      final death = event.reason == StopReason.error ? classifier(event) : null;
+      if (death == null) {
+        _buffer.forEach(out.push);
+        out.push(event);
+        return const _Forwarded();
+      }
+      return _Retryable(
+        event.retryAfter,
+        event.error,
+        isTransport: true,
+        deathKind: death.kind,
+        deathCooldown: death.cooldown,
+        immediate: death.immediate,
+      );
+    }
     if (event.reason == StopReason.error &&
         isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
       // Not forwarded: the buffer is discarded and the chain retries.
@@ -428,6 +619,16 @@ final class FallbackStreamFunction {
     DateTime Function()? now,
     double Function()? jitterFraction,
     Future<bool> Function(Duration delay, CancelToken? cancelToken)? sleeper,
+
+    /// Issue #418: when set, the queue death classifier decides what
+    /// advances (7 death kinds) and what surfaces verbatim
+    /// (content_filter/user abort). Null keeps the classic rate-limit +
+    /// transport policy byte-identical.
+    this.queueClassifier,
+
+    /// Issue #418: the sticky-cursor/health state the queue editor reads.
+    /// Null in roles mode.
+    this.queueState,
   }) : _entries = List.unmodifiable(entries),
        _now = now ?? DateTime.now,
        _jitterFraction = jitterFraction ?? Random().nextDouble,
@@ -440,6 +641,12 @@ final class FallbackStreamFunction {
       );
     }
   }
+
+  /// The queue death classifier (issue #418); null in roles mode.
+  final QueueDeathClassifier? queueClassifier;
+
+  /// The queue's sticky cursor + per-entry health; null in roles mode.
+  final ProviderQueueState? queueState;
 
   final List<ChainEntry> _entries;
   final DateTime Function() _now;
@@ -513,7 +720,32 @@ final class FallbackStreamFunction {
   ) async {
     final state = _DriveState(_firstAvailableIndex(), _now());
     _activeIndex = state.entryIndex;
-
+    queueState?.recordCurrentIndex(state.entryIndex);
+    // Issue #418 (UT-23): every entry cooling — die loud with per-entry
+    // ETAs instead of silently hammering a benched head.
+    final queue = queueState;
+    if (queue != null) {
+      final now = _now();
+      final etas = <String>[
+        for (var index = 0; index < _entries.length; index++)
+          if (queue.cooldownRemaining(index, now) case final left?)
+            '${_entries[index].label} ready in ${_etaText(left)}',
+      ];
+      if (etas.length == _entries.length) {
+        out.push(
+          ErrorEvent(
+            reason: StopReason.error,
+            error: _terminalMessage(
+              _entries.first.model,
+              StopReason.error,
+              'Provider queue cooling down: every entry is in cooldown — '
+              '${etas.join(', ')}.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
     while (true) {
       if (cancelToken?.isCancelled ?? false) {
         _pushAborted(out, _entries[state.entryIndex].model);
@@ -562,7 +794,11 @@ final class FallbackStreamFunction {
       cancelToken,
     );
     switch (outcome) {
-      case _Forwarded():
+      case _Forwarded(:final succeeded, :final death):
+        if (succeeded) queueState?.recordSuccess(state.entryIndex);
+        if (death != null) {
+          _markMidAnswerDeath(state, death, outcome.deathText);
+        }
         return false;
       case _Retryable():
         return _onRetryable(
@@ -578,12 +814,17 @@ final class FallbackStreamFunction {
 
   /// Selects the next entry after the current one gave up. Returns false
   /// when the chain is exhausted (the last failure has been forwarded).
-  bool _failOver(AssistantMessageEventStream out, _DriveState state) {
+  bool _failOver(
+    AssistantMessageEventStream out,
+    _DriveState state, {
+    bool noCooldown = false,
+  }) {
     final next = _failover(
       state.entryIndex,
       state.tried,
       state.lastFailure,
       failures: state.failures,
+      noCooldown: noCooldown,
     );
     if (next == null) {
       _forwardLastFailure(out, state);
@@ -600,6 +841,31 @@ final class FallbackStreamFunction {
     final ring = _entries[next].keyRing;
     state.credential = ring.availableCredential ?? ring.currentCredential;
     return true;
+  }
+
+  /// Issue #418 (UT-26): a mid-answer death stands (the turn is already
+  /// on the wire), but the queue health records it and the sticky cursor
+  /// advances so the NEXT call starts on the next entry.
+  void _markMidAnswerDeath(
+    _DriveState state,
+    QueueDeath death,
+    String? errorText,
+  ) {
+    final qState = queueState;
+    if (qState == null) return;
+    final from = state.entryIndex;
+    final count = qState.recordFailure(from, death.kind, errorText ?? '');
+    if (!death.immediate) {
+      final base = death.cooldown ?? policy.keyBackoff;
+      final doubled = base * (1 << (count - 1).clamp(0, 7));
+      final cap = const Duration(hours: 24);
+      final until = _now().add(doubled > cap ? cap : doubled);
+      _cooldownUntil[from] = until;
+      qState.recordCooldown(from, until);
+    }
+    final next = (from + 1) % _entries.length;
+    qState.recordCurrentIndex(next);
+    _activeIndex = next;
   }
 
   /// Paid same-entry retry: sleeps once, then forces the next iteration to
@@ -694,6 +960,11 @@ final class FallbackStreamFunction {
   ) async {
     state.lastFailure = outcome;
     state.attemptLog.add('${entry.label}: ${_shortReasonText(outcome.error)}');
+    // Issue #418 (UT-10): auth is a dead key — no retries, no cooldown,
+    // advance to the next entry at once.
+    if (outcome.immediate) {
+      return _failOver(out, state, noCooldown: true);
+    }
     if (!outcome.isTransport) {
       entry.keyRing.reportRateLimited(
         attemptCredential.name,
@@ -737,15 +1008,51 @@ final class FallbackStreamFunction {
   /// Picks the next chain entry after [from], skipping entries already tried
   /// in this call and entries in cooldown; marks [from]'s cooldown. Returns
   /// `null` when the chain is exhausted.
+  ///
+  /// Issue #418: in queue mode the failure is recorded into the sticky
+  /// state (kind + count), the cooldown doubles with each consecutive
+  /// failure (capped at 24h), and the switch reason carries the exact
+  /// death-kind label (UT-17). [noCooldown] (auth deaths) advances
+  /// without benching the dead entry.
   int? _failover(
     int from,
     Set<int> tried,
     _Retryable? lastFailure, {
     required int failures,
+    bool noCooldown = false,
   }) {
-    _cooldownUntil[from] = _now().add(
-      lastFailure?.retryAfter ?? policy.keyBackoff,
-    );
+    final failure = lastFailure;
+    final queueState = this.queueState;
+    Duration cooldown;
+    String reason;
+    if (failure == null) {
+      cooldown = policy.keyBackoff;
+      reason = 'rate limited';
+    } else if (queueState != null) {
+      final count = queueState.recordFailure(
+        from,
+        failure.deathKind ?? QueueDeathKind.network,
+        _shortReasonText(failure.error),
+      );
+      final base =
+          failure.deathCooldown ?? failure.retryAfter ?? policy.keyBackoff;
+      final doubled = base * (1 << (count - 1).clamp(0, 7));
+      final cap = const Duration(hours: 24);
+      final clamped = doubled > cap;
+      cooldown = clamped ? cap : doubled;
+      reason =
+          '${failure.deathKind?.label ?? 'error'}: '
+          '${_shortReasonText(failure.error)}'
+          '${clamped ? ' (cooldown clamped to 24h)' : ''}';
+    } else {
+      cooldown = failure.retryAfter ?? policy.keyBackoff;
+      reason = _shortReasonText(failure.error);
+    }
+    if (!noCooldown) {
+      final until = _now().add(cooldown);
+      _cooldownUntil[from] = until;
+      queueState?.recordCooldown(from, until);
+    }
     for (var index = 0; index < _entries.length; index++) {
       if (tried.contains(index)) continue;
       if (isInCooldown(index)) continue;
@@ -757,14 +1064,25 @@ final class FallbackStreamFunction {
           toModel: entry.label,
           delay: Duration.zero,
           attempt: failures,
-          reason: lastFailure == null
-              ? 'rate limited'
-              : _shortReasonText(lastFailure.error),
+          reason: reason,
         ),
       );
       return index;
     }
     return null;
+  }
+
+  /// Per-entry health for the exhausted-chain terminal (UT-24): every
+  /// entry with its last death kind, error line, and failure count.
+  String _queueHealthSummary() {
+    final state = queueState!;
+    return [
+      for (var index = 0; index < _entries.length; index++)
+        '${_entries[index].label}: '
+            '${state.lastErrorKind(index)?.label ?? 'unknown'}'
+            '${state.consecutiveFailures(index) > 0 ? ' x${state.consecutiveFailures(index)}' : ''}'
+            '${state.lastError(index) == null ? '' : ' — ${state.lastError(index)}'}',
+    ].join('; ');
   }
 
   Duration _retryDelay(int attempt, Duration? retryAfter) {
@@ -795,7 +1113,7 @@ final class FallbackStreamFunction {
       context,
       cancelToken: cancelToken,
     );
-    final attempt = _AttemptBuffer();
+    final attempt = _AttemptBuffer(queueClassifier);
 
     await for (final event in stream) {
       final outcome = attempt.accept(out, event);
@@ -838,11 +1156,14 @@ final class FallbackStreamFunction {
               line.endsWith('.') ? line.substring(0, line.length - 1) : line,
         )
         .join('; ');
+    final queueLines = queueState == null
+        ? ''
+        : ' Queue health: ${_queueHealthSummary()}.';
     final story =
         'Provider chain exhausted: ${state.tried.length} of '
         '${_entries.length} chain model(s) failed after '
         '${state.attemptLog.length} attempt(s) over $elapsedText. '
-        'Attempts: $log. '
+        'Attempts: $log.$queueLines '
         'All available models failed with provider-side errors — likely an '
         'outage or quota exhaustion, not a key problem. '
         'Check the provider status or try again later.';

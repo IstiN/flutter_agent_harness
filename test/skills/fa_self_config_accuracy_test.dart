@@ -34,6 +34,9 @@ const _topLevelParserSources = [
   // `roles:` / `modelOverrides:` / `retry:` are read from the WHOLE config
   // map by ModelRolesConfig.fromYaml (wired from CliConfig.fromYaml).
   'lib/src/model_roles/roles_config.dart',
+  // `providersQueue:` is read from both config files by the boot resolver
+  // (issue #418).
+  'lib/src/cli/startup.dart',
 ];
 
 /// All ```yaml fenced blocks in the skill, parsed (config examples are
@@ -50,6 +53,16 @@ List<Object?> _skillYamlDocs(String skill) {
 /// Nested key paths the skill may document → the parser source that reads
 /// them.
 const _nestedKeySources = <String, String>{
+  'providersQueue.[]': 'lib/src/model_roles/providers_queue.dart',
+  'providersQueue.[].provider_type': 'lib/src/model_roles/providers_queue.dart',
+  'providersQueue.[].provider_config':
+      'lib/src/model_roles/providers_queue.dart',
+  'providersQueue.[].provider_config.model':
+      'lib/src/model_roles/providers_queue.dart',
+  'providersQueue.[].provider_config.baseUrl':
+      'lib/src/model_roles/providers_queue.dart',
+  'providersQueue.[].provider_config.apiKeyEnv':
+      'lib/src/model_roles/providers_queue.dart',
   'memory.projectPath': 'lib/src/memory_config.dart',
   'memory.userPath': 'lib/src/memory_config.dart',
   'cube.enabled': 'lib/src/cube/config/cube_settings.dart',

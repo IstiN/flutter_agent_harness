@@ -2052,5 +2052,72 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCompactionDocs => 'Compaction docs';
 
   @override
+  String get settingsQueueTitle => 'Provider queue';
+
+  @override
+  String get settingsQueueHelper =>
+      'An ordered chain of providers: when the current provider dies (quota, auth, network, timeout, malformed stream, 5xx, bad finish), the next takes over and the winner sticks for the session. Applies from the next run.';
+
+  @override
+  String get settingsQueueEmpty =>
+      'No provider queue — the single provider/model boot applies. Add an entry to build the chain.';
+
+  @override
+  String get settingsQueueScopeEnv =>
+      'effective from the FA_PROVIDERS_QUEUE environment variable — edit the env to change it (read-only here)';
+
+  @override
+  String get settingsQueueUnsupported =>
+      'Not configurable on the web — there is no config file or environment here.';
+
+  @override
+  String get settingsQueueAdd => 'Add entry';
+
+  @override
+  String get settingsQueueAddTitle => 'Add queue entry';
+
+  @override
+  String get settingsQueueKind => 'Provider type (e.g. openai-completions)';
+
+  @override
+  String get settingsQueueModel => 'Model (e.g. moonshotai/Kimi-K2.6)';
+
+  @override
+  String get settingsQueueApiKeyEnv => 'API key env var (e.g. KIMI_API_KEY)';
+
+  @override
+  String get settingsQueueBaseUrl => 'Base URL (optional)';
+
+  @override
+  String get settingsQueueCancel => 'Cancel';
+
+  @override
+  String get settingsQueueAddAction => 'Add';
+
+  @override
+  String get settingsQueueMoveUp => 'Move up';
+
+  @override
+  String get settingsQueueMoveDown => 'Move down';
+
+  @override
+  String get settingsQueueRemove => 'Remove';
+
+  @override
+  String settingsQueueSaved(String file) {
+    return 'Queue saved to $file — applies from the next run.';
+  }
+
+  @override
+  String settingsQueueSaveFailed(String error) {
+    return 'Could not save the queue: $error';
+  }
+
+  @override
+  String settingsQueueInvalid(String error) {
+    return 'Provider queue rejected: $error';
+  }
+
+  @override
   String get themePackImportFailed => 'Theme pack rejected';
 }
