@@ -2153,14 +2153,24 @@ class AgentService extends ChangeNotifier
 
   TrajectoryBlobPersister _trajectoryBlobPersisterFor() {
     final session = _session;
-    if (_trajectoryBlobPersister == null ||
-        _trajectoryBlobPersisterSession != session) {
-      _trajectoryBlobPersister = TrajectoryBlobPersister(
-        redactText: _redactionPipeline?.redact,
-      );
+    final existing = _trajectoryBlobPersister;
+    // Same session (or the session materialised after the first capture
+    // — the null→real transition must ADOPT, not reset: the seen-hash
+    // state implements the #385 blob dedup and the #440 model-change
+    // dedup, and wiping it once per session re-persisted known blobs and
+    // appended a second model_change for an unchanged version).
+    if (existing != null &&
+        (_trajectoryBlobPersisterSession == null ||
+            identical(_trajectoryBlobPersisterSession, session))) {
       _trajectoryBlobPersisterSession = session;
+      return existing;
     }
-    return _trajectoryBlobPersister!;
+    final persister = TrajectoryBlobPersister(
+      redactText: _redactionPipeline?.redact,
+    );
+    _trajectoryBlobPersister = persister;
+    _trajectoryBlobPersisterSession = session;
+    return persister;
   }
 
   /// The producer behind [trajectory]: rebuilt from the active branch on
@@ -2849,6 +2859,17 @@ class AgentService extends ChangeNotifier
     final pending = List.of(_pendingRequestRecords);
     _pendingRequestRecords.clear();
     for (final (:customType, :data) in pending) {
+      if (customType == _pendingModelChangeMarker) {
+        // Issue #440: the System row for this request-context version —
+        // a real ModelChangeRecord through the same session API the
+        // model-switch flow uses, so replay projects the row the
+        // following summary stamps (F7a). Never a custom record.
+        await session.appendModelChange(
+          provider: _agent.state.model.provider,
+          modelId: _agent.state.model.id,
+        );
+        continue;
+      }
       await session.appendCustomEntry(customType: customType, data: data);
     }
   }

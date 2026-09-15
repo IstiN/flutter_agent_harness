@@ -15,6 +15,12 @@
 
 part of 'agent_service.dart';
 
+/// Internal marker in `_pendingRequestRecords`: the flush turns it into
+/// a real `ModelChangeRecord` (issue #440) — the System row the request
+/// summary that follows on the chain stamps with the blob pointers (F7a).
+/// Never passed to `appendCustomEntry`.
+const String _pendingModelChangeMarker = '_pending_model_change';
+
 extension AgentServiceEvents on AgentService {
   Future<void> _onAgentEvent(AgentEvent event, CancelToken cancelToken) async {
     // Any event proves the run is alive — rearm the idle watchdog.
@@ -186,8 +192,18 @@ extension AgentServiceEvents on AgentService {
   /// records right before their assistant message, so the request summary
   /// stays ahead of it on the record chain (the replay walk expects that).
   void _persistModelRequest(ModelRequestEvent event) {
+    final persister = _trajectoryBlobPersisterFor();
+    // Issue #440: a new request-context version lands a `model_change`
+    // ahead of its blob/summary records (content-addressed, once per
+    // version run — the app twin of the CLI's model-change rows).
+    if (persister.shouldAppendModelChange(event.detail)) {
+      _pendingRequestRecords.add((
+        customType: _pendingModelChangeMarker,
+        data: const {},
+      ));
+    }
     _pendingRequestRecords.addAll(
-      _trajectoryBlobPersisterFor().recordsFor(
+      persister.recordsFor(
         event.detail,
         promptBlob: event.promptBlob,
         manifestBlob: event.manifestBlob,
