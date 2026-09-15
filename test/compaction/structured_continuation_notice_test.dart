@@ -60,8 +60,7 @@ void main() {
     expect(line, contains('tool_result×1'));
   });
 
-  test('E4: long span lists cap to first and last with the full-list hint',
-      () {
+  test('E4: long span lists cap to first and last with the full-list hint', () {
     final entries = <SessionRecord>[
       for (var i = 1; i <= 15; i++)
         messageRecord('r$i', UserMessage.text('m$i')),

@@ -26,9 +26,7 @@ String hiddenRecoverablesSummary(
   final seqs = RecordSeqIndex(entries);
   final spans = <String>[];
   for (final hidden in entries.whereType<HiddenRangeRecord>()) {
-    final nums = [
-      for (final id in hidden.recordIds) ?seqs.seqOf(id),
-    ]..sort();
+    final nums = [for (final id in hidden.recordIds) ?seqs.seqOf(id)]..sort();
     if (nums.isEmpty) continue;
     final counts = <String, int>{};
     for (final id in hidden.recordIds) {
