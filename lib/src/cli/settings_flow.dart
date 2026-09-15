@@ -585,81 +585,113 @@ extension SettingsFlow on AgentCli {
       ]);
       if (picked == null || picked == 'done') return;
       if (picked == 'add') {
-        final rule = await _promptTtsrRule();
-        if (rule != null) {
-          // Reload-before-write: a concurrent edit that landed while the
-          // menus sat open survives every action (E3).
-          final fresh = await _readTtsrSection(path);
-          if (fresh == null) return;
-          await _writeTtsrSection(
-            path,
-            TtsrConfig(settings: fresh.settings, rules: [...fresh.rules, rule]),
-            before: fresh.rules,
-          );
-        }
+        await _ttsrAddAction(path);
         continue;
       }
-      final name = picked.substring('rule:'.length);
-      TtsrRule? rule;
-      for (final candidate in current.rules) {
-        if (candidate.name == name) rule = candidate;
-      }
-      if (rule == null) continue;
-      final action = await _pickOption('rule ${rule.name}', [
-        (
-          'toggle',
-          rule.enabled ? 'Disable' : 'Enable',
-          'persists and applies ${ttsr == null ? 'at next boot' : 'live'}',
-        ),
-        ('delete', 'Delete', 'remove from the section'),
-        ('back', 'Back', ''),
-      ]);
-      if (action != 'toggle' && action != 'delete') continue;
-      final fresh = await _readTtsrSection(path);
-      if (fresh == null) return;
-      TtsrRule? target;
-      for (final candidate in fresh.rules) {
-        if (candidate.name == name) target = candidate;
-      }
-      if (target == null) {
-        io.writeln('ttsr: rule "$name" is gone from $path — not saved');
-        continue;
-      }
-      if (action == 'toggle') {
-        final flipped = TtsrRule(
-          name: target.name,
-          patterns: target.patterns,
-          body: target.body,
-          path: target.path,
-          enabled: !target.enabled,
-          scope: target.scope,
-        );
-        final flippedName = flipped.name;
-        await _writeTtsrSection(
-          path,
-          TtsrConfig(
-            settings: fresh.settings,
-            rules: [
-              for (final existing in fresh.rules)
-                existing.name == flippedName ? flipped : existing,
-            ],
-          ),
-          before: fresh.rules,
-        );
-      } else {
-        await _writeTtsrSection(
-          path,
-          TtsrConfig(
-            settings: fresh.settings,
-            rules: [
-              for (final existing in fresh.rules)
-                if (existing.name != name) existing,
-            ],
-          ),
-          before: fresh.rules,
-        );
-      }
+      await _ttsrRuleAction(path, picked.substring('rule:'.length));
     }
+  }
+
+  /// The add branch: prompt for the rule, then reload-before-write so a
+  /// concurrent edit that landed while the menus sat open survives (E3).
+  Future<void> _ttsrAddAction(String path) async {
+    final rule = await _promptTtsrRule();
+    if (rule == null) return;
+    final fresh = await _readTtsrSection(path);
+    if (fresh == null) return;
+    await _writeTtsrSection(
+      path,
+      TtsrConfig(settings: fresh.settings, rules: [...fresh.rules, rule]),
+      before: fresh.rules,
+    );
+  }
+
+  /// The per-rule branch (toggle/delete) for the rule named [name]:
+  /// pick the action, reload, and write the same diff.
+  Future<void> _ttsrRuleAction(String path, String name) async {
+    final current = await _readTtsrSection(path);
+    final rule = _ttsrFindRule(current?.rules, name);
+    if (rule == null) return;
+    final action = await _pickOption('rule ${rule.name}', [
+      (
+        'toggle',
+        rule.enabled ? 'Disable' : 'Enable',
+        'persists and applies ${ttsr == null ? 'at next boot' : 'live'}',
+      ),
+      ('delete', 'Delete', 'remove from the section'),
+      ('back', 'Back', ''),
+    ]);
+    if (action != 'toggle' && action != 'delete') return;
+    final fresh = await _readTtsrSection(path);
+    if (fresh == null) return;
+    final target = _ttsrFindRule(fresh.rules, name);
+    if (target == null) {
+      io.writeln('ttsr: rule "$name" is gone from $path — not saved');
+      return;
+    }
+    if (action == 'toggle') {
+      await _ttsrToggleRule(path, fresh, target);
+    } else {
+      await _ttsrDeleteRule(path, fresh, name);
+    }
+  }
+
+  /// Persists the rule with its `enabled` flag flipped.
+  Future<void> _ttsrToggleRule(
+    String path,
+    TtsrConfig fresh,
+    TtsrRule target,
+  ) async {
+    final flipped = TtsrRule(
+      name: target.name,
+      patterns: target.patterns,
+      body: target.body,
+      path: target.path,
+      enabled: !target.enabled,
+      scope: target.scope,
+    );
+    final flippedName = flipped.name;
+    await _writeTtsrSection(
+      path,
+      TtsrConfig(
+        settings: fresh.settings,
+        rules: [
+          for (final existing in fresh.rules)
+            existing.name == flippedName ? flipped : existing,
+        ],
+      ),
+      before: fresh.rules,
+    );
+  }
+
+  /// Persists the removal of the rule named [name].
+  Future<void> _ttsrDeleteRule(
+    String path,
+    TtsrConfig fresh,
+    String name,
+  ) async {
+    await _writeTtsrSection(
+      path,
+      TtsrConfig(
+        settings: fresh.settings,
+        rules: [
+          for (final existing in fresh.rules)
+            if (existing.name != name) existing,
+        ],
+      ),
+      before: fresh.rules,
+    );
+  }
+
+  /// The rule named [name] in [rules] (last wins, matching registration
+  /// dedupe); null when the list is null or the rule is gone.
+  TtsrRule? _ttsrFindRule(List<TtsrRule>? rules, String name) {
+    if (rules == null) return null;
+    TtsrRule? found;
+    for (final candidate in rules) {
+      if (candidate.name == name) found = candidate;
+    }
+    return found;
   }
 
   /// Reads and parses the `ttsr:` section of [path]. An absent section
