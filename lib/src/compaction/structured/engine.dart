@@ -183,11 +183,6 @@ final class StructuredCompactor {
         protectLastN: protectLastN,
       );
       if (ids.isEmpty) break;
-      // ignore: avoid_print
-      print(
-        'HIDEDBG pass=$i before=$before trigger=$trigger hideable=${_hideableEntries(view.ledger).length} picks=${picks.length} ids=${ids.length} ledger=${view.ledger.entries.length}',
-      );
-
       await session.appendHiddenRange(recordIds: ids.toList()..sort());
       final after = await _refreshState();
       hooks?.onPass(
