@@ -172,6 +172,131 @@ class _SecretRequestSheetState extends State<SecretRequestSheet> {
   }
 }
 
+/// Renders a mid-run password ask (issue #367: `sudo`, `ssh`, a passphrase)
+/// as a modal bottom sheet with ONE obscured field. The chat surface
+/// installs [showPasswordPromptSheet] on `FaChatService.passwordPromptHandler`;
+/// the bash tool calls it when the detector sees a password prompt and the
+/// returned value is streamed to the live process stdin — the password
+/// never enters the composer, the transcript, or the input history.
+///
+/// Dismissing the sheet (barrier tap, back button, drag-down, Cancel)
+/// resolves with `null`: the tool then writes a bare newline and the
+/// command fails on its own.
+Future<String?> showPasswordPromptSheet(BuildContext context, String prompt) {
+  return showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (_) => PasswordPromptSheet(prompt: prompt),
+  );
+}
+
+/// The password prompt sheet: a key icon, the detected [prompt] as title,
+/// an auto-focused obscured field (the composer never gets focus), and
+/// Cancel / Submit controls. Pops with the entered password, or `null`
+/// when dismissed.
+class PasswordPromptSheet extends StatefulWidget {
+  const PasswordPromptSheet({super.key, required this.prompt});
+
+  /// The prompt line the detector matched; shown as the title.
+  final String prompt;
+
+  @override
+  State<PasswordPromptSheet> createState() => _PasswordPromptSheetState();
+}
+
+class _PasswordPromptSheetState extends State<PasswordPromptSheet> {
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _focus = FocusNode();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = _controller.text;
+    if (value.isEmpty) return;
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final strings = FaChatStrings.of(context);
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 8,
+        bottom: 16 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.password, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.prompt,
+                    style: theme.textTheme.titleMedium,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: strings.passwordPromptCancel,
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              focusNode: _focus,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: strings.passwordPromptLabel,
+                isDense: true,
+              ),
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              onSubmitted: (_) => _submit(),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(strings.passwordPromptCancel),
+                ),
+                const SizedBox(width: 8),
+                ListenableBuilder(
+                  listenable: _controller,
+                  builder: (context, _) => FilledButton.icon(
+                    onPressed: _controller.text.isEmpty ? null : _submit,
+                    icon: const Icon(Icons.key, size: 18),
+                    label: Text(strings.passwordPromptSubmit),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Uppercases input as the user types (env var names are UPPER_SNAKE).
 final class _UpperCaseFormatter extends TextInputFormatter {
   @override

@@ -116,6 +116,16 @@ final class SubagentHandle {
   /// Number of model requests made.
   int requests;
 
+  /// In-flight provider usage of the CURRENT run (issue #383 heartbeat):
+  /// the executor touches it on every completed provider response so the
+  /// parent's digest shows live request/token counts. The lifetime totals
+  /// above only land at completion; a running child adds these on top.
+  int liveTokens = 0;
+
+  /// In-flight provider request count of the current run (see
+  /// [liveTokens]).
+  int liveRequests = 0;
+
   /// The model id used for this child.
   String? modelId;
 
@@ -161,6 +171,8 @@ final class SubagentHandle {
     'requests': requests,
     'modelId': modelId,
     'lastReply': lastReply,
+    'liveTokens': liveTokens,
+    'liveRequests': liveRequests,
     if (supersedes != null) 'supersedes': supersedes,
     'pendingMessages': [for (final m in pendingMessages) m.toJson()],
   };
@@ -184,6 +196,8 @@ final class SubagentHandle {
     handle.tokens = json['tokens'] as int? ?? 0;
     handle.requests = json['requests'] as int? ?? 0;
     handle.modelId = json['modelId'] as String?;
+    handle.liveTokens = json['liveTokens'] as int? ?? 0;
+    handle.liveRequests = json['liveRequests'] as int? ?? 0;
     handle.lastReply = json['lastReply'] as String?;
     handle.supersedes = json['supersedes'] as String?;
     for (final entry
@@ -195,7 +209,6 @@ final class SubagentHandle {
     return handle;
   }
 
-  /// A short status line for display in `/tasks` or the app UI.
   String get statusLine {
     final parts = <String>['$id ($agentType)'];
     switch (status) {

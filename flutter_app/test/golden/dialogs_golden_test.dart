@@ -364,6 +364,30 @@ void main() {
       await expectGolden(tester, 'dialogs_secret_request_ru');
     });
 
+    testWidgets('password prompt sheet: masked entry over a sudo ask', (
+      tester,
+    ) async {
+      await _pumpOpened(
+        tester,
+        (context) => showPasswordPromptSheet(
+          context,
+          '[sudo] password for user:',
+        ),
+      );
+      await tester.enterText(find.byType(TextField), 'hunter2');
+      await tester.pumpAndSettle();
+      await expectGolden(tester, 'dialogs_password_prompt');
+    });
+
+    testWidgets('password prompt sheet: russian locale', (tester) async {
+      await _pumpOpened(
+        tester,
+        (context) => showPasswordPromptSheet(context, 'Password:'),
+        locale: const Locale('ru'),
+      );
+      await expectGolden(tester, 'dialogs_password_prompt_ru');
+    });
+
     testWidgets('settings key editor dialog', (tester) async {
       await _pumpOpened(
         tester,

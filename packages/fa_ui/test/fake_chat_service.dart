@@ -94,6 +94,8 @@ class FakeChatService extends ChangeNotifier implements FaChatService {
   @override
   RequestSecretCallback? secretRequestHandler;
   @override
+  PasswordPromptCallback? passwordPromptHandler;
+  @override
   ApprovalManager get approval => ApprovalManager();
   @override
   void setApprovalMode(ApprovalMode mode) {}

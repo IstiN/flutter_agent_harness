@@ -76,5 +76,41 @@ void main() {
       await job.settled;
       expect(job.stopReason, 'cancelled');
     });
+
+    test('live stdin: the pipe stays open until the process ends and a '
+        'write reaches it (issue #367)', () async {
+      final channel = LiveStdinChannel();
+      final started = await env.startShellJob(
+        'read line; echo "got:\$line"',
+        id: 'sh-5',
+        logPath: '${tempDir.path}/sh-5.log',
+        options: ShellExecOptions(liveStdin: channel),
+      );
+      final job = started.valueOrNull!;
+      expect(channel.isBound, isTrue);
+      // The pipe is still open: the stdin-reader has not seen EOF and
+      // keeps waiting for the answer.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(job.isRunning, isTrue);
+      expect(channel.write('s3cret\n'), isTrue);
+      await job.settled;
+      expect(job.exitCode, 0);
+      final log = File(job.logPath).readAsStringSync();
+      expect(log, contains('got:s3cret'));
+      // The process is gone: a late write fails cleanly, never throws.
+      expect(channel.write('late\n'), isFalse);
+    });
+
+    test('without a live channel stdin closes at start (ripgrep safety)',
+        () async {
+      final started = await env.startShellJob(
+        'read line; echo "got:\$line"',
+        id: 'sh-6',
+        logPath: '${tempDir.path}/sh-6.log',
+      );
+      final job = started.valueOrNull!;
+      await job.settled;
+      expect(job.exitCode, 0);
+    });
   });
 }

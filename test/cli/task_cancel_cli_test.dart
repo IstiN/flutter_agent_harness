@@ -140,6 +140,11 @@ final class _CtrlJob implements ShellJob {
   String? get stopReason => _stopped ? 'cancelled' : null;
 
   @override
+  Stream<String> get output => const Stream.empty();
+  @override
+  bool writeStdin(String data) => false;
+
+  @override
   Future<void> stop() async {
     if (_stopped) return;
     _stopped = true;

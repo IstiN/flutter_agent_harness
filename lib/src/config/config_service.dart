@@ -42,6 +42,7 @@ import '../power_config.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
 import '../tools/availability.dart';
+import '../task/subagent_heartbeat.dart';
 import '../ttsr/ttsr.dart';
 
 /// Sections the PROJECT file participates in (each wins over the user file).
@@ -76,6 +77,7 @@ const configTopLevelKeys = <String>{
   'agent',
   'images',
   'skills',
+  'subagents',
   'fabric',
   'power',
   'tui',
@@ -402,7 +404,7 @@ final class ConfigService {
     // A JSON array/object value renders as a yaml block (list-valued keys
     // — `customProviders`, the `roles:` chains, `redact:` lists); any
     // other value is the single scalar line `upsertYamlPath` always wrote.
-    final leafLines = _leafLines(value, depth: segments.length - 1);
+    final leafLines = configLeafLines(value, depth: segments.length - 1);
     final edited = upsertYamlPath(text, segments, leafLines);
     // New or previously newline-less files still end with a newline.
     final normalized = edited.isEmpty || edited.endsWith('\n')
@@ -830,11 +832,12 @@ int _blockEnd(List<String> lines, int keyLine, int depth) {
   return end;
 }
 
-/// The leaf value lines for a `config set` value: a JSON array/object
-/// renders as a yaml block under the key (list-valued keys —
-/// `customProviders`, the `roles:` chains, `redact:` lists); anything
-/// else stays the single scalar line `renderYamlScalar` always wrote.
-List<String> _leafLines(String value, {required int depth}) {
+/// The leaf value lines for a config value: a JSON array/object renders
+/// as a yaml block under the key (list-valued keys — `customProviders`,
+/// the `roles:` chains, `redact:` lists); anything else stays the single
+/// scalar line `renderYamlScalar` always wrote. Shared by `config set`
+/// and the settings flows' surgical upsert.
+List<String> configLeafLines(String value, {required int depth}) {
   final raw = value.trim();
   if (!raw.startsWith('[') && !raw.startsWith('{')) {
     return [renderYamlScalar(value)];
@@ -950,6 +953,23 @@ String applicationNote(String section) => switch (section) {
   _ => 'applies at next boot',
 };
 
+/// The strict `redact:` section validator, shared by `check`, `set` and
+/// the settings flow (issue #391). [RedactionConfig.fromYaml] is tolerant
+/// for booleans and numbers, but an invalid allowlist regex throws a bare
+/// FormatException mid-parse — wrapped here so every caller surfaces the
+/// parser's verbatim message as a [ConfigException] instead of crashing
+/// (a `config set redact.allowlist` used to escape the diagnostics pass
+/// uncaught).
+void validateRedactSection(Object? value) {
+  try {
+    RedactionConfig.fromYaml(value is Map<dynamic, dynamic> ? value : null);
+  } on ConfigException {
+    rethrow;
+  } on Object catch (error) {
+    throw ConfigException(error.toString());
+  }
+}
+
 /// Collects diagnostics for one config file: syntax errors, unknown keys
 /// (warnings), strict-section schema errors and bad scalars (errors).
 ///
@@ -1053,9 +1073,9 @@ bool _validateTopLevelEntry(
 final _sectionValidators = <String, void Function(dynamic value, String label)>{
   'memory': (value, _) => MemoryConfig.fromYaml(value),
   'cube': (value, _) => CubeSettings.fromYaml(value),
-  'tools': (value, _) => ToolsConfig.fromYaml(value),
   'mcp': (value, _) => McpConfig.fromYaml(value),
-  'redact': (value, _) => RedactionConfig.fromYaml(value),
+  'redact': (value, _) => validateRedactSection(value),
+  'tools': (value, _) => ToolsConfig.fromYaml(value),
   'compaction': (value, label) =>
       CompactionEngine.fromSection(value, label: label),
   'models': (value, _) => ModelsConfig.fromYaml(value),
@@ -1071,6 +1091,10 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // SAME public strict parser CliConfig.fromYaml uses — no mirror to
   // keep in sync, unlike the private-parser sections above.
   'power': (value, _) => parsePowerSection(value),
+  // The subagents section (background-subagent heartbeat, issue #383)
+  // delegates to the SAME public strict parser CliConfig.fromYaml uses —
+  // no mirror to keep in sync.
+  'subagents': (value, _) => SubagentsConfig.fromYaml(value),
   // Deep validation (strict prompt names) lives behind cli_config.dart's
   // strict parser; here the section must be a string-valued map.
   'prompts': (value, _) => _validateStringMap(value, 'prompts'),
@@ -1085,7 +1109,8 @@ void _validateTuiSection(Object? node, String label) {
     throw ConfigException('$label: tui section must be a map');
   }
   final unknown = [
-    for (final key in node.keys) if (!{'theme'}.contains('$key')) '$key',
+    for (final key in node.keys)
+      if (!{'theme'}.contains('$key')) '$key',
   ];
   if (unknown.isNotEmpty) {
     throw ConfigException(
