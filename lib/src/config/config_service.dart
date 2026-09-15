@@ -950,6 +950,9 @@ String applicationNote(String section) => switch (section) {
   'ttsr' =>
     'rule edits apply live when the stream-rule engine is running, '
         'otherwise at next boot (issue #392)',
+  // Issue #395: the flow republishes the process-wide registry global on
+  // every write, so the request build picks the change up immediately.
+  'images' => 'applies to the next request build',
   // Issue #279: the session theme switches live on write (`/theme` runs
   // the same persist + switch flow); a hand-edit applies at next boot.
   'tui' => 'applies live via /theme, otherwise at next boot',

@@ -130,8 +130,9 @@ bool _isGhostProviderEntry(Object? node) =>
 /// Parses the `images:` section (session image registry, issue #171):
 /// `registry` (kill switch) and `maxPerRequest` (per-request unique-image
 /// cap). Strict — a bad schema throws [ConfigException] instead of
-/// silently keeping the defaults.
-ImageRegistryConfig? _parseImagesSection(Object? node) {
+/// silently keeping the defaults. Public so the settings flow's
+/// reload-after-write (issue #395) reuses the same parser the boot runs.
+ImageRegistryConfig? parseImagesSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('images must be a map, got: $node');
@@ -293,7 +294,7 @@ final class CliConfig {
       // The trajectory section (issue #385) is a plain boolean today:
       // `wireDump` opts the raw outbound payloads into the session ledger.
       wireDump: _parseTrajectorySection(map['trajectory']),
-      images: _parseImagesSection(map['images']),
+      images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
       // The agent section (owner-side context cap, issue #273) is strict
