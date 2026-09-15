@@ -145,6 +145,13 @@ jobs:
             -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
           if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
 
+      # Issue #433 AC1: README CRAP badge must equal the crap4dart.yaml
+      # threshold (they drifted to 8.0-vs-12.0 once). Pure python — runs on
+      # every PR, including docs-only ones (a README edit is exactly the
+      # drift vector).
+      - name: CRAP badge/config sync guard
+        run: python3 scripts/check_crap_guards.py
+
       # Full analyze needs the example app's package config (Flutter imports);
       # a docs-only PR skips the flutter setup entirely and analyzes the pure
       # Dart scopes only — it cannot have changed resolution anyway.
