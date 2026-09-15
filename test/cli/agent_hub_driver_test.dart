@@ -180,18 +180,87 @@ void main() {
       );
 
       final out = io.out.toString();
-      expect(
-        RegExp('bash sh-1-\\S+ · running').hasMatch(out),
-        isTrue,
-        reason: 'the start block names the job and its state',
-      );
+      // Line mode has no live region: the running wall never exists, the
+      // terminal card carries the truth at settle (issue #429 S1).
+      expect(out, isNot(contains('running')));
       expect(out, contains('sleep 2'));
       expect(
-        RegExp('bash sh-1-\\S+ · done').hasMatch(out),
+        out.contains('bash task completed in background'),
         isTrue,
-        reason: 'the block closes with the exit code',
+        reason: 'the settled card carries the truthful terminal headline',
       );
-      expect(out, contains('exit 0'));
+      expect(
+        RegExp('sh-1-\\S+ · .*exit 0').hasMatch(out),
+        isTrue,
+        reason: 'the id lives in the dim detail with the exit code',
+      );
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'more than 3 background jobs in a turn collapse into ONE summary card',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final turns = <List<AssistantMessageEvent>>[
+        toolTurn([
+          for (var i = 0; i < 5; i++)
+            ToolCall(
+              id: 't$i',
+              name: 'bash',
+              arguments: {'command': 'sleep $i', 'background': true},
+            ),
+        ]),
+        textTurn('jobs started'),
+        textTurn('acknowledged'),
+      ];
+      final contexts = <Context>[];
+      final cli = buildCli((model, context, {cancelToken}) {
+        contexts.add(
+          Context(
+            systemPrompt: context.systemPrompt,
+            messages: List.of(context.messages),
+            tools: context.tools,
+          ),
+        );
+        final stream = AssistantMessageEventStream();
+        for (final event in turns.removeAt(0)) {
+          stream.push(event);
+        }
+        stream.end();
+        return stream;
+      }, shell: _FakeBgShell());
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('start');
+      await waitForIt(
+        () => contexts.length >= 2 && !cli.isBusy,
+        reason: 'the collapsed turn starts and settles',
+      );
+      await waitForIt(
+        () => contexts.any(
+          (context) => context.messages.any(
+            (message) =>
+                message is UserMessage &&
+                _messageText(message).contains('Background shell job sh-'),
+          ),
+        ),
+        reason: 'the settle notices steer the model',
+      );
+
+      final out = io.out.toString();
+      // One summary card, no wall of individual start/settled cards.
+      expect(
+        'Background jobs (5)'.allMatches(out),
+        hasLength(1),
+        reason: 'exactly one summary card for the collapsed turn',
+      );
+      expect(out, contains('5 done'));
+      expect(out, isNot(contains('bash task started in background')));
+      expect(out, isNot(contains('bash task completed in background')));
 
       io.sendLine('/exit');
       await run;
