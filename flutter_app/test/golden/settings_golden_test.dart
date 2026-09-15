@@ -186,6 +186,7 @@ Future<void> _selectProvider(WidgetTester tester, String label) async {
 }
 
 void main() {
+  group('provider queue section (issue #418)', _queueGoldenSection);
   setUpAll(() async {
     await ensureGoldenFonts();
     await _ensureMaterialIcons();
@@ -731,4 +732,104 @@ class _FakeDapHubService implements DapHubService {
     String? sessionId,
     String? sessionTitle,
   }) async {}
+}
+
+/// Provider-queue section goldens (issue #418, settings_sections.dart): the editable project-scope
+/// queue and the read-only env-wins queue, each in en and ru. Deterministic
+/// fakes — no config file is read or written.
+void _queueGoldenSection() {
+  final queueEntries = <ProviderQueueEntry>[
+    ProviderQueueEntry(
+      providerType: 'openai-completions',
+      model: 'moonshotai/Kimi-K2.6',
+      baseUrl: 'https://gate.test/v1',
+      apiKeyEnv: 'KIMI_API_KEY',
+    ),
+    ProviderQueueEntry(
+      providerType: 'anthropic',
+      model: 'claude-sonnet-4',
+      apiKeyEnv: 'ANTHROPIC_API_KEY',
+    ),
+  ];
+  final editable = ProviderQueueResolution(
+    scope: ProviderQueueScope.project,
+    entries: queueEntries,
+    notices: const [],
+  );
+  final envOwned = ProviderQueueResolution(
+    scope: ProviderQueueScope.env,
+    entries: editable.entries,
+    notices: const [],
+  );
+  ProviderQueueResolution fakeResolve({String? projectDir, String? homeDir}) =>
+      editable;
+
+  Future<void> frame(
+    WidgetTester tester,
+    ProviderQueueResolution Function({String? projectDir, String? homeDir})
+    resolve,
+    Locale locale,
+    String name,
+  ) async {
+    tester.view.physicalSize = const Size(800, 420);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: buildFahTheme(),
+        locale: locale,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 620,
+              child: ProviderQueueSection(
+                projectDir: '/tmp/proj',
+                resolve: resolve,
+                write: (entries, {required layer, projectDir, homeDir}) async =>
+                    '/tmp/proj/.fah/config.yaml',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await expectGolden(tester, name);
+  }
+
+  testWidgets('queue section, editable project scope (en)', (tester) async {
+    await frame(
+      tester,
+      fakeResolve,
+      const Locale('en'),
+      'settings_queue_project_en',
+    );
+  });
+  testWidgets('queue section, editable project scope (ru)', (tester) async {
+    await frame(
+      tester,
+      fakeResolve,
+      const Locale('ru'),
+      'settings_queue_project_ru',
+    );
+  });
+  testWidgets('queue section, env wins read-only (en)', (tester) async {
+    await frame(
+      tester,
+      ({projectDir, homeDir}) => envOwned,
+      const Locale('en'),
+      'settings_queue_env_en',
+    );
+  });
+  testWidgets('queue section, env wins read-only (ru)', (tester) async {
+    await frame(
+      tester,
+      ({projectDir, homeDir}) => envOwned,
+      const Locale('ru'),
+      'settings_queue_env_ru',
+    );
+  });
 }

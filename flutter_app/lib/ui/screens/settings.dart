@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -38,6 +39,7 @@ import 'package:fa/services/openrouter_oauth_links_stub.dart'
     if (dart.library.html) 'package:fa/services/openrouter_oauth_links_web.dart';
 import 'package:fa/services/media_models_store.dart';
 import 'package:fa/services/compaction_engine_loader.dart';
+import 'package:fa/services/providers_queue_loader.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
@@ -2135,6 +2137,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'main/docs',
                   ),
                 ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 16),
+                // Provider queue editor (issue #418): the ordered
+                // main-model failover chain. Resolves/writes the same
+                // scopes the CLI boot reads, so an edit applies from the
+                // next run; the env queue shows read-only ("env wins").
+                ProviderQueueSection(projectDir: service.env.sessionCwd),
               ],
               // Registry-classified CLI-only settings, listed with their
               // reasons — never a silent absence (issue #288 AC4).

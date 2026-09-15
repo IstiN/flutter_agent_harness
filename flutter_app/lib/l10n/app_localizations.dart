@@ -3548,6 +3548,120 @@ abstract class AppLocalizations {
   /// **'Compaction docs'**
   String get settingsCompactionDocs;
 
+  /// Title of the Settings provider-queue section (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Provider queue'**
+  String get settingsQueueTitle;
+
+  /// Explainer under the queue section title (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'An ordered chain of providers: when the current provider dies (quota, auth, network, timeout, malformed stream, 5xx, bad finish), the next takes over and the winner sticks for the session. Applies from the next run.'**
+  String get settingsQueueHelper;
+
+  /// Empty-state caption (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'No provider queue — the single provider/model boot applies. Add an entry to build the chain.'**
+  String get settingsQueueEmpty;
+
+  /// Env-wins caption; the env scope is read-only (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'effective from the FA_PROVIDERS_QUEUE environment variable — edit the env to change it (read-only here)'**
+  String get settingsQueueScopeEnv;
+
+  /// Web stub note (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Not configurable on the web — there is no config file or environment here.'**
+  String get settingsQueueUnsupported;
+
+  /// Button adding a queue entry (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Add entry'**
+  String get settingsQueueAdd;
+
+  /// Title of the add-entry dialog (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Add queue entry'**
+  String get settingsQueueAddTitle;
+
+  /// Field: provider_type (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Provider type (e.g. openai-completions)'**
+  String get settingsQueueKind;
+
+  /// Field: model (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Model (e.g. moonshotai/Kimi-K2.6)'**
+  String get settingsQueueModel;
+
+  /// Field: apiKeyEnv (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'API key env var (e.g. KIMI_API_KEY)'**
+  String get settingsQueueApiKeyEnv;
+
+  /// Field: optional baseUrl (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Base URL (optional)'**
+  String get settingsQueueBaseUrl;
+
+  /// Dialog cancel button (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get settingsQueueCancel;
+
+  /// Dialog confirm button (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get settingsQueueAddAction;
+
+  /// Reorder tooltip (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Move up'**
+  String get settingsQueueMoveUp;
+
+  /// Reorder tooltip (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Move down'**
+  String get settingsQueueMoveDown;
+
+  /// Remove tooltip (issue #418)
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get settingsQueueRemove;
+
+  /// No description provided for @settingsQueueSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Queue saved to {file} — applies from the next run.'**
+  String settingsQueueSaved(String file);
+
+  /// No description provided for @settingsQueueSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the queue: {error}'**
+  String settingsQueueSaveFailed(String error);
+
+  /// No description provided for @settingsQueueInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider queue rejected: {error}'**
+  String settingsQueueInvalid(String error);
+
   /// No description provided for @themePackImportFailed.
   ///
   /// In en, this message translates to:
