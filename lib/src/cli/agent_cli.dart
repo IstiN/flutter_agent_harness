@@ -324,6 +324,10 @@ class AgentCli {
         lsp: config.lspConfig,
         mcp: _mcp.manager,
         shellJobs: _shellJobs,
+        // Mid-run password asks (issue #367): the TUI opens the masked
+        // secret-mode prompt; the value streams to the live process stdin.
+        onPasswordPrompt:
+            io.isInteractive ? _answerPasswordPrompt : null,
         config: ConfigService(env: decoratedEnv, homeDir: config.homeDir),
       ),
       ...memoryTools(

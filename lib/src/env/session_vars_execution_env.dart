@@ -64,6 +64,11 @@ final class SessionVarsExecutionEnv
       cancelToken: options?.cancelToken,
       onStdout: options?.onStdout,
       onStderr: options?.onStderr,
+      // stdinData + liveStdin (issue #367): the live stdin channel keeps
+      // the pipe open so a mid-run password ask can be answered; the
+      // launch-time stdin param rides the same merge.
+      stdinData: options?.stdinData,
+      liveStdin: options?.liveStdin,
     );
     return _delegate.exec(command, options: merged);
   }
@@ -111,6 +116,9 @@ final class SessionVarsExecutionEnv
       cancelToken: options?.cancelToken,
       onStdout: options?.onStdout,
       onStderr: options?.onStderr,
+      // stdinData + liveStdin (issue #367): see exec above.
+      stdinData: options?.stdinData,
+      liveStdin: options?.liveStdin,
     );
     return bg.startShellJob(command, id: id, logPath: logPath, options: merged);
   }
