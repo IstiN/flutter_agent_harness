@@ -63,6 +63,7 @@ extension on AgentCli {
     _syncMailboxPrefix();
     // Re-claim ownership for the new session (#428): free → drive,
     // live lease → viewer (no takeover ever).
+    await _releaseSessionLease();
     await _claimSessionLease();
     await _printViewerBannerIfAny();
     _persistedCount = 0;
@@ -98,6 +99,7 @@ extension on AgentCli {
     _syncMailboxPrefix();
     // Re-claim ownership for the new session (#428): free → drive,
     // live lease → viewer (no takeover ever).
+    await _releaseSessionLease();
     await _claimSessionLease();
     await _printViewerBannerIfAny();
     // Now that `_session` is assigned, the registry source can read the
@@ -215,6 +217,7 @@ extension on AgentCli {
     _syncMailboxPrefix();
     // Re-claim ownership for the new session (#428): free → drive,
     // live lease → viewer (no takeover ever).
+    await _releaseSessionLease();
     await _claimSessionLease();
     await _printViewerBannerIfAny();
     _persistedCount = 0;

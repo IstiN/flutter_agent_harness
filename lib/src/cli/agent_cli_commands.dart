@@ -258,6 +258,7 @@ extension SlashCommandDispatch on AgentCli {
         _session = await _createSession();
         _syncMailboxPrefix();
         // Re-claim ownership for the new session (#428).
+        await _releaseSessionLease();
         await _claimSessionLease();
         await _printViewerBannerIfAny();
         _persistedCount = 0;

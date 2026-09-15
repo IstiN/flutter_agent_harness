@@ -938,6 +938,10 @@ class AgentCli {
   /// The viewer attachment when this instance opened a leased session.
   _ViewerAttachment? _viewer;
 
+  /// The live presence row for the session this instance is DRIVING —
+  /// re-registered when [/session] switches (a viewer keeps no row).
+  ({SessionPresenceStore store, String sessionId})? _livePresence;
+
   /// Per-process lease identity (E3): pid recycling across restarts
   /// cannot impersonate a dead owner because this differs.
   late final String _leaseBootId = FileSessionLeaseStore.newBootId();
@@ -1276,7 +1280,7 @@ class AgentCli {
     // Issue #312: catalogue unclassified vendor words (default transient).
     onUnknownFinishReason = (reason) =>
         _logDiagnostic('unknown finish_reason sid=$_logSid reason=$reason');
-    final presence = await _registerLivePresence();
+    _livePresence = await _registerLivePresence();
     // Phase 3a: rehydrate the subagent registry from the resumed session's
     // `subagent_registry` records — agents of this session are visible again
     // (across restarts AND across instances sharing the session repo).
@@ -1310,7 +1314,7 @@ class AgentCli {
       _onTaskJobCompleted,
     );
     _hubEnsureEventSubs();
-    final inboxTimer = _startInboxWatcher(presence);
+    final inboxTimer = _startInboxWatcher();
     try {
       if (_useTui) {
         // The TUI prints the banner itself into its output history (buffered
@@ -1320,7 +1324,7 @@ class AgentCli {
         await _runLineRepl();
       }
     } finally {
-      await _teardownAfterRepl(interruptSub, taskSub, inboxTimer, presence);
+      await _teardownAfterRepl(interruptSub, taskSub, inboxTimer);
     }
     await printSessionResumeHint();
   }
@@ -1351,9 +1355,7 @@ class AgentCli {
   /// agent into a turn (mid-run mail is delivered by the steering poll).
   /// The same tick refreshes the presence heartbeat (every other tick ≈
   /// 4s, well inside the 15s staleness window).
-  Timer _startInboxWatcher(
-    ({SessionPresenceStore store, String sessionId})? presence,
-  ) {
+  Timer _startInboxWatcher() {
     var heartbeatTick = 0;
     return Timer.periodic(const Duration(seconds: 2), (_) {
       // Viewer mode: follow the lease only — the owner's mail, presence,
@@ -1365,9 +1367,9 @@ class AgentCli {
       unawaited(_reclaimOrphanFabricMail());
       unawaited(_wakeOnInboxMail());
       if (heartbeatTick++ % 2 == 0) {
-        if (presence != null) {
-          unawaited(presence.store.touch(presence.sessionId));
-        }
+        // Touches the CURRENT session's row and re-registers after a
+        // /session switch (a viewer keeps no row at all).
+        unawaited(_touchPresenceForCurrentSession());
         // The messaging-fabric heartbeat: agent_directory reports this
         // instance as live even when no mail is pending.
         _touchFabricHeartbeat();
@@ -1385,7 +1387,6 @@ class AgentCli {
     StreamSubscription<dynamic> interruptSub,
     StreamSubscription<dynamic> taskSub,
     Timer inboxTimer,
-    ({SessionPresenceStore store, String sessionId})? presence,
   ) async {
     _cancelPendingAnswers();
     _hubTeardown();
@@ -1405,8 +1406,9 @@ class AgentCli {
     // Live-session presence off: the session stops being "running in
     // the CLI" for app viewers.
     await _extSessionEndBounded();
-    if (presence != null) {
-      await presence.store.unregister(presence.sessionId);
+    if (_livePresence != null) {
+      await _livePresence!.store.unregister(_livePresence!.sessionId);
+      _livePresence = null;
     }
     // Lease bookkeeping: release OUR lease (graceful exit, #428); a
     // viewer never touches the owner's lease.
@@ -1962,6 +1964,14 @@ class AgentCli {
     // same cached trees a REPL session would).
     await _cubeBootRestore();
     _session = await _initializeSession();
+    // Ownership lease (#428, E7): a headless run NEVER spawns a second
+    // writer over a live lease — it refuses with the banner (exit 3) so
+    // wake loops reopen interactively instead of fighting the owner.
+    final leaseBlocked = await _claimSessionLeaseHeadless();
+    if (leaseBlocked != null) {
+      io.writeln(viewerBannerText(leaseBlocked, stale: false));
+      return 3;
+    }
     if (hep != null) {
       hep.writeHeader(
         sessionId: _session!.cachedId ?? (await _session!.getMetadata()).id,

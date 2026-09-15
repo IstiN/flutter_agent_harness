@@ -64,15 +64,50 @@ extension AgentCliLease on AgentCli {
       pid: config.processId ?? 0,
       sessionName: await session.getSessionName(),
     );
+
     switch (result) {
-      case LeaseAcquired():
+      case LeaseAcquired(:final replaced):
         _heldLeasePath = meta.path;
+        if (replaced != null) {
+          io.writeln(
+            _style.yellow(
+              'lease: previous owner ${leaseOwnerLabel(replaced.host)} '
+              '(pid ${replaced.pid}) looks dead (stale) — driving fresh',
+            ),
+          );
+        }
       case LeaseBlocked(:final lease):
         await _enterViewerMode(lease: lease, meta: meta);
       case LeaseUnenforced():
         // E4/E5 fail-open: a broken or non-atomic lease store never
         // blocks opening a session — drive without enforcement.
         break;
+    }
+  }
+
+  /// Headless claim (E7): no viewer mode exists here — returns the
+  /// owner's live lease when blocked (the caller refuses), else null.
+  Future<SessionLease?> _claimSessionLeaseHeadless() async {
+    final store = config.leaseStore;
+    final session = _session;
+    if (store == null || session == null) return null;
+    final meta = await session.getMetadata();
+    final result = await store.acquire(
+      sessionFilePath: meta.path,
+      sessionId: meta.id,
+      host: 'cli',
+      bootId: _leaseBootId,
+      pid: config.processId ?? 0,
+      sessionName: await session.getSessionName(),
+    );
+    switch (result) {
+      case LeaseAcquired():
+        _heldLeasePath = meta.path;
+        return null;
+      case LeaseBlocked(:final lease):
+        return lease;
+      case LeaseUnenforced():
+        return null;
     }
   }
 
@@ -206,6 +241,24 @@ extension AgentCliLease on AgentCli {
     if (path != null && store != null) {
       await store.release(path, _leaseBootId);
     }
+  }
+
+  /// Touches the live presence row for the CURRENT session and
+  /// re-registers after a /session switch (the boot row belonged to the
+  /// session this process opened). A viewer keeps no row at all.
+  Future<void> _touchPresenceForCurrentSession() async {
+    final session = _session;
+    if (_viewer != null || session == null) return;
+    final meta = await session.getMetadata();
+    final current = _livePresence;
+    if (current != null && current.sessionId == meta.id) {
+      await current.store.touch(meta.id);
+      return;
+    }
+    if (current != null) {
+      await current.store.unregister(current.sessionId);
+    }
+    _livePresence = await _registerLivePresence();
   }
 
   /// Heartbeat for OUR lease (every other inbox tick ≈ 4s, inside the

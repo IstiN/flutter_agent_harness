@@ -159,10 +159,14 @@ sealed class LeaseAcquire {
 
 /// This process now owns the session: heartbeat + release with [bootId].
 final class LeaseAcquired extends LeaseAcquire {
-  const LeaseAcquired(this.lease);
+  const LeaseAcquired(this.lease, {this.replaced});
 
   /// The fresh lease as written (acquiredAt == heartbeatAt == now).
   final SessionLease lease;
+
+  /// The dead owner's expired lease this acquire overwrote, if any —
+  /// the caller prints the dead-owner warning naming host + pid.
+  final SessionLease? replaced;
 }
 
 /// A live lease blocked the drive-open: this opener is a VIEWER. No
@@ -307,7 +311,7 @@ final class FileSessionLeaseStore {
     final verify = await _readLease(path);
     if (verify == null) return LeaseUnenforced(lease);
     if (verify.bootId != bootId) return LeaseBlocked(verify);
-    return LeaseAcquired(verify);
+    return LeaseAcquired(verify, replaced: found.lease);
   }
 
   /// Refreshes the heartbeat of OUR lease: a no-op (returning false) when
