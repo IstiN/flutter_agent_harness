@@ -1039,6 +1039,25 @@ class AgentCli {
   StreamSubscription<dynamic>? _hubSubagentEventsSub;
   StreamSubscription<dynamic>? _hubTaskStartsSub;
 
+  // Issue #437 steering delivery tracking. A mid-run steer is persisted
+  // at accept and queued here until the agent loop merges it at a step
+  // boundary (identity match on the queued message) or the leftover
+  // settle runs/drops it; the wake paths deliver recovered records.
+  final List<PendingSteering> _pendingSteering = [];
+
+  /// Last agent event time — the run heartbeat. A busy run silent past
+  /// `config.steeringStaleAfter` looks wedged: steering flips to `dead`.
+  DateTime? _lastAgentEventAt;
+
+  /// Recovered steering from the previous session (persisted-but-
+  /// unconsumed records), awaiting the idle wake; null once delivered.
+  List<({String recordId, String text, DeferredPanel panel})>?
+  _recoveredSteering;
+
+  /// Guards the recovery wake against the settle-gap re-entry (mirrors
+  /// `_inboxWakeRunning`).
+  bool _steeringWakeRunning = false;
+
   /// Hard bounds for the compaction-time memory extraction (see
   /// `_runAutoCompact`): cancel the extraction stream after 90s, and
   /// force-skip after 120s even if the cancel didn't land.
@@ -1395,6 +1414,10 @@ class AgentCli {
       }
       unawaited(_reclaimOrphanFabricMail());
       unawaited(_wakeOnInboxMail());
+      // #437: wedge watchdog for mid-run steering + the idle wake for
+      // steering recovered from the previous session.
+      _checkPendingSteeringHealth();
+      _wakeOnRecoveredSteering();
       if (heartbeatTick++ % 2 == 0) {
         // Touches the CURRENT session's row and re-registers after a
         // /session switch (a viewer keeps no row at all).
@@ -2552,6 +2575,8 @@ class AgentCli {
         _assistantMessageIsEmpty(lastMessage);
   }
 
+  /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
+  /// `true` when the expiry was handled and the turn is finished.
   Future<bool> _maybeHandleCodeMieError(String message) async {
     // Headless: the browser SSO re-auth awaits a human that is not there —
     // surface the error instead and let the exit code carry the failure.
