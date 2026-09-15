@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:collection';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
@@ -86,6 +87,68 @@ TrajectorySnapshot _snapshot() => trajectorySnapshotOf([
   ),
   _toolResultRecord('r1', parentId: 'a1', callId: 'c1'),
 ]);
+
+/// A snapshot whose request carries real prompt/manifest/wire-dump blobs
+/// (issue #385): user → model change → tools change → prompt blob →
+/// manifest blob → request summary (with both hashes) → assistant.
+TrajectorySnapshot _blobSnapshot() {
+  const prompt = 'You are a test agent.\nBe concise.';
+  final promptBlob = TrajectoryPromptBlob.of(prompt);
+  final manifest = TrajectoryToolManifestBlob.of(const [
+    Tool(name: 'bash', description: 'run it', parameters: {'type': 'object'}),
+    Tool(name: 'read', description: 'read it', parameters: {'type': 'object'}),
+  ]);
+  CustomRecord blobRecord(String id, String type, Map<String, dynamic> data) =>
+      CustomRecord(
+        id: id,
+        parentId: 't1',
+        timestamp: _at(0),
+        customType: type,
+        data: data,
+      );
+  return trajectorySnapshotOf([
+    _userRecord('u1'),
+    ModelChangeRecord(
+      id: 'm1',
+      parentId: 'u1',
+      timestamp: _at(0),
+      provider: 'anthropic',
+      modelId: 'claude-test',
+    ),
+    ActiveToolsChangeRecord(
+      id: 't1',
+      parentId: 'm1',
+      timestamp: _at(0),
+      activeToolNames: const ['bash', 'read'],
+    ),
+    blobRecord('b1', 'trajectory_prompt_blob', promptBlob.toJson()),
+    blobRecord('b2', 'trajectory_manifest_blob', manifest.toJson()),
+    blobRecord(
+      'b9',
+      'trajectory_wire_dump',
+      const TrajectoryWireDump(
+        hash: 'wh1',
+        payload: '{"systemPrompt":"…"}',
+        truncated: true,
+      ).toJson(),
+    ),
+    blobRecord(
+      'b3',
+      'model_request_summary',
+      TrajectoryRequestDetail(
+        messageCount: 1,
+        systemPromptChars: prompt.length,
+        systemPromptHash: promptBlob.hash,
+        toolCount: 2,
+        toolNames: const ['bash', 'read'],
+        toolManifestHash: manifest.hash,
+        wireDumpHash: 'wh1',
+        messages: const [],
+      ).toJson(),
+    ),
+    _assistantRecord('a1', parentId: 'b3'),
+  ]);
+}
 
 void main() {
   group('trajectoryLines', () {
@@ -612,6 +675,261 @@ void main() {
       );
       io.sendLine('/exit');
       await run;
+    });
+  });
+
+  group('trajectoryInspectLines blob sections (issue #385)', () {
+    test(
+      'an assistant row prints the prompt text, manifest tools, and sizes',
+      () {
+        final snapshot = _blobSnapshot();
+        final assistantIndex = snapshot.records.indexOf(
+          snapshot.records.whereType<TrajectoryAssistantRecord>().first,
+        );
+        final lines = trajectoryInspectLines(snapshot, assistantIndex + 1)!;
+        expect(lines, contains('  You are a test agent.'));
+        expect(lines, contains('  Be concise.'));
+        expect(
+          lines.any(
+            (l) => l.startsWith('system prompt: ') && l.endsWith(' chars'),
+          ),
+          isTrue,
+        );
+        expect(
+          lines.any((l) => l.startsWith('manifest: ') && l.endsWith('2 tools')),
+          isTrue,
+        );
+        expect(
+          lines.any(
+            (l) =>
+                l.startsWith('wire dump: wh1 · ') &&
+                l.endsWith(' chars · truncated'),
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('pointers without blob records render hash-only (E6)', () {
+      final snapshot = trajectorySnapshotOf([
+        _userRecord('u1'),
+        CustomRecord(
+          id: 'b3',
+          parentId: 'u1',
+          timestamp: _at(0),
+          customType: 'model_request_summary',
+          data: TrajectoryRequestDetail(
+            messageCount: 1,
+            systemPromptChars: 33,
+            systemPromptHash: 'deadbeef',
+            toolCount: 2,
+            toolNames: const ['bash', 'read'],
+            toolManifestHash: 'cafebabe',
+            wireDumpHash: 'beadfeed',
+            messages: const [],
+          ).toJson(),
+        ),
+        _assistantRecord('a1', parentId: 'b3'),
+      ]);
+      final assistantIndex = snapshot.records.indexOf(
+        snapshot.records.whereType<TrajectoryAssistantRecord>().first,
+      );
+      final lines = trajectoryInspectLines(snapshot, assistantIndex + 1)!;
+      expect(lines, contains('system prompt: deadbeef'));
+      expect(lines, contains('manifest: cafebabe'));
+      expect(lines, contains('wire dump: beadfeed'));
+    });
+
+    test('a system row renders the full prompt when the blob is present', () {
+      final snapshot = _blobSnapshot();
+      // The toolsChange row carries the manifest; the system rows carry
+      // the prompt hash stamped from the NEXT request summary.
+      final toolsRow = snapshot.records.indexWhere(
+        (r) =>
+            r is TrajectorySystemRecord &&
+            r.change == TrajectorySystemChange.toolsChange,
+      );
+      expect(toolsRow, greaterThanOrEqualTo(0));
+      final lines = trajectoryInspectLines(snapshot, toolsRow + 1)!;
+      expect(lines.any((l) => l.startsWith('tool manifest: ')), isTrue);
+      expect(lines, contains('  bash: run it'));
+    });
+  });
+
+  group('trajectoryInspectReport (issue #385 F4/AC9)', () {
+    test(
+      'empty, non-numeric, and out-of-range args degrade explicitly',
+      () async {
+        final snapshot = trajectorySnapshotOf([_userRecord('u1')]);
+        expect(await trajectoryInspectReport(trajectorySnapshotOf([]), '1'), [
+          'no records',
+        ]);
+        expect(await trajectoryInspectReport(snapshot, 'abc'), [
+          'usage: /trajectory inspect <n>',
+        ]);
+        expect(await trajectoryInspectReport(snapshot, '9'), [
+          trajectoryRangeError(9, 1),
+        ]);
+      },
+    );
+
+    test('a plain row reports its detail lines untouched', () async {
+      final snapshot = trajectorySnapshotOf([_userRecord('u1')]);
+      final lines = await trajectoryInspectReport(snapshot, '1');
+      expect(lines.first, '#1 USER');
+    });
+
+    test(
+      'a compacted row resolves its hidden range through the callback',
+      () async {
+        final snapshot = trajectorySnapshotOf([
+          _userRecord('u1'),
+          HiddenRangeRecord(
+            id: 'h1',
+            parentId: 'u1',
+            timestamp: _at(2),
+            recordIds: const ['r1', 'r2'],
+          ),
+        ]);
+        final lines = await trajectoryInspectReport(
+          snapshot,
+          '2',
+          resolveHidden: (record) async => const [
+            TrajectoryHiddenRecordPreview(
+              id: 'r1',
+              type: 'user',
+              preview: 'hidden work',
+              timestamp: null,
+            ),
+            TrajectoryHiddenRecordPreview(
+              id: 'r2',
+              type: 'missing',
+              preview: '[hidden: not captured for this session]',
+            ),
+          ],
+        );
+        expect(lines, contains('hidden range: 2 covered records'));
+        expect(lines, contains('  [user] hidden work'));
+        expect(
+          lines,
+          contains('  [missing] [hidden: not captured for this session]'),
+        );
+      },
+    );
+
+    test(
+      'an unserved range renders the honest not-captured marker (E6)',
+      () async {
+        final snapshot = trajectorySnapshotOf([
+          _userRecord('u1'),
+          HiddenRangeRecord(
+            id: 'h1',
+            parentId: 'u1',
+            timestamp: _at(2),
+            recordIds: const ['r1'],
+          ),
+        ]);
+        // No session: the header only.
+        expect(
+          await trajectoryInspectReport(snapshot, '2'),
+          isNot(contains('  [hidden: not captured for this session]')),
+        );
+        // Resolver yields nothing: the marker row lands.
+        final lines = await trajectoryInspectReport(
+          snapshot,
+          '2',
+          resolveHidden: (record) async => const [],
+        );
+        expect(lines, contains('  [hidden: not captured for this session]'));
+      },
+    );
+  });
+
+  group('trajectoryInspectLines system diff sections (issue #385 F7)', () {
+    test('a toolsChange row diffs prompt and manifest against previous', () {
+      const promptAText = 'version A\nshared';
+      const promptBText = 'version B\nshared';
+      final promptA = TrajectoryPromptBlob.of(promptAText);
+      final promptB = TrajectoryPromptBlob.of(promptBText);
+      final manifestA = TrajectoryToolManifestBlob.of(const [
+        Tool(name: 'bash', description: 'run it', parameters: {}),
+      ]);
+      final bigSchema = {'type': 'object', 'pad': 'x' * 240};
+      final manifestB = TrajectoryToolManifestBlob.of([
+        const Tool(
+          name: 'bash',
+          description: 'run it well',
+          parameters: {'type': 'object'},
+        ),
+        Tool(name: 'write', description: 'write it', parameters: bigSchema),
+      ]);
+      final row = TrajectorySystemRecord(
+        index: 1,
+        recordId: 's1',
+        text: 'tools changed',
+        change: TrajectorySystemChange.toolsChange,
+        activeToolNames: const ['bash', 'write'],
+        systemPromptHash: promptB.hash,
+        previousSystemPromptHash: promptA.hash,
+        toolManifestHash: manifestB.hash,
+        previousToolManifestHash: manifestA.hash,
+      );
+      final snapshot = TrajectorySnapshot(
+        records: UnmodifiableListView([row]),
+        requests: UnmodifiableListView(const []),
+        callSchemas: const {},
+        partial: null,
+        runningCalls: UnmodifiableListView(const []),
+        recordLocations: const {},
+        revision: 1,
+        blobs: TrajectoryBlobTable()
+            .withPromptBlob(promptA)
+            .withPromptBlob(promptB)
+            .withManifestBlob(manifestA)
+            .withManifestBlob(manifestB),
+      );
+      final lines = trajectoryInspectLines(snapshot, 1)!;
+      // Prompt section: sizes + the unified diff.
+      expect(
+        lines.any((l) => l.startsWith('system prompt: ') && l.contains(' · ')),
+        isTrue,
+      );
+      expect(lines, contains('diff vs ${promptA.hash}:'));
+      expect(lines, contains('  -version A'));
+      expect(lines, contains('  +version B'));
+      expect(lines, contains('   shared'));
+      // Manifest section: the tool-set diff then the full listing.
+      expect(lines, contains('  + write'));
+      expect(lines, contains('  ~ bash'));
+      expect(lines, contains('  bash: run it well'));
+      // A schema over 200 chars collapses to a size marker.
+      expect(
+        lines.any((l) => l.startsWith('    [schema ') && l.endsWith(' chars]')),
+        isTrue,
+      );
+    });
+
+    test('system-row pointers without blobs render hash-only (E6)', () {
+      final row = TrajectorySystemRecord(
+        index: 1,
+        recordId: 's1',
+        text: 'model changed',
+        change: TrajectorySystemChange.modelChange,
+        systemPromptHash: 'deadbeef',
+        toolManifestHash: 'cafebabe',
+      );
+      final snapshot = TrajectorySnapshot(
+        records: UnmodifiableListView([row]),
+        requests: UnmodifiableListView(const []),
+        callSchemas: const {},
+        partial: null,
+        runningCalls: UnmodifiableListView(const []),
+        recordLocations: const {},
+        revision: 1,
+      );
+      final lines = trajectoryInspectLines(snapshot, 1)!;
+      expect(lines, contains('system prompt: deadbeef'));
+      expect(lines, contains('tool manifest: cafebabe'));
     });
   });
 }

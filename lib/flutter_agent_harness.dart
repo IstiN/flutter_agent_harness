@@ -135,6 +135,7 @@ export 'src/trajectory/trajectory_record.dart';
 export 'src/trajectory/event_projection.dart';
 export 'src/trajectory/trajectory_layout.dart';
 export 'src/trajectory/trajectory_preview.dart';
+export 'src/trajectory/trajectory_blobs.dart';
 export 'src/trajectory/trajectory_snapshot.dart';
 export 'src/trajectory/trajectory_snapshot_builder.dart';
 export 'src/trajectory/trajectory_export.dart';

@@ -1392,6 +1392,10 @@ Future<void> _runApp(List<String> args) async {
     global: saved.compactionEngine,
   );
 
+  // Raw wire dumps (issue #385 F5): opt-in only — the project
+  // `.fah/config.yaml` `trajectory:` section wins over the user one.
+  final wireDump = loadProjectWireDump(cwd) ?? saved.wireDump;
+
   // Remote provider catalog (fa1.dev/models-catalog.json): default model
   // ids and per-provider context-window tables for endpoints that don't
   // publish them. Preloaded once, non-blocking (a 10s timeout, never
@@ -1911,6 +1915,7 @@ Future<void> _runApp(List<String> args) async {
       alwaysAllowTools: saved.allowedTools.toSet(),
       runtimeTools: runtimeTools,
       compactionEngine: compactionEngine,
+      wireDump: wireDump,
       contextWindowCap: saved.contextWindowCap,
       modelRolesResolver: rolesResolver,
       // The live models config (`models:` section): `/models set`/`remove`

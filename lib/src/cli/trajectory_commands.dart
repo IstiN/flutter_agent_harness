@@ -47,23 +47,50 @@ extension on AgentCli {
   Future<void> _trajectoryInspect(String arg) async {
     final snapshot = await _trajectorySnapshot();
     if (snapshot == null) return;
-    if (snapshot.records.isEmpty) {
-      io.writeln('no records');
-      return;
-    }
-    final index = int.tryParse(arg);
-    if (index == null) {
-      io.writeln('usage: /trajectory inspect <n>');
-      return;
-    }
-    final lines = trajectoryInspectLines(snapshot, index);
-    if (lines == null) {
-      io.writeln(trajectoryRangeError(index, snapshot.records.length));
-      return;
-    }
+    final lines = await trajectoryInspectReport(
+      snapshot,
+      arg,
+      resolveHidden: _resolveHiddenPreviews,
+    );
     for (final line in lines) {
       io.writeln(line);
     }
+  }
+
+  /// Resolves one compacted row's hidden range on demand (issue #385
+  /// F4): a one-pass chunk-reader lookup, previews capped at
+  /// [hiddenRecordPreviewLimit]. Null = no active session (the report
+  /// prints the header only); empty = the range could not be served and
+  /// the report renders the honest "not captured" marker (E6).
+  Future<List<TrajectoryHiddenRecordPreview>?> _resolveHiddenPreviews(
+    TrajectoryCompactedRecord record,
+  ) async {
+    final session = _session;
+    if (session == null) return null;
+    try {
+      return await _resolveHiddenPreviewsIn(session, record);
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// The session-shaped half of the resolver: windowed storages read the
+  /// raw file (the evicted records sit OFF the kept branch); full-open
+  /// sessions resolve in memory.
+  Future<List<TrajectoryHiddenRecordPreview>> _resolveHiddenPreviewsIn(
+    Session session,
+    TrajectoryCompactedRecord record,
+  ) async {
+    final ids = record.hiddenRecordIds ?? const <String>[];
+    final Map<String, SessionRecord> resolved;
+    if (session.getStorage() case final WindowedSessionStorage windowed) {
+      resolved = await windowed.reader.readRecordsByIds(ids.toSet());
+    } else {
+      // Full-open session: every record is resident — resolve in memory.
+      final all = await session.getBranch();
+      resolved = {for (final resolved in all) resolved.id: resolved};
+    }
+    return projectHiddenRecordPreviews(recordIds: ids, resolved: resolved);
   }
 
   /// Follows the active session's records, one row per appended record,
@@ -104,17 +131,32 @@ extension on AgentCli {
     return trajectorySnapshotOf(await session.getBranch());
   }
 
-  /// Persists the outbound-request summary so replayed sessions rebuild the
-  /// Request tab. A CustomRecord is context-omitted; the ordering matters —
-  /// it must land before its assistant message (the replay walk expects it
-  /// as the step's predecessor), which the event order guarantees.
-  Future<void> _onModelRequest(TrajectoryRequestDetail detail) async {
+  /// Persists the outbound-request capture so replayed sessions rebuild the
+  /// Request tab (issue #385): unseen prompt/manifest blobs land as their
+  /// own records, wire dumps only when the loop captured a raw one (opt-in
+  /// config; redacted through the active pipeline and capped here). A
+  /// CustomRecord is context-omitted; the ordering matters — the summary
+  /// must land before its assistant message (the replay walk expects it as
+  /// the step's predecessor), which the persister's record order guarantees.
+  Future<void> _onModelRequest(ModelRequestEvent event) async {
     final session = _session;
     if (session == null) return;
-    await session.appendCustomEntry(
-      customType: 'model_request_summary',
-      data: detail.toJson(),
+    if (_trajectoryBlobPersister == null ||
+        _trajectoryBlobPersisterSession != session) {
+      _trajectoryBlobPersister = TrajectoryBlobPersister(
+        redactText: config.redactionPipeline?.redact,
+      );
+      _trajectoryBlobPersisterSession = session;
+    }
+    final records = _trajectoryBlobPersister!.recordsFor(
+      event.detail,
+      promptBlob: event.promptBlob,
+      manifestBlob: event.manifestBlob,
+      rawWireDump: event.rawWireDump,
     );
+    for (final (:customType, :data) in records) {
+      await session.appendCustomEntry(customType: customType, data: data);
+    }
   }
 
   int get _trajectoryWidth => io.columns > 0 ? io.columns : 80;

@@ -9,6 +9,8 @@ library;
 
 import '../types.dart';
 
+import 'trajectory_blobs.dart';
+
 /// Closed set of trajectory record kinds.
 enum TrajectoryCellKind {
   /// Model/tool-set/checkpoint context changes.
@@ -126,6 +128,7 @@ final class TrajectoryRequestMessageSummary {
     required this.role,
     required this.chars,
     required this.preview,
+    this.blocks = const [],
   });
 
   /// Role discriminator (`user`, `assistant`, `toolResult`).
@@ -137,11 +140,17 @@ final class TrajectoryRequestMessageSummary {
   /// Bounded text preview of the message content.
   final String preview;
 
+  /// Block structure in model order with bounded full texts and image
+  /// markers (F3). Empty when not captured (old sessions, E6).
+  final List<TrajectoryRequestMessageBlock> blocks;
+
   /// Serializes to a JSON map.
   Map<String, dynamic> toJson() => {
     'role': role,
     'chars': chars,
     'preview': preview,
+    if (blocks.isNotEmpty)
+      'blocks': [for (final block in blocks) block.toJson()],
   };
 
   /// Deserializes from a JSON map produced by [toJson].
@@ -150,6 +159,12 @@ final class TrajectoryRequestMessageSummary {
       role: json['role'] as String? ?? '',
       chars: json['chars'] as int? ?? 0,
       preview: json['preview'] as String? ?? '',
+      blocks: [
+        for (final block in (json['blocks'] as List?) ?? const [])
+          TrajectoryRequestMessageBlock.fromJson(
+            (block as Map).cast<String, dynamic>(),
+          ),
+      ],
     );
   }
 }
@@ -167,6 +182,9 @@ final class TrajectoryRequestDetail {
     required this.toolCount,
     required this.toolNames,
     required this.messages,
+    this.systemPromptHash,
+    this.toolManifestHash,
+    this.wireDumpHash,
   });
 
   /// Number of messages in the outbound request.
@@ -184,6 +202,18 @@ final class TrajectoryRequestDetail {
   /// Per-message summaries, in request order.
   final List<TrajectoryRequestMessageSummary> messages;
 
+  /// Pointer into the session's prompt-blob table (F1); null when the
+  /// prompt text was not captured for this session (E6).
+  final String? systemPromptHash;
+
+  /// Pointer into the session's manifest-blob table (F2); null when not
+  /// captured (E6).
+  final String? toolManifestHash;
+
+  /// Pointer into the session's wire-dump table (F5); null when wire
+  /// dumps are off or not captured.
+  final String? wireDumpHash;
+
   /// Serializes to a JSON map.
   Map<String, dynamic> toJson() => {
     'messageCount': messageCount,
@@ -191,6 +221,9 @@ final class TrajectoryRequestDetail {
     'toolCount': toolCount,
     'toolNames': toolNames,
     'messages': [for (final message in messages) message.toJson()],
+    if (systemPromptHash != null) 'systemPromptHash': systemPromptHash,
+    if (toolManifestHash != null) 'toolManifestHash': toolManifestHash,
+    if (wireDumpHash != null) 'wireDumpHash': wireDumpHash,
   };
 
   /// Deserializes from a JSON map produced by [toJson].
@@ -209,6 +242,9 @@ final class TrajectoryRequestDetail {
             (message as Map).cast<String, dynamic>(),
           ),
       ],
+      systemPromptHash: json['systemPromptHash'] as String?,
+      toolManifestHash: json['toolManifestHash'] as String?,
+      wireDumpHash: json['wireDumpHash'] as String?,
     );
   }
 }
@@ -532,6 +568,7 @@ final class TrajectoryCompactedRecord extends TrajectoryRecord {
     this.timeSeconds,
     this.startedAt,
     this.interrupted = false,
+    this.hiddenRecordIds,
   });
 
   /// Bounded preview of the summary.
@@ -552,6 +589,12 @@ final class TrajectoryCompactedRecord extends TrajectoryRecord {
   /// Whether the compaction was interrupted before it finished.
   final bool interrupted;
 
+  /// Ids of the records covered by a hidden-range event (F4), when this
+  /// row projects one. Null for plain compactions; the covered records
+  /// resolve lazily from the session storage on drill-in — never
+  /// preloaded into the snapshot (AC5).
+  final List<String>? hiddenRecordIds;
+
   @override
   TrajectoryCellKind get kind => TrajectoryCellKind.compacted;
 }
@@ -568,6 +611,11 @@ final class TrajectorySystemRecord extends TrajectoryRecord {
     this.time,
     this.errorCode,
     this.errorMessage,
+    this.activeToolNames,
+    this.systemPromptHash,
+    this.previousSystemPromptHash,
+    this.toolManifestHash,
+    this.previousToolManifestHash,
   });
 
   /// Short human-readable description of the change.
@@ -588,6 +636,48 @@ final class TrajectorySystemRecord extends TrajectoryRecord {
   /// Error description for a failed turn end.
   final String? errorMessage;
 
+  /// Active tool names for a `toolsChange` row (F7b: the tab renders the
+  /// real set instead of an unconditional missing stub). Null otherwise.
+  final List<String>? activeToolNames;
+
+  /// Prompt-blob pointer active from this row on (F7a: the System-prompt
+  /// tab renders the full text from the blob table instead of a stub).
+  /// Null when not captured (E6). [previousSystemPromptHash] enables the
+  /// diff view between prompt versions.
+  final String? systemPromptHash;
+  final String? previousSystemPromptHash;
+
+  /// Manifest-blob pointer active from this row on, plus the previous
+  /// version for the tool diff (F2/F7b). Null when not captured.
+  final String? toolManifestHash;
+  final String? previousToolManifestHash;
+
+  /// Returns a copy with the blob-table pointers stamped by the snapshot
+  /// builder when the row's following request summary lands (F7): the
+  /// full system prompt / tool manifest active from this row on, plus the
+  /// previous versions for the diff views. Null fields pass through.
+  TrajectorySystemRecord withHashes({
+    String? systemPromptHash,
+    String? previousSystemPromptHash,
+    String? toolManifestHash,
+    String? previousToolManifestHash,
+  }) => TrajectorySystemRecord(
+    index: index,
+    recordId: recordId,
+    text: text,
+    change: change,
+    detail: detail,
+    time: time,
+    errorCode: errorCode,
+    errorMessage: errorMessage,
+    activeToolNames: activeToolNames,
+    systemPromptHash: systemPromptHash ?? this.systemPromptHash,
+    previousSystemPromptHash:
+        previousSystemPromptHash ?? this.previousSystemPromptHash,
+    toolManifestHash: toolManifestHash ?? this.toolManifestHash,
+    previousToolManifestHash:
+        previousToolManifestHash ?? this.previousToolManifestHash,
+  );
   @override
   TrajectoryCellKind get kind => TrajectoryCellKind.system;
 }
