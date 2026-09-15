@@ -332,6 +332,140 @@ void main() {
       },
     );
 
+    test(
+      'a prompt change between turns lands model_change records (#440 AC1)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final agent = _createAgent(
+          _singleTextResponse('ok'),
+          systemPrompt: 'prompt v1',
+        );
+        final service = AgentService(
+          agent: agent,
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('turn one');
+        await service.waitForIdle();
+        // AGENTS.md/skills changed the composed prompt between turns.
+        agent.state.systemPrompt = 'prompt v2 with new sections';
+        await service.sendText('turn two');
+        await service.waitForIdle();
+
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final session = await repo.open((await repo.list()).single);
+        final entries = await session.getEntries();
+        final changes = entries.whereType<ModelChangeRecord>().toList();
+        expect(changes, hasLength(2));
+
+        // Each version's blobs are persisted beside its model_change, and
+        // both prompt versions are content-addressed separately.
+        final blobs = entries
+            .whereType<CustomRecord>()
+            .where((r) => r.customType == 'trajectory_prompt_blob')
+            .toList();
+        expect(blobs, hasLength(2));
+        String hashOf(CustomRecord r) => (r.data as Map)['hash'] as String;
+        expect(hashOf(blobs[0]), isNot(hashOf(blobs[1])));
+
+        // Ordering: the model_change precedes the request summary it
+        // belongs to (the summary stamps the row, F7a).
+        final summaries = entries
+            .whereType<CustomRecord>()
+            .where((r) => r.customType == 'model_request_summary')
+            .toList();
+        expect(
+          entries.indexOf(changes[0]),
+          lessThan(entries.indexOf(summaries[0])),
+        );
+        expect(
+          entries.indexOf(changes[1]),
+          lessThan(entries.indexOf(summaries[1])),
+        );
+
+        // Replay: a System row per turn; the second row carries the new
+        // hash with the first as its previous (the diff view's pair).
+        final snapshot = TrajectorySnapshotBuilder().appendAll(entries);
+        final systemRows = snapshot.records
+            .whereType<TrajectorySystemRecord>()
+            .where((r) => r.change == TrajectorySystemChange.modelChange)
+            .toList();
+        expect(systemRows, hasLength(2));
+        expect(systemRows[0].systemPromptHash, isNotNull);
+        expect(
+          systemRows[1].systemPromptHash,
+          isNot(systemRows[0].systemPromptHash),
+        );
+        expect(
+          systemRows[1].previousSystemPromptHash,
+          systemRows[0].systemPromptHash,
+        );
+      },
+    );
+
+    test(
+      'an unchanged prompt appends exactly one model_change (#440 AC2)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_singleTextResponse('ok')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        for (var i = 0; i < 10; i++) {
+          await service.sendText('turn $i');
+          await service.waitForIdle();
+        }
+
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final session = await repo.open((await repo.list()).single);
+        final entries = await session.getEntries();
+        expect(entries.whereType<ModelChangeRecord>(), hasLength(1));
+      },
+    );
+
+    test(
+      'a legacy app session without model_change opens honestly (#440 AC5)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final service = AgentService(
+          agent: _createAgent(_singleTextResponse('ok')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+        await service.sendText('legacy turn');
+        await service.waitForIdle();
+
+        // The pre-#440 session shape: blobs + summaries persisted, but no
+        // model_change records — old sessions must open cleanly, never
+        // fabricate a System row (E6).
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final session = await repo.open((await repo.list()).single);
+        final legacy = (await session.getEntries())
+            .where((r) => r is! ModelChangeRecord)
+            .toList();
+        expect(
+          legacy.whereType<CustomRecord>().where(
+            (r) => r.customType == 'model_request_summary',
+          ),
+          isNotEmpty,
+        );
+
+        final snapshot = TrajectorySnapshotBuilder().appendAll(legacy);
+        expect(
+          snapshot.records.whereType<TrajectorySystemRecord>().where(
+            (r) => r.change == TrajectorySystemChange.modelChange,
+          ),
+          isEmpty,
+        );
+      },
+    );
+
     test('sendImage appends a user message with image bytes', () async {
       final env = MemoryExecutionEnv();
       final service = AgentService(
