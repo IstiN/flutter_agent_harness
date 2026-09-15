@@ -13,5 +13,6 @@ export 'package:flutter_agent_harness/src/hub/local_hub.dart' show HubJoin;
 /// password join path: strangers get 401 on the upgrade, holders of the
 /// password connect and may enroll).
 class FakeHub extends LocalHub {
-  FakeHub({String? masterSecret}) : super(masterSecret: masterSecret);
+  FakeHub({String? masterSecret, int port = 0})
+      : super(masterSecret: masterSecret, port: port);
 }
