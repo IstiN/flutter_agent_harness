@@ -25,6 +25,7 @@ import 'dart:convert';
 import '../env/execution_env.dart';
 import '../exceptions.dart';
 import '../env/session_parse_executor.dart';
+import '../session_io_retry.dart';
 import 'session_chunk_reader.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
@@ -50,6 +51,7 @@ final class WindowedSessionStorage
     SessionChunk chunk, {
     int residentRecords = defaultResidentRecords,
     int residentBytes = defaultResidentBytes,
+    this._ioRetry = const SessionIoRetryConfig(),
   }) : _metadata = metadata,
        _hasOlder = chunk.hasOlder,
        _windowTopOffset = chunk.isEmpty ? null : chunk.firstOffset,
@@ -76,6 +78,10 @@ final class WindowedSessionStorage
   final FileSystem _fs;
   final String _filePath;
   final SessionChunkReader _reader;
+
+  /// Transient-ENOENT retry wiring (issue #427) for the disk appends;
+  /// the reader-side page-ins stay outside the retry window.
+  final SessionIoRetryConfig _ioRetry;
 
   final List<SessionRecord> _entries = [];
 
@@ -183,6 +189,7 @@ final class WindowedSessionStorage
     int? residentRecords,
     int? residentBytes,
     SessionParseExecutor? parseExecutor,
+    SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
   }) async {
     final reader = SessionChunkReader(
       fs: fs,
@@ -202,6 +209,7 @@ final class WindowedSessionStorage
       chunk,
       residentRecords: residentRecords ?? defaultResidentRecords,
       residentBytes: residentBytes ?? defaultResidentBytes,
+      ioRetry: ioRetry,
     );
   }
 
@@ -747,8 +755,15 @@ final class WindowedSessionStorage
     // mid-record. Same contract as [JsonlSessionStorage].
     final line = jsonEncode(record.toJson());
     await withSessionFileLock(_filePath, () async {
+      // Issue #427: the app-chat submit path appends here; a transient
+      // ENOENT rides the capped retry instead of killing the submit.
       _fsOrThrow(
-        await _fs.appendFile(_filePath, '$line\n'),
+        await retryTransientSessionFileIo(
+          () => _fs.appendFile(_filePath, '$line\n'),
+          op: 'append',
+          path: _filePath,
+          config: _ioRetry,
+        ),
         'Failed to append session entry ${record.id}',
       );
       final info = await _reader.stat();
