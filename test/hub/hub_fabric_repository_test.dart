@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:fa_hub_client/fa_hub_client.dart'
     hide AgentMessage, MailboxEntry;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    hide PluginContext;
+    hide HubIdentity, PluginContext;
 import 'package:test/test.dart';
 
 import '../../bin/hub_fabric_repository.dart';

@@ -901,6 +901,561 @@ extension SettingsFlow on AgentCli {
     return 'inactive this session';
   }
 
+  /// The settings-hub row and `/settings` summary label for MCP: the
+  /// live per-server connection counts when a manager runs this session,
+  /// otherwise an honest inactive/not-configured state.
+  String _mcpStatusLabel() {
+    final manager = _mcp.manager;
+    final section = manager?.config ?? config.mcpConfig?.config;
+    if (section == null || section.servers.isEmpty) {
+      return manager == null ? 'not configured' : '0 servers · live';
+    }
+    var connected = 0;
+    for (final state in manager?.states.values ?? const <McpServerState>[]) {
+      if (state.status == McpServerStatus.connected) connected++;
+    }
+    final total = section.servers.length;
+    final stateWord = manager == null ? 'inactive this session' : 'live';
+    if (manager == null) return '$total server${_s(total)} · $stateWord';
+    return '$total server${_s(total)} · $connected connected · live';
+  }
+
+  /// The plural suffix for [n] (empty for 1).
+  String _s(int n) => n == 1 ? '' : 's';
+
+  /// Settings → MCP servers (issue #396): manage the `mcp:` section live
+  /// — per-server status (connecting/connected/failed) with view-tools /
+  /// reconnect / edit / remove (confirm), plus an add wizard (stdio
+  /// command/args/env or remote url/transport/headers). Every action
+  /// re-reads the section (a concurrent edit survives — E3) and is
+  /// validated with the real [McpConfig] parser BEFORE the surgical write
+  /// into `~/.fah/config.yaml` (AC2/AC4). With a live manager the same
+  /// section diff applies through [McpManager.applyConfig] — only the
+  /// touched servers reconnect; without one the note defers to the next
+  /// boot (AC3). Loops until cancelled or done.
+  Future<void> startMcpServersFlow() async {
+    final path = _userConfigPath();
+    if (path == null) {
+      io.writeln('mcp: no user config on this host — not saved');
+      return;
+    }
+    for (;;) {
+      if (!await _mcpMenuRound(path)) return;
+    }
+  }
+
+  /// One main-menu round. Returns false when the flow must end: the
+  /// section is malformed/unreadable (reported), the user cancelled, or
+  /// picked Done.
+  Future<bool> _mcpMenuRound(String path) async {
+    final current = await _readMcpSection(path);
+    if (current == null) return false;
+    final picked = await _pickOption('mcp servers — $path', [
+      for (final server in current.servers.values)
+        ('server:${server.name}', server.name, _mcpServerDescription(server)),
+      ('add', 'Add a server', 'stdio (command) or remote (url)'),
+      ('done', 'Done', ''),
+    ]);
+    if (picked == null || picked == 'done') return false;
+    if (picked == 'add') {
+      await _mcpAddAction(path);
+      return true;
+    }
+    await _mcpServerAction(path, picked.substring('server:'.length));
+    return true;
+  }
+
+  /// The per-server menu row: transport + endpoint detail, then the live
+  /// status (connecting/connected/failed) when a manager runs this
+  /// session, or the honest inactive marker when it does not.
+  String _mcpServerDescription(McpServerConfig server) {
+    final manager = _mcp.manager;
+    final detail = switch (server) {
+      McpStdioServerConfig(:final command, :final args) =>
+        'stdio · $command${args.isEmpty ? '' : ' ${args.join(' ')}'}',
+      McpHttpServerConfig(:final url) => 'remote · $url',
+    };
+    final state = manager?.states[server.name];
+    if (manager == null) return '$detail · inactive this session';
+    return switch (state?.status) {
+      McpServerStatus.connected =>
+        '$detail · connected · ${state!.tools.length} tool(s)',
+      McpServerStatus.failed =>
+        '$detail · failed: ${state!.error ?? 'unknown'}',
+      McpServerStatus.connecting || null => '$detail · connecting…',
+    };
+  }
+
+  /// The per-server branch: view tools / reconnect / edit / delete. The
+  /// live-manager-only actions are offered only when one runs.
+  Future<void> _mcpServerAction(String path, String name) async {
+    for (;;) {
+      final current = await _readMcpSection(path);
+      final server = current?.servers[name];
+      final manager = _mcp.manager;
+      final state = manager?.states[name];
+      if (server == null) return;
+      final action = await _pickOption(
+        'mcp server $name',
+        _mcpServerMenuOptions(name, server, manager, state),
+      );
+      if (!await _mcpHandleServerAction(path, name, action, server, state)) {
+        return;
+      }
+    }
+  }
+
+  /// The submenu rows: tools/reconnect appear only with a live manager
+  List<(String, String, String)> _mcpServerMenuOptions(
+    String name,
+    McpServerConfig server,
+    McpManager? manager,
+    McpServerState? state,
+  ) => [
+    if (state != null && state.status == McpServerStatus.connected)
+      (
+        'tools',
+        'View tools',
+        '${state.tools.length} advertised as mcp__${name}__*',
+      ),
+    if (manager != null)
+      ('reconnect', 'Reconnect', 'stop and reconnect just this server'),
+    (
+      'edit',
+      'Edit',
+      '${server is McpStdioServerConfig ? 'stdio' : 'remote'} fields',
+    ),
+    ('delete', 'Delete', 'remove from the section (confirm)'),
+    ('back', 'Back', ''),
+  ];
+
+  /// Dispatches one submenu action. Returns false when the submenu must
+  /// end (edit/delete consumed it, or back/cancelled).
+  Future<bool> _mcpHandleServerAction(
+    String path,
+    String name,
+    String? action,
+    McpServerConfig server,
+    McpServerState? state,
+  ) async {
+    switch (action) {
+      case 'tools':
+        _printMcpServerTools(name, state!.tools);
+        return true;
+      case 'reconnect':
+        await _mcpReconnectAction(name);
+        return true;
+      default:
+        await _mcpLeaveAction(path, name, action, server);
+        return false;
+    }
+  }
+
+  /// The submenu-leaving actions: edit and delete write the section;
+  /// back/cancelled falls through with nothing written.
+  Future<void> _mcpLeaveAction(
+    String path,
+    String name,
+    String? action,
+    McpServerConfig server,
+  ) async {
+    switch (action) {
+      case 'edit':
+        await _mcpEditAction(path, server);
+      case 'delete':
+        await _mcpDeleteAction(path, name);
+      default:
+        break; // back / cancelled
+    }
+  }
+
+  /// Reconnect stops just this server's loop and starts a fresh one;
+  /// the other servers keep their connections.
+  Future<void> _mcpReconnectAction(String name) async {
+    await _mcp.manager!.restartServer(name);
+    io.writeln('mcp: "$name" reconnecting');
+  }
+
+  /// The connected server's advertised tools (read-only view).
+  void _printMcpServerTools(String name, List<McpToolInfo> tools) {
+    if (tools.isEmpty) {
+      io.writeln('mcp: "$name" advertises no tools');
+      return;
+    }
+    io.writeln('mcp: "$name" advertises ${tools.length} tool(s):');
+    for (final tool in tools) {
+      final description = tool.description;
+      io.writeln(
+        '  mcp__${name}__${tool.name}'
+        '${description == null ? '' : ' — $description'}',
+      );
+    }
+  }
+
+  /// The add branch: kind → name → fields, then reload-before-write (E3)
+  /// so a server added meanwhile is not clobbered.
+  Future<void> _mcpAddAction(String path) async {
+    final server = await _mcpPromptNewServer();
+    if (server == null) return;
+    await _mcpWriteFresh(
+      path,
+      server.name,
+      expectPresent: false,
+      write: (fresh) async {
+        await _writeMcpSection(
+          path,
+          McpConfig(
+            servers: {...fresh.servers, server.name: server},
+            toolCallTimeout: fresh.toolCallTimeout,
+          ),
+          before: fresh,
+        );
+      },
+    );
+  }
+
+  /// The add wizard: kind → name → fields. Returns null on cancel, an
+  /// empty name, or a body the user aborted (reported).
+  Future<McpServerConfig?> _mcpPromptNewServer() async {
+    final kind = await _pickOption('add server — kind', [
+      ('stdio', 'stdio', 'spawns a local command (process-capable hosts)'),
+      ('remote', 'remote', 'HTTP endpoint (streamable-http or sse)'),
+    ]);
+    if (kind == null) return null;
+    final name = (await _askLine('server name: '))?.trim() ?? '';
+    if (name.isEmpty) return null;
+    return _promptMcpServerBody(
+      name,
+      kind == 'stdio'
+          ? const McpStdioServerConfig(name: '', command: '')
+          : const McpHttpServerConfig(name: '', url: ''),
+    );
+  }
+
+  /// The shared reload-before-write tail (E3): re-reads the section
+  /// fresh, refuses when [name]'s presence does not match
+  /// [expectPresent] (a concurrent edit — reported, nothing written),
+  /// and otherwise hands the fresh section to [write].
+  Future<void> _mcpWriteFresh(
+    String path,
+    String name, {
+    required bool expectPresent,
+    required Future<void> Function(McpConfig fresh) write,
+  }) async {
+    final fresh = await _readMcpSection(path);
+    if (fresh == null) return;
+    if (fresh.servers.containsKey(name) != expectPresent) {
+      io.writeln(
+        expectPresent
+            ? 'mcp: server "$name" is gone from $path — not saved'
+            : 'mcp: server "$name" already exists — not saved',
+      );
+      return;
+    }
+    await write(fresh);
+  }
+
+  /// The edit branch: prompt the fields with the current values as the
+  /// keep-on-empty defaults (the name and stdio/remote kind stay fixed —
+  /// a rename or a kind switch is delete + add), then reload-before-write
+  /// (E3).
+  Future<void> _mcpEditAction(String path, McpServerConfig server) async {
+    final next = await _promptMcpServerBody(server.name, server);
+    if (next == null) return;
+    await _mcpWriteFresh(
+      path,
+      server.name,
+      expectPresent: true,
+      write: (fresh) async {
+        await _writeMcpSection(
+          path,
+          McpConfig(
+            servers: {...fresh.servers, server.name: next},
+            toolCallTimeout: fresh.toolCallTimeout,
+          ),
+          before: fresh,
+        );
+      },
+    );
+  }
+
+  /// The delete branch: confirm, then reload-before-write (E3). Deleting
+  /// the last server leaves a valid empty `servers: {}` section.
+  Future<void> _mcpDeleteAction(String path, String name) async {
+    final sure = (await _askLine("remove server '$name'? (y/N): "))?.trim();
+    if (sure?.toLowerCase() != 'y') return;
+    await _mcpWriteFresh(
+      path,
+      name,
+      expectPresent: true,
+      write: (fresh) async {
+        await _writeMcpSection(
+          path,
+          McpConfig(
+            servers: {
+              for (final entry in fresh.servers.entries)
+                if (entry.key != name) entry.key: entry.value,
+            },
+            toolCallTimeout: fresh.toolCallTimeout,
+          ),
+          before: fresh,
+        );
+      },
+    );
+  }
+
+  /// Prompts the fields of one server. [current] seeds the keep-on-empty
+  /// defaults (edit) or empty seeds (add); [name] is fixed beforehand.
+  /// Returns null when the user cancels or an entry is malformed
+  /// (reported — nothing is written).
+  Future<McpServerConfig?> _promptMcpServerBody(
+    String name,
+    McpServerConfig current,
+  ) async {
+    switch (current) {
+      case McpStdioServerConfig():
+        return _promptMcpStdioBody(name, current);
+      case McpHttpServerConfig():
+        return _promptMcpHttpBody(name, current);
+    }
+  }
+
+  /// The stdio fields: command (required), args (optional list), env
+  /// (KEY=VALUE pairs).
+  Future<McpStdioServerConfig?> _promptMcpStdioBody(
+    String name,
+    McpStdioServerConfig current,
+  ) async {
+    final command = await _askMcpRequired('command', current.command);
+    if (command == null) return null;
+    final argsAnswer = await _askMcpOptional(
+      'args (comma-separated)',
+      current.args.join(', '),
+    );
+    final env = await _askMcpPairs('env', current.env);
+    if (env == null) return null;
+    return McpStdioServerConfig(
+      name: name,
+      command: command,
+      args: _splitMcpList(argsAnswer),
+      env: env,
+    );
+  }
+
+  /// The remote fields: url (required), transport (validated with the
+  /// real parser BEFORE further prompts — a mistake never reaches the
+  /// write), headers (KEY=VALUE pairs).
+  Future<McpHttpServerConfig?> _promptMcpHttpBody(
+    String name,
+    McpHttpServerConfig current,
+  ) async {
+    final url = await _askMcpRequired('url', current.url);
+    if (url == null) return null;
+    final transportAnswer =
+        (await _askLine(
+          "transport (streamable-http or sse, empty keeps "
+          "'${current.transport.label}'): ",
+        ))?.trim() ??
+        '';
+    final transport = _mcpTransportOrNull(transportAnswer, current, name);
+    if (transport == null) return null;
+    final headers = await _askMcpPairs('headers', current.headers);
+    if (headers == null) return null;
+    return McpHttpServerConfig(
+      name: name,
+      url: url,
+      transport: transport,
+      headers: headers,
+    );
+  }
+
+  /// Parses the transport answer with the real parser; null (reported)
+  /// on an unknown kind, [current]'s kind on empty (keep).
+  McpHttpTransportKind? _mcpTransportOrNull(
+    String answer,
+    McpHttpServerConfig current,
+    String name,
+  ) {
+    if (answer.isEmpty) return McpHttpTransportKind.streamableHttp;
+    try {
+      return McpHttpTransportKind.parse(answer, server: name);
+    } on ConfigException catch (error) {
+      io.writeln('mcp: not saved: ${error.message}');
+      return null;
+    }
+  }
+
+  /// One prompted line for a REQUIRED field: on edit (non-empty [seed])
+  /// an empty answer keeps the seed; on add an empty answer cancels.
+  Future<String?> _askMcpRequired(String label, String seed) async {
+    final answer = seed.isEmpty
+        ? await _askLine('$label: ')
+        : await _askLine("$label (empty keeps '$seed'): ");
+    final trimmed = answer?.trim() ?? '';
+    if (trimmed.isEmpty) return seed.isEmpty ? null : seed;
+    return trimmed;
+  }
+
+  /// One prompted line for an OPTIONAL list field: empty keeps [seed]
+  /// (usually empty = none). Never cancels.
+  Future<String> _askMcpOptional(String label, String seed) async =>
+      (seed.isEmpty
+          ? await _askLine('$label (empty = none): ')
+          : await _askLine("$label (empty keeps '$seed'): ")) ??
+      '';
+
+  /// The comma-separated pieces of [answer] (trimmed, empties dropped).
+  List<String> _splitMcpList(String answer) => [
+    for (final piece in answer.split(','))
+      if (piece.trim().isNotEmpty) piece.trim(),
+  ];
+
+  /// KEY=VALUE pairs (comma-separated) for env/headers. An empty answer
+  /// keeps [seed]; `-` clears; a malformed entry reports and cancels the
+  /// action with nothing written. ponytail: values with literal commas
+  /// need the file — upgrade to a per-value prompt flow if that bites.
+  Future<Map<String, String>?> _askMcpPairs(
+    String label,
+    Map<String, String> seed,
+  ) async {
+    final rendered = [
+      for (final entry in seed.entries) '${entry.key}=${entry.value}',
+    ].join(', ');
+    final answer = rendered.isEmpty
+        ? await _askLine('$label (KEY=VALUE comma-separated, empty = none): ')
+        : await _askLine("$label (empty keeps '$rendered', '-' clears): ");
+    final trimmed = answer?.trim() ?? '';
+    if (trimmed.isEmpty) return seed;
+    if (trimmed == '-') return const {};
+    final pairs = <String, String>{};
+    for (final piece in trimmed.split(',')) {
+      final entry = piece.trim();
+      if (entry.isEmpty) continue;
+      final eq = entry.indexOf('=');
+      if (eq <= 0) {
+        io.writeln('mcp: $label entries must be KEY=VALUE — not saved');
+        return null;
+      }
+      pairs[entry.substring(0, eq)] = entry.substring(eq + 1);
+    }
+    _warnInlineMcpSecrets(label, pairs.keys);
+    return pairs;
+  }
+
+  /// Points credential-looking keys at the existing key flow (the secure
+  /// store behind `/key`, env-first `FA_KEY_*` resolution) instead of an
+  /// inline yaml value.
+  void _warnInlineMcpSecrets(String label, Iterable<String> keys) {
+    final pattern = RegExp(
+      r'token|secret|password|key|auth',
+      caseSensitive: false,
+    );
+    final flagged = [
+      for (final key in keys)
+        if (pattern.hasMatch(key)) key,
+    ];
+    if (flagged.isEmpty) return;
+    io.writeln(
+      'mcp: $label ${flagged.join(', ')} looks like a credential — prefer '
+      'the host environment (an exported FA_KEY_* variable) over inline '
+      'yaml',
+    );
+  }
+
+  /// Reads and parses the `mcp:` section of [path]. An absent section (or
+  /// file) parses as an empty server map (E1); a malformed one reports
+  /// the parser's verbatim message and returns null — the flow never
+  /// edits from a half-parsed section and never writes over one (AC4).
+  Future<McpConfig?> _readMcpSection(String path) async {
+    final String source;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        source = value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        return McpConfig(servers: {});
+      case Err(:final error):
+        io.writeln('mcp: cannot read $path: $error — not saved');
+        return null;
+    }
+    if (source.trim().isEmpty) return McpConfig(servers: {});
+    try {
+      final doc = loadYaml(source);
+      final node = doc is YamlMap ? doc['mcp'] : null;
+      return node == null ? McpConfig(servers: {}) : McpConfig.fromYaml(node);
+    } on Object catch (error) {
+      io.writeln('mcp: not saved: $error');
+      return null;
+    }
+  }
+
+  /// The surgical `mcp:` write shared by every action: block replace in
+  /// [path] (absent block appends), validated with the real parser BEFORE
+  /// the write (AC4), then the same section diff applied to the live
+  /// manager — only touched servers reconnect (AC3). Returns true when
+  /// written.
+  Future<bool> _writeMcpSection(
+    String path,
+    McpConfig next, {
+    required McpConfig before,
+  }) async {
+    final String source;
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        source = value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        source = '';
+      case Err(:final error):
+        io.writeln('mcp: cannot read $path: $error — not saved');
+        return false;
+    }
+    final edited = _replaceTopLevelYamlBlock(source, 'mcp', next.toYaml());
+    // Never persist a file the next boot would reject.
+    final doc = loadYaml(edited);
+    final node = doc is YamlMap ? doc['mcp'] : null;
+    try {
+      McpConfig.fromYaml(node);
+    } on Object catch (error) {
+      io.writeln('mcp: not saved: $error');
+      return false;
+    }
+    if (await _env.writeFile(path, edited) is Err) {
+      io.writeln('mcp: could not write $path');
+      return false;
+    }
+    final manager = _mcp.manager;
+    if (manager == null) {
+      io.writeln(
+        'mcp saved → $path (applies at next boot — no live MCP manager '
+        'this session)',
+      );
+      return true;
+    }
+    await manager.applyConfig(next);
+    io.writeln('mcp saved → $path ${_mcpApplyNote(before, next)}');
+    return true;
+  }
+
+  /// The honest liveness detail (AC3): which servers the section change
+  /// touches on the live manager — connecting/reconnecting/stopped — or
+  /// nothing when the section is value-identical.
+  String _mcpApplyNote(McpConfig before, McpConfig next) {
+    final notes = <String>[];
+    for (final entry in next.servers.entries) {
+      final old = before.servers[entry.key];
+      if (old == null) {
+        notes.add('${entry.key} connecting');
+      } else if (entry.value != old) {
+        notes.add('${entry.key} reconnecting');
+      }
+    }
+    for (final name in before.servers.keys) {
+      if (!next.servers.containsKey(name)) notes.add('$name stopped');
+    }
+    return notes.isEmpty
+        ? '(applies live)'
+        : '(applies live — ${notes.join(', ')})';
+  }
+
   /// The settings-hub row and `/settings` summary label for redaction
   /// (issue #391): the live pipeline state, or plain `off` when the boot
   /// config disabled redaction (no pipeline exists).
@@ -2035,10 +2590,10 @@ extension SettingsFlow on AgentCli {
         description: _imagesStatusLabel(),
       ),
       MenuItem(key: 'power', label: 'Power', description: _powerStatusLabel()),
-      const MenuItem(
+      MenuItem(
         key: 'mcp',
         label: 'MCP servers',
-        description: 'status and config reload',
+        description: _mcpStatusLabel(),
       ),
     ];
   }
@@ -2054,6 +2609,11 @@ extension SettingsFlow on AgentCli {
   @visibleForTesting
   Set<String> settingsPickerHandlerKeysForTest() =>
       _settingsPickerHandlers.keys.toSet();
+
+  /// The live MCP manager when one runs this session (the flow tests
+  /// assert real reconnect behavior through it).
+  @visibleForTesting
+  McpManager? get mcpManagerForTest => _mcp.manager;
 
   /// A settings-hub selection launches the same flow its dedicated slash
   /// command would open.
@@ -2083,6 +2643,7 @@ extension SettingsFlow on AgentCli {
     'memory': startMemoryStoresFlow,
     'images': startImagesFlow,
     'power': startPowerFlow,
+    'mcp': startMcpServersFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
@@ -2103,6 +2664,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('queue: ${_providersQueueStatusLabel()}');
     io.writeln('images: ${_imagesStatusLabel()}');
     io.writeln('power: ${_powerStatusLabel()}');
+    io.writeln('mcp: ${_mcpStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
       '/tools (agent models: the /settings hub)',

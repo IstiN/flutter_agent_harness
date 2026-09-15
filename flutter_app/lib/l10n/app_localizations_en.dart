@@ -1184,6 +1184,53 @@ class AppLocalizationsEn extends AppLocalizations {
       'A hub is where your Fa agents meet — the CLI, this app, and the browser extension. Connect once and this agent becomes reachable by name: others can find it and send it messages.';
 
   @override
+  String get settingsAgentNetworkJoin => 'Join as agent';
+
+  @override
+  String get settingsAgentNetworkJoinHint =>
+      'Your agent joins the hub as a live, addressable member — CLI peers and other apps reach it by DM.';
+
+  @override
+  String get settingsAgentNetworkUrl => 'Hub URL';
+
+  @override
+  String get settingsAgentNetworkToken => 'Pairing token';
+
+  @override
+  String get settingsAgentNetworkName => 'Agent name';
+
+  @override
+  String get settingsAgentNetworkSave => 'Save';
+
+  @override
+  String get settingsAgentNetworkConnected => 'Connected';
+
+  @override
+  String get settingsAgentNetworkConnecting => 'Connecting…';
+
+  @override
+  String get settingsAgentNetworkOffline => 'Offline';
+
+  @override
+  String get settingsAgentNetworkPeers => 'Peers';
+
+  @override
+  String get settingsAgentNetworkNoPeers => 'No peers visible yet';
+
+  @override
+  String get settingsAgentNetworkDmHint => 'Message a peer…';
+
+  @override
+  String get settingsAgentNetworkSend => 'Send DM';
+
+  @override
+  String get settingsAgentNetworkUnsupported =>
+      'Agent network membership is not available on this platform.';
+
+  @override
+  String get settingsAgentNetworkSaved => 'Agent network settings saved';
+
+  @override
   String get settingsDapIdentityTitle => 'How other agents see you';
 
   @override

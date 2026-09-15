@@ -1195,6 +1195,53 @@ class AppLocalizationsRu extends AppLocalizations {
       'Хаб — место встречи ваших агентов Fa: CLI, это приложение и браузерное расширение. Подключитесь один раз — и этот агент станет доступен по имени: другие смогут найти его и отправлять ему сообщения.';
 
   @override
+  String get settingsAgentNetworkJoin => 'Включить агента в сети';
+
+  @override
+  String get settingsAgentNetworkJoinHint =>
+      'Агент подключается к хабу как живой участник — CLI-пиры и другие приложения пишут ему напрямую.';
+
+  @override
+  String get settingsAgentNetworkUrl => 'Адрес хаба';
+
+  @override
+  String get settingsAgentNetworkToken => 'Токен пейринга';
+
+  @override
+  String get settingsAgentNetworkName => 'Имя агента';
+
+  @override
+  String get settingsAgentNetworkSave => 'Сохранить';
+
+  @override
+  String get settingsAgentNetworkConnected => 'Подключён';
+
+  @override
+  String get settingsAgentNetworkConnecting => 'Подключение…';
+
+  @override
+  String get settingsAgentNetworkOffline => 'Не в сети';
+
+  @override
+  String get settingsAgentNetworkPeers => 'Пиры';
+
+  @override
+  String get settingsAgentNetworkNoPeers => 'Пиров пока не видно';
+
+  @override
+  String get settingsAgentNetworkDmHint => 'Написать пиру…';
+
+  @override
+  String get settingsAgentNetworkSend => 'Отправить ЛС';
+
+  @override
+  String get settingsAgentNetworkUnsupported =>
+      'Членство агента в сети недоступно на этой платформе.';
+
+  @override
+  String get settingsAgentNetworkSaved => 'Настройки сети агента сохранены';
+
+  @override
   String get settingsDapIdentityTitle => 'Как вас видят другие агенты';
 
   @override

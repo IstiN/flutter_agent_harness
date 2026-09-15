@@ -15,7 +15,7 @@ import 'dart:io';
 import 'package:fa_hub_client/fa_hub_client.dart'
     hide AgentMessage, MailboxEntry, MessagingRepository;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    hide PluginContext;
+    hide HubIdentity, PluginContext;
 import 'package:flutter_agent_harness/io.dart' show LocalHub;
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/messaging/agent_fabric.dart';
@@ -114,125 +114,115 @@ void main() {
     sentAt: DateTime.now().toUtc().toIso8601String(),
   );
 
-  test('IT-directory: hub peers merge with name, presence and [hub] marker',
-      () async {
-    final entries = await fabric.directory();
-    final browserEntry = entries.firstWhere(
-      (e) => e.id == browser.agentId,
+  test(
+    'IT-directory: hub peers merge with name, presence and [hub] marker',
+    () async {
+      final entries = await fabric.directory();
+      final browserEntry = entries.firstWhere((e) => e.id == browser.agentId);
+      expect(browserEntry.name, 'Browser');
+      expect(browserEntry.presence, AgentPresence.live);
+      expect(browserEntry.source, mailboxSourceHub);
+      // File entries carry no marker (REG-legacy).
+      final rendered = await renderDirectory();
+      expect(rendered, contains('Browser ('));
+      expect(rendered, contains('[hub]'));
+    },
+    timeout: timeout,
+  );
+
+  test('IT-roundtrip: agent_message-shaped send by NAME rides sendDm; the '
+      'reply lands in the sender inbox at the drain boundary (E5)', () async {
+    final arrived = browser.inbound
+        .firstWhere((m) => m.plaintext == 'ping via fabric')
+        .timeout(const Duration(seconds: 5));
+    await fabric.send(mail('Browser', 'ping via fabric'));
+    final inbound = await arrived;
+    expect(inbound.from, plugin.agentId);
+
+    // The extension replies with a DM.
+    await browser.sendDm(plugin.agentId!, 'pong from browser');
+    await plugin.repository!.client.inbound
+        .firstWhere((m) => m.plaintext == 'pong from browser')
+        .timeout(const Duration(seconds: 5));
+
+    // Delivered at the step boundary: the main-mailbox drain (what the
+    // steering loop runs between turns) sees it, attributed to the
+    // sender — and consumption is once.
+    final drained = await fabric.drain('sess1/main');
+    expect(drained.map((m) => m.text), contains('pong from browser'));
+    final pong = drained.firstWhere((m) => m.text == 'pong from browser');
+    expect(pong.fromId, browser.agentId);
+    expect(
+      await fabric.drain('sess1/main'),
+      isEmpty,
+      reason: 'drained mail is consumed exactly once',
     );
-    expect(browserEntry.name, 'Browser');
-    expect(browserEntry.presence, AgentPresence.live);
-    expect(browserEntry.source, mailboxSourceHub);
-    // File entries carry no marker (REG-legacy).
-    final rendered = await renderDirectory();
-    expect(rendered, contains('Browser ('));
-    expect(rendered, contains('[hub]'));
   }, timeout: timeout);
 
-  test(
-    'IT-roundtrip: agent_message-shaped send by NAME rides sendDm; the '
-    'reply lands in the sender inbox at the drain boundary (E5)',
-    () async {
-      final arrived = browser.inbound
-          .firstWhere((m) => m.plaintext == 'ping via fabric')
-          .timeout(const Duration(seconds: 5));
-      await fabric.send(mail('Browser', 'ping via fabric'));
-      final inbound = await arrived;
-      expect(inbound.from, plugin.agentId);
+  test('IT-dedup: a duplicated-delivery primary yields exactly one message '
+      '(at-least-once + dedup by id and by sender|ts|body)', () async {
+    // The hub wire assigns a FRESH id per delivered frame; a re-wrap or
+    // redelivery therefore re-enters the drain under a new id. Wrap the
+    // real primary so every hub frame is delivered TWICE: once verbatim
+    // and once re-wrapped (fresh id, same sender/ts/body).
+    final duplicating = _DuplicatingPrimary(HubFabricRepository(plugin));
+    final composite = FallbackMessagingRepository(
+      primary: duplicating,
+      fallback: fileFabric,
+    )..primaryMailbox = () => 'sess1/main';
 
-      // The extension replies with a DM.
-      await browser.sendDm(plugin.agentId!, 'pong from browser');
-      await plugin.repository!.client.inbound
-          .firstWhere((m) => m.plaintext == 'pong from browser')
-          .timeout(const Duration(seconds: 5));
+    await browser.sendDm(plugin.agentId!, 'only once please');
+    await plugin.repository!.client.inbound
+        .firstWhere((m) => m.plaintext == 'only once please')
+        .timeout(const Duration(seconds: 5));
 
-      // Delivered at the step boundary: the main-mailbox drain (what the
-      // steering loop runs between turns) sees it, attributed to the
-      // sender — and consumption is once.
-      final drained = await fabric.drain('sess1/main');
-      expect(
-        drained.map((m) => m.text),
-        contains('pong from browser'),
-      );
-      final pong = drained.firstWhere((m) => m.text == 'pong from browser');
-      expect(pong.fromId, browser.agentId);
-      expect(await fabric.drain('sess1/main'), isEmpty,
-          reason: 'drained mail is consumed exactly once');
-    },
-    timeout: timeout,
-  );
+    final drained = await composite.drain('sess1/main');
+    final copies = drained.where((m) => m.text == 'only once please').toList();
+    expect(
+      copies,
+      hasLength(1),
+      reason: 'a re-wrapped duplicate collapses onto one delivery',
+    );
+    expect(copies.single.fromId, browser.agentId);
+  }, timeout: timeout);
 
-  test(
-    'IT-dedup: a duplicated-delivery primary yields exactly one message '
-    '(at-least-once + dedup by id and by sender|ts|body)',
-    () async {
-      // The hub wire assigns a FRESH id per delivered frame; a re-wrap or
-      // redelivery therefore re-enters the drain under a new id. Wrap the
-      // real primary so every hub frame is delivered TWICE: once verbatim
-      // and once re-wrapped (fresh id, same sender/ts/body).
-      final duplicating = _DuplicatingPrimary(HubFabricRepository(plugin));
-      final composite = FallbackMessagingRepository(
-        primary: duplicating,
-        fallback: fileFabric,
-      )..primaryMailbox = () => 'sess1/main';
+  test('IT-fallback: hub down — mail to a hub peer queues in the file inbox '
+      '(no throw), directory degrades, and a hub restart forwards the queue '
+      'exactly once (AC2, E2)', () async {
+    final peerId = browser.agentId!;
+    final port = hub.url.port; // capture before the hub dies
+    // The hub dies mid-session (kill -9 shape: no graceful stop).
+    await hub.stop();
 
-      await browser.sendDm(plugin.agentId!, 'only once please');
-      await plugin.repository!.client.inbound
-          .firstWhere((m) => m.plaintext == 'only once please')
-          .timeout(const Duration(seconds: 5));
+    // The directory degrades to the file-only view — never throws.
+    final entries = await fabric.directory();
+    expect(entries.any((e) => e.id == peerId), isFalse);
 
-      final drained = await composite.drain('sess1/main');
-      final copies = drained
-          .where((m) => m.text == 'only once please')
-          .toList();
-      expect(copies, hasLength(1),
-          reason: 'a re-wrapped duplicate collapses onto one delivery');
-      expect(copies.single.fromId, browser.agentId);
-    },
-    timeout: timeout,
-  );
+    // Sending to the hub peer takes the honest fallback: no throw, the
+    // mail is queued in the file inbox.
+    await fabric.send(mail(peerId, 'queued while offline'));
+    expect(
+      (await fileFabric.peek(peerId)).map((m) => m.text),
+      contains('queued while offline'),
+    );
 
-  test(
-    'IT-fallback: hub down — mail to a hub peer queues in the file inbox '
-    '(no throw), directory degrades, and a hub restart forwards the queue '
-    'exactly once (AC2, E2)',
-    () async {
-      final peerId = browser.agentId!;
-      final port = hub.url.port; // capture before the hub dies
-      // The hub dies mid-session (kill -9 shape: no graceful stop).
-      await hub.stop();
+    // A later start: a hub comes back on the same port, both clients
+    // reconnect, and the queued mail is forwarded on the next fabric
+    // call (the 2s inbox probe in production).
+    final revived = LocalHub(port: port);
+    await revived.start();
+    addTearDown(revived.stop);
+    await _waitFor(() => fabric.isConnected);
+    await _waitFor(() => browser.connected);
+    final arrived = browser.inbound
+        .firstWhere((m) => m.plaintext == 'queued while offline')
+        .timeout(const Duration(seconds: 5));
+    await fabric.drain('sess1/main'); // triggers the flush
+    await arrived;
 
-      // The directory degrades to the file-only view — never throws.
-      final entries = await fabric.directory();
-      expect(entries.any((e) => e.id == peerId), isFalse);
-
-      // Sending to the hub peer takes the honest fallback: no throw, the
-      // mail is queued in the file inbox.
-      await fabric.send(mail(peerId, 'queued while offline'));
-      expect(
-        (await fileFabric.peek(peerId)).map((m) => m.text),
-        contains('queued while offline'),
-      );
-
-      // A later start: a hub comes back on the same port, both clients
-      // reconnect, and the queued mail is forwarded on the next fabric
-      // call (the 2s inbox probe in production).
-      final revived = LocalHub(port: port);
-      await revived.start();
-      addTearDown(revived.stop);
-      await _waitFor(() => fabric.isConnected);
-      await _waitFor(() => browser.connected);
-      final arrived = browser.inbound
-          .firstWhere((m) => m.plaintext == 'queued while offline')
-          .timeout(const Duration(seconds: 5));
-      await fabric.drain('sess1/main'); // triggers the flush
-      await arrived;
-
-      // The file copy is gone — a file-polling peer never sees it twice.
-      expect(await fileFabric.peek(peerId), isEmpty);
-    },
-    timeout: timeout,
-  );
+    // The file copy is gone — a file-polling peer never sees it twice.
+    expect(await fileFabric.peek(peerId), isEmpty);
+  }, timeout: timeout);
 }
 
 /// Waits for [probe] with a short poll loop (bounded at ~5s).

@@ -386,6 +386,21 @@
   "settingsDapEnvNote": "Переменные DAP_HUB_URL или DAP_AGENT_NAME заданы в окружении — env имеет приоритет над сохранённым подключением.",
   "settingsDapHubHint": "Агенты Fa находят друг друга и обмениваются сообщениями",
   "settingsDapHubIntro": "Хаб — место встречи ваших агентов Fa: CLI, это приложение и браузерное расширение. Подключитесь один раз — и этот агент станет доступен по имени: другие смогут найти его и отправлять ему сообщения.",
+  "settingsAgentNetworkJoin": "Включить агента в сети",
+  "settingsAgentNetworkJoinHint": "Агент подключается к хабу как живой участник — CLI-пиры и другие приложения пишут ему напрямую.",
+  "settingsAgentNetworkUrl": "Адрес хаба",
+  "settingsAgentNetworkToken": "Токен пейринга",
+  "settingsAgentNetworkName": "Имя агента",
+  "settingsAgentNetworkSave": "Сохранить",
+  "settingsAgentNetworkConnected": "Подключён",
+  "settingsAgentNetworkConnecting": "Подключение…",
+  "settingsAgentNetworkOffline": "Не в сети",
+  "settingsAgentNetworkPeers": "Пиры",
+  "settingsAgentNetworkNoPeers": "Пиров пока не видно",
+  "settingsAgentNetworkDmHint": "Написать пиру…",
+  "settingsAgentNetworkSend": "Отправить ЛС",
+  "settingsAgentNetworkUnsupported": "Членство агента в сети недоступно на этой платформе.",
+  "settingsAgentNetworkSaved": "Настройки сети агента сохранены",
   "settingsDapIdentityTitle": "Как вас видят другие агенты",
   "settingsDapIdentityHint": "Имя — это адрес для других агентов. ID выводится из ключа этого устройства.",
   "settingsDapInboundTitle": "Входящие сообщения",
@@ -698,7 +713,16 @@
   },
   "themeConsentTitle": "Применить тему?",
   "themeConsentBody": "Приложение {app} просит применить тему \"{pack}\".",
-  "@themeConsentBody": { "placeholders": { "app": { "type": "String" }, "pack": { "type": "String" } } },
+  "@themeConsentBody": {
+    "placeholders": {
+      "app": {
+        "type": "String"
+      },
+      "pack": {
+        "type": "String"
+      }
+    }
+  },
   "themeConsentContrast": "Внимание: часть цветовых пар темы ниже контрастности WCAG AA (4,5:1).",
   "themeConsentApply": "Применить",
   "themeConsentDeny": "Оставить текущую",
@@ -710,7 +734,13 @@
   "themePackActiveChip": "активна",
   "themePackWallpaperChip": "обои",
   "themePackImported": "Тема \"{name}\" установлена",
-  "@themePackImported": { "placeholders": { "name": { "type": "String" } } },
+  "@themePackImported": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "settingsCompactionLabel": "Компакция",
   "@settingsCompactionLabel": {
     "description": "Title of the Settings compaction-engine section (issue #287)"
@@ -752,9 +782,21 @@
     "description": "Note shown instead of the picker on the web stub (issue #287 AC5)"
   },
   "settingsCompactionSaved": "Сохранено в {file} — применится при следующей компакции.",
-  "@settingsCompactionSaved": { "placeholders": { "file": { "type": "String" } } },
+  "@settingsCompactionSaved": {
+    "placeholders": {
+      "file": {
+        "type": "String"
+      }
+    }
+  },
   "settingsCompactionSaveFailed": "Не удалось сохранить движок компакции: {error}",
-  "@settingsCompactionSaveFailed": { "placeholders": { "error": { "type": "String" } } },
+  "@settingsCompactionSaveFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsCompactionDocs": "Документация по компакции",
   "@settingsCompactionDocs": {
     "description": "Link to the compaction documentation from the settings section (issue #287)"
