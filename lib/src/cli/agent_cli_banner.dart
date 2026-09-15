@@ -11,7 +11,7 @@ extension on AgentCli {
     final model = _agent.state.model;
     final metadata = await _session!.getMetadata();
     io.writeln(
-      '${_style.bold(_style.teal('>_'))}${_style.bold('Fa')} '
+      '${tuiFaMark()}'
       '${_style.dim('v$_version')}',
     );
     io.writeln(
@@ -29,7 +29,7 @@ extension on AgentCli {
     if (keyStatus != null) {
       io.writeln(
         keyStatus.startsWith('key: no key set')
-            ? '  ${_style.yellow(keyStatus)}'
+            ? '  ${tuiWarning(keyStatus)}'
             : '  $keyStatus',
       );
     }

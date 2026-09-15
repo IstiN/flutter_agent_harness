@@ -111,7 +111,7 @@ extension on AgentCli {
           io.writeln(line);
         }
       } on Object catch (error) {
-        io.writeln(_style.red('trajectory: tail failed: $error'));
+        io.writeln(tuiError('trajectory: tail failed: $error'));
         return;
       }
       stopped = await Future.any<bool>([
