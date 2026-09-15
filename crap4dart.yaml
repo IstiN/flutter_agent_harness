@@ -32,3 +32,52 @@ coverage:
   lcov_path: coverage/lcov.info
   required: true
   branch_coverage: true
+  # crap4dart 0.9.5 flipped the run_tests default to true — a bare
+  # `analyze`/`check` would silently re-run the whole core suite first.
+  # Coverage is regenerated explicitly (pre-commit hook, CI shard merge);
+  # do not pay for it twice.
+  run_tests: false
+
+# ─── Gates (issue #447) ────────────────────────────────────────────────────
+# 0.9.5 default-enables ALL built-in gates; only broken_goldens is
+# enforced here, everything else is disabled explicitly so a bare
+# `check --staged` (pre-commit, core-only #433 split) means exactly the
+# pixel gate. The flutter_app goldens live in flutter_app/crap4dart.yaml.
+gates:
+  loc: {enabled: false} # own ≤2800 gate (scripts/ci_fast_gate.sh)
+  test_coverage: {enabled: false} # own ≥80% coverage-gate job
+  complexity: {enabled: false} # CRAP ratchet above already covers it
+  method_size: {enabled: false}
+  nesting: {enabled: false}
+  class_size: {enabled: false}
+  weight_of_class: {enabled: false}
+  unused_code: {enabled: false}
+  unused_files: {enabled: false}
+  banned_imports: {enabled: false}
+  duplication: {enabled: false} # own jscpd <1% guard
+  file_naming: {enabled: false}
+  magic_constants: {enabled: false}
+  test_assertions: {enabled: false}
+  folder_structure: {enabled: false}
+  external: {enabled: false}
+  public_docs: {enabled: false}
+  golden: {enabled: false} # flutter-only gate (core is not a Flutter project)
+  accessibility: {enabled: false}
+  hardcoded_strings: {enabled: false}
+
+  # Pixel gate over core test/ goldens — none exist today, so this is a
+  # no-op that guards the future (issue #447 AC: "and core test/ goldens
+  # if any appear"). WARNING, same rationale as flutter_app: the 0.9.5
+  # detector misses the Ahem-solid-rect and hollow-square classes and
+  # false-positives on V-converging shapes; flip to error when the
+  # upstream detector fixes land.
+  broken_goldens:
+    enabled: true
+    severity: warning
+    dirs: [test]
+    exclude:
+      # TUI screenshots, not goldens: amber/yellow text on the dark theme
+      # trips the stripe heuristic (measured 14/14 "overflow stripes" —
+      # the same yellow-on-dark detector bug the issue documents for
+      # apps_panel/panel_dark). Revisit when upstream fixes land.
+      - 'test/integration/**'
