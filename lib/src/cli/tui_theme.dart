@@ -25,9 +25,11 @@
 /// | error          | error                  |
 /// | userMessageBg  | userMessageBg          |
 ///
-/// Their remaining roles (md*, syntax*, statusLine*, thinking*, tool*Bg,
-/// scrollbar*, search*) have no rendering surface here — user themes use
-/// OUR role schema, so nothing silently drops.
+/// The #444 completion adds borderMuted, toolTitle, toolOutput,
+/// userMessageText and the toolSuccessBg/toolErrorBg tints; their
+/// remaining roles (md*, syntax*, statusLine*, thinking*, scrollbar*,
+/// search*) have no rendering surface here — user themes use OUR role
+/// schema, so nothing silently drops.
 library;
 
 import 'dart:convert';
@@ -37,6 +39,7 @@ import 'dart:math' as math;
 // program/windows_terminal -> dart:ffi, which the web build cannot
 // compile (fa_tui_stub -> tui_prompt -> tui_theme ships to web).
 import 'package:dart_tui/style.dart' show ColorProfile, RgbColor, Style, Theme;
+import 'tool_rows.dart' show LaidOutToolRow, ToolRowState;
 
 /// The boot default: the historical site palette (site/styles.css teal +
 /// indigo). Truecolor output is byte-identical to the pre-theming CLI.
@@ -62,6 +65,17 @@ const Theme kDefaultTuiTheme = Theme(
   ),
   accent2Soft: Style(foregroundRgb: RgbColor(129, 140, 248)), // #818CF8
   userMessageBg: Style(backgroundRgb: RgbColor(30, 34, 42)), // #1E222A
+  // Issue #444 role-table completion: every rendered string picks a
+  // named role; a missing role renders plain text, never a color pick.
+  borderMuted: Style(isDim: true),
+  toolTitle: Style(
+    foregroundRgb: RgbColor(129, 140, 248), // #818CF8
+    isBold: true,
+  ),
+  toolOutput: Style(isDim: true),
+  userMessageText: Style(foregroundRgb: RgbColor(0xE8, 0xEE, 0xF7)),
+  toolSuccessBg: Style(backgroundRgb: RgbColor(20, 37, 27)),
+  toolErrorBg: Style(backgroundRgb: RgbColor(42, 21, 24)),
 );
 
 /// The built-in catalog, keyed by config name. `default` wins the
@@ -91,6 +105,12 @@ const Theme _ohmypiDark = Theme(
   accent2: Style(foregroundRgb: RgbColor(0xb2, 0x81, 0xd6), isBold: true),
   accent2Soft: Style(foregroundRgb: RgbColor(0xb2, 0x81, 0xd6)),
   userMessageBg: Style(backgroundRgb: RgbColor(0x22, 0x1d, 0x1a)),
+  borderMuted: Style(foregroundRgb: RgbColor(0x5f, 0x66, 0x73), isDim: true),
+  toolTitle: Style(foregroundRgb: RgbColor(0xb2, 0x81, 0xd6), isBold: true),
+  toolOutput: Style(foregroundRgb: RgbColor(0x5f, 0x66, 0x73), isDim: true),
+  userMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
+  toolSuccessBg: Style(backgroundRgb: RgbColor(0x1a, 0x22, 0x1a)),
+  toolErrorBg: Style(backgroundRgb: RgbColor(0x2a, 0x1a, 0x1a)),
 );
 
 /// oh-my-pi `light.json` port.
@@ -107,6 +127,12 @@ const Theme _ohmypiLight = Theme(
   focusBorder: Style(foregroundRgb: RgbColor(0x5a, 0x80, 0x80)),
   accent2Soft: Style(foregroundRgb: RgbColor(0x7e, 0x57, 0xc2)),
   userMessageBg: Style(backgroundRgb: RgbColor(0xe8, 0xe8, 0xe8)),
+  borderMuted: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76), isDim: true),
+  toolTitle: Style(foregroundRgb: RgbColor(0x7e, 0x57, 0xc2), isBold: true),
+  toolOutput: Style(foregroundRgb: RgbColor(0x76, 0x76, 0x76), isDim: true),
+  userMessageText: Style(foregroundRgb: RgbColor(0x22, 0x22, 0x22)),
+  toolSuccessBg: Style(backgroundRgb: RgbColor(0xdc, 0xe8, 0xdc)),
+  toolErrorBg: Style(backgroundRgb: RgbColor(0xf0, 0xdc, 0xdc)),
 );
 
 /// pi's interactive-mode dark palette (`theme/dark.json`) port.
@@ -124,12 +150,19 @@ const Theme _piDark = Theme(
   accent2: Style(foregroundRgb: RgbColor(0x95, 0x75, 0xcd), isBold: true),
   accent2Soft: Style(foregroundRgb: RgbColor(0x95, 0x75, 0xcd)),
   userMessageBg: Style(backgroundRgb: RgbColor(0x34, 0x35, 0x41)),
+  borderMuted: Style(foregroundRgb: RgbColor(0x4a, 0x4a, 0x4a), isDim: true),
+  toolTitle: Style(foregroundRgb: RgbColor(0x95, 0x75, 0xcd), isBold: true),
+  toolOutput: Style(foregroundRgb: RgbColor(0x66, 0x66, 0x66), isDim: true),
+  userMessageText: Style(foregroundRgb: RgbColor(0xd4, 0xd4, 0xd4)),
+  toolSuccessBg: Style(backgroundRgb: RgbColor(0x2a, 0x2e, 0x24)),
+  toolErrorBg: Style(backgroundRgb: RgbColor(0x36, 0x26, 0x26)),
 );
 
 /// The roles a user theme JSON may set (values: `#rgb`/`#rrggbb`).
 const Set<String> kThemeRoleNames = {
   'accent',
   'accent2',
+  'accent2Soft',
   'muted',
   'highlight',
   'success',
@@ -138,6 +171,12 @@ const Set<String> kThemeRoleNames = {
   'border',
   'focusBorder',
   'userMessageBg',
+  'borderMuted',
+  'toolTitle',
+  'toolOutput',
+  'userMessageText',
+  'toolSuccessBg',
+  'toolErrorBg',
 };
 
 /// A user-theme parse failure naming every problem with its role and line.
@@ -146,8 +185,7 @@ final class ThemeParseException implements Exception {
   final List<String> problems;
 
   @override
-  String toString() =>
-      'invalid theme: ${problems.join('; ')}';
+  String toString() => 'invalid theme: ${problems.join('; ')}';
 }
 
 /// Parses one `#rgb`/`#rrggbb` color, returning null on anything else.
@@ -207,16 +245,14 @@ Theme parseUserTheme(String text, String fileName) {
   for (final entry in rolesNode.entries) {
     final role = '${entry.key}';
     if (!kThemeRoleNames.contains(role)) {
-      problems.add(
-        '$fileName:${_roleLine(text, role)}: unknown role "$role"',
-      );
+      problems.add('$fileName:${_roleLine(text, role)}: unknown role "$role"');
       continue;
     }
     final color = _parseHexColor('${entry.value}');
     if (color == null) {
       problems.add(
         '$fileName:${_roleLine(text, role)}: role "$role" must be '
-            '"#rgb" or "#rrggbb", got "${entry.value}"',
+        '"#rgb" or "#rrggbb", got "${entry.value}"',
       );
       continue;
     }
@@ -241,15 +277,15 @@ Theme parseUserTheme(String text, String fileName) {
 
   // Background roles: same inheritance, against the default's background.
   Style bg(String role) => Style(
-      backgroundRgb: resolved[role] ?? _defaultRoleStyle(role)?.backgroundRgb,
-    );
+    backgroundRgb: resolved[role] ?? _defaultRoleStyle(role)?.backgroundRgb,
+  );
 
   return Theme(
     name: fileName,
     base: const Style(),
+    accent2Soft: fg('accent2Soft'),
     accent: fg('accent', bold: true),
     accent2: fg('accent2', bold: true),
-    accent2Soft: fg('accent2'),
     muted: fg('muted', dim: true),
     highlight: bg('highlight'),
     success: fg('success'),
@@ -258,24 +294,37 @@ Theme parseUserTheme(String text, String fileName) {
     border: fg('border'),
     focusBorder: fg('focusBorder'),
     userMessageBg: bg('userMessageBg'),
+    borderMuted: fg('borderMuted'),
+    toolTitle: fg('toolTitle'),
+    toolOutput: fg('toolOutput', dim: true),
+    userMessageText: fg('userMessageText'),
+    toolSuccessBg: bg('toolSuccessBg'),
+    toolErrorBg: bg('toolErrorBg'),
   );
 }
 
 /// The [role]'s style in the default palette (`null` for roles the
 /// default leaves plain).
 Style? _defaultRoleStyle(String role) => switch (role) {
-      'accent' => kDefaultTuiTheme.accent,
-      'accent2' => kDefaultTuiTheme.accent2,
-      'muted' => kDefaultTuiTheme.muted,
-      'highlight' => kDefaultTuiTheme.highlight,
-      'success' => kDefaultTuiTheme.success,
-      'warning' => kDefaultTuiTheme.warning,
-      'error' => kDefaultTuiTheme.error,
-      'border' => kDefaultTuiTheme.border,
-      'focusBorder' => kDefaultTuiTheme.focusBorder,
-      'userMessageBg' => kDefaultTuiTheme.userMessageBg,
-      _ => null,
-    };
+  'accent' => kDefaultTuiTheme.accent,
+  'accent2' => kDefaultTuiTheme.accent2,
+  'accent2Soft' => kDefaultTuiTheme.accent2Soft,
+  'muted' => kDefaultTuiTheme.muted,
+  'highlight' => kDefaultTuiTheme.highlight,
+  'success' => kDefaultTuiTheme.success,
+  'warning' => kDefaultTuiTheme.warning,
+  'error' => kDefaultTuiTheme.error,
+  'border' => kDefaultTuiTheme.border,
+  'focusBorder' => kDefaultTuiTheme.focusBorder,
+  'userMessageBg' => kDefaultTuiTheme.userMessageBg,
+  'borderMuted' => kDefaultTuiTheme.borderMuted,
+  'toolTitle' => kDefaultTuiTheme.toolTitle,
+  'toolOutput' => kDefaultTuiTheme.toolOutput,
+  'userMessageText' => kDefaultTuiTheme.userMessageText,
+  'toolSuccessBg' => kDefaultTuiTheme.toolSuccessBg,
+  'toolErrorBg' => kDefaultTuiTheme.toolErrorBg,
+  _ => null,
+};
 
 /// Loads user themes from `<home>/.fah/themes/*.json`. Filenames that
 /// shadow a built-in are skipped (user themes can never shadow built-ins);
@@ -371,8 +420,7 @@ final class FaThemeController {
   /// Restores the boot default.
   void reset() => switchTo(kDefaultTuiTheme.name);
 
-  Style _p(Style style) =>
-      profile == null ? style : style.withProfile(profile);
+  Style _p(Style style) => profile == null ? style : style.withProfile(profile);
 
   /// Renders [text] in the current theme's [role], honoring the profile;
   /// no-op (raw text) when styling is off.
@@ -395,9 +443,32 @@ final class FaThemeController {
 
   String error(String text) => _render(_current.error, text);
 
+  String success(String text) => _render(_current.success, text);
+
   /// Backgrounds the echoed user-message lines.
-  String userMessageBg(String text) =>
-      _render(_current.userMessageBg, text);
+  String userMessageBg(String text) => _render(_current.userMessageBg, text);
+
+  /// Tool-row label role.
+  String toolTitle(String text) => _render(_current.toolTitle, text);
+
+  /// Tool-row detail/output role.
+  String toolOutput(String text) => _render(_current.toolOutput, text);
+
+  /// Settled-border role.
+  String borderMuted(String text) => _render(_current.borderMuted, text);
+
+  /// User-message text role.
+  String userMessageText(String text) =>
+      _render(_current.userMessageText, text);
+
+  /// Renders [text] in [style] over [tint]'s background (tinted tool
+  /// rows); a [tint] without a background renders [style] alone.
+  String tinted(Style style, Style tint, String text) => profile == null
+      ? text
+      : _render(style.copyWith(backgroundRgb: tint.backgroundRgb), text);
+
+  /// Renders [glyph] in [style] (the tool-row state rail).
+  String border(Style style, String glyph) => _render(style, glyph);
 
   /// The raw SGR prefix [style] renders with under the active profile
   /// ('' when styling is off). Derived from a probe render so the prefix
@@ -435,6 +506,9 @@ String tuiError(String s) => FaThemeController.instance.error(s);
 /// First accent without bold (banner title, markdown markers).
 String tuiAccentSoft(String s) => FaThemeController.instance.accentSoft(s);
 
+/// Success foreground (connection confirmations, ok markers).
+String tuiSuccess(String s) => FaThemeController.instance.success(s);
+
 /// The raw SGR prefix (e.g. `\x1b[1m\x1b[38;2;…m`) [style] renders with
 /// under the active profile — '' when styling is off. For emitters that
 /// paint per-line fragments and close the escape themselves (markdown
@@ -444,9 +518,7 @@ String tuiSgr(Style style) => FaThemeController.instance.sgrPrefix(style);
 /// Raw SGR prefix of the first accent WITHOUT bold — the markdown marker
 /// color (bullets, checkboxes, code spans, list numbers).
 String tuiAccentSoftSgr() => tuiSgr(
-  Style(
-    foregroundRgb: FaThemeController.instance.current.accent.foregroundRgb,
-  ),
+  Style(foregroundRgb: FaThemeController.instance.current.accent.foregroundRgb),
 );
 
 /// Raw SGR prefix of the second accent WITHOUT bold (sub-headers pair it
@@ -461,17 +533,75 @@ String tuiDimSgr() => tuiSgr(FaThemeController.instance.current.muted);
 String tuiUserMessageBgSgr() =>
     tuiSgr(FaThemeController.instance.current.userMessageBg);
 
+/// Raw SGR prefix of the current theme's user-message text role.
+String tuiUserMessageTextSgr() =>
+    tuiSgr(FaThemeController.instance.current.userMessageText);
 
+/// One echoed user-message line: the userMessageText role over the
+/// userMessageBg band (issue #444 defect 4) — an explicit foreground
+/// keeps the band readable in every palette; styling-off degrades to
+/// plain text (E2).
+String tuiUserMessageLine(String text) {
+  if (FaThemeController.instance.profile == null) return text;
+  return '${tuiUserMessageBgSgr()}${tuiUserMessageTextSgr()}$text\x1b[0m';
+}
+
+/// The `>_Fa` mark (issue #444 defect 3): the prompt glyph `>_` in the
+/// first accent, the brand `Fa` in the second — ONE composed definition
+/// shared by the banner and the per-message prefix.
+String tuiFaMark() {
+  if (FaThemeController.instance.profile == null) return '>_Fa ';
+  return '${tuiAccent('>_')}${tuiAccent2('Fa')} ';
+}
+
+/// Paints a laid-out tool row for its lifecycle [state] (issue #444
+/// defect 2): the state rail picks a border role — running rows the
+/// accent border ([Theme.focusBorder], pi's `borderAccent`), settled
+/// rows [Theme.borderMuted], done/failed rows the success/error tints
+/// ([Theme.toolSuccessBg]/[Theme.toolErrorBg]); label and detail render
+/// in [Theme.toolTitle]/[Theme.toolOutput]. No profile → a plain rail
+/// + row, deterministically (E2).
+String tuiToolRow(LaidOutToolRow row, ToolRowState state) {
+  final c = FaThemeController.instance;
+  if (c.profile == null) return '│ ${row.join()}';
+  final softAccent = Style(foregroundRgb: c.current.accent.foregroundRgb);
+  final (rail, glyph, tint) = switch (state) {
+    ToolRowState.running => (
+      c.current.focusBorder,
+      c.current.accent2Soft,
+      const Style(),
+    ),
+    ToolRowState.settled => (c.current.borderMuted, softAccent, const Style()),
+    ToolRowState.done => (
+      c.current.success,
+      Style(foregroundRgb: c.current.success.foregroundRgb, isBold: true),
+      c.current.toolSuccessBg,
+    ),
+    ToolRowState.failed => (
+      c.current.error,
+      c.current.error,
+      c.current.toolErrorBg,
+    ),
+  };
+  // Failed rows keep the failure text bright (issue #366): the tint
+  // carries the state, the text stays readable.
+  final painted = row.style(
+    glyph: (s) => c.tinted(glyph, tint, s),
+    label: (s) => c.tinted(c.current.toolTitle, tint, s),
+    dim: (s) => state == ToolRowState.failed
+        ? c.tinted(const Style(), tint, s)
+        : c.tinted(c.current.toolOutput, tint, s),
+  );
+  return '${c.border(rail, '│')} $painted';
+}
 
 // ── Swatch/table rendering ────────────────────────────────────────────────
 
 /// One `███` run in [style]'s foreground; plain text when styling is off.
 String _swatch(Style style, String label) =>
     FaThemeController.instance.profile == null
-        ? label
-        : style
-            .withProfile(FaThemeController.instance.profile)
-            .render(label);
+    ? label
+    : style.withProfile(FaThemeController.instance.profile).render(label);
 
 /// A live-preview swatch row for [theme]: colored blocks sampling the
 /// palette's load-bearing roles. Plain blocks when styling is off.
@@ -508,7 +638,22 @@ double themeContrast(Theme theme) {
   // Base text inherits the terminal's own foreground (oh-my-pi light.json
   // ships "text": "" too), so the reference fg contrasts with whatever
   // the terminal bg is: dark-on-light palettes, light-on-dark ones.
-  final fg = theme.base.foregroundRgb ??
+  final fg =
+      theme.base.foregroundRgb ??
+      (_relativeLuminance(bg) > 0.5
+          ? const RgbColor(0x1a, 0x1a, 0x1a)
+          : const RgbColor(204, 204, 204));
+  return _contrastRatio(fg, bg);
+}
+
+/// The user-message readability floor (issue #444 AC4): contrast of
+/// [Theme.userMessageText] against [Theme.userMessageBg]. A theme
+/// leaving the text role unset reads against the plain base fg.
+double themeUserMessageContrast(Theme theme) {
+  final bg = theme.userMessageBg.backgroundRgb ?? const RgbColor(0, 0, 0);
+  final fg =
+      theme.userMessageText.foregroundRgb ??
+      theme.base.foregroundRgb ??
       (_relativeLuminance(bg) > 0.5
           ? const RgbColor(0x1a, 0x1a, 0x1a)
           : const RgbColor(204, 204, 204));
@@ -518,12 +663,12 @@ double themeContrast(Theme theme) {
 double _relativeLuminance(RgbColor c) {
   double channel(int v) {
     final s = v / 255;
-    return s <= 0.03928 ? s / 12.92 : math.pow((s + 0.055) / 1.055, 2.4).toDouble();
+    return s <= 0.03928
+        ? s / 12.92
+        : math.pow((s + 0.055) / 1.055, 2.4).toDouble();
   }
 
-  return 0.2126 * channel(c.r) +
-      0.7152 * channel(c.g) +
-      0.0722 * channel(c.b);
+  return 0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
 }
 
 double _contrastRatio(RgbColor a, RgbColor b) {

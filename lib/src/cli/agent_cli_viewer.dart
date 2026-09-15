@@ -70,7 +70,7 @@ extension AgentCliLease on AgentCli {
         _heldLeasePath = meta.path;
         if (replaced != null) {
           io.writeln(
-            _style.yellow(
+            tuiWarning(
               'lease: previous owner ${leaseOwnerLabel(replaced.host)} '
               '(pid ${replaced.pid}) looks dead (stale) — driving fresh',
             ),
@@ -179,7 +179,7 @@ extension AgentCliLease on AgentCli {
     if (inspect.state == LeaseState.live) return;
     viewer.stale = true;
     viewer.lease = inspect.lease ?? viewer.lease;
-    io.writeln(_style.yellow(viewerStaleNotice(viewer.lease)));
+    io.writeln(tuiWarning(viewerStaleNotice(viewer.lease)));
   }
 
   /// Prints the viewer banner under the boot banner when this instance
@@ -188,7 +188,7 @@ extension AgentCliLease on AgentCli {
     final viewer = _viewer;
     if (viewer == null) return;
     io.writeln(
-      _style.yellow(viewerBannerText(viewer.lease, stale: viewer.stale)),
+      tuiWarning(viewerBannerText(viewer.lease, stale: viewer.stale)),
     );
   }
 
@@ -206,7 +206,7 @@ extension AgentCliLease on AgentCli {
         ),
       );
     } on Object catch (error) {
-      io.writeln(_style.red('could not deliver to the driving agent: $error'));
+      io.writeln(tuiError('could not deliver to the driving agent: $error'));
     }
   }
 
@@ -263,7 +263,7 @@ extension AgentCliLease on AgentCli {
       meta: meta,
     );
     io.writeln(
-      _style.yellow(
+      tuiWarning(
         'lease: lost — another host is driving this session; you are a '
         'viewer now',
       ),
